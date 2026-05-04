@@ -8,13 +8,17 @@ import math
 import re
 import sys
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
+from typing import Generic, TypeVar
 
 import numpy as np
+
+from nominal_refactor_advisor.collection_algebra import sorted_tuple
+from nominal_refactor_advisor.record_algebra import product_record
 
 import openhcs.core.runtime_artifact_queries as runtime_artifact_queries
 import openhcs.core.runtime_semantics as runtime_semantics
@@ -144,6 +148,228 @@ _RuntimeMeasurementRowSubjectSchema = tuple[
     tuple[int, ...],
 ]
 _ContextualMeasurementPaddingGroup = tuple[str, tuple[str, ...], str | None]
+_RuntimeMeasurementRowSchemaCache = dict[tuple[str, ...], _RuntimeMeasurementRowSchema]
+_RuntimeMeasurementFeatureKeyCache = dict[
+    tuple[RuntimeMeasurementSubjectKey, str | None, str, tuple[str, ...]],
+    RuntimeMeasurementFeatureKey | None,
+]
+_RuntimeMeasurementLongFormKeyCache = dict[
+    tuple[RuntimeMeasurementSubjectKey, str | None, str],
+    RuntimeMeasurementFeatureKey | None,
+]
+_RuntimeMeasurementQualifierRenderCache = dict[
+    _RuntimeMeasurementQualifierCacheKey,
+    str | None,
+]
+_RuntimeMeasurementPaddingGroupCache = dict[
+    tuple[str, RuntimeMeasurementFeatureKey],
+    tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
+]
+_AggregateValuesByFeature = dict[
+    tuple[RuntimeMeasurementFeatureKey, tuple[tuple[str, object], ...]],
+    list[float],
+]
+_AggregateMeanKeyCache = dict[
+    RuntimeMeasurementFeatureKey,
+    RuntimeMeasurementFeatureKey | None,
+]
+_RuntimeRowProjectionValueT = TypeVar("_RuntimeRowProjectionValueT")
+_RuntimeRowProjectionRecord = tuple[
+    tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
+    RuntimeMeasurementFeatureKey,
+    _RuntimeRowProjectionValueT,
+]
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeRowProjection(Generic[_RuntimeRowProjectionValueT]):
+    records: tuple[_RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT], ...]
+    long_form: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class _RuntimeRowProjectionContext:
+    row: Mapping[str, object]
+    subject: RuntimeMeasurementSubjectKey
+    policy: RuntimeEquivalencePolicy
+    source_name: str | None
+    known_source_names: tuple[str, ...]
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None
+    table_padding_group: str
+    schema_cache: _RuntimeMeasurementRowSchemaCache
+    key_cache: _RuntimeMeasurementFeatureKeyCache
+    long_form_key_cache: _RuntimeMeasurementLongFormKeyCache
+    qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache
+    padding_group_cache: _RuntimeMeasurementPaddingGroupCache
+
+    @classmethod
+    def from_row(
+        cls,
+        row: Mapping[str, object],
+        subject: RuntimeMeasurementSubjectKey,
+        policy: RuntimeEquivalencePolicy,
+        *,
+        source_name: str | None,
+        known_source_names: tuple[str, ...],
+        required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
+        table_padding_group: str,
+        schema_cache: _RuntimeMeasurementRowSchemaCache,
+        key_cache: _RuntimeMeasurementFeatureKeyCache,
+        long_form_key_cache: _RuntimeMeasurementLongFormKeyCache,
+        qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache,
+        padding_group_cache: _RuntimeMeasurementPaddingGroupCache,
+    ) -> "_RuntimeRowProjectionContext":
+        return cls(
+            row=row,
+            subject=subject,
+            policy=policy,
+            source_name=source_name,
+            known_source_names=known_source_names,
+            required_keys=required_keys,
+            table_padding_group=table_padding_group,
+            schema_cache=schema_cache,
+            key_cache=key_cache,
+            long_form_key_cache=long_form_key_cache,
+            qualifier_render_cache=qualifier_render_cache,
+            padding_group_cache=padding_group_cache,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _AggregateInputRecordingContext:
+    values_by_feature: _AggregateValuesByFeature
+    row_mapping: Mapping[str, object]
+    axis_key: object | None
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None
+    key_cache: _AggregateMeanKeyCache
+
+
+@dataclass(frozen=True, slots=True)
+class _MeasurementFeatureKeySourceContext:
+    field_name: str
+    subject: RuntimeMeasurementSubjectKey
+    policy: RuntimeEquivalencePolicy
+    qualifiers: tuple[str, ...]
+    source_name: str | None
+    known_source_names: tuple[str, ...]
+
+
+_MeasurementScopeAggregatePolicy = product_record(
+    "_MeasurementScopeAggregatePolicy",
+    "scope: MeasurementScope; accepts_aggregate_feature_key: bool",
+    doc="Aggregate-feature parsing policy for one closed measurement scope.",
+)
+
+
+def _measurement_scope_aggregate_policy_by_scope(
+    rows: tuple[_MeasurementScopeAggregatePolicy, ...],
+) -> Mapping[MeasurementScope, _MeasurementScopeAggregatePolicy]:
+    by_scope = {row.scope: row for row in rows}
+    if set(by_scope) != set(MeasurementScope):
+        missing = sorted_tuple(scope.value for scope in set(MeasurementScope) - set(by_scope))
+        extra = sorted_tuple(scope.value for scope in set(by_scope) - set(MeasurementScope))
+        raise ValueError(
+            "Measurement scope aggregate policy must cover MeasurementScope "
+            f"exactly: missing={missing!r}, extra={extra!r}."
+        )
+    return MappingProxyType(by_scope)
+
+
+_MEASUREMENT_SCOPE_AGGREGATE_POLICY_BY_SCOPE = (
+    _measurement_scope_aggregate_policy_by_scope(
+        (
+            _MeasurementScopeAggregatePolicy(MeasurementScope.ARTIFACT, False),
+            _MeasurementScopeAggregatePolicy(MeasurementScope.IMAGE, True),
+            _MeasurementScopeAggregatePolicy(MeasurementScope.OBJECT, False),
+            _MeasurementScopeAggregatePolicy(MeasurementScope.RELATIONSHIP, False),
+            _MeasurementScopeAggregatePolicy(MeasurementScope.EXPERIMENT, True),
+        )
+    )
+)
+_MeasurementQualifierValueRenderer = Callable[[tuple[object, ...]], str | None]
+
+
+def _two_digit_integer_measurement_qualifier_value(
+    values: tuple[object, ...],
+) -> str | None:
+    return str(_measurement_qualifier_integer(values[0])).zfill(2)
+
+
+def _fraction_of_count_measurement_qualifier_value(
+    values: tuple[object, ...],
+) -> str | None:
+    if len(values) != 2:
+        return None
+    return (
+        f"{_measurement_qualifier_integer(values[0])}"
+        f"of{_measurement_qualifier_integer(values[1])}"
+    )
+
+
+def _identifier_measurement_qualifier_value(
+    values: tuple[object, ...],
+) -> str | None:
+    return "_".join(_measurement_qualifier_identifier(value) for value in values)
+
+
+def _measurement_qualifier_value_renderers(
+    renderers: Mapping[
+        RuntimeMeasurementQualifierValueMode,
+        _MeasurementQualifierValueRenderer,
+    ],
+) -> Mapping[
+    RuntimeMeasurementQualifierValueMode,
+    _MeasurementQualifierValueRenderer,
+]:
+    renderer_modes = set(renderers)
+    value_modes = set(RuntimeMeasurementQualifierValueMode)
+    if renderer_modes != value_modes:
+        missing = sorted_tuple(mode.value for mode in value_modes - renderer_modes)
+        extra = sorted_tuple(mode.value for mode in renderer_modes - value_modes)
+        raise ValueError(
+            "Measurement qualifier value renderers must cover "
+            f"RuntimeMeasurementQualifierValueMode exactly: "
+            f"missing={missing!r}, extra={extra!r}."
+        )
+    return MappingProxyType(dict(renderers))
+
+
+_MEASUREMENT_QUALIFIER_VALUE_RENDERERS = _measurement_qualifier_value_renderers(
+    {
+        RuntimeMeasurementQualifierValueMode.IDENTIFIER: _identifier_measurement_qualifier_value,
+        RuntimeMeasurementQualifierValueMode.TWO_DIGIT_INTEGER: _two_digit_integer_measurement_qualifier_value,
+        RuntimeMeasurementQualifierValueMode.FRACTION_OF_COUNT: _fraction_of_count_measurement_qualifier_value,
+    }
+)
+
+
+def _aggregate_mean_key(
+    key: RuntimeMeasurementFeatureKey,
+    *,
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
+    key_cache: _AggregateMeanKeyCache,
+) -> RuntimeMeasurementFeatureKey | None:
+    mean_key = key_cache.get(key, _CACHE_MISS)
+    if mean_key is _CACHE_MISS:
+        mean_key = _runtime_measurement_feature_key(
+            key.subject,
+            key.feature_name,
+            "mean",
+            source_name=key.source_name,
+        )
+        if required_keys is not None and mean_key not in required_keys:
+            mean_key = None
+        elif _is_image_number_reference_feature(key):
+            mean_key = None
+        key_cache[key] = mean_key
+    return mean_key
+
+
+def _finite_numeric_runtime_cell_value(value: RuntimeCellSignature) -> float | None:
+    if value.kind is not RuntimeCellValueKind.NUMBER:
+        return None
+    numeric_value = float(value.value)
+    return numeric_value if math.isfinite(numeric_value) else None
 
 
 _MEASUREMENT_DIALECT_QUALIFIER_FIELD_NAMES_CACHE: dict[
@@ -1000,19 +1226,17 @@ def _threshold_sensitive_pair_companion_features(
     comparable_features = set(reference.values_by_feature) & set(
         candidate.values_by_feature
     )
-    return tuple(
-        sorted(
-            (
-                other
-                for other in comparable_features
-                if _is_pair_companion_feature(
-                    feature,
-                    other,
-                    source_tokens=source_tokens,
-                )
-            ),
-            key=lambda key: key.sort_key,
-        )
+    return sorted_tuple(
+        (
+            other
+            for other in comparable_features
+            if _is_pair_companion_feature(
+                feature,
+                other,
+                source_tokens=source_tokens,
+            )
+        ),
+        key=lambda key: key.sort_key,
     )
 
 
@@ -1078,14 +1302,10 @@ def _sparse_object_boundary_value_feature_equivalent(
     if not _object_count_values_stable(feature, reference, candidate, policy):
         return False
     if feature.feature_name in _ORIENTATION_FEATURES:
-        return _sparse_absolute_numeric_counters_equivalent(
+        return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
             reference.values_by_feature[feature],
             candidate.values_by_feature[feature],
             policy,
-            abs_tolerance=policy.object_boundary_jitter_abs_tolerance,
-            rel_tolerance=policy.object_boundary_jitter_rel_tolerance,
-            max_unstable_values=policy.object_boundary_jitter_max_unstable_values,
-            max_unstable_fraction=policy.object_boundary_jitter_max_unstable_fraction,
         )
     if _is_object_identifier_feature(feature.feature_name):
         return _sparse_object_identifier_counters_equivalent(
@@ -1151,6 +1371,22 @@ def _sparse_object_boundary_mean_feature_equivalent(
         reference.values_by_feature[feature],
         candidate.values_by_feature[feature],
         mean_policy,
+    )
+
+
+def _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
+    reference: Counter[RuntimeCellSignature],
+    candidate: Counter[RuntimeCellSignature],
+    policy: RuntimeEquivalencePolicy,
+) -> bool:
+    return _sparse_absolute_numeric_counters_equivalent(
+        reference,
+        candidate,
+        policy,
+        abs_tolerance=policy.object_boundary_jitter_abs_tolerance,
+        rel_tolerance=policy.object_boundary_jitter_rel_tolerance,
+        max_unstable_values=policy.object_boundary_jitter_max_unstable_values,
+        max_unstable_fraction=policy.object_boundary_jitter_max_unstable_fraction,
     )
 
 
@@ -1284,14 +1520,10 @@ def _unstable_shape_descriptor_values_equivalent(
         )
     if feature.feature_name in _ORIENTATION_FEATURES:
         if policy.allow_sparse_object_boundary_jitter:
-            return _sparse_absolute_numeric_counters_equivalent(
+            return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
                 reference_values,
                 candidate_values,
                 policy,
-                abs_tolerance=policy.object_boundary_jitter_abs_tolerance,
-                rel_tolerance=policy.object_boundary_jitter_rel_tolerance,
-                max_unstable_values=policy.object_boundary_jitter_max_unstable_values,
-                max_unstable_fraction=policy.object_boundary_jitter_max_unstable_fraction,
             )
         return _absolute_numeric_counters_equivalent(
             reference_values,
@@ -1537,13 +1769,15 @@ def _record_static_wide_measurement_table_snapshot(
             cache_key = (subject, source_name, index, qualifiers)
             key = key_cache.get(cache_key, _CACHE_MISS)
             if key is _CACHE_MISS:
-                key = _measurement_feature_key_for_field(
-                    table.header[index],
-                    subject,
-                    policy,
-                    qualifiers=qualifiers,
-                    source_name=source_name,
-                    known_source_names=known_source_names,
+                key = _measurement_feature_key_from_source_context(
+                    _MeasurementFeatureKeySourceContext(
+                        table.header[index],
+                        subject,
+                        policy,
+                        qualifiers,
+                        source_name,
+                        known_source_names,
+                    )
                 )
                 key_cache[cache_key] = key
             if key is None:
@@ -1743,13 +1977,15 @@ def _record_static_wide_runtime_measurement_table(
             cache_key = (subject, source_name, index, qualifiers)
             key = key_cache.get(cache_key, _CACHE_MISS)
             if key is _CACHE_MISS:
-                key = _measurement_feature_key_for_field(
-                    field_name,
-                    subject,
-                    policy,
-                    qualifiers=qualifiers,
-                    source_name=source_name,
-                    known_source_names=known_source_names,
+                key = _measurement_feature_key_from_source_context(
+                    _MeasurementFeatureKeySourceContext(
+                        field_name,
+                        subject,
+                        policy,
+                        qualifiers,
+                        source_name,
+                        known_source_names,
+                    )
                 )
                 key_cache[cache_key] = key
             if key is None:
@@ -1799,19 +2035,22 @@ def _record_static_wide_runtime_measurement_table(
         if not derived_row_facts:
             continue
         row_identity: tuple[tuple[str, object], ...] | None = None
+        aggregate_input_context = _AggregateInputRecordingContext(
+            aggregate_values_by_feature,
+            row_mapping,
+            axis_key,
+            required_keys,
+            aggregate_input_key_cache,
+        )
         for key, value in derived_row_facts:
             table_explicit_measurement_keys.add(key)
             if required_keys is None or key in required_keys:
                 values_by_feature.setdefault(key, Counter())[value] += 1
             row_identity = _record_row_aggregate_input_value(
-                aggregate_values_by_feature,
+                aggregate_input_context,
                 key,
                 value,
                 row_identity=row_identity,
-                row_mapping=row_mapping,
-                axis_key=axis_key,
-                required_keys=required_keys,
-                key_cache=aggregate_input_key_cache,
             )
 
     explicit_measurement_keys = frozenset(table_explicit_measurement_keys)
@@ -1828,84 +2067,36 @@ def _record_static_wide_runtime_measurement_table(
     return True
 
 
-def _record_aggregate_input_value(
-    values_by_feature: dict[RuntimeMeasurementFeatureKey, list[float]],
-    key: RuntimeMeasurementFeatureKey,
-    value: RuntimeCellSignature,
-    *,
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
-    key_cache: dict[RuntimeMeasurementFeatureKey, RuntimeMeasurementFeatureKey | None],
-) -> None:
-    """Record object values needed to derive table-local mean measurements."""
-    if key.subject.scope is not MeasurementScope.OBJECT:
-        return
-    if key.statistic != "value":
-        return
-    mean_key = key_cache.get(key, _CACHE_MISS)
-    if mean_key is _CACHE_MISS:
-        mean_key = _runtime_measurement_feature_key(
-            key.subject,
-            key.feature_name,
-            "mean",
-            source_name=key.source_name,
-        )
-        if required_keys is not None and mean_key not in required_keys:
-            mean_key = None
-        elif _is_image_number_reference_feature(key):
-            mean_key = None
-        key_cache[key] = mean_key
-    if mean_key is None:
-        return
-    if value.kind is not RuntimeCellValueKind.NUMBER:
-        return
-    numeric_value = float(value.value)
-    if not math.isfinite(numeric_value):
-        return
-    values_by_feature.setdefault(key, []).append(numeric_value)
-
-
 def _record_row_aggregate_input_value(
-    values_by_feature: dict[
-        tuple[RuntimeMeasurementFeatureKey, tuple[tuple[str, object], ...]],
-        list[float],
-    ],
+    context: _AggregateInputRecordingContext,
     key: RuntimeMeasurementFeatureKey,
     value: RuntimeCellSignature,
     *,
     row_identity: tuple[tuple[str, object], ...] | None,
-    row_mapping: Mapping[str, object],
-    axis_key: object | None,
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
-    key_cache: dict[RuntimeMeasurementFeatureKey, RuntimeMeasurementFeatureKey | None],
 ) -> tuple[tuple[str, object], ...] | None:
     """Record object values needed to derive row-identity-scoped means."""
     if key.subject.scope is not MeasurementScope.OBJECT:
         return row_identity
     if key.statistic != "value":
         return row_identity
-    mean_key = key_cache.get(key, _CACHE_MISS)
-    if mean_key is _CACHE_MISS:
-        mean_key = _runtime_measurement_feature_key(
-            key.subject,
-            key.feature_name,
-            "mean",
-            source_name=key.source_name,
-        )
-        if required_keys is not None and mean_key not in required_keys:
-            mean_key = None
-        elif _is_image_number_reference_feature(key):
-            mean_key = None
-        key_cache[key] = mean_key
+    mean_key = _aggregate_mean_key(
+        key,
+        required_keys=context.required_keys,
+        key_cache=context.key_cache,
+    )
     if mean_key is None:
         return row_identity
-    if value.kind is not RuntimeCellValueKind.NUMBER:
-        return row_identity
-    numeric_value = float(value.value)
-    if not math.isfinite(numeric_value):
+    numeric_value = _finite_numeric_runtime_cell_value(value)
+    if numeric_value is None:
         return row_identity
     if row_identity is None:
-        row_identity = _axis_scoped_measurement_row_identity(row_mapping, axis_key)
-    values_by_feature.setdefault((mean_key, row_identity), []).append(numeric_value)
+        row_identity = _axis_scoped_measurement_row_identity(
+            context.row_mapping,
+            context.axis_key,
+        )
+    context.values_by_feature.setdefault((mean_key, row_identity), []).append(
+        numeric_value
+    )
     return row_identity
 
 
@@ -2019,7 +2210,7 @@ def _measurement_row_image_identity_key(
                 _measurement_table_cell_payload(value),
             )
         )
-    return tuple(sorted(identity_values))
+    return sorted_tuple(identity_values)
 
 
 def _axis_scoped_measurement_row_identity(
@@ -2079,6 +2270,19 @@ def _runtime_measurement_feature_key(
         feature_name,
         statistic,
         source_name,
+    )
+
+
+def _measurement_feature_key_from_source_context(
+    context: _MeasurementFeatureKeySourceContext,
+) -> RuntimeMeasurementFeatureKey | None:
+    return _measurement_feature_key_for_field(
+        context.field_name,
+        context.subject,
+        context.policy,
+        qualifiers=context.qualifiers,
+        source_name=context.source_name,
+        known_source_names=context.known_source_names,
     )
 
 
@@ -2149,17 +2353,19 @@ def _measurement_facts_from_table_snapshot(
                 index,
                 fallback_subject=row_subject,
             )
-            key = _measurement_feature_key_for_field(
-                field_name,
-                subject,
-                policy,
-                qualifiers=_measurement_row_qualifiers(
-                    row_mapping,
-                    policy.measurement_dialect,
+            key = _measurement_feature_key_from_source_context(
+                _MeasurementFeatureKeySourceContext(
                     field_name,
-                ),
-                source_name=source_name,
-                known_source_names=known_source_names,
+                    subject,
+                    policy,
+                    _measurement_row_qualifiers(
+                        row_mapping,
+                        policy.measurement_dialect,
+                        field_name,
+                    ),
+                    source_name,
+                    known_source_names,
+                )
             )
             if key is None:
                 continue
@@ -2212,13 +2418,15 @@ def _static_wide_measurement_facts_from_table_snapshot(
             ),
         )
         for key in (
-            _measurement_feature_key_for_field(
-                field_name,
-                column_subject,
-                policy,
-                qualifiers=(),
-                source_name=source_name,
-                known_source_names=known_source_names,
+            _measurement_feature_key_from_source_context(
+                _MeasurementFeatureKeySourceContext(
+                    field_name,
+                    column_subject,
+                    policy,
+                    (),
+                    source_name,
+                    known_source_names,
+                )
             ),
         )
         if key is not None
@@ -2333,13 +2541,15 @@ def _wide_measurement_table_needs_row_derivation(
                 fallback_subject=fallback_subject,
             )
         )
-        key = _measurement_feature_key_for_field(
-            header[index],
-            subject,
-            policy,
-            qualifiers=(),
-            source_name=source_name,
-            known_source_names=known_source_names,
+        key = _measurement_feature_key_from_source_context(
+            _MeasurementFeatureKeySourceContext(
+                header[index],
+                subject,
+                policy,
+                (),
+                source_name,
+                known_source_names,
+            )
         )
         if key is not None and key.feature_name == _PAIR_REGRESSION_SLOPE_FEATURE:
             return True
@@ -2360,23 +2570,11 @@ def _measurement_facts_from_runtime_table(
         known_source_names=known_source_names,
     )
     row_required_subjects = _required_measurement_subjects(row_required_keys)
-    schema_cache: dict[tuple[str, ...], _RuntimeMeasurementRowSchema] = {}
-    key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str, tuple[str, ...]],
-        RuntimeMeasurementFeatureKey | None,
-    ] = {}
-    long_form_key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str],
-        RuntimeMeasurementFeatureKey | None,
-    ] = {}
-    qualifier_render_cache: dict[
-        _RuntimeMeasurementQualifierCacheKey,
-        str | None,
-    ] = {}
-    padding_group_cache: dict[
-        tuple[str, RuntimeMeasurementFeatureKey],
-        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-    ] = {}
+    schema_cache: _RuntimeMeasurementRowSchemaCache = {}
+    key_cache: _RuntimeMeasurementFeatureKeyCache = {}
+    long_form_key_cache: _RuntimeMeasurementLongFormKeyCache = {}
+    qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache = {}
+    padding_group_cache: _RuntimeMeasurementPaddingGroupCache = {}
     subject_schema_cache: dict[
         tuple[str, ...],
         _RuntimeMeasurementRowSubjectSchema,
@@ -2415,7 +2613,7 @@ def _measurement_facts_from_runtime_table(
             row_values,
             subject_schema,
         )
-        row_facts = _measurement_facts_from_runtime_row_cached(
+        row_context = _RuntimeRowProjectionContext.from_row(
             row_mapping,
             subject,
             policy,
@@ -2429,20 +2627,24 @@ def _measurement_facts_from_runtime_table(
             qualifier_render_cache=qualifier_render_cache,
             padding_group_cache=padding_group_cache,
         )
+        row_facts = _measurement_facts_from_runtime_row_cached(row_context)
         facts.extend(row_facts)
         if not row_facts:
             continue
         row_identity: tuple[tuple[str, object], ...] | None = None
+        aggregate_input_context = _AggregateInputRecordingContext(
+            aggregate_values_by_feature,
+            row_mapping,
+            axis_key,
+            required_keys,
+            aggregate_input_key_cache,
+        )
         for key, value in row_facts:
             row_identity = _record_row_aggregate_input_value(
-                aggregate_values_by_feature,
+                aggregate_input_context,
                 key,
                 value,
                 row_identity=row_identity,
-                row_mapping=row_mapping,
-                axis_key=axis_key,
-                required_keys=required_keys,
-                key_cache=aggregate_input_key_cache,
             )
 
     explicit_keys = frozenset(key for key, _value in facts)
@@ -2462,39 +2664,31 @@ def _measurement_facts_from_runtime_table(
     return tuple(facts)
 
 
-def _measurement_facts_from_runtime_row_cached(
-    row: Mapping[str, object],
-    subject: RuntimeMeasurementSubjectKey,
-    policy: RuntimeEquivalencePolicy,
+def _runtime_row_projection_cached(
+    context: _RuntimeRowProjectionContext,
     *,
-    source_name: str | None,
-    known_source_names: tuple[str, ...],
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
-    table_padding_group: str,
-    schema_cache: dict[tuple[str, ...], _RuntimeMeasurementRowSchema],
-    key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str, tuple[str, ...]],
-        RuntimeMeasurementFeatureKey | None,
+    value_projector: Callable[
+        [
+            RuntimeMeasurementFeatureKey,
+            object,
+            RuntimeEquivalencePolicy,
+        ],
+        tuple[tuple[RuntimeMeasurementFeatureKey, _RuntimeRowProjectionValueT], ...],
     ],
-    long_form_key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str],
-        RuntimeMeasurementFeatureKey | None,
+    long_form_projector: Callable[
+        [tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]],
+        tuple[tuple[RuntimeMeasurementFeatureKey, _RuntimeRowProjectionValueT], ...],
     ],
-    qualifier_render_cache: dict[
-        _RuntimeMeasurementQualifierCacheKey,
-        str | None,
-    ],
-    padding_group_cache: dict[
-        tuple[str, RuntimeMeasurementFeatureKey],
-        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-    ],
-) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
-    """Project one runtime row using table-local schema/key caches."""
+) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
+    """Project one runtime row through shared schema/key/padding caches."""
+    row = context.row
+    subject = context.subject
+    policy = context.policy
     if _is_metadata_map_row(subject, row):
-        return ()
+        return _RuntimeRowProjection(())
 
     header = tuple(row)
-    cached_schema = schema_cache.get(header)
+    cached_schema = context.schema_cache.get(header)
     if cached_schema is None:
         normalized_fields = tuple(_normalize_identifier(field) for field in header)
         aggregate_reference_indexes = frozenset(
@@ -2551,7 +2745,7 @@ def _measurement_facts_from_runtime_row_cached(
             long_form_feature_indexes,
             long_form_value_indexes,
         )
-        schema_cache[header] = cached_schema
+        context.schema_cache[header] = cached_schema
 
     (
         feature_indexes,
@@ -2565,27 +2759,28 @@ def _measurement_facts_from_runtime_row_cached(
             row_values,
             subject,
             policy,
-            source_name=source_name,
-            known_source_names=known_source_names,
+            source_name=context.source_name,
+            known_source_names=context.known_source_names,
             feature_indexes=long_form_feature_indexes,
             value_indexes=long_form_value_indexes,
-            key_cache=long_form_key_cache,
+            key_cache=context.long_form_key_cache,
         )
         if long_form_feature_indexes and long_form_value_indexes
         else None
     )
     if long_form_fact is not None:
-        if required_keys is not None and long_form_fact[0] not in required_keys:
-            return ()
-        return (long_form_fact,)
+        if context.required_keys is not None and long_form_fact[0] not in context.required_keys:
+            return _RuntimeRowProjection((), long_form=True)
+        return _RuntimeRowProjection(
+            tuple(
+                ((subject, context.source_name, ()), key, value)
+                for key, value in long_form_projector(long_form_fact)
+                if context.required_keys is None or key in context.required_keys
+            ),
+            long_form=True,
+        )
 
-    row_fact_records: list[
-        tuple[
-            tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-            RuntimeMeasurementFeatureKey,
-            RuntimeCellSignature,
-        ]
-    ] = []
+    records: list[_RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT]] = []
     padding_group_presence: dict[
         tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
         bool,
@@ -2606,70 +2801,91 @@ def _measurement_facts_from_runtime_row_cached(
                 qualifiers = _measurement_row_qualifiers_from_indexed_values_cached(
                     row_values,
                     indexed_qualifiers,
-                    qualifier_render_cache,
+                    context.qualifier_render_cache,
                 )
                 row_qualifier_cache[indexed_qualifiers] = qualifiers
-        cache_key = (subject, source_name, field_name, qualifiers)
-        key = key_cache.get(cache_key, _CACHE_MISS)
+        cache_key = (subject, context.source_name, field_name, qualifiers)
+        key = context.key_cache.get(cache_key, _CACHE_MISS)
         if key is _CACHE_MISS:
-            key = _measurement_feature_key_for_field(
-                field_name,
-                subject,
-                policy,
-                qualifiers=qualifiers,
-                source_name=source_name,
-                known_source_names=known_source_names,
+            key = _measurement_feature_key_from_source_context(
+                _MeasurementFeatureKeySourceContext(
+                    field_name,
+                    subject,
+                    policy,
+                    qualifiers,
+                    context.source_name,
+                    context.known_source_names,
+                )
             )
-            key_cache[cache_key] = key
+            context.key_cache[cache_key] = key
         if key is None:
             continue
         padding_group_cache_key = (field_name, key)
-        padding_group = padding_group_cache.get(padding_group_cache_key)
+        padding_group = context.padding_group_cache.get(padding_group_cache_key)
         if padding_group is None:
             padding_group = _runtime_measurement_padding_group(
-                table_padding_group,
+                context.table_padding_group,
                 field_name,
                 key,
                 policy.measurement_dialect,
             )
-            padding_group_cache[padding_group_cache_key] = padding_group
+            context.padding_group_cache[padding_group_cache_key] = padding_group
         padding_group_presence[padding_group] = (
             padding_group_presence.get(padding_group, False)
             or _measurement_value_is_present(value)
         )
         if (
-            required_keys is not None
-            and key not in required_keys
+            context.required_keys is not None
+            and key not in context.required_keys
             and not isinstance(value, Mapping)
         ):
             continue
-        cell_facts = _cell_measurement_facts(key, value, policy)
-        if required_keys is not None:
-            cell_facts = tuple(
+        projected_values = value_projector(key, value, policy)
+        if context.required_keys is not None:
+            projected_values = tuple(
                 (cell_key, cell_value)
-                for cell_key, cell_value in cell_facts
-                if cell_key in required_keys
+                for cell_key, cell_value in projected_values
+                if cell_key in context.required_keys
             )
-        row_fact_records.extend(
+        records.extend(
             (padding_group, cell_key, cell_value)
-            for cell_key, cell_value in cell_facts
+            for cell_key, cell_value in projected_values
         )
 
+    return _RuntimeRowProjection(
+        tuple(
+            (padding_group, key, value)
+            for padding_group, key, value in records
+            if padding_group_presence.get(padding_group, True)
+        )
+    )
+
+
+def _measurement_facts_from_runtime_row_cached(
+    context: _RuntimeRowProjectionContext,
+) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
+    """Project one runtime row using table-local schema/key caches."""
+    projection = _runtime_row_projection_cached(
+        context,
+        value_projector=_cell_measurement_facts,
+        long_form_projector=lambda fact: (fact,),
+    )
     row_facts = tuple(
         (key, value)
-        for padding_group, key, value in row_fact_records
-        if padding_group_presence.get(padding_group, True)
+        for _padding_group, key, value in projection.records
     )
+    if projection.long_form:
+        return row_facts
     derived_facts = _derive_pair_measurement_facts(
         _dedupe_measurement_facts(row_facts),
-        policy,
-        known_source_names=known_source_names,
+        context.policy,
+        known_source_names=context.known_source_names,
     )
-    if required_keys is not None:
+    if context.required_keys is not None:
         return tuple(
             (key, value)
             for key, value in derived_facts
-            if key in required_keys
+            if key in context.required_keys
         )
     return derived_facts
 
@@ -2760,76 +2976,6 @@ def _required_measurement_subjects(
                     )
                 )
     return frozenset(subjects)
-
-
-def _measurement_facts_from_row(
-    row: Mapping[str, object],
-    subject: RuntimeMeasurementSubjectKey,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    source_name: str | None,
-    known_source_names: tuple[str, ...],
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None,
-) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
-    if _is_metadata_map_row(subject, row):
-        return ()
-
-    long_form_fact = _long_form_measurement_fact(
-        row,
-        subject,
-        policy,
-        source_name=source_name,
-        known_source_names=known_source_names,
-    )
-    if long_form_fact is not None:
-        if required_keys is not None and long_form_fact[0] not in required_keys:
-            return ()
-        return (long_form_fact,)
-
-    facts: list[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]] = []
-    for field_name, value in row.items():
-        if _is_measurement_identity_field(field_name, policy.measurement_dialect):
-            continue
-        key = _measurement_feature_key_for_field(
-            field_name,
-            subject,
-            policy,
-            qualifiers=_measurement_row_qualifiers(
-                row,
-                policy.measurement_dialect,
-                field_name,
-            ),
-            source_name=source_name,
-            known_source_names=known_source_names,
-        )
-        if key is None:
-            continue
-        if (
-            required_keys is not None
-            and key not in required_keys
-            and not isinstance(value, Mapping)
-        ):
-            continue
-        cell_facts = _cell_measurement_facts(key, value, policy)
-        if required_keys is not None:
-            cell_facts = tuple(
-                (cell_key, cell_value)
-                for cell_key, cell_value in cell_facts
-                if cell_key in required_keys
-            )
-        facts.extend(cell_facts)
-    derived_facts = _derive_pair_measurement_facts(
-        _dedupe_measurement_facts(facts),
-        policy,
-        known_source_names=known_source_names,
-    )
-    if required_keys is not None:
-        return tuple(
-            (key, value)
-            for key, value in derived_facts
-            if key in required_keys
-        )
-    return derived_facts
 
 
 def _is_metadata_map_row(
@@ -3373,7 +3519,8 @@ def _aggregate_measurement_feature_key(
     *,
     known_source_names: tuple[str, ...],
 ) -> RuntimeMeasurementFeatureKey | None:
-    if subject.scope not in (MeasurementScope.IMAGE, MeasurementScope.EXPERIMENT):
+    scope_policy = _MEASUREMENT_SCOPE_AGGREGATE_POLICY_BY_SCOPE[subject.scope]
+    if not scope_policy.accepts_aggregate_feature_key:
         return None
     parts = tuple(part for part in _normalize_identifier(field_name).split("_") if part)
     if len(parts) >= 2 and parts[0] == "count":
@@ -3438,67 +3585,6 @@ def _starts_with_measurement_category(
         len(parts) >= len(prefix) and parts[: len(prefix)] == prefix
         for prefix in dialect.category_prefixes
     )
-
-
-def _derived_measurement_aggregates(
-    facts: tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]
-    | list[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]],
-    policy: RuntimeEquivalencePolicy,
-    *,
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None,
-) -> tuple[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature], ...]:
-    required_mean_keys = _required_mean_measurement_keys(required_keys)
-    if required_mean_keys is not None and not required_mean_keys:
-        return ()
-
-    values_by_feature: dict[RuntimeMeasurementFeatureKey, list[float]] = {}
-    for key, value in facts:
-        if key.subject.scope is not MeasurementScope.OBJECT:
-            continue
-        if key.statistic != "value":
-            continue
-        if (
-            required_mean_keys is not None
-            and _runtime_measurement_feature_key(
-                key.subject,
-                key.feature_name,
-                "mean",
-                source_name=key.source_name,
-            )
-            not in required_mean_keys
-        ):
-            continue
-        if value.kind is not RuntimeCellValueKind.NUMBER:
-            continue
-        numeric_value = float(value.value)
-        if not math.isfinite(numeric_value):
-            continue
-        values_by_feature.setdefault(key, []).append(numeric_value)
-
-    aggregate_facts: list[
-        tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]
-    ] = []
-    explicit_keys = frozenset(key for key, _value in facts)
-    for key, values in values_by_feature.items():
-        if not values:
-            continue
-        aggregate_key = _runtime_measurement_feature_key(
-            key.subject,
-            key.feature_name,
-            "mean",
-            source_name=key.source_name,
-        )
-        if aggregate_key in explicit_keys:
-            continue
-        if required_mean_keys is not None and aggregate_key not in required_mean_keys:
-            continue
-        aggregate_facts.append(
-            (
-                aggregate_key,
-                _cell_signature(str(sum(values) / len(values)), policy),
-            )
-        )
-    return tuple(aggregate_facts)
 
 
 def _required_mean_measurement_keys(
@@ -4198,23 +4284,11 @@ def _object_measurement_values_by_label(
         required_keys,
         known_source_names=known_source_names,
     )
-    schema_cache: dict[tuple[str, ...], _RuntimeMeasurementRowSchema] = {}
-    key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str, tuple[str, ...]],
-        RuntimeMeasurementFeatureKey | None,
-    ] = {}
-    long_form_key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str],
-        RuntimeMeasurementFeatureKey | None,
-    ] = {}
-    qualifier_render_cache: dict[
-        _RuntimeMeasurementQualifierCacheKey,
-        str | None,
-    ] = {}
-    padding_group_cache: dict[
-        tuple[str, RuntimeMeasurementFeatureKey],
-        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-    ] = {}
+    schema_cache: _RuntimeMeasurementRowSchemaCache = {}
+    key_cache: _RuntimeMeasurementFeatureKeyCache = {}
+    long_form_key_cache: _RuntimeMeasurementLongFormKeyCache = {}
+    qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache = {}
+    padding_group_cache: _RuntimeMeasurementPaddingGroupCache = {}
     for table in measurement_tables:
         table_subject = RuntimeMeasurementSubjectKey.from_subject(table.subject)
         table_object_subject = (
@@ -4248,7 +4322,7 @@ def _object_measurement_values_by_label(
                     continue
             else:
                 subject = table_object_subject
-            for key, value in _numeric_measurement_values_from_runtime_row_cached(
+            row_context = _RuntimeRowProjectionContext.from_row(
                 row_mapping,
                 subject,
                 policy,
@@ -4262,6 +4336,9 @@ def _object_measurement_values_by_label(
                 long_form_key_cache=long_form_key_cache,
                 qualifier_render_cache=qualifier_render_cache,
                 padding_group_cache=padding_group_cache,
+            )
+            for key, value in _numeric_measurement_values_from_runtime_row_cached(
+                row_context
             ):
                 if row_required_keys is not None and key not in row_required_keys:
                     continue
@@ -4272,207 +4349,20 @@ def _object_measurement_values_by_label(
 
 
 def _numeric_measurement_values_from_runtime_row_cached(
-    row: Mapping[str, object],
-    subject: RuntimeMeasurementSubjectKey,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    source_name: str | None,
-    known_source_names: tuple[str, ...],
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
-    table_padding_group: str,
-    schema_cache: dict[tuple[str, ...], _RuntimeMeasurementRowSchema],
-    key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str, tuple[str, ...]],
-        RuntimeMeasurementFeatureKey | None,
-    ],
-    long_form_key_cache: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, str],
-        RuntimeMeasurementFeatureKey | None,
-    ],
-    qualifier_render_cache: dict[
-        _RuntimeMeasurementQualifierCacheKey,
-        str | None,
-    ],
-    padding_group_cache: dict[
-        tuple[str, RuntimeMeasurementFeatureKey],
-        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-    ],
+    context: _RuntimeRowProjectionContext,
 ) -> tuple[tuple[RuntimeMeasurementFeatureKey, float], ...]:
     """Project numeric runtime row values without building cell signatures."""
-    if _is_metadata_map_row(subject, row):
-        return ()
-
-    header = tuple(row)
-    cached_schema = schema_cache.get(header)
-    if cached_schema is None:
-        normalized_fields = tuple(_normalize_identifier(field) for field in header)
-        aggregate_reference_indexes = frozenset(
-            index
-            for index, field_name in enumerate(header)
-            if _is_aggregate_image_number_reference_measurement_field(field_name)
-        )
-        normalized_field_indexes = {
-            field_name: index
-            for index, field_name in enumerate(normalized_fields)
-        }
-        feature_indexes = tuple(
-            index
-            for index, field_name in enumerate(normalized_fields)
-            if not _is_normalized_measurement_identity_field(
-                field_name,
-                policy.measurement_dialect,
-            )
-            and index not in aggregate_reference_indexes
-        )
-        qualifier_indexes = {
-            qualifier: tuple(
-                normalized_field_indexes.get(field_name)
-                for field_name in qualifier.field_names
-            )
-            for qualifier in policy.measurement_dialect.row_qualifiers
-        }
-        qualifiers_by_index = {
-            index: tuple(
-                (qualifier, qualifier_indexes[qualifier])
-                for qualifier in policy.measurement_dialect.row_qualifiers
-                if _row_qualifier_applies_to_field(
-                    qualifier,
-                    tuple(
-                        part
-                        for part in normalized_fields[index].split("_")
-                        if part
-                    ),
-                )
-            )
-            for index in feature_indexes
-        }
-        long_form_feature_indexes = _field_indexes_for_names(
-            normalized_field_indexes,
-            _MEASUREMENT_FEATURE_NAME_FIELDS,
-        )
-        long_form_value_indexes = _field_indexes_for_names(
-            normalized_field_indexes,
-            _MEASUREMENT_VALUE_FIELDS,
-        )
-        cached_schema = (
-            feature_indexes,
-            qualifiers_by_index,
-            long_form_feature_indexes,
-            long_form_value_indexes,
-        )
-        schema_cache[header] = cached_schema
-
-    (
-        feature_indexes,
-        qualifiers_by_index,
-        long_form_feature_indexes,
-        long_form_value_indexes,
-    ) = cached_schema
-    row_values = tuple(row.get(field_name) for field_name in header)
-    long_form_fact = (
-        _long_form_measurement_fact_cached(
-            row_values,
-            subject,
-            policy,
-            source_name=source_name,
-            known_source_names=known_source_names,
-            feature_indexes=long_form_feature_indexes,
-            value_indexes=long_form_value_indexes,
-            key_cache=long_form_key_cache,
-        )
-        if long_form_feature_indexes and long_form_value_indexes
-        else None
+    projection = _runtime_row_projection_cached(
+        context,
+        value_projector=_numeric_cell_measurement_values,
+        long_form_projector=_numeric_long_form_measurement_values,
     )
-    if long_form_fact is not None:
-        key, cell_value = long_form_fact
-        if required_keys is not None and key not in required_keys:
-            return ()
-        numeric_value = _cell_signature_numeric_value(cell_value)
-        if numeric_value is None:
-            return ()
-        return ((key, numeric_value),)
-
-    row_value_records: list[
-        tuple[
-            tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-            RuntimeMeasurementFeatureKey,
-            float,
-        ]
-    ] = []
-    padding_group_presence: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-        bool,
-    ] = {}
-    row_qualifier_cache: dict[
-        tuple[_RuntimeMeasurementIndexedQualifier, ...],
-        tuple[str, ...],
-    ] = {}
-    for index in feature_indexes:
-        field_name = header[index]
-        value = row_values[index]
-        indexed_qualifiers = qualifiers_by_index[index]
-        if not indexed_qualifiers:
-            qualifiers = ()
-        else:
-            qualifiers = row_qualifier_cache.get(indexed_qualifiers)
-            if qualifiers is None:
-                qualifiers = _measurement_row_qualifiers_from_indexed_values_cached(
-                    row_values,
-                    indexed_qualifiers,
-                    qualifier_render_cache,
-                )
-                row_qualifier_cache[indexed_qualifiers] = qualifiers
-        cache_key = (subject, source_name, field_name, qualifiers)
-        key = key_cache.get(cache_key, _CACHE_MISS)
-        if key is _CACHE_MISS:
-            key = _measurement_feature_key_for_field(
-                field_name,
-                subject,
-                policy,
-                qualifiers=qualifiers,
-                source_name=source_name,
-                known_source_names=known_source_names,
-            )
-            key_cache[cache_key] = key
-        if key is None:
-            continue
-        padding_group_cache_key = (field_name, key)
-        padding_group = padding_group_cache.get(padding_group_cache_key)
-        if padding_group is None:
-            padding_group = _runtime_measurement_padding_group(
-                table_padding_group,
-                field_name,
-                key,
-                policy.measurement_dialect,
-            )
-            padding_group_cache[padding_group_cache_key] = padding_group
-        padding_group_presence[padding_group] = (
-            padding_group_presence.get(padding_group, False)
-            or _measurement_value_is_present(value)
-        )
-        if (
-            required_keys is not None
-            and key not in required_keys
-            and not isinstance(value, Mapping)
-        ):
-            continue
-        numeric_values = _numeric_cell_measurement_values(key, value, policy)
-        if required_keys is not None:
-            numeric_values = tuple(
-                (cell_key, cell_value)
-                for cell_key, cell_value in numeric_values
-                if cell_key in required_keys
-            )
-        row_value_records.extend(
-            (padding_group, cell_key, cell_value)
-            for cell_key, cell_value in numeric_values
-        )
-
     row_values_by_key = _dedupe_numeric_measurement_values(
         (key, value)
-        for padding_group, key, value in row_value_records
-        if padding_group_presence.get(padding_group, True)
+        for _padding_group, key, value in projection.records
     )
+    if projection.long_form:
+        return row_values_by_key
     if not any(
         key.feature_name == _PAIR_REGRESSION_SLOPE_FEATURE
         for key, _value in row_values_by_key
@@ -4481,23 +4371,33 @@ def _numeric_measurement_values_from_runtime_row_cached(
 
     derived_facts = _derive_pair_measurement_facts(
         tuple(
-            (key, _cell_signature(repr(value), policy))
+            (key, _cell_signature(repr(value), context.policy))
             for key, value in row_values_by_key
         ),
-        policy,
-        known_source_names=known_source_names,
+        context.policy,
+        known_source_names=context.known_source_names,
     )
-    if required_keys is not None:
+    if context.required_keys is not None:
         derived_facts = tuple(
             (key, value)
             for key, value in derived_facts
-            if key in required_keys
+            if key in context.required_keys
         )
     return tuple(
         (key, numeric_value)
         for key, value in derived_facts
         if (numeric_value := _cell_signature_numeric_value(value)) is not None
     )
+
+
+def _numeric_long_form_measurement_values(
+    fact: tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature],
+) -> tuple[tuple[RuntimeMeasurementFeatureKey, float], ...]:
+    key, cell_value = fact
+    numeric_value = _cell_signature_numeric_value(cell_value)
+    if numeric_value is None:
+        return ()
+    return ((key, numeric_value),)
 
 
 def _numeric_cell_measurement_values(
@@ -4598,7 +4498,7 @@ def _relationship_child_ids_by_parent(
         if source_id > 0 and target_id > 0:
             children.setdefault(source_id, []).append(target_id)
     return {
-        source_id: tuple(sorted(child_ids))
+        source_id: sorted_tuple(child_ids)
         for source_id, child_ids in sorted(children.items())
     }
 
@@ -4662,7 +4562,7 @@ def _measurement_source_names_from_artifact_execution(
                 )
                 if row_source_name is not None:
                     source_names.update(_source_name_aliases(row_source_name))
-    return tuple(sorted(source_names, key=_normalize_identifier))
+    return sorted_tuple(source_names, key=_normalize_identifier)
 
 
 def _source_name_aliases(source_name: str) -> tuple[str, ...]:
@@ -4670,16 +4570,6 @@ def _source_name_aliases(source_name: str) -> tuple[str, ...]:
     if len(names) <= 1:
         return names
     return (source_name, *names)
-
-
-def _measurement_source_name_from_runtime_row(
-    table: MeasurementTable,
-    row: Mapping[str, object],
-) -> str | None:
-    row_source_name = measurement_row_source_image_name(row)
-    if row_source_name is not None:
-        return row_source_name
-    return table.source_image_name
 
 
 def _runtime_measurement_row_subject_schema(
@@ -4699,7 +4589,7 @@ def _runtime_measurement_row_subject_schema(
         ),
         _field_indexes_for_names(
             normalized_field_indexes,
-            tuple(sorted(_IMAGE_IDENTITY_FIELDS)),
+            sorted_tuple(_IMAGE_IDENTITY_FIELDS),
         ),
     )
 
@@ -4845,21 +4735,6 @@ def _measurement_subject_from_column_context(
     ):
         return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, row_object_name)
     return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context)
-
-
-def _measurement_subject_from_runtime_row(
-    table: MeasurementTable,
-    row: Mapping[str, object],
-) -> RuntimeMeasurementSubjectKey:
-    object_name = measurement_row_object_name(row)
-    if object_name is not None and _row_has_object_identity(row):
-        return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
-    row_source_name = measurement_row_source_image_name(row)
-    if row_source_name is not None:
-        return RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, row_source_name)
-    if _row_has_image_identity(row) and not _row_has_object_identity(row):
-        return RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
-    return RuntimeMeasurementSubjectKey.from_subject(table.subject)
 
 
 def _row_has_image_identity(row: Mapping[str, object]) -> bool:
@@ -5163,12 +5038,7 @@ def _source_name_token_groups(
         )
         if normalized
     )
-    return tuple(
-        sorted(
-            groups,
-            key=lambda group: (-len(group[1]), group[0]),
-        )
-    )
+    return sorted_tuple(groups, key=lambda group: (-len(group[1]), group[0]))
 
 
 def _matching_source_name_at(
@@ -5214,12 +5084,24 @@ def _measurement_row_qualifiers(
     dialect: RuntimeMeasurementDialect,
     field_name: str,
 ) -> tuple[str, ...]:
+    return _measurement_row_qualifiers_for_field(
+        dialect,
+        field_name,
+        lambda qualifier: _render_measurement_row_qualifier(row, qualifier),
+    )
+
+
+def _measurement_row_qualifiers_for_field(
+    dialect: RuntimeMeasurementDialect,
+    field_name: str,
+    render: Callable[[RuntimeMeasurementRowQualifier], str | None],
+) -> tuple[str, ...]:
     qualifiers: list[str] = []
     field_parts = tuple(part for part in _normalize_identifier(field_name).split("_") if part)
     for qualifier in dialect.row_qualifiers:
         if not _row_qualifier_applies_to_field(qualifier, field_parts):
             continue
-        rendered = _render_measurement_row_qualifier(row, qualifier)
+        rendered = render(qualifier)
         if rendered is None:
             continue
         qualifiers.append(rendered)
@@ -5231,58 +5113,14 @@ def _measurement_row_qualifiers_from_values(
     dialect: RuntimeMeasurementDialect,
     field_name: str,
 ) -> tuple[str, ...]:
-    qualifiers: list[str] = []
-    field_parts = tuple(part for part in _normalize_identifier(field_name).split("_") if part)
-    for qualifier in dialect.row_qualifiers:
-        if not _row_qualifier_applies_to_field(qualifier, field_parts):
-            continue
-        rendered = _render_measurement_row_qualifier_from_values(
+    return _measurement_row_qualifiers_for_field(
+        dialect,
+        field_name,
+        lambda qualifier: _render_measurement_row_qualifier_from_values(
             row_values,
             qualifier,
-        )
-        if rendered is None:
-            continue
-        qualifiers.append(rendered)
-    return tuple(qualifiers)
-
-
-def _measurement_row_qualifiers_from_applicable_values(
-    row_values: Mapping[str, object],
-    qualifiers: tuple[RuntimeMeasurementRowQualifier, ...],
-) -> tuple[str, ...]:
-    rendered_values: list[str] = []
-    for qualifier in qualifiers:
-        rendered = _render_measurement_row_qualifier_from_values(
-            row_values,
-            qualifier,
-        )
-        if rendered is not None:
-            rendered_values.append(rendered)
-    return tuple(rendered_values)
-
-
-def _measurement_row_qualifiers_from_applicable_values_cached(
-    row_values: Mapping[str, object],
-    qualifiers: tuple[RuntimeMeasurementRowQualifier, ...],
-    cache: dict[_RuntimeMeasurementQualifierCacheKey, str | None],
-) -> tuple[str, ...]:
-    rendered_values: list[str] = []
-    for qualifier in qualifiers:
-        values = tuple(row_values.get(field_name) for field_name in qualifier.field_names)
-        cache_key = (
-            qualifier,
-            tuple(None if value is None else str(value) for value in values),
-        )
-        rendered = cache.get(cache_key)
-        if cache_key not in cache:
-            rendered = _render_measurement_row_qualifier_value_tuple(
-                values,
-                qualifier,
-            )
-            cache[cache_key] = rendered
-        if rendered is not None:
-            rendered_values.append(rendered)
-    return tuple(rendered_values)
+        ),
+    )
 
 
 def _measurement_row_qualifiers_from_indexed_values_cached(
@@ -5350,18 +5188,7 @@ def _render_measurement_row_qualifier(
     qualifier: RuntimeMeasurementRowQualifier,
 ) -> str | None:
     values = tuple(_first_row_value(row, (field_name,)) for field_name in qualifier.field_names)
-    if any(_is_missing_measurement_qualifier_value(value) for value in values):
-        return None
-    if qualifier.value_mode is RuntimeMeasurementQualifierValueMode.TWO_DIGIT_INTEGER:
-        return str(_measurement_qualifier_integer(values[0])).zfill(2)
-    if qualifier.value_mode is RuntimeMeasurementQualifierValueMode.FRACTION_OF_COUNT:
-        if len(values) != 2:
-            return None
-        return (
-            f"{_measurement_qualifier_integer(values[0])}"
-            f"of{_measurement_qualifier_integer(values[1])}"
-        )
-    return "_".join(_measurement_qualifier_identifier(value) for value in values)
+    return _render_measurement_row_qualifier_value_tuple(values, qualifier)
 
 
 def _render_measurement_row_qualifier_from_values(
@@ -5378,16 +5205,7 @@ def _render_measurement_row_qualifier_value_tuple(
 ) -> str | None:
     if any(_is_missing_measurement_qualifier_value(value) for value in values):
         return None
-    if qualifier.value_mode is RuntimeMeasurementQualifierValueMode.TWO_DIGIT_INTEGER:
-        return str(_measurement_qualifier_integer(values[0])).zfill(2)
-    if qualifier.value_mode is RuntimeMeasurementQualifierValueMode.FRACTION_OF_COUNT:
-        if len(values) != 2:
-            return None
-        return (
-            f"{_measurement_qualifier_integer(values[0])}"
-            f"of{_measurement_qualifier_integer(values[1])}"
-        )
-    return "_".join(_measurement_qualifier_identifier(value) for value in values)
+    return _MEASUREMENT_QUALIFIER_VALUE_RENDERERS[qualifier.value_mode](values)
 
 
 def _measurement_qualifier_identifier(value: object) -> str:

@@ -8,6 +8,8 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
+from nominal_refactor_advisor.collection_algebra import sorted_tuple
+
 from openhcs.core.equivalence.cells import runtime_cell_signature
 from openhcs.core.equivalence.policy import (
     RuntimeEquivalencePolicy,
@@ -102,7 +104,7 @@ class RuntimeTableSnapshot:
     @property
     def schema_key(self) -> tuple[str, ...]:
         """File-order-independent schema identity for this table."""
-        return tuple(sorted(self.header))
+        return sorted_tuple(self.header)
 
     def content_key(
         self,
@@ -111,14 +113,12 @@ class RuntimeTableSnapshot:
         """File-order-independent row identity for this table."""
         columns = self.schema_key
         indexes = {column: self.header.index(column) for column in self.header}
-        return tuple(
-            sorted(
-                tuple(
-                    runtime_cell_signature(row[indexes[column]], policy).sort_key
-                    for column in columns
-                )
-                for row in self.rows
+        return sorted_tuple(
+            tuple(
+                runtime_cell_signature(row[indexes[column]], policy).sort_key
+                for column in columns
             )
+            for row in self.rows
         )
 
 

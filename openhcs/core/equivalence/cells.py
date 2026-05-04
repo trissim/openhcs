@@ -52,6 +52,48 @@ class RuntimeCellSignature:
         return cls(RuntimeCellValueKind(str(kind)), str(value))
 
 
+@dataclass(frozen=True, slots=True)
+class _SparseNumericInstability:
+    """Policy fragment for sparse numeric runtime-equivalence instability."""
+
+    abs_tolerance: float
+    rel_tolerance: float
+    max_unstable_values: int
+    max_unstable_fraction: float
+
+    @classmethod
+    def from_values(
+        cls,
+        abs_tolerance: float,
+        rel_tolerance: float,
+        max_unstable_values: int,
+        max_unstable_fraction: float,
+    ) -> "_SparseNumericInstability":
+        return cls(
+            abs_tolerance=abs_tolerance,
+            rel_tolerance=rel_tolerance,
+            max_unstable_values=max_unstable_values,
+            max_unstable_fraction=max_unstable_fraction,
+        )
+
+    def unstable_cap(self, stable_value_count: int) -> int:
+        return max(
+            self.max_unstable_values,
+            math.ceil(stable_value_count * self.max_unstable_fraction),
+        )
+
+    def relaxed_policy(
+        self,
+        base_policy: RuntimeEquivalencePolicy,
+    ) -> RuntimeEquivalencePolicy:
+        return RuntimeEquivalencePolicy(
+            numeric_decimal_places=base_policy.numeric_decimal_places,
+            numeric_abs_tolerance=self.abs_tolerance,
+            numeric_rel_tolerance=self.rel_tolerance,
+            measurement_feature_name_mode=base_policy.measurement_feature_name_mode,
+        )
+
+
 def runtime_cell_signature(
     value: str,
     policy: RuntimeEquivalencePolicy,
@@ -107,23 +149,25 @@ def sparse_numeric_counters_equivalent(
     max_unstable_fraction: float,
 ) -> bool:
     """Return whether sparse numeric instability is within policy bounds."""
+    instability = _SparseNumericInstability.from_values(
+        abs_tolerance,
+        rel_tolerance,
+        max_unstable_values,
+        max_unstable_fraction,
+    )
     reference_exact, reference_numbers = split_approximate_numeric_signatures(reference)
     candidate_exact, candidate_numbers = split_approximate_numeric_signatures(candidate)
     if not _sparse_nonfinite_numeric_counters_equivalent(
         reference_exact,
         candidate_exact,
-        max_unstable_values=max_unstable_values,
-        max_unstable_fraction=max_unstable_fraction,
+        instability=instability,
     ):
         return False
     return sparse_numeric_values_equivalent(
         reference_numbers,
         candidate_numbers,
         policy,
-        abs_tolerance=abs_tolerance,
-        rel_tolerance=rel_tolerance,
-        max_unstable_values=max_unstable_values,
-        max_unstable_fraction=max_unstable_fraction,
+        instability=instability,
     )
 
 
@@ -155,6 +199,12 @@ def sparse_absolute_numeric_counters_equivalent(
     max_unstable_fraction: float,
 ) -> bool:
     """Return whether sparse absolute numeric instability is policy-equivalent."""
+    instability = _SparseNumericInstability.from_values(
+        abs_tolerance,
+        rel_tolerance,
+        max_unstable_values,
+        max_unstable_fraction,
+    )
     reference_exact, reference_numbers = split_approximate_numeric_signatures(reference)
     candidate_exact, candidate_numbers = split_approximate_numeric_signatures(candidate)
     if reference_exact != candidate_exact:
@@ -163,10 +213,7 @@ def sparse_absolute_numeric_counters_equivalent(
         tuple(abs(value) for value in reference_numbers),
         tuple(abs(value) for value in candidate_numbers),
         policy,
-        abs_tolerance=abs_tolerance,
-        rel_tolerance=rel_tolerance,
-        max_unstable_values=max_unstable_values,
-        max_unstable_fraction=max_unstable_fraction,
+        instability=instability,
     )
 
 
@@ -217,22 +264,11 @@ def sparse_numeric_values_equivalent(
     candidate_numbers: tuple[float, ...],
     policy: RuntimeEquivalencePolicy,
     *,
-    abs_tolerance: float,
-    rel_tolerance: float,
-    max_unstable_values: int,
-    max_unstable_fraction: float,
+    instability: _SparseNumericInstability,
 ) -> bool:
     """Return whether sparse finite numeric differences fit instability bounds."""
-    unstable_cap = max(
-        max_unstable_values,
-        math.ceil(len(reference_numbers) * max_unstable_fraction),
-    )
-    unstable_policy = RuntimeEquivalencePolicy(
-        numeric_decimal_places=policy.numeric_decimal_places,
-        numeric_abs_tolerance=abs_tolerance,
-        numeric_rel_tolerance=rel_tolerance,
-        measurement_feature_name_mode=policy.measurement_feature_name_mode,
-    )
+    unstable_cap = instability.unstable_cap(len(reference_numbers))
+    unstable_policy = instability.relaxed_policy(policy)
     unmatched_reference, unmatched_candidate = unmatched_numeric_values(
         reference_numbers,
         candidate_numbers,
@@ -305,8 +341,7 @@ def _sparse_nonfinite_numeric_counters_equivalent(
     reference: Counter[RuntimeCellSignature],
     candidate: Counter[RuntimeCellSignature],
     *,
-    max_unstable_values: int,
-    max_unstable_fraction: float,
+    instability: _SparseNumericInstability,
 ) -> bool:
     if reference == candidate:
         return True
@@ -315,10 +350,7 @@ def _sparse_nonfinite_numeric_counters_equivalent(
     if any(not _signature_is_nonfinite_number(signature) for signature in candidate):
         return False
 
-    unstable_cap = max(
-        max_unstable_values,
-        math.ceil(sum(reference.values()) * max_unstable_fraction),
-    )
+    unstable_cap = instability.unstable_cap(sum(reference.values()))
     missing = sum((reference - candidate).values())
     extra = sum((candidate - reference).values())
     return max(missing, extra) <= unstable_cap
