@@ -18,12 +18,30 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.constants import MULTIPROCESSING_AXIS
+from openhcs.constants import Backend, MULTIPROCESSING_AXIS
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import DtypeConfig
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.progress import set_progress_queue
+from openhcs.core.vfs_protocol import FileManagerLike
+from openhcs.interop.cellprofiler.import_records import (
+    CellProfilerModuleReference,
+    CellProfilerPipelineImportResult,
+    CellProfilerPipelineProvenance,
+)
+from openhcs.interop.cellprofiler.import_service import (
+    CellProfilerPipelineImporter,
+    CellProfilerPipelineImportRequest,
+)
+from openhcs.interop.cellprofiler.compiler_registry import (
+    register_cellprofiler_dialect_compiler,
+)
+from openhcs.interop.cellprofiler.module_roles import (
+    CellProfilerModuleRole,
+    INFRASTRUCTURE_MODULE_NAMES,
+)
+from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
 from openhcs.processing.backends.lib_registry.openhcs_registry import (
     OpenHCSRegistry,
 )
@@ -36,9 +54,9 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 )
 from openhcs.processing.func_registry import register_function
 
+from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
+
 from .contract_inference import InferredContract, infer_contract
-from .cppipe_module_roles import INFRASTRUCTURE_MODULE_NAMES
-from .parser import CPPipeParser, ModuleBlock
 from .pipeline_generator import GeneratedPipeline, PipelineGenerator
 
 
@@ -60,6 +78,7 @@ class CPPipePipelineArtifact(ABC):
     infrastructure_modules: tuple[ModuleBlock, ...]
     source_schema: PipelineImageSchema
     generated_pipeline: GeneratedPipeline
+    provenance: CellProfilerPipelineProvenance
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,6 +98,23 @@ class PreparedGeneratedPipeline(CPPipePipelineArtifact):
     pipeline: Pipeline
     registered_functions: tuple[str, ...]
 
+    @property
+    def import_result(self) -> CellProfilerPipelineImportResult:
+        """Return the product-facing import record for this prepared pipeline."""
+        return CellProfilerPipelineImportResult(
+            provenance=self.provenance,
+            pipeline=self.pipeline,
+            source_schema=self.source_schema,
+            generated_source=self.generated_pipeline.code,
+            generated_module_name=self.module_name,
+            generated_module_path=self.module_path,
+            artifact_contracts=tuple(
+                contract.module_contract
+                for contract in self.generated_pipeline.artifact_contracts
+            ),
+            registered_functions=self.registered_functions,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class DirectPipelineExecution:
@@ -86,6 +122,38 @@ class DirectPipelineExecution:
 
     compiled_contexts: dict[str, Any]
     execution_results: dict[str, Any]
+
+
+class BenchmarkCellProfilerDialectCompiler(CellProfilerPipelineImporter):
+    """Current dialect compiler implementation backed by the benchmark converter."""
+
+    def import_pipeline(
+        self,
+        request: CellProfilerPipelineImportRequest,
+    ) -> CellProfilerPipelineImportResult:
+        prepared = prepare_generated_pipeline(
+            request.cppipe_path,
+            output_path=request.generated_pipeline_path,
+            filemanager=request.filemanager,
+            cppipe_backend=request.cppipe_backend,
+            generated_pipeline_backend=request.generated_pipeline_backend,
+            prune_dead_unmaterialized_artifact_steps=(
+                request.prune_dead_unmaterialized_artifact_steps
+            ),
+        )
+        return prepared.import_result
+
+
+BenchmarkCellProfilerPipelineImporter = BenchmarkCellProfilerDialectCompiler
+
+
+def register_benchmark_cellprofiler_dialect_compiler() -> (
+    BenchmarkCellProfilerDialectCompiler
+):
+    """Register the current benchmark-backed compiler as the product provider."""
+    compiler = BenchmarkCellProfilerDialectCompiler()
+    register_cellprofiler_dialect_compiler(compiler)
+    return compiler
 
 
 class InferredContractMapper(ABC, metaclass=AutoRegisterMeta):
@@ -168,14 +236,23 @@ def generate_pipeline_from_cppipe(
     generator: PipelineGenerator | None = None,
     infrastructure_module_names: frozenset[str] = INFRASTRUCTURE_MODULE_NAMES,
     prune_dead_unmaterialized_artifact_steps: bool = False,
+    filemanager: FileManagerLike | None = None,
+    cppipe_backend: Backend = Backend.DISK,
 ) -> GeneratedCPPipePipeline:
     """Parse and convert a .cppipe file into generated OpenHCS pipeline code."""
     cppipe_parser = parser or CPPipeParser()
-    modules = tuple(cppipe_parser.parse(cppipe_path))
+    modules = tuple(
+        cppipe_parser.parse(
+            cppipe_path,
+            filemanager=filemanager,
+            backend=cppipe_backend,
+        )
+    )
     partition = partition_cppipe_modules(
         modules,
         infrastructure_module_names=infrastructure_module_names,
     )
+    provenance = _provenance_from_partition(cppipe_path, partition)
     pipeline_generator = generator or PipelineGenerator()
 
     missing_modules = tuple(
@@ -205,6 +282,7 @@ def generate_pipeline_from_cppipe(
         infrastructure_modules=partition.infrastructure_modules,
         source_schema=generated_pipeline.source_schema,
         generated_pipeline=generated_pipeline,
+        provenance=provenance,
     )
 
 
@@ -216,6 +294,9 @@ def prepare_generated_pipeline(
     generator: PipelineGenerator | None = None,
     infrastructure_module_names: frozenset[str] = INFRASTRUCTURE_MODULE_NAMES,
     prune_dead_unmaterialized_artifact_steps: bool = False,
+    filemanager: FileManagerLike | None = None,
+    cppipe_backend: Backend = Backend.DISK,
+    generated_pipeline_backend: Backend = Backend.DISK,
 ) -> PreparedGeneratedPipeline:
     """Generate, import, and register a .cppipe-derived OpenHCS pipeline."""
     converted = generate_pipeline_from_cppipe(
@@ -226,14 +307,24 @@ def prepare_generated_pipeline(
         prune_dead_unmaterialized_artifact_steps=(
             prune_dead_unmaterialized_artifact_steps
         ),
+        filemanager=filemanager,
+        cppipe_backend=cppipe_backend,
     )
-    converted.generated_pipeline.save(output_path)
+    converted.generated_pipeline.save(
+        output_path,
+        filemanager=filemanager,
+        backend=generated_pipeline_backend,
+    )
 
     module_name = _generated_module_name(
         output_path,
         converted.generated_pipeline.code,
     )
-    module = load_generated_pipeline_module(output_path, module_name=module_name)
+    module = load_generated_pipeline_module_from_source(
+        converted.generated_pipeline.code,
+        module_name=module_name,
+        filename=str(output_path),
+    )
     pipeline = _pipeline_from_generated_module(
         module,
         pipeline_name=converted.generated_pipeline.name,
@@ -249,6 +340,7 @@ def prepare_generated_pipeline(
         infrastructure_modules=converted.infrastructure_modules,
         source_schema=converted.source_schema,
         generated_pipeline=converted.generated_pipeline,
+        provenance=converted.provenance,
         registered_functions=registered_functions,
     )
 
@@ -266,6 +358,20 @@ def load_generated_pipeline_module(
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
+    return module
+
+
+def load_generated_pipeline_module_from_source(
+    source: str,
+    *,
+    module_name: str,
+    filename: str,
+) -> ModuleType:
+    """Import generated pipeline code from source with a stable module name."""
+    module = ModuleType(module_name)
+    module.__file__ = filename
+    sys.modules[module_name] = module
+    exec(compile(source, filename, "exec"), module.__dict__)
     return module
 
 
@@ -315,6 +421,7 @@ def execute_pipeline_direct(
     pipeline: Pipeline,
     *,
     well_filter: Sequence[str] | None = None,
+    phase_timing: PhaseTimingTrace | None = None,
 ) -> DirectPipelineExecution:
     """Compile and execute a pipeline through the direct orchestrator path."""
     wells = list(well_filter or orchestrator.get_component_keys(MULTIPROCESSING_AXIS))
@@ -332,22 +439,38 @@ def execute_pipeline_direct(
 
     try:
         set_progress_queue(progress_queue)
-        compilation_result = orchestrator.compile_pipelines(
-            pipeline_definition=pipeline.steps,
-            well_filter=wells,
-        )
+        if phase_timing is None:
+            compilation_result = orchestrator.compile_pipelines(
+                pipeline_definition=pipeline.steps,
+                well_filter=wells,
+            )
+        else:
+            with phase_timing.phase(BenchmarkPhase.COMPILE_OPENHCS):
+                compilation_result = orchestrator.compile_pipelines(
+                    pipeline_definition=pipeline.steps,
+                    well_filter=wells,
+                )
         compiled_contexts = compilation_result["compiled_contexts"]
         progress_context = {
             "execution_id": f"direct::{int(time.time() * 1_000_000)}",
             "plate_id": str(orchestrator.plate_path),
             "axis_id": "",
         }
-        execution_results = orchestrator.execute_compiled_plate(
-            pipeline_definition=pipeline.steps,
-            compiled_contexts=compiled_contexts,
-            progress_queue=progress_queue,
-            progress_context=progress_context,
-        )
+        if phase_timing is None:
+            execution_results = orchestrator.execute_compiled_plate(
+                pipeline_definition=pipeline.steps,
+                compiled_contexts=compiled_contexts,
+                progress_queue=progress_queue,
+                progress_context=progress_context,
+            )
+        else:
+            with phase_timing.phase(BenchmarkPhase.EXECUTE_OPENHCS):
+                execution_results = orchestrator.execute_compiled_plate(
+                    pipeline_definition=pipeline.steps,
+                    compiled_contexts=compiled_contexts,
+                    progress_queue=progress_queue,
+                    progress_context=progress_context,
+                )
         return DirectPipelineExecution(
             compiled_contexts=compiled_contexts,
             execution_results=execution_results,
@@ -375,6 +498,34 @@ def _pipeline_from_generated_module(
             f"Pipeline, got {type(pipeline_steps).__name__}."
         )
     return Pipeline(steps=pipeline_steps, name=pipeline_name)
+
+
+def _provenance_from_partition(
+    cppipe_path: Path,
+    partition: CPPipeModulePartition,
+) -> CellProfilerPipelineProvenance:
+    """Build product provenance from benchmark-owned parsed module blocks."""
+    role_by_module_num = {
+        module.module_num: CellProfilerModuleRole.PROCESSING
+        for module in partition.processing_modules
+    }
+    role_by_module_num.update(
+        {
+            module.module_num: CellProfilerModuleRole.INFRASTRUCTURE
+            for module in partition.infrastructure_modules
+        }
+    )
+    return CellProfilerPipelineProvenance(
+        cppipe_path=cppipe_path,
+        modules=tuple(
+            CellProfilerModuleReference(
+                name=module.name,
+                module_num=module.module_num,
+                role=role_by_module_num[module.module_num],
+            )
+            for module in partition.modules
+        ),
+    )
 
 
 def _generated_step_callables(module: ModuleType) -> tuple[Callable[..., Any], ...]:

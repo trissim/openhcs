@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-04  
 **Branch:** `benchmark-platform`  
-**Status:** Planning / architecture lock-in  
+**Status:** In progress / architecture lock-in  
 **Audience:** OpenHCS runtime, benchmark, converter, backend, and PyQt UI work
 
 ## Purpose
@@ -69,6 +69,13 @@ below are semantic decisions, not blind advisor output.
    Numba/CuPy replacements are valid only when they preserve the CellProfiler
    observable contract. Faster but semantically different code is a new backend
    only if explicitly named and tested as such.
+
+8. Core runtime abstractions must not assume NumPy as the only array backend.
+
+   Generic execution records should preserve OpenHCS memory/backend neutrality.
+   If equivalence or export code materializes arrays to NumPy for hashing or
+   comparison, that conversion must stay explicit at the snapshot/comparison
+   boundary rather than leaking into runtime invocation semantics.
 
 ## Advisor Signals
 
@@ -147,6 +154,27 @@ benchmark/
 - Equivalence orchestration.
 - Report generation.
 - Corpus management.
+
+## Implemented So Far
+
+- Product-facing `openhcs.interop.cellprofiler` namespace now owns stable
+  parser, source-schema, settings, module-role, compiler contract, compiler
+  registry, import request/result, and provenance records.
+- Benchmark converter modules now provide compatibility shims for moved
+  product-owned records instead of being the semantic owner.
+- `.cppipe` import is exposed as an explicit `CellProfilerDialectCompiler`
+  service registered through a fail-loud product registry.
+- PyQt pipeline editor can route `.cppipe` files through the compiler service
+  and populate ordinary `Pipeline` / `FunctionStep` state.
+- Parser and generated-source persistence can use an explicit OpenHCS
+  `FileManager` plus typed `Backend`; standalone disk behavior remains for CLI
+  and tests.
+- Benchmark phase timing exists as typed `BenchmarkPhase` records with JSONL
+  and CSV writers that can use FileManager/VFS.
+- Runtime equivalence report, policy, measurement key, cell-signature, and
+  generic invocation records have started moving into package-owned OpenHCS core
+  modules, with the monolithic modules retaining compatibility imports while
+  staged ownership is established.
 
 `openhcs.pyqt_gui` owns:
 
@@ -707,4 +735,3 @@ Why:
 - Runtime equivalence and module execution are staged and testable.
 - Backend selection remains explicit, typed, and fail-loud.
 - All existing parity tests remain green during migration.
-

@@ -66,7 +66,7 @@ from .settings_binder import (
     SettingsBinder,
     normalize_cellprofiler_setting_name,
 )
-from .setting_names import (
+from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     optional_setting_value,
     setting_names,

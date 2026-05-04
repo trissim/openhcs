@@ -21,6 +21,7 @@ from benchmark.contracts.tool_adapter import (
     ToolExecutionError,
     ToolNotInstalledError,
 )
+from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 from openhcs.core.runtime_equivalence import RuntimeOutputSnapshot
 
 
@@ -109,7 +110,13 @@ class CellProfilerAdapter(ToolAdapter):
             output_dir=Path(output_dir),
         )
         request.output_dir.mkdir(parents=True, exist_ok=True)
-        source = resolve_cppipe_source(request.cppipe_source)
+        phase_timing = PhaseTimingTrace(
+            run_id=f"{request.dataset_id}:{request.pipeline_name}:native_cellprofiler",
+            pipeline_name=request.pipeline_name,
+            tool=self.name,
+        )
+        with phase_timing.phase(BenchmarkPhase.RESOLVE_SOURCE):
+            source = resolve_cppipe_source(request.cppipe_source)
         native_output_root = (
             request.output_dir
             / f"{request.dataset_path.name}_{request.pipeline_name}_native_cellprofiler"
@@ -133,13 +140,14 @@ class CellProfilerAdapter(ToolAdapter):
             for metric in request.metrics:
                 stack.enter_context(metric)
             try:
-                result = subprocess.run(
-                    command,
-                    capture_output=True,
-                    text=True,
-                    timeout=request.timeout_seconds,
-                    check=False,
-                )
+                with phase_timing.phase(BenchmarkPhase.EXECUTE_NATIVE_CP):
+                    result = subprocess.run(
+                        command,
+                        capture_output=True,
+                        text=True,
+                        timeout=request.timeout_seconds,
+                        check=False,
+                    )
             except FileNotFoundError as exc:
                 raise ToolNotInstalledError(
                     f"CellProfiler executable not found: {command[0]}"
@@ -150,13 +158,15 @@ class CellProfilerAdapter(ToolAdapter):
                 + _subprocess_output(result)
             )
 
-        snapshot = RuntimeOutputSnapshot.from_output_root(native_output_root)
+        with phase_timing.phase(BenchmarkPhase.SNAPSHOT_OUTPUTS):
+            snapshot = RuntimeOutputSnapshot.from_output_root(native_output_root)
         provenance: dict[str, Any] = {
             "cellprofiler_version": self.version,
             "pipeline_source": "native_cppipe",
             "cppipe_path": str(source.path),
             "csv_output_count": len(snapshot.tables),
             "image_output_count": len(snapshot.images),
+            "phase_timing_records": phase_timing.payloads(),
         }
         if source.reference_url is not None:
             provenance["cppipe_reference_url"] = source.reference_url

@@ -26,11 +26,15 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor
 
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+from openhcs.constants import Backend
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.config import GlobalPipelineConfig
-from polystore.filemanager import FileManager
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.pipeline import Pipeline
+from openhcs.interop.cellprofiler import (
+    CellProfilerPipelineImportRequest,
+    get_cellprofiler_dialect_compiler,
+)
 
 # Mixin imports REMOVED - now in ABC (handle_selection_change_with_prevention, CrossWindowPreviewMixin)
 from pyqt_reactive.theming import StyleSheetGenerator
@@ -767,6 +771,10 @@ class PipelineEditorWidget(AbstractManagerWidget):
             file_path: Path to pipeline file
         """
         try:
+            if file_path.suffix == ".cppipe":
+                self._load_cppipe_pipeline_from_file(file_path)
+                return
+
             # Use migration utility to load with backward compatibility
             steps = load_pipeline_with_migration(file_path)
 
@@ -797,6 +805,41 @@ class PipelineEditorWidget(AbstractManagerWidget):
         except Exception as e:
             logger.error(f"Failed to load pipeline: {e}")
             self.service_adapter.show_error_dialog(f"Failed to load pipeline: {e}")
+
+    def _load_cppipe_pipeline_from_file(self, file_path: Path) -> None:
+        """Compile a CellProfiler `.cppipe` into normal OpenHCS pipeline state."""
+        generated_path = file_path.with_name(f"{file_path.stem}_openhcs.py")
+        filemanager = self.service_adapter.get_file_manager()
+        import_result = get_cellprofiler_dialect_compiler().compile_pipeline(
+            CellProfilerPipelineImportRequest(
+                cppipe_path=file_path,
+                generated_pipeline_path=generated_path,
+                filemanager=filemanager,
+                cppipe_backend=Backend.DISK,
+                generated_pipeline_backend=Backend.DISK,
+            )
+        )
+        self.pipeline_steps = list(import_result.pipeline.steps)
+        self.cellprofiler_import_result = import_result
+        self._normalize_step_scope_tokens(register=False)
+
+        if self.current_plate:
+            self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+            logger.debug(
+                "Updated Pipeline ObjectState (%d steps) from .cppipe: %s",
+                len(self.pipeline_steps),
+                file_path,
+            )
+
+        self.update_item_list()
+        self._suppress_pipeline_state_sync = True
+        try:
+            self.pipeline_changed.emit(self.pipeline_steps)
+        finally:
+            self._suppress_pipeline_state_sync = False
+        self.status_message.emit(
+            f"Imported {len(self.pipeline_steps)} steps from {file_path.name}"
+        )
 
     def save_pipeline_to_file(self, file_path: Path):
         """

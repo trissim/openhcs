@@ -8,6 +8,7 @@ import tifffile
 from benchmark.cellprofiler_compat import cellprofiler_runtime_adapter_factory
 from benchmark.converter.parser import ModuleBlock
 from benchmark.converter.pipeline_generator import GeneratedPipeline, PipelineGenerator
+from openhcs.constants import Backend
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactKind,
@@ -144,6 +145,26 @@ def _pipeline_namespace(generated: GeneratedPipeline) -> dict:
         namespace,
     )
     return namespace
+
+
+def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
+    tmp_path: Path,
+) -> None:
+    generated = GeneratedPipeline(
+        name="Example",
+        code="# generated",
+        source_cppipe="example.cppipe",
+        converted_modules=[],
+        failed_modules=[],
+    )
+    filemanager = FileManagerStub()
+    output_path = tmp_path / "generated.py"
+
+    generated.save(output_path, filemanager=filemanager, backend=Backend.MEMORY)
+
+    assert filemanager.directories == {(str(tmp_path), "memory")}
+    assert filemanager.saved[(str(output_path), "memory")] == "# generated"
+    assert not output_path.exists()
 
 
 def _synthetic_nuclei_image() -> np.ndarray:

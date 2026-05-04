@@ -101,6 +101,17 @@ from openhcs.interop.cellprofiler.measurement_scope import (
     CellProfilerMeasurementTargetScope,
     coerce_cellprofiler_measurement_target_scope,
 )
+from openhcs.interop.cellprofiler.runtime.invocation import (
+    CellProfilerImageExecutionContext,
+    CellProfilerImageRequest,
+    CellProfilerInvocationRequest,
+    CellProfilerMeasurementImage,
+    CellProfilerMeasurementImageDomain,
+    CellProfilerResolvedInputRequest,
+    CellProfilerSliceAlignedValues,
+    illumination_scope_uses_all_images,
+    requested_image_execution_mode,
+)
 from benchmark.cellprofiler_compat.measurement_lookup import (
     count_feature_object_name,
 )
@@ -953,37 +964,6 @@ class CellProfilerModuleExecutor:
         )
         return (*declared, *runtime_extras)
 
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerImageExecutionContext(ABC):
-    """Shared source provenance for CellProfiler image execution records."""
-
-    source_image_name: str | None
-    execution_mode: ImagePayloadExecutionMode = ImagePayloadExecutionMode.NATURAL
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerResolvedInputRequest(CellProfilerImageExecutionContext):
-    """Shared source provenance for resolved CellProfiler invocation inputs."""
-
-    image_count: int
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerImageRequest(CellProfilerResolvedInputRequest):
-    """Resolved image payload and source metadata for one module invocation."""
-
-    payload: Any
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerInvocationRequest(CellProfilerResolvedInputRequest):
-    """Resolved invocation inputs for one CellProfiler function call."""
-
-    image: Any
-    kwargs: Mapping[str, Any]
-
-
 class CellProfilerInvocationExecutionModePolicy(ABC, metaclass=AutoRegisterMeta):
     """Nominal policy for modules whose settings change stack execution mode."""
 
@@ -1025,7 +1005,7 @@ class CorrectIlluminationCalculateExecutionModePolicy(
         default: ImagePayloadExecutionMode,
         kwargs: Mapping[str, Any],
     ) -> ImagePayloadExecutionMode:
-        if _illumination_scope_uses_all_images(kwargs.get("calculation_scope")):
+        if illumination_scope_uses_all_images(kwargs.get("calculation_scope")):
             return ImagePayloadExecutionMode.FULL_STACK
         return default
 
@@ -1132,51 +1112,6 @@ class AlignedMultiImageStackExecutionStrategy(CellProfilerImageExecutionStrategy
             image,
             **dict(kwargs),
         )
-
-
-class CellProfilerMeasurementImageDomain(Enum):
-    """Semantic domain represented by a measurement image argument."""
-
-    SOURCE_IMAGE = "source_image"
-    OBJECT_LABELS = "object_labels"
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
-    """One resolved image payload used by object measurement modules."""
-
-    payload: Any
-    align_to_labels: bool = True
-    reference_domain: CellProfilerMeasurementImageDomain = (
-        CellProfilerMeasurementImageDomain.SOURCE_IMAGE
-    )
-
-    def __post_init__(self) -> None:
-        if not isinstance(self.reference_domain, CellProfilerMeasurementImageDomain):
-            raise TypeError(
-                "CellProfilerMeasurementImage.reference_domain must be "
-                "CellProfilerMeasurementImageDomain, got "
-                f"{type(self.reference_domain).__name__}."
-            )
-
-@dataclass(frozen=True, slots=True)
-class CellProfilerSliceAlignedValues:
-    """Non-image vector payload with one value array per object-label slice."""
-
-    slices: tuple[np.ndarray, ...]
-
-    def __post_init__(self) -> None:
-        slices = tuple(np.asarray(value) for value in self.slices)
-        if not slices:
-            raise ValueError("CellProfilerSliceAlignedValues.slices cannot be empty.")
-        object.__setattr__(self, "slices", slices)
-
-    @property
-    def slice_count(self) -> int:
-        return len(self.slices)
-
-    def value_for_slice(self, slice_index: int) -> np.ndarray:
-        return self.slices[slice_index]
 
 
 def _coerce_invocation_kwargs(
@@ -4489,27 +4424,6 @@ def _convert_memory(
     )
 
 
-def _requested_image_execution_mode(
-    *,
-    force_full_stack: bool,
-    execution_mode: ImagePayloadExecutionMode | None,
-) -> ImagePayloadExecutionMode:
-    if execution_mode is not None:
-        return execution_mode
-    if force_full_stack:
-        return ImagePayloadExecutionMode.FULL_STACK
-    return ImagePayloadExecutionMode.NATURAL
-
-
-def _illumination_scope_uses_all_images(value: Any) -> bool:
-    if value is None:
-        return False
-    if isinstance(value, Enum):
-        value = value.value
-    normalized = re.sub(r"[^a-z0-9]+", "_", str(value).strip().lower()).strip("_")
-    return normalized.startswith("all")
-
-
 class CellProfilerFunctionContractExecutor:
     """Apply OpenHCS processing contracts after CellProfiler input resolution."""
 
@@ -4522,7 +4436,7 @@ class CellProfilerFunctionContractExecutor:
         force_full_stack: bool = False,
         execution_mode: ImagePayloadExecutionMode | None = None,
     ) -> Any:
-        mode = _requested_image_execution_mode(
+        mode = requested_image_execution_mode(
             force_full_stack=force_full_stack,
             execution_mode=execution_mode,
         )

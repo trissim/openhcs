@@ -52,18 +52,21 @@ from .symbol_table import (
 def _is_public_api_export(name: str, value: object) -> bool:
     return not name.startswith("_") and (
         getattr(value, "__module__", __name__).startswith("benchmark.converter")
-        or name in _CORE_SCHEMA_EXPORTS
+        or name in _COMPATIBILITY_EXPORTS
     )
 
 
-_CORE_SCHEMA_EXPORTS = frozenset(
+_COMPATIBILITY_EXPORTS = frozenset(
     {
+        "CPPipeParser",
         "GroupingPlan",
         "ImageAssignment",
         "ImagesRule",
         "MetadataExtractionRule",
         "MetadataSource",
+        "ModuleBlock",
         "PipelineImageSchema",
+        "compile_image_schema",
     }
 )
 

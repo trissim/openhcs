@@ -106,6 +106,9 @@ def test_cellprofiler_adapter_runs_cppipe_headless(
     assert result.provenance["cellprofiler_version"] == "CellProfiler 4.2.6"
     assert result.provenance["pipeline_source"] == "native_cppipe"
     assert result.provenance["csv_output_count"] == 1
+    assert {
+        record["phase"] for record in result.provenance["phase_timing_records"]
+    } == {"RESOLVE_SOURCE", "EXECUTE_NATIVE_CP", "SNAPSHOT_OUTPUTS"}
     assert commands[1] == (
         "/usr/bin/cellprofiler",
         "-c",

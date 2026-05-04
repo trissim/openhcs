@@ -1,6 +1,17 @@
 from pathlib import Path
 
 from benchmark.converter.parser import CPPipeParser
+from openhcs.constants import Backend
+
+
+class _FakeFileManager:
+    def __init__(self, content: str) -> None:
+        self.content = content
+        self.loaded: list[tuple[str, str]] = []
+
+    def load(self, path: str, backend: str) -> str:
+        self.loaded.append((path, backend))
+        return self.content
 
 
 def test_cppipe_parser_ignores_legacy_empty_setting_labels(tmp_path: Path) -> None:
@@ -46,3 +57,23 @@ def test_cppipe_parser_preserves_indented_hash_prefixed_setting_names(
 
     assert modules[0].settings["# of deviations"] == "0.75"
     assert modules[0].get_setting_values("# of deviations") == ("0.75",)
+
+
+def test_cppipe_parser_can_read_through_explicit_filemanager() -> None:
+    content = "\n".join(
+        (
+            "CellProfiler Pipeline: http://www.cellprofiler.org",
+            "Images:[module_num:1|enabled:True]",
+            "    Filter based on rules:No",
+        )
+    )
+    filemanager = _FakeFileManager(content)
+
+    modules = CPPipeParser().parse(
+        Path("/virtual/pipeline.cppipe"),
+        filemanager=filemanager,
+        backend=Backend.MEMORY,
+    )
+
+    assert [module.name for module in modules] == ["Images"]
+    assert filemanager.loaded == [("/virtual/pipeline.cppipe", "memory")]

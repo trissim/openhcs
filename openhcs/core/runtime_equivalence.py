@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import csv
 import hashlib
 import inspect
 import math
@@ -10,13 +9,11 @@ import re
 import sys
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass, field
-from enum import Enum
+from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType
 
-import imageio.v3 as imageio
 import numpy as np
 
 import openhcs.core.runtime_artifact_queries as runtime_artifact_queries
@@ -54,6 +51,37 @@ from openhcs.core.runtime_values import ObjectLabelSet
 from openhcs.core.runtime_values import ObjectRelationship
 from openhcs.core.runtime_values import RuntimeValue
 from openhcs.core.runtime_values import SpatialGrid
+from openhcs.core.equivalence.policy import (
+    DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
+    RuntimeEquivalencePolicy,
+    RuntimeMeasurementDialect,
+    RuntimeMeasurementFeatureNameMode,
+    RuntimeMeasurementFeatureNumericTolerance,
+    RuntimeMeasurementQualifierValueMode,
+    RuntimeMeasurementRowQualifier,
+    normalize_runtime_identifier as _normalize_identifier,
+    normalize_runtime_source_name as _normalize_source_name,
+)
+from openhcs.core.equivalence.keys import (
+    RuntimeMeasurementFeatureKey,
+    RuntimeMeasurementSubjectKey,
+)
+from openhcs.core.equivalence.cells import (
+    RuntimeCellSignature,
+    RuntimeCellValueKind,
+    runtime_cell_signature as _cell_signature,
+)
+from openhcs.core.equivalence.tables import (
+    CSV_HEADER_CONTEXT_STOPWORDS as _CSV_HEADER_CONTEXT_STOPWORDS,
+    MEASUREMENT_IDENTITY_FIELDS as _MEASUREMENT_IDENTITY_FIELDS,
+    RuntimeTableSnapshot,
+)
+from openhcs.core.equivalence.images import RuntimeImageSnapshot
+from openhcs.core.equivalence.report import (
+    RuntimeEquivalenceDifference,
+    RuntimeEquivalenceDifferenceKind,
+    RuntimeEquivalenceReport,
+)
 
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"parity"})
@@ -85,126 +113,6 @@ def _module_source_digest(module: object) -> str:
     return hashlib.sha256(source).hexdigest()
 
 
-class RuntimeEquivalenceDifferenceKind(str, Enum):
-    """Closed families of semantic runtime-output differences."""
-
-    RUNTIME_ARTIFACT_COUNTS = "runtime_artifact_counts"
-    MEASUREMENT_FEATURE = "measurement_feature"
-    MEASUREMENT_CONTENT = "measurement_content"
-    TABLE_SCHEMA = "table_schema"
-    TABLE_COUNT = "table_count"
-    TABLE_CONTENT = "table_content"
-    IMAGE_COUNT = "image_count"
-    IMAGE_CONTENT = "image_content"
-
-
-class RuntimeCellValueKind(str, Enum):
-    """Canonical scalar families used for exported table comparison."""
-
-    EMPTY = "empty"
-    NUMBER = "number"
-    TEXT = "text"
-
-
-class RuntimeMeasurementFeatureNameMode(str, Enum):
-    """How measurement feature names are canonicalized for semantic comparison."""
-
-    FULL = "full"
-    SEMANTIC_CORE = "semantic_core"
-
-
-_EMPTY_FEATURE_ALIASES = MappingProxyType({})
-_EMPTY_PAIR_FEATURE_ALIASES = MappingProxyType({})
-_EMPTY_NUMBERED_FEATURE_PREFIX_ALIASES = MappingProxyType({})
-_IDENTIFIER_INITIALISM_BOUNDARY_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
-_IDENTIFIER_LOWER_UPPER_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
-_IDENTIFIER_ALPHA_NUMBER_BOUNDARY_RE = re.compile(r"([A-Za-z])([0-9])")
-_IDENTIFIER_NUMBER_ALPHA_BOUNDARY_RE = re.compile(r"([0-9])([A-Za-z])")
-_IDENTIFIER_NON_ALNUM_RE = re.compile(r"[^A-Za-z0-9]+")
-
-
-def _normalize_identifier(value: object) -> str:
-    return _normalize_identifier_text(str(value).strip())
-
-
-@lru_cache(maxsize=32768)
-def _normalize_identifier_text(text: str) -> str:
-    text = _IDENTIFIER_INITIALISM_BOUNDARY_RE.sub(r"\1_\2", text)
-    text = _IDENTIFIER_LOWER_UPPER_BOUNDARY_RE.sub(r"\1_\2", text)
-    text = _IDENTIFIER_ALPHA_NUMBER_BOUNDARY_RE.sub(r"\1_\2", text)
-    text = _IDENTIFIER_NUMBER_ALPHA_BOUNDARY_RE.sub(r"\1_\2", text)
-    text = _IDENTIFIER_NON_ALNUM_RE.sub("_", text)
-    return text.strip("_").lower()
-
-
-class RuntimeMeasurementQualifierValueMode(str, Enum):
-    """How a row qualifier value is rendered into a feature suffix."""
-
-    IDENTIFIER = "identifier"
-    TWO_DIGIT_INTEGER = "two_digit_integer"
-    FRACTION_OF_COUNT = "fraction_of_count"
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementRowQualifier:
-    """Declarative row fields that qualify measurement feature names."""
-
-    field_names: tuple[str, ...]
-    value_mode: RuntimeMeasurementQualifierValueMode = (
-        RuntimeMeasurementQualifierValueMode.IDENTIFIER
-    )
-    feature_prefixes: tuple[tuple[str, ...], ...] = ()
-
-    def __post_init__(self) -> None:
-        field_names = tuple(
-            _normalize_identifier(field_name)
-            for field_name in self.field_names
-            if str(field_name).strip()
-        )
-        if not field_names:
-            raise ValueError(
-                "RuntimeMeasurementRowQualifier.field_names cannot be empty."
-            )
-        object.__setattr__(self, "field_names", field_names)
-        object.__setattr__(
-            self,
-            "value_mode",
-            (
-                self.value_mode
-                if isinstance(
-                    self.value_mode,
-                    RuntimeMeasurementQualifierValueMode,
-                )
-                else RuntimeMeasurementQualifierValueMode(self.value_mode)
-            ),
-        )
-        object.__setattr__(
-            self,
-            "feature_prefixes",
-            tuple(
-                tuple(
-                    _normalize_identifier(part)
-                    for part in prefix
-                    if str(part).strip()
-                )
-                for prefix in self.feature_prefixes
-            ),
-        )
-
-
-_DEFAULT_MEASUREMENT_ROW_QUALIFIERS = (
-    RuntimeMeasurementRowQualifier(("scale",)),
-    RuntimeMeasurementRowQualifier(
-        ("direction",),
-        RuntimeMeasurementQualifierValueMode.TWO_DIGIT_INTEGER,
-    ),
-    RuntimeMeasurementRowQualifier(("gray_levels",)),
-    RuntimeMeasurementRowQualifier(
-        ("bin_index", "bin_count"),
-        RuntimeMeasurementQualifierValueMode.FRACTION_OF_COUNT,
-    ),
-)
-
 _RuntimeMeasurementIndexedQualifier = tuple[
     RuntimeMeasurementRowQualifier,
     tuple[int | None, ...],
@@ -228,186 +136,10 @@ _RuntimeMeasurementRowSubjectSchema = tuple[
 _ContextualMeasurementPaddingGroup = tuple[str, tuple[str, ...], str | None]
 
 
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementDialect:
-    """Policy-provided measurement-name dialect for semantic comparisons."""
-
-    category_prefixes: tuple[tuple[str, ...], ...] = ()
-    feature_part_aliases: Mapping[tuple[str, ...], tuple[str, ...]] = (
-        _EMPTY_FEATURE_ALIASES
-    )
-    source_feature_prefixes: tuple[tuple[str, ...], ...] = ()
-    directional_pair_feature_aliases: Mapping[str, tuple[str, int]] = (
-        _EMPTY_PAIR_FEATURE_ALIASES
-    )
-    scale_qualified_feature_prefixes: tuple[tuple[str, ...], ...] = ()
-    threshold_qualifier_tokens: frozenset[str] = frozenset()
-    source_qualifier_prefix_tokens: frozenset[str] = frozenset()
-    source_qualifier_suffix_tokens: frozenset[str] = frozenset()
-    row_qualifiers: tuple[RuntimeMeasurementRowQualifier, ...] = (
-        _DEFAULT_MEASUREMENT_ROW_QUALIFIERS
-    )
-    numbered_feature_prefix_aliases: Mapping[str, tuple[str, ...]] = (
-        _EMPTY_NUMBERED_FEATURE_PREFIX_ALIASES
-    )
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "category_prefixes",
-            tuple(tuple(part for part in prefix if part) for prefix in self.category_prefixes),
-        )
-        object.__setattr__(
-            self,
-            "feature_part_aliases",
-            MappingProxyType(
-                {
-                    tuple(part for part in parts if part): tuple(
-                        part for part in alias if part
-                    )
-                    for parts, alias in self.feature_part_aliases.items()
-                }
-            ),
-        )
-        object.__setattr__(
-            self,
-            "source_feature_prefixes",
-            tuple(
-                tuple(part for part in prefix if part)
-                for prefix in self.source_feature_prefixes
-            ),
-        )
-        object.__setattr__(
-            self,
-            "directional_pair_feature_aliases",
-            MappingProxyType(
-                {
-                    str(name): (
-                        str(alias[0]),
-                        int(alias[1]),
-                    )
-                    for name, alias in self.directional_pair_feature_aliases.items()
-                }
-            ),
-        )
-        object.__setattr__(
-            self,
-            "scale_qualified_feature_prefixes",
-            tuple(
-                tuple(part for part in prefix if part)
-                for prefix in self.scale_qualified_feature_prefixes
-            ),
-        )
-        object.__setattr__(
-            self,
-            "threshold_qualifier_tokens",
-            frozenset(str(token) for token in self.threshold_qualifier_tokens),
-        )
-        object.__setattr__(
-            self,
-            "source_qualifier_prefix_tokens",
-            frozenset(
-                str(token) for token in self.source_qualifier_prefix_tokens
-            ),
-        )
-        object.__setattr__(
-            self,
-            "source_qualifier_suffix_tokens",
-            frozenset(
-                str(token) for token in self.source_qualifier_suffix_tokens
-            ),
-        )
-        object.__setattr__(
-            self,
-            "row_qualifiers",
-            tuple(
-                qualifier
-                if isinstance(qualifier, RuntimeMeasurementRowQualifier)
-                else RuntimeMeasurementRowQualifier(tuple(qualifier))
-                for qualifier in self.row_qualifiers
-            ),
-        )
-        object.__setattr__(
-            self,
-            "numbered_feature_prefix_aliases",
-            MappingProxyType(
-                {
-                    _normalize_identifier(prefix): tuple(
-                        _normalize_identifier(part)
-                        for part in alias
-                        if str(part).strip()
-                    )
-                    for prefix, alias in self.numbered_feature_prefix_aliases.items()
-                    if str(prefix).strip()
-                }
-            ),
-        )
-
-
-DEFAULT_RUNTIME_MEASUREMENT_DIALECT = RuntimeMeasurementDialect()
 _MEASUREMENT_DIALECT_QUALIFIER_FIELD_NAMES_CACHE: dict[
     int,
     tuple[RuntimeMeasurementDialect, frozenset[str]],
 ] = {}
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementFeatureNumericTolerance:
-    """Numeric tolerance scoped to a semantic measurement feature family."""
-
-    feature_name_prefixes: tuple[str, ...] = ()
-    feature_names: frozenset[str] = frozenset()
-    subject_scope: MeasurementScope | None = None
-    statistic: str | None = None
-    numeric_abs_tolerance: float = 0.0
-    numeric_rel_tolerance: float = 0.0
-    require_object_count_stability: bool = False
-
-    def __post_init__(self) -> None:
-        feature_name_prefixes = tuple(
-            str(prefix).strip()
-            for prefix in self.feature_name_prefixes
-            if str(prefix).strip()
-        )
-        feature_names = frozenset(
-            str(feature_name).strip()
-            for feature_name in self.feature_names
-            if str(feature_name).strip()
-        )
-        if not feature_name_prefixes and not feature_names:
-            raise ValueError(
-                "RuntimeMeasurementFeatureNumericTolerance requires at least "
-                "one feature name or feature-name prefix."
-            )
-        subject_scope = (
-            self.subject_scope
-            if self.subject_scope is None
-            or isinstance(self.subject_scope, MeasurementScope)
-            else MeasurementScope(self.subject_scope)
-        )
-        statistic = (
-            _normalize_identifier(self.statistic)
-            if self.statistic is not None
-            else None
-        )
-        if statistic == "":
-            raise ValueError(
-                "RuntimeMeasurementFeatureNumericTolerance.statistic cannot be empty."
-            )
-        if self.numeric_abs_tolerance < 0:
-            raise ValueError(
-                "RuntimeMeasurementFeatureNumericTolerance.numeric_abs_tolerance "
-                "cannot be negative."
-            )
-        if self.numeric_rel_tolerance < 0:
-            raise ValueError(
-                "RuntimeMeasurementFeatureNumericTolerance.numeric_rel_tolerance "
-                "cannot be negative."
-            )
-        object.__setattr__(self, "feature_name_prefixes", feature_name_prefixes)
-        object.__setattr__(self, "feature_names", feature_names)
-        object.__setattr__(self, "subject_scope", subject_scope)
-        object.__setattr__(self, "statistic", statistic)
 
 
 _TIE_SENSITIVE_LOCATION_FEATURES = frozenset(
@@ -437,402 +169,6 @@ _SHAPE_DESCRIPTOR_GATING_FEATURES = (
     "min_feret_diameter",
     "max_feret_diameter",
 )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeEquivalencePolicy:
-    """Policy controlling semantic output comparison strictness."""
-
-    numeric_decimal_places: int = 10
-    numeric_abs_tolerance: float = 0.0
-    numeric_rel_tolerance: float = 0.0
-    allow_tie_sensitive_location_mismatches: bool = False
-    allow_unstable_shape_descriptors: bool = False
-    shape_descriptor_abs_tolerance: float = 0.025
-    shape_descriptor_rel_tolerance: float = 0.0
-    shape_descriptor_max_unstable_values: int = 2
-    shape_descriptor_max_unstable_fraction: float = 0.01
-    threshold_entropy_abs_tolerance: float = 0.0
-    threshold_sensitive_pair_abs_tolerance: float = 0.0
-    threshold_sensitive_pair_rel_tolerance: float = 0.0
-    allow_sparse_object_boundary_jitter: bool = False
-    object_boundary_jitter_abs_tolerance: float = 25.0
-    object_boundary_jitter_rel_tolerance: float = 0.0
-    object_boundary_jitter_max_unstable_values: int = 25
-    object_boundary_jitter_max_unstable_fraction: float = 0.01
-    object_boundary_jitter_aggregate_abs_tolerance: float = 0.05
-    object_boundary_jitter_aggregate_rel_tolerance: float = 0.0
-    compare_table_values: bool = True
-    compare_image_pixels: bool = True
-    image_abs_tolerance: float = 0.0
-    image_rel_tolerance: float = 0.0
-    image_max_different_fraction: float = 0.0
-    allow_extra_candidate_measurements: bool = True
-    measurement_feature_name_mode: RuntimeMeasurementFeatureNameMode = (
-        RuntimeMeasurementFeatureNameMode.SEMANTIC_CORE
-    )
-    measurement_dialect: RuntimeMeasurementDialect = (
-        DEFAULT_RUNTIME_MEASUREMENT_DIALECT
-    )
-    feature_numeric_tolerances: tuple[
-        RuntimeMeasurementFeatureNumericTolerance,
-        ...
-    ] = ()
-
-    def __post_init__(self) -> None:
-        if self.numeric_decimal_places < 0:
-            raise ValueError("numeric_decimal_places cannot be negative.")
-        if self.numeric_abs_tolerance < 0:
-            raise ValueError("numeric_abs_tolerance cannot be negative.")
-        if self.numeric_rel_tolerance < 0:
-            raise ValueError("numeric_rel_tolerance cannot be negative.")
-        if self.shape_descriptor_abs_tolerance < 0:
-            raise ValueError("shape_descriptor_abs_tolerance cannot be negative.")
-        if self.shape_descriptor_rel_tolerance < 0:
-            raise ValueError("shape_descriptor_rel_tolerance cannot be negative.")
-        if self.shape_descriptor_max_unstable_values < 0:
-            raise ValueError("shape_descriptor_max_unstable_values cannot be negative.")
-        if self.shape_descriptor_max_unstable_fraction < 0:
-            raise ValueError(
-                "shape_descriptor_max_unstable_fraction cannot be negative."
-            )
-        if self.threshold_entropy_abs_tolerance < 0:
-            raise ValueError("threshold_entropy_abs_tolerance cannot be negative.")
-        if self.threshold_sensitive_pair_abs_tolerance < 0:
-            raise ValueError(
-                "threshold_sensitive_pair_abs_tolerance cannot be negative."
-            )
-        if self.threshold_sensitive_pair_rel_tolerance < 0:
-            raise ValueError(
-                "threshold_sensitive_pair_rel_tolerance cannot be negative."
-            )
-        if self.object_boundary_jitter_abs_tolerance < 0:
-            raise ValueError(
-                "object_boundary_jitter_abs_tolerance cannot be negative."
-            )
-        if self.object_boundary_jitter_rel_tolerance < 0:
-            raise ValueError(
-                "object_boundary_jitter_rel_tolerance cannot be negative."
-            )
-        if self.object_boundary_jitter_max_unstable_values < 0:
-            raise ValueError(
-                "object_boundary_jitter_max_unstable_values cannot be negative."
-            )
-        if self.object_boundary_jitter_max_unstable_fraction < 0:
-            raise ValueError(
-                "object_boundary_jitter_max_unstable_fraction cannot be negative."
-            )
-        if self.object_boundary_jitter_aggregate_abs_tolerance < 0:
-            raise ValueError(
-                "object_boundary_jitter_aggregate_abs_tolerance cannot be negative."
-            )
-        if self.object_boundary_jitter_aggregate_rel_tolerance < 0:
-            raise ValueError(
-                "object_boundary_jitter_aggregate_rel_tolerance cannot be negative."
-            )
-        if self.image_abs_tolerance < 0:
-            raise ValueError("image_abs_tolerance cannot be negative.")
-        if self.image_rel_tolerance < 0:
-            raise ValueError("image_rel_tolerance cannot be negative.")
-        if self.image_max_different_fraction < 0:
-            raise ValueError("image_max_different_fraction cannot be negative.")
-        object.__setattr__(
-            self,
-            "measurement_feature_name_mode",
-            (
-                self.measurement_feature_name_mode
-                if isinstance(
-                    self.measurement_feature_name_mode,
-                    RuntimeMeasurementFeatureNameMode,
-                )
-                else RuntimeMeasurementFeatureNameMode(
-                    self.measurement_feature_name_mode
-                )
-            ),
-        )
-        if not isinstance(self.measurement_dialect, RuntimeMeasurementDialect):
-            raise TypeError(
-                "RuntimeEquivalencePolicy.measurement_dialect must be "
-                f"RuntimeMeasurementDialect, got {type(self.measurement_dialect).__name__}."
-            )
-        object.__setattr__(
-            self,
-            "feature_numeric_tolerances",
-            tuple(
-                tolerance
-                if isinstance(
-                    tolerance,
-                    RuntimeMeasurementFeatureNumericTolerance,
-                )
-                else RuntimeMeasurementFeatureNumericTolerance(**tolerance)
-                for tolerance in self.feature_numeric_tolerances
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeCellSignature:
-    """Canonical scalar value for exported table comparison."""
-
-    kind: RuntimeCellValueKind
-    value: str
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "kind",
-            (
-                self.kind
-                if isinstance(self.kind, RuntimeCellValueKind)
-                else RuntimeCellValueKind(self.kind)
-            ),
-        )
-
-    @property
-    def sort_key(self) -> tuple[str, str]:
-        """Return a stable ordering key for mixed scalar families."""
-        return (self.kind.value, self.value)
-
-    def to_cache_payload(self) -> tuple[str, str]:
-        """Return a pickle/JSON-stable semantic cache payload."""
-        return (self.kind.value, self.value)
-
-    @classmethod
-    def from_cache_payload(cls, payload: object) -> "RuntimeCellSignature":
-        """Rebuild a cell signature from a semantic cache payload."""
-        kind, value = payload  # type: ignore[misc]
-        return cls(RuntimeCellValueKind(str(kind)), str(value))
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeTableSnapshot:
-    """Semantic snapshot of one exported runtime table."""
-
-    path: Path
-    header: tuple[str, ...]
-    rows: tuple[tuple[str, ...], ...]
-    column_context: tuple[str | None, ...] = ()
-
-    @classmethod
-    def from_csv(cls, path: Path) -> "RuntimeTableSnapshot":
-        """Read a CSV export into a semantic table snapshot."""
-        with Path(path).open(newline="") as handle:
-            header, rows, column_context = _read_semantic_csv_table(
-                csv.reader(handle)
-            )
-        return cls(
-            path=Path(path),
-            header=header,
-            rows=rows,
-            column_context=column_context,
-        )
-
-    def __post_init__(self) -> None:
-        path = Path(self.path)
-        header = tuple(str(column).strip() for column in self.header)
-        if not header:
-            raise ValueError(f"Runtime table {path} has no header.")
-        column_context = tuple(
-            None if value is None or not str(value).strip() else str(value).strip()
-            for value in self.column_context
-        )
-        if column_context and len(column_context) != len(header):
-            raise ValueError(
-                f"Runtime table {path} column context width "
-                f"{len(column_context)} does not match header width {len(header)}."
-            )
-        duplicate_headers = _duplicates(header)
-        if duplicate_headers:
-            raise ValueError(
-                f"Runtime table {path} has duplicate headers "
-                f"{duplicate_headers!r}."
-            )
-        rows = tuple(tuple(str(value).strip() for value in row) for row in self.rows)
-        malformed_rows = tuple(
-            index
-            for index, row in enumerate(rows, start=1)
-            if len(row) != len(header)
-        )
-        if malformed_rows:
-            raise ValueError(
-                f"Runtime table {path} rows do not match header width at "
-                f"data rows {malformed_rows!r}."
-            )
-        object.__setattr__(self, "path", path)
-        object.__setattr__(self, "header", header)
-        object.__setattr__(self, "rows", rows)
-        object.__setattr__(self, "column_context", column_context)
-
-    @property
-    def schema_key(self) -> tuple[str, ...]:
-        """File-order-independent schema identity for this table."""
-        return tuple(sorted(self.header))
-
-    def content_key(
-        self,
-        policy: RuntimeEquivalencePolicy,
-    ) -> tuple[tuple[tuple[str, str], ...], ...]:
-        """File-order-independent row identity for this table."""
-        columns = self.schema_key
-        indexes = {column: self.header.index(column) for column in self.header}
-        return tuple(
-            sorted(
-                tuple(
-                    _cell_signature(row[indexes[column]], policy).sort_key
-                    for column in columns
-                )
-                for row in self.rows
-            )
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeImageSnapshot:
-    """Semantic snapshot of one exported runtime image."""
-
-    path: Path
-    shape: tuple[int, ...]
-    dtype: str
-    pixel_digest: str
-    pixel_data: np.ndarray = field(repr=False, compare=False)
-
-    @classmethod
-    def from_image_file(cls, path: Path) -> "RuntimeImageSnapshot":
-        """Read an image export into a decoded-pixel semantic snapshot."""
-        array = (
-            np.load(path)
-            if path.suffix.lower() == ".npy"
-            else np.asarray(imageio.imread(path))
-        )
-        return cls.from_array(path, array)
-
-    @classmethod
-    def from_array(
-        cls,
-        path: Path | str,
-        array: object,
-    ) -> "RuntimeImageSnapshot":
-        """Build a semantic image snapshot from an in-memory runtime artifact."""
-        contiguous = np.ascontiguousarray(array)
-        return cls(
-            path=Path(path),
-            shape=tuple(int(axis) for axis in contiguous.shape),
-            dtype=str(contiguous.dtype),
-            pixel_digest=hashlib.sha256(contiguous.tobytes()).hexdigest(),
-            pixel_data=contiguous.copy(),
-        )
-
-    def content_key(
-        self,
-        policy: RuntimeEquivalencePolicy,
-    ) -> tuple[object, ...]:
-        """Return image identity at the requested semantic strictness."""
-        key: tuple[object, ...] = (self.shape, self.dtype)
-        if policy.compare_image_pixels:
-            key = (*key, self.pixel_digest)
-        return key
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementSubjectKey:
-    """Canonical measured subject for semantic measurement comparison."""
-
-    scope: MeasurementScope
-    name: str | None = None
-
-    def __post_init__(self) -> None:
-        scope = (
-            self.scope
-            if isinstance(self.scope, MeasurementScope)
-            else MeasurementScope(self.scope)
-        )
-        name = (
-            _normalize_identifier(self.name)
-            if self.name is not None
-            else None
-        )
-        if name == "":
-            raise ValueError("RuntimeMeasurementSubjectKey.name cannot be empty.")
-        object.__setattr__(self, "scope", scope)
-        object.__setattr__(self, "name", name)
-
-    @classmethod
-    def from_subject(cls, subject: MeasurementSubject) -> "RuntimeMeasurementSubjectKey":
-        """Build a comparison subject key from typed runtime semantics."""
-        return cls(scope=subject.scope, name=subject.name)
-
-    @property
-    def sort_key(self) -> tuple[str, str]:
-        return (self.scope.value, self.name or "")
-
-    def to_cache_payload(self) -> tuple[str, str | None]:
-        """Return a pickle/JSON-stable semantic cache payload."""
-        return (self.scope.value, self.name)
-
-    @classmethod
-    def from_cache_payload(cls, payload: object) -> "RuntimeMeasurementSubjectKey":
-        """Rebuild a measurement subject from a semantic cache payload."""
-        scope, name = payload  # type: ignore[misc]
-        return cls(MeasurementScope(str(scope)), None if name is None else str(name))
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeMeasurementFeatureKey:
-    """Canonical measured feature on one semantic subject."""
-
-    subject: RuntimeMeasurementSubjectKey
-    feature_name: str
-    statistic: str = "value"
-    source_name: str | None = None
-
-    def __post_init__(self) -> None:
-        feature_name = self.feature_name.strip()
-        if not feature_name:
-            raise ValueError("RuntimeMeasurementFeatureKey.feature_name cannot be empty.")
-        statistic = _normalize_identifier(self.statistic)
-        if not statistic:
-            raise ValueError("RuntimeMeasurementFeatureKey.statistic cannot be empty.")
-        source_name = (
-            _normalize_source_name(self.source_name)
-            if self.source_name is not None
-            else None
-        )
-        if source_name == "":
-            raise ValueError("RuntimeMeasurementFeatureKey.source_name cannot be empty.")
-        object.__setattr__(self, "feature_name", feature_name)
-        object.__setattr__(self, "statistic", statistic)
-        object.__setattr__(self, "source_name", source_name)
-
-    @property
-    def sort_key(self) -> tuple[tuple[str, str], str, str, str]:
-        return (
-            self.subject.sort_key,
-            self.statistic,
-            self.feature_name,
-            self.source_name or "",
-        )
-
-    def to_cache_payload(
-        self,
-    ) -> tuple[tuple[str, str | None], str, str, str | None]:
-        """Return a pickle/JSON-stable semantic cache payload."""
-        return (
-            self.subject.to_cache_payload(),
-            self.feature_name,
-            self.statistic,
-            self.source_name,
-        )
-
-    @classmethod
-    def from_cache_payload(cls, payload: object) -> "RuntimeMeasurementFeatureKey":
-        """Rebuild a measurement feature key from a semantic cache payload."""
-        subject, feature_name, statistic, source_name = payload  # type: ignore[misc]
-        return cls(
-            RuntimeMeasurementSubjectKey.from_cache_payload(subject),
-            str(feature_name),
-            str(statistic),
-            None if source_name is None else str(source_name),
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1301,41 +637,6 @@ class RuntimeOutputSnapshot:
                 for path in image_paths(root)
             ),
         )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeEquivalenceDifference:
-    """One semantic difference between two runtime outputs."""
-
-    kind: RuntimeEquivalenceDifferenceKind
-    message: str
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self,
-            "kind",
-            (
-                self.kind
-                if isinstance(self.kind, RuntimeEquivalenceDifferenceKind)
-                else RuntimeEquivalenceDifferenceKind(self.kind)
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeEquivalenceReport:
-    """Semantic equivalence result for two runtime outputs."""
-
-    differences: tuple[RuntimeEquivalenceDifference, ...]
-
-    @property
-    def is_equivalent(self) -> bool:
-        """Return whether the compared outputs are semantically equivalent."""
-        return not self.differences
-
-    def failure_messages(self) -> tuple[str, ...]:
-        """Return stable human-readable failure messages."""
-        return tuple(difference.message for difference in self.differences)
 
 
 def runtime_output_equivalence(
@@ -2645,26 +1946,6 @@ def _is_metadata_table_snapshot(table: RuntimeTableSnapshot) -> bool:
         _normalize_identifier(column) for column in table.header
     )
     return normalized_header == frozenset(("key", "value"))
-
-
-def _cell_signature(
-    value: str,
-    policy: RuntimeEquivalencePolicy,
-) -> RuntimeCellSignature:
-    text = value.strip()
-    if not text:
-        return RuntimeCellSignature(RuntimeCellValueKind.EMPTY, "")
-    try:
-        numeric = float(text)
-    except ValueError:
-        return RuntimeCellSignature(RuntimeCellValueKind.TEXT, text)
-    if math.isnan(numeric):
-        canonical = "nan"
-    elif math.isinf(numeric):
-        canonical = "inf" if numeric > 0 else "-inf"
-    else:
-        canonical = repr(round(numeric, policy.numeric_decimal_places))
-    return RuntimeCellSignature(RuntimeCellValueKind.NUMBER, canonical)
 
 
 def _record_measurement_facts(
@@ -6488,20 +5769,6 @@ def _matching_source_name_at(
     return None
 
 
-def _normalize_source_name(source_name: str | None) -> str | None:
-    if source_name is None:
-        return None
-    normalized = "__".join(
-        part
-        for part in (
-            _normalize_identifier(part)
-            for part in str(source_name).split("__")
-        )
-        if part
-    )
-    return normalized or None
-
-
 def _source_name_tokens(source_name: str) -> tuple[str, ...]:
     return tuple(
         token
@@ -6785,128 +6052,6 @@ def _is_normalized_measurement_identity_field(
     return normalized.startswith("metadata_")
 
 
-def _read_semantic_csv_table(
-    rows: Iterable[tuple[str, ...] | list[str]],
-) -> tuple[tuple[str, ...], tuple[tuple[str, ...], ...], tuple[str | None, ...]]:
-    all_rows = tuple(tuple(row) for row in rows)
-    for index, row in enumerate(all_rows):
-        header = tuple(str(column).strip() for column in row)
-        if index + 1 < len(all_rows):
-            next_header = tuple(str(column).strip() for column in all_rows[index + 1])
-            if (
-                _is_contextual_semantic_csv_table_header(header, next_header)
-                and len(header) == len(next_header)
-            ):
-                return (
-                    _disambiguate_contextual_csv_header(next_header, header),
-                    all_rows[index + 2 :],
-                    _semantic_csv_column_context(header),
-                )
-        if _is_semantic_csv_header(header):
-            return header, all_rows[index + 1 :], ()
-        if _is_contextual_semantic_csv_header(header) and index > 0:
-            context = tuple(str(column).strip() for column in all_rows[index - 1])
-            if len(context) == len(header):
-                return (
-                    _disambiguate_contextual_csv_header(header, context),
-                    all_rows[index + 1 :],
-                    _semantic_csv_column_context(context),
-                )
-        if _is_contextual_semantic_csv_header(header):
-            return _ensure_unique_header(header), all_rows[index + 1 :], ()
-    return (), (), ()
-
-
-def _semantic_csv_column_context(
-    context: tuple[str, ...],
-) -> tuple[str | None, ...]:
-    return tuple(str(value).strip() or None for value in context)
-
-
-def _is_semantic_csv_header(header: tuple[str, ...]) -> bool:
-    if not header:
-        return False
-    if any(not column for column in header):
-        return False
-    return not _duplicates(header)
-
-
-def _is_contextual_semantic_csv_header(header: tuple[str, ...]) -> bool:
-    if not header:
-        return False
-    if any(not column for column in header):
-        return False
-    if not _duplicates(header):
-        return False
-    normalized_fields = {_normalize_identifier(column) for column in header}
-    return bool(normalized_fields & _MEASUREMENT_IDENTITY_FIELDS)
-
-
-def _is_contextual_semantic_csv_table_header(
-    context: tuple[str, ...],
-    header: tuple[str, ...],
-) -> bool:
-    """Return whether adjacent CSV rows encode context plus measurement header."""
-    if _is_contextual_semantic_csv_header(header):
-        return True
-    if not _is_semantic_csv_header(header):
-        return False
-    if len(context) != len(header):
-        return False
-    normalized_context = tuple(_normalize_identifier(column) for column in context)
-    normalized_header = tuple(_normalize_identifier(column) for column in header)
-    if normalized_context == normalized_header:
-        return False
-    if not (frozenset(normalized_header) & _MEASUREMENT_IDENTITY_FIELDS):
-        return False
-    if _duplicates(normalized_context):
-        return True
-    return bool(frozenset(normalized_context) & _CSV_HEADER_CONTEXT_STOPWORDS)
-
-
-def _disambiguate_contextual_csv_header(
-    header: tuple[str, ...],
-    context: tuple[str, ...],
-) -> tuple[str, ...]:
-    duplicates = frozenset(_duplicates(header))
-    disambiguated = tuple(
-        _contextual_csv_header_name(column, context_value, index, duplicates)
-        for index, (column, context_value) in enumerate(zip(header, context, strict=True))
-    )
-    return _ensure_unique_header(disambiguated)
-
-
-def _contextual_csv_header_name(
-    column: str,
-    context_value: str,
-    index: int,
-    duplicates: frozenset[str],
-) -> str:
-    if column not in duplicates:
-        return column
-    normalized_context = _normalize_identifier(context_value)
-    if normalized_context and normalized_context not in _CSV_HEADER_CONTEXT_STOPWORDS:
-        return f"{column}_{normalized_context}"
-    return f"{column}_{index + 1}"
-
-
-def _ensure_unique_header(header: tuple[str, ...]) -> tuple[str, ...]:
-    counts: Counter[str] = Counter()
-    unique: list[str] = []
-    for index, column in enumerate(header, start=1):
-        counts[column] += 1
-        if counts[column] == 1:
-            unique.append(column)
-            continue
-        unique.append(f"{column}_{index}")
-    return tuple(unique)
-
-
-def _duplicates(values: tuple[str, ...]) -> tuple[str, ...]:
-    counts = Counter(values)
-    return tuple(value for value, count in counts.items() if count > 1)
-
-
 def _is_image_path(path: Path) -> bool:
     return path.suffix.lower() in {
         ".bmp",
@@ -6930,27 +6075,6 @@ _MEASUREMENT_QUALIFIER_FIELDS = (
 _MEASUREMENT_QUALIFIER_FIELD_SET = frozenset(_MEASUREMENT_QUALIFIER_FIELDS)
 _OBJECT_IDENTITY_FIELDS = frozenset(MEASUREMENT_OBJECT_ID_FIELDS)
 _IMAGE_IDENTITY_FIELDS = frozenset({"image_number", "image_id", "slice_index"})
-_MEASUREMENT_IDENTITY_FIELDS = frozenset(
-    {
-        "image_number",
-        "image_id",
-        "slice_index",
-        *MEASUREMENT_OBJECT_ID_FIELDS,
-        MEASUREMENT_OBJECT_NAME_FIELD,
-        MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
-        "group_key",
-        "number_object_number",
-    }
-)
-_CSV_HEADER_CONTEXT_STOPWORDS = frozenset(
-    {
-        "image",
-        "object",
-        "objects",
-        "measurement",
-        "measurements",
-    }
-)
 _NON_MEASUREMENT_FIELD_PREFIXES = (
     "channel_",
     "execution_time_",

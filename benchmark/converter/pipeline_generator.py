@@ -19,20 +19,26 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
+from openhcs.constants import Backend
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.vfs_protocol import FileManagerLike
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 from benchmark.cellprofiler_library import canonical_module_name
 
 from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
-from .parser import ModuleBlock
 from .processing_contract_resolution import resolve_processing_contract
 from .settings_binder import SettingsBinder, normalize_cellprofiler_setting_name
-from .setting_names import SettingNameFamily, setting_values, split_symbol_names
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    setting_values,
+    split_symbol_names,
+)
 from .symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
@@ -100,9 +106,24 @@ class GeneratedPipeline:
     artifact_contracts: tuple[ModuleArtifactContracts, ...] = ()
     source_schema: PipelineImageSchema = PipelineImageSchema.empty()
     
-    def save(self, output_path: Path) -> None:
+    def save(
+        self,
+        output_path: Path,
+        *,
+        filemanager: FileManagerLike | None = None,
+        backend: Backend = Backend.DISK,
+    ) -> None:
         """Save pipeline to file."""
-        output_path.write_text(self.code)
+        if not isinstance(backend, Backend):
+            raise TypeError(
+                "GeneratedPipeline.save backend must be Backend, "
+                f"got {type(backend).__name__}."
+            )
+        if filemanager is None:
+            output_path.write_text(self.code)
+        else:
+            filemanager.ensure_directory(str(output_path.parent), backend.value)
+            filemanager.save(self.code, str(output_path), backend.value)
         logger.info(f"Saved pipeline to {output_path}")
 
 

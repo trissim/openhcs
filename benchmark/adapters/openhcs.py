@@ -30,6 +30,7 @@ from benchmark.converter.execution_validation import (
     CPPipeExecutionValidationError,
     validate_cppipe_execution,
 )
+from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 from openhcs.interop.cellprofiler.measurement_dialect import (
     cellprofiler_runtime_equivalence_policy,
 )
@@ -42,8 +43,8 @@ from benchmark.contracts.tool_adapter import (
 from benchmark.contracts.metric import MetricCollector
 from openhcs.constants.constants import Microscope
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.equivalence import RuntimeEquivalencePolicy
 from openhcs.core.runtime_equivalence import (
-    RuntimeEquivalencePolicy,
     RuntimeMeasurementSnapshot,
     RuntimeOutputSnapshot,
     image_paths,
@@ -248,7 +249,13 @@ class OpenHCSAdapter(ToolAdapter):
         )
         from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 
-        cppipe_source = self._resolve_cppipe_source(request)
+        phase_timing = PhaseTimingTrace(
+            run_id=f"{request.dataset_id}:{request.pipeline_name}:openhcs",
+            pipeline_name=request.pipeline_name,
+            tool=self.name,
+        )
+        with phase_timing.phase(BenchmarkPhase.RESOLVE_SOURCE):
+            cppipe_source = self._resolve_cppipe_source(request)
         cppipe_path = cppipe_source.path
         reference_url = cppipe_source.reference_url
 
@@ -256,13 +263,14 @@ class OpenHCSAdapter(ToolAdapter):
         output_plate_root = request.output_dir / f"{request.dataset_path.name}{output_suffix}"
         generated_module_path = request.output_dir / f"{cppipe_path.stem}_openhcs.py"
         try:
-            prepared = prepare_generated_pipeline(
-                cppipe_path,
-                output_path=generated_module_path,
-                prune_dead_unmaterialized_artifact_steps=(
-                    not request.compare_image_outputs
-                ),
-            )
+            with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
+                prepared = prepare_generated_pipeline(
+                    cppipe_path,
+                    output_path=generated_module_path,
+                    prune_dead_unmaterialized_artifact_steps=(
+                        not request.compare_image_outputs
+                    ),
+                )
         except ValueError as exc:
             raise ToolExecutionError(
                 f"Failed to prepare converted .cppipe pipeline {cppipe_path.name}: "
@@ -275,8 +283,16 @@ class OpenHCSAdapter(ToolAdapter):
             else None
         )
 
-        cache_hit = self._load_runtime_execution_cache(request)
+        with phase_timing.phase(BenchmarkPhase.READ_CACHE):
+            cache_hit = self._load_runtime_execution_cache(request)
         if cache_hit is not None:
+            phase_timing.record(BenchmarkPhase.COMPILE_OPENHCS, seconds=0.0, cached=True)
+            phase_timing.record(BenchmarkPhase.EXECUTE_OPENHCS, seconds=0.0, cached=True)
+            phase_timing.record(
+                BenchmarkPhase.VALIDATE_RUNTIME,
+                seconds=0.0,
+                cached=True,
+            )
             validation = cache_hit.validation
             output_roots = cache_hit.output_roots
             execution_output_root = cache_hit.execution_output_root
@@ -288,11 +304,12 @@ class OpenHCSAdapter(ToolAdapter):
             execution_microscope = self._configured_microscope(request.microscope_type)
             if source_workspace_path is not None:
                 try:
-                    source_workspace = materialize_source_schema_workspace(
-                        request.dataset_path,
-                        source_workspace_path,
-                        prepared.source_schema,
-                    )
+                    with phase_timing.phase(BenchmarkPhase.MATERIALIZE_SOURCE_SCHEMA):
+                        source_workspace = materialize_source_schema_workspace(
+                            request.dataset_path,
+                            source_workspace_path,
+                            prepared.source_schema,
+                        )
                 except Exception as exc:
                     raise ToolExecutionError(
                         f"Failed to materialize CellProfiler source schema for "
@@ -321,12 +338,17 @@ class OpenHCSAdapter(ToolAdapter):
                 execution_plate_path,
                 pipeline_config=pipeline_config,
             )
-            orchestrator.initialize()
+            with phase_timing.phase(BenchmarkPhase.INITIALIZE_RUNTIME):
+                orchestrator.initialize()
 
             with ExitStack() as stack:
                 for metric in request.metrics:
                     stack.enter_context(metric)
-                execution = execute_pipeline_direct(orchestrator, prepared.pipeline)
+                execution = execute_pipeline_direct(
+                    orchestrator,
+                    prepared.pipeline,
+                    phase_timing=phase_timing,
+                )
             output_roots = runtime_output_roots(
                 execution.compiled_contexts,
                 output_plate_root,
@@ -335,23 +357,25 @@ class OpenHCSAdapter(ToolAdapter):
                 output_roots[0] if len(output_roots) == 1 else request.output_dir
             )
             try:
-                validation = validate_cppipe_execution(
-                    prepared,
-                    execution,
-                    execution_output_root,
-                )
+                with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
+                    validation = validate_cppipe_execution(
+                        prepared,
+                        execution,
+                        execution_output_root,
+                    )
             except CPPipeExecutionValidationError as exc:
                 raise ToolExecutionError(str(exc)) from exc
             axis_count = len(execution.execution_results)
             reused_runtime_execution_cache = False
-            self._write_runtime_execution_cache(
-                request,
-                validation=validation,
-                output_roots=output_roots,
-                execution_output_root=execution_output_root,
-                source_workspace_path=source_workspace_path,
-                axis_count=axis_count,
-            )
+            with phase_timing.phase(BenchmarkPhase.WRITE_CACHE):
+                self._write_runtime_execution_cache(
+                    request,
+                    validation=validation,
+                    output_roots=output_roots,
+                    execution_output_root=execution_output_root,
+                    source_workspace_path=source_workspace_path,
+                    axis_count=axis_count,
+                )
         equivalence_reference = request.equivalence_reference_output_dir
         equivalence_report = None
         if equivalence_reference is not None:
@@ -373,29 +397,31 @@ class OpenHCSAdapter(ToolAdapter):
                 not request.compare_image_outputs
                 or _reference_has_no_images(equivalence_reference)
             ):
-                equivalence_report = (
-                    self._cached_table_only_reference_artifact_equivalence(
-                        request,
-                        equivalence_reference=equivalence_reference,
-                        validation=validation,
-                        policy=equivalence_policy,
+                with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
+                    equivalence_report = (
+                        self._cached_table_only_reference_artifact_equivalence(
+                            request,
+                            equivalence_reference=equivalence_reference,
+                            validation=validation,
+                            policy=equivalence_policy,
+                        )
                     )
-                )
             else:
-                equivalence_report = runtime_reference_artifact_equivalence(
-                    RuntimeOutputSnapshot.from_output_root(equivalence_reference),
-                    validation.observation,
-                    policy=equivalence_policy,
-                    candidate_image_artifact_names=(
-                        validation.expectation.exports.image_artifact_names
-                    ),
-                    candidate_image_export_specs=(
-                        validation.expectation.exports.image_export_specs
-                    ),
-                    candidate_image_snapshots=_candidate_image_snapshots_for_equivalence(
-                        validation
-                    ),
-                )
+                with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
+                    equivalence_report = runtime_reference_artifact_equivalence(
+                        RuntimeOutputSnapshot.from_output_root(equivalence_reference),
+                        validation.observation,
+                        policy=equivalence_policy,
+                        candidate_image_artifact_names=(
+                            validation.expectation.exports.image_artifact_names
+                        ),
+                        candidate_image_export_specs=(
+                            validation.expectation.exports.image_export_specs
+                        ),
+                        candidate_image_snapshots=(
+                            _candidate_image_snapshots_for_equivalence(validation)
+                        ),
+                    )
             if not equivalence_report.is_equivalent:
                 raise ToolExecutionError(
                     "Converted CellProfiler output did not match semantic "
@@ -421,6 +447,7 @@ class OpenHCSAdapter(ToolAdapter):
             "image_output_count": len(validation.observation.exports.image_outputs),
             "compiled_output_roots": tuple(str(root) for root in output_roots),
             "reused_runtime_execution_cache": reused_runtime_execution_cache,
+            "phase_timing_records": phase_timing.payloads(),
         }
         if request.runtime_execution_cache_manifest is not None:
             provenance["runtime_execution_cache_manifest"] = str(

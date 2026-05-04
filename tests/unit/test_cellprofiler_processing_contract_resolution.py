@@ -28,5 +28,13 @@ def test_resolve_processing_contract_uses_callable_metadata() -> None:
 
 
 def test_resolve_processing_contract_rejects_unresolved_unknown() -> None:
+    def unresolved_function() -> None:
+        return None
+
     with pytest.raises(ValueError, match="declares unknown processing contract"):
-        resolve_processing_contract("ColorToGray", "color_to_gray", "unknown")
+        resolve_processing_contract(
+            "UnresolvedModule",
+            "unresolved_function",
+            "unknown",
+            function_resolver=lambda *_args, **_kwargs: unresolved_function,
+        )

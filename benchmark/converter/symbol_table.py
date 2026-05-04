@@ -52,6 +52,7 @@ from openhcs.core.source_bindings import (
     SourceSelector,
     StepSourceBindingsConfig,
 )
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 from .align_settings import align_image_plan
 from .area_occupied_settings import (
@@ -77,7 +78,7 @@ from .artifact_semantics import (
     artifact_setting_symbols,
     function_special_outputs,
 )
-from .cppipe_module_roles import INFRASTRUCTURE_MODULE_NAMES
+from openhcs.interop.cellprofiler.module_roles import INFRASTRUCTURE_MODULE_NAMES
 from .filter_objects_settings import (
     FilterObjectsOutputRole,
     filter_objects_child_count_object_names,
@@ -90,8 +91,8 @@ from .overlay_outlines_settings import (
     overlay_outlines_base_image_name,
     overlay_outlines_output_image_name,
 )
-from .parser import ModuleBlock
-from .setting_names import (
+from openhcs.interop.cellprofiler.source_schema import compile_image_schema
+from openhcs.interop.cellprofiler.setting_names import (
     IMAGE_MEASUREMENT_SETTING,
     OBJECT_MEASUREMENT_SETTING,
     SettingNameFamily,
@@ -101,7 +102,6 @@ from .setting_names import (
     setting_values,
     split_symbol_names,
 )
-from .source_schema import compile_image_schema
 from .straighten_worms_settings import (
     straighten_worms_image_bindings,
     straighten_worms_input_objects_name,

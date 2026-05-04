@@ -16,6 +16,7 @@ from openhcs.processing.backends.cellprofiler import require_cellprofiler_functi
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
+from openhcs.interop.cellprofiler.parser import CPPipeParser
 
 from .cppipe_corpus import (
     CPPipeCorpusCase,
@@ -23,7 +24,6 @@ from .cppipe_corpus import (
     default_cppipe_corpus,
 )
 from .cppipe_module_roles import CPPipeModuleRole, cppipe_module_role
-from .parser import CPPipeParser
 from .processing_contract_resolution import (
     ProcessingContractResolutionSource,
     resolve_processing_contract,

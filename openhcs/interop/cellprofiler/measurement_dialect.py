@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import MappingProxyType
 
-from openhcs.core.runtime_equivalence import (
+from openhcs.core.equivalence import (
     RuntimeEquivalencePolicy,
     RuntimeMeasurementFeatureNumericTolerance,
     RuntimeMeasurementDialect,
