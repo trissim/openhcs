@@ -181,6 +181,9 @@ def _materialize_artifacts(
 ) -> None:
     if not plan.artifact_outputs:
         return
+    if not context.global_config.materialize_runtime_artifacts:
+        logger.info("Skipping persistent runtime artifact materialization")
+        return
 
     logger.info(
         "Starting materialization for %s artifact outputs",

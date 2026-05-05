@@ -28,7 +28,7 @@ DECLARED_PROCESSING_CONTRACT_ATTR = "__openhcs_declared_processing_contract__"
 RAW_PROCESSING_FUNCTION_ATTR = "__openhcs_raw_processing_function__"
 PROCESSING_PREPARE_ATTR = "__openhcs_prepare__"
 RUNTIME_IMAGE_EXECUTION_MODE_ATTR = "__openhcs_runtime_image_execution_mode__"
-_PREPARED_CALLABLE_KEYS: set[tuple[int, int]] = set()
+_PREPARED_CALLABLE_KEYS: set[tuple[str, str, int]] = set()
 _PREPARED_CALLABLE_LOCK = Lock()
 
 
@@ -194,6 +194,71 @@ def attach_callable_contract_metadata(
         )
 
 
+def processing_prepare(*targets: Any) -> Any:
+    """Declare a preparation callable for one or more processing callables.
+
+    This keeps preparation binding explicit and colocated with the prepare
+    function definition instead of relying on tail-end attribute assignment.
+    """
+    if not targets:
+        raise ValueError("processing_prepare requires at least one target callable.")
+    for target in targets:
+        if not callable(target):
+            raise TypeError(
+                "processing_prepare targets must be callable, "
+                f"got {type(target).__name__}."
+            )
+
+    def decorator(prepare: Any) -> Any:
+        if not callable(prepare):
+            raise TypeError(
+                "processing_prepare can only decorate callables, "
+                f"got {type(prepare).__name__}."
+            )
+        for target in targets:
+            attach_processing_prepare(target, prepare)
+        return prepare
+
+    return decorator
+
+
+def attach_processing_prepare(func: Any, prepare: Any) -> None:
+    """Attach preparation metadata across a decorated callable family."""
+    if not callable(func):
+        raise TypeError(
+            "attach_processing_prepare target must be callable, "
+            f"got {type(func).__name__}."
+        )
+    if not callable(prepare):
+        raise TypeError(
+            "attach_processing_prepare prepare must be callable, "
+            f"got {type(prepare).__name__}."
+        )
+    for target in _callable_prepare_targets(func):
+        setattr(target, PROCESSING_PREPARE_ATTR, prepare)
+
+
+def _callable_prepare_targets(func: Any) -> tuple[Any, ...]:
+    """Return wrapper/raw callables that may appear at compiler/runtime boundary."""
+    targets: list[Any] = []
+    seen: set[int] = set()
+    pending = [func]
+    while pending:
+        target = pending.pop()
+        target_id = id(target)
+        if target_id in seen:
+            continue
+        seen.add(target_id)
+        targets.append(target)
+        raw = getattr(target, RAW_PROCESSING_FUNCTION_ATTR, None)
+        if callable(raw):
+            pending.append(raw)
+        wrapped = getattr(target, "__wrapped__", None)
+        if callable(wrapped):
+            pending.append(wrapped)
+    return tuple(targets)
+
+
 def runtime_image_execution_mode(
     mode: ImagePayloadExecutionMode,
 ) -> Any:
@@ -216,6 +281,7 @@ def prepare_processing_callable(func: Any) -> None:
     module_name = _callable_module(func)
     if module_name is not None:
         _prepare_module_autoregister_families(module_name)
+        _prepare_processing_module(module_name)
 
     namespace = _callable_namespace(func)
     prepare = namespace.get(PROCESSING_PREPARE_ATTR)
@@ -226,7 +292,31 @@ def prepare_processing_callable(func: Any) -> None:
             f"{_callable_name(func)!r}.{PROCESSING_PREPARE_ATTR} must be "
             f"callable, got {type(prepare).__name__}."
         )
-    prepare_key = (id(func), id(prepare))
+    prepare_key = (
+        "callable",
+        f"{module_name or '<unknown>'}.{_callable_name(func)}",
+        id(prepare),
+    )
+    with _PREPARED_CALLABLE_LOCK:
+        if prepare_key in _PREPARED_CALLABLE_KEYS:
+            return
+    prepare()
+    with _PREPARED_CALLABLE_LOCK:
+        _PREPARED_CALLABLE_KEYS.add(prepare_key)
+
+
+def _prepare_processing_module(module_name: str) -> None:
+    """Run an optional module-level preparation hook exactly once."""
+    module = importlib.import_module(module_name)
+    prepare = getattr(module, PROCESSING_PREPARE_ATTR, None)
+    if prepare is None:
+        return
+    if not callable(prepare):
+        raise TypeError(
+            f"Module {module_name!r}.{PROCESSING_PREPARE_ATTR} must be callable, "
+            f"got {type(prepare).__name__}."
+        )
+    prepare_key = ("module", module_name, id(prepare))
     with _PREPARED_CALLABLE_LOCK:
         if prepare_key in _PREPARED_CALLABLE_KEYS:
             return

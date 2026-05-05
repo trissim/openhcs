@@ -16,7 +16,11 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.core.runtime_semantics import SpatialGridOrdering
-from openhcs.core.runtime_values import ObjectLabelPayload, SpatialGrid
+from openhcs.core.runtime_values import (
+    ObjectLabelPayload,
+    SpatialGrid,
+    image_payload_metadata,
+)
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
@@ -712,6 +716,8 @@ def identify_objects_in_grid(
     return image, stats, ObjectLabelPayload(
         labels=labels.astype(np.int32, copy=False),
         declared_object_count=object_count,
+        spatial_origin_yx=image_payload_metadata(image).spatial_origin_yx,
+        source_spatial_shape_yx=image_payload_metadata(image).source_spatial_shape_yx,
     )
 
 
@@ -800,6 +806,8 @@ def identify_objects_in_grid_with_guides(
     return image, stats, ObjectLabelPayload(
         labels=labels.astype(np.int32, copy=False),
         declared_object_count=object_count,
+        spatial_origin_yx=image_payload_metadata(image).spatial_origin_yx,
+        source_spatial_shape_yx=image_payload_metadata(image).source_spatial_shape_yx,
     )
 
 

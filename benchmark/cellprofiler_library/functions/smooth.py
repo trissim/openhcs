@@ -9,11 +9,12 @@ import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar
+from typing import Any, Callable, Mapping, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
-from numba import njit, prange
+from numba import njit
 
+from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
     image_payload_data,
@@ -70,7 +71,7 @@ def _default_smoothing_backend_provider(
     if backend_provider is not None:
         return normalize_cellprofiler_backend_provider(backend_provider)
     if method is SmoothingMethod.GAUSSIAN_FILTER:
-        return CellProfilerBackendProvider.NUMBA
+        return CellProfilerBackendProvider.OPENCV
     return CellProfilerBackendProvider.NATIVE
 
 
@@ -136,6 +137,24 @@ class NumpyGaussianSmoothingStrategy(SmoothingStrategy):
                 mode="constant",
                 cval=0,
             ),
+        )
+
+
+class OpenCVGaussianSmoothingStrategy(SmoothingStrategy):
+    strategy_key = SmoothingStrategyKey(
+        CellProfilerBackendProvider.OPENCV,
+        SmoothingMethod.GAUSSIAN_FILTER,
+    )
+    strategy_label = _smoothing_strategy_label(
+        strategy_key.backend_provider,
+        strategy_key.method,
+    )
+
+    def smooth(self, request: SmoothingRequest) -> np.ndarray:
+        return _masked_gaussian_filter_opencv(
+            request.pixel_data,
+            request.mask,
+            request.sigma,
         )
 
 
@@ -252,6 +271,78 @@ def _masked_linear_filter(
     return filtered / (weights + np.finfo(float).eps)
 
 
+def _masked_linear_filter_stack(
+    image_stack: np.ndarray,
+    mask_stack: np.ndarray | None,
+    operation,
+) -> np.ndarray:
+    if mask_stack is None:
+        mask_stack = np.ones(image_stack.shape, dtype=bool)
+    else:
+        mask_stack = np.asarray(mask_stack, dtype=bool)
+    masked_image = np.zeros(image_stack.shape, dtype=image_stack.dtype)
+    masked_image[mask_stack] = image_stack[mask_stack]
+    weights = operation(mask_stack.astype(float))
+    filtered = operation(masked_image)
+    return filtered / (weights + np.finfo(float).eps)
+
+
+def _masked_gaussian_filter_opencv(
+    image: np.ndarray,
+    mask: np.ndarray | None,
+    sigma: float,
+) -> np.ndarray:
+    import cv2
+
+    image_array = np.ascontiguousarray(image, dtype=np.float32)
+    if mask is None:
+        mask_array = np.ones(image_array.shape, dtype=np.float32)
+    else:
+        mask_bool = np.asarray(mask, dtype=bool)
+        if mask_bool.shape != image_array.shape:
+            raise ValueError(
+                "Smoothing mask must match image shape; got "
+                f"{mask_bool.shape!r} for image {image_array.shape!r}."
+            )
+        mask_array = np.ascontiguousarray(mask_bool.astype(np.float32))
+    kernel = _gaussian_kernel_1d(sigma).astype(np.float32, copy=False)
+    masked_image = np.zeros(image_array.shape, dtype=np.float32)
+    np.copyto(masked_image, image_array, where=mask_array.astype(bool, copy=False))
+    filtered = cv2.sepFilter2D(
+        masked_image,
+        cv2.CV_32F,
+        kernel,
+        kernel,
+        borderType=cv2.BORDER_CONSTANT,
+    )
+    weights = cv2.sepFilter2D(
+        mask_array,
+        cv2.CV_32F,
+        kernel,
+        kernel,
+        borderType=cv2.BORDER_CONSTANT,
+    )
+    return filtered / (weights + np.finfo(np.float32).eps)
+
+
+def _masked_gaussian_filter_stack_opencv(
+    image_stack: np.ndarray,
+    mask_stack: np.ndarray | None,
+    sigma: float,
+) -> np.ndarray:
+    return np.stack(
+        [
+            _masked_gaussian_filter_opencv(
+                image_stack[index],
+                None if mask_stack is None else mask_stack[index],
+                sigma,
+            )
+            for index in range(image_stack.shape[0])
+        ],
+        axis=0,
+    )
+
+
 def _gaussian_filter_numba(
     image: np.ndarray,
     mask: np.ndarray | None,
@@ -265,10 +356,8 @@ def _gaussian_filter_numba(
     kernel = _gaussian_kernel_1d(sigma)
     contiguous_image = np.ascontiguousarray(image_array)
     if mask is None:
-        mask_array = np.ones(image_array.shape, dtype=np.bool_)
-        return _masked_separable_gaussian_constant_2d_numba(
+        return _separable_gaussian_normalized_constant_2d_numba(
             contiguous_image,
-            np.ascontiguousarray(mask_array),
             kernel,
         )
 
@@ -296,37 +385,50 @@ def _gaussian_kernel_1d(sigma: float) -> np.ndarray:
     return kernel.astype(np.float64, copy=False)
 
 
-@njit(cache=True, parallel=True)
-def _separable_gaussian_constant_2d_numba(
+@njit(cache=True)
+def _separable_gaussian_normalized_constant_2d_numba(
     image: np.ndarray,
     kernel: np.ndarray,
 ) -> np.ndarray:
     height, width = image.shape
     radius = kernel.size // 2
     temp = np.zeros((height, width), dtype=np.float64)
+    x_weights = np.zeros(width, dtype=np.float64)
+    y_weights = np.zeros(height, dtype=np.float64)
     output = np.zeros((height, width), dtype=np.float32)
 
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             value = 0.0
+            weight = 0.0
             for offset in range(kernel.size):
                 source_col = col + offset - radius
                 if 0 <= source_col < width:
-                    value += float(image[row, source_col]) * kernel[offset]
+                    kernel_value = kernel[offset]
+                    value += float(image[row, source_col]) * kernel_value
+                    weight += kernel_value
             temp[row, col] = value
+            if row == 0:
+                x_weights[col] = weight
 
-    for row in prange(height):
+    for row in range(height):
+        y_weight = 0.0
+        for offset in range(kernel.size):
+            source_row = row + offset - radius
+            if 0 <= source_row < height:
+                y_weight += kernel[offset]
+        y_weights[row] = y_weight
         for col in range(width):
             value = 0.0
             for offset in range(kernel.size):
                 source_row = row + offset - radius
                 if 0 <= source_row < height:
                     value += temp[source_row, col] * kernel[offset]
-            output[row, col] = value
+            output[row, col] = value / (x_weights[col] * y_weights[row] + np.finfo(np.float64).eps)
     return output
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _masked_separable_gaussian_constant_2d_numba(
     image: np.ndarray,
     mask: np.ndarray,
@@ -339,7 +441,7 @@ def _masked_separable_gaussian_constant_2d_numba(
     output = np.zeros((height, width), dtype=np.float32)
     eps = np.finfo(np.float64).eps
 
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             weighted_value = 0.0
             weight = 0.0
@@ -352,7 +454,7 @@ def _masked_separable_gaussian_constant_2d_numba(
             temp_values[row, col] = weighted_value
             temp_weights[row, col] = weight
 
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             weighted_value = 0.0
             weight = 0.0
@@ -448,3 +550,97 @@ def smooth(
         mask=mask,
         metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
     )
+
+
+def _smooth_batch(
+    func: Callable[..., Any],
+    slices_2d: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+    slice_count: int,
+    execute_slice: Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
+) -> list[Any]:
+    smoothing_method = _coerce_function_enum(
+        SmoothingMethod,
+        kwargs.get("smoothing_method", SmoothingMethod.GAUSSIAN_FILTER),
+    )
+    backend_provider = _default_smoothing_backend_provider(
+        smoothing_method,
+        kwargs.get("smoothing_backend_provider"),
+    )
+    if (
+        smoothing_method is not SmoothingMethod.GAUSSIAN_FILTER
+        or backend_provider
+        not in {CellProfilerBackendProvider.NATIVE, CellProfilerBackendProvider.OPENCV}
+    ):
+        return [
+            execute_slice(func, slice_2d, kwargs, slice_index, slice_count)
+            for slice_index, slice_2d in enumerate(slices_2d)
+        ]
+
+    pixel_stack = np.ascontiguousarray(
+        np.stack(
+            [
+                np.asarray(image_payload_data(slice_2d), dtype=np.float32)
+                for slice_2d in slices_2d
+            ],
+            axis=0,
+        ),
+    )
+    masks = tuple(image_payload_mask(slice_2d) for slice_2d in slices_2d)
+    mask_stack = None
+    if any(mask is not None for mask in masks):
+        mask_stack = np.stack(
+            [
+                np.ones(pixel_stack.shape[1:], dtype=bool)
+                if mask is None
+                else np.asarray(mask, dtype=bool)
+                for mask in masks
+            ],
+            axis=0,
+        )
+
+    if bool(kwargs.get("auto_object_size", True)):
+        calculated_size = max(1, np.mean(pixel_stack.shape[1:]) / 40)
+        calculated_size = min(30, calculated_size)
+    else:
+        calculated_size = kwargs.get("object_size", 16.0)
+    sigma = float(calculated_size) / 2.35
+
+    if backend_provider is CellProfilerBackendProvider.OPENCV:
+        output_stack = _masked_gaussian_filter_stack_opencv(
+            pixel_stack,
+            mask_stack,
+            sigma,
+        ).astype(np.float32, copy=False)
+    else:
+        from scipy.ndimage import gaussian_filter
+
+        output_stack = _masked_linear_filter_stack(
+            pixel_stack,
+            mask_stack,
+            lambda image: gaussian_filter(
+                image,
+                (0.0, sigma, sigma),
+                mode="constant",
+                cval=0,
+            ),
+        ).astype(np.float32, copy=False)
+
+    return [
+        image_payload_with_context(
+            output_stack[slice_index],
+            mask=masks[slice_index],
+            metadata=image_payload_metadata(slice_2d).without_unit_interval_intensity_scale(),
+        )
+        for slice_index, slice_2d in enumerate(slices_2d)
+    ]
+
+
+@processing_prepare(smooth)
+def _prepare_smooth() -> None:
+    """Compile default Gaussian smoothing before timed execution."""
+    image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
+    smooth.__wrapped__(image)
+
+
+smooth.__openhcs_pure_2d_batch_executor__ = _smooth_batch

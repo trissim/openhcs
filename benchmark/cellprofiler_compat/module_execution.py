@@ -75,6 +75,7 @@ from openhcs.core.runtime_stores import require_runtime_value_store
 from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectLabelPayload,
+    ObjectLabelSet,
     ObjectRelationship,
 )
 from openhcs.core.runtime_values import (
@@ -117,7 +118,10 @@ from openhcs.interop.cellprofiler.runtime.invocation import (
 from benchmark.cellprofiler_compat.measurement_lookup import (
     count_feature_object_name,
 )
-from benchmark.cellprofiler_compat.runtime_adapter import CellProfilerRuntimeAdapter
+from benchmark.cellprofiler_compat.runtime_adapter import (
+    CellProfilerRuntimeAdapter,
+    prepare_cellprofiler_runtime_adapter,
+)
 from benchmark.converter.contract_inference import InferredContract, infer_contract
 
 _MODULE_NAME_REGISTRY_KEY = "module_name"
@@ -350,6 +354,11 @@ class CellProfilerModuleExecutor:
 
     def prepare(self, func: Callable[..., Any]) -> None:
         """Resolve nominal policies used by this executor before timed execution."""
+        prepare_cellprofiler_runtime_adapter()
+        for mode in ImagePayloadExecutionMode:
+            CellProfilerImageExecutionStrategy.for_mode(mode)
+        for kind in tuple(RuntimeArtifactKindStrategy.__registry__.keys()):
+            RuntimeArtifactKindStrategy.for_kind(kind)
         self._declared_input_specs()
         self._primary_image_inputs(func)
         self._object_input_specs()
@@ -4646,7 +4655,7 @@ def _object_label_count(
     slice_index: int | None = None,
 ) -> int:
     return _object_label_count_from_value(
-        adapter.get_objects(object_name).labels,
+        adapter.get_objects(object_name),
         slice_index=slice_index,
     )
 
@@ -4656,10 +4665,13 @@ def _object_label_count_from_value(
     *,
     slice_index: int | None,
 ) -> int:
-    labels = value.labels if isinstance(value, ObjectLabelPayload) else value
+    if isinstance(value, ObjectLabelPayload | ObjectLabelSet):
+        labels = value.labels
+    else:
+        labels = value
     label_array = np.asarray(labels)
     if (
-        isinstance(value, ObjectLabelPayload)
+        isinstance(value, ObjectLabelPayload | ObjectLabelSet)
         and value.declared_object_count is not None
         and (
             slice_index is None
@@ -5955,6 +5967,8 @@ def _slice_pure_2d_value(value: Any, slice_index: int, slice_count: int) -> Any:
             ),
             declared_object_count=value.declared_object_count,
             declared_object_ids=value.declared_object_ids,
+            spatial_origin_yx=value.spatial_origin_yx,
+            source_spatial_shape_yx=value.source_spatial_shape_yx,
         )
     if isinstance(value, tuple):
         stack = _slice_aligned_stack_view(value) if len(value) > 1 else None

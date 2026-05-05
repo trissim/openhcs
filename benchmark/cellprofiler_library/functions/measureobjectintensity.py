@@ -82,17 +82,15 @@ def _measure_object_intensity_batch(
             for slice_index, slice_2d in enumerate(slices_2d)
         ]
 
-    backend = object_intensity_backend(
-        backend_provider=kwargs.get("object_intensity_backend_provider"),
-    )
+    backend_provider = kwargs.get("object_intensity_backend_provider")
     results: list[Any] = []
     for slice_index, slice_2d in enumerate(slices_2d):
-        image_plane = _single_plane(np.asarray(image_payload_data(slice_2d)), "image")
-        arrays = backend.measure(
-            image_plane,
+        measurements = _measure_object_intensity_measurements(
+            image_payload_data(slice_2d),
             label_stack[slice_index],
+            slice_index=slice_index,
+            backend_provider=backend_provider,
         )
-        measurements = _measurements_from_arrays(arrays, slice_index)
         results.append((slice_2d, measurements))
     return results
 
@@ -163,16 +161,31 @@ def measure_object_intensity(
     Returns:
         Tuple of (original image, list of intensity measurements per object)
     """
-    intensity_arrays = object_intensity_backend(
+    return image, _measure_object_intensity_measurements(
+        image,
+        labels,
+        slice_index=0,
         backend_provider=object_intensity_backend_provider,
+    )
+
+
+def _measure_object_intensity_measurements(
+    image: np.ndarray,
+    labels: np.ndarray,
+    *,
+    slice_index: int,
+    backend_provider: CellProfilerBackendProvider | None,
+) -> list[ObjectIntensityMeasurement]:
+    """Measure one image/label plane through the selected intensity backend."""
+    intensity_arrays = object_intensity_backend(
+        backend_provider=backend_provider,
     ).measure(
         _single_plane(np.asarray(image), "image"),
         _single_plane(np.asarray(labels), "labels"),
     )
     if intensity_arrays.object_labels.size == 0:
-        return image, []
-    
-    return image, _measurements_from_arrays(intensity_arrays, 0)
+        return []
+    return _measurements_from_arrays(intensity_arrays, slice_index)
 
 
 def _single_plane(array: np.ndarray, name: str) -> np.ndarray:

@@ -9,14 +9,6 @@ from arraybridge import (
     # Converters
     convert_memory,
     detect_memory_type,
-    # Decorators
-    memory_types,
-    numpy,
-    cupy,
-    torch,
-    tensorflow,
-    jax,
-    pyclesperanto,
     DtypeConversion,
     # Stack utilities
     stack_slices,
@@ -40,11 +32,18 @@ from arraybridge import (
     _get_device_id,
 )
 
-# Provide decorators namespace for backward compatibility
-try:
-    from arraybridge import decorators as decorators
-except Exception:  # pragma: no cover - fallback for older arraybridge exports
-    import arraybridge.decorators as decorators
+# OpenHCS wraps arraybridge decorators to preserve compiler metadata while
+# leaving conversion semantics in arraybridge.
+from . import decorators as decorators
+from .decorators import (
+    cupy,
+    jax,
+    memory_types,
+    numpy,
+    pyclesperanto,
+    tensorflow,
+    torch,
+)
 
 # Keep MemoryType from openhcs constants for backward compatibility
 from openhcs.constants.constants import MemoryType

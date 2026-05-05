@@ -11,6 +11,7 @@ from typing import ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
     image_payload_metadata,
@@ -58,12 +59,27 @@ class DivideIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
     method_label = method.value
 
     def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
-        safe_illumination = np.where(
-            request.illumination_function == 0,
-            1e-10,
+        output_dtype = np.result_type(
+            request.image_pixels,
             request.illumination_function,
+            1e-10,
         )
-        return request.image_pixels / safe_illumination
+        output = np.empty(request.image_pixels.shape, dtype=output_dtype)
+        nonzero = request.illumination_function != 0
+        np.divide(
+            request.image_pixels,
+            request.illumination_function,
+            out=output,
+            where=nonzero,
+        )
+        if not np.all(nonzero):
+            np.divide(
+                request.image_pixels,
+                output_dtype.type(1e-10),
+                out=output,
+                where=~nonzero,
+            )
+        return output
 
 
 class SubtractIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
@@ -71,7 +87,20 @@ class SubtractIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
     method_label = method.value
 
     def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
-        return request.image_pixels - request.illumination_function
+        output = np.empty(
+            request.image_pixels.shape,
+            dtype=np.result_type(
+                request.image_pixels,
+                request.illumination_function,
+                0.0,
+            ),
+        )
+        np.subtract(
+            request.image_pixels,
+            request.illumination_function,
+            out=output,
+        )
+        return output
 
 
 @numpy
@@ -161,11 +190,11 @@ def _correct_illumination_pair(
         )
     )
     if truncate_low:
-        output_pixels = np.maximum(output_pixels, 0.0)
+        np.maximum(output_pixels, 0.0, out=output_pixels)
     if truncate_high:
-        output_pixels = np.minimum(output_pixels, 1.0)
+        np.minimum(output_pixels, 1.0, out=output_pixels)
     return image_payload_with_context(
-        output_pixels[np.newaxis, ...].astype(np.float32),
+        output_pixels[np.newaxis, ...].astype(np.float32, copy=False),
         mask=_input_mask(image, input_index),
         metadata=image_payload_metadata(image)
         .for_channel(input_index)
@@ -221,3 +250,23 @@ def _input_mask(image: object, input_index: int) -> object | None:
     if mask_array.ndim == 3 and mask_array.shape[0] > 0:
         return mask_array[input_index : input_index + 1]
     return mask_array
+
+
+@processing_prepare(correct_illumination_apply)
+def _prepare_correct_illumination_apply() -> None:
+    """Materialize correction strategy registry before timed execution."""
+    pixels = np.stack(
+        (
+            np.full((16, 16), 0.5, dtype=np.float32),
+            np.full((16, 16), 0.25, dtype=np.float32),
+        ),
+        axis=0,
+    )
+    correct_illumination_apply.__wrapped__(
+        pixels,
+        method=IlluminationCorrectionMethod.DIVIDE,
+    )
+    correct_illumination_apply.__wrapped__(
+        pixels,
+        method=IlluminationCorrectionMethod.SUBTRACT,
+    )

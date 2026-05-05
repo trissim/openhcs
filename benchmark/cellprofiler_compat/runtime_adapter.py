@@ -32,6 +32,7 @@ from openhcs.core.source_bindings import (
     SourceBindingRuntimeContext,
     SourceBindingOrigin,
 )
+from openhcs.core.source_schema_workspace import source_schema_auxiliary_payload
 from openhcs.core.source_matching import (
     is_image_path,
     merge_source_metadata,
@@ -47,8 +48,8 @@ from openhcs.core.runtime_stores import (
 )
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
-    measurement_value_index,
     measurement_values_for_label_slices,
+    measurement_value_index,
     runtime_measurement_tables,
     runtime_measurement_tables_for_scope,
     runtime_measurement_tables_for_object,
@@ -227,7 +228,37 @@ class CellProfilerRuntimeAdapter:
         )
         return ObjectLabelSet(
             name=alias,
-            labels=labels,
+            labels=labels.labels if isinstance(labels, ObjectLabelPayload) else labels,
+            unedited_labels=(
+                labels.unedited_labels
+                if isinstance(labels, ObjectLabelPayload)
+                else None
+            ),
+            small_removed_labels=(
+                labels.small_removed_labels
+                if isinstance(labels, ObjectLabelPayload)
+                else None
+            ),
+            declared_object_count=(
+                labels.declared_object_count
+                if isinstance(labels, ObjectLabelPayload)
+                else None
+            ),
+            declared_object_ids=(
+                labels.declared_object_ids
+                if isinstance(labels, ObjectLabelPayload)
+                else ()
+            ),
+            spatial_origin_yx=(
+                labels.spatial_origin_yx
+                if isinstance(labels, ObjectLabelPayload)
+                else None
+            ),
+            source_spatial_shape_yx=(
+                labels.source_spatial_shape_yx
+                if isinstance(labels, ObjectLabelPayload)
+                else None
+            ),
             source_image_name=alias,
         )
 
@@ -343,6 +374,8 @@ class CellProfilerRuntimeAdapter:
                 small_removed_labels=labels.small_removed_labels,
                 declared_object_count=labels.declared_object_count,
                 declared_object_ids=labels.declared_object_ids,
+                spatial_origin_yx=labels.spatial_origin_yx,
+                source_spatial_shape_yx=labels.source_spatial_shape_yx,
                 source_image_name=source_image_name,
                 dimensions=dimensions,
                 representation=representation,
@@ -1017,6 +1050,15 @@ class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
         """Load selected source files as stackable image-like payloads."""
 
 
+def prepare_cellprofiler_runtime_adapter() -> None:
+    """Materialize nominal runtime-adapter registries before execution."""
+    for origin in SourceBindingOrigin:
+        SourceBindingResolver.for_origin(origin)
+    for method in SourceBindingMatchMethod:
+        SourceBindingMatchPlanResolver.for_method(method)
+    tuple(PipelineStartSourceFileLoader.__registry__.values())
+
+
 class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
     """Load normal image sources through the OpenHCS VFS filemanager."""
 
@@ -1095,23 +1137,48 @@ class NumpyArraySourceFileLoader(PipelineStartSourceFileLoader):
 
     def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
         return [
-            _source_payload_with_metadata(
-                self._load_array(path),
+            _numpy_array_source_payload_with_metadata(
+                self._load_array(path, request),
                 source_path=path,
-                request=request,
             )
             for path in request.selected_paths
         ]
 
-    def _load_array(self, path: str) -> Any:
-        import numpy as np
-
-        payload = np.load(path)
+    def _load_array(
+        self,
+        path: str,
+        request: PipelineStartSourceLoadRequest,
+    ) -> Any:
+        payload = source_schema_auxiliary_payload(path)
+        if payload is None:
+            payload = _require_processing_context(request.adapter).filemanager.load(
+                path,
+                request.backend,
+            )
         if not _is_numeric_array_payload(payload):
             raise RuntimeError(
                 f"NumPy source file {path!r} does not contain a numeric image array."
             )
         return payload
+
+
+def _numpy_array_source_payload_with_metadata(
+    payload: Any,
+    *,
+    source_path: str,
+) -> Any:
+    """Attach array payload metadata without image-file probing."""
+    metadata = image_payload_metadata(payload)
+    if not metadata.has_values:
+        metadata = type(metadata).for_array_payload(
+            image_payload_data(payload),
+            source_path=source_path,
+        )
+    return image_payload_with_context(
+        image_payload_data(payload),
+        mask=image_payload_mask(payload),
+        metadata=metadata,
+    )
 
 
 def _source_payload_with_metadata(
@@ -1231,6 +1298,39 @@ def _candidate_metadata(
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     context = adapter.source_binding_context
+    virtual_path = _virtual_workspace_path_for_source(resolved_path, context)
+    context_paths = _candidate_metadata_paths(file_path, resolved_path, virtual_path)
+    has_context_metadata = any(
+        _context_source_metadata(path, context) is not None
+        for path in context_paths
+    )
+    if has_context_metadata:
+        _merge_context_source_metadata(metadata, context_paths, context)
+        _merge_candidate_path_metadata(
+            metadata,
+            resolved_path,
+            adapter,
+            parser,
+            strict=False,
+        )
+        if Path(file_path) != Path(resolved_path):
+            _merge_candidate_path_metadata(
+                metadata,
+                file_path,
+                adapter,
+                parser,
+                strict=False,
+            )
+        if virtual_path is not None and virtual_path not in {file_path, resolved_path}:
+            _merge_candidate_path_metadata(
+                metadata,
+                virtual_path,
+                adapter,
+                parser,
+                strict=False,
+            )
+        return metadata
+
     _merge_candidate_path_metadata(
         metadata,
         resolved_path,
@@ -1246,7 +1346,6 @@ def _candidate_metadata(
             parser,
             strict=_step_input_source_path(file_path, context) is None,
         )
-    virtual_path = _virtual_workspace_path_for_source(resolved_path, context)
     if virtual_path is not None and virtual_path not in {file_path, resolved_path}:
         _merge_candidate_path_metadata(
             metadata,
@@ -1577,10 +1676,20 @@ def _pipeline_start_payload_cache_key(
     return (
         backend,
         selected_paths,
-        context.step_input_dir,
-        tuple(sorted(context.step_input_source_paths.items())),
-        _frozen_metadata_by_path(context.source_metadata_by_path),
-        tuple(context.pipeline_input_files),
+        _frozen_selected_metadata_by_path(
+            context.source_metadata_by_path,
+            selected_paths,
+        ),
+    )
+
+
+def _frozen_selected_metadata_by_path(
+    metadata_by_path: Mapping[str, Mapping[str, str]],
+    selected_paths: tuple[str, ...],
+) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+    return tuple(
+        (path, tuple(sorted(metadata_by_path.get(path, {}).items())))
+        for path in selected_paths
     )
 
 

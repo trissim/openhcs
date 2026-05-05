@@ -7,10 +7,11 @@ import numpy as np
 from typing import Optional, Sequence, Tuple
 from dataclasses import dataclass
 from enum import Enum
+from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.analysis.region_properties import (
-    LabelRegionPropertiesBackendStrategy,
     binary_area_and_perimeter_2d,
+    label_area_and_rounded_perimeter_2d,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
@@ -308,13 +309,7 @@ def _label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
 
 def _label_plane_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
     labels_array = labels.astype(np.int32, copy=False)
-    region_properties = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-        labels_array
-    )
-    area_occupied = float(np.sum(region_properties.area))
-    if area_occupied == 0:
-        return area_occupied, 0.0
-    return area_occupied, float(np.sum(np.round(region_properties.perimeter)))
+    return label_area_and_rounded_perimeter_2d(labels_array)
 
 
 def _reference_image_for_labels(image: np.ndarray, labels: np.ndarray) -> np.ndarray:
@@ -484,3 +479,15 @@ def measure_image_volume_occupied_objects(
     )
     
     return image, measurement
+
+
+@processing_prepare(measure_image_area_occupied)
+def _prepare_measure_image_area_occupied() -> None:
+    """Compile reusable area/perimeter kernels before timed execution."""
+    binary = np.zeros((64, 64), dtype=np.float32)
+    binary[8:40, 12:48] = 1.0
+    labels = np.zeros((64, 64), dtype=np.int32)
+    labels[8:24, 8:24] = 1
+    labels[32:56, 32:56] = 2
+    _measure_binary_image(binary)
+    _measure_object_labels(binary, labels)

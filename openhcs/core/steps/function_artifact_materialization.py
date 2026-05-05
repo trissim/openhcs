@@ -211,19 +211,6 @@ def _actual_materialization_records(
     )
 
 
-def _require_materialization_payload(
-    record: StoredRuntimeValue,
-    output_plan: ArtifactOutputPlan,
-    context: Any,
-) -> None:
-    if context.filemanager.exists(record.path, record.backend):
-        return
-    raise RuntimeError(
-        f"RuntimeValueStore has record for artifact '{output_plan.name}' at "
-        f"'{record.path}' ({record.backend}), but the VFS payload is missing."
-    )
-
-
 def materialize_artifact_outputs(
     filemanager: Any,
     plan: FunctionStepExecutionPlan,
@@ -259,13 +246,12 @@ def materialize_artifact_outputs(
             output_plan=output_plan,
         )
         for record in records:
-            _require_materialization_payload(record, output_plan, context)
             dict_key = record.key.scope.group_key
 
             filemanager.ensure_directory(
                 Path(record.path).parent, record.backend
             )
-            data = filemanager.load(record.path, record.backend)
+            data = record.value.data
             mat_spec = resolve_artifact_materialization_spec(
                 output_plan,
                 record.value,

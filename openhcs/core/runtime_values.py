@@ -80,6 +80,33 @@ class ImagePayloadMetadata:
             source_path=source_path,
         )
 
+    @classmethod
+    def for_array_payload(
+        cls,
+        array: Any,
+        *,
+        source_path: str | None = None,
+    ) -> "ImagePayloadMetadata":
+        """Build source metadata from an arraybridge-detectable payload."""
+        from openhcs.core.memory import MEMORY_TYPE_NUMPY, detect_memory_type
+
+        memory_type = detect_memory_type(array)
+        dtype = getattr(array, "dtype", None)
+        if dtype is None:
+            raise TypeError(
+                "ImagePayloadMetadata.for_array_payload requires an array payload "
+                f"with dtype; got {type(array).__name__}."
+            )
+        return cls(
+            intensity_scale=(
+                image_intensity_scale_for_dtype(dtype)
+                if memory_type == MEMORY_TYPE_NUMPY
+                else None
+            ),
+            source_dtype=str(dtype),
+            source_path=source_path,
+        )
+
     @property
     def has_values(self) -> bool:
         """Return whether this metadata carries any semantic image facts."""
@@ -646,6 +673,8 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
     small_removed_labels: Any | None = None
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
+    spatial_origin_yx: tuple[int, int] | None = None
+    source_spatial_shape_yx: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         if self.declared_object_count is not None:
@@ -657,6 +686,21 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
         if any(object_id <= 0 for object_id in ids):
             raise ValueError("ObjectLabelPayload.declared_object_ids must be positive.")
         object.__setattr__(self, "declared_object_ids", tuple(sorted(dict.fromkeys(ids))))
+        if self.spatial_origin_yx is not None:
+            object.__setattr__(
+                self,
+                "spatial_origin_yx",
+                _spatial_shape_pair(self.spatial_origin_yx, "spatial_origin_yx"),
+            )
+        if self.source_spatial_shape_yx is not None:
+            object.__setattr__(
+                self,
+                "source_spatial_shape_yx",
+                _spatial_shape_pair(
+                    self.source_spatial_shape_yx,
+                    "source_spatial_shape_yx",
+                ),
+            )
 
     @property
     def shape(self) -> Any:
@@ -972,6 +1016,8 @@ class ObjectLabelSet(SourceImageRuntimeValue):
     representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
+    spatial_origin_yx: tuple[int, int] | None = None
+    source_spatial_shape_yx: tuple[int, int] | None = None
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -991,6 +1037,8 @@ class ObjectLabelSet(SourceImageRuntimeValue):
                 small_removed_labels=payload.small_removed_labels,
                 declared_object_count=payload.declared_object_count,
                 declared_object_ids=payload.declared_object_ids,
+                spatial_origin_yx=payload.spatial_origin_yx,
+                source_spatial_shape_yx=payload.source_spatial_shape_yx,
                 dimensions=schema.dimensions,
                 source_image_name=schema.source_image_name,
                 representation=(
@@ -1038,6 +1086,18 @@ class ObjectLabelSet(SourceImageRuntimeValue):
                     "declared_object_ids",
                     payload.declared_object_ids,
                 )
+            if self.spatial_origin_yx is None:
+                object.__setattr__(
+                    self,
+                    "spatial_origin_yx",
+                    payload.spatial_origin_yx,
+                )
+            if self.source_spatial_shape_yx is None:
+                object.__setattr__(
+                    self,
+                    "source_spatial_shape_yx",
+                    payload.source_spatial_shape_yx,
+                )
         if self.declared_object_count is not None:
             count = int(self.declared_object_count)
             if count < 0:
@@ -1047,6 +1107,21 @@ class ObjectLabelSet(SourceImageRuntimeValue):
         if any(object_id <= 0 for object_id in ids):
             raise ValueError("ObjectLabelSet.declared_object_ids must be positive.")
         object.__setattr__(self, "declared_object_ids", tuple(sorted(dict.fromkeys(ids))))
+        if self.spatial_origin_yx is not None:
+            object.__setattr__(
+                self,
+                "spatial_origin_yx",
+                _spatial_shape_pair(self.spatial_origin_yx, "spatial_origin_yx"),
+            )
+        if self.source_spatial_shape_yx is not None:
+            object.__setattr__(
+                self,
+                "source_spatial_shape_yx",
+                _spatial_shape_pair(
+                    self.source_spatial_shape_yx,
+                    "source_spatial_shape_yx",
+                ),
+            )
         validator = _PAYLOAD_VALIDATORS[representation.payload_shape]
         if validator is not None and not validator(self.labels):
             raise TypeError(
@@ -1075,6 +1150,8 @@ class ObjectLabelSet(SourceImageRuntimeValue):
             or self.small_removed_labels is not None
             or self.declared_object_count is not None
             or self.declared_object_ids
+            or self.spatial_origin_yx is not None
+            or self.source_spatial_shape_yx is not None
         ):
             return ObjectLabelPayload(
                 labels=self.labels,
@@ -1082,6 +1159,8 @@ class ObjectLabelSet(SourceImageRuntimeValue):
                 small_removed_labels=self.small_removed_labels,
                 declared_object_count=self.declared_object_count,
                 declared_object_ids=self.declared_object_ids,
+                spatial_origin_yx=self.spatial_origin_yx,
+                source_spatial_shape_yx=self.source_spatial_shape_yx,
             )
         return self.labels
 

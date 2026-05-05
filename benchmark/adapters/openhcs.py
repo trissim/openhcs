@@ -148,6 +148,10 @@ class OpenHCSRunRequest:
         return bool(self.pipeline_params.get("compare_image_outputs", True))
 
     @property
+    def materialize_runtime_artifacts(self) -> bool:
+        return bool(self.pipeline_params.get("materialize_runtime_artifacts", False))
+
+    @property
     def raise_on_equivalence_failure(self) -> bool:
         return bool(self.pipeline_params.get("raise_on_equivalence_failure", True))
 
@@ -267,6 +271,7 @@ class OpenHCSAdapter(ToolAdapter):
         """Execute a converted CellProfiler pipeline through the OpenHCS orchestrator."""
         from openhcs.config_framework.lazy_factory import ensure_global_config_context
         from openhcs.core.config import (
+            AnalysisConsolidationConfig,
             GlobalPipelineConfig,
             LazyPathPlanningConfig,
             MaterializationBackend,
@@ -348,6 +353,10 @@ class OpenHCSAdapter(ToolAdapter):
             global_config = GlobalPipelineConfig(
                 num_workers=1,
                 use_threading=True,
+                analysis_consolidation_config=AnalysisConsolidationConfig(
+                    enabled=False,
+                ),
+                materialize_runtime_artifacts=request.materialize_runtime_artifacts,
                 materialization_results_path=output_plate_root / "results",
                 microscope=execution_microscope,
             )
@@ -390,6 +399,7 @@ class OpenHCSAdapter(ToolAdapter):
                         prepared,
                         execution,
                         execution_output_root,
+                        validate_table_exports=request.materialize_runtime_artifacts,
                         validate_image_exports=request.compare_image_outputs,
                     )
             except CPPipeExecutionValidationError as exc:

@@ -779,23 +779,51 @@ def _distance_to_label_edge_numba(labels: np.ndarray) -> np.ndarray:
     for label in range(1, max_label + 1):
         if counts[label] <= 0:
             continue
-        crop_height = max_y[label] - min_y[label] + 2
-        crop_width = max_x[label] - min_x[label] + 2
+        crop_y0 = min_y[label] - 1
+        if crop_y0 < 0:
+            crop_y0 = 0
+        crop_x0 = min_x[label] - 1
+        if crop_x0 < 0:
+            crop_x0 = 0
+        crop_y1 = max_y[label] + 1
+        if crop_y1 > height:
+            crop_y1 = height
+        crop_x1 = max_x[label] + 1
+        if crop_x1 > width:
+            crop_x1 = width
+        crop_height = crop_y1 - crop_y0
+        crop_width = crop_x1 - crop_x0
+        has_background = False
+        for yy in range(crop_height):
+            source_y = crop_y0 + yy
+            for xx in range(crop_width):
+                source_x = crop_x0 + xx
+                if labels[source_y, source_x] != label:
+                    has_background = True
+                    break
+            if has_background:
+                break
+
+        if not has_background:
+            for yy in range(crop_height):
+                source_y = crop_y0 + yy
+                y_distance = yy + 1
+                for xx in range(crop_width):
+                    source_x = crop_x0 + xx
+                    output[source_y, source_x] = np.sqrt(
+                        (y_distance * y_distance) + (xx * xx)
+                    )
+            continue
+
         row_distances = np.empty((crop_height, crop_width), dtype=np.float64)
         distances_sq = np.empty((crop_height, crop_width), dtype=np.float64)
 
         for yy in range(crop_height):
             source = np.empty(crop_width, dtype=np.float64)
-            source_y = min_y[label] + yy - 1
+            source_y = crop_y0 + yy
             for xx in range(crop_width):
-                source_x = min_x[label] + xx - 1
-                if (
-                    source_y >= 0
-                    and source_y < height
-                    and source_x >= 0
-                    and source_x < width
-                    and labels[source_y, source_x] == label
-                ):
+                source_x = crop_x0 + xx
+                if labels[source_y, source_x] == label:
                     source[xx] = inf
                 else:
                     source[xx] = 0.0
@@ -815,10 +843,10 @@ def _distance_to_label_edge_numba(labels: np.ndarray) -> np.ndarray:
             for yy in range(crop_height):
                 distances_sq[yy, xx] = column_output[yy]
 
-        for yy in range(1, crop_height - 1):
-            source_y = min_y[label] + yy - 1
-            for xx in range(1, crop_width - 1):
-                source_x = min_x[label] + xx - 1
+        for yy in range(crop_height):
+            source_y = crop_y0 + yy
+            for xx in range(crop_width):
+                source_x = crop_x0 + xx
                 if labels[source_y, source_x] == label:
                     output[source_y, source_x] = np.sqrt(distances_sq[yy, xx])
     return output

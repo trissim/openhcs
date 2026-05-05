@@ -160,6 +160,11 @@ class GlobalPipelineConfig:
     by the sub_dir field in each step's step_materialization_config.
     """
 
+    materialize_runtime_artifacts: Annotated[
+        bool, abbreviation("mat_artifacts")
+    ] = True
+    """Persist runtime artifacts such as measurements/tables to configured result files."""
+
     num_workers: Annotated[int, abbreviation("W")] = 1
     """Number of worker processes/threads for parallelizable tasks."""
 

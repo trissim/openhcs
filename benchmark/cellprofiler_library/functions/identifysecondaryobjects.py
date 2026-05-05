@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from enum import Enum
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
+from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
@@ -791,3 +792,31 @@ def identify_secondary_objects(
     relationships = _parent_child_relationship(inputs.labels, labels_out)
     
     return img.astype(np.float32), stats, relationships, labels_out
+
+
+@processing_prepare(identify_secondary_objects)
+def _prepare_identify_secondary_objects() -> None:
+    """Compile secondary-object threshold, distance, and propagation kernels."""
+    image = np.zeros((64, 64), dtype=np.float32)
+    yy, xx = np.ogrid[:64, :64]
+    image[((yy - 24) ** 2 + (xx - 24) ** 2) <= 18 * 18] = 0.7
+    image[((yy - 40) ** 2 + (xx - 40) ** 2) <= 14 * 14] = 0.5
+    labels = np.zeros((64, 64), dtype=np.int32)
+    labels[20:28, 20:28] = 1
+    labels[36:44, 36:44] = 2
+    identify_secondary_objects.__wrapped__(
+        image,
+        labels,
+        method=SecondaryMethod.PROPAGATION,
+        threshold_method=CellProfilerThresholdMethod.OTSU,
+        threshold_smoothing_scale=1.3488,
+        regularization_factor=0.05,
+    )
+    identify_secondary_objects.__wrapped__(
+        image,
+        labels,
+        method=SecondaryMethod.DISTANCE_B,
+        threshold_method=CellProfilerThresholdMethod.OTSU,
+        threshold_smoothing_scale=1.3488,
+        distance_to_dilate=8,
+    )

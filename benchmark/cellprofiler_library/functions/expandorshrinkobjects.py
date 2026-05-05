@@ -332,6 +332,16 @@ def expand_or_shrink_objects(
     return image, ObjectLabelPayload(
         labels=result_labels.astype(np.float32),
         declared_object_ids=object_ids,
+        spatial_origin_yx=(
+            labels.spatial_origin_yx
+            if isinstance(labels, ObjectLabelPayload)
+            else None
+        ),
+        source_spatial_shape_yx=(
+            labels.source_spatial_shape_yx
+            if isinstance(labels, ObjectLabelPayload)
+            else None
+        ),
     )
 
 

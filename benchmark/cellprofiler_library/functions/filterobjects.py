@@ -33,7 +33,11 @@ from openhcs.core.runtime_semantics import (
     aligned_dense_object_label_arrays,
     project_dense_object_label_stack,
 )
-from openhcs.core.runtime_values import MeasurementTable, ObjectRelationship
+from openhcs.core.runtime_values import (
+    MeasurementTable,
+    ObjectLabelPayload,
+    ObjectRelationship,
+)
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
@@ -500,9 +504,9 @@ def filter_objects(
             objects_pre_filter=0,
             objects_post_filter=0,
         )
-        relabeled_objects = (
-            labels,
-            *additional_label_planes,
+        relabeled_objects = _filtered_object_payloads(
+            object_labels,
+            (labels, *additional_label_planes),
         )
         relationships = _object_transform_relationships(
             input_label_planes,
@@ -561,11 +565,14 @@ def filter_objects(
             label_mapping[old_idx] = new_idx
     
     filtered_labels = label_mapping[labels]
-    relabeled_objects = (
-        filtered_labels,
-        *(
-            _relabel_overlapping_objects(additional, filtered_labels)
-            for additional in additional_label_planes
+    relabeled_objects = _filtered_object_payloads(
+        object_labels,
+        (
+            filtered_labels,
+            *(
+                _relabel_overlapping_objects(additional, filtered_labels)
+                for additional in additional_label_planes
+            ),
         ),
     )
     relationships = _object_transform_relationships(
@@ -584,6 +591,30 @@ def filter_objects(
         *relabeled_objects,
         *relationships,
         *_outline_images(relabeled_objects, outline_object_indices),
+    )
+
+
+def _filtered_object_payloads(
+    inputs: Sequence[np.ndarray],
+    outputs: Sequence[np.ndarray],
+) -> tuple[np.ndarray | ObjectLabelPayload, ...]:
+    return tuple(
+        _filtered_object_payload(input_value, output_labels)
+        for input_value, output_labels in zip(inputs, outputs, strict=True)
+    )
+
+
+def _filtered_object_payload(
+    input_value: np.ndarray,
+    output_labels: np.ndarray,
+) -> np.ndarray | ObjectLabelPayload:
+    if not isinstance(input_value, ObjectLabelPayload):
+        return output_labels
+    return ObjectLabelPayload(
+        labels=output_labels,
+        declared_object_count=int(np.max(output_labels)) if output_labels.size else 0,
+        spatial_origin_yx=input_value.spatial_origin_yx,
+        source_spatial_shape_yx=input_value.source_spatial_shape_yx,
     )
 
 
@@ -1214,7 +1245,10 @@ def _object_transform_relationships(
         )
     relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type()
     return tuple(
-        relationship_backend.parent_child_payload_from_labels(input_labels, output_labels)
+        relationship_backend.parent_child_payload_from_labels(
+            np.asarray(input_labels),
+            np.asarray(output_labels),
+        )
         for input_labels, output_labels in zip(
             input_label_planes,
             relabeled_objects,
@@ -1234,7 +1268,7 @@ def _outline_images(
 
 
 def _outline_image(labels: np.ndarray) -> np.ndarray:
-    labels = labels.astype(np.int32)
+    labels = np.asarray(labels).astype(np.int32)
     if labels.ndim != 2:
         raise ValueError("FilterObjects outline images require 2D labels.")
     boundary = np.zeros(labels.shape, dtype=bool)

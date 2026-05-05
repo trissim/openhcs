@@ -256,6 +256,19 @@ def binary_area_and_perimeter_2d(mask: np.ndarray) -> tuple[float, float]:
     return float(area), float(perimeter)
 
 
+def label_area_and_rounded_perimeter_2d(labels: np.ndarray) -> tuple[float, float]:
+    """Return summed label area and CellProfiler-style rounded per-label perimeter."""
+    labels_array = np.asarray(labels, dtype=np.int32)
+    if labels_array.ndim != 2:
+        raise NotImplementedError(
+            "Numba label area/perimeter currently supports 2-D labels."
+        )
+    area, perimeter = _label_area_rounded_perimeter_2d_numba(
+        np.ascontiguousarray(labels_array)
+    )
+    return float(area), float(perimeter)
+
+
 @njit(cache=True)
 def _dense_label_region_properties_2d_numba(labels: np.ndarray):
     height, width = labels.shape
@@ -689,6 +702,59 @@ def _label_pixel_at(
 
 
 @njit(cache=True)
+def _label_area_rounded_perimeter_2d_numba(
+    labels: np.ndarray,
+) -> tuple[float, float]:
+    height, width = labels.shape
+    max_label = 0
+    for row in range(height):
+        for col in range(width):
+            label_id = int(labels[row, col])
+            if label_id > max_label:
+                max_label = label_id
+    if max_label <= 0:
+        return 0.0, 0.0
+
+    area_dense = np.zeros(max_label + 1, dtype=np.float64)
+    min_y = np.full(max_label + 1, height, dtype=np.int64)
+    min_x = np.full(max_label + 1, width, dtype=np.int64)
+    max_y = np.zeros(max_label + 1, dtype=np.int64)
+    max_x = np.zeros(max_label + 1, dtype=np.int64)
+    for row in range(height):
+        for col in range(width):
+            label_id = int(labels[row, col])
+            if label_id <= 0:
+                continue
+            area_dense[label_id] += 1.0
+            if row < min_y[label_id]:
+                min_y[label_id] = row
+            if col < min_x[label_id]:
+                min_x[label_id] = col
+            if row + 1 > max_y[label_id]:
+                max_y[label_id] = row + 1
+            if col + 1 > max_x[label_id]:
+                max_x[label_id] = col + 1
+
+    area = 0.0
+    perimeter = 0.0
+    for label_id in range(1, max_label + 1):
+        if area_dense[label_id] <= 0.0:
+            continue
+        area += area_dense[label_id]
+        perimeter += np.round(
+            _label_perimeter_2d(
+                labels,
+                label_id,
+                int(min_y[label_id]),
+                int(min_x[label_id]),
+                int(max_y[label_id]),
+                int(max_x[label_id]),
+            )
+        )
+    return area, perimeter
+
+
+@njit(cache=True)
 def _binary_area_perimeter_2d_numba(mask: np.ndarray) -> tuple[float, float]:
     height, width = mask.shape
     area = 0.0
@@ -712,42 +778,55 @@ def _binary_area_perimeter_2d_numba(mask: np.ndarray) -> tuple[float, float]:
     if area == 0.0:
         return 0.0, 0.0
 
-    weights = np.zeros(50, dtype=np.float64)
-    weights[5] = 1.0
-    weights[7] = 1.0
-    weights[15] = 1.0
-    weights[17] = 1.0
-    weights[25] = 1.0
-    weights[27] = 1.0
-    weights[21] = np.sqrt(2.0)
-    weights[33] = np.sqrt(2.0)
-    weights[13] = (1.0 + np.sqrt(2.0)) / 2.0
-    weights[23] = (1.0 + np.sqrt(2.0)) / 2.0
+    configs = np.zeros((max_y - min_y, max_x - min_x), dtype=np.uint8)
+    config_height, config_width = configs.shape
+    for row in range(min_y, max_y):
+        local_row = row - min_y
+        for col in range(min_x, max_x):
+            if not _binary_border_pixel_4(mask, row, col):
+                continue
+            local_col = col - min_x
+            if local_row + 1 < config_height:
+                if local_col + 1 < config_width:
+                    configs[local_row + 1, local_col + 1] += 10
+                configs[local_row + 1, local_col] += 2
+                if local_col > 0:
+                    configs[local_row + 1, local_col - 1] += 10
+            if local_col + 1 < config_width:
+                configs[local_row, local_col + 1] += 2
+            configs[local_row, local_col] += 1
+            if local_col > 0:
+                configs[local_row, local_col - 1] += 2
+            if local_row > 0:
+                if local_col + 1 < config_width:
+                    configs[local_row - 1, local_col + 1] += 10
+                configs[local_row - 1, local_col] += 2
+                if local_col > 0:
+                    configs[local_row - 1, local_col - 1] += 10
 
     perimeter = 0.0
-    for row in range(min_y, max_y):
-        for col in range(min_x, max_x):
-            config = 0
-            if _binary_border_pixel_4(mask, row - 1, col - 1):
-                config += 10
-            if _binary_border_pixel_4(mask, row - 1, col):
-                config += 2
-            if _binary_border_pixel_4(mask, row - 1, col + 1):
-                config += 10
-            if _binary_border_pixel_4(mask, row, col - 1):
-                config += 2
-            if _binary_border_pixel_4(mask, row, col):
-                config += 1
-            if _binary_border_pixel_4(mask, row, col + 1):
-                config += 2
-            if _binary_border_pixel_4(mask, row + 1, col - 1):
-                config += 10
-            if _binary_border_pixel_4(mask, row + 1, col):
-                config += 2
-            if _binary_border_pixel_4(mask, row + 1, col + 1):
-                config += 10
-            perimeter += weights[config]
+    for row in range(config_height):
+        for col in range(config_width):
+            perimeter += _perimeter_weight_for_config_numba(int(configs[row, col]))
     return area, perimeter
+
+
+@njit(cache=True)
+def _perimeter_weight_for_config_numba(config: int) -> float:
+    if (
+        config == 5
+        or config == 7
+        or config == 15
+        or config == 17
+        or config == 25
+        or config == 27
+    ):
+        return 1.0
+    if config == 21 or config == 33:
+        return np.sqrt(2.0)
+    if config == 13 or config == 23:
+        return (1.0 + np.sqrt(2.0)) / 2.0
+    return 0.0
 
 
 @njit(cache=True)
@@ -776,6 +855,7 @@ def _binary_pixel_at(mask: np.ndarray, row: int, col: int) -> bool:
 __all__ = [
     "binary_area_and_perimeter_2d",
     "DenseLabelRegionProperties",
+    "label_area_and_rounded_perimeter_2d",
     "LabelRegionPropertiesBackendStrategy",
     "NumbaNumpyLabelRegionPropertiesBackendStrategy",
     "label_region_properties_backend",

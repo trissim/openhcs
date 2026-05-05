@@ -67,11 +67,13 @@ def validate_cppipe_execution(
     execution: DirectPipelineExecution,
     output_root: Path,
     *,
+    validate_table_exports: bool = True,
     validate_image_exports: bool = True,
 ) -> CPPipeExecutionValidation:
     """Validate runtime artifacts and exports implied by a prepared .cppipe."""
     expectation = _runtime_expectation(
         prepared,
+        validate_table_exports=validate_table_exports,
         validate_image_exports=validate_image_exports,
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
@@ -96,6 +98,7 @@ def validate_cppipe_execution(
 def _runtime_expectation(
     prepared: PreparedGeneratedPipeline,
     *,
+    validate_table_exports: bool = True,
     validate_image_exports: bool = True,
 ) -> RuntimeArtifactExecutionExpectation:
     output_specs = _output_specs(prepared)
@@ -106,6 +109,7 @@ def _runtime_expectation(
             _infrastructure_features(prepared),
             artifact_kinds,
             _image_export_specs(prepared) if validate_image_exports else (),
+            validate_table_exports=validate_table_exports,
             validate_image_exports=validate_image_exports,
         ),
     )
@@ -153,10 +157,13 @@ def _runtime_exports(
     artifact_kinds: frozenset[ArtifactKind],
     image_export_specs: tuple[RuntimeImageExportSpec, ...],
     *,
+    validate_table_exports: bool = True,
     validate_image_exports: bool = True,
 ) -> RuntimeExportExpectation:
     return RuntimeExportExpectation.from_flags(
         table_exports=(
+            validate_table_exports
+            and
             CPPipeInfrastructureFeature.EXPORT_TO_SPREADSHEET
             in infrastructure_features
         ),

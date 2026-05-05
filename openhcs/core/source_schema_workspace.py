@@ -8,6 +8,7 @@ import os
 import shutil
 import urllib.request
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -16,7 +17,7 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.constants.constants import AllComponents, Backend
+from openhcs.constants.constants import AllComponents, Backend, FileFormat
 from openhcs.core.pipeline_image_schema import (
     ImageAssignment,
     ImagePlaneSource,
@@ -47,6 +48,123 @@ SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR = "_source"
 SOURCE_SCHEMA_WORKSPACE_PIXEL_SIZE = 1.0
 SOURCE_SCHEMA_WORKSPACE_GRID_DIMENSIONS = [1, 1]
 SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE = "source"
+_AUXILIARY_PAYLOAD_CACHE_LIMIT = 64
+_AUXILIARY_PAYLOAD_CACHE: OrderedDict[str, object] = OrderedDict()
+
+
+def cache_source_schema_auxiliary_payload(path: str | Path, payload: object) -> None:
+    """Cache an immutable materialized auxiliary payload by workspace path."""
+    for cache_key in _auxiliary_payload_cache_keys(path):
+        _AUXILIARY_PAYLOAD_CACHE[cache_key] = payload
+        _AUXILIARY_PAYLOAD_CACHE.move_to_end(cache_key)
+        if len(_AUXILIARY_PAYLOAD_CACHE) > _AUXILIARY_PAYLOAD_CACHE_LIMIT:
+            _AUXILIARY_PAYLOAD_CACHE.popitem(last=False)
+
+
+def source_schema_auxiliary_payload(path: str | Path) -> object | None:
+    """Return a cached materialized auxiliary payload for a workspace path."""
+    for cache_key in _auxiliary_payload_cache_keys(path):
+        payload = _AUXILIARY_PAYLOAD_CACHE.get(cache_key)
+        if payload is not None:
+            _AUXILIARY_PAYLOAD_CACHE.move_to_end(cache_key)
+            return payload
+    return None
+
+
+def _auxiliary_payload_cache_keys(path: str | Path) -> tuple[str, ...]:
+    raw_key = str(path)
+    resolved_key = str(Path(path).resolve()) if Path(path).is_absolute() else raw_key
+    if resolved_key == raw_key:
+        return (raw_key,)
+    return (raw_key, resolved_key)
+
+
+class SourceSchemaAuxiliaryMaterializer(ABC, metaclass=AutoRegisterMeta):
+    """Normalize auxiliary source files during source-schema workspace creation."""
+
+    __registry_key__ = "materializer_key"
+    __skip_if_no_key__ = True
+    materializer_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_path(cls, path: Path) -> "SourceSchemaAuxiliaryMaterializer | None":
+        for materializer_cls in cls.__registry__.values():
+            materializer = materializer_cls()
+            if materializer.accepts_path(path):
+                return materializer
+        return None
+
+    @abstractmethod
+    def accepts_path(self, path: Path) -> bool:
+        """Return whether this materializer owns the source path format."""
+
+    @abstractmethod
+    def materialize(
+        self,
+        source_path: Path,
+        *,
+        workspace_root: Path,
+        alias: str,
+        index: int,
+    ) -> Path:
+        """Return the workspace-local source path used by virtual mappings."""
+
+
+class NumpyAuxiliaryMaterializer(SourceSchemaAuxiliaryMaterializer):
+    """Rewrite NumPy auxiliary files into current-format workspace files."""
+
+    materializer_key = "numpy"
+
+    def accepts_path(self, path: Path) -> bool:
+        return path.suffix.lower() in FileFormat.NUMPY.value
+
+    def materialize(
+        self,
+        source_path: Path,
+        *,
+        workspace_root: Path,
+        alias: str,
+        index: int,
+    ) -> Path:
+        import numpy as np
+        from openhcs.core.memory import (
+            MEMORY_TYPE_NUMPY,
+            convert_memory,
+            detect_memory_type,
+        )
+
+        target_dir = workspace_root / SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR / alias
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = _materialized_auxiliary_target_path(
+            target_dir,
+            source_path,
+            index=index,
+        )
+        payload = np.load(source_path)
+        source_memory_type = detect_memory_type(payload)
+        payload = convert_memory(
+            payload,
+            source_memory_type,
+            MEMORY_TYPE_NUMPY,
+            gpu_id=0,
+        )
+        np.save(target_path, payload)
+        cache_source_schema_auxiliary_payload(source_path, payload)
+        cache_source_schema_auxiliary_payload(target_path, payload)
+        return target_path
+
+
+def _materialized_auxiliary_target_path(
+    target_dir: Path,
+    source_path: Path,
+    *,
+    index: int,
+) -> Path:
+    """Preserve source basenames for selector semantics, disambiguating if needed."""
+    target_path = target_dir / source_path.name
+    if not target_path.exists():
+        return target_path
+    return target_dir / f"{index:03d}_{source_path.name}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1037,16 +1155,48 @@ def _auxiliary_workspace_mappings(
                 f"{SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR}/"
                 f"{alias}/{index:03d}_{candidate.path.name}"
             )
+            source_path = _materialized_auxiliary_source_path(
+                candidate.path,
+                workspace_root=workspace_root,
+                alias=alias,
+                index=index,
+            )
             _add_mapping(
                 mappings,
                 virtual_path,
-                _workspace_relative_path(workspace_root, candidate.path),
+                _workspace_relative_path(workspace_root, source_path),
             )
+            cached_payload = source_schema_auxiliary_payload(source_path)
+            if cached_payload is not None:
+                cache_source_schema_auxiliary_payload(virtual_path, cached_payload)
+                cache_source_schema_auxiliary_payload(
+                    workspace_root / virtual_path,
+                    cached_payload,
+                )
             source_metadata[virtual_path] = _source_metadata_for_virtual_path(
                 {"source_alias": alias},
                 candidate.metadata,
             )
     return MappingProxyType(mappings), MappingProxyType(source_metadata)
+
+
+def _materialized_auxiliary_source_path(
+    source_path: Path,
+    *,
+    workspace_root: Path,
+    alias: str,
+    index: int,
+) -> Path:
+    """Return an auxiliary source path normalized for runtime loading."""
+    materializer = SourceSchemaAuxiliaryMaterializer.for_path(source_path)
+    if materializer is None:
+        return source_path
+    return materializer.materialize(
+        source_path,
+        workspace_root=workspace_root,
+        alias=alias,
+        index=index,
+    )
 
 
 def _source_metadata_for_virtual_path(

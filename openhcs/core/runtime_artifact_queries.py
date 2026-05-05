@@ -135,6 +135,8 @@ class MeasurementObjectQuery:
     def matches(self, table: MeasurementTable) -> bool:
         if table.subject.scope is MeasurementScope.OBJECT:
             return table.subject.name == self.object_name
+        if not _measurement_table_may_declare_object_name(table):
+            return False
         return any(
             measurement_row_object_name(measurement_row_mapping(row))
             == self.object_name
@@ -349,6 +351,26 @@ def measurement_rows(
     return tuple(rows)
 
 
+def _measurement_table_may_declare_object_name(table: MeasurementTable) -> bool:
+    """Return whether row-level fallback object-name scans can match."""
+    if table.object_name is not None:
+        return True
+    if any(field.name == MEASUREMENT_OBJECT_NAME_FIELD for field in table.fields):
+        return True
+
+    rows = table.rows
+    if isinstance(rows, ColumnarRows):
+        return MEASUREMENT_OBJECT_NAME_FIELD in tuple(
+            str(column) for column in rows.columns
+        )
+    if not isinstance(rows, list | tuple) or not rows:
+        return False
+    return any(
+        MEASUREMENT_OBJECT_NAME_FIELD in measurement_row_mapping(row)
+        for row in rows
+    )
+
+
 def _columnar_measurement_value_index(
     table: MeasurementTable,
     query: MeasurementFeatureQuery,
@@ -399,10 +421,15 @@ def _row_sequence_measurement_value_index(
             return None
 
     field_names = _row_sequence_field_names(rows, query.feature_name)
+    table_source_image_name = (
+        None
+        if _measurement_table_declares_object_identity(table, field_names)
+        else table.source_image_name
+    )
     feature_field = _matching_row_value_field(
         field_names,
         query.feature_name,
-        table_source_image_name=table.source_image_name,
+        table_source_image_name=table_source_image_name,
     )
     if feature_field is None:
         return None
@@ -517,6 +544,22 @@ def _matching_object_id_field(
         if field_name in MEASUREMENT_OBJECT_ID_FIELDS:
             return field_name
     return None
+
+
+def _measurement_table_declares_object_identity(
+    table: MeasurementTable,
+    field_names: tuple[str, ...],
+) -> bool:
+    """Return whether table-level image source should not qualify feature fields."""
+    return (
+        measurement_table_object_name(table) is not None
+        or MEASUREMENT_OBJECT_NAME_FIELD in field_names
+        or _matching_object_id_field(
+            field_names,
+            measurement_table_object_id_field(table),
+        )
+        is not None
+    )
 
 
 def _matching_columnar_feature_column(
@@ -873,10 +916,15 @@ def _measurement_value_indexes_by_slice(
             return None
 
         field_names = _row_sequence_field_names(rows, feature_name)
+        table_source_image_name = (
+            None
+            if _measurement_table_declares_object_identity(table, field_names)
+            else table.source_image_name
+        )
         feature_field = _matching_row_value_field(
             field_names,
             feature_name,
-            table_source_image_name=table.source_image_name,
+            table_source_image_name=table_source_image_name,
         )
         if feature_field is None:
             continue

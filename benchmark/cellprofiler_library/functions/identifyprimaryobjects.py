@@ -678,6 +678,10 @@ def identify_primary_objects(
             unedited_labels=unedited_labels.astype(np.int32, copy=False),
             small_removed_labels=small_removed_labels.astype(np.int32, copy=False),
             declared_object_count=object_count,
+            spatial_origin_yx=image_payload_metadata(image).spatial_origin_yx,
+            source_spatial_shape_yx=(
+                image_payload_metadata(image).source_spatial_shape_yx
+            ),
         ),
     )
 
@@ -923,6 +927,24 @@ def _prepare_identify_primary_objects() -> None:
     yy, xx = np.ogrid[:96, :96]
     image[((yy - 32) ** 2 + (xx - 32) ** 2) <= 12 * 12] = 0.8
     image[((yy - 56) ** 2 + (xx - 56) ** 2) <= 12 * 12] = 0.75
+    binary = image > np.float32(0.5)
+    cellprofiler_threshold_diagnostics(
+        image,
+        binary,
+        final_threshold=0.5,
+        original_threshold=0.5,
+        proven_unit_interval_scale=65535,
+    )
+    rectangular_mask = np.zeros_like(binary, dtype=bool)
+    rectangular_mask[16:80, 16:80] = True
+    cellprofiler_threshold_diagnostics(
+        image,
+        binary,
+        final_threshold=0.5,
+        original_threshold=0.5,
+        mask=rectangular_mask,
+        proven_unit_interval_scale=65535,
+    )
     identify_primary_objects.__wrapped__(
         image,
         min_diameter=10,
