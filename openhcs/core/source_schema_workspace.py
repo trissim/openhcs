@@ -574,6 +574,79 @@ def materialize_source_schema_workspace(
     )
 
 
+def expand_source_schema_workspace_wells(
+    metadata_path: Path,
+    well_ids: Iterable[str],
+) -> tuple[str, ...]:
+    """Duplicate source-schema image mappings across synthetic OpenHCS wells.
+
+    This preserves the virtual-workspace abstraction: no source images are copied.
+    Existing virtual filenames are parsed through ``SourceSchemaFilenameParser`` and
+    re-emitted with each requested well identifier.
+    """
+    target_wells = tuple(dict.fromkeys(str(well_id) for well_id in well_ids))
+    if not target_wells:
+        raise ValueError("well_ids must contain at least one well.")
+
+    metadata_path = Path(metadata_path)
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    subdirectories = metadata.get(FIELDS.SUBDIRECTORIES)
+    if not isinstance(subdirectories, dict):
+        raise ValueError(f"OpenHCS metadata lacks subdirectories: {metadata_path}")
+    main_metadata = subdirectories.get(FIELDS.DEFAULT_SUBDIRECTORY)
+    if not isinstance(main_metadata, dict):
+        raise ValueError(
+            f"OpenHCS metadata lacks main source-schema subdirectory: {metadata_path}"
+        )
+    workspace_mapping = main_metadata.get(FIELDS.WORKSPACE_MAPPING)
+    if not isinstance(workspace_mapping, dict) or not workspace_mapping:
+        raise ValueError(
+            f"OpenHCS metadata lacks workspace mappings for well expansion: {metadata_path}"
+        )
+
+    parser = SourceSchemaFilenameParser()
+    expanded_mapping: dict[str, str] = {}
+    expanded_source_metadata: dict[str, dict[str, str]] = {}
+    original_source_metadata = main_metadata.get(FIELDS.SOURCE_METADATA) or {}
+    if not isinstance(original_source_metadata, dict):
+        raise ValueError(
+            f"OpenHCS metadata source_metadata is not a mapping: {metadata_path}"
+        )
+
+    for virtual_path, real_path in workspace_mapping.items():
+        parsed = parser.parse_filename(str(virtual_path))
+        if parsed is None:
+            raise ValueError(
+                f"Cannot parse source-schema virtual filename {virtual_path!r}."
+            )
+        path_source_metadata = original_source_metadata.get(str(virtual_path), {})
+        if not isinstance(path_source_metadata, dict):
+            raise ValueError(
+                f"source_metadata for {virtual_path!r} is not a mapping."
+            )
+        for well_id in target_wells:
+            expanded_path = parser.construct_filename(
+                well=well_id,
+                site=parsed["site"],
+                channel=parsed["channel"],
+                z_index=parsed["z_index"],
+                timepoint=parsed["timepoint"],
+                extension=parsed["extension"],
+            )
+            _add_mapping(expanded_mapping, expanded_path, str(real_path))
+            expanded_source_metadata[expanded_path] = {
+                **path_source_metadata,
+                AllComponents.WELL.value: well_id,
+            }
+
+    main_metadata[FIELDS.IMAGE_FILES] = list(expanded_mapping)
+    main_metadata[FIELDS.WORKSPACE_MAPPING] = expanded_mapping
+    main_metadata[FIELDS.SOURCE_METADATA] = expanded_source_metadata
+    main_metadata[FIELDS.WELLS] = {well_id: None for well_id in target_wells}
+    metadata_path.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    return target_wells
+
+
 def _partition_assignments(
     schema: PipelineImageSchema,
 ) -> tuple[tuple[ImageAssignment, ...], tuple[SourceAssignmentBase, ...]]:

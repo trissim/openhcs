@@ -330,6 +330,11 @@ def prepare_generated_pipeline(
         module_name=module_name,
         filename=str(output_path),
     )
+    materialize_generated_pipeline_import_module(
+        converted.generated_pipeline.code,
+        module_name=module_name,
+        output_dir=output_path.parent,
+    )
     pipeline = _pipeline_from_generated_module(
         module,
         pipeline_name=converted.generated_pipeline.name,
@@ -378,6 +383,39 @@ def load_generated_pipeline_module_from_source(
     sys.modules[module_name] = module
     exec(compile(source, filename, "exec"), module.__dict__)
     return module
+
+
+def materialize_generated_pipeline_import_module(
+    source: str,
+    *,
+    module_name: str,
+    output_dir: Path,
+) -> Path:
+    """Write generated pipeline source under its importable module name.
+
+    OpenHCS multiprocessing resolves compiled FunctionReference values inside
+    spawned workers. Generated cppipe modules therefore need the same property
+    pycodify-generated OpenHCS code has: importing the module recreates the
+    runtime objects needed by the registry.
+    """
+    importable_path = output_dir / f"{module_name}.py"
+    importable_source = (
+        source
+        + "\n\n"
+        + "if __name__ != '__main__':\n"
+        + "    import sys as _openhcs_generated_sys\n"
+        + "    from benchmark.converter.runtime_pipeline import register_generated_pipeline_functions as _openhcs_register_generated\n"
+        + "    _openhcs_register_generated(_openhcs_generated_sys.modules[__name__])\n"
+    )
+    if (
+        not importable_path.exists()
+        or importable_path.read_text(encoding="utf-8") != importable_source
+    ):
+        importable_path.write_text(importable_source, encoding="utf-8")
+    output_dir_text = str(output_dir)
+    if output_dir_text not in sys.path:
+        sys.path.insert(0, output_dir_text)
+    return importable_path
 
 
 def register_generated_pipeline_functions(module: ModuleType) -> tuple[str, ...]:

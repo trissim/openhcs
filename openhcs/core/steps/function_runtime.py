@@ -893,6 +893,7 @@ class PatternGroupRuntime:
         metadata = self._openhcs_metadata_dict()
         workspace_source_paths: dict[str, str] = {}
         source_metadata_by_path: dict[str, Mapping[str, str]] = {}
+        source_metadata_by_real_path: dict[str, Mapping[str, str] | None] = {}
         for subdirectory in metadata.get(FIELDS.SUBDIRECTORIES, {}).values():
             workspace_mapping = subdirectory.get("workspace_mapping", {})
             for virtual_relative, real_relative in workspace_mapping.items():
@@ -924,7 +925,17 @@ class PatternGroupRuntime:
                 real_relative = workspace_mapping.get(virtual_path)
                 if real_relative is not None:
                     real_path = str(Path(self.context.plate_path) / real_relative)
-                    source_metadata_by_path[real_path] = normalized_metadata
+                    existing_metadata = source_metadata_by_real_path.get(real_path)
+                    if existing_metadata is None and real_path in source_metadata_by_real_path:
+                        continue
+                    if existing_metadata is None:
+                        source_metadata_by_real_path[real_path] = normalized_metadata
+                    elif dict(existing_metadata) != dict(normalized_metadata):
+                        source_metadata_by_real_path[real_path] = None
+
+        for real_path, metadata_fields in source_metadata_by_real_path.items():
+            if metadata_fields is not None:
+                source_metadata_by_path[real_path] = metadata_fields
 
         if not workspace_source_paths:
             raise RuntimeError(

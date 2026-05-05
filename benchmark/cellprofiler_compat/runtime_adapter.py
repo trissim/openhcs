@@ -1298,7 +1298,11 @@ def _candidate_metadata(
 ) -> dict[str, Any]:
     metadata: dict[str, Any] = {}
     context = adapter.source_binding_context
-    virtual_path = _virtual_workspace_path_for_source(resolved_path, context)
+    virtual_path = _candidate_virtual_workspace_path(
+        file_path,
+        resolved_path,
+        context,
+    )
     context_paths = _candidate_metadata_paths(file_path, resolved_path, virtual_path)
     has_context_metadata = any(
         _context_source_metadata(path, context) is not None
@@ -1424,6 +1428,17 @@ def _merge_missing_source_metadata(
 ) -> None:
     for key, value in additions.items():
         metadata.setdefault(key, str(value))
+
+
+def _candidate_virtual_workspace_path(
+    file_path: str,
+    resolved_path: str,
+    context: SourceBindingRuntimeContext,
+) -> str | None:
+    for key in _source_path_lookup_keys(file_path, context.step_input_dir):
+        if key in context.step_input_source_paths:
+            return key
+    return _virtual_workspace_path_for_source(resolved_path, context)
 
 
 def _virtual_workspace_path_for_source(

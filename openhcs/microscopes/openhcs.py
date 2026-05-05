@@ -147,6 +147,7 @@ class OpenHCSMetadataFields:
     IMAGE_FILES: str = "image_files"
     AVAILABLE_BACKENDS: str = METADATA_CONFIG.AVAILABLE_BACKENDS_KEY
     SOURCE_METADATA: str = "source_metadata"
+    WORKSPACE_MAPPING: str = "workspace_mapping"
 
     # Required metadata fields
     GRID_DIMENSIONS: str = "grid_dimensions"
