@@ -42,6 +42,20 @@ def main() -> int:
         default=14,
         help="Split long grouped charts into two stacked panels above this count.",
     )
+    parser.add_argument(
+        "--replicas",
+        type=int,
+        action="append",
+        default=None,
+        help="Only plot these sample counts. Repeat to include multiple counts.",
+    )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        action="append",
+        default=None,
+        help="Only plot these OpenHCS job counts. Repeat to include multiple counts.",
+    )
     args = parser.parse_args()
 
     outputs = generate_cppipe_scaling_figures(
@@ -53,6 +67,8 @@ def main() -> int:
         ),
         include_average=not args.no_average,
         wrap_after=args.wrap_after,
+        replica_counts=tuple(args.replicas or ()),
+        worker_counts=tuple(args.workers or ()),
     )
     for output in outputs:
         print(output)

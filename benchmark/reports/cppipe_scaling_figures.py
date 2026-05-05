@@ -80,9 +80,15 @@ def generate_cppipe_scaling_figures(
     output_formats: Sequence[str] = DEFAULT_FORMATS,
     include_average: bool = True,
     wrap_after: int = DEFAULT_WRAP_AFTER,
+    replica_counts: Sequence[int] = (),
+    worker_counts: Sequence[int] = (),
 ) -> tuple[Path, ...]:
     """Generate v7-style grouped-bar charts from ``throughput_batches.csv``."""
-    table_rows = _load_summary_rows(summary_csv)
+    table_rows = _filter_summary_rows(
+        _load_summary_rows(summary_csv),
+        replica_counts=replica_counts,
+        worker_counts=worker_counts,
+    )
     native_seconds_by_case = _load_native_seconds(native_summary_csv)
     base_rows = tuple(
         _throughput_metric_rows(
@@ -161,6 +167,29 @@ def _load_summary_rows(path: Path) -> tuple[dict[str, str], ...]:
             f"Throughput summary CSV {path} missing columns: {sorted(missing)!r}"
         )
     return rows
+
+
+def _filter_summary_rows(
+    rows: Sequence[dict[str, str]],
+    *,
+    replica_counts: Sequence[int],
+    worker_counts: Sequence[int],
+) -> tuple[dict[str, str], ...]:
+    selected_replicas = {int(value) for value in replica_counts}
+    selected_workers = {int(value) for value in worker_counts}
+    filtered = tuple(
+        row
+        for row in rows
+        if (not selected_replicas or int(row[REPLICAS_FIELD]) in selected_replicas)
+        and (not selected_workers or int(row[WORKER_COUNT_FIELD]) in selected_workers)
+    )
+    if not filtered:
+        raise ValueError(
+            "Throughput filters removed all rows: "
+            f"replica_counts={sorted(selected_replicas)!r}, "
+            f"worker_counts={sorted(selected_workers)!r}"
+        )
+    return filtered
 
 
 def _throughput_metric_rows(
