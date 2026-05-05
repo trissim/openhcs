@@ -150,6 +150,23 @@ class RuntimeValueStore:
         self._records_by_key: OrderedDict[ArtifactKey, StoredRuntimeValue] = (
             OrderedDict()
         )
+        self._revision = 0
+        self._find_cache: dict[
+            tuple[
+                int,
+                str | None,
+                ArtifactKind | None,
+                str | None,
+                str | None,
+                bool,
+            ],
+            tuple[StoredRuntimeValue, ...],
+        ] = {}
+
+    @property
+    def revision(self) -> int:
+        """Return the mutation revision for cache-safe runtime queries."""
+        return self._revision
 
     def record(
         self,
@@ -167,6 +184,7 @@ class RuntimeValueStore:
         if existing is not None:
             _validate_overwrite(existing, record)
         self._records_by_key[value.key] = record
+        self._mark_mutated()
         return record
 
     def replace(
@@ -187,6 +205,7 @@ class RuntimeValueStore:
             location=RuntimeArtifactLocation(path=path, backend=backend),
         )
         self._records_by_key[value.key] = record
+        self._mark_mutated()
         return record
 
     def resolve(
@@ -229,6 +248,10 @@ class RuntimeValueStore:
         match_group: bool = False,
     ) -> tuple[StoredRuntimeValue, ...]:
         """Find stored values by semantic identity fields."""
+        cache_key = (self._revision, name, kind, axis_id, group_key, match_group)
+        cached = self._find_cache.get(cache_key)
+        if cached is not None:
+            return cached
         records: list[StoredRuntimeValue] = []
         for record in self._records_by_key.values():
             key = record.key
@@ -241,7 +264,9 @@ class RuntimeValueStore:
             if match_group and key.scope.group_key != group_key:
                 continue
             records.append(record)
-        return tuple(records)
+        result = tuple(records)
+        self._find_cache[cache_key] = result
+        return result
 
     def find_by_location(
         self,
@@ -267,6 +292,10 @@ class RuntimeValueStore:
 
     def __len__(self) -> int:
         return len(self._records_by_key)
+
+    def _mark_mutated(self) -> None:
+        self._revision += 1
+        self._find_cache.clear()
 
 
 def _validate_overwrite(

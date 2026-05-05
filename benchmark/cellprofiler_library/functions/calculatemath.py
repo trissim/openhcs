@@ -10,13 +10,19 @@ not on image data directly.
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 from typing import Any, ClassVar, Optional, Tuple
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.interop.cellprofiler.runtime.invocation import (
+    CellProfilerSliceAlignedValues,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
@@ -114,6 +120,7 @@ class MathOperationStrategy(ABC, metaclass=AutoRegisterMeta):
     operation: ClassVar[MathOperation]
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_operation(cls, operation: MathOperation) -> "MathOperationStrategy":
         return cls.__registry__[operation.value]()
 
@@ -176,6 +183,7 @@ class RoundingStrategy(ABC, metaclass=AutoRegisterMeta):
     rounding: ClassVar[RoundingMethod]
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_rounding(cls, rounding: RoundingMethod) -> "RoundingStrategy":
         return cls.__registry__[rounding.value]()
 
@@ -219,6 +227,7 @@ class CeilingRoundingStrategy(RoundingStrategy):
         return np.ceil(value)
 
 
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_outputs(("math_results", csv_materializer(
     fields=[
@@ -334,10 +343,92 @@ def calculate_math(
             )
         ),
     )
-    result = _calculate_scalar_result(request)
-    math_result = _math_result_rows(result, request)
+    math_result = _calculate_result_rows(request)
     
     return image, math_result
+
+
+def _calculate_result_rows(request: MathCalculationRequest) -> MathResult | list[MathResult]:
+    aligned_operands = _aligned_operand_slices(request)
+    if aligned_operands is None:
+        return _math_result_rows(_calculate_scalar_result(request), request)
+
+    rows: list[MathResult] = []
+    for slice_index, operand1_value, operand2_value in aligned_operands:
+        slice_request = MathCalculationRequest(
+            operand1=MathOperand(
+                value=operand1_value,
+                multiplicand=request.operand1.multiplicand,
+                exponent=request.operand1.exponent,
+            ),
+            operand2=MathOperand(
+                value=operand2_value,
+                multiplicand=request.operand2.multiplicand,
+                exponent=request.operand2.exponent,
+            ),
+            operation=request.operation,
+            take_log10=request.take_log10,
+            final=request.final,
+            rounding=request.rounding,
+            rounding_digits=request.rounding_digits,
+            bounds=request.bounds,
+            output_name=request.output_name,
+            object_names=request.object_names,
+        )
+        slice_rows = _math_result_rows(_calculate_scalar_result(slice_request), slice_request)
+        for row in _as_result_list(slice_rows):
+            rows.append(
+                MathResult(
+                    slice_index=slice_index,
+                    output_name=row.output_name,
+                    feature_name=row.feature_name,
+                    result_value=row.result_value,
+                    operand1_value=row.operand1_value,
+                    operand2_value=row.operand2_value,
+                    operation=row.operation,
+                    object_label=row.object_label,
+                    object_name=row.object_name,
+                )
+            )
+    return rows
+
+
+def _aligned_operand_slices(
+    request: MathCalculationRequest,
+) -> list[tuple[int, Any, Any]] | None:
+    operand1 = request.operand1.value
+    operand2 = request.operand2.value
+    aligned_values = tuple(
+        value
+        for value in (operand1, operand2)
+        if isinstance(value, CellProfilerSliceAlignedValues)
+    )
+    if not aligned_values:
+        return None
+    slice_counts = {value.slice_count for value in aligned_values}
+    if len(slice_counts) != 1:
+        raise ValueError(
+            "CalculateMath aligned operands must have the same slice count."
+        )
+    slice_count = slice_counts.pop()
+    return [
+        (
+            slice_index,
+            _operand_value_for_slice(operand1, slice_index),
+            _operand_value_for_slice(operand2, slice_index),
+        )
+        for slice_index in range(slice_count)
+    ]
+
+
+def _operand_value_for_slice(value: Any, slice_index: int) -> Any:
+    if isinstance(value, CellProfilerSliceAlignedValues):
+        return value.value_for_slice(slice_index)
+    return value
+
+
+def _as_result_list(rows: MathResult | list[MathResult]) -> list[MathResult]:
+    return rows if isinstance(rows, list) else [rows]
 
 
 def _calculate_scalar_result(request: MathCalculationRequest) -> Any:

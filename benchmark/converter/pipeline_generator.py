@@ -236,6 +236,7 @@ from openhcs.constants.input_source import InputSource
         modules: List[ModuleBlock],
         skipped_modules: Optional[List[ModuleBlock]] = None,
         prune_dead_unmaterialized_artifact_steps: bool = False,
+        materialize_skipped_save_images: bool = True,
     ) -> GeneratedPipeline:
         """
         Generate pipeline using absorbed library (instant, no LLM).
@@ -295,8 +296,10 @@ from openhcs.constants.input_source import InputSource
             symbol_table.contract_for(module)
             for module in skipped_modules
         )
-        save_images_required_artifacts = frozenset(
-            _save_images_required_artifacts(skipped_modules)
+        save_images_required_artifacts = (
+            frozenset(_save_images_required_artifacts(skipped_modules))
+            if materialize_skipped_save_images
+            else frozenset()
         )
         executable_modules = (
             self._prune_dead_unmaterialized_artifact_steps(
@@ -723,7 +726,9 @@ from openhcs.constants.input_source import InputSource
                 "declared_processing_contract="
                 f"{repr(self._module_metadata(module.name)['contract'])}, "
                 f"raw_processing_function={raw_binding}, "
-                f"prepare={prepare_binding})"
+                f"prepare={prepare_binding}, "
+                "runtime_image_execution_mode="
+                f"getattr({raw_binding}, '__openhcs_runtime_image_execution_mode__', None))"
             )
             lines.append("")
 

@@ -66,9 +66,14 @@ def validate_cppipe_execution(
     prepared: PreparedGeneratedPipeline,
     execution: DirectPipelineExecution,
     output_root: Path,
+    *,
+    validate_image_exports: bool = True,
 ) -> CPPipeExecutionValidation:
     """Validate runtime artifacts and exports implied by a prepared .cppipe."""
-    expectation = _runtime_expectation(prepared)
+    expectation = _runtime_expectation(
+        prepared,
+        validate_image_exports=validate_image_exports,
+    )
     observation = RuntimeArtifactExecutionObservation.from_contexts(
         execution.compiled_contexts,
         output_root,
@@ -90,6 +95,8 @@ def validate_cppipe_execution(
 
 def _runtime_expectation(
     prepared: PreparedGeneratedPipeline,
+    *,
+    validate_image_exports: bool = True,
 ) -> RuntimeArtifactExecutionExpectation:
     output_specs = _output_specs(prepared)
     artifact_kinds = frozenset(spec.kind for spec in output_specs)
@@ -98,7 +105,8 @@ def _runtime_expectation(
         exports=_runtime_exports(
             _infrastructure_features(prepared),
             artifact_kinds,
-            _image_export_specs(prepared),
+            _image_export_specs(prepared) if validate_image_exports else (),
+            validate_image_exports=validate_image_exports,
         ),
     )
 
@@ -144,13 +152,18 @@ def _runtime_exports(
     infrastructure_features: frozenset[CPPipeInfrastructureFeature],
     artifact_kinds: frozenset[ArtifactKind],
     image_export_specs: tuple[RuntimeImageExportSpec, ...],
+    *,
+    validate_image_exports: bool = True,
 ) -> RuntimeExportExpectation:
     return RuntimeExportExpectation.from_flags(
         table_exports=(
             CPPipeInfrastructureFeature.EXPORT_TO_SPREADSHEET
             in infrastructure_features
         ),
-        image_exports=CPPipeInfrastructureFeature.SAVE_IMAGES in infrastructure_features,
+        image_exports=(
+            validate_image_exports
+            and CPPipeInfrastructureFeature.SAVE_IMAGES in infrastructure_features
+        ),
         table_artifact_kinds=frozenset(
             kind
             for kind in artifact_kinds

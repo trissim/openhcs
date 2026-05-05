@@ -6,10 +6,14 @@ compiler has one source of truth for memory and artifact declarations.
 
 from __future__ import annotations
 
+import importlib
+import inspect
 from dataclasses import dataclass
+from functools import lru_cache
 from threading import Lock
 from typing import Any, Mapping
 
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
 from openhcs.core.runtime_adapters import (
     RuntimeAdapterSpec,
@@ -23,6 +27,7 @@ PROCESSING_CONTRACT_ATTR = "__processing_contract__"
 DECLARED_PROCESSING_CONTRACT_ATTR = "__openhcs_declared_processing_contract__"
 RAW_PROCESSING_FUNCTION_ATTR = "__openhcs_raw_processing_function__"
 PROCESSING_PREPARE_ATTR = "__openhcs_prepare__"
+RUNTIME_IMAGE_EXECUTION_MODE_ATTR = "__openhcs_runtime_image_execution_mode__"
 _PREPARED_CALLABLE_KEYS: set[tuple[int, int]] = set()
 _PREPARED_CALLABLE_LOCK = Lock()
 
@@ -42,6 +47,7 @@ class CallableContract:
     processing_contract: Any | None = None
     declared_processing_contract: str | None = None
     raw_processing_function: Any | None = None
+    runtime_image_execution_mode: ImagePayloadExecutionMode | None = None
 
     @classmethod
     def from_callable(cls, func: Any) -> "CallableContract":
@@ -80,6 +86,11 @@ class CallableContract:
                 DECLARED_PROCESSING_CONTRACT_ATTR,
             ),
             raw_processing_function=namespace.get(RAW_PROCESSING_FUNCTION_ATTR),
+            runtime_image_execution_mode=_optional_execution_mode(
+                namespace,
+                function_name,
+                RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
+            ),
         )
 
     @property
@@ -132,6 +143,7 @@ def attach_callable_contract_metadata(
     declared_processing_contract: str | None = None,
     raw_processing_function: Any | None = None,
     prepare: Any | None = None,
+    runtime_image_execution_mode: ImagePayloadExecutionMode | None = None,
 ) -> None:
     """Attach OpenHCS callable metadata used by compiler/runtime phases."""
     if declared_processing_contract is not None:
@@ -169,10 +181,42 @@ def attach_callable_contract_metadata(
                 f"got {type(prepare).__name__}."
             )
         setattr(func, PROCESSING_PREPARE_ATTR, prepare)
+    if runtime_image_execution_mode is not None:
+        if not isinstance(runtime_image_execution_mode, ImagePayloadExecutionMode):
+            raise TypeError(
+                "runtime_image_execution_mode must be ImagePayloadExecutionMode, "
+                f"got {type(runtime_image_execution_mode).__name__}."
+            )
+        setattr(
+            func,
+            RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
+            runtime_image_execution_mode,
+        )
+
+
+def runtime_image_execution_mode(
+    mode: ImagePayloadExecutionMode,
+) -> Any:
+    """Declare the image execution mode the compiler should preserve."""
+    if not isinstance(mode, ImagePayloadExecutionMode):
+        raise TypeError(
+            "runtime_image_execution_mode mode must be ImagePayloadExecutionMode, "
+            f"got {type(mode).__name__}."
+        )
+
+    def decorator(func: Any) -> Any:
+        setattr(func, RUNTIME_IMAGE_EXECUTION_MODE_ATTR, mode)
+        return func
+
+    return decorator
 
 
 def prepare_processing_callable(func: Any) -> None:
     """Run an optional callable preparation hook before timed data processing."""
+    module_name = _callable_module(func)
+    if module_name is not None:
+        _prepare_module_autoregister_families(module_name)
+
     namespace = _callable_namespace(func)
     prepare = namespace.get(PROCESSING_PREPARE_ATTR)
     if prepare is None:
@@ -189,6 +233,17 @@ def prepare_processing_callable(func: Any) -> None:
     prepare()
     with _PREPARED_CALLABLE_LOCK:
         _PREPARED_CALLABLE_KEYS.add(prepare_key)
+
+
+@lru_cache(maxsize=None)
+def _prepare_module_autoregister_families(module_name: str) -> None:
+    """Materialize AutoRegisterMeta registries declared by a callable module."""
+    module = importlib.import_module(module_name)
+    for _name, candidate in inspect.getmembers(module, inspect.isclass):
+        namespace = vars(candidate)
+        if "__registry__" not in namespace or "__registry_key__" not in namespace:
+            continue
+        tuple(candidate.__registry__.values())
 
 
 def _callable_name(func: Any) -> str:
@@ -248,6 +303,22 @@ def _optional_string(
     if not isinstance(value, str):
         raise TypeError(
             f"{function_name!r}.{field_name} must be a string, "
+            f"got {type(value).__name__}."
+        )
+    return value
+
+
+def _optional_execution_mode(
+    namespace: CallableNamespace,
+    function_name: str,
+    field_name: str,
+) -> ImagePayloadExecutionMode | None:
+    value = namespace.get(field_name)
+    if value is None:
+        return None
+    if not isinstance(value, ImagePayloadExecutionMode):
+        raise TypeError(
+            f"{function_name!r}.{field_name} must be ImagePayloadExecutionMode, "
             f"got {type(value).__name__}."
         )
     return value

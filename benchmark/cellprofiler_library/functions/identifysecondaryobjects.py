@@ -88,6 +88,7 @@ def _propagate_labels(
     mask: np.ndarray,
     regularization: float,
     backend_provider: CellProfilerBackendProvider | None = None,
+    max_distance: float | None = None,
 ) -> np.ndarray:
     """Propagate labels using the configured explicit backend provider."""
     return SecondaryPropagationBackendStrategy.for_memory_type(
@@ -97,6 +98,7 @@ def _propagate_labels(
         labels,
         mask,
         regularization,
+        max_distance=max_distance,
     )
     return result
 
@@ -270,6 +272,7 @@ class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
                 request.unedited_labels,
                 request.thresholded,
                 1.0,
+                max_distance=float(request.distance_to_dilate),
             )
             if request.propagation_backend_provider is None
             else _propagate_labels(
@@ -278,12 +281,9 @@ class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
                 request.thresholded,
                 1.0,
                 backend_provider=request.propagation_backend_provider,
+                max_distance=float(request.distance_to_dilate),
             )
         )
-        distances = SecondaryDistanceTransformBackendStrategy.for_memory_type(
-            backend_provider=request.distance_backend_provider,
-        ).distance_to_foreground(request.labels)
-        labels_out[distances > _distance_limited_expansion_radius(request.distance_to_dilate)] = 0
         labels_out[request.labels > 0] = request.labels[request.labels > 0]
         return labels_out
 
@@ -569,13 +569,6 @@ def _filter_labels(labels_out: np.ndarray, primary_labels: np.ndarray) -> np.nda
         np.ascontiguousarray(aligned_primary, dtype=np.int32),
         max_out,
     )
-
-
-def _distance_limited_expansion_radius(distance_to_dilate: int) -> float:
-    """Convert CP's pixel-count expansion setting to a center-distance cutoff."""
-    if distance_to_dilate <= 0:
-        return 0.0
-    return float(distance_to_dilate) - 0.5
 
 
 @njit(cache=True)

@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, field
+from functools import lru_cache
 import logging
 import os
 from pathlib import Path
@@ -80,7 +81,7 @@ _SOURCE_CANDIDATE_PROCESS_CACHE: OrderedDict[
 ] = OrderedDict()
 _PIPELINE_START_PAYLOAD_CACHE_LIMIT = 64
 _PIPELINE_START_PAYLOAD_PROCESS_CACHE: OrderedDict[
-    tuple[str, tuple[str, ...]],
+    tuple[Hashable, ...],
     tuple[Any, ...],
 ] = OrderedDict()
 
@@ -124,9 +125,27 @@ class CellProfilerRuntimeAdapter:
         tuple["ParsedSourceCandidate", ...],
     ] = field(default_factory=dict, init=False, repr=False, compare=False)
     _pipeline_start_payload_cache: dict[
-        tuple[str, tuple[str, ...]],
+        tuple[Hashable, ...],
         tuple[Any, ...],
     ] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _image_cache: dict[tuple[str | None, str], NamedImage] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _object_cache: dict[tuple[str | None, str], ObjectLabelSet] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _measurement_cache: dict[tuple[Hashable, ...], tuple[MeasurementTable, ...]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_value_store, RuntimeValueStore):
@@ -274,17 +293,23 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> NamedImage:
+        cache_key = (group_key, name)
+        cached = self._image_cache.get(cache_key)
+        if cached is not None:
+            return cached
         record = self._query_context(group_key).resolve(
             name=name,
             kind=ArtifactKind.IMAGE,
         )
         schema = record.value.schema
-        return NamedImage(
+        image = NamedImage(
             name=name,
             data=record.value.data,
             dimensions=schema.dimensions,
             source_image_name=schema.source_image_name,
         )
+        self._image_cache[cache_key] = image
+        return image
 
     def add_objects(
         self,
@@ -338,11 +363,17 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> ObjectLabelSet:
+        cache_key = (group_key, name)
+        cached = self._object_cache.get(cache_key)
+        if cached is not None:
+            return cached
         record = self._query_context(group_key).resolve(
             name=name,
             kind=ArtifactKind.OBJECT_LABELS,
         )
-        return ObjectLabelSet.from_runtime_value(record.value)
+        objects = ObjectLabelSet.from_runtime_value(record.value)
+        self._object_cache[cache_key] = objects
+        return objects
 
     def add_measurements(
         self,
@@ -394,10 +425,16 @@ class CellProfilerRuntimeAdapter:
         group_key: str | None = None,
     ) -> tuple[MeasurementTable, ...]:
         """Return prior measurement tables whose subject is an object set."""
-        return runtime_measurement_tables_for_object(
+        cache_key = ("object", group_key, object_name)
+        cached = self._measurement_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        tables = runtime_measurement_tables_for_object(
             self._query_context(group_key),
             object_name,
         )
+        self._measurement_cache[cache_key] = tables
+        return tables
 
     def measurement_tables(
         self,
@@ -406,12 +443,19 @@ class CellProfilerRuntimeAdapter:
         match_group: bool = True,
     ) -> tuple[MeasurementTable, ...]:
         """Return measurement tables visible to the current runtime scope."""
-        return runtime_measurement_tables(
+        resolved_group_key = self.group_key if group_key is None else group_key
+        cache_key = ("all", resolved_group_key if match_group else None, match_group)
+        cached = self._measurement_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        tables = runtime_measurement_tables(
             self._measurement_query_context(
                 group_key=group_key,
                 match_group=match_group,
             )
         )
+        self._measurement_cache[cache_key] = tables
+        return tables
 
     def measurement_tables_for_scope(
         self,
@@ -422,7 +466,18 @@ class CellProfilerRuntimeAdapter:
         match_group: bool = True,
     ) -> tuple[MeasurementTable, ...]:
         """Return measurement tables for one generic semantic scope."""
-        return runtime_measurement_tables_for_scope(
+        resolved_group_key = self.group_key if group_key is None else group_key
+        cache_key = (
+            "scope",
+            resolved_group_key if match_group else None,
+            match_group,
+            scope,
+            name,
+        )
+        cached = self._measurement_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        tables = runtime_measurement_tables_for_scope(
             self._measurement_query_context(
                 group_key=group_key,
                 match_group=match_group,
@@ -430,6 +485,8 @@ class CellProfilerRuntimeAdapter:
             scope,
             name,
         )
+        self._measurement_cache[cache_key] = tables
+        return tables
 
     def add_relationship(
         self,
@@ -549,6 +606,7 @@ class CellProfilerRuntimeAdapter:
             path=plan.path,
             backend=self.backend,
         )
+        self._clear_runtime_query_caches()
         _log_adapter_profile(
             "adapter_runtime_store_replace",
             time.perf_counter() - store_started_at,
@@ -562,6 +620,11 @@ class CellProfilerRuntimeAdapter:
             kind=expected_kind.value,
         )
         return stored_value
+
+    def _clear_runtime_query_caches(self) -> None:
+        self._image_cache.clear()
+        self._object_cache.clear()
+        self._measurement_cache.clear()
 
     def _require_output_plan(
         self,
@@ -688,6 +751,7 @@ class SourceBindingResolver(ABC, metaclass=AutoRegisterMeta):
     origin_key: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_origin(cls, origin: SourceBindingOrigin) -> "SourceBindingResolver":
         return cls.__registry__[origin.value]()
 
@@ -822,6 +886,7 @@ class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
     loader_key: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_paths(
         cls,
         selected_paths: tuple[str, ...],
@@ -1327,12 +1392,19 @@ def _load_pipeline_start_stack(
 ) -> Any:
     if not selected_paths:
         raise RuntimeError("Pipeline-start source selection cannot load zero paths.")
+    current_step_payload = _select_current_step_source_stack(
+        adapter=adapter,
+        selected_paths=selected_paths,
+        current_image=current_image,
+    )
+    if current_step_payload is not None:
+        return current_step_payload
     backend = adapter.source_binding_context.pipeline_input_backend
     if backend is None:
         raise RuntimeError(
             "Pipeline-start source resolution requires pipeline_input_backend."
         )
-    cache_key = (backend, selected_paths)
+    cache_key = _pipeline_start_payload_cache_key(adapter, backend, selected_paths)
     loaded_payloads = adapter._pipeline_start_payload_cache.get(cache_key)
     if loaded_payloads is None:
         loaded_payloads = _PIPELINE_START_PAYLOAD_PROCESS_CACHE.get(cache_key)
@@ -1360,6 +1432,64 @@ def _load_pipeline_start_stack(
             f"{list(selected_paths)}."
         )
     return _restack_like_payload(loaded_payloads, current_image)
+
+
+def _select_current_step_source_stack(
+    *,
+    adapter: CellProfilerRuntimeAdapter,
+    selected_paths: tuple[str, ...],
+    current_image: Any,
+) -> Any | None:
+    """Return a current-stack slice when selected pipeline-start files are already loaded."""
+    context = adapter.source_binding_context
+    if not context.step_input_files or not context.step_input_source_paths:
+        return None
+    selected_indexes = _current_step_source_indexes(
+        step_input_files=context.step_input_files,
+        step_input_source_paths=context.step_input_source_paths,
+        selected_paths=selected_paths,
+    )
+    if selected_indexes is None:
+        return None
+    if len(context.step_input_files) == 1:
+        return _natural_step_input_payload(current_image)
+    slices = _unstack_payload(current_image)
+    return _restack_like_payload([slices[index] for index in selected_indexes], current_image)
+
+
+def _current_step_source_indexes(
+    *,
+    step_input_files: tuple[str, ...],
+    step_input_source_paths: Mapping[str, str],
+    selected_paths: tuple[str, ...],
+) -> tuple[int, ...] | None:
+    indexed_sources: dict[str, int] = {}
+    for index, step_path in enumerate(step_input_files):
+        source_path = step_input_source_paths.get(step_path, step_path)
+        indexed_sources[str(source_path)] = index
+    selected_indexes: list[int] = []
+    for selected_path in selected_paths:
+        index = indexed_sources.get(str(selected_path))
+        if index is None:
+            return None
+        selected_indexes.append(index)
+    return tuple(selected_indexes)
+
+
+def _pipeline_start_payload_cache_key(
+    adapter: CellProfilerRuntimeAdapter,
+    backend: str,
+    selected_paths: tuple[str, ...],
+) -> tuple[Hashable, ...]:
+    context = adapter.source_binding_context
+    return (
+        backend,
+        selected_paths,
+        context.step_input_dir,
+        tuple(sorted(context.step_input_source_paths.items())),
+        _frozen_metadata_by_path(context.source_metadata_by_path),
+        tuple(context.pipeline_input_files),
+    )
 
 
 def _matlab_numeric_arrays(
@@ -1466,6 +1596,7 @@ class SourceBindingMatchPlanResolver(ABC, metaclass=AutoRegisterMeta):
     method_key: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_method(
         cls,
         method: SourceBindingMatchMethod,

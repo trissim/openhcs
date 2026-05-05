@@ -126,6 +126,8 @@ class SecondaryPropagationBackendStrategy(
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
+        *,
+        max_distance: float | None = None,
     ) -> np.ndarray:
         """Propagate seed labels through a mask."""
 
@@ -149,6 +151,8 @@ class CentrosomeSecondaryPropagationBackendStrategy(
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
+        *,
+        max_distance: float | None = None,
     ) -> np.ndarray:
         import centrosome.propagate
 
@@ -160,6 +164,10 @@ class CentrosomeSecondaryPropagationBackendStrategy(
             mask,
             regularization,
         )
+        if max_distance is not None:
+            result = np.asarray(result).copy()
+            result[_distance > float(max_distance)] = 0
+            result[labels > 0] = labels[labels > 0]
         return np.asarray(result, dtype=np.int32)
 
 
@@ -182,6 +190,8 @@ class NumbaSecondaryPropagationBackendStrategy(
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
+        *,
+        max_distance: float | None = None,
     ) -> np.ndarray:
         image_array = np.asarray(image, dtype=np.float64)
         label_array = np.asarray(labels, dtype=np.int32)
@@ -199,6 +209,7 @@ class NumbaSecondaryPropagationBackendStrategy(
             np.ascontiguousarray(label_array),
             np.ascontiguousarray(mask_array),
             float(regularization),
+            -1.0 if max_distance is None else float(max_distance),
         )
 
 
@@ -485,6 +496,7 @@ def _propagate_labels_numba(
     seed_labels: np.ndarray,
     mask: np.ndarray,
     weight: float,
+    max_distance: float,
 ) -> np.ndarray:
     height, width = image.shape
     output = np.zeros((height, width), dtype=np.int32)
@@ -528,6 +540,8 @@ def _propagate_labels_numba(
             heap_xs,
             heap_size,
         )
+        if max_distance >= 0.0 and _value > max_distance:
+            break
         if output[y1, x1] != 0:
             continue
         output[y1, x1] = label

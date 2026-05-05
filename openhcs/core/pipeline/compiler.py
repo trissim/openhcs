@@ -163,6 +163,7 @@ _FUNCTION_REFERENCE_PRESERVED_ATTRS = (
     "__artifact_outputs__",
     "__runtime_adapter__",
     "__openhcs_prepare__",
+    "__openhcs_runtime_image_execution_mode__",
     "input_memory_type",
     "output_memory_type",
 )

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
+from dataclasses import dataclass, field, fields as dataclass_fields, is_dataclass
 from enum import Enum
 from functools import lru_cache
 from inspect import Parameter, signature, unwrap
@@ -174,11 +174,78 @@ def cellprofiler_runtime_adapter_factory(
     )
 
 
+@lru_cache(maxsize=None)
+def _declared_input_specs_for_contract(
+    contract: ModuleArtifactContract,
+) -> tuple[ArtifactSpec, ...]:
+    declared = tuple(contract.inputs)
+    runtime_extras = tuple(
+        spec for spec in contract.runtime_artifact_inputs if spec not in declared
+    )
+    return (*declared, *runtime_extras)
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerModuleExecutor:
     """Execute one generated CellProfiler module against a typed runtime adapter."""
 
     contract: ModuleArtifactContract
+    _canonical_module_name: str = field(init=False, repr=False, compare=False)
+    _declared_inputs: tuple[ArtifactSpec, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _object_inputs: tuple[ArtifactSpec, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _spatial_grid_inputs: tuple[ArtifactSpec, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _runtime_image_names_cache: tuple[str, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _runtime_image_name_set: frozenset[str] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _external_source_image_names_cache: tuple[str, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _external_source_object_names_cache: tuple[str, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _external_source_image_name_set: frozenset[str] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _external_source_object_name_set: frozenset[str] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _ordered_outputs: tuple[ArtifactSpec, ...] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _output_recorders: Mapping[ArtifactKind, "CellProfilerOutputRecorder"] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.contract, ModuleArtifactContract):
@@ -187,6 +254,84 @@ class CellProfilerModuleExecutor:
                 "ModuleArtifactContract, got "
                 f"{type(self.contract).__name__}."
             )
+        declared_inputs = _declared_input_specs_for_contract(self.contract)
+        runtime_image_names = tuple(
+            spec.name
+            for spec in _specs_of_kind(
+                self.contract.runtime_artifact_inputs,
+                ArtifactKind.IMAGE,
+            )
+        )
+        runtime_image_name_set = frozenset(runtime_image_names)
+        runtime_object_names = frozenset(
+            spec.name
+            for spec in _specs_of_kind(
+                self.contract.runtime_artifact_inputs,
+                ArtifactKind.OBJECT_LABELS,
+            )
+        )
+        ordered_outputs = _output_recording_order(self.contract.outputs)
+
+        object.__setattr__(
+            self,
+            "_canonical_module_name",
+            canonical_module_name(self.contract.module_name),
+        )
+        object.__setattr__(self, "_declared_inputs", declared_inputs)
+        object.__setattr__(
+            self,
+            "_object_inputs",
+            _specs_of_kind(declared_inputs, ArtifactKind.OBJECT_LABELS),
+        )
+        object.__setattr__(
+            self,
+            "_spatial_grid_inputs",
+            _specs_of_kind(declared_inputs, ArtifactKind.SPATIAL_GRID),
+        )
+        object.__setattr__(self, "_runtime_image_names_cache", runtime_image_names)
+        object.__setattr__(self, "_runtime_image_name_set", runtime_image_name_set)
+        object.__setattr__(
+            self,
+            "_external_source_image_names_cache",
+            external_image_names := tuple(
+                spec.name
+                for spec in _specs_of_kind(declared_inputs, ArtifactKind.IMAGE)
+                if spec.name not in runtime_image_name_set
+            ),
+        )
+        object.__setattr__(
+            self,
+            "_external_source_object_names_cache",
+            external_object_names := tuple(
+                spec.name
+                for spec in _specs_of_kind(
+                    self.contract.inputs,
+                    ArtifactKind.OBJECT_LABELS,
+                )
+                if spec.name not in runtime_object_names
+            ),
+        )
+        object.__setattr__(
+            self,
+            "_external_source_image_name_set",
+            frozenset(external_image_names),
+        )
+        object.__setattr__(
+            self,
+            "_external_source_object_name_set",
+            frozenset(external_object_names),
+        )
+        object.__setattr__(self, "_ordered_outputs", ordered_outputs)
+        object.__setattr__(
+            self,
+            "_output_recorders",
+            MappingProxyType(
+                {
+                    kind: CellProfilerOutputRecorder.for_kind(kind)
+                    for kind in {spec.kind for spec in ordered_outputs}
+                }
+            ),
+        )
 
     @property
     def module_name(self) -> str:
@@ -218,7 +363,7 @@ class CellProfilerModuleExecutor:
         self._runs_per_image_measurement(func)
         self._runs_per_object_measurement()
         for output in self.outputs:
-            CellProfilerOutputRecorder.for_kind(output.kind)
+            self._output_recorders[output.kind]
 
     def run(
         self,
@@ -892,7 +1037,7 @@ class CellProfilerModuleExecutor:
     ) -> tuple["CellProfilerMeasurementImage", ...]:
         if reference_domain is None:
             reference_domain = CellProfilerMeasurementImageDomain.SOURCE_IMAGE
-        runtime_image_names = frozenset(self._runtime_image_names())
+        runtime_image_names = self._runtime_image_name_set
         resolved_images: list[CellProfilerMeasurementImage] = []
         for spec in image_inputs:
             resolved_images.append(
@@ -931,10 +1076,7 @@ class CellProfilerModuleExecutor:
         )
 
     def _object_input_specs(self) -> tuple[ArtifactSpec, ...]:
-        return _specs_of_kind(
-            self._declared_input_specs(),
-            ArtifactKind.OBJECT_LABELS,
-        )
+        return self._object_inputs
 
     def _object_labels(
         self,
@@ -967,7 +1109,9 @@ class CellProfilerModuleExecutor:
         kwargs: Mapping[str, Any],
     ) -> dict[str, Any]:
         runtime_inputs = self._special_runtime_inputs(func)
-        object_input_policy = CellProfilerObjectInputPolicy.for_module(self.module_name)
+        object_input_policy = CellProfilerObjectInputPolicy.for_module(
+            self._canonical_module_name
+        )
         if not runtime_inputs:
             if object_input_policy.binds_without_declared_inputs:
                 return object_input_policy.bind(
@@ -977,9 +1121,7 @@ class CellProfilerModuleExecutor:
                         adapter=adapter,
                     kwargs=kwargs,
                     current_image=current_image,
-                    external_object_names=frozenset(
-                        self._external_source_object_names()
-                    ),
+                    external_object_names=self._external_source_object_name_set,
                     runtime_inputs=runtime_inputs,
                 )
             )
@@ -987,7 +1129,9 @@ class CellProfilerModuleExecutor:
 
         special_input_names = special_input_names_from_callable(func)
         if special_input_names:
-            return CellProfilerSpecialInputPolicy.for_module(self.module_name).bind(
+            return CellProfilerSpecialInputPolicy.for_module(
+                self._canonical_module_name
+            ).bind(
                 SpecialInputBindingRequest(
                     module_name=self.module_name,
                     parameter_names=special_input_names,
@@ -995,11 +1139,9 @@ class CellProfilerModuleExecutor:
                     adapter=adapter,
                     kwargs=kwargs,
                     current_image=current_image,
-                    external_image_names=frozenset(self._external_source_image_names()),
-                    external_object_names=frozenset(
-                        self._external_source_object_names()
-                    ),
-                    runtime_image_names=frozenset(self._runtime_image_names()),
+                    external_image_names=self._external_source_image_name_set,
+                    external_object_names=self._external_source_object_name_set,
+                    runtime_image_names=self._runtime_image_name_set,
                 )
             )
 
@@ -1028,7 +1170,7 @@ class CellProfilerModuleExecutor:
                 adapter=adapter,
                 kwargs=kwargs,
                 current_image=current_image,
-                external_object_names=frozenset(self._external_source_object_names()),
+                external_object_names=self._external_source_object_name_set,
                 runtime_inputs=runtime_inputs,
             )
         )
@@ -1081,7 +1223,7 @@ class CellProfilerModuleExecutor:
             outputs=len(self.outputs),
         )
         order_started_at = time.perf_counter()
-        ordered_outputs = _output_recording_order(self.outputs)
+        ordered_outputs = self._ordered_outputs
         _log_module_profile(
             "cp_output_recording_order",
             time.perf_counter() - order_started_at,
@@ -1091,7 +1233,7 @@ class CellProfilerModuleExecutor:
         )
         for spec in ordered_outputs:
             record_started_at = time.perf_counter()
-            CellProfilerOutputRecorder.for_kind(spec.kind).record(
+            self._output_recorders[spec.kind].record(
                 CellProfilerOutputRecordRequest(
                     executor=self,
                     adapter=adapter,
@@ -1122,10 +1264,7 @@ class CellProfilerModuleExecutor:
             payload = (
                 _object_only_reference_image(current_image)
                 if self._object_input_specs()
-                or _specs_of_kind(
-                    self._declared_input_specs(),
-                    ArtifactKind.SPATIAL_GRID,
-                )
+                or self._spatial_grid_inputs
                 else _cellprofiler_image_payload(current_image)
             )
             return CellProfilerImageRequest(
@@ -1135,13 +1274,7 @@ class CellProfilerModuleExecutor:
                 execution_mode=ImagePayloadExecutionMode.NATURAL,
             )
 
-        runtime_image_names = {
-            spec.name
-            for spec in _specs_of_kind(
-                self.runtime_artifact_inputs,
-                ArtifactKind.IMAGE,
-            )
-        }
+        runtime_image_names = self._runtime_image_name_set
         external_image_names = tuple(
             spec.name
             for spec in image_inputs
@@ -1179,7 +1312,7 @@ class CellProfilerModuleExecutor:
         )
         special_image_count = len(
             CellProfilerSpecialInputPolicy.for_module(
-                self.module_name
+                self._canonical_module_name
             ).special_image_inputs(
                 self.module_name,
                 func,
@@ -1195,14 +1328,8 @@ class CellProfilerModuleExecutor:
         adapter: CellProfilerRuntimeAdapter,
     ) -> str | None:
         source_names: list[str] = []
-        runtime_image_names = frozenset(
-            spec.name
-            for spec in _specs_of_kind(
-                self.runtime_artifact_inputs,
-                ArtifactKind.IMAGE,
-            )
-        )
-        external_image_names = frozenset(self._external_source_image_names())
+        runtime_image_names = self._runtime_image_name_set
+        external_image_names = self._external_source_image_name_set
         for spec in self._declared_input_specs():
             source_name = _artifact_kind_strategy(spec.kind).source_image_name(
                 RuntimeArtifactInputRequest(
@@ -1233,7 +1360,7 @@ class CellProfilerModuleExecutor:
             **kwargs,
             **self._runtime_input_kwargs(func, adapter, current_image, kwargs),
         }
-        if canonical_module_name(self.module_name) == "TrackObjects":
+        if self._canonical_module_name == "TrackObjects":
             source_image_name = (
                 image_request.source_image_name
                 or self._object_input_source_image_name(adapter)
@@ -1254,9 +1381,12 @@ class CellProfilerModuleExecutor:
         ):
             runtime_kwargs.setdefault("slice_by_slice", True)
         execution_mode = CellProfilerInvocationExecutionModePolicy.for_module(
-            self.module_name
+            self._canonical_module_name
         ).execution_mode(
-            default=image_request.execution_mode,
+            default=(
+                CallableContract.from_callable(func).runtime_image_execution_mode
+                or image_request.execution_mode
+            ),
             kwargs=runtime_kwargs,
         )
         return CellProfilerInvocationRequest(
@@ -1268,15 +1398,7 @@ class CellProfilerModuleExecutor:
         )
 
     def _external_source_image_names(self) -> tuple[str, ...]:
-        runtime_image_names = frozenset(self._runtime_image_names())
-        return tuple(
-            spec.name
-            for spec in _specs_of_kind(
-                self._declared_input_specs(),
-                ArtifactKind.IMAGE,
-            )
-            if spec.name not in runtime_image_names
-        )
+        return self._external_source_image_names_cache
 
     def _object_input_source_image_name(
         self,
@@ -1291,34 +1413,13 @@ class CellProfilerModuleExecutor:
         )
 
     def _external_source_object_names(self) -> tuple[str, ...]:
-        runtime_object_names = frozenset(
-            spec.name
-            for spec in _specs_of_kind(
-                self.runtime_artifact_inputs,
-                ArtifactKind.OBJECT_LABELS,
-            )
-        )
-        return tuple(
-            spec.name
-            for spec in _specs_of_kind(self.inputs, ArtifactKind.OBJECT_LABELS)
-            if spec.name not in runtime_object_names
-        )
+        return self._external_source_object_names_cache
 
     def _runtime_image_names(self) -> tuple[str, ...]:
-        return tuple(
-            spec.name
-            for spec in _specs_of_kind(
-                self.runtime_artifact_inputs,
-                ArtifactKind.IMAGE,
-            )
-        )
+        return self._runtime_image_names_cache
 
     def _declared_input_specs(self) -> tuple[ArtifactSpec, ...]:
-        declared = tuple(self.inputs)
-        runtime_extras = tuple(
-            spec for spec in self.runtime_artifact_inputs if spec not in declared
-        )
-        return (*declared, *runtime_extras)
+        return self._declared_inputs
 
 class CellProfilerInvocationExecutionModePolicy(ABC, metaclass=AutoRegisterMeta):
     """Nominal policy for modules whose settings change stack execution mode."""
@@ -1328,6 +1429,7 @@ class CellProfilerInvocationExecutionModePolicy(ABC, metaclass=AutoRegisterMeta)
     module_name: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_module(cls, module_name: str) -> "CellProfilerInvocationExecutionModePolicy":
         policy_type = cls.__registry__.get(
             canonical_module_name(module_name),
@@ -1390,6 +1492,7 @@ class CellProfilerImageExecutionStrategy(ABC, metaclass=AutoRegisterMeta):
     mode_key: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_mode(
         cls,
         mode: ImagePayloadExecutionMode,
@@ -1434,13 +1537,13 @@ class NaturalImageExecutionStrategy(CellProfilerImageExecutionStrategy):
             contract is ProcessingContract.PURE_2D
             and _slice_count_from_pure_2d_kwargs(kwargs) is not None
         ):
-            result = executor._execute_pure_2d(func, image, **dict(kwargs))
+            result = executor._execute_pure_2d(func, image, **kwargs)
         else:
             result = contract.execute(
                 executor,
                 func,
                 image,
-                **dict(kwargs),
+                **kwargs,
             )
         _log_module_profile(
             "cp_natural_contract_execute",
@@ -1464,7 +1567,7 @@ class FullStackImageExecutionStrategy(CellProfilerImageExecutionStrategy):
         image: Any,
         kwargs: Mapping[str, Any],
     ) -> Any:
-        return executor._execute_pure_3d(func, image, **dict(kwargs))
+        return executor._execute_pure_3d(func, image, **kwargs)
 
 
 class AlignedMultiImageStackExecutionStrategy(CellProfilerImageExecutionStrategy):
@@ -1781,6 +1884,7 @@ class RuntimeArtifactKindStrategy(ABC, metaclass=AutoRegisterMeta):
     kind: ClassVar[ArtifactKind | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_kind(cls, kind: ArtifactKind) -> "RuntimeArtifactKindStrategy":
         return cls.__registry__[kind]()
 
@@ -1997,6 +2101,7 @@ class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
     supported_non_object_input_kinds: ClassVar[frozenset[ArtifactKind]] = frozenset()
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_module(cls, module_name: str) -> "CellProfilerObjectInputPolicy":
         policy_type = cls.__registry__.get(
             canonical_module_name(module_name),
@@ -2120,6 +2225,7 @@ class CellProfilerObjectMeasurementRowPolicy(metaclass=AutoRegisterMeta):
     )
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_module(
         cls,
         module_name: str,
@@ -2452,23 +2558,42 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
         self,
         request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
+        started_at = time.perf_counter()
+        operand1_started_at = time.perf_counter()
+        operand1_value = _calculate_math_operand_value(
+            request.adapter,
+            request.kwargs,
+            feature_kwarg="operand1_feature",
+            object_kwarg="operand1_object_name",
+            object_inputs=request.object_inputs,
+            labels_for=request.labels_for,
+        )
+        _log_module_profile(
+            "calculate_math_operand_bind",
+            time.perf_counter() - operand1_started_at,
+            operand="1",
+        )
+        operand2_started_at = time.perf_counter()
+        operand2_value = _calculate_math_operand_value(
+            request.adapter,
+            request.kwargs,
+            feature_kwarg="operand2_feature",
+            object_kwarg="operand2_object_name",
+            object_inputs=request.object_inputs,
+            labels_for=request.labels_for,
+        )
+        _log_module_profile(
+            "calculate_math_operand_bind",
+            time.perf_counter() - operand2_started_at,
+            operand="2",
+        )
+        _log_module_profile(
+            "calculate_math_bind_total",
+            time.perf_counter() - started_at,
+        )
         return {
-            "operand1_value": _calculate_math_operand_value(
-                request.adapter,
-                request.kwargs,
-                feature_kwarg="operand1_feature",
-                object_kwarg="operand1_object_name",
-                object_inputs=request.object_inputs,
-                labels_for=request.labels_for,
-            ),
-            "operand2_value": _calculate_math_operand_value(
-                request.adapter,
-                request.kwargs,
-                feature_kwarg="operand2_feature",
-                object_kwarg="operand2_object_name",
-                object_inputs=request.object_inputs,
-                labels_for=request.labels_for,
-            ),
+            "operand1_value": operand1_value,
+            "operand2_value": operand2_value,
         }
 
 
@@ -2536,6 +2661,7 @@ class CellProfilerMeasurementRecordBuilder(ABC, metaclass=AutoRegisterMeta):
     module_name: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_module(
         cls,
         module_name: str,
@@ -2820,6 +2946,7 @@ class CellProfilerOutputRecorder(ABC, metaclass=AutoRegisterMeta):
     kind: ClassVar[ArtifactKind | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_kind(cls, kind: ArtifactKind) -> "CellProfilerOutputRecorder":
         recorder_type = cls.__registry__.get(kind)
         if recorder_type is None:
@@ -4602,6 +4729,7 @@ class CellProfilerSpecialInputPolicy(ABC, metaclass=AutoRegisterMeta):
     module_name: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_module(
         cls,
         module_name: str,
@@ -4863,13 +4991,34 @@ def _calculate_math_image_operand_value(
     adapter: CellProfilerRuntimeAdapter,
     feature_name: str,
 ) -> Any:
+    tables_started_at = time.perf_counter()
     measurement_tables = adapter.measurement_tables(match_group=False)
+    _log_module_profile(
+        "calculate_math_measurement_tables",
+        time.perf_counter() - tables_started_at,
+        feature=feature_name,
+        count=len(measurement_tables),
+    )
+    slice_started_at = time.perf_counter()
     slice_values = _calculate_math_image_operand_values_by_slice(
         measurement_tables,
         feature_name,
     )
+    _log_module_profile(
+        "calculate_math_image_operand_slices",
+        time.perf_counter() - slice_started_at,
+        feature=feature_name,
+        sliced=slice_values is not None,
+    )
     if slice_values is None:
-        return measurement_scalar_value_for_feature(measurement_tables, feature_name)
+        scalar_started_at = time.perf_counter()
+        scalar_value = measurement_scalar_value_for_feature(measurement_tables, feature_name)
+        _log_module_profile(
+            "calculate_math_image_operand_scalar",
+            time.perf_counter() - scalar_started_at,
+            feature=feature_name,
+        )
+        return scalar_value
     return _slice_aligned_measurement_values(slice_values)
 
 
@@ -4961,6 +5110,7 @@ class CellProfilerDualScopeMeasurementPolicy(ABC, metaclass=AutoRegisterMeta):
     image_function_name: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def for_module(
         cls,
         module_name: str,

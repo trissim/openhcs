@@ -681,6 +681,30 @@ def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages()
     ]
 
 
+def test_generator_can_ignore_saveimages_artifacts_for_value_only_runs():
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cellprofiler_generated_runtime_smoke",
+        source_cppipe=Path("cellprofiler_generated_runtime_smoke.cppipe"),
+        modules=_image_artifact_pipeline_modules(),
+        skipped_modules=[
+            _module(
+                5,
+                "SaveImages",
+                {"Select the image to save": OVERLAY_IMAGE},
+            )
+        ],
+        prune_dead_unmaterialized_artifact_steps=True,
+        materialize_skipped_save_images=False,
+    )
+
+    assert 'name="ConvertObjectsToImage"' not in generated.code
+    assert 'name="Opening"' not in generated.code
+    assert 'name="OverlayOutlines"' not in generated.code
+    assert [contract.module_name for contract in generated.artifact_contracts] == [
+        IDENTIFY_PRIMARY_OBJECTS
+    ]
+
+
 def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
     generated = _generated_pipeline(_gray_to_color_pipeline_modules())
     namespace = _pipeline_namespace(generated)

@@ -296,6 +296,7 @@ class OpenHCSAdapter(ToolAdapter):
                     prune_dead_unmaterialized_artifact_steps=(
                         not request.compare_image_outputs
                     ),
+                    materialize_skipped_save_images=request.compare_image_outputs,
                 )
         except ValueError as exc:
             raise ToolExecutionError(
@@ -389,6 +390,7 @@ class OpenHCSAdapter(ToolAdapter):
                         prepared,
                         execution,
                         execution_output_root,
+                        validate_image_exports=request.compare_image_outputs,
                     )
             except CPPipeExecutionValidationError as exc:
                 raise ToolExecutionError(str(exc)) from exc

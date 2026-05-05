@@ -7,6 +7,7 @@ from dataclasses import dataclass, fields, is_dataclass
 from functools import lru_cache
 import re
 from typing import Any
+from weakref import WeakKeyDictionary
 
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.runtime_semantics import MeasurementScope
@@ -54,6 +55,10 @@ MEASUREMENT_OBJECT_ID_FIELDS = (
 )
 MEASUREMENT_UNQUALIFIED_SOURCE_NAMES = frozenset(("", MeasurementScope.IMAGE.value))
 _COLUMNAR_RECORD_ORIENTATION = "records"
+_MEASUREMENT_TABLE_CACHE: WeakKeyDictionary[
+    RuntimeValueStore,
+    dict[tuple[int, str, str | None], tuple[MeasurementTable, ...]],
+] = WeakKeyDictionary()
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,10 +260,20 @@ def runtime_measurement_tables(
     context: RuntimeArtifactQueryContext,
 ) -> tuple[MeasurementTable, ...]:
     """Return all measurement tables in a runtime query context."""
-    return tuple(
+    cache_key = (context.store.revision, context.axis_id, context.group_key)
+    store_cache = _MEASUREMENT_TABLE_CACHE.setdefault(context.store, {})
+    cached = store_cache.get(cache_key)
+    if cached is not None:
+        return cached
+    tables = tuple(
         MeasurementTable.from_runtime_value(record.value)
         for record in context.find(kind=ArtifactKind.MEASUREMENTS)
     )
+    for key in tuple(store_cache):
+        if key[0] != context.store.revision:
+            del store_cache[key]
+    store_cache[cache_key] = tables
+    return tables
 
 
 def runtime_measurement_tables_for_object(

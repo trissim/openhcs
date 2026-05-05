@@ -1022,15 +1022,17 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
                         clipped = delta
                     elif clipped > 1.0:
                         clipped = 1.0
-                    log_value = minval_log
+                    weighted_log_value = minval_log
+                    entropy_log_value = math.log2(clipped)
                     log_delta_value = math.log2(clipped + delta)
                 else:
-                    log_value = log_values[code]
+                    weighted_log_value = log_values[code]
+                    entropy_log_value = weighted_log_value
                     log_delta_value = log_delta_values[code]
                 noise_value = noise[y, x]
                 log_smoothed_value = (
                     log_delta_value * noise_value
-                    + (1.0 - noise_value) * log_value
+                    + (1.0 - noise_value) * entropy_log_value
                 )
                 if log_smoothed_value > 0.0:
                     log_smoothed_value = 0.0
@@ -1041,13 +1043,13 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
                 if binary_image[y, x]:
                     fg_count += 1
                     foreground_count += 1
-                    fg_sum += log_value
-                    fg_sumsq += log_value * log_value
+                    fg_sum += weighted_log_value
+                    fg_sumsq += weighted_log_value * weighted_log_value
                 else:
                     bg_count += 1
                     background_count += 1
-                    bg_sum += log_value
-                    bg_sumsq += log_value * log_value
+                    bg_sum += weighted_log_value
+                    bg_sumsq += weighted_log_value * weighted_log_value
 
         if fg_count == 0 and bg_count == 0:
             weighted_variance = 0.0
@@ -1087,15 +1089,15 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
                     clipped = delta
                 elif clipped > 1.0:
                     clipped = 1.0
-                log_value = math.log2(clipped)
+                entropy_log_value = math.log2(clipped)
                 log_delta_value = math.log2(clipped + delta)
             else:
-                log_value = log_values[code]
+                entropy_log_value = log_values[code]
                 log_delta_value = log_delta_values[code]
             noise_value = noise[y, x]
             log_smoothed_value = (
                 log_delta_value * noise_value
-                + (1.0 - noise_value) * log_value
+                + (1.0 - noise_value) * entropy_log_value
             )
             if log_smoothed_value > 0.0:
                 log_smoothed_value = 0.0

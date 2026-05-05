@@ -53,6 +53,12 @@ from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
 logger = logging.getLogger(__name__)
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+PROCESSING_CONTEXT_OWNER_NAME = ProcessingContext.__name__
+ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
+ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
+_CALLABLE_PARAMETER_NAMES: WeakKeyDictionary[Callable, frozenset[str]] = (
+    WeakKeyDictionary()
+)
 
 
 def _runtime_profile_enabled() -> bool:
@@ -65,11 +71,14 @@ def _log_runtime_profile(label: str, seconds: float, **fields: Any) -> None:
     field_text = " ".join(f"{key}={value}" for key, value in fields.items())
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
-PROCESSING_CONTEXT_OWNER_NAME = ProcessingContext.__name__
 
-
-ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
-ArtifactOutputPlans = Mapping[str, ArtifactOutputPlan]
+def _callable_parameter_names(func: Callable) -> frozenset[str]:
+    """Return cached callable parameter names for runtime adapter injection."""
+    names = _CALLABLE_PARAMETER_NAMES.get(func)
+    if names is None:
+        names = frozenset(inspect.signature(func).parameters)
+        _CALLABLE_PARAMETER_NAMES[func] = names
+    return names
 
 
 @dataclass(frozen=True)
@@ -400,13 +409,13 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                 kind=input_plan.kind.value,
             )
 
-    sig = inspect.signature(func_callable)
-    if "context" in sig.parameters:
+    parameter_names = _callable_parameter_names(func_callable)
+    if "context" in parameter_names:
         final_kwargs["context"] = context
 
     if request.runtime_adapter is not None:
         adapter_parameter = request.runtime_adapter.parameter_name
-        if adapter_parameter not in sig.parameters:
+        if adapter_parameter not in parameter_names:
             raise TypeError(
                 f"{func_callable.__name__} declares runtime adapter parameter "
                 f"'{adapter_parameter}', but its signature does not accept it."
