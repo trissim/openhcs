@@ -6,13 +6,15 @@ leaving a ring shape.
 """
 
 import numpy as np
-from typing import Tuple
+from typing import Any, Callable, Mapping, Tuple
 from dataclasses import dataclass
+from numba import njit
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
     object_label_parent_child_payload,
 )
+from openhcs.core.runtime_values import image_payload_data
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.outlines import ObjectOutlineBackendStrategy
 
@@ -64,6 +66,155 @@ def _parent_child_relationship(
         child_labels,
         child_region_labels=parent_context_labels,
     )
+
+
+def _label_stack_view(value: Any, slice_count: int) -> np.ndarray | None:
+    array = np.asarray(image_payload_data(value), dtype=np.int32)
+    if array.ndim == 3 and array.shape[0] == slice_count:
+        return np.ascontiguousarray(array)
+    if array.ndim == 2:
+        return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
+    return None
+
+
+def _identify_tertiary_objects_batch(
+    func: Callable[..., Any],
+    slices_2d: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+    slice_count: int,
+    execute_slice: Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
+) -> list[Any]:
+    primary_stack = _label_stack_view(kwargs["primary_labels"], slice_count)
+    secondary_stack = _label_stack_view(kwargs["secondary_labels"], slice_count)
+    if primary_stack is None or secondary_stack is None:
+        return [
+            execute_slice(func, slice_2d, kwargs, slice_index, slice_count)
+            for slice_index, slice_2d in enumerate(slices_2d)
+        ]
+    if primary_stack.shape != secondary_stack.shape:
+        raise ValueError(
+            "Primary and secondary label stacks must match. "
+            f"Got {primary_stack.shape} vs {secondary_stack.shape}."
+        )
+
+    tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts = (
+        _tertiary_stack_numba(
+            primary_stack,
+            secondary_stack,
+            bool(kwargs.get("shrink_primary", True)),
+        )
+    )
+
+    return [
+        (
+            slices_2d[slice_index],
+            _parent_child_relationship(
+                secondary_stack[slice_index],
+                tertiary_stack[slice_index],
+            ),
+            _parent_child_relationship(
+                primary_stack[slice_index],
+                tertiary_stack[slice_index],
+                parent_context_labels=secondary_stack[slice_index],
+            ),
+            TertiaryObjectStats(
+                slice_index=slice_index,
+                object_count=int(object_counts[slice_index]),
+                mean_area=float(mean_areas[slice_index]),
+                primary_parent_count=int(primary_counts[slice_index]),
+                secondary_parent_count=int(secondary_counts[slice_index]),
+            ),
+            tertiary_stack[slice_index],
+        )
+        for slice_index in range(slice_count)
+    ]
+
+
+@njit(cache=True)
+def _tertiary_stack_numba(
+    primary_stack: np.ndarray,
+    secondary_stack: np.ndarray,
+    shrink_primary: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    slice_count, height, width = secondary_stack.shape
+    max_primary = 0
+    max_secondary = 0
+    for z in range(slice_count):
+        for y in range(height):
+            for x in range(width):
+                primary_label = primary_stack[z, y, x]
+                secondary_label = secondary_stack[z, y, x]
+                if primary_label > max_primary:
+                    max_primary = primary_label
+                if secondary_label > max_secondary:
+                    max_secondary = secondary_label
+
+    tertiary_stack = np.zeros_like(secondary_stack)
+    primary_present = np.zeros((slice_count, max_primary + 1), dtype=np.uint8)
+    secondary_present = np.zeros((slice_count, max_secondary + 1), dtype=np.uint8)
+    tertiary_present = np.zeros((slice_count, max_secondary + 1), dtype=np.uint8)
+    tertiary_areas = np.zeros((slice_count, max_secondary + 1), dtype=np.int64)
+    first_y = np.full((slice_count, max_secondary + 1), -1, dtype=np.int64)
+    first_x = np.full((slice_count, max_secondary + 1), -1, dtype=np.int64)
+
+    for z in range(slice_count):
+        for y in range(height):
+            for x in range(width):
+                primary_label = primary_stack[z, y, x]
+                secondary_label = secondary_stack[z, y, x]
+                if primary_label > 0:
+                    primary_present[z, primary_label] = 1
+                if secondary_label > 0:
+                    secondary_present[z, secondary_label] = 1
+                    if first_y[z, secondary_label] < 0:
+                        first_y[z, secondary_label] = y
+                        first_x[z, secondary_label] = x
+
+                keep_pixel = primary_label <= 0
+                if shrink_primary and primary_label > 0:
+                    for dy in range(-1, 2):
+                        ny = y + dy
+                        for dx in range(-1, 2):
+                            nx = x + dx
+                            if ny < 0 or ny >= height or nx < 0 or nx >= width:
+                                keep_pixel = True
+                            elif primary_stack[z, ny, nx] != primary_label:
+                                keep_pixel = True
+
+                if keep_pixel and secondary_label > 0:
+                    tertiary_stack[z, y, x] = secondary_label
+                    tertiary_present[z, secondary_label] = 1
+                    tertiary_areas[z, secondary_label] += 1
+
+    for z in range(slice_count):
+        for label in range(1, max_secondary + 1):
+            if secondary_present[z, label] == 0 or tertiary_present[z, label] != 0:
+                continue
+            y = first_y[z, label]
+            x = first_x[z, label]
+            if y >= 0:
+                tertiary_stack[z, y, x] = label
+                tertiary_present[z, label] = 1
+                tertiary_areas[z, label] += 1
+
+    object_counts = np.zeros(slice_count, dtype=np.int64)
+    mean_areas = np.zeros(slice_count, dtype=np.float64)
+    primary_counts = np.zeros(slice_count, dtype=np.int64)
+    secondary_counts = np.zeros(slice_count, dtype=np.int64)
+    for z in range(slice_count):
+        total_area = 0
+        for label in range(1, max_primary + 1):
+            if primary_present[z, label] != 0:
+                primary_counts[z] += 1
+        for label in range(1, max_secondary + 1):
+            if secondary_present[z, label] != 0:
+                secondary_counts[z] += 1
+            if tertiary_present[z, label] != 0:
+                object_counts[z] += 1
+                total_area += tertiary_areas[z, label]
+        if object_counts[z] > 0:
+            mean_areas[z] = total_area / object_counts[z]
+    return tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts
 
 
 @numpy
@@ -196,3 +347,8 @@ def identify_tertiary_objects(
         stats,
         tertiary_labels_out,
     )
+
+
+identify_tertiary_objects.__openhcs_pure_2d_batch_executor__ = (
+    _identify_tertiary_objects_batch
+)

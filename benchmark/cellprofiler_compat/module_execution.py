@@ -60,7 +60,6 @@ from openhcs.core.runtime_artifact_queries import (
     measurement_rows,
     measurement_scalar_value_for_feature,
     measurement_table_for_slice,
-    measurement_values_for_label_slices,
     measurement_values_for_feature,
 )
 from openhcs.core.runtime_semantics import (
@@ -4798,11 +4797,10 @@ class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         return {
             "labels": labels,
             "measurements": _slice_aligned_measurement_values(
-                measurement_values_for_label_slices(
-                    request.adapter.measurement_tables_for_object(object_spec.name),
+                request.adapter.measurement_values_for_label_slices(
+                    object_spec.name,
                     feature_name,
                     labels,
-                    object_name=object_spec.name,
                 )
             ),
         }
@@ -4834,9 +4832,6 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
         _require_exact_object_count(request.module_name, object_inputs, 1)
         object_spec = object_inputs[0]
         labels = request.labels_for(object_spec)
-        measurement_tables = request.adapter.measurement_tables_for_object(
-            object_spec.name
-        )
         if "classification_rules" in request.kwargs:
             rules = request.kwargs["classification_rules"]
             if not isinstance(rules, (tuple, list)):
@@ -4848,14 +4843,13 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
                 "labels": labels,
                 "measurement_values_by_rule": tuple(
                     _slice_aligned_measurement_values(
-                        measurement_values_for_label_slices(
-                            measurement_tables,
+                        request.adapter.measurement_values_for_label_slices(
+                            object_spec.name,
                             _classification_rule_measurement_feature(
                                 rule,
                                 request.module_name,
                             ),
                             labels,
-                            object_name=object_spec.name,
                         )
                     )
                     for rule in rules
@@ -4865,15 +4859,14 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
             "labels": labels,
             **{
                 parameter_name: _slice_aligned_measurement_values(
-                    measurement_values_for_label_slices(
-                        measurement_tables,
+                    request.adapter.measurement_values_for_label_slices(
+                        object_spec.name,
                         _required_string_kwarg(
                             request.kwargs,
                             kwarg_name,
                             request.module_name,
                         ),
                         labels,
-                        object_name=object_spec.name,
                     )
                 )
                 for parameter_name, kwarg_name in (
@@ -4971,11 +4964,10 @@ def _calculate_math_operand_value(
     label_spec = _spec_by_name(object_inputs, object_name)
     if label_spec is not None and labels_for is not None:
         return _slice_aligned_measurement_values(
-            measurement_values_for_label_slices(
-                adapter.measurement_tables_for_object(object_name),
+            adapter.measurement_values_for_label_slices(
+                object_name,
                 feature_name,
                 labels_for(label_spec),
-                object_name=object_name,
             )
         )
     values = measurement_values_for_feature(
@@ -5600,19 +5592,31 @@ class CellProfilerFunctionContractExecutor:
 
         slice_count = len(slices_2d)
         slice_execute_seconds = 0.0
-        slice_results = []
-        for slice_index, slice_2d in enumerate(slices_2d):
+        batch_executor = _pure_2d_batch_executor(func)
+        if batch_executor is not None and slice_count > 1:
             slice_started_at = time.perf_counter()
-            slice_results.append(
-                _rewrite_slice_index(
-                    func(
-                        slice_2d,
-                        **_slice_pure_2d_kwargs(kwargs, slice_index, slice_count),
-                    ),
-                    slice_index,
-                )
+            slice_results = batch_executor(
+                func,
+                tuple(slices_2d),
+                kwargs,
+                slice_count,
+                _execute_pure_2d_slice,
             )
-            slice_execute_seconds += time.perf_counter() - slice_started_at
+            slice_execute_seconds = time.perf_counter() - slice_started_at
+        else:
+            slice_results = []
+            for slice_index, slice_2d in enumerate(slices_2d):
+                slice_started_at = time.perf_counter()
+                slice_results.append(
+                    _execute_pure_2d_slice(
+                        func,
+                        slice_2d,
+                        kwargs,
+                        slice_index,
+                        slice_count,
+                    )
+                )
+                slice_execute_seconds += time.perf_counter() - slice_started_at
         _log_module_profile(
             "cp_pure_2d_slice_execute",
             slice_execute_seconds,
@@ -5674,6 +5678,38 @@ class CellProfilerFunctionContractExecutor:
             mask=result_mask,
             metadata=result_metadata,
         )
+
+
+def _pure_2d_batch_executor(
+    func: Callable[..., Any],
+) -> Callable[
+    [
+        Callable[..., Any],
+        tuple[Any, ...],
+        Mapping[str, Any],
+        int,
+        Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
+    ],
+    list[Any],
+] | None:
+    executor = getattr(func, "__openhcs_pure_2d_batch_executor__", None)
+    return executor if callable(executor) else None
+
+
+def _execute_pure_2d_slice(
+    func: Callable[..., Any],
+    slice_2d: Any,
+    kwargs: Mapping[str, Any],
+    slice_index: int,
+    slice_count: int,
+) -> Any:
+    return _rewrite_slice_index(
+        func(
+            slice_2d,
+            **_slice_pure_2d_kwargs(kwargs, slice_index, slice_count),
+        ),
+        slice_index,
+    )
 
 
 def _processing_contract_for_callable(func: Callable[..., Any]) -> ProcessingContract:

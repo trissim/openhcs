@@ -47,13 +47,19 @@ from openhcs.core.runtime_stores import (
 )
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
+    measurement_value_index,
+    measurement_values_for_label_slices,
     runtime_measurement_tables,
     runtime_measurement_tables_for_scope,
     runtime_measurement_tables_for_object,
     runtime_relationship,
     runtime_spatial_grid,
 )
-from openhcs.core.runtime_semantics import MeasurementScope, RelationshipSemantics
+from openhcs.core.runtime_semantics import (
+    MeasurementScope,
+    RelationshipSemantics,
+    dense_object_label_id_domain,
+)
 from openhcs.core.runtime_values import (
     FieldSpec,
     MeasurementTable,
@@ -140,7 +146,13 @@ class CellProfilerRuntimeAdapter:
         repr=False,
         compare=False,
     )
-    _measurement_cache: dict[tuple[Hashable, ...], tuple[MeasurementTable, ...]] = field(
+    _measurement_cache: dict[tuple[Hashable, ...], Any] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+    _label_domain_cache: dict[int, tuple[int, ...]] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -436,6 +448,85 @@ class CellProfilerRuntimeAdapter:
         self._measurement_cache[cache_key] = tables
         return tables
 
+    def measurement_values_for_label_slices(
+        self,
+        object_name: str,
+        feature_name: str,
+        labels: object,
+        *,
+        group_key: str | None = None,
+    ) -> tuple[Any, ...]:
+        """Return object measurements aligned to label planes with adapter caching."""
+        label_array = np.asarray(labels)
+        if label_array.ndim <= 2:
+            return (
+                self._measurement_values_for_label_plane(
+                    object_name,
+                    feature_name,
+                    labels,
+                    group_key=group_key,
+                ),
+            )
+        resolved_group_key = self.group_key if group_key is None else group_key
+        cache_key = (
+            "object_label_values",
+            resolved_group_key,
+            object_name,
+            feature_name,
+            id(labels),
+        )
+        cached = self._measurement_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        values = measurement_values_for_label_slices(
+            self.measurement_tables_for_object(object_name, group_key=group_key),
+            feature_name,
+            labels,
+            object_name=object_name,
+        )
+        self._measurement_cache[cache_key] = values
+        return values
+
+    def _measurement_values_for_label_plane(
+        self,
+        object_name: str,
+        feature_name: str,
+        labels: object,
+        *,
+        group_key: str | None,
+    ) -> Any:
+        resolved_group_key = self.group_key if group_key is None else group_key
+        domain = self._dense_label_domain(labels)
+        cache_key = (
+            "object_feature_index",
+            resolved_group_key,
+            object_name,
+            feature_name,
+        )
+        value_index = self._measurement_cache.get(cache_key)
+        if value_index is None:
+            value_index = measurement_value_index(
+                self.measurement_tables_for_object(object_name, group_key=group_key),
+                feature_name,
+                object_name=object_name,
+            )
+            self._measurement_cache[cache_key] = value_index
+        values_by_label, positional_values = value_index
+        if values_by_label:
+            return np.array([values_by_label.get(label, np.nan) for label in domain])
+        if positional_values:
+            return np.array(positional_values[: len(domain)])
+        raise ValueError(f"Could not resolve measurement feature {feature_name!r}.")
+
+    def _dense_label_domain(self, labels: object) -> tuple[int, ...]:
+        cache_key = id(labels)
+        cached = self._label_domain_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        domain = dense_object_label_id_domain(labels)
+        self._label_domain_cache[cache_key] = domain
+        return domain
+
     def measurement_tables(
         self,
         *,
@@ -625,6 +716,7 @@ class CellProfilerRuntimeAdapter:
         self._image_cache.clear()
         self._object_cache.clear()
         self._measurement_cache.clear()
+        self._label_domain_cache.clear()
 
     def _require_output_plan(
         self,

@@ -36,6 +36,7 @@ from benchmark.cellprofiler_library.functions.thresholding import (
     cellprofiler_threshold,
     cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
+    unit_interval_scale_for_threshold_diagnostics,
 )
 from benchmark.cellprofiler_compat.perf_fixtures import capture_array_fixture
 from benchmark.cellprofiler_library.functions.watershed import (
@@ -342,7 +343,7 @@ def identify_primary_objects(
         else ImagePayloadMetadata()
     )
     raw_image_data = np.asarray(image_payload_data(image))
-    diagnostics_unit_interval_scale = _unit_interval_scale_for_diagnostics(
+    diagnostics_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
         raw_image_data,
         image_payload_metadata(image),
     )
@@ -692,24 +693,6 @@ def _label_area_statistics(labels: np.ndarray) -> tuple[float, float, float]:
         float(np.median(positive_areas)),
         float(np.sum(positive_areas)),
     )
-
-
-def _unit_interval_scale_for_diagnostics(
-    image_data: np.ndarray,
-    metadata: ImagePayloadMetadata,
-) -> int | None:
-    """Return a proof scale for exact unit-interval threshold diagnostics."""
-    metadata_scale = metadata.unit_interval_intensity_scale_for_channel(0)
-    if metadata_scale is not None and metadata_scale > 1:
-        return int(metadata_scale)
-    if not np.issubdtype(np.asarray(image_data).dtype, np.integer):
-        return None
-    from openhcs.core.runtime_values import image_intensity_scale_for_dtype
-
-    scale = image_intensity_scale_for_dtype(np.asarray(image_data).dtype)
-    if scale is None or scale <= 1:
-        return None
-    return int(scale)
 
 
 def _filter_labels_below_minimum_diameter(

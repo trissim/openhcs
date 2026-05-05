@@ -88,19 +88,14 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
         if image_array.shape != label_array.shape:
             raise ValueError("image and labels must have matching shapes.")
 
-        object_labels = np.unique(label_array)
-        object_labels = np.ascontiguousarray(
-            object_labels[object_labels > 0],
-            dtype=np.int64,
-        )
+        max_label = int(label_array.max()) if label_array.size else 0
+        object_labels = np.arange(1, max_label + 1, dtype=np.int64)
         object_count = int(object_labels.size)
         if object_count == 0:
             return _empty_intensity_arrays(object_labels)
 
-        max_label = int(label_array.max())
         label_to_index = np.full(max_label + 1, -1, dtype=np.int64)
-        for index, object_label in enumerate(object_labels):
-            label_to_index[int(object_label)] = index
+        label_to_index[1:] = np.arange(object_count, dtype=np.int64)
 
         arrays = _object_intensity_scan_numba(
             image_array,
@@ -238,10 +233,10 @@ def _object_intensity_quantiles_grouped_numba(
         count = int(counts[index])
         if count <= 0:
             continue
-        sorted_group = np.sort(values[start:start + count].copy())
-        lower[index] = _quantile_from_dense_sorted_group(sorted_group, 0.25)
-        median[index] = _quantile_from_dense_sorted_group(sorted_group, 0.5)
-        upper[index] = _quantile_from_dense_sorted_group(sorted_group, 0.75)
+        group = values[start:start + count].copy()
+        lower[index] = _quantile_from_dense_group_partition(group, 0.25)
+        median[index] = _quantile_from_dense_group_partition(group, 0.5)
+        upper[index] = _quantile_from_dense_group_partition(group, 0.75)
 
     write_offsets = offsets[:-1].copy()
     deviations = np.empty(total_count, dtype=np.float64)
@@ -265,10 +260,35 @@ def _object_intensity_quantiles_grouped_numba(
         count = int(counts[index])
         if count <= 0:
             continue
-        sorted_group = np.sort(deviations[start:start + count].copy())
-        mad[index] = _quantile_from_dense_sorted_group(sorted_group, 0.5)
+        group = deviations[start:start + count].copy()
+        mad[index] = _quantile_from_dense_group_partition(group, 0.5)
 
     return lower, median, upper, mad
+
+
+@njit(cache=True)
+def _quantile_from_dense_group_partition(
+    values: np.ndarray,
+    fraction: float,
+) -> float:
+    count = values.size
+    if count <= 0:
+        return 0.0
+    qindex = count * fraction
+    low = int(qindex)
+    qfraction = qindex - low
+    last = count - 1
+    if low >= last:
+        return _partition_value(values, last)
+    low_value = _partition_value(values, low)
+    high_value = _partition_value(values, low + 1)
+    return low_value * (1.0 - qfraction) + high_value * qfraction
+
+
+@njit(cache=True)
+def _partition_value(values: np.ndarray, index: int) -> float:
+    partitioned = np.partition(values.copy(), index)
+    return float(partitioned[index])
 
 
 @njit(cache=True)

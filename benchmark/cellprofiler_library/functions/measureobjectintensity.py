@@ -4,11 +4,12 @@ Measures intensity features for identified objects in grayscale images.
 """
 
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Any, Callable, List, Mapping, Tuple
 
 import numpy as np
 
 from openhcs.core.memory import numpy
+from openhcs.core.runtime_values import image_payload_data
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity import object_intensity_backend
 
@@ -67,6 +68,79 @@ def _first_scalar_position(position) -> int:
     raise ValueError(f"Cannot extract scalar position from {position!r}.")
 
 
+def _measure_object_intensity_batch(
+    func: Callable[..., Any],
+    slices_2d: tuple[Any, ...],
+    kwargs: Mapping[str, Any],
+    slice_count: int,
+    execute_slice: Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
+) -> list[Any]:
+    label_stack = _measurement_label_stack(kwargs["labels"], slice_count)
+    if label_stack is None:
+        return [
+            execute_slice(func, slice_2d, kwargs, slice_index, slice_count)
+            for slice_index, slice_2d in enumerate(slices_2d)
+        ]
+
+    backend = object_intensity_backend(
+        backend_provider=kwargs.get("object_intensity_backend_provider"),
+    )
+    results: list[Any] = []
+    for slice_index, slice_2d in enumerate(slices_2d):
+        image_plane = _single_plane(np.asarray(image_payload_data(slice_2d)), "image")
+        arrays = backend.measure(
+            image_plane,
+            label_stack[slice_index],
+        )
+        measurements = _measurements_from_arrays(arrays, slice_index)
+        results.append((slice_2d, measurements))
+    return results
+
+
+def _measurement_label_stack(labels: Any, slice_count: int) -> np.ndarray | None:
+    label_array = np.asarray(image_payload_data(labels), dtype=np.int32)
+    if label_array.ndim == 3 and label_array.shape[0] == slice_count:
+        return np.ascontiguousarray(label_array)
+    if label_array.ndim == 2:
+        return np.ascontiguousarray(
+            np.broadcast_to(label_array, (slice_count, *label_array.shape))
+        )
+    return None
+
+
+def _measurements_from_arrays(arrays: Any, slice_index: int) -> list[ObjectIntensityMeasurement]:
+    if arrays.object_labels.size == 0:
+        return []
+    return [
+        ObjectIntensityMeasurement(
+            slice_index=slice_index,
+            object_label=int(label),
+            integrated_intensity=float(arrays.integrated_intensity[index]),
+            mean_intensity=float(arrays.mean_intensity[index]),
+            std_intensity=float(arrays.std_intensity[index]),
+            min_intensity=float(arrays.min_intensity[index]),
+            max_intensity=float(arrays.max_intensity[index]),
+            integrated_intensity_edge=float(arrays.integrated_intensity_edge[index]),
+            mean_intensity_edge=float(arrays.mean_intensity_edge[index]),
+            std_intensity_edge=float(arrays.std_intensity_edge[index]),
+            min_intensity_edge=float(arrays.min_intensity_edge[index]),
+            max_intensity_edge=float(arrays.max_intensity_edge[index]),
+            mass_displacement=float(arrays.mass_displacement[index]),
+            lower_quartile_intensity=float(arrays.lower_quartile_intensity[index]),
+            median_intensity=float(arrays.median_intensity[index]),
+            mad_intensity=float(arrays.mad_intensity[index]),
+            upper_quartile_intensity=float(arrays.upper_quartile_intensity[index]),
+            center_mass_intensity_x=float(arrays.center_mass_intensity_x[index]),
+            center_mass_intensity_y=float(arrays.center_mass_intensity_y[index]),
+            center_mass_intensity_z=0.0,
+            max_intensity_x=float(arrays.max_intensity_x[index]),
+            max_intensity_y=float(arrays.max_intensity_y[index]),
+            max_intensity_z=0.0,
+        )
+        for index, label in enumerate(arrays.object_labels)
+    ]
+
+
 @numpy
 def measure_object_intensity(
     image: np.ndarray,
@@ -98,40 +172,7 @@ def measure_object_intensity(
     if intensity_arrays.object_labels.size == 0:
         return image, []
     
-    # Build measurement list
-    measurements = []
-    for i, label in enumerate(intensity_arrays.object_labels):
-        measurements.append(ObjectIntensityMeasurement(
-            slice_index=0,
-            object_label=int(label),
-            integrated_intensity=float(intensity_arrays.integrated_intensity[i]),
-            mean_intensity=float(intensity_arrays.mean_intensity[i]),
-            std_intensity=float(intensity_arrays.std_intensity[i]),
-            min_intensity=float(intensity_arrays.min_intensity[i]),
-            max_intensity=float(intensity_arrays.max_intensity[i]),
-            integrated_intensity_edge=float(intensity_arrays.integrated_intensity_edge[i]),
-            mean_intensity_edge=float(intensity_arrays.mean_intensity_edge[i]),
-            std_intensity_edge=float(intensity_arrays.std_intensity_edge[i]),
-            min_intensity_edge=float(intensity_arrays.min_intensity_edge[i]),
-            max_intensity_edge=float(intensity_arrays.max_intensity_edge[i]),
-            mass_displacement=float(intensity_arrays.mass_displacement[i]),
-            lower_quartile_intensity=float(
-                intensity_arrays.lower_quartile_intensity[i]
-            ),
-            median_intensity=float(intensity_arrays.median_intensity[i]),
-            mad_intensity=float(intensity_arrays.mad_intensity[i]),
-            upper_quartile_intensity=float(
-                intensity_arrays.upper_quartile_intensity[i]
-            ),
-            center_mass_intensity_x=float(intensity_arrays.center_mass_intensity_x[i]),
-            center_mass_intensity_y=float(intensity_arrays.center_mass_intensity_y[i]),
-            center_mass_intensity_z=0.0,
-            max_intensity_x=float(intensity_arrays.max_intensity_x[i]),
-            max_intensity_y=float(intensity_arrays.max_intensity_y[i]),
-            max_intensity_z=0.0,
-        ))
-    
-    return image, measurements
+    return image, _measurements_from_arrays(intensity_arrays, 0)
 
 
 def _single_plane(array: np.ndarray, name: str) -> np.ndarray:
@@ -156,3 +197,6 @@ def _prepare_measure_object_intensity() -> None:
 
 
 measure_object_intensity.__openhcs_prepare__ = _prepare_measure_object_intensity
+measure_object_intensity.__openhcs_pure_2d_batch_executor__ = (
+    _measure_object_intensity_batch
+)

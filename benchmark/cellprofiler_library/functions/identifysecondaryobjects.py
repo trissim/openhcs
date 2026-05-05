@@ -18,6 +18,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     image_payload_data,
     image_payload_mask,
+    image_payload_metadata,
 )
 from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
@@ -34,6 +35,7 @@ from benchmark.cellprofiler_library.functions.thresholding import (
     cellprofiler_threshold,
     cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
+    unit_interval_scale_for_threshold_diagnostics,
 )
 from benchmark.cellprofiler_library.functions.watershed import (
     cellprofiler_legacy_watershed,
@@ -140,6 +142,7 @@ class SecondaryThresholdRequest:
     variance_method: CellProfilerVarianceMethod
     number_of_deviations: float
     manual_threshold: float
+    diagnostics_unit_interval_scale: int | None = None
 
 
 def _parent_child_relationship(
@@ -510,6 +513,7 @@ def _threshold_secondary_objects(
         final_threshold=threshold_value,
         original_threshold=original_threshold,
         mask=request.image_mask,
+        proven_unit_interval_scale=request.diagnostics_unit_interval_scale,
     )
     return SecondaryThresholdResult(
         value=threshold_value,
@@ -725,7 +729,12 @@ def identify_secondary_objects(
         backend_provider=morphology_backend_provider,
     )
     input_mask = image_payload_mask(image)
-    inputs = _normalize_secondary_inputs(image_payload_data(image), primary_labels)
+    raw_image_data = image_payload_data(image)
+    diagnostics_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
+        np.asarray(raw_image_data),
+        image_payload_metadata(image),
+    )
+    inputs = _normalize_secondary_inputs(raw_image_data, primary_labels)
     img = _normalize_intensity_image(inputs.image)
     threshold = _threshold_secondary_objects(
         SecondaryThresholdRequest(
@@ -748,6 +757,7 @@ def identify_secondary_objects(
             averaging_method=averaging_method,
             variance_method=variance_method,
             number_of_deviations=number_of_deviations,
+            diagnostics_unit_interval_scale=diagnostics_unit_interval_scale,
         )
     )
     labels_out = SecondarySegmentationStrategy.for_method(method).segment(

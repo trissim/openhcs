@@ -10,7 +10,10 @@ from typing import Any
 from weakref import WeakKeyDictionary
 
 from openhcs.core.artifacts import ArtifactKind
-from openhcs.core.runtime_semantics import MeasurementScope
+from openhcs.core.runtime_semantics import (
+    MeasurementScope,
+    dense_object_label_id_domain,
+)
 from openhcs.core.runtime_stores import (
     RuntimeValueStore,
     StoredRuntimeValue,
@@ -812,9 +815,7 @@ def measurement_values_for_label_slices(
         if values_by_slice is not None:
             return tuple(
                 (
-                    np.array([], dtype=float)
-                    if not np.any(np.asarray(label_plane) > 0)
-                    else _measurement_values_for_label_plane(
+                    _measurement_values_for_label_plane(
                         label_plane,
                         *values_by_slice.get(
                             slice_index,
@@ -1001,20 +1002,8 @@ def _measurement_values_for_label_plane(
 
 
 def _positive_label_ids(label_plane: Any) -> tuple[int, ...]:
-    """Return present positive dense-label ids without sorting all pixels."""
-    import numpy as np
-
-    label_array = np.asarray(label_plane)
-    if label_array.size == 0:
-        return ()
-    integer_labels = label_array.astype(np.int64, copy=False)
-    max_label = int(integer_labels.max())
-    if max_label <= 0:
-        return ()
-    if max_label <= integer_labels.size:
-        present = np.bincount(integer_labels.ravel(), minlength=max_label + 1) > 0
-        return tuple(int(label) for label in np.flatnonzero(present[1:]) + 1)
-    return tuple(int(label) for label in np.unique(integer_labels) if int(label) > 0)
+    """Return the semantic dense object-label ID domain for one label plane."""
+    return dense_object_label_id_domain(label_plane)
 
 
 def _measurement_values_for_label_slice(
@@ -1026,8 +1015,6 @@ def _measurement_values_for_label_slice(
 ) -> Any:
     import numpy as np
 
-    if not np.any(np.asarray(label_plane) > 0):
-        return np.array([], dtype=float)
     values_by_label, positional_values = measurement_value_index(
         measurement_tables,
         feature_name,

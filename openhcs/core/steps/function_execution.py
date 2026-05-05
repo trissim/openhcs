@@ -15,7 +15,9 @@ from openhcs.constants.constants import (
     LOADABLE_IMAGE_EXTENSIONS,
     Backend,
 )
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.function_patterns import CompiledFunctionGroup
 from openhcs.core.progress import ProgressPhase, ProgressStatus, emit
 from openhcs.core.steps.function_io import (
     bulk_preload_step_images,
@@ -347,12 +349,106 @@ class FunctionStepExecutor:
                 default_component=plan.group_by_value,
             )
         )
+        grouped_patterns = self._collapse_artifact_driven_anchor_patterns(
+            grouped_patterns,
+        )
         if self._count_pattern_groups(grouped_patterns) == 0:
             raise ValueError(
                 f"No pattern groups found for step {plan.step_index} "
                 f"({plan.step_name}) in well {plan.axis_id}"
             )
         return grouped_patterns
+
+    def _collapse_artifact_driven_anchor_patterns(
+        self,
+        grouped_patterns: Mapping[Any, Sequence[Any]],
+    ) -> Mapping[Any, Sequence[Any]]:
+        """Drop duplicate main-image anchors for artifact-driven callables.
+
+        A FunctionStep still needs a pattern item to bind source context and output
+        naming. For adapter-managed artifact pipelines, however, the real inputs are
+        declared runtime artifacts; the main image stack is not the semantic driver.
+        If discovery finds multiple anchor patterns that differ only by components
+        outside ``variable_components`` (for example channel), executing all of them
+        repeats the same semantic module call.
+        """
+        collapsed: dict[Any, Sequence[Any]] = {}
+        changed = False
+
+        for component_value, pattern_list in grouped_patterns.items():
+            compiled_group = self.plan.compiled_function_pattern.group_for_component(
+                component_value
+            )
+            if compiled_group is None:
+                collapsed[component_value] = pattern_list
+                continue
+            if not self._group_uses_artifact_driven_invocation(compiled_group):
+                collapsed[component_value] = pattern_list
+                continue
+
+            deduplicated = self._deduplicate_anchor_patterns(pattern_list)
+            collapsed[component_value] = deduplicated
+            changed = changed or len(deduplicated) != len(pattern_list)
+
+        if changed:
+            _log_step_profile(
+                "step_collapse_artifact_anchors",
+                0.0,
+                step=self.plan.step_index,
+                step_name=self.plan.step_name,
+                before=self._count_pattern_groups(grouped_patterns),
+                after=self._count_pattern_groups(collapsed),
+            )
+        return collapsed
+
+    def _group_uses_artifact_driven_invocation(
+        self,
+        compiled_group: CompiledFunctionGroup,
+    ) -> bool:
+        if not compiled_group.invocations:
+            return False
+
+        for invocation in compiled_group.invocations:
+            runtime_adapter = invocation.contract.runtime_adapter
+            if runtime_adapter is None or not runtime_adapter.manages_artifact_inputs:
+                return False
+            if not invocation.artifact_input_keys:
+                return False
+            if any(
+                self.plan.artifact_outputs[key].kind is ArtifactKind.IMAGE
+                for key in invocation.artifact_output_keys
+                if key in self.plan.artifact_outputs
+            ):
+                return False
+        return True
+
+    def _deduplicate_anchor_patterns(
+        self,
+        pattern_list: Sequence[Any],
+    ) -> list[Any]:
+        seen: set[tuple[tuple[str, Any], ...]] = set()
+        deduplicated: list[Any] = []
+        variable_components = set(self.plan.variable_component_values)
+        parser = self.context.microscope_handler.parser
+
+        for pattern in pattern_list:
+            metadata = parser.parse_filename(str(pattern))
+            if not metadata:
+                deduplicated.append(pattern)
+                continue
+            key = tuple(
+                sorted(
+                    (component, value)
+                    for component, value in metadata.items()
+                    if component in variable_components
+                )
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduplicated.append(pattern)
+
+        return deduplicated
 
     @staticmethod
     def _count_pattern_groups(grouped_patterns: Mapping[Any, Sequence[Any]]) -> int:

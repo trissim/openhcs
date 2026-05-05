@@ -17,6 +17,8 @@ from benchmark.cellprofiler_compat.perf_fixtures import (
     capture_array_fixture,
     capture_enabled,
 )
+from openhcs.core.runtime_values import ImagePayloadMetadata
+from openhcs.core.runtime_values import image_intensity_scale_for_dtype
 from openhcs.core.runtime_values import image_payload_data
 from openhcs.core.runtime_values import normalize_image_payload_intensity
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
@@ -93,6 +95,23 @@ class CellProfilerThresholdDiagnostics:
 def normalize_cellprofiler_image(image: np.ndarray) -> np.ndarray:
     """Return an image in CellProfiler's normalized pixel-data convention."""
     return image_payload_data(normalize_image_payload_intensity(image, dtype=np.float32))
+
+
+def unit_interval_scale_for_threshold_diagnostics(
+    image_data: np.ndarray,
+    metadata: ImagePayloadMetadata,
+) -> int | None:
+    """Return a proof scale for exact unit-interval threshold diagnostics."""
+    metadata_scale = metadata.unit_interval_intensity_scale_for_channel(0)
+    if metadata_scale is not None and metadata_scale > 1:
+        return int(metadata_scale)
+    image_array = np.asarray(image_data)
+    if not np.issubdtype(image_array.dtype, np.integer):
+        return None
+    scale = image_intensity_scale_for_dtype(image_array.dtype)
+    if scale is None or scale <= 1:
+        return None
+    return int(scale)
 
 
 def cellprofiler_get_global_threshold(

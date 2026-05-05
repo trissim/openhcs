@@ -265,9 +265,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                                         np.rint(image_array * scale).astype(np.int64),
                                     ),
                                     np.ascontiguousarray(binary_array),
-                                    np.ascontiguousarray(
-                                        _deterministic_normal_noise(image_array.shape)
-                                    ),
+                                    _deterministic_normal_noise(image_array.shape),
                                     values,
                                     log_values,
                                     log_delta_values,
@@ -288,9 +286,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                             np.rint(image_array * scale).astype(np.int64),
                         ),
                         np.ascontiguousarray(binary_array),
-                        np.ascontiguousarray(
-                            _deterministic_normal_noise(image_array.shape)
-                        ),
+                        _deterministic_normal_noise(image_array.shape),
                         values,
                         log_values,
                         log_delta_values,
@@ -301,7 +297,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                 _threshold_diagnostics_unmasked_finite_numba(
                     np.ascontiguousarray(image_array),
                     np.ascontiguousarray(binary_array),
-                    np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
+                    _deterministic_normal_noise(image_array.shape),
                 )
             )
             return float(weighted_variance), float(sum_of_entropies)
@@ -312,7 +308,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                     np.ascontiguousarray(image_array),
                     np.ascontiguousarray(mask_array),
                     np.ascontiguousarray(binary_array),
-                    np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
+                    _deterministic_normal_noise(image_array.shape),
                 )
             )
             return float(weighted_variance), float(sum_of_entropies)
@@ -320,7 +316,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
             np.ascontiguousarray(image_array),
             np.ascontiguousarray(mask_array),
             np.ascontiguousarray(binary_array),
-            np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
+            _deterministic_normal_noise(image_array.shape),
         )
         return float(weighted_variance), float(sum_of_entropies)
 
@@ -565,7 +561,10 @@ class NumbaNumpyThresholdPrimitiveBackendStrategy(ThresholdPrimitiveBackendStrat
         values_array = np.asarray(values)
         if values_array.dtype == np.float32:
             finite_values32 = _finite_flat_float32(values_array)
-            return _li_threshold_float32_numpy(finite_values32)
+            finite_values = np.ascontiguousarray(finite_values32, dtype=np.float64)
+            return float(
+                _li_threshold_numba(finite_values, _li_tolerance_numba(finite_values))
+            )
         finite_values = _finite_flat_float64(values_array)
         return float(
             _li_threshold_numba(finite_values, _li_tolerance_numba(finite_values))
@@ -633,7 +632,7 @@ class NumbaNumpyThresholdPrimitiveBackendStrategy(ThresholdPrimitiveBackendStrat
                 raise ValueError(
                     "Minimum cross-entropy mask must match the image shape; got "
                     f"mask {mask_array.shape!r} for image {image_array.shape!r}."
-                )
+            )
             if image_array.dtype == np.float32:
                 values32 = _finite_flat_float32(image_array[mask_array])
                 return _li_threshold_float32_numpy(values32)
@@ -1755,6 +1754,7 @@ def _smooth_with_deterministic_noise(image: np.ndarray, *, bits: int) -> np.ndar
 
 
 @lru_cache(maxsize=32)
+@lru_cache(maxsize=16)
 def _deterministic_normal_noise(shape: tuple[int, ...]) -> np.ndarray:
     random_state = np.random.RandomState()
     random_state.seed(0)
