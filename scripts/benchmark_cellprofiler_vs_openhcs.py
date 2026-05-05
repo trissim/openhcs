@@ -5,10 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import logging
 import os
 from datetime import datetime
 from pathlib import Path
+
+from benchmark.runtime_env import configure_headless_cpu_benchmark_runtime
 
 
 def main() -> int:
@@ -82,8 +83,7 @@ def main() -> int:
 
 
 def _run_command(args: argparse.Namespace) -> int:
-    _configure_reproducible_runtime_env()
-    _configure_benchmark_logging(args.log_level)
+    configure_headless_cpu_benchmark_runtime(args.log_level)
     from benchmark.cellprofiler_comparison import (
         load_comparison_cases,
         run_comparison_suite,
@@ -108,8 +108,7 @@ def _run_command(args: argparse.Namespace) -> int:
 
 
 def _official_cp3_manifest_command(args: argparse.Namespace) -> int:
-    _configure_reproducible_runtime_env()
-    _configure_benchmark_logging(args.log_level)
+    configure_headless_cpu_benchmark_runtime(args.log_level)
     cppipe_dir = args.examples_root / "CellProfiler3Pipelines"
     if not cppipe_dir.is_dir():
         raise FileNotFoundError(f"CellProfiler3Pipelines directory not found: {cppipe_dir}")
@@ -162,8 +161,7 @@ def _official_cellprofiler3_source_name_for_pipeline(
 
 
 def _plot_command(args: argparse.Namespace) -> int:
-    _configure_reproducible_runtime_env()
-    _configure_benchmark_logging(args.log_level)
+    configure_headless_cpu_benchmark_runtime(args.log_level)
     plot_summary(args.summary_csv, args.output_dir)
     print(f"figures={args.output_dir}")
     return 0
@@ -178,36 +176,6 @@ def plot_summary(summary_csv: Path, output_dir: Path) -> None:
         (SummarySource("OH1", summary_csv),),
         output_dir=output_dir,
     )
-
-
-def _configure_reproducible_runtime_env() -> None:
-    """Set defaults that make GUI/logging imports deterministic in headless runs."""
-    os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    os.environ.setdefault("XDG_DATA_HOME", "/tmp/openhcs-benchmark-xdg-data")
-    os.environ.setdefault("XDG_CACHE_HOME", "/tmp/openhcs-benchmark-xdg-cache")
-    os.environ.setdefault("MPLCONFIGDIR", "/tmp/openhcs-benchmark-mpl")
-    os.environ.setdefault("OPENHCS_CPU_ONLY", "true")
-    os.environ.setdefault("OPENHCS_SUBPROCESS_NO_GPU", "1")
-    os.environ.setdefault("POLYSTORE_SUBPROCESS_NO_GPU", "1")
-
-
-def _configure_benchmark_logging(log_level: str) -> None:
-    """Configure benchmark logging before importing OpenHCS runtime modules."""
-    level = getattr(logging, log_level.upper(), None)
-    if not isinstance(level, int):
-        raise ValueError(f"Unknown log level: {log_level!r}")
-    root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
-        return
-    root_logger.setLevel(level)
-    for handler in root_logger.handlers:
-        handler.setLevel(level)
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

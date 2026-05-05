@@ -21,6 +21,7 @@ from openhcs.core.config import (
     GlobalPipelineConfig,
     LazyPathPlanningConfig,
     MaterializationBackend,
+    MultiprocessingStartMethod,
     PipelineConfig,
     VFSConfig,
 )
@@ -34,6 +35,9 @@ from openhcs.core.steps.function_runtime import prepare_compiled_context_callabl
 
 
 WELL_THROUGHPUT_ROWS_CSV = "well_throughput.csv"
+WELL_THROUGHPUT_EVENTS_CSV = "well_throughput_progress_events.csv"
+WELL_THROUGHPUT_LANES_CSV = "well_throughput_worker_lanes.csv"
+WELL_THROUGHPUT_STEPS_CSV = "well_throughput_step_timings.csv"
 
 
 @dataclass(frozen=True, slots=True)
@@ -122,6 +126,7 @@ def run_case_well_throughput(
     global_config = GlobalPipelineConfig(
         num_workers=worker_count,
         use_threading=False,
+        multiprocessing_start_method=MultiprocessingStartMethod.FORK,
         analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
         materialize_runtime_artifacts=False,
         microscope=Microscope.AUTO,
@@ -140,10 +145,13 @@ def run_case_well_throughput(
     )
     orchestrator.initialize()
 
-    progress_queue = multiprocessing.get_context("spawn").Queue()
+    progress_events: list[dict[str, Any]] = []
+    progress_queue = multiprocessing.get_context(
+        global_config.multiprocessing_start_method.value
+    ).Queue()
     consumer = threading.Thread(
         target=_drain_progress_queue,
-        args=(progress_queue,),
+        args=(progress_queue, progress_events),
         daemon=True,
     )
     consumer.start()
@@ -193,6 +201,13 @@ def run_case_well_throughput(
         for result in execution_results.values()
         if _execution_result_succeeded(result)
     )
+    _write_progress_diagnostics(
+        output_root,
+        case_name=case_name,
+        worker_count=worker_count,
+        well_count=well_count,
+        events=progress_events,
+    )
     return WellThroughputResult(
         case_name=case_name,
         worker_count=worker_count,
@@ -241,7 +256,10 @@ def _execution_result_succeeded(result: Any) -> bool:
     return True
 
 
-def _drain_progress_queue(progress_queue) -> None:
+def _drain_progress_queue(
+    progress_queue,
+    progress_events: list[dict[str, Any]],
+) -> None:
     while True:
         try:
             item = progress_queue.get(timeout=0.5)
@@ -249,3 +267,200 @@ def _drain_progress_queue(progress_queue) -> None:
             continue
         if item is None:
             return
+        if isinstance(item, dict):
+            progress_events.append(item)
+
+
+def _write_progress_diagnostics(
+    output_root: Path,
+    *,
+    case_name: str,
+    worker_count: int,
+    well_count: int,
+    events: Sequence[dict[str, Any]],
+) -> None:
+    output_root.mkdir(parents=True, exist_ok=True)
+    _write_progress_events_csv(
+        output_root / WELL_THROUGHPUT_EVENTS_CSV,
+        case_name=case_name,
+        worker_count=worker_count,
+        well_count=well_count,
+        events=events,
+    )
+    _write_worker_lane_csv(
+        output_root / WELL_THROUGHPUT_LANES_CSV,
+        case_name=case_name,
+        worker_count=worker_count,
+        well_count=well_count,
+        events=events,
+    )
+    _write_step_timings_csv(
+        output_root / WELL_THROUGHPUT_STEPS_CSV,
+        case_name=case_name,
+        worker_count=worker_count,
+        well_count=well_count,
+        events=events,
+    )
+
+
+def _write_progress_events_csv(
+    path: Path,
+    *,
+    case_name: str,
+    worker_count: int,
+    well_count: int,
+    events: Sequence[dict[str, Any]],
+) -> None:
+    fieldnames = (
+        "case_name",
+        "worker_count",
+        "well_count",
+        "timestamp",
+        "pid",
+        "worker_slot",
+        "axis_id",
+        "step_name",
+        "phase",
+        "status",
+        "percent",
+        "completed",
+        "total",
+    )
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for event in events:
+            writer.writerow(
+                {
+                    "case_name": case_name,
+                    "worker_count": worker_count,
+                    "well_count": well_count,
+                    "timestamp": event.get("timestamp"),
+                    "pid": event.get("pid"),
+                    "worker_slot": event.get("worker_slot"),
+                    "axis_id": event.get("axis_id"),
+                    "step_name": event.get("step_name"),
+                    "phase": event.get("phase"),
+                    "status": event.get("status"),
+                    "percent": event.get("percent"),
+                    "completed": event.get("completed"),
+                    "total": event.get("total"),
+                }
+            )
+
+
+def _write_worker_lane_csv(
+    path: Path,
+    *,
+    case_name: str,
+    worker_count: int,
+    well_count: int,
+    events: Sequence[dict[str, Any]],
+) -> None:
+    lanes: dict[str, dict[str, Any]] = {}
+    for event in events:
+        worker_slot = event.get("worker_slot")
+        if not worker_slot:
+            continue
+        lane = lanes.setdefault(
+            str(worker_slot),
+            {
+                "case_name": case_name,
+                "worker_count": worker_count,
+                "well_count": well_count,
+                "worker_slot": worker_slot,
+                "axis_count": 0,
+                "started_at": "",
+                "completed_at": "",
+                "lane_seconds": "",
+            },
+        )
+        phase = event.get("phase")
+        timestamp = float(event["timestamp"])
+        if phase == "axis_started":
+            if lane["started_at"] == "" or timestamp < float(lane["started_at"]):
+                lane["started_at"] = timestamp
+        elif phase == "axis_completed":
+            lane["axis_count"] += 1
+            if lane["completed_at"] == "" or timestamp > float(lane["completed_at"]):
+                lane["completed_at"] = timestamp
+
+    for lane in lanes.values():
+        if lane["started_at"] != "" and lane["completed_at"] != "":
+            lane["lane_seconds"] = float(lane["completed_at"]) - float(
+                lane["started_at"]
+            )
+
+    fieldnames = (
+        "case_name",
+        "worker_count",
+        "well_count",
+        "worker_slot",
+        "axis_count",
+        "started_at",
+        "completed_at",
+        "lane_seconds",
+    )
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in sorted(lanes.values(), key=lambda value: str(value["worker_slot"])):
+            writer.writerow(row)
+
+
+def _write_step_timings_csv(
+    path: Path,
+    *,
+    case_name: str,
+    worker_count: int,
+    well_count: int,
+    events: Sequence[dict[str, Any]],
+) -> None:
+    started: dict[tuple[str, str, str], float] = {}
+    rows: list[dict[str, Any]] = []
+    for event in events:
+        phase = event.get("phase")
+        if phase not in {"step_started", "step_completed"}:
+            continue
+        key = (
+            str(event.get("worker_slot", "")),
+            str(event.get("axis_id", "")),
+            str(event.get("step_name", "")),
+        )
+        timestamp = float(event["timestamp"])
+        if phase == "step_started":
+            started[key] = timestamp
+            continue
+        start_timestamp = started.pop(key, None)
+        if start_timestamp is None:
+            continue
+        rows.append(
+            {
+                "case_name": case_name,
+                "worker_count": worker_count,
+                "well_count": well_count,
+                "worker_slot": key[0],
+                "axis_id": key[1],
+                "step_name": key[2],
+                "started_at": start_timestamp,
+                "completed_at": timestamp,
+                "step_seconds": timestamp - start_timestamp,
+            }
+        )
+
+    fieldnames = (
+        "case_name",
+        "worker_count",
+        "well_count",
+        "worker_slot",
+        "axis_id",
+        "step_name",
+        "started_at",
+        "completed_at",
+        "step_seconds",
+    )
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(row)

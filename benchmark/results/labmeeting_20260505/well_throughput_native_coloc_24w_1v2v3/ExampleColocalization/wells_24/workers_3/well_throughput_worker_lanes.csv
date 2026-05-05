@@ -1,0 +1,4 @@
+case_name,worker_count,well_count,worker_slot,axis_count,started_at,completed_at,lane_seconds
+ExampleColocalization,3,24,worker_0,8,1777974662.8166106,1777974687.6060882,24.789477586746216
+ExampleColocalization,3,24,worker_1,8,1777974662.860953,1777974687.971847,25.110893964767456
+ExampleColocalization,3,24,worker_2,8,1777974662.8686297,1777974687.253978,24.385348320007324

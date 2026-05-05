@@ -4,9 +4,10 @@
 from __future__ import annotations
 
 import argparse
-import logging
 import os
 from pathlib import Path
+
+from benchmark.runtime_env import configure_headless_cpu_benchmark_runtime
 
 
 def main() -> int:
@@ -22,8 +23,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    _configure_reproducible_runtime_env()
-    _configure_benchmark_logging(args.log_level)
+    configure_headless_cpu_benchmark_runtime(args.log_level)
 
     from benchmark.well_throughput_scaling import WELL_THROUGHPUT_ROWS_CSV
     from benchmark.well_throughput_scaling import run_well_throughput_suite
@@ -39,34 +39,6 @@ def main() -> int:
     print(f"observations={len(results)}")
     print(f"csv={csv_path}")
     return 0
-
-
-def _configure_reproducible_runtime_env() -> None:
-    os.environ.setdefault("PYTEST_DISABLE_PLUGIN_AUTOLOAD", "1")
-    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
-    os.environ.setdefault("XDG_DATA_HOME", "/tmp/openhcs-benchmark-xdg-data")
-    os.environ.setdefault("XDG_CACHE_HOME", "/tmp/openhcs-benchmark-xdg-cache")
-    os.environ.setdefault("MPLCONFIGDIR", "/tmp/openhcs-benchmark-mpl")
-    os.environ.setdefault("OPENHCS_CPU_ONLY", "true")
-    os.environ.setdefault("OPENHCS_SUBPROCESS_NO_GPU", "1")
-    os.environ.setdefault("POLYSTORE_SUBPROCESS_NO_GPU", "1")
-
-
-def _configure_benchmark_logging(log_level: str) -> None:
-    level = getattr(logging, log_level.upper(), None)
-    if not isinstance(level, int):
-        raise ValueError(f"Unknown log level: {log_level!r}")
-    root_logger = logging.getLogger()
-    if not root_logger.handlers:
-        logging.basicConfig(
-            level=level,
-            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-        )
-        return
-    root_logger.setLevel(level)
-    for handler in root_logger.handlers:
-        handler.setLevel(level)
-
 
 if __name__ == "__main__":
     raise SystemExit(main())

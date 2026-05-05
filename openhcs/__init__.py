@@ -52,12 +52,15 @@ logging.FileHandler.__init__ = _utf8_file_handler_init
 def _ensure_basic_logging():
     """Ensure basic logging is configured if no configuration exists."""
     root_logger = logging.getLogger()
+    configured_level_name = os.environ.get("OPENHCS_LOG_LEVEL", "INFO").upper()
+    configured_level = getattr(logging, configured_level_name, None)
+    if not isinstance(configured_level, int):
+        raise ValueError(f"Unknown OPENHCS_LOG_LEVEL: {configured_level_name!r}")
 
     # Only configure if no handlers exist and level is too high
-    if not root_logger.handlers and root_logger.level > logging.INFO:
-        # Set up basic console logging at INFO level
+    if not root_logger.handlers and root_logger.level > configured_level:
         logging.basicConfig(
-            level=logging.INFO,
+            level=configured_level,
             format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
         )
 

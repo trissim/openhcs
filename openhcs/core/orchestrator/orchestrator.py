@@ -491,11 +491,16 @@ def _configure_worker_with_gpu(
     import logging
     import os
 
-    # Workers should be allowed to import GPU libs if available.
-    # The parent subprocess runner may set OPENHCS_SUBPROCESS_NO_GPU=1 to stay lean,
-    # but that flag must not leak into worker processes.
-    os.environ.pop("OPENHCS_SUBPROCESS_NO_GPU", None)
-    os.environ.pop("POLYSTORE_SUBPROCESS_NO_GPU", None)
+    worker_log_level_name = os.environ.get("OPENHCS_LOG_LEVEL", "INFO").upper()
+    worker_log_level = getattr(logging, worker_log_level_name, None)
+    if not isinstance(worker_log_level, int):
+        raise ValueError(f"Unknown OPENHCS_LOG_LEVEL: {worker_log_level_name!r}")
+
+    # Workers should be allowed to import GPU libs only when the execution is not
+    # explicitly CPU-only. CPU-only subprocesses must keep GPU discovery disabled.
+    if os.environ.get("OPENHCS_CPU_ONLY", "").lower() != "true":
+        os.environ.pop("OPENHCS_SUBPROCESS_NO_GPU", None)
+        os.environ.pop("POLYSTORE_SUBPROCESS_NO_GPU", None)
 
     # Configure logging only if log_file_base is provided
     if log_file_base:
@@ -503,38 +508,25 @@ def _configure_worker_with_gpu(
         worker_logger = logging.getLogger("openhcs.worker")
     else:
         # Set up basic logging for worker messages
-        logging.basicConfig(level=logging.INFO)
+        logging.basicConfig(level=worker_log_level)
         worker_logger = logging.getLogger("openhcs.worker")
+    logging.getLogger().setLevel(worker_log_level)
+    logging.getLogger("openhcs").setLevel(worker_log_level)
 
-    # Initialize function registry for this worker process
-    try:
-        # Import and initialize function registry (will auto-discover all libraries)
-        import openhcs.processing.func_registry as func_registry_module
+    import cv2
 
-        # Force initialization if not already done (workers need full registry)
-        with func_registry_module._registry_lock:
-            if not func_registry_module._registry_initialized:
-                func_registry_module._auto_initialize_registry()
+    cv2.setNumThreads(1)
 
-    except Exception as e:
-        # Don't raise - let worker continue, registry will auto-init on first function call
-        pass
-
-    # Initialize GPU registry for this worker process
-    try:
-        # Reconstruct global config from dict
+    # Function references resolve through RegistryService on demand. Eagerly
+    # hydrating the entire registry in every spawned worker makes CPU-only,
+    # generated-code pipelines pay for backends they do not execute.
+    if os.environ.get("OPENHCS_CPU_ONLY", "").lower() != "true":
         from openhcs.core.config import GlobalPipelineConfig
 
         global_config = GlobalPipelineConfig(**global_config_dict)
-
-        # Initialize GPU registry for this worker
         from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
 
         setup_global_gpu_registry(global_config)
-
-    except Exception as e:
-        # Don't raise - let worker continue without GPU if needed
-        pass
 
     if progress_queue is not None and progress_context is not None:
         from openhcs.core.progress import set_progress_queue
@@ -1211,17 +1203,12 @@ class PipelineOrchestrator:
             execution_results: Dict[str, ExecutionResult] = {}
 
             # CUDA COMPATIBILITY: Set spawn method for multiprocessing to support CUDA
-            try:
-                # Check if spawn method is available and set it if not already set
-                current_method = multiprocessing.get_start_method(allow_none=True)
-                if current_method != "spawn":
-                    multiprocessing.set_start_method("spawn", force=True)
-            except RuntimeError as e:
-                # Start method may already be set, which is fine
-                pass
+            effective_config = self.get_effective_config()
+            multiprocessing_context = multiprocessing.get_context(
+                effective_config.multiprocessing_start_method.value
+            )
 
             # Choose executor type based on effective config for debugging support
-            effective_config = self.get_effective_config()
             executor_type = (
                 "ThreadPoolExecutor"
                 if effective_config.use_threading
@@ -1244,6 +1231,7 @@ class PipelineOrchestrator:
                 if log_file_base:
                     executor = concurrent.futures.ProcessPoolExecutor(
                         max_workers=actual_max_workers,
+                        mp_context=multiprocessing_context,
                         initializer=_configure_worker_with_gpu,
                         initargs=(
                             log_file_base,
@@ -1255,6 +1243,7 @@ class PipelineOrchestrator:
                 else:
                     executor = concurrent.futures.ProcessPoolExecutor(
                         max_workers=actual_max_workers,
+                        mp_context=multiprocessing_context,
                         initializer=_configure_worker_with_gpu,
                         initargs=(
                             "",

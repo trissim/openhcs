@@ -134,6 +134,14 @@ class TransportMode(Enum):
     TCP = "tcp"  # Network sockets (supports remote, triggers firewall)
 
 
+class MultiprocessingStartMethod(Enum):
+    """Process start methods for OpenHCS worker pools."""
+
+    SPAWN = "spawn"
+    FORK = "fork"
+    FORKSERVER = "forkserver"
+
+
 @abbreviation("gpc")
 @auto_create_decorator
 @dataclass(frozen=True)
@@ -180,6 +188,15 @@ class GlobalPipelineConfig:
         metadata={"ui_hidden": True},
     )
     """Use ThreadPoolExecutor instead of ProcessPoolExecutor for debugging. Reads from OPENHCS_USE_THREADING environment variable."""
+
+    multiprocessing_start_method: Annotated[
+        MultiprocessingStartMethod,
+        abbreviation("mp_start"),
+    ] = field(
+        default=MultiprocessingStartMethod.SPAWN,
+        metadata={"ui_hidden": True},
+    )
+    """Process start method for multiprocessing workers. SPAWN is CUDA-safe; FORK is CPU-only."""
 
     auto_add_output_plate_to_plate_manager: Annotated[
         bool, abbreviation("auto_add_output_plate")
