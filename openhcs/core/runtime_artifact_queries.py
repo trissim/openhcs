@@ -177,8 +177,8 @@ class MeasurementFeatureQuery:
             raise ValueError("MeasurementFeatureQuery.object_name cannot be empty.")
 
     @property
-    def candidates(self) -> frozenset[str]:
-        return measurement_feature_candidates(self.feature_name)
+    def candidates(self) -> tuple[str, ...]:
+        return ordered_measurement_feature_candidates(self.feature_name)
 
     def row_value(self, row: object) -> object | None:
         """Return the row value matching this feature query, if present."""
@@ -520,7 +520,7 @@ def _matching_row_value_field(
     *,
     table_source_image_name: str | None,
 ) -> str | None:
-    candidates = measurement_feature_candidates(feature_name)
+    candidates = ordered_measurement_feature_candidates(feature_name)
     if table_source_image_name is not None:
         normalized_source = normalize_measurement_token(table_source_image_name)
         if (
@@ -639,40 +639,56 @@ def _normalize_measurement_text(text: str) -> str:
 
 def measurement_feature_candidates(feature_name: str) -> frozenset[str]:
     """Return normalized feature aliases accepted for row/field lookup."""
+    return frozenset(ordered_measurement_feature_candidates(feature_name))
+
+
+def ordered_measurement_feature_candidates(feature_name: str) -> tuple[str, ...]:
+    """Return feature aliases from most specific to least specific."""
     normalized = normalize_measurement_token(feature_name)
     parts = tuple(part for part in normalized.split("_") if part)
-    candidates = {normalized, normalized.replace("_", "")}
-    candidates.update(parts)
+    candidates: list[str] = []
+
+    def add(candidate: str) -> None:
+        if candidate and candidate not in candidates:
+            candidates.append(candidate)
+
+    add(normalized)
+    add(normalized.replace("_", ""))
     if len(parts) >= 2:
-        candidates.add("_".join(parts[1:]))
-        candidates.add("".join(parts[1:]))
-        candidates.add(parts[-1])
+        add("_".join(parts[1:]))
+        add("".join(parts[1:]))
     if len(parts) >= 3:
-        candidates.add("_".join(parts[1:-1]))
-        candidates.add("".join(parts[1:-1]))
-    for start in range(len(parts)):
-        for stop in range(start + 2, len(parts) + 1):
+        add("_".join(parts[1:-1]))
+        add("".join(parts[1:-1]))
+
+    for width in range(len(parts), 1, -1):
+        for start in range(0, len(parts) - width + 1):
+            stop = start + width
             candidate_parts = parts[start:stop]
-            candidates.add("_".join(candidate_parts))
-            candidates.add("".join(candidate_parts))
-    return frozenset(candidates)
+            add("_".join(candidate_parts))
+            add("".join(candidate_parts))
+
+    for part in parts:
+        add(part)
+    return tuple(candidates)
 
 
 def matching_measurement_field(
     row: Mapping[str, object],
-    candidates: frozenset[str],
+    candidates: Sequence[str],
 ) -> str | None:
-    """Return the first row field whose name matches one feature candidate."""
-    for field_name in row:
-        normalized = normalize_measurement_token(field_name)
-        if normalized in candidates or normalized.replace("_", "") in candidates:
-            return field_name
+    """Return the first row field matching the ordered feature alias set."""
+    for candidate in candidates:
+        for field_name in row:
+            normalized = normalize_measurement_token(field_name)
+            if candidate in (normalized, normalized.replace("_", "")):
+                return field_name
     return None
 
 
 def measurement_row_feature_matches(
     row: Mapping[str, object],
-    candidates: frozenset[str],
+    candidates: Sequence[str],
 ) -> bool:
     """Return whether the row explicitly names one matching feature."""
     for field_name in MEASUREMENT_FEATURE_NAME_FIELDS:
@@ -733,7 +749,7 @@ def measurement_table_object_name(table: MeasurementTable) -> str | None:
 
 def measurement_row_source_matches_feature(
     row: Mapping[str, object],
-    candidates: frozenset[str],
+    candidates: Sequence[str],
 ) -> bool:
     """Return whether the row source qualifier is compatible with a feature."""
     source_image_name = measurement_row_source_image_name(row)
@@ -1046,6 +1062,8 @@ def _measurement_values_for_label_plane(
     import numpy as np
 
     positive_labels = _positive_label_ids(label_plane)
+    if not positive_labels:
+        return np.array([], dtype=float)
     if values_by_label:
         return np.array(
             [values_by_label.get(label, np.nan) for label in positive_labels]
@@ -1056,8 +1074,16 @@ def _measurement_values_for_label_plane(
 
 
 def _positive_label_ids(label_plane: Any) -> tuple[int, ...]:
-    """Return the semantic dense object-label ID domain for one label plane."""
-    return dense_object_label_id_domain(label_plane)
+    """Return positive object IDs actually present in one label plane."""
+    import numpy as np
+
+    label_array = np.asarray(label_plane)
+    if not label_array.size:
+        return ()
+    positive_labels = label_array[label_array > 0]
+    if not positive_labels.size:
+        return ()
+    return tuple(int(label_id) for label_id in np.unique(positive_labels))
 
 
 def _measurement_values_for_label_slice(

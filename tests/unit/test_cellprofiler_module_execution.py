@@ -22,6 +22,7 @@ from benchmark.cellprofiler_compat.module_execution import (
     CellProfilerOutputRecorder,
     _coerce_invocation_kwargs,
     _aggregate_cellprofiler_pure_2d_auxiliary_output,
+    _cellprofiler_global_image_number_rows,
     _complete_object_measurement_rows,
     _measurement_image_for_labels,
     _measurement_labels,
@@ -124,10 +125,24 @@ class _SyntheticObjectMeasurement:
     value: float
 
 
+@dataclass(frozen=True, slots=True)
+class _SyntheticAxisObjectMeasurement:
+    image_number: int
+    object_label: int
+    value: float
+
+
 def _synthetic_object_measurement_function(
     image: np.ndarray,
     labels: np.ndarray,
 ) -> tuple[np.ndarray, list[_SyntheticObjectMeasurement]]:
+    return image, []
+
+
+def _synthetic_axis_object_measurement_function(
+    image: np.ndarray,
+    labels: np.ndarray,
+) -> tuple[np.ndarray, list[_SyntheticAxisObjectMeasurement]]:
     return image, []
 
 
@@ -284,6 +299,41 @@ def test_complete_object_measurement_rows_uses_declared_label_domain() -> None:
 
     assert [row["object_label"] for row in rows] == [1, 2, 3]
     assert all(np.isnan(row["value"]) for row in rows)
+
+
+def test_complete_object_measurement_rows_handles_empty_rows_with_axis_fields() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.zeros((4, 4), dtype=np.int32),
+        declared_object_count=2,
+    )
+
+    rows = _complete_object_measurement_rows(
+        [],
+        label_payload=payload,
+        func=_synthetic_axis_object_measurement_function,
+    )
+
+    assert [row["object_label"] for row in rows] == [1, 2]
+    assert all(np.isnan(row["image_number"]) for row in rows)
+    assert all(np.isnan(row["value"]) for row in rows)
+
+
+def test_global_image_number_projection_ignores_missing_axis_values() -> None:
+    rows = [
+        {"slice_index": 0, "object_label": 1, "value": 1.0},
+        {"slice_index": np.nan, "object_label": 2, "value": np.nan},
+    ]
+
+    projected, projected_mappings = _cellprofiler_global_image_number_rows(
+        _FakeCellProfilerRuntime({}),
+        rows,
+        source_image_name=None,
+        object_name=None,
+    )
+
+    assert projected is projected_mappings
+    assert projected[0]["image_number"] == 1
+    assert "image_number" not in projected[1]
 
 
 def test_measure_object_intensity_zero_fills_missing_positive_extent() -> None:

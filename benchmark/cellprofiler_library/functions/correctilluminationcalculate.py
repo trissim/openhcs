@@ -982,6 +982,17 @@ def _prepare_correct_illumination_calculate() -> None:
         filter_size_method=FilterSizeMethod.AUTOMATIC,
         rescale_option=RescaleOption.YES,
     )
+    background = np.zeros((64, 64), dtype=np.float32)
+    background[::8, ::8] = 1.0
+    correct_illumination_calculate.__wrapped__(
+        background,
+        intensity_choice=IntensityChoice.BACKGROUND,
+        block_size=8,
+        smoothing_method=SmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=FilterSizeMethod.MANUALLY,
+        manual_filter_size=32,
+        rescale_option=RescaleOption.NO,
+    )
 
 
 correct_illumination_calculate.__openhcs_prepare__ = (

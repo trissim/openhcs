@@ -143,7 +143,6 @@ def compile_image_schema(modules: Iterable[ModuleBlock]) -> PipelineImageSchema:
         compiler = SetupModuleCompiler.for_module(module.name)
         if compiler is not None:
             compiler.compile(module, builder)
-    _compile_disabled_path_metadata_for_ordered_image_sets(module_tuple, builder)
     _compile_embedded_image_plane_sources(module_tuple, builder)
     return builder.build()
 
@@ -238,66 +237,6 @@ class MetadataModuleCompiler(SetupModuleCompiler):
             start_name="Metadata extraction method",
         ):
             _compile_metadata_block(block, state)
-
-
-def _compile_disabled_path_metadata_for_ordered_image_sets(
-    modules: Sequence[ModuleBlock],
-    state: PipelineImageSchemaBuilder,
-) -> None:
-    """Preserve explicit filename axis metadata for order-matched image sets.
-
-    Some public CP3 example pipelines keep a filename metadata regex in the
-    Metadata module while disabling CP measurement-level metadata extraction.
-    The regex is still the only typed source-schema declaration of well/site
-    identity for OpenHCS's per-axis execution model, so use it strictly as a
-    source projection rule when NamesAndTypes assembles image sets by order.
-    """
-
-    if state.metadata_rules:
-        return
-    if state.match_plan is None:
-        return
-    if state.match_plan.method is not SourceBindingMatchMethod.ORDER:
-        return
-    if not state.assignments_by_alias:
-        return
-    for module in modules:
-        if module.name != "Metadata" or not module.enabled:
-            continue
-        if _metadata_extraction_enabled(module):
-            continue
-        for block in repeating_setting_blocks(
-            module.iter_settings(),
-            start_name="Metadata extraction method",
-        ):
-            _compile_disabled_path_metadata_block(block, state)
-
-
-def _compile_disabled_path_metadata_block(
-    block: Sequence[ModuleSetting],
-    state: PipelineImageSchemaBuilder,
-) -> None:
-    method = block_setting_value(block, "Metadata extraction method")
-    if not _is_path_metadata_extraction_method(method):
-        return
-    source = _metadata_source(
-        block_setting_value(block, "Metadata source", default="File name")
-    )
-    pattern = _metadata_pattern_for_block(block, source)
-    if not pattern:
-        return
-    state.add_metadata_rule(
-        MetadataExtractionRule(
-            source=source,
-            pattern=pattern,
-            filters=_filter_clauses_from_criteria(
-                block_setting_value(
-                    block,
-                    "Select the filtering criteria",
-                )
-            ),
-        )
-    )
 
 
 class NamesAndTypesModuleCompiler(SetupModuleCompiler):

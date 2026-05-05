@@ -10,6 +10,7 @@ from functools import lru_cache
 from inspect import Parameter, signature, unwrap
 import json
 import logging
+import math
 import os
 from pathlib import Path
 import re
@@ -2182,15 +2183,18 @@ class ObjectLabelDrivenPrimaryImageInputPolicy(DefaultPrimaryImageInputPolicy):
 
 
 for _object_label_driven_module_name in ObjectLabelDrivenPrimaryImageInputPolicy.module_names:
-    type(
-        f"{_object_label_driven_module_name}PrimaryImageInputPolicy",
+    _object_label_driven_policy_name = (
+        f"{_object_label_driven_module_name}PrimaryImageInputPolicy"
+    )
+    globals()[_object_label_driven_policy_name] = type(
+        _object_label_driven_policy_name,
         (ObjectLabelDrivenPrimaryImageInputPolicy,),
         {
             "__module__": __name__,
             "module_name": _object_label_driven_module_name,
         },
     )
-del _object_label_driven_module_name
+del _object_label_driven_module_name, _object_label_driven_policy_name
 
 
 class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
@@ -3943,7 +3947,7 @@ def _missing_object_measurement_row(
     row_policy: CellProfilerObjectMeasurementRowPolicy,
     positive_label_extent: int | None = None,
 ) -> dict[str, Any]:
-    axis_values = dict(zip(axis_fields, axis_key, strict=True))
+    axis_values = _measurement_axis_values_for_key(axis_fields, axis_key)
     row = {
         field_name: row_policy.missing_measurement_value(
             object_id=object_id,
@@ -3960,6 +3964,19 @@ def _missing_object_measurement_row(
     row.update(axis_values)
     row[object_id_field] = object_id
     return row
+
+
+def _measurement_axis_values_for_key(
+    axis_fields: Sequence[str],
+    axis_key: Sequence[Any],
+) -> dict[str, Any]:
+    """Return known axis values, leaving absent axes to row-value policy."""
+    if len(axis_key) > len(axis_fields):
+        raise ValueError(
+            "Measurement axis key has more values than axis fields; got "
+            f"{tuple(axis_key)!r} for fields {tuple(axis_fields)!r}."
+        )
+    return dict(zip(axis_fields, axis_key, strict=False))
 
 
 def _measurement_row_field_names(
@@ -4098,7 +4115,7 @@ def _cellprofiler_global_image_number_rows(
         if has_slice_index and not has_image_number:
             projected_rows = [dict(row) for row in row_mappings]
             for row in projected_rows:
-                if row.get("slice_index") is not None:
+                if _measurement_axis_value_is_present(row.get("slice_index")):
                     row["image_number"] = int(row["slice_index"]) + 1
             return projected_rows, projected_rows
         return rows, row_mappings
@@ -4106,14 +4123,14 @@ def _cellprofiler_global_image_number_rows(
     if has_slice_index and not has_image_number:
         projected_rows = [dict(row) for row in row_mappings]
         for row in projected_rows:
-            if row.get("slice_index") is not None:
+            if _measurement_axis_value_is_present(row.get("slice_index")):
                 row["image_number"] = int(row["slice_index"]) + start
         return projected_rows, projected_rows
 
     image_numbers = [
         int(row["image_number"])
         for row in row_mappings
-        if row.get("image_number") is not None
+        if _measurement_axis_value_is_present(row.get("image_number"))
     ]
     if not image_numbers or min(image_numbers) >= start:
         return rows, row_mappings
@@ -4121,9 +4138,20 @@ def _cellprofiler_global_image_number_rows(
     offset = start - 1
     projected_rows = [dict(row) for row in row_mappings]
     for row in projected_rows:
-        if row.get("image_number") is not None:
+        if _measurement_axis_value_is_present(row.get("image_number")):
             row["image_number"] = int(row["image_number"]) + offset
     return projected_rows, projected_rows
+
+
+def _measurement_axis_value_is_present(value: Any) -> bool:
+    """Return whether an axis value can participate in ImageNumber projection."""
+    if value is None:
+        return False
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        return True
+    return math.isfinite(numeric_value)
 
 
 def _coerce_spatial_grid(value: Any, name: str) -> SpatialGrid | Mapping[str, Any]:

@@ -2354,6 +2354,53 @@ def test_correct_illumination_median_smoothing_uses_local_rank_structuring_disk(
     np.testing.assert_array_equal(illumination, expected)
 
 
+def test_correct_illumination_median_smoothing_fast_minimum_majority_path():
+    image = np.ones((16, 16), dtype=np.float32)
+    image[1::4, 1::4] = 0.25
+
+    illumination, _ = correct_illumination_calculate(
+        image,
+        intensity_choice="Background",
+        block_size=4,
+        smoothing_method="Median Filter",
+        filter_size_method="Manually",
+        manual_filter_size=16,
+        rescale_option="No",
+        dtype_config=DtypeConfig(),
+    )
+
+    expected = np.full((16, 16), np.uint16(0.25 * 65535) / 65535, dtype=np.float32)
+    np.testing.assert_array_equal(illumination, expected)
+
+
+def test_correct_illumination_median_smoothing_falls_back_when_minimum_not_majority():
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+
+    image = np.arange(25, dtype=np.float32).reshape((5, 5)) / 24
+
+    accelerated, _ = correct_illumination_calculate(
+        image,
+        smoothing_method="Median Filter",
+        filter_size_method="Manually",
+        manual_filter_size=2.35,
+        rescale_option="No",
+        dtype_config=DtypeConfig(),
+    )
+    reference, _ = correct_illumination_calculate(
+        image,
+        smoothing_method="Median Filter",
+        filter_size_method="Manually",
+        manual_filter_size=2.35,
+        rescale_option="No",
+        dtype_config=DtypeConfig(),
+        rank_median_backend_provider=CellProfilerBackendProvider.NATIVE,
+    )
+
+    np.testing.assert_array_equal(accelerated, reference)
+
+
 def test_correct_illumination_convex_hull_smoothing_reconstructs_level_hulls():
     from openhcs.constants.constants import MemoryType
 

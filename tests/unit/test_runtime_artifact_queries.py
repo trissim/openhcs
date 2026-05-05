@@ -6,7 +6,9 @@ from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
     annotate_measurement_row_object,
+    matching_measurement_field,
     measurement_feature_candidates,
+    ordered_measurement_feature_candidates,
     measurement_row_mapping,
     measurement_values_for_feature,
     runtime_measurement_tables_for_object,
@@ -108,6 +110,21 @@ def test_measurement_feature_candidates_match_cellprofiler_compact_metric_names(
 
     assert "madintensity" in candidates
     assert "mad_intensity".replace("_", "") in candidates
+
+
+def test_matching_measurement_field_prefers_specific_feature_suffix() -> None:
+    row = {
+        "object_label": 1,
+        "Area": 25.0,
+        "FormFactor": 0.95,
+    }
+
+    field = matching_measurement_field(
+        row,
+        ordered_measurement_feature_candidates("AreaShape_FormFactor"),
+    )
+
+    assert field == "FormFactor"
 
 
 def test_runtime_relationship_query_reconstructs_typed_relationship() -> None:

@@ -357,7 +357,7 @@ def test_compile_image_schema_ignores_disabled_metadata_module():
     assert schema.metadata_rules == ()
 
 
-def test_compile_image_schema_uses_disabled_metadata_regex_for_ordered_image_sets():
+def test_compile_image_schema_ignores_disabled_metadata_regex_for_ordered_image_sets():
     metadata_module = _module_with_records(
         1,
         "Metadata",
@@ -391,9 +391,7 @@ def test_compile_image_schema_uses_disabled_metadata_regex_for_ordered_image_set
 
     assert schema.match_plan is not None
     assert schema.match_plan.method is SourceBindingMatchMethod.ORDER
-    assert len(schema.metadata_rules) == 1
-    assert schema.metadata_rules[0].source is MetadataSource.FILE_NAME
-    assert "(?P<Well>" in schema.metadata_rules[0].pattern
+    assert schema.metadata_rules == ()
 
 
 def test_compile_image_schema_treats_binary_masks_as_stack_images():

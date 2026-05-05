@@ -191,6 +191,81 @@ def test_materialize_source_schema_workspace_uses_single_default_well_for_ordere
         )
 
 
+def test_materialize_source_schema_workspace_projects_ordered_channel_site_sets(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "imaging_flow_source"
+    source_root.mkdir()
+    for channel in ("Ch1", "Ch6", "Ch7"):
+        _write_image(source_root / f"{channel}_1.tif", value=1)
+        _write_image(source_root / f"{channel}_2.tif", value=2)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "BF_image": ImageAssignment(
+                    alias="BF_image",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "Ch1",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "DF_image": ImageAssignment(
+                    alias="DF_image",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "Ch6",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "Marker_image": ImageAssignment(
+                    alias="Marker_image",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "Ch7",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    primary = json.loads(result.metadata_path.read_text())["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "source_s001_w1_z001_t001.tif",
+        "source_s001_w2_z001_t001.tif",
+        "source_s001_w3_z001_t001.tif",
+        "source_s002_w1_z001_t001.tif",
+        "source_s002_w2_z001_t001.tif",
+        "source_s002_w3_z001_t001.tif",
+    }
+    assert primary["wells"] == {"source": None}
+    assert primary["sites"] == {"1": None, "2": None}
+
+
 def test_materialize_source_schema_workspace_disambiguates_duplicate_site_metadata(
     tmp_path: Path,
 ) -> None:

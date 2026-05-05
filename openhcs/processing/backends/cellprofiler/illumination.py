@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import NamedTuple
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -102,7 +103,21 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
         )
         effective_scaled = scaled.copy()
         effective_scaled[~mask_array] = np.uint16(0)
+        minimum_value = np.min(effective_scaled)
+        if _rank_median_global_minimum_is_majority_everywhere_numba(
+            np.ascontiguousarray(effective_scaled),
+            row_offsets_y,
+            row_radii_x,
+            minimum_value,
+        ):
+            return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
+
         values, inverse = np.unique(effective_scaled, return_inverse=True)
+        if _rank_median_skimage_rank_backend_is_preferred(
+            RankMedianWorkload(radius=radius, value_count=int(values.size)),
+        ):
+            return _rank_median_native_reference(scaled, footprint)
+
         code_image = inverse.reshape(image.shape).astype(np.int32, copy=False)
         result_codes = _rank_median_codes_2d_sliding_histogram_numba(
             np.ascontiguousarray(code_image),
@@ -811,6 +826,85 @@ def _rank_median_disk_rows(
         np.asarray(rows, dtype=np.int64),
         np.asarray(radii, dtype=np.int64),
     )
+
+
+class RankMedianWorkload(NamedTuple):
+    """Small immutable workload descriptor for exact rank-median dispatch."""
+
+    radius: int
+    value_count: int
+
+
+def _rank_median_skimage_rank_backend_is_preferred(
+    workload: RankMedianWorkload,
+) -> bool:
+    return workload.radius >= 32 and workload.value_count <= 1024
+
+
+def _rank_median_native_reference(
+    scaled: np.ndarray,
+    footprint: np.ndarray,
+) -> np.ndarray:
+    import skimage.filters
+
+    result = skimage.filters.median(
+        scaled,
+        footprint,
+        behavior="rank",
+    )
+    return result.astype(np.float32) / 65535.0
+
+
+@njit(cache=True)
+def _rank_median_global_minimum_is_majority_everywhere_numba(
+    image: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+    minimum_value: np.uint16,
+) -> bool:
+    height, width = image.shape
+    for y in range(height):
+        total_count = 0
+        minimum_count = 0
+
+        for row_index in range(row_offsets_y.shape[0]):
+            yy = y + row_offsets_y[row_index]
+            if yy < 0 or yy >= height:
+                continue
+            radius_x = row_radii_x[row_index]
+            right = radius_x
+            if right >= width:
+                right = width - 1
+            for xx in range(0, right + 1):
+                total_count += 1
+                if image[yy, xx] == minimum_value:
+                    minimum_count += 1
+
+        if minimum_count <= total_count // 2:
+            return False
+
+        for x in range(1, width):
+            for row_index in range(row_offsets_y.shape[0]):
+                yy = y + row_offsets_y[row_index]
+                if yy < 0 or yy >= height:
+                    continue
+                radius_x = row_radii_x[row_index]
+
+                remove_x = x - 1 - radius_x
+                if remove_x >= 0 and remove_x < width:
+                    total_count -= 1
+                    if image[yy, remove_x] == minimum_value:
+                        minimum_count -= 1
+
+                add_x = x + radius_x
+                if add_x >= 0 and add_x < width:
+                    total_count += 1
+                    if image[yy, add_x] == minimum_value:
+                        minimum_count += 1
+
+            if minimum_count <= total_count // 2:
+                return False
+    return True
 
 
 @njit(cache=True, parallel=True)
