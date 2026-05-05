@@ -376,6 +376,8 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         self.library_name = library_name
         self._cache_path = get_cache_file_path(f"{library_name}_function_metadata.json")
         self._library_warmed = False
+        self._function_metadata_cache: Optional[Dict[str, FunctionMetadata]] = None
+        self._function_metadata_cache_modules: tuple[str, ...] | None = None
 
     # ===== ESSENTIAL ABC METHODS =====
 
@@ -684,16 +686,26 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     def load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
         """Load functions from cache or discover them if cache is invalid."""
         self._ensure_library_warmed()
+        module_signature = tuple(self.MODULES_TO_SCAN)
+        if (
+            self._function_metadata_cache is not None
+            and self._function_metadata_cache_modules == module_signature
+        ):
+            return self._function_metadata_cache
         logger.info(f"🔄 load_or_discover_functions called for {self.library_name}")
 
         cached_functions = self._load_from_cache()
         if cached_functions is not None:
             logger.info(f"✅ Loaded {len(cached_functions)} {self.library_name} functions from cache")
+            self._function_metadata_cache = cached_functions
+            self._function_metadata_cache_modules = module_signature
             return cached_functions
 
         logger.info(f"🔍 Cache miss for {self.library_name} - performing full discovery")
         functions = self.discover_functions()
         self._save_to_cache(functions)
+        self._function_metadata_cache = functions
+        self._function_metadata_cache_modules = module_signature
         return functions
 
     def _load_or_discover_functions(self) -> Dict[str, FunctionMetadata]:
@@ -742,7 +754,32 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         functions = {}
         for func_name, cached_data in cache_data['functions'].items():
             original_name = cached_data.get('original_name', func_name)
-            func = self._get_function_by_name(cached_data['module'], original_name)
+            try:
+                func = self._get_function_by_name(
+                    cached_data['module'],
+                    original_name,
+                )
+            except (AttributeError, ImportError, ModuleNotFoundError) as exc:
+                logger.warning(
+                    "Registry cache entry %s is stale for %s; rebuilding %s cache: %s",
+                    func_name,
+                    self.library_name,
+                    self.library_name,
+                    exc,
+                )
+                self._cache_path.unlink(missing_ok=True)
+                return None
+            if not callable(func):
+                logger.warning(
+                    "Registry cache entry %s for %s resolved to non-callable %r; "
+                    "rebuilding %s cache",
+                    func_name,
+                    self.library_name,
+                    type(func).__name__,
+                    self.library_name,
+                )
+                self._cache_path.unlink(missing_ok=True)
+                return None
             contract = ProcessingContract[cached_data['contract']]
 
             adapted_func = self.create_library_adapter(func, contract)

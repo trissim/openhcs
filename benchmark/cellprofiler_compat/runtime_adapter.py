@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections import OrderedDict
+from collections.abc import Hashable, Mapping
 from dataclasses import dataclass, field
 import logging
 import os
@@ -72,6 +73,16 @@ from openhcs.core.runtime_values import (
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
+_SOURCE_CANDIDATE_CACHE_LIMIT = 64
+_SOURCE_CANDIDATE_PROCESS_CACHE: OrderedDict[
+    tuple[Hashable, ...],
+    tuple["ParsedSourceCandidate", ...],
+] = OrderedDict()
+_PIPELINE_START_PAYLOAD_CACHE_LIMIT = 64
+_PIPELINE_START_PAYLOAD_PROCESS_CACHE: OrderedDict[
+    tuple[str, tuple[str, ...]],
+    tuple[Any, ...],
+] = OrderedDict()
 
 
 def _runtime_profile_enabled() -> bool:
@@ -108,6 +119,14 @@ class CellProfilerRuntimeAdapter:
     processing_context: Any | None = None
     filemanager: Any | None = None
     backend: str = Backend.MEMORY.value
+    _source_candidate_cache: dict[
+        tuple[str, ...],
+        tuple["ParsedSourceCandidate", ...],
+    ] = field(default_factory=dict, init=False, repr=False, compare=False)
+    _pipeline_start_payload_cache: dict[
+        tuple[str, tuple[str, ...]],
+        tuple[Any, ...],
+    ] = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_value_store, RuntimeValueStore):
@@ -597,6 +616,39 @@ class CellProfilerRuntimeAdapter:
             RuntimeArtifactLocation(path=path, backend=self.backend),
         )
 
+    def source_candidates(
+        self,
+        file_paths: tuple[str, ...],
+    ) -> tuple["ParsedSourceCandidate", ...]:
+        """Return parsed source candidates for this runtime source universe.
+
+        Source resolution may query the same step-input and pipeline-start
+        universes from separate CellProfiler runtime adapters. Parsing is pure
+        for the path tuple, source-binding context, metadata rules and filename
+        parser, so the cache key carries those semantic inputs explicitly.
+        """
+        cache_key = _source_candidate_cache_key(file_paths, self)
+        candidates = self._source_candidate_cache.get(file_paths)
+        if candidates is None:
+            candidates = _SOURCE_CANDIDATE_PROCESS_CACHE.get(cache_key)
+            if candidates is not None:
+                _SOURCE_CANDIDATE_PROCESS_CACHE.move_to_end(cache_key)
+                self._source_candidate_cache[file_paths] = candidates
+        if candidates is None:
+            started_at = time.perf_counter()
+            candidates = _parse_source_candidates(file_paths, self)
+            self._source_candidate_cache[file_paths] = candidates
+            _SOURCE_CANDIDATE_PROCESS_CACHE[cache_key] = candidates
+            _SOURCE_CANDIDATE_PROCESS_CACHE.move_to_end(cache_key)
+            if len(_SOURCE_CANDIDATE_PROCESS_CACHE) > _SOURCE_CANDIDATE_CACHE_LIMIT:
+                _SOURCE_CANDIDATE_PROCESS_CACHE.popitem(last=False)
+            _log_adapter_profile(
+                "source_candidates_parse",
+                time.perf_counter() - started_at,
+                count=len(candidates),
+            )
+        return candidates
+
 
 @dataclass(frozen=True, slots=True)
 class SourceBindingRequestBase(ABC):
@@ -660,14 +712,19 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
                 "selector resolution, but no step input file universe was "
                 "provided to the runtime adapter."
             )
-        parsed_candidates = _parse_source_candidates(
-            step_input_files,
-            request.adapter,
-        )
+        parsed_candidates = request.adapter.source_candidates(step_input_files)
+        match_started_at = time.perf_counter()
         matched = _match_candidates(
             candidates=parsed_candidates,
             binding=request.binding,
             inherit_components={},
+        )
+        _log_adapter_profile(
+            "source_candidates_match",
+            time.perf_counter() - match_started_at,
+            alias=request.alias,
+            source=SourceBindingOrigin.STEP_INPUT.value,
+            count=len(matched),
         )
         selected_files = _require_matched_candidates(
             MatchedSourceCandidatesRequest.from_resolution(
@@ -696,18 +753,15 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
                 "selector resolution, but no pipeline-start file universe was "
                 "provided to the runtime adapter."
             )
-        step_input_candidates = _parse_source_candidates(
-            request.adapter.source_binding_context.step_input_files,
-            request.adapter,
+        step_input_candidates = request.adapter.source_candidates(
+            request.adapter.source_binding_context.step_input_files
         )
         inherit_components = _pipeline_start_inherited_components(
             request.adapter.source_binding_plan,
             step_input_candidates,
         )
-        parsed_candidates = _parse_source_candidates(
-            pipeline_input_files,
-            request.adapter,
-        )
+        parsed_candidates = request.adapter.source_candidates(pipeline_input_files)
+        match_started_at = time.perf_counter()
         initially_matched = _match_candidates(
             candidates=parsed_candidates,
             binding=request.binding,
@@ -722,6 +776,13 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             source_binding_plan=request.adapter.source_binding_plan,
             group_key=request.adapter.group_key,
         )
+        _log_adapter_profile(
+            "source_candidates_match",
+            time.perf_counter() - match_started_at,
+            alias=request.alias,
+            source=SourceBindingOrigin.PIPELINE_START.value,
+            count=len(matched),
+        )
         selected_files = _require_matched_candidates(
             MatchedSourceCandidatesRequest.from_resolution(
                 request,
@@ -729,11 +790,19 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
                 source_description="pipeline start",
             )
         )
-        return _load_pipeline_start_stack(
+        load_started_at = time.perf_counter()
+        payload = _load_pipeline_start_stack(
             adapter=request.adapter,
             selected_paths=tuple(candidate.path for candidate in selected_files),
             current_image=request.current_image,
         )
+        _log_adapter_profile(
+            "source_candidates_load",
+            time.perf_counter() - load_started_at,
+            alias=request.alias,
+            count=len(selected_files),
+        )
+        return payload
 
 
 @dataclass(frozen=True, slots=True)
@@ -966,6 +1035,35 @@ def _parse_source_candidates(
             )
         )
     return tuple(candidates)
+
+
+def _source_candidate_cache_key(
+    file_paths: tuple[str, ...],
+    adapter: CellProfilerRuntimeAdapter,
+) -> tuple[Hashable, ...]:
+    context = adapter.source_binding_context
+    parser = _require_processing_context(adapter).microscope_handler.parser
+    return (
+        tuple(file_paths),
+        context.step_input_dir,
+        tuple(sorted(context.step_input_source_paths.items())),
+        _frozen_metadata_by_path(context.source_metadata_by_path),
+        context.pipeline_input_backend,
+        tuple(context.pipeline_input_files),
+        adapter.source_binding_plan.metadata_rules,
+        type(parser).__module__,
+        type(parser).__qualname__,
+        repr(parser),
+    )
+
+
+def _frozen_metadata_by_path(
+    metadata_by_path: Mapping[str, Mapping[str, str]],
+) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+    return tuple(
+        (path, tuple(sorted(metadata.items())))
+        for path, metadata in sorted(metadata_by_path.items())
+    )
 
 
 def _candidate_metadata(
@@ -1234,15 +1332,28 @@ def _load_pipeline_start_stack(
         raise RuntimeError(
             "Pipeline-start source resolution requires pipeline_input_backend."
         )
-    loaded_payloads = PipelineStartSourceFileLoader.for_paths(
-        selected_paths,
-    ).load_slices(
-        PipelineStartSourceLoadRequest(
-            adapter=adapter,
-            selected_paths=selected_paths,
-            backend=backend,
+    cache_key = (backend, selected_paths)
+    loaded_payloads = adapter._pipeline_start_payload_cache.get(cache_key)
+    if loaded_payloads is None:
+        loaded_payloads = _PIPELINE_START_PAYLOAD_PROCESS_CACHE.get(cache_key)
+        if loaded_payloads is not None:
+            _PIPELINE_START_PAYLOAD_PROCESS_CACHE.move_to_end(cache_key)
+            adapter._pipeline_start_payload_cache[cache_key] = loaded_payloads
+    if loaded_payloads is None:
+        loaded_payloads = tuple(
+            PipelineStartSourceFileLoader.for_paths(selected_paths).load_slices(
+                PipelineStartSourceLoadRequest(
+                    adapter=adapter,
+                    selected_paths=selected_paths,
+                    backend=backend,
+                )
+            )
         )
-    )
+        adapter._pipeline_start_payload_cache[cache_key] = loaded_payloads
+        _PIPELINE_START_PAYLOAD_PROCESS_CACHE[cache_key] = loaded_payloads
+        _PIPELINE_START_PAYLOAD_PROCESS_CACHE.move_to_end(cache_key)
+        if len(_PIPELINE_START_PAYLOAD_PROCESS_CACHE) > _PIPELINE_START_PAYLOAD_CACHE_LIMIT:
+            _PIPELINE_START_PAYLOAD_PROCESS_CACHE.popitem(last=False)
     if not loaded_payloads:
         raise RuntimeError(
             "Pipeline-start source resolution loaded no payloads from "

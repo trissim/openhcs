@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from enum import Enum
+from functools import lru_cache
 from inspect import Parameter, signature, unwrap
 import json
 import logging
@@ -1490,18 +1491,46 @@ def _coerce_invocation_kwargs(
     func: Callable[..., Any],
     kwargs: Mapping[str, Any],
 ) -> dict[str, Any]:
-    parameters = signature(func).parameters
-    coerced_kwargs = _accepted_invocation_kwargs(parameters, kwargs)
-    annotations = _callable_type_hints(func)
-    for name, value in tuple(coerced_kwargs.items()):
-        enum_type = _enum_annotation_type(
-            parameters.get(name),
-            annotations.get(name),
-        )
-        if enum_type is None:
+    accepts_var_keyword, accepted_names, enum_types = _callable_invocation_kwarg_spec(
+        func
+    )
+    if accepts_var_keyword:
+        coerced_kwargs = dict(kwargs)
+    else:
+        coerced_kwargs = {
+            name: value
+            for name, value in kwargs.items()
+            if name in accepted_names or name in _INVOCATION_CONTROL_KWARGS
+        }
+    for name, enum_type in enum_types:
+        if name not in coerced_kwargs:
             continue
+        value = coerced_kwargs[name]
         coerced_kwargs[name] = _coerce_enum_argument(enum_type, value, name)
     return coerced_kwargs
+
+
+@lru_cache(maxsize=256)
+def _callable_invocation_kwarg_spec(
+    func: Callable[..., Any],
+) -> tuple[bool, frozenset[str], tuple[tuple[str, type[Enum]], ...]]:
+    parameters = _callable_parameters(func)
+    annotations = _callable_type_hints(func)
+    accepts_var_keyword = any(
+        parameter.kind is Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
+    enum_types = tuple(
+        (name, enum_type)
+        for name, parameter in parameters.items()
+        if (
+            enum_type := _enum_annotation_type(
+                parameter,
+                annotations.get(name),
+            )
+        )
+        is not None
+    )
+    return accepts_var_keyword, frozenset(parameters), enum_types
 
 
 def _accepted_invocation_kwargs(
@@ -1517,6 +1546,12 @@ def _accepted_invocation_kwargs(
     }
 
 
+@lru_cache(maxsize=256)
+def _callable_parameters(func: Callable[..., Any]) -> Mapping[str, Parameter]:
+    return signature(func).parameters
+
+
+@lru_cache(maxsize=256)
 def _callable_type_hints(func: Callable[..., Any]) -> Mapping[str, Any]:
     try:
         return get_type_hints(func)
@@ -2609,10 +2644,26 @@ class RelateObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
+        table_started_at = time.perf_counter()
+        table_rows = _measurement_table_rows(request.value)
+        _log_module_profile(
+            "relate_measurement_table_rows",
+            time.perf_counter() - table_started_at,
+            module=self.module_name,
+            rows=len(table_rows),
+        )
+        relationship_started_at = time.perf_counter()
+        relationship_rows = _relationship_measurement_rows(request)
+        _log_module_profile(
+            "relate_relationship_rows",
+            time.perf_counter() - relationship_started_at,
+            module=self.module_name,
+            rows=len(relationship_rows),
+        )
         return CellProfilerMeasurementRecord(
             rows=[
-                *_measurement_table_rows(request.value),
-                *_relationship_measurement_rows(request),
+                *table_rows,
+                *relationship_rows,
             ],
             object_name=None,
             source_image_name=request.source_image_name,
@@ -3741,19 +3792,40 @@ def _record_measurements(
     }
     if object_name is not _MISSING_MEASUREMENT_OBJECT_NAME:
         kwargs["object_name"] = object_name
+    projection_started_at = time.perf_counter()
     projected_rows, projected_row_mappings = _cellprofiler_global_image_number_rows(
         adapter,
         rows,
         source_image_name=source_image_name,
         object_name=object_name,
+        need_row_mappings=bool(fields),
     )
+    _log_module_profile(
+        "record_measurements_project_rows",
+        time.perf_counter() - projection_started_at,
+        rows=len(projected_rows),
+        fields=bool(fields),
+    )
+    fields_started_at = time.perf_counter()
     fields = _measurement_fields_covering_mappings(fields, projected_row_mappings)
+    _log_module_profile(
+        "record_measurements_fields",
+        time.perf_counter() - fields_started_at,
+        rows=len(projected_row_mappings),
+        fields=bool(fields),
+    )
     if fields:
         kwargs["fields"] = fields
+    add_started_at = time.perf_counter()
     adapter.add_measurements(
         name,
         projected_rows,
         **kwargs,
+    )
+    _log_module_profile(
+        "record_measurements_add",
+        time.perf_counter() - add_started_at,
+        rows=len(projected_rows),
     )
 
 
@@ -3784,12 +3856,23 @@ def _cellprofiler_global_image_number_rows(
     *,
     source_image_name: str | None,
     object_name: str | None | object,
+    need_row_mappings: bool = True,
 ) -> tuple[Sequence[Any], Sequence[Mapping[str, Any]]]:
-    row_mappings = [measurement_row_mapping(row) for row in rows]
-    if not row_mappings:
+    row_mappings: list[Mapping[str, Any]] = []
+    has_image_number = False
+    has_slice_index = False
+    for row in rows:
+        row_mapping = measurement_row_mapping(row)
+        if need_row_mappings:
+            row_mappings.append(row_mapping)
+        has_image_number = has_image_number or "image_number" in row_mapping
+        has_slice_index = has_slice_index or "slice_index" in row_mapping
+        if (has_image_number or has_slice_index) and not need_row_mappings:
+            row_mappings = [measurement_row_mapping(candidate) for candidate in rows]
+            break
+
+    if not rows:
         return rows, row_mappings
-    has_image_number = any("image_number" in row for row in row_mappings)
-    has_slice_index = any("slice_index" in row for row in row_mappings)
     if not has_image_number and not has_slice_index:
         return rows, row_mappings
 
@@ -4449,6 +4532,16 @@ def _object_label_count_from_value(
 ) -> int:
     labels = value.labels if isinstance(value, ObjectLabelPayload) else value
     label_array = np.asarray(labels)
+    if (
+        isinstance(value, ObjectLabelPayload)
+        and value.declared_object_count is not None
+        and (
+            slice_index is None
+            or label_array.ndim < 3
+            or label_array.shape[0] == 1
+        )
+    ):
+        return int(value.declared_object_count)
     if slice_index is not None and label_array.ndim >= 3:
         if slice_index < label_array.shape[0]:
             label_array = label_array[slice_index]
@@ -4938,7 +5031,7 @@ _COMPOSED_IMAGE_PAYLOAD_PARAMETERS = frozenset(
 
 def _callable_accepts_composed_image_payload(func: Callable[..., Any]) -> bool:
     """Return whether callable parameters describe a multi-image bundle contract."""
-    parameters = signature(func).parameters
+    parameters = _callable_parameters(func)
     return any(
         parameter_name in parameters
         for parameter_name in _COMPOSED_IMAGE_PAYLOAD_PARAMETERS

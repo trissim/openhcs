@@ -10,7 +10,11 @@ import numpy as np
 
 from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.runtime_values import image_payload_data, with_image_payload_data
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_metadata,
+    with_image_payload_data,
+)
 
 
 class ImageChannelType(Enum):
@@ -44,7 +48,11 @@ def color_to_gray(
     resolved_image_type = _coerce_enum(ImageChannelType, image_type, "image_type")
     if resolved_mode is ColorToGrayMode.COMBINE:
         output = _combine_colortogray(image, channel_indices, contributions)
-        return with_image_payload_data(image, output)
+        return with_image_payload_data(
+            image,
+            output,
+            metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
+        )
     return tuple(
         with_image_payload_data(image, output)
         for output in _split_colortogray(image, resolved_image_type, channel_indices)

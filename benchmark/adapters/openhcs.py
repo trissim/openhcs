@@ -7,9 +7,12 @@ import logging
 import pickle
 import hashlib
 import importlib.util
+import os
+import signal
+import threading
 import time
 from collections.abc import Callable, Mapping
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from pathlib import Path
@@ -73,6 +76,7 @@ _RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX = "runtime_candidate_measurement_
 _RUNTIME_EXECUTION_CACHE_IGNORED_PARAM_KEYS = frozenset(
     {
         "equivalence_reference_output_dir",
+        "openhcs_timeout_seconds",
         "runtime_execution_cache_manifest",
         "runtime_execution_cache_key",
         "reuse_runtime_execution_cache",
@@ -152,6 +156,16 @@ class OpenHCSRunRequest:
         return bool(
             self.pipeline_params.get("cache_candidate_measurement_snapshot", True)
         )
+
+    @property
+    def openhcs_timeout_seconds(self) -> float:
+        value = self.pipeline_params.get("openhcs_timeout_seconds")
+        if value is None:
+            value = os.environ.get("OPENHCS_BENCHMARK_OPENHCS_TIMEOUT_SECONDS", "120")
+        seconds = float(value)
+        if seconds <= 0:
+            raise ValueError("openhcs_timeout_seconds must be positive.")
+        return seconds
 
 
 @dataclass(frozen=True, slots=True)
@@ -356,11 +370,12 @@ class OpenHCSAdapter(ToolAdapter):
             with ExitStack() as stack:
                 for metric in request.metrics:
                     stack.enter_context(metric)
-                execution = execute_pipeline_direct(
-                    orchestrator,
-                    prepared.pipeline,
-                    phase_timing=phase_timing,
-                )
+                with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
+                    execution = execute_pipeline_direct(
+                        orchestrator,
+                        prepared.pipeline,
+                        phase_timing=phase_timing,
+                    )
             output_roots = runtime_output_roots(
                 execution.compiled_contexts,
                 output_plate_root,
@@ -823,6 +838,31 @@ class OpenHCSAdapter(ToolAdapter):
                 )
             validated_metrics.append(metric)
         return tuple(validated_metrics)
+
+
+@contextmanager
+def _openhcs_execution_watchdog(timeout_seconds: float):
+    """Interrupt benchmark OpenHCS execution that exceeds the run budget."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+
+    previous_handler = signal.getsignal(signal.SIGALRM)
+
+    def _raise_timeout(_signum: int, _frame: object) -> None:
+        raise TimeoutError(
+            f"OpenHCS execution exceeded {timeout_seconds:.1f}s watchdog."
+        )
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_seconds)
+    try:
+        yield
+    except TimeoutError as exc:
+        raise ToolExecutionError(str(exc)) from exc
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, previous_handler)
 
 
 def _validation_cache_payload(

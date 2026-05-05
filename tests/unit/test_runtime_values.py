@@ -245,6 +245,31 @@ def test_compose_image_payload_metadata_tracks_per_channel_sources() -> None:
     assert metadata.for_channel(1).source_dtype == "uint8"
 
 
+def test_compose_image_payload_metadata_tracks_unit_interval_proof() -> None:
+    first = image_payload_with_context(
+        np.zeros((2, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            intensity_scale=65535.0,
+            source_dtype="uint16",
+            unit_interval_intensity_scale=65535,
+        ),
+    )
+    second = image_payload_with_context(
+        np.zeros((2, 3), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            intensity_scale=255.0,
+            source_dtype="uint8",
+            unit_interval_intensity_scale=255,
+        ),
+    )
+
+    metadata = compose_image_payload_metadata((first, second))
+
+    assert metadata.channel_unit_interval_intensity_scales == (65535, 255)
+    assert metadata.for_channel(0).unit_interval_intensity_scale == 65535
+    assert metadata.for_channel(1).unit_interval_intensity_scale == 255
+
+
 def test_image_payload_metadata_tracks_spatial_crop_edges() -> None:
     metadata = ImagePayloadMetadata(source_dtype="float32").with_spatial_crop(
         input_shape_yx=(10, 12),
@@ -320,6 +345,7 @@ def test_normalize_image_payload_intensity_uses_semantic_scale() -> None:
     normalized = normalize_image_payload_intensity(payload)
 
     assert image_payload_metadata(normalized).intensity_scale == 4095.0
+    assert image_payload_metadata(normalized).unit_interval_intensity_scale == 4095
     assert image_payload_data(normalized).dtype == np.float32
     np.testing.assert_allclose(image_payload_data(normalized), [[0.0, 1.0]])
 

@@ -7,6 +7,8 @@ saturation metrics, intensity metrics, and threshold metrics.
 """
 
 import numpy as np
+import os
+import time
 from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
 from enum import Enum
@@ -19,6 +21,21 @@ from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
 from openhcs.processing.materialization import csv_materializer
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    import logging
+
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logging.getLogger(__name__).info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 class ThresholdMethod(Enum):
@@ -301,9 +318,9 @@ def _calculate_intensity_metrics(pixel_data: np.ndarray) -> dict:
             'min_intensity': 0.0,
             'max_intensity': 0.0
         }
-    
+
     pixel_median = np.median(pixel_data)
-    
+
     return {
         'total_area': int(pixel_data.size),
         'total_intensity': float(np.sum(pixel_data)),
@@ -407,30 +424,66 @@ def measure_image_quality(
     Returns:
         Tuple of (original image, ImageQualityMetrics dataclass)
     """
+    total_started_at = time.perf_counter()
     metrics = ImageQualityMetrics(slice_index=0)
-    
+
+    phase_started_at = time.perf_counter()
     pixel_data = np.asarray(image, dtype=np.float32)
-    
+    _log_profile(
+        "miq_prepare_image",
+        time.perf_counter() - phase_started_at,
+        function="measure_image_quality",
+    )
+
     # Calculate blur metrics
     if calculate_blur:
+        phase_started_at = time.perf_counter()
         metrics.focus_score = _calculate_focus_score(pixel_data)
+        _log_profile(
+            "miq_focus_score",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+        phase_started_at = time.perf_counter()
         metrics.local_focus_score = _calculate_local_focus_score(pixel_data, blur_scale)
+        _log_profile(
+            "miq_local_focus_score",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+        phase_started_at = time.perf_counter()
         metrics.correlation = _calculate_correlation(
             pixel_data,
             blur_scale,
             backend_provider=backend_provider,
         )
+        _log_profile(
+            "miq_correlation",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+        phase_started_at = time.perf_counter()
         metrics.power_log_log_slope = _calculate_power_spectrum_slope(
             pixel_data,
             backend_provider=backend_provider,
         )
+        _log_profile(
+            "miq_power_log_log_slope",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
     
-    # Calculate saturation metrics
     if calculate_saturation:
+        phase_started_at = time.perf_counter()
         metrics.percent_maximal, metrics.percent_minimal = _calculate_saturation(pixel_data)
-    
-    # Calculate intensity metrics
+        _log_profile(
+            "miq_saturation",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+
     if calculate_intensity:
+        phase_started_at = time.perf_counter()
         intensity_metrics = _calculate_intensity_metrics(pixel_data)
         metrics.total_area = intensity_metrics['total_area']
         metrics.total_intensity = intensity_metrics['total_intensity']
@@ -440,10 +493,28 @@ def measure_image_quality(
         metrics.mad_intensity = intensity_metrics['mad_intensity']
         metrics.min_intensity = intensity_metrics['min_intensity']
         metrics.max_intensity = intensity_metrics['max_intensity']
+        _log_profile(
+            "miq_intensity",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
     
     # Calculate threshold
     if calculate_threshold:
+        phase_started_at = time.perf_counter()
         metrics.threshold_otsu = _calculate_threshold(pixel_data, threshold_method)
+        _log_profile(
+            "miq_threshold",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+            method=threshold_method.value,
+        )
+
+    _log_profile(
+        "miq_total",
+        time.perf_counter() - total_started_at,
+        function="measure_image_quality",
+    )
     
     return image, metrics
 

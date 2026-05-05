@@ -14,6 +14,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
+    image_payload_metadata,
     with_image_payload_data,
 )
 
@@ -291,4 +292,9 @@ def image_math(
     output = output_pixel_data.astype(np.float32)
     if ignore_masks:
         return output
-    return with_image_payload_data(source_payload, output, mask=source_mask)
+    return with_image_payload_data(
+        source_payload,
+        output,
+        mask=source_mask,
+        metadata=image_payload_metadata(source_payload).without_unit_interval_intensity_scale(),
+    )

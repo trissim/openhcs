@@ -167,7 +167,9 @@ def _correct_illumination_pair(
     return image_payload_with_context(
         output_pixels[np.newaxis, ...].astype(np.float32),
         mask=_input_mask(image, input_index),
-        metadata=image_payload_metadata(image).for_channel(input_index),
+        metadata=image_payload_metadata(image)
+        .for_channel(input_index)
+        .without_unit_interval_intensity_scale(),
     )
 
 

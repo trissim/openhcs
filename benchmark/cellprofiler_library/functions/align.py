@@ -516,6 +516,22 @@ def _cumsum_quadrant(
     return np.fliplr(np.fliplr(values).cumsum(1))
 
 
+def _prepare_align() -> None:
+    """Compile alignment backend kernels outside measured execution."""
+    reference = np.zeros((32, 32), dtype=np.float32)
+    moving = np.zeros((32, 32), dtype=np.float32)
+    reference[8:20, 9:21] = 1.0
+    moving[9:21, 8:20] = 1.0
+    _translation_offset(
+        reference,
+        moving,
+        method="Mutual Information",
+        first_mask=None,
+        second_mask=None,
+        alignment_backend_provider=None,
+    )
+
+
 def _crop_mode_outputs(
     first_image: np.ndarray,
     second_image: np.ndarray,
@@ -738,3 +754,6 @@ def _offset_slice(
         *(slice(None),) * max(0, target.ndim - 2),
     )
     return source[source_slices], target[target_slices]
+
+
+align.__openhcs_prepare__ = _prepare_align

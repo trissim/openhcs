@@ -2,7 +2,11 @@
 
 import numpy as np
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.runtime_values import image_payload_data, with_image_payload_data
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_metadata,
+    with_image_payload_data,
+)
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -47,4 +51,5 @@ def closing(
     return with_image_payload_data(
         image,
         result.astype(pixel_data.dtype, copy=False),
+        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
     )

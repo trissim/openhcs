@@ -37,6 +37,7 @@ from benchmark.cellprofiler_library.functions.thresholding import (
     cellprofiler_threshold_diagnostics,
     normalize_cellprofiler_image,
 )
+from benchmark.cellprofiler_compat.perf_fixtures import capture_array_fixture
 from benchmark.cellprofiler_library.functions.watershed import (
     cellprofiler_legacy_watershed,
 )
@@ -340,6 +341,11 @@ def identify_primary_objects(
         if respect_source_border_metadata
         else ImagePayloadMetadata()
     )
+    raw_image_data = np.asarray(image_payload_data(image))
+    diagnostics_unit_interval_scale = _unit_interval_scale_for_diagnostics(
+        raw_image_data,
+        image_payload_metadata(image),
+    )
     img = normalize_cellprofiler_image(image)
     effective_threshold_smoothing = threshold_smoothing_scale
     _log_profile(
@@ -400,7 +406,6 @@ def identify_primary_objects(
         binary,
         connectivity=2,
     )
-    pre_declump_labels = labeled_image.copy()
     declump_backend_method = CellProfilerDeclumpMethod.SHAPE
     _log_profile(
         "ipo_initial_label",
@@ -572,25 +577,13 @@ def identify_primary_objects(
             function="identify_primary_objects",
         )
     
-    phase_started_at = time.perf_counter()
-    labels_before_size_filter = labeled_image.copy()
-    _log_profile(
-        "ipo_copy_size_reference",
-        time.perf_counter() - phase_started_at,
-        function="identify_primary_objects",
-    )
-
     # Filter objects by size. Keep CellProfiler's small-removed variant: small
     # objects are removed, large objects are still present.
     if exclude_size and object_count > 0:
         phase_started_at = time.perf_counter()
-        labeled_image = _filter_labels_below_minimum_diameter(
+        small_removed_labels, labeled_image = _filter_labels_by_diameter_range(
             labeled_image,
             min_diameter,
-        )
-        small_removed_labels = labeled_image.copy()
-        labeled_image = _filter_labels_above_maximum_diameter(
-            labeled_image,
             max_diameter,
         )
         _log_profile(
@@ -605,8 +598,14 @@ def identify_primary_objects(
         fill_holes=fill_holes,
     ):
         phase_started_at = time.perf_counter()
-        labeled_image = morphology.fill_labeled_holes(labeled_image)
-        if exclude_size and object_count > 0:
+        capture_array_fixture("ipo_fill_after", labels=labeled_image)
+        filled_labeled_image = morphology.fill_labeled_holes(labeled_image)
+        fill_changed_labels = (
+            filled_labeled_image is not labeled_image
+            and not np.array_equal(filled_labeled_image, labeled_image)
+        )
+        labeled_image = filled_labeled_image
+        if fill_changed_labels and exclude_size and object_count > 0:
             labeled_image = _filter_labels_below_minimum_diameter(
                 labeled_image,
                 min_diameter,
@@ -645,6 +644,7 @@ def identify_primary_objects(
         final_threshold=thresh,
         original_threshold=original_threshold,
         mask=input_mask,
+        proven_unit_interval_scale=diagnostics_unit_interval_scale,
     )
     _log_profile(
         "ipo_statistics_diagnostics",
@@ -694,6 +694,24 @@ def _label_area_statistics(labels: np.ndarray) -> tuple[float, float, float]:
     )
 
 
+def _unit_interval_scale_for_diagnostics(
+    image_data: np.ndarray,
+    metadata: ImagePayloadMetadata,
+) -> int | None:
+    """Return a proof scale for exact unit-interval threshold diagnostics."""
+    metadata_scale = metadata.unit_interval_intensity_scale_for_channel(0)
+    if metadata_scale is not None and metadata_scale > 1:
+        return int(metadata_scale)
+    if not np.issubdtype(np.asarray(image_data).dtype, np.integer):
+        return None
+    from openhcs.core.runtime_values import image_intensity_scale_for_dtype
+
+    scale = image_intensity_scale_for_dtype(np.asarray(image_data).dtype)
+    if scale is None or scale <= 1:
+        return None
+    return int(scale)
+
+
 def _filter_labels_below_minimum_diameter(
     labels: np.ndarray,
     min_diameter: float,
@@ -722,6 +740,23 @@ def _filter_labels_above_maximum_diameter(
     )
 
 
+def _filter_labels_by_diameter_range(
+    labels: np.ndarray,
+    min_diameter: float,
+    max_diameter: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    min_area = np.pi * (float(min_diameter) ** 2) / 4.0
+    max_area = np.pi * (float(max_diameter) ** 2) / 4.0
+    labels_array = np.ascontiguousarray(labels)
+    areas = np.ascontiguousarray(np.bincount(np.asarray(labels_array).ravel()))
+    return _filter_labels_by_diameter_range_numba(
+        labels_array,
+        areas,
+        float(min_area),
+        float(max_area),
+    )
+
+
 @njit(cache=True, parallel=True)
 def _filter_labels_by_area_numba(
     labels: np.ndarray,
@@ -742,6 +777,30 @@ def _filter_labels_by_area_numba(
     return output
 
 
+@njit(cache=True, parallel=True)
+def _filter_labels_by_diameter_range_numba(
+    labels: np.ndarray,
+    areas: np.ndarray,
+    min_area: float,
+    max_area: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    small_removed = labels.copy()
+    final = labels.copy()
+    height, width = labels.shape
+    for row in prange(height):
+        for col in range(width):
+            label = int(labels[row, col])
+            if label <= 0:
+                continue
+            area = float(areas[label])
+            if area < min_area:
+                small_removed[row, col] = 0
+                final[row, col] = 0
+            elif area > max_area:
+                final[row, col] = 0
+    return small_removed, final
+
+
 def _filter_border_objects(
     labeled_image: np.ndarray,
     *,
@@ -749,35 +808,26 @@ def _filter_border_objects(
     image_metadata: ImagePayloadMetadata = ImagePayloadMetadata(),
 ) -> np.ndarray:
     """Remove labels touching the physical border or masked image border."""
-    output = labeled_image.copy()
-    max_label = int(output.max())
-    if max_label <= 0:
-        return output
-
-    height, width = output.shape[:2]
+    height, width = labeled_image.shape[:2]
     physical_edges = image_metadata.physical_border_edges_for_shape((height, width))
-    border_slices = []
-    if height > 0 and physical_edges[0]:
-        border_slices.append(output[0, :])
-    if height > 0 and physical_edges[1]:
-        border_slices.append(output[-1, :])
-    if width > 0 and physical_edges[2]:
-        border_slices.append(output[:, 0])
-    if width > 0 and physical_edges[3]:
-        border_slices.append(output[:, -1])
-    if border_slices:
-        border_labels = np.concatenate(border_slices).astype(np.int64, copy=False)
-        border_histogram = np.bincount(border_labels, minlength=max_label + 1)
-        labels_to_remove = np.flatnonzero(border_histogram[1:] > 0) + 1
-        if labels_to_remove.size:
-            output[np.isin(output, labels_to_remove)] = 0
-            return output
+    output, removed_physical = _filter_physical_border_objects_numba(
+        np.ascontiguousarray(labeled_image),
+        bool(physical_edges[0]),
+        bool(physical_edges[1]),
+        bool(physical_edges[2]),
+        bool(physical_edges[3]),
+    )
+    if removed_physical:
+        return output
 
     if image_mask is None or image_metadata.mask_defines_border is False:
         return output
 
     from scipy import ndimage as ndi
 
+    max_label = int(output.max())
+    if max_label <= 0:
+        return output
     mask = np.asarray(image_mask, dtype=bool)
     mask_border = np.logical_not(ndi.binary_erosion(mask, border_value=1)) & mask
     masked_border_labels = output[mask_border].astype(np.int64, copy=False)
@@ -789,6 +839,63 @@ def _filter_border_objects(
     if labels_to_remove.size:
         output[np.isin(output, labels_to_remove)] = 0
     return output
+
+
+@njit(cache=True)
+def _filter_physical_border_objects_numba(
+    labels: np.ndarray,
+    top: bool,
+    bottom: bool,
+    left: bool,
+    right: bool,
+) -> tuple[np.ndarray, bool]:
+    height, width = labels.shape
+    max_label = 0
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+    if max_label <= 0:
+        return labels, False
+
+    remove = np.zeros(max_label + 1, dtype=np.bool_)
+    if top and height > 0:
+        for x in range(width):
+            label = int(labels[0, x])
+            if label > 0:
+                remove[label] = True
+    if bottom and height > 0:
+        for x in range(width):
+            label = int(labels[height - 1, x])
+            if label > 0:
+                remove[label] = True
+    if left and width > 0:
+        for y in range(height):
+            label = int(labels[y, 0])
+            if label > 0:
+                remove[label] = True
+    if right and width > 0:
+        for y in range(height):
+            label = int(labels[y, width - 1])
+            if label > 0:
+                remove[label] = True
+
+    any_removed = False
+    for label in range(1, max_label + 1):
+        if remove[label]:
+            any_removed = True
+            break
+    if not any_removed:
+        return labels, False
+
+    output = labels.copy()
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > 0 and remove[label]:
+                output[y, x] = 0
+    return output, True
 
 
 def _declumping_suppression_footprint(
@@ -827,6 +934,8 @@ def _prepare_identify_primary_objects() -> None:
         2.0,
         4.0,
     )
+    _filter_labels_by_diameter_range(labels, 2.0, 4.0)
+    _filter_physical_border_objects_numba(labels, True, True, True, True)
     image = np.zeros((96, 96), dtype=np.float32)
     yy, xx = np.ogrid[:96, :96]
     image[((yy - 32) ** 2 + (xx - 32) ** 2) <= 12 * 12] = 0.8
@@ -840,6 +949,32 @@ def _prepare_identify_primary_objects() -> None:
         low_res_maxima=True,
         use_advanced_settings=True,
         threshold_method=CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY,
+    )
+    identify_primary_objects.__wrapped__(
+        image,
+        min_diameter=3,
+        max_diameter=15,
+        unclump_method=UnclumpMethod.INTENSITY,
+        watershed_method=WatershedMethod.INTENSITY,
+        low_res_maxima=True,
+        use_advanced_settings=True,
+        threshold_method=CellProfilerThresholdMethod.OTSU,
+        otsu_class_count=CellProfilerOtsuMethod.THREE_CLASS,
+        assign_middle_to_foreground=CellProfilerThresholdAssignment.BACKGROUND,
+        threshold_smoothing_scale=1.3488,
+    )
+    identify_primary_objects.__wrapped__(
+        image,
+        min_diameter=3,
+        max_diameter=15,
+        unclump_method=UnclumpMethod.INTENSITY,
+        watershed_method=WatershedMethod.INTENSITY,
+        low_res_maxima=True,
+        use_advanced_settings=True,
+        threshold_method=CellProfilerThresholdMethod.OTSU,
+        otsu_class_count=CellProfilerOtsuMethod.TWO_CLASS,
+        assign_middle_to_foreground=CellProfilerThresholdAssignment.BACKGROUND,
+        threshold_smoothing_scale=1.3488,
     )
 
 

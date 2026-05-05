@@ -8,6 +8,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
+import logging
+import os
+import time
 from typing import ClassVar
 
 import numpy as np
@@ -27,6 +31,20 @@ from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer
 
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 class IntensityChoice(Enum):
@@ -356,17 +374,66 @@ def _fit_polynomial_surface(
             "Fit-polynomial illumination mask must match the image shape; got "
             f"mask {mask_array.shape!r} for image {image.shape!r}."
         )
-    gram, rhs = _fit_polynomial_normal_equations_numba(
-        image,
-        mask_array,
-        mask is not None,
-    )
+    if mask is None:
+        gram = _fit_polynomial_unmasked_gram(image.shape[0], image.shape[1])
+        rhs = _fit_polynomial_unmasked_rhs_numba(image)
+    else:
+        gram, rhs = _fit_polynomial_normal_equations_numba(
+            image,
+            mask_array,
+            True,
+        )
     coeffs = np.linalg.lstsq(gram, rhs, rcond=None)[0]
     return _evaluate_polynomial_surface_numba(
         image.shape[0],
         image.shape[1],
         np.ascontiguousarray(coeffs, dtype=np.float64),
     )
+
+
+@lru_cache(maxsize=16)
+def _fit_polynomial_unmasked_gram(height: int, width: int) -> np.ndarray:
+    return _fit_polynomial_unmasked_gram_numba(int(height), int(width))
+
+
+@njit(cache=True)
+def _fit_polynomial_unmasked_gram_numba(height: int, width: int) -> np.ndarray:
+    gram = np.zeros((6, 6), dtype=np.float64)
+    features = np.empty(6, dtype=np.float64)
+    for row in range(height):
+        y_value = row / height - 0.5
+        y2 = y_value * y_value
+        for col in range(width):
+            x_value = col / width - 0.5
+            features[0] = x_value * x_value
+            features[1] = y2
+            features[2] = x_value * y_value
+            features[3] = x_value
+            features[4] = y_value
+            features[5] = 1.0
+            for i in range(6):
+                for j in range(6):
+                    gram[i, j] += features[i] * features[j]
+    return gram
+
+
+@njit(cache=True)
+def _fit_polynomial_unmasked_rhs_numba(pixel_data: np.ndarray) -> np.ndarray:
+    height, width = pixel_data.shape
+    rhs = np.zeros(6, dtype=np.float64)
+    for row in range(height):
+        y_value = row / height - 0.5
+        y2 = y_value * y_value
+        for col in range(width):
+            x_value = col / width - 0.5
+            value = pixel_data[row, col]
+            rhs[0] += x_value * x_value * value
+            rhs[1] += y2 * value
+            rhs[2] += x_value * y_value * value
+            rhs[3] += x_value * value
+            rhs[4] += y_value * value
+            rhs[5] += value
+    return rhs
 
 
 @njit(cache=True)
@@ -620,16 +687,14 @@ def _apply_scaling(
     if sorted_data.size == 0:
         return pixel_data
     
-    sorted_data = np.sort(sorted_data)
-    
     if rescale_option == RescaleOption.YES:
         idx = int(len(sorted_data) * ROBUST_FACTOR)
-        robust_minimum = sorted_data[idx]
+        robust_minimum = np.partition(sorted_data, idx)[idx]
         result = pixel_data.copy()
         result[result < robust_minimum] = robust_minimum
     else:  # MEDIAN
         idx = len(sorted_data) // 2
-        robust_minimum = sorted_data[idx]
+        robust_minimum = np.partition(sorted_data, idx)[idx]
         result = pixel_data.copy()
     
     if robust_minimum == 0:
@@ -664,6 +729,8 @@ def _calculate_illumination_from_pixels(
     rank_median_backend_provider: CellProfilerBackendProvider | None,
     slice_index: int = 0,
 ) -> tuple[np.ndarray, IlluminationStats]:
+    total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
     filter_size = SmoothingFilterSizeStrategy.for_method(
         filter_size_method,
     ).calculate(
@@ -673,7 +740,15 @@ def _calculate_illumination_from_pixels(
             manual_filter_size=manual_filter_size,
         )
     )
+    _log_profile(
+        "cic_filter_size",
+        time.perf_counter() - phase_started_at,
+        function="correct_illumination_calculate",
+        method=filter_size_method.value,
+        smoothing=smoothing_method.value,
+    )
 
+    phase_started_at = time.perf_counter()
     avg_image = _illumination_average_image(
         pixel_data,
         mask,
@@ -683,7 +758,21 @@ def _calculate_illumination_from_pixels(
         morphology,
         calculation_scope,
     )
+    _log_profile(
+        "cic_average_image",
+        time.perf_counter() - phase_started_at,
+        function="correct_illumination_calculate",
+        method=intensity_choice.value,
+        scope=calculation_scope.value,
+    )
+    phase_started_at = time.perf_counter()
     dilated_image = _apply_dilation(avg_image, mask, dilate_objects, object_dilation_radius)
+    _log_profile(
+        "cic_dilation",
+        time.perf_counter() - phase_started_at,
+        function="correct_illumination_calculate",
+        enabled=dilate_objects,
+    )
     smoothing_request = SmoothingPlaneRequest(
         pixel_data=dilated_image,
         mask=mask,
@@ -700,11 +789,26 @@ def _calculate_illumination_from_pixels(
         convex_hull_backend_provider=convex_hull_backend_provider,
         rank_median_backend_provider=rank_median_backend_provider,
     )
+    phase_started_at = time.perf_counter()
     smoothed_image = SmoothingPlaneStrategy.for_method(smoothing_method).smooth(
         smoothing_request
     )
+    _log_profile(
+        "cic_smoothing",
+        time.perf_counter() - phase_started_at,
+        function="correct_illumination_calculate",
+        method=smoothing_method.value,
+    )
 
+    phase_started_at = time.perf_counter()
     output_image = _apply_scaling(smoothed_image, mask, rescale_option).astype(np.float32)
+    _log_profile(
+        "cic_scaling",
+        time.perf_counter() - phase_started_at,
+        function="correct_illumination_calculate",
+        method=rescale_option.value,
+    )
+    phase_started_at = time.perf_counter()
     stats = IlluminationStats(
         slice_index=slice_index,
         min_value=float(np.min(output_image)),
@@ -712,6 +816,16 @@ def _calculate_illumination_from_pixels(
         mean_value=float(np.mean(output_image)),
         calculation_type=intensity_choice.value,
         smoothing_method=smoothing_method.value
+    )
+    _log_profile(
+        "cic_stats",
+        time.perf_counter() - phase_started_at,
+        function="correct_illumination_calculate",
+    )
+    _log_profile(
+        "cic_total",
+        time.perf_counter() - total_started_at,
+        function="correct_illumination_calculate",
     )
     return output_image, stats
 
@@ -793,7 +907,7 @@ def correct_illumination_calculate(
 
     pixel_data = np.asarray(image_payload_data(image))
     mask = _normalized_illumination_mask(image_payload_mask(image), pixel_data)
-    metadata = image_payload_metadata(image)
+    metadata = image_payload_metadata(image).without_unit_interval_intensity_scale()
     common_kwargs = {
         "intensity_choice": intensity_choice,
         "dilate_objects": dilate_objects,
@@ -857,3 +971,19 @@ def correct_illumination_calculate(
         ),
         stats,
     )
+
+
+def _prepare_correct_illumination_calculate() -> None:
+    """Compile common illumination kernels outside measured step execution."""
+    image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
+    correct_illumination_calculate.__wrapped__(
+        image,
+        smoothing_method=SmoothingMethod.FIT_POLYNOMIAL,
+        filter_size_method=FilterSizeMethod.AUTOMATIC,
+        rescale_option=RescaleOption.YES,
+    )
+
+
+correct_illumination_calculate.__openhcs_prepare__ = (
+    _prepare_correct_illumination_calculate
+)

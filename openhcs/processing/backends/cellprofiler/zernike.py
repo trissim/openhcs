@@ -282,7 +282,8 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             zernike_numbers_array
         )
         denominators = np.ascontiguousarray(np.pi * radii * radii, dtype=np.float64)
-        return zernike_numbers, _score_zernike_moments_direct_numba(
+        score_started_at = time.perf_counter()
+        values = _score_zernike_moments_direct_numba(
             np.ascontiguousarray(label_values, dtype=np.int32),
             np.ascontiguousarray(y_coords, dtype=np.float64),
             np.ascontiguousarray(x_coords, dtype=np.float64),
@@ -295,6 +296,14 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             denominators,
             int(dense_labels.size),
         )
+        _log_profile(
+            "zernike_shape_score",
+            time.perf_counter() - score_started_at,
+            objects=int(dense_labels.size),
+            pixels=int(y_coords.size),
+            orders=zernike_numbers_array.shape[0],
+        )
+        return zernike_numbers, values
 
     def intensity_zernike_moments(
         self,

@@ -100,12 +100,17 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             if mask is None
             else np.asarray(mask, dtype=np.bool_)
         )
-        result = _rank_median_uint16_2d_sliding_histogram_numba(
-            scaled,
-            mask_array,
+        effective_scaled = scaled.copy()
+        effective_scaled[~mask_array] = np.uint16(0)
+        values, inverse = np.unique(effective_scaled, return_inverse=True)
+        code_image = inverse.reshape(image.shape).astype(np.int32, copy=False)
+        result_codes = _rank_median_codes_2d_sliding_histogram_numba(
+            np.ascontiguousarray(code_image),
             row_offsets_y,
             row_radii_x,
+            int(values.size),
         )
+        result = values[result_codes]
         return result.astype(np.float32) / 65535.0
 
 
@@ -806,6 +811,85 @@ def _rank_median_disk_rows(
         np.asarray(rows, dtype=np.int64),
         np.asarray(radii, dtype=np.int64),
     )
+
+
+@njit(cache=True, parallel=True)
+def _rank_median_codes_2d_sliding_histogram_numba(
+    code_image: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+    value_count: int,
+) -> np.ndarray:
+    height, width = code_image.shape
+    output = np.empty((height, width), dtype=np.int32)
+    for y in prange(height):
+        tree = np.zeros(value_count + 1, dtype=np.int64)
+        count = 0
+
+        for row_index in range(row_offsets_y.shape[0]):
+            yy = y + row_offsets_y[row_index]
+            if yy < 0 or yy >= height:
+                continue
+            radius_x = row_radii_x[row_index]
+            right = radius_x
+            if right >= width:
+                right = width - 1
+            for xx in range(0, right + 1):
+                _fenwick_add_code(tree, int(code_image[yy, xx]), 1)
+                count += 1
+
+        if count == 0:
+            output[y, 0] = 0
+        else:
+            output[y, 0] = _fenwick_select_code(tree, count // 2)
+
+        for x in range(1, width):
+            for row_index in range(row_offsets_y.shape[0]):
+                yy = y + row_offsets_y[row_index]
+                if yy < 0 or yy >= height:
+                    continue
+                radius_x = row_radii_x[row_index]
+
+                remove_x = x - 1 - radius_x
+                if remove_x >= 0 and remove_x < width:
+                    _fenwick_add_code(tree, int(code_image[yy, remove_x]), -1)
+                    count -= 1
+
+                add_x = x + radius_x
+                if add_x >= 0 and add_x < width:
+                    _fenwick_add_code(tree, int(code_image[yy, add_x]), 1)
+                    count += 1
+
+            if count == 0:
+                output[y, x] = 0
+            else:
+                output[y, x] = _fenwick_select_code(tree, count // 2)
+    return output
+
+
+@njit(cache=True)
+def _fenwick_add_code(tree: np.ndarray, code: int, delta: int) -> None:
+    index = code + 1
+    while index < tree.shape[0]:
+        tree[index] += delta
+        index += index & -index
+
+
+@njit(cache=True)
+def _fenwick_select_code(tree: np.ndarray, kth: int) -> int:
+    index = 0
+    bit = 1
+    while bit < tree.shape[0]:
+        bit <<= 1
+    bit >>= 1
+    target = kth + 1
+    while bit != 0:
+        next_index = index + bit
+        if next_index < tree.shape[0] and tree[next_index] < target:
+            index = next_index
+            target -= tree[next_index]
+        bit >>= 1
+    return index
 
 
 @njit(cache=True, parallel=True)

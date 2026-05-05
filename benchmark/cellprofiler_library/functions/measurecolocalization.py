@@ -7,6 +7,9 @@ Measures colocalization and correlation between intensities in different images
 """
 
 import numpy as np
+import logging
+import os
+import time
 from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -28,6 +31,20 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
 from openhcs.processing.materialization import csv_materializer
 import scipy.ndimage
 from numba import njit
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 class CostesMethod(Enum):
@@ -116,6 +133,7 @@ class ColocalizationMeasurementOptions:
     do_costes: bool
     costes_method: CostesMethod
     scale_max: int
+    unit_interval_intensity_scale: int | None = None
     costes_backend_provider: BackendProviderInput | None = None
 
     def __post_init__(self) -> None:
@@ -396,10 +414,8 @@ def _colocalization_measurement(
     options: ColocalizationMeasurementOptions,
     valid_mask: np.ndarray | None = None,
 ) -> ColocalizationMeasurements:
-    mask = (~np.isnan(first_pixels)) & (~np.isnan(second_pixels))
-    if valid_mask is not None:
-        mask &= np.asarray(valid_mask, dtype=bool)
-
+    total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
     corr = np.nan
     slope = np.nan
     slope_reverse = np.nan
@@ -415,18 +431,51 @@ def _colocalization_measurement(
     thr_fi_c = np.nan
     thr_si_c = np.nan
 
-    if np.any(mask):
-        fi = first_pixels[mask]
-        si = second_pixels[mask]
+    if valid_mask is None:
+        first_array = np.asarray(first_pixels)
+        second_array = np.asarray(second_pixels)
+        finite_mask = np.isfinite(first_array) & np.isfinite(second_array)
+        if np.any(finite_mask):
+            if bool(np.all(finite_mask)):
+                fi = np.ravel(first_array)
+                si = np.ravel(second_array)
+            else:
+                fi = first_array[finite_mask]
+                si = second_array[finite_mask]
+        else:
+            fi = np.empty(0, dtype=np.asarray(first_pixels).dtype)
+            si = np.empty(0, dtype=np.asarray(second_pixels).dtype)
+    else:
+        mask = np.asarray(valid_mask, dtype=bool)
+        if np.any(mask):
+            fi = first_pixels[mask]
+            si = second_pixels[mask]
+        else:
+            fi = np.empty(0, dtype=np.asarray(first_pixels).dtype)
+            si = np.empty(0, dtype=np.asarray(second_pixels).dtype)
 
+    _log_profile(
+        "coloc_prepare_pixels",
+        time.perf_counter() - phase_started_at,
+        function="_colocalization_measurement",
+        pixels=fi.size,
+    )
+    if fi.size:
         if options.do_correlation:
+            phase_started_at = time.perf_counter()
             corr, slope, slope_reverse = (
                 ColocalizationCostesBackendStrategy.for_memory_type(
                     backend_provider=options.costes_backend_provider,
                 ).correlation_slopes(fi, si)
             )
+            _log_profile(
+                "coloc_correlation",
+                time.perf_counter() - phase_started_at,
+                function="_colocalization_measurement",
+            )
 
         if any((options.do_manders, options.do_rwc, options.do_overlap)):
+            phase_started_at = time.perf_counter()
             (
                 m1,
                 m2,
@@ -435,16 +484,24 @@ def _colocalization_measurement(
                 overlap,
                 k1,
                 k2,
-            ) = _thresholded_colocalization_metrics_numba(
-                np.ascontiguousarray(fi, dtype=np.float64),
-                np.ascontiguousarray(si, dtype=np.float64),
+            ) = _thresholded_colocalization_metrics(
+                np.ascontiguousarray(fi),
+                np.ascontiguousarray(si),
                 float(options.threshold_percent),
                 bool(options.do_manders),
                 bool(options.do_rwc),
                 bool(options.do_overlap),
+                int(options.scale_max),
+                options.unit_interval_intensity_scale,
+            )
+            _log_profile(
+                "coloc_thresholded_metrics",
+                time.perf_counter() - phase_started_at,
+                function="_colocalization_measurement",
             )
 
         if options.do_costes:
+            phase_started_at = time.perf_counter()
             if options.costes_method == CostesMethod.FASTER:
                 thr_fi_c, thr_si_c = _bisection_costes(
                     fi,
@@ -461,15 +518,27 @@ def _colocalization_measurement(
                     fast_mode,
                     backend_provider=options.costes_backend_provider,
                 )
+            _log_profile(
+                "coloc_costes_thresholds",
+                time.perf_counter() - phase_started_at,
+                function="_colocalization_measurement",
+                method=options.costes_method.value,
+            )
 
+            phase_started_at = time.perf_counter()
             c1, c2 = _costes_manders_numba(
                 np.ascontiguousarray(fi),
                 np.ascontiguousarray(si),
                 _pixel_dtype_threshold(fi, thr_fi_c),
                 _pixel_dtype_threshold(si, thr_si_c),
             )
+            _log_profile(
+                "coloc_costes_manders",
+                time.perf_counter() - phase_started_at,
+                function="_colocalization_measurement",
+            )
 
-    return ColocalizationMeasurements(
+    result = ColocalizationMeasurements(
         slice_index=0,
         correlation=float(corr) if not np.isnan(corr) else 0.0,
         slope=float(slope) if not np.isnan(slope) else 0.0,
@@ -486,12 +555,157 @@ def _colocalization_measurement(
         costes_threshold_1=float(thr_fi_c) if not np.isnan(thr_fi_c) else 0.0,
         costes_threshold_2=float(thr_si_c) if not np.isnan(thr_si_c) else 0.0,
     )
+    _log_profile(
+        "coloc_total",
+        time.perf_counter() - total_started_at,
+        function="_colocalization_measurement",
+    )
+    return result
 
 
-@njit(cache=True)
+def _thresholded_colocalization_metrics(
+    first: np.ndarray,
+    second: np.ndarray,
+    threshold_percent: float,
+    do_manders: bool,
+    do_rwc: bool,
+    do_overlap: bool,
+    preferred_scale: int | None = None,
+    proven_unit_interval_scale: int | None = None,
+) -> tuple[float, float, float, float, float, float, float]:
+    if not do_rwc:
+        empty_ranks = np.empty(0, dtype=np.int64)
+        return _thresholded_colocalization_metrics_with_ranks_numba(
+            first,
+            second,
+            empty_ranks,
+            empty_ranks,
+            threshold_percent,
+            do_manders,
+            False,
+            do_overlap,
+        )
+
+    first_ranks = _dense_ranks(
+        first,
+        preferred_scale=preferred_scale,
+        proven_unit_interval_scale=proven_unit_interval_scale,
+    )
+    second_ranks = _dense_ranks(
+        second,
+        preferred_scale=preferred_scale,
+        proven_unit_interval_scale=proven_unit_interval_scale,
+    )
+    return _thresholded_colocalization_metrics_with_ranks_numba(
+        first,
+        second,
+        first_ranks,
+        second_ranks,
+        threshold_percent,
+        do_manders,
+        True,
+        do_overlap,
+    )
+
+
+def _dense_ranks(
+    values: np.ndarray,
+    *,
+    preferred_scale: int | None = None,
+    proven_unit_interval_scale: int | None = None,
+) -> np.ndarray:
+    if proven_unit_interval_scale is not None:
+        return _dense_ranks_for_proven_unit_interval(
+            values,
+            int(proven_unit_interval_scale),
+        )
+    quantized_ranks = _dense_ranks_for_integer_unit_interval(
+        values,
+        preferred_scale=preferred_scale,
+    )
+    if quantized_ranks is not None:
+        return quantized_ranks
+    return np.ascontiguousarray(
+        np.unique(values, return_inverse=True)[1],
+        dtype=np.int64,
+    )
+
+
+def _dense_ranks_for_proven_unit_interval(
+    values: np.ndarray,
+    scale: int,
+) -> np.ndarray:
+    """Return dense ranks when metadata proves values are exact code / scale."""
+    codes = np.rint(np.asarray(values) * int(scale)).astype(np.int64, copy=False)
+    present = np.bincount(codes.ravel(), minlength=int(scale) + 1) > 0
+    lookup = np.cumsum(present, dtype=np.int64) - 1
+    return np.ascontiguousarray(lookup[codes], dtype=np.int64)
+
+
+def _dense_ranks_for_integer_unit_interval(
+    values: np.ndarray,
+    *,
+    preferred_scale: int | None = None,
+) -> np.ndarray | None:
+    values_array = np.asarray(values)
+    if values_array.size == 0 or values_array.dtype.kind not in {"f", "u", "i"}:
+        return None
+    minimum = np.min(values_array)
+    maximum = np.max(values_array)
+    if not np.isfinite(minimum) or not np.isfinite(maximum):
+        return None
+    if minimum < 0 or maximum > 1:
+        return None
+    scales = (
+        (preferred_scale, 65535, 255)
+        if preferred_scale is not None
+        else (65535, 255)
+    )
+    for scale in dict.fromkeys(int(candidate) for candidate in scales if candidate):
+        codes = np.rint(values_array * scale).astype(np.int64, copy=False)
+        if np.any(codes < 0) or np.any(codes > scale):
+            continue
+        reconstructed = (
+            codes.astype(values_array.dtype, copy=False)
+            / values_array.dtype.type(scale)
+        )
+        if not np.array_equal(values_array, reconstructed):
+            continue
+        present = np.bincount(codes.ravel(), minlength=scale + 1) > 0
+        lookup = np.cumsum(present, dtype=np.int64) - 1
+        return np.ascontiguousarray(lookup[codes], dtype=np.int64)
+    return None
+
+
 def _thresholded_colocalization_metrics_numba(
     first: np.ndarray,
     second: np.ndarray,
+    threshold_percent: float,
+    do_manders: bool,
+    do_rwc: bool,
+    do_overlap: bool,
+    preferred_scale: int | None = None,
+    proven_unit_interval_scale: int | None = None,
+) -> tuple[float, float, float, float, float, float, float]:
+    """Compatibility entrypoint for the Numba-backed metric reducer."""
+    return _thresholded_colocalization_metrics(
+        first,
+        second,
+        threshold_percent,
+        do_manders,
+        do_rwc,
+        do_overlap,
+        preferred_scale,
+        proven_unit_interval_scale,
+    )
+
+
+@njit(cache=True)
+def _thresholded_colocalization_metrics_with_ranks_numba(
+    first: np.ndarray,
+    second: np.ndarray,
+    first_ranks: np.ndarray,
+    second_ranks: np.ndarray,
     threshold_percent: float,
     do_manders: bool,
     do_rwc: bool,
@@ -580,8 +794,6 @@ def _thresholded_colocalization_metrics_numba(
     rwc1 = nan_value
     rwc2 = nan_value
     if do_rwc and first_threshold_total > 0.0 and second_threshold_total > 0.0:
-        first_ranks = _dense_rank_values_numba(first)
-        second_ranks = _dense_rank_values_numba(second)
         max_rank = 0
         for index in range(count):
             if first_ranks[index] > max_rank:
@@ -685,15 +897,19 @@ def _channel_pair_valid_mask(
     image_data: np.ndarray,
     channel_1: int,
     channel_2: int,
-) -> np.ndarray:
+) -> np.ndarray | None:
     """Return CellProfiler-style valid pixels for a two-image measurement."""
     first_pixels = image_data[channel_1]
     second_pixels = image_data[channel_2]
-    valid = np.isfinite(first_pixels) & np.isfinite(second_pixels)
     mask = image_payload_mask(image)
     if mask is None:
-        return valid
+        if bool(np.all(np.isfinite(first_pixels))) and bool(
+            np.all(np.isfinite(second_pixels))
+        ):
+            return None
+        return np.isfinite(first_pixels) & np.isfinite(second_pixels)
 
+    valid = np.isfinite(first_pixels) & np.isfinite(second_pixels)
     mask_array = np.asarray(mask, dtype=bool)
     if mask_array.shape == valid.shape:
         return valid & mask_array
@@ -759,6 +975,22 @@ def _costes_scale_max(
     return 255
 
 
+def _colocalization_unit_interval_scale(
+    image: object,
+    channel_1: int,
+    channel_2: int,
+) -> int | None:
+    """Return a shared proof scale when both channels are exact unit interval."""
+    metadata = image_payload_metadata(image)
+    first_scale = metadata.unit_interval_intensity_scale_for_channel(channel_1)
+    second_scale = metadata.unit_interval_intensity_scale_for_channel(channel_2)
+    if first_scale is None or second_scale is None:
+        return None
+    if int(first_scale) != int(second_scale):
+        return None
+    return int(first_scale)
+
+
 @numpy
 @special_outputs(("colocalization_measurements", csv_materializer(
     fields=["slice_index", "correlation", "slope", "slope_reverse", "overlap", "k1", "k2",
@@ -813,11 +1045,19 @@ def measure_colocalization(
         'Calculate the Manders coefficients using Costes auto threshold?' -> do_costes
         'Method for Costes thresholding' -> costes_method
     """
+    total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
     # Select the two channels to compare
     image_data = image_payload_data(image)
     if channel_1 >= image_data.shape[0] or channel_2 >= image_data.shape[0]:
         raise ValueError(f"Channel indices ({channel_1}, {channel_2}) out of range for image with {image_data.shape[0]} channels")
+    _log_profile(
+        "measure_coloc_input",
+        time.perf_counter() - phase_started_at,
+        function="measure_colocalization",
+    )
 
+    phase_started_at = time.perf_counter()
     options = ColocalizationMeasurementOptions(
         threshold_percent=threshold_percent,
         do_correlation=do_correlation,
@@ -833,23 +1073,59 @@ def measure_colocalization(
             channel_2,
             scale_max,
         ),
+        unit_interval_intensity_scale=_colocalization_unit_interval_scale(
+            image,
+            channel_1,
+            channel_2,
+        ),
         costes_backend_provider=costes_backend_provider,
     )
+    _log_profile(
+        "measure_coloc_options",
+        time.perf_counter() - phase_started_at,
+        function="measure_colocalization",
+    )
+    phase_started_at = time.perf_counter()
     image_float = _cellprofiler_float_pixels(image_data)
+    valid_mask = _channel_pair_valid_mask(
+        image,
+        image_float,
+        channel_1,
+        channel_2,
+    )
+    _log_profile(
+        "measure_coloc_prepare_arrays",
+        time.perf_counter() - phase_started_at,
+        function="measure_colocalization",
+        full_valid=valid_mask is None,
+    )
+    phase_started_at = time.perf_counter()
     measurements = _colocalization_measurement(
         image_float[channel_1],
         image_float[channel_2],
         options=options,
-        valid_mask=_channel_pair_valid_mask(
-            image,
-            image_float,
-            channel_1,
-            channel_2,
-        ),
+        valid_mask=valid_mask,
+    )
+    _log_profile(
+        "measure_coloc_metrics",
+        time.perf_counter() - phase_started_at,
+        function="measure_colocalization",
     )
     
     # Return first selected channel as the output image
-    return _channel_output_payload(image, image_data, channel_1), measurements
+    phase_started_at = time.perf_counter()
+    output = _channel_output_payload(image, image_data, channel_1)
+    _log_profile(
+        "measure_coloc_output_payload",
+        time.perf_counter() - phase_started_at,
+        function="measure_colocalization",
+    )
+    _log_profile(
+        "measure_coloc_total",
+        time.perf_counter() - total_started_at,
+        function="measure_colocalization",
+    )
+    return output, measurements
 
 
 @numpy
@@ -1269,3 +1545,45 @@ def _object_colocalization_row(
             float(costes_threshold_2) if np.isfinite(costes_threshold_2) else 0.0
         ),
     )
+
+
+def _prepare_measure_colocalization() -> None:
+    """Compile colocalization kernels outside measured execution."""
+    first = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
+    second = np.flipud(first).copy()
+    _colocalization_measurement(
+        first,
+        second,
+        options=ColocalizationMeasurementOptions(
+            threshold_percent=15.0,
+            do_correlation=True,
+            do_manders=True,
+            do_rwc=True,
+            do_overlap=True,
+            do_costes=True,
+            costes_method=CostesMethod.ACCURATE,
+            scale_max=255,
+        ),
+    )
+    quantized_codes = (np.arange(64 * 64, dtype=np.uint16) % 512) + 1024
+    quantized_first = (quantized_codes.astype(np.float32) / np.float32(65535)).reshape(
+        (64, 64)
+    )
+    quantized_second = np.flipud(quantized_first).copy()
+    _colocalization_measurement(
+        quantized_first,
+        quantized_second,
+        options=ColocalizationMeasurementOptions(
+            threshold_percent=15.0,
+            do_correlation=True,
+            do_manders=True,
+            do_rwc=True,
+            do_overlap=True,
+            do_costes=True,
+            costes_method=CostesMethod.ACCURATE,
+            scale_max=255,
+        ),
+    )
+
+
+measure_colocalization.__openhcs_prepare__ = _prepare_measure_colocalization

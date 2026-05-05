@@ -16,6 +16,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
+    image_payload_metadata,
     with_image_payload_data,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -552,4 +553,5 @@ def enhance_edges(
         image,
         output,
         mask=operation_mask if payload_mask is not None else None,
+        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
     )

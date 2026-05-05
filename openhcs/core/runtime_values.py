@@ -53,9 +53,11 @@ class ImagePayloadMetadata:
     intensity_scale: float | None = None
     source_dtype: str | None = None
     source_path: str | None = None
+    unit_interval_intensity_scale: int | None = None
     channel_intensity_scales: tuple[float | None, ...] = ()
     channel_source_dtypes: tuple[str | None, ...] = ()
     channel_source_paths: tuple[str | None, ...] = ()
+    channel_unit_interval_intensity_scales: tuple[int | None, ...] = ()
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
     physical_border_edges_yx: tuple[bool, bool, bool, bool] | None = None
@@ -86,9 +88,11 @@ class ImagePayloadMetadata:
                 self.intensity_scale is not None,
                 self.source_dtype is not None,
                 self.source_path is not None,
+                self.unit_interval_intensity_scale is not None,
                 bool(self.channel_intensity_scales),
                 bool(self.channel_source_dtypes),
                 bool(self.channel_source_paths),
+                bool(self.channel_unit_interval_intensity_scales),
                 self.spatial_origin_yx is not None,
                 self.source_spatial_shape_yx is not None,
                 self.physical_border_edges_yx is not None,
@@ -104,6 +108,17 @@ class ImagePayloadMetadata:
                 return channel_scale
         return self.intensity_scale
 
+    def unit_interval_intensity_scale_for_channel(
+        self,
+        channel_index: int,
+    ) -> int | None:
+        """Return the scale proving current pixels are exact integer/scale values."""
+        if 0 <= channel_index < len(self.channel_unit_interval_intensity_scales):
+            channel_scale = self.channel_unit_interval_intensity_scales[channel_index]
+            if channel_scale is not None:
+                return int(channel_scale)
+        return self.unit_interval_intensity_scale
+
     def for_channel(self, channel_index: int) -> "ImagePayloadMetadata":
         """Return single-channel metadata sliced from a stacked payload."""
         return ImagePayloadMetadata(
@@ -112,10 +127,28 @@ class ImagePayloadMetadata:
             or self.source_dtype,
             source_path=_tuple_value(self.channel_source_paths, channel_index)
             or self.source_path,
+            unit_interval_intensity_scale=(
+                self.unit_interval_intensity_scale_for_channel(channel_index)
+            ),
             spatial_origin_yx=self.spatial_origin_yx,
             source_spatial_shape_yx=self.source_spatial_shape_yx,
             physical_border_edges_yx=self.physical_border_edges_yx,
             mask_defines_border=self.mask_defines_border,
+        )
+
+    def with_unit_interval_intensity_scale(
+        self,
+        scale: int | None,
+    ) -> "ImagePayloadMetadata":
+        """Return metadata with the current unit-interval pixel proof updated."""
+        return replace(self, unit_interval_intensity_scale=scale)
+
+    def without_unit_interval_intensity_scale(self) -> "ImagePayloadMetadata":
+        """Return metadata after an arithmetic transform changed pixel values."""
+        return replace(
+            self,
+            unit_interval_intensity_scale=None,
+            channel_unit_interval_intensity_scales=(),
         )
 
     def physical_border_edges_for_shape(
@@ -372,6 +405,10 @@ def compose_image_payload_metadata(
             metadata.source_path
             for metadata in metadata_by_payload
         ),
+        channel_unit_interval_intensity_scales=tuple(
+            metadata.unit_interval_intensity_scale_for_channel(0)
+            for metadata in metadata_by_payload
+        ),
         spatial_origin_yx=_common_metadata_value(
             metadata.spatial_origin_yx for metadata in metadata_by_payload
         ),
@@ -437,6 +474,10 @@ def normalize_image_payload_intensity(
             normalized = array.astype(target_dtype)
         else:
             normalized = array.astype(target_dtype) / float(intensity_scale)
+            metadata = image_payload_metadata(payload).with_unit_interval_intensity_scale(
+                int(intensity_scale)
+            )
+            return with_image_payload_data(payload, normalized, metadata=metadata)
     elif np.issubdtype(array.dtype, np.floating):
         normalized = array.astype(target_dtype, copy=False)
     else:

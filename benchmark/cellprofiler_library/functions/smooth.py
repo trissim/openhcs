@@ -446,5 +446,5 @@ def smooth(
     return image_payload_with_context(
         np.asarray(output, dtype=np.float32),
         mask=mask,
-        metadata=image_payload_metadata(image),
+        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
     )

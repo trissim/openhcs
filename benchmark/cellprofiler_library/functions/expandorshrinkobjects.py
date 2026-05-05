@@ -5,6 +5,7 @@ Original: expand_or_shrink_objects
 
 import numpy as np
 from enum import Enum
+from numba import njit
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_semantics import dense_object_label_id_domain
@@ -33,13 +34,89 @@ def _expand_defined_pixels(labels: np.ndarray, iterations: int) -> np.ndarray:
     
     if iterations <= 0:
         return labels.copy()
+    labels_int = labels.astype(np.int32, copy=False)
+    if _labels_are_points_numba(np.ascontiguousarray(labels_int)):
+        return _expand_point_labels_defined_pixels_numba(
+            np.ascontiguousarray(labels_int),
+            int(iterations),
+        )
 
-    result = labels.copy()
-    background = labels == 0
+    result = labels_int.copy()
+    background = labels_int == 0
     distances, indices = distance_transform_edt(background, return_indices=True)
     expand_mask = background & (distances <= iterations)
-    result[expand_mask] = labels[indices[0][expand_mask], indices[1][expand_mask]]
+    result[expand_mask] = labels_int[indices[0][expand_mask], indices[1][expand_mask]]
     return result
+
+
+@njit(cache=True)
+def _labels_are_points_numba(labels: np.ndarray) -> bool:
+    max_label = 0
+    height, width = labels.shape
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+    if max_label <= 0:
+        return True
+
+    counts = np.zeros(max_label + 1, dtype=np.int64)
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            counts[label] += 1
+            if counts[label] > 1:
+                return False
+    return True
+
+
+@njit(cache=True)
+def _expand_point_labels_defined_pixels_numba(
+    labels: np.ndarray,
+    radius: int,
+) -> np.ndarray:
+    height, width = labels.shape
+    output = labels.copy()
+    radius_squared = radius * radius
+    initial_distance = radius_squared + 1
+    best_distance = np.full(labels.shape, initial_distance, dtype=np.int32)
+    best_y = np.full(labels.shape, 2147483647, dtype=np.int32)
+    best_x = np.full(labels.shape, 2147483647, dtype=np.int32)
+
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            for dy in range(-radius, radius + 1):
+                yy = y + dy
+                if yy < 0 or yy >= height:
+                    continue
+                for dx in range(-radius, radius + 1):
+                    xx = x + dx
+                    if xx < 0 or xx >= width:
+                        continue
+                    distance = dy * dy + dx * dx
+                    if distance > radius_squared:
+                        continue
+                    if (
+                        distance < best_distance[yy, xx]
+                        or (
+                            distance == best_distance[yy, xx]
+                            and (
+                                x < best_x[yy, xx]
+                                or (x == best_x[yy, xx] and y < best_y[yy, xx])
+                            )
+                        )
+                    ):
+                        best_distance[yy, xx] = distance
+                        best_y[yy, xx] = y
+                        best_x[yy, xx] = x
+                        output[yy, xx] = label
+    return output
 
 
 def _expand_until_touching(labels: np.ndarray) -> np.ndarray:
@@ -106,18 +183,50 @@ def _restore_eroded_objects_to_centroids(
 
 def _shrink_to_point(labels: np.ndarray, fill: bool) -> np.ndarray:
     """Shrink each labeled object to a single point at its centroid."""
-    result = np.zeros_like(labels)
-    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-        labels.astype(np.int32, copy=False)
-    )
-    for index, label_id in enumerate(region_props.label):
-        cy = int(region_props.centroid_y[index])
-        cx = int(region_props.centroid_x[index])
-        # Ensure centroid is within image bounds
-        cy = max(0, min(labels.shape[0] - 1, cy))
-        cx = max(0, min(labels.shape[1] - 1, cx))
-        result[cy, cx] = int(label_id)
-    
+    labels_int = labels.astype(np.int32, copy=False)
+    if labels_int.size == 0 or int(labels_int.max()) <= 0:
+        return np.zeros_like(labels_int)
+    return _shrink_to_point_numba(np.ascontiguousarray(labels_int))
+
+
+@njit(cache=True)
+def _shrink_to_point_numba(labels: np.ndarray) -> np.ndarray:
+    height, width = labels.shape
+    max_label = 0
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+
+    y_sums = np.zeros(max_label + 1, dtype=np.float64)
+    x_sums = np.zeros(max_label + 1, dtype=np.float64)
+    counts = np.zeros(max_label + 1, dtype=np.int64)
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            y_sums[label] += float(y)
+            x_sums[label] += float(x)
+            counts[label] += 1
+
+    result = np.zeros(labels.shape, dtype=np.int32)
+    for label in range(1, max_label + 1):
+        count = counts[label]
+        if count <= 0:
+            continue
+        cy = int(y_sums[label] / float(count))
+        cx = int(x_sums[label] / float(count))
+        if cy < 0:
+            cy = 0
+        elif cy >= height:
+            cy = height - 1
+        if cx < 0:
+            cx = 0
+        elif cx >= width:
+            cx = width - 1
+        result[cy, cx] = label
     return result
 
 
@@ -224,3 +333,15 @@ def expand_or_shrink_objects(
         labels=result_labels.astype(np.float32),
         declared_object_ids=object_ids,
     )
+
+
+def _prepare_expand_or_shrink_objects() -> None:
+    """Compile Numba kernels used by common object expansion/shrink modes."""
+    labels = np.zeros((16, 16), dtype=np.int32)
+    labels[2:5, 3:7] = 1
+    labels[8:12, 9:14] = 2
+    points = _shrink_to_point(labels, False)
+    _expand_defined_pixels(points, 2)
+
+
+expand_or_shrink_objects.__openhcs_prepare__ = _prepare_expand_or_shrink_objects

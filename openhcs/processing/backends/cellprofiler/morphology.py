@@ -558,6 +558,8 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
                 False,
             ):
                 fill_flags[component_id] = True
+        if not np.any(fill_flags):
+            return labels_array
         if labels_array.dtype == np.bool_:
             return _fill_binary_holes_from_components_numba(
                 np.ascontiguousarray(labels_array),
@@ -1830,6 +1832,14 @@ def _fill_binary_holes_from_components_numba(
     fill_flags: np.ndarray,
 ) -> np.ndarray:
     height, width = labels.shape
+    has_fillable_component = False
+    for component in range(fill_flags.size):
+        if fill_flags[component]:
+            has_fillable_component = True
+            break
+    if not has_fillable_component:
+        return labels
+
     output = labels.copy()
     for y in prange(height):
         for x in range(width):
@@ -1846,7 +1856,6 @@ def _fill_labeled_holes_single_label_components_numba(
     fill_flags: np.ndarray,
 ) -> np.ndarray:
     height, width = labels.shape
-    output = labels.copy()
     component_labels = np.zeros(fill_flags.size, dtype=np.int64)
 
     for y in range(height):
@@ -1879,6 +1888,15 @@ def _fill_labeled_holes_single_label_components_numba(
                     int(labels[y, x + 1]),
                 )
 
+    has_fillable_component = False
+    for component in range(component_labels.size):
+        if component_labels[component] > 0:
+            has_fillable_component = True
+            break
+    if not has_fillable_component:
+        return labels
+
+    output = labels.copy()
     for y in range(height):
         for x in range(width):
             component = components[y, x]

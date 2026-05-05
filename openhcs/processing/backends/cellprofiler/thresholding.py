@@ -164,8 +164,10 @@ class ThresholdDiagnosticsBackendStrategy(
     def diagnostics(
         self,
         image: np.ndarray,
-        mask: np.ndarray,
+        mask: np.ndarray | None,
         binary_image: np.ndarray,
+        *,
+        proven_unit_interval_scale: int | None = None,
     ) -> tuple[float, float]:
         """Return weighted variance and sum of entropies."""
         return (
@@ -232,13 +234,88 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
     def diagnostics(
         self,
         image: np.ndarray,
-        mask: np.ndarray,
+        mask: np.ndarray | None,
         binary_image: np.ndarray,
+        *,
+        proven_unit_interval_scale: int | None = None,
     ) -> tuple[float, float]:
         image_array = np.asarray(image, dtype=np.float64)
-        mask_array = np.asarray(mask, dtype=np.bool_)
         binary_array = np.asarray(binary_image, dtype=np.bool_)
-        self._validate_inputs(image_array, mask_array, binary_array)
+        if mask is None:
+            self._validate_unmasked_inputs(image_array, binary_array)
+            full_mask = True
+        else:
+            mask_array = np.asarray(mask, dtype=np.bool_)
+            self._validate_inputs(image_array, mask_array, binary_array)
+            full_mask = bool(np.all(mask_array))
+            if not full_mask:
+                mask_slices = _rectangular_mask_slices(mask_array)
+                if mask_slices is not None:
+                    cropped_image = image_array[mask_slices]
+                    if bool(np.all(np.isfinite(cropped_image))):
+                        if proven_unit_interval_scale is not None:
+                            scale = int(proven_unit_interval_scale)
+                            values, log_values, log_delta_values = (
+                                _quantized_log_tables(scale)
+                            )
+                            y_slice, x_slice = mask_slices
+                            weighted_variance, sum_of_entropies = (
+                                _threshold_diagnostics_rectangular_mask_quantized_numba(
+                                    np.ascontiguousarray(
+                                        np.rint(image_array * scale).astype(np.int64),
+                                    ),
+                                    np.ascontiguousarray(binary_array),
+                                    np.ascontiguousarray(
+                                        _deterministic_normal_noise(image_array.shape)
+                                    ),
+                                    values,
+                                    log_values,
+                                    log_delta_values,
+                                    int(y_slice.start),
+                                    int(y_slice.stop),
+                                    int(x_slice.start),
+                                    int(x_slice.stop),
+                                )
+                            )
+                            return float(weighted_variance), float(sum_of_entropies)
+        if full_mask and bool(np.all(np.isfinite(image_array))):
+            if proven_unit_interval_scale is not None:
+                scale = int(proven_unit_interval_scale)
+                values, log_values, log_delta_values = _quantized_log_tables(scale)
+                weighted_variance, sum_of_entropies = (
+                    _threshold_diagnostics_unmasked_finite_quantized_numba(
+                        np.ascontiguousarray(
+                            np.rint(image_array * scale).astype(np.int64),
+                        ),
+                        np.ascontiguousarray(binary_array),
+                        np.ascontiguousarray(
+                            _deterministic_normal_noise(image_array.shape)
+                        ),
+                        values,
+                        log_values,
+                        log_delta_values,
+                    )
+                )
+                return float(weighted_variance), float(sum_of_entropies)
+            weighted_variance, sum_of_entropies = (
+                _threshold_diagnostics_unmasked_finite_numba(
+                    np.ascontiguousarray(image_array),
+                    np.ascontiguousarray(binary_array),
+                    np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
+                )
+            )
+            return float(weighted_variance), float(sum_of_entropies)
+        if mask is None:
+            mask_array = np.ones(image_array.shape, dtype=np.bool_)
+            weighted_variance, sum_of_entropies = (
+                _threshold_diagnostics_numba(
+                    np.ascontiguousarray(image_array),
+                    np.ascontiguousarray(mask_array),
+                    np.ascontiguousarray(binary_array),
+                    np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
+                )
+            )
+            return float(weighted_variance), float(sum_of_entropies)
         weighted_variance, sum_of_entropies = _threshold_diagnostics_numba(
             np.ascontiguousarray(image_array),
             np.ascontiguousarray(mask_array),
@@ -246,6 +323,22 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
             np.ascontiguousarray(_deterministic_normal_noise(image_array.shape)),
         )
         return float(weighted_variance), float(sum_of_entropies)
+
+    def _validate_unmasked_inputs(
+        self,
+        image_array: np.ndarray,
+        binary_array: np.ndarray,
+    ) -> None:
+        if image_array.ndim != 2:
+            raise NotImplementedError(
+                "CellProfiler threshold diagnostics currently support 2-D "
+                f"NumPy planes, got shape {image_array.shape!r}."
+            )
+        if binary_array.shape != image_array.shape:
+            raise ValueError(
+                "Threshold diagnostics binary image must match the image shape; got "
+                f"binary {binary_array.shape!r} for image {image_array.shape!r}."
+            )
 
     def weighted_variance(
         self,
@@ -825,6 +918,494 @@ def _numpy_threshold_sum_of_entropies(
     hfg = hfg.astype(float) / float(np.sum(hfg))
     hbg = hbg.astype(float) / float(np.sum(hbg))
     return float(np.sum(hfg * np.log2(hfg)) + np.sum(hbg * np.log2(hbg)))
+
+
+def _unit_interval_quantized_codes(
+    values: np.ndarray,
+) -> tuple[np.ndarray, int] | None:
+    values_array = np.asarray(values)
+    if values_array.size == 0:
+        return None
+    minimum = np.min(values_array)
+    maximum = np.max(values_array)
+    if not np.isfinite(minimum) or not np.isfinite(maximum):
+        return None
+    if minimum < 0.0 or maximum > 1.0:
+        return None
+    for scale in (65535, 255):
+        codes = np.rint(values_array * scale).astype(np.int64, copy=False)
+        if np.any(codes < 0) or np.any(codes > scale):
+            continue
+        reconstructed = (
+            codes.astype(np.float32, copy=False) / np.float32(scale)
+        ).astype(np.float64, copy=False)
+        if np.array_equal(values_array, reconstructed):
+            return codes, int(scale)
+    return None
+
+
+def _rectangular_mask_slices(mask: np.ndarray) -> tuple[slice, slice] | None:
+    """Return the true rectangle for masks that are exactly one filled rectangle."""
+    if mask.ndim != 2:
+        return None
+    row_indices = np.flatnonzero(np.any(mask, axis=1))
+    if row_indices.size == 0:
+        return None
+    column_indices = np.flatnonzero(np.any(mask, axis=0))
+    y0 = int(row_indices[0])
+    y1 = int(row_indices[-1]) + 1
+    x0 = int(column_indices[0])
+    x1 = int(column_indices[-1]) + 1
+    if int(np.sum(mask)) != (y1 - y0) * (x1 - x0):
+        return None
+    return slice(y0, y1), slice(x0, x1)
+
+
+@lru_cache(maxsize=8)
+def _quantized_log_tables(
+    scale: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    codes = np.arange(int(scale) + 1, dtype=np.float32)
+    values = (codes / np.float32(scale)).astype(np.float64, copy=False)
+    delta = 2.0 ** -8
+    clipped = np.clip(values, delta, 1.0)
+    return (
+        values,
+        np.log2(clipped),
+        np.log2(clipped + delta),
+    )
+
+
+@njit(cache=True)
+def _threshold_diagnostics_unmasked_finite_quantized_numba(
+    codes: np.ndarray,
+    binary_image: np.ndarray,
+    noise: np.ndarray,
+    values: np.ndarray,
+    log_values: np.ndarray,
+    log_delta_values: np.ndarray,
+) -> tuple[float, float]:
+    height, width = codes.shape
+    if height == 0 or width == 0:
+        return 0.0, 0.0
+
+    max_value = values[codes[0, 0]]
+    for y in range(height):
+        for x in range(width):
+            value = values[codes[y, x]]
+            if value > max_value:
+                max_value = value
+
+    weighted_variance = 0.0
+    minval = max_value / 256.0
+    minval_log = 0.0
+    delta = 2.0 ** -8
+    lower = np.inf
+    upper = -np.inf
+    foreground_count = 0
+    background_count = 0
+    if minval > 0.0:
+        minval_log = math.log2(minval)
+        fg_count = 0
+        bg_count = 0
+        fg_sum = 0.0
+        bg_sum = 0.0
+        fg_sumsq = 0.0
+        bg_sumsq = 0.0
+        for y in range(height):
+            for x in range(width):
+                code = codes[y, x]
+                value = values[code]
+                if value < minval:
+                    clipped = minval
+                    if clipped < delta:
+                        clipped = delta
+                    elif clipped > 1.0:
+                        clipped = 1.0
+                    log_value = minval_log
+                    log_delta_value = math.log2(clipped + delta)
+                else:
+                    log_value = log_values[code]
+                    log_delta_value = log_delta_values[code]
+                noise_value = noise[y, x]
+                log_smoothed_value = (
+                    log_delta_value * noise_value
+                    + (1.0 - noise_value) * log_value
+                )
+                if log_smoothed_value > 0.0:
+                    log_smoothed_value = 0.0
+                if log_smoothed_value < lower:
+                    lower = log_smoothed_value
+                if log_smoothed_value > upper:
+                    upper = log_smoothed_value
+                if binary_image[y, x]:
+                    fg_count += 1
+                    foreground_count += 1
+                    fg_sum += log_value
+                    fg_sumsq += log_value * log_value
+                else:
+                    bg_count += 1
+                    background_count += 1
+                    bg_sum += log_value
+                    bg_sumsq += log_value * log_value
+
+        if fg_count == 0 and bg_count == 0:
+            weighted_variance = 0.0
+        elif fg_count == 0:
+            bg_mean = bg_sum / bg_count
+            weighted_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+        elif bg_count == 0:
+            fg_mean = fg_sum / fg_count
+            weighted_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+        else:
+            fg_mean = fg_sum / fg_count
+            bg_mean = bg_sum / bg_count
+            fg_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+            bg_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+            weighted_variance = (
+                fg_variance * fg_count + bg_variance * bg_count
+            ) / (fg_count + bg_count)
+
+    if minval == 0.0:
+        return weighted_variance, 0.0
+
+    if upper == lower:
+        return weighted_variance, math.log2(float(foreground_count + background_count))
+    if foreground_count == 0 or background_count == 0:
+        return weighted_variance, 0.0
+
+    foreground_hist = np.zeros(256, dtype=np.int64)
+    background_hist = np.zeros(256, dtype=np.int64)
+    scale = 256.0 / (upper - lower)
+    for y in range(height):
+        for x in range(width):
+            code = codes[y, x]
+            value = values[code]
+            if value < minval:
+                clipped = minval
+                if clipped < delta:
+                    clipped = delta
+                elif clipped > 1.0:
+                    clipped = 1.0
+                log_value = math.log2(clipped)
+                log_delta_value = math.log2(clipped + delta)
+            else:
+                log_value = log_values[code]
+                log_delta_value = log_delta_values[code]
+            noise_value = noise[y, x]
+            log_smoothed_value = (
+                log_delta_value * noise_value
+                + (1.0 - noise_value) * log_value
+            )
+            if log_smoothed_value > 0.0:
+                log_smoothed_value = 0.0
+            bin_index = int((log_smoothed_value - lower) * scale)
+            if bin_index < 0:
+                continue
+            if bin_index >= 256:
+                if bin_index == 256:
+                    bin_index = 255
+                else:
+                    continue
+            if binary_image[y, x]:
+                foreground_hist[bin_index] += 1
+            else:
+                background_hist[bin_index] += 1
+
+    return weighted_variance, _histogram_entropy_numba(
+        foreground_hist,
+        foreground_count,
+    ) + _histogram_entropy_numba(
+        background_hist,
+        background_count,
+    )
+
+
+@njit(cache=True)
+def _threshold_diagnostics_rectangular_mask_quantized_numba(
+    codes: np.ndarray,
+    binary_image: np.ndarray,
+    noise: np.ndarray,
+    values: np.ndarray,
+    log_values: np.ndarray,
+    log_delta_values: np.ndarray,
+    y0: int,
+    y1: int,
+    x0: int,
+    x1: int,
+) -> tuple[float, float]:
+    height, width = codes.shape
+    if height == 0 or width == 0 or y0 >= y1 or x0 >= x1:
+        return 0.0, 0.0
+
+    masked_max = values[codes[y0, x0]]
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            value = values[codes[y, x]]
+            if value > masked_max:
+                masked_max = value
+
+    weighted_variance = 0.0
+    minval = masked_max / 256.0
+    if minval > 0.0:
+        minval_log = math.log2(minval)
+        fg_count = 0
+        bg_count = 0
+        fg_sum = 0.0
+        bg_sum = 0.0
+        fg_sumsq = 0.0
+        bg_sumsq = 0.0
+        for y in range(y0, y1):
+            for x in range(x0, x1):
+                code = codes[y, x]
+                value = values[code]
+                log_value = minval_log if value < minval else log_values[code]
+                if binary_image[y, x]:
+                    fg_count += 1
+                    fg_sum += log_value
+                    fg_sumsq += log_value * log_value
+                else:
+                    bg_count += 1
+                    bg_sum += log_value
+                    bg_sumsq += log_value * log_value
+
+        if fg_count == 0 and bg_count == 0:
+            weighted_variance = 0.0
+        elif fg_count == 0:
+            bg_mean = bg_sum / bg_count
+            weighted_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+        elif bg_count == 0:
+            fg_mean = fg_sum / fg_count
+            weighted_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+        else:
+            fg_mean = fg_sum / fg_count
+            bg_mean = bg_sum / bg_count
+            fg_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+            bg_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+            weighted_variance = (
+                fg_variance * fg_count + bg_variance * bg_count
+            ) / (fg_count + bg_count)
+
+    if minval == 0.0:
+        return weighted_variance, 0.0
+
+    delta = 2.0 ** -8
+    lower = np.inf
+    upper = -np.inf
+    for y in range(height):
+        for x in range(width):
+            code = codes[y, x]
+            value = values[code]
+            if value < minval:
+                clipped = minval
+                if clipped < delta:
+                    clipped = delta
+                elif clipped > 1.0:
+                    clipped = 1.0
+                log_value = math.log2(clipped)
+                log_delta_value = math.log2(clipped + delta)
+            else:
+                log_value = log_values[code]
+                log_delta_value = log_delta_values[code]
+            noise_value = noise[y, x]
+            log_smoothed_value = (
+                log_delta_value * noise_value
+                + (1.0 - noise_value) * log_value
+            )
+            if log_smoothed_value > 0.0:
+                log_smoothed_value = 0.0
+            if log_smoothed_value < lower:
+                lower = log_smoothed_value
+            if log_smoothed_value > upper:
+                upper = log_smoothed_value
+
+    foreground_count = 0
+    background_count = 0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            if binary_image[y, x]:
+                foreground_count += 1
+            else:
+                background_count += 1
+
+    if upper == lower:
+        return weighted_variance, math.log2(float(foreground_count + background_count))
+    if foreground_count == 0 or background_count == 0:
+        return weighted_variance, 0.0
+
+    foreground_hist = np.zeros(256, dtype=np.int64)
+    background_hist = np.zeros(256, dtype=np.int64)
+    histogram_scale = 256.0 / (upper - lower)
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            code = codes[y, x]
+            value = values[code]
+            if value < minval:
+                clipped = minval
+                if clipped < delta:
+                    clipped = delta
+                elif clipped > 1.0:
+                    clipped = 1.0
+                log_value = math.log2(clipped)
+                log_delta_value = math.log2(clipped + delta)
+            else:
+                log_value = log_values[code]
+                log_delta_value = log_delta_values[code]
+            noise_value = noise[y, x]
+            log_smoothed_value = (
+                log_delta_value * noise_value
+                + (1.0 - noise_value) * log_value
+            )
+            if log_smoothed_value > 0.0:
+                log_smoothed_value = 0.0
+            bin_index = int((log_smoothed_value - lower) * histogram_scale)
+            if bin_index < 0:
+                continue
+            if bin_index >= 256:
+                if bin_index == 256:
+                    bin_index = 255
+                else:
+                    continue
+            if binary_image[y, x]:
+                foreground_hist[bin_index] += 1
+            else:
+                background_hist[bin_index] += 1
+
+    return weighted_variance, _histogram_entropy_numba(
+        foreground_hist,
+        foreground_count,
+    ) + _histogram_entropy_numba(
+        background_hist,
+        background_count,
+    )
+
+
+@njit(cache=True)
+def _threshold_diagnostics_unmasked_finite_numba(
+    image: np.ndarray,
+    binary_image: np.ndarray,
+    noise: np.ndarray,
+) -> tuple[float, float]:
+    height, width = image.shape
+    if height == 0 or width == 0:
+        return 0.0, 0.0
+
+    max_value = image[0, 0]
+    for y in range(height):
+        for x in range(width):
+            value = image[y, x]
+            if value > max_value:
+                max_value = value
+
+    weighted_variance = 0.0
+    minval = max_value / 256.0
+    if minval != 0.0:
+        fg_count = 0
+        bg_count = 0
+        fg_sum = 0.0
+        bg_sum = 0.0
+        fg_sumsq = 0.0
+        bg_sumsq = 0.0
+        for y in range(height):
+            for x in range(width):
+                value = image[y, x]
+                if value < minval:
+                    value = minval
+                log_value = math.log2(value)
+                if binary_image[y, x]:
+                    fg_count += 1
+                    fg_sum += log_value
+                    fg_sumsq += log_value * log_value
+                else:
+                    bg_count += 1
+                    bg_sum += log_value
+                    bg_sumsq += log_value * log_value
+
+        if fg_count == 0 and bg_count == 0:
+            weighted_variance = 0.0
+        elif fg_count == 0:
+            bg_mean = bg_sum / bg_count
+            weighted_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+        elif bg_count == 0:
+            fg_mean = fg_sum / fg_count
+            weighted_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+        else:
+            fg_mean = fg_sum / fg_count
+            bg_mean = bg_sum / bg_count
+            fg_variance = fg_sumsq / fg_count - fg_mean * fg_mean
+            bg_variance = bg_sumsq / bg_count - bg_mean * bg_mean
+            weighted_variance = (
+                fg_variance * fg_count + bg_variance * bg_count
+            ) / (fg_count + bg_count)
+
+    if minval == 0.0:
+        return weighted_variance, 0.0
+
+    delta = 2.0 ** -8
+    lower = np.inf
+    upper = -np.inf
+    foreground_count = 0
+    background_count = 0
+    log_smoothed = np.empty((height, width), dtype=np.float64)
+    for y in range(height):
+        for x in range(width):
+            value = image[y, x]
+            if value < minval:
+                value = minval
+            if value < delta:
+                clipped = delta
+            elif value > 1.0:
+                clipped = 1.0
+            else:
+                clipped = value
+
+            noise_value = noise[y, x]
+            log_smoothed_value = (
+                math.log2(clipped + delta) * noise_value
+                + (1.0 - noise_value) * math.log2(clipped)
+            )
+            if log_smoothed_value > 0.0:
+                log_smoothed_value = 0.0
+            log_smoothed[y, x] = log_smoothed_value
+            if log_smoothed_value < lower:
+                lower = log_smoothed_value
+            if log_smoothed_value > upper:
+                upper = log_smoothed_value
+            if binary_image[y, x]:
+                foreground_count += 1
+            else:
+                background_count += 1
+
+    if upper == lower:
+        return weighted_variance, math.log2(float(foreground_count + background_count))
+    if foreground_count == 0 or background_count == 0:
+        return weighted_variance, 0.0
+
+    foreground_hist = np.zeros(256, dtype=np.int64)
+    background_hist = np.zeros(256, dtype=np.int64)
+    scale = 256.0 / (upper - lower)
+    for y in range(height):
+        for x in range(width):
+            bin_index = int((log_smoothed[y, x] - lower) * scale)
+            if bin_index < 0:
+                continue
+            if bin_index >= 256:
+                if bin_index == 256:
+                    bin_index = 255
+                else:
+                    continue
+            if binary_image[y, x]:
+                foreground_hist[bin_index] += 1
+            else:
+                background_hist[bin_index] += 1
+
+    return weighted_variance, _histogram_entropy_numba(
+        foreground_hist,
+        foreground_count,
+    ) + _histogram_entropy_numba(
+        background_hist,
+        background_count,
+    )
 
 
 @njit(cache=True)

@@ -589,6 +589,10 @@ def _stack_payload_metadata(raw_slices: Sequence[Any]) -> ImagePayloadMetadata:
             metadata.source_path
             for metadata in slice_metadata
         ),
+        channel_unit_interval_intensity_scales=tuple(
+            metadata.unit_interval_intensity_scale_for_channel(0)
+            for metadata in slice_metadata
+        ),
     )
 
 

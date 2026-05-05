@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 import logging
 import os
 import time
@@ -12,6 +13,10 @@ import numpy as np
 import scipy.interpolate
 
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from benchmark.cellprofiler_compat.perf_fixtures import (
+    capture_array_fixture,
+    capture_enabled,
+)
 from openhcs.core.runtime_values import image_payload_data
 from openhcs.core.runtime_values import normalize_image_payload_intensity
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
@@ -266,10 +271,13 @@ def cellprofiler_apply_threshold(
     smoothing: float = 0,
 ) -> tuple[np.ndarray, float]:
     """Apply threshold with CP's mask-aware smoothing convention."""
-    resolved_mask = _resolved_threshold_mask(image, mask)
     if smoothing == 0:
-        return (np.asarray(image) >= threshold) & resolved_mask, 0.0
+        thresholded = np.asarray(image) >= threshold
+        if mask is None:
+            return thresholded, 0.0
+        return thresholded & np.asarray(mask, dtype=bool), 0.0
 
+    resolved_mask = _resolved_threshold_mask(image, mask)
     blurred_image, sigma = _threshold_application_smoothed_image(
         image,
         resolved_mask,
@@ -328,7 +336,14 @@ def _threshold_application_smoothed_image(
             "Threshold application mask must match the image shape; got "
             f"mask {mask_array.shape!r} for image {image_array.shape!r}."
         )
-    masked_image = np.where(mask_array, image_array, 0.0)
+    full_mask = bool(np.all(mask_array))
+    capture_array_fixture(
+        "threshold_application",
+        image=image_array,
+        mask=mask_array,
+        smoothing=np.asarray(smoothing, dtype=np.float64),
+    )
+    masked_image = image_array if full_mask else np.where(mask_array, image_array, 0.0)
     smoothed_image = ndi.gaussian_filter(
         masked_image,
         sigma=sigma,
@@ -336,19 +351,40 @@ def _threshold_application_smoothed_image(
         cval=0,
         truncate=4.0,
     )
-    mask_weight = ndi.gaussian_filter(
-        mask_array.astype(np.float64),
-        sigma=sigma,
-        mode="constant",
-        cval=0,
-        truncate=4.0,
+    mask_weight = (
+        _full_threshold_mask_weight(image_array.shape, sigma)
+        if full_mask
+        else ndi.gaussian_filter(
+            mask_array.astype(np.float64),
+            sigma=sigma,
+            mode="constant",
+            cval=0,
+            truncate=4.0,
+        )
     )
+    if full_mask:
+        smoothed_image /= mask_weight
+        return smoothed_image, sigma
     output = np.zeros_like(image_array)
     valid = mask_weight != 0
     output[valid] = smoothed_image[valid] / mask_weight[valid]
     return (
         output,
         sigma,
+    )
+
+
+@lru_cache(maxsize=32)
+def _full_threshold_mask_weight(shape: tuple[int, int], sigma: float) -> np.ndarray:
+    """Return CP's threshold-application boundary weights for a full mask."""
+    from scipy import ndimage as ndi
+
+    return ndi.gaussian_filter(
+        np.ones(shape, dtype=np.float64),
+        sigma=sigma,
+        mode="constant",
+        cval=0,
+        truncate=4.0,
     )
 
 
@@ -813,16 +849,26 @@ def cellprofiler_threshold_diagnostics(
     final_threshold: float,
     original_threshold: float,
     mask: np.ndarray | None = None,
+    proven_unit_interval_scale: int | None = None,
 ) -> CellProfilerThresholdDiagnostics:
     """Return CellProfiler's image-level threshold quality measurements."""
     total_started_at = time.perf_counter()
     phase_started_at = time.perf_counter()
-    measurement_mask = (
-        np.ones_like(binary, dtype=bool)
-        if mask is None
-        else np.asarray(mask, dtype=bool)
-    )
+    measurement_mask = None if mask is None else np.asarray(mask, dtype=bool)
     binary_image = np.asarray(binary, dtype=bool)
+    if capture_enabled():
+        capture_array_fixture(
+            "threshold_diagnostics",
+            image=np.asarray(image),
+            binary=binary_image,
+            mask=(
+                np.ones_like(binary_image, dtype=bool)
+                if measurement_mask is None
+                else measurement_mask
+            ),
+            final_threshold=np.asarray(final_threshold, dtype=np.float64),
+            original_threshold=np.asarray(original_threshold, dtype=np.float64),
+        )
     _log_profile(
         "threshold_diagnostics_prepare",
         time.perf_counter() - phase_started_at,
@@ -838,6 +884,7 @@ def cellprofiler_threshold_diagnostics(
             image,
             measurement_mask,
             binary_image,
+            proven_unit_interval_scale=proven_unit_interval_scale,
         )
     )
     _log_profile(

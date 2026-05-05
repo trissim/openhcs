@@ -116,17 +116,40 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
         if not valid:
             return 0.0, 0.0
         if slope > 0.0:
-            event_threshold = np.minimum(second, (slope * first) + intercept)
-            order = np.argsort(event_threshold)
-            sorted_first = np.ascontiguousarray(first[order])
-            sorted_second = np.ascontiguousarray(second[order])
-            return _scaled_second_channel_costes_sorted_events_numba(
-                np.ascontiguousarray(event_threshold[order]),
-                np.ascontiguousarray(np.cumsum(sorted_first)),
-                np.ascontiguousarray(np.cumsum(sorted_second)),
-                np.ascontiguousarray(np.cumsum(sorted_first * sorted_first)),
-                np.ascontiguousarray(np.cumsum(sorted_second * sorted_second)),
-                np.ascontiguousarray(np.cumsum(sorted_first * sorted_second)),
+            event_summaries = _quantized_unit_interval_event_summaries(
+                first,
+                second,
+                slope,
+                intercept,
+                int(scale_max),
+            )
+            if event_summaries is None:
+                event_threshold = np.minimum(second, (slope * first) + intercept)
+                unique_events, inverse = np.unique(event_threshold, return_inverse=True)
+                counts = np.bincount(inverse)
+                first_sum = np.bincount(inverse, weights=first)
+                second_sum = np.bincount(inverse, weights=second)
+                first_square_sum = np.bincount(inverse, weights=first * first)
+                second_square_sum = np.bincount(inverse, weights=second * second)
+                product_sum = np.bincount(inverse, weights=first * second)
+            else:
+                (
+                    unique_events,
+                    counts,
+                    first_sum,
+                    second_sum,
+                    first_square_sum,
+                    second_square_sum,
+                    product_sum,
+                ) = event_summaries
+            return _scaled_second_channel_costes_grouped_events_numba(
+                np.ascontiguousarray(unique_events, dtype=np.float64),
+                np.ascontiguousarray(np.cumsum(counts), dtype=np.int64),
+                np.ascontiguousarray(np.cumsum(first_sum), dtype=np.float64),
+                np.ascontiguousarray(np.cumsum(second_sum), dtype=np.float64),
+                np.ascontiguousarray(np.cumsum(first_square_sum), dtype=np.float64),
+                np.ascontiguousarray(np.cumsum(second_square_sum), dtype=np.float64),
+                np.ascontiguousarray(np.cumsum(product_sum), dtype=np.float64),
                 int(scale_max),
                 slope,
                 intercept,
@@ -489,6 +512,99 @@ def _linear_costes_sorted_events_numba(
     return threshold_1, threshold_2
 
 
+def _quantized_unit_interval_event_summaries(
+    first: np.ndarray,
+    second: np.ndarray,
+    slope: float,
+    intercept: float,
+    preferred_scale: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray] | None:
+    first_code_result = _integer_unit_interval_codes(
+        first,
+        preferred_scale=preferred_scale,
+    )
+    second_code_result = _integer_unit_interval_codes(
+        second,
+        preferred_scale=preferred_scale,
+    )
+    if first_code_result is None or second_code_result is None:
+        return None
+    first_codes, first_scale = first_code_result
+    second_codes, second_scale = second_code_result
+    first_dense, first_values = _dense_codes_and_values(first_codes, first_scale)
+    second_dense, second_values = _dense_codes_and_values(second_codes, second_scale)
+    second_value_count = second_values.size
+    combined = first_dense * second_value_count + second_dense
+    pair_counts = np.bincount(
+        combined,
+        minlength=first_values.size * second_value_count,
+    )
+    active_pairs = np.flatnonzero(pair_counts)
+    if active_pairs.size == 0:
+        return None
+    first_index = active_pairs // second_value_count
+    second_index = active_pairs - first_index * second_value_count
+    counts = pair_counts[active_pairs].astype(np.float64, copy=False)
+    first_pair_values = first_values[first_index]
+    second_pair_values = second_values[second_index]
+    event_thresholds = np.minimum(
+        second_pair_values,
+        slope * first_pair_values + intercept,
+    )
+    unique_events, inverse = np.unique(event_thresholds, return_inverse=True)
+    return (
+        unique_events,
+        np.bincount(inverse, weights=counts).astype(np.int64, copy=False),
+        np.bincount(inverse, weights=counts * first_pair_values),
+        np.bincount(inverse, weights=counts * second_pair_values),
+        np.bincount(inverse, weights=counts * first_pair_values * first_pair_values),
+        np.bincount(inverse, weights=counts * second_pair_values * second_pair_values),
+        np.bincount(inverse, weights=counts * first_pair_values * second_pair_values),
+    )
+
+
+def _integer_unit_interval_codes(
+    values: np.ndarray,
+    *,
+    preferred_scale: int | None = None,
+) -> tuple[np.ndarray, int] | None:
+    values_array = np.asarray(values)
+    if values_array.size == 0:
+        return None
+    minimum = np.min(values_array)
+    maximum = np.max(values_array)
+    if not np.isfinite(minimum) or not np.isfinite(maximum):
+        return None
+    if minimum < 0.0 or maximum > 1.0:
+        return None
+    scales = (
+        (preferred_scale, 65535, 255)
+        if preferred_scale is not None
+        else (65535, 255)
+    )
+    for scale in dict.fromkeys(int(candidate) for candidate in scales if candidate):
+        codes = np.rint(values_array * scale).astype(np.int64, copy=False)
+        if np.any(codes < 0) or np.any(codes > scale):
+            continue
+        reconstructed = (
+            codes.astype(np.float32, copy=False) / np.float32(scale)
+        ).astype(np.float64, copy=False)
+        if np.array_equal(values_array, reconstructed):
+            return codes, scale
+    return None
+
+
+def _dense_codes_and_values(
+    codes: np.ndarray,
+    scale: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    present = np.bincount(codes.ravel()) > 0
+    lookup = np.cumsum(present, dtype=np.int64) - 1
+    dense = np.ascontiguousarray(lookup[codes], dtype=np.int64)
+    values = np.flatnonzero(present).astype(np.float32, copy=False)
+    return dense, (values / np.float32(scale)).astype(np.float64, copy=False)
+
+
 @njit(cache=True)
 def _scaled_second_channel_costes_numba(
     first: np.ndarray,
@@ -583,6 +699,81 @@ def _scaled_second_channel_costes_sorted_events_numba(
         selected_first_threshold = 0.0
 
     return selected_first_threshold, selected_second_threshold
+
+
+@njit(cache=True)
+def _scaled_second_channel_costes_grouped_events_numba(
+    sorted_event_threshold: np.ndarray,
+    prefix_count: np.ndarray,
+    prefix_x: np.ndarray,
+    prefix_y: np.ndarray,
+    prefix_x2: np.ndarray,
+    prefix_y2: np.ndarray,
+    prefix_xy: np.ndarray,
+    scale_max: int,
+    slope: float,
+    intercept: float,
+) -> tuple[float, float]:
+    minimum_scale_index = min(scale_max, 5)
+    selected_first_threshold = 0.0
+    selected_second_threshold = minimum_scale_index / scale_max
+    selected_correlation = np.nan
+
+    for second_scale_index in range(scale_max, minimum_scale_index - 1, -1):
+        second_threshold = second_scale_index / scale_max
+        first_threshold = (second_threshold - intercept) / slope
+        if first_threshold < 0.0:
+            first_threshold = 0.0
+        group_count = _event_count_for_threshold_numba(
+            sorted_event_threshold,
+            second_threshold,
+        )
+        cost_regression = _prefix_pearson_from_group_count_numba(
+            group_count,
+            prefix_count,
+            prefix_x,
+            prefix_y,
+            prefix_x2,
+            prefix_y2,
+            prefix_xy,
+        )
+        selected_first_threshold = first_threshold
+        selected_second_threshold = second_threshold
+        selected_correlation = cost_regression
+        if np.isfinite(cost_regression) and cost_regression <= 0.0:
+            break
+
+    if (
+        (not np.isfinite(selected_correlation))
+        or selected_correlation > 0.0
+        or selected_first_threshold <= 0.0
+    ):
+        selected_first_threshold = 0.0
+
+    return selected_first_threshold, selected_second_threshold
+
+
+@njit(cache=True)
+def _prefix_pearson_from_group_count_numba(
+    group_count: int,
+    prefix_count: np.ndarray,
+    prefix_x: np.ndarray,
+    prefix_y: np.ndarray,
+    prefix_x2: np.ndarray,
+    prefix_y2: np.ndarray,
+    prefix_xy: np.ndarray,
+) -> float:
+    if group_count <= 0:
+        return np.nan
+    count = int(prefix_count[group_count - 1])
+    return _prefix_pearson_numba(
+        count,
+        _prefix_value_numba(prefix_x, group_count),
+        _prefix_value_numba(prefix_y, group_count),
+        _prefix_value_numba(prefix_x2, group_count),
+        _prefix_value_numba(prefix_y2, group_count),
+        _prefix_value_numba(prefix_xy, group_count),
+    )
 
 
 __all__ = [

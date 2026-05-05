@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from enum import Enum
+from functools import lru_cache
 from typing import ClassVar, TypeVar
 
 from openhcs.constants.constants import MemoryType
@@ -136,40 +137,59 @@ class CellProfilerBackendStrategyMixin:
         memory_type: MemoryType | str,
         backend_provider: BackendProviderInput | None,
     ) -> type[BackendStrategyT]:
-        resolved = normalize_cellprofiler_memory_type(memory_type)
         registry: dict[str, type[BackendStrategyT]] = getattr(cls, "__registry__", {})
-        if backend_provider is not None:
-            provider = normalize_cellprofiler_backend_provider(backend_provider)
-            key = cellprofiler_backend_key(resolved, provider)
-            try:
-                return registry[key]
-            except KeyError as exc:
-                raise NotImplementedError(
-                    f"No CellProfiler {cls.__name__} backend is registered for "
-                    f"memory type {resolved.value!r} and provider "
-                    f"{provider.value!r}. Registered providers for this memory "
-                    f"type: {cls.available_backend_providers(resolved)!r}."
-                ) from exc
-
-        matches = [
-            strategy_cls
-            for strategy_cls in registry.values()
-            if strategy_cls.memory_type is resolved
-            and bool(strategy_cls.is_default_backend)
-        ]
-        if len(matches) == 1:
-            return matches[0]
-        if not matches:
-            raise NotImplementedError(
-                f"No default CellProfiler {cls.__name__} backend is registered "
-                f"for memory type {resolved.value!r}. Registered providers for "
-                f"this memory type: {cls.available_backend_providers(resolved)!r}."
-            )
-        raise RuntimeError(
-            f"Multiple default CellProfiler {cls.__name__} backends are "
-            f"registered for memory type {resolved.value!r}: "
-            f"{tuple(strategy.__name__ for strategy in matches)!r}."
+        return _resolve_backend_class_cached(
+            cls,
+            normalize_cellprofiler_memory_type(memory_type),
+            None
+            if backend_provider is None
+            else normalize_cellprofiler_backend_provider(backend_provider),
+            tuple(sorted(registry)),
         )
+
+
+@lru_cache(maxsize=None)
+def _resolve_backend_class_cached(
+    strategy_family: type[BackendStrategyT],
+    resolved: MemoryType,
+    backend_provider: CellProfilerBackendProvider | None,
+    _registry_keys: tuple[str, ...],
+) -> type[BackendStrategyT]:
+    registry: dict[str, type[BackendStrategyT]] = getattr(
+        strategy_family,
+        "__registry__",
+        {},
+    )
+    if backend_provider is not None:
+        key = cellprofiler_backend_key(resolved, backend_provider)
+        try:
+            return registry[key]
+        except KeyError as exc:
+            raise NotImplementedError(
+                f"No CellProfiler {strategy_family.__name__} backend is registered for "
+                f"memory type {resolved.value!r} and provider "
+                f"{backend_provider.value!r}. Registered providers for this memory "
+                f"type: {strategy_family.available_backend_providers(resolved)!r}."
+            ) from exc
+
+    matches = [
+        strategy_cls
+        for strategy_cls in registry.values()
+        if strategy_cls.memory_type is resolved and bool(strategy_cls.is_default_backend)
+    ]
+    if len(matches) == 1:
+        return matches[0]
+    if not matches:
+        raise NotImplementedError(
+            f"No default CellProfiler {strategy_family.__name__} backend is registered "
+            f"for memory type {resolved.value!r}. Registered providers for "
+            f"this memory type: {strategy_family.available_backend_providers(resolved)!r}."
+        )
+    raise RuntimeError(
+        f"Multiple default CellProfiler {strategy_family.__name__} backends are "
+        f"registered for memory type {resolved.value!r}: "
+        f"{tuple(strategy.__name__ for strategy in matches)!r}."
+    )
 
 
 __all__ = [
