@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import math
 from collections.abc import Iterable, Sequence
+from enum import Enum, auto
 from pathlib import Path
 
 from benchmark.reports.cppipe_figures import DEFAULT_FORMATS
@@ -24,21 +25,12 @@ SPEEDUP_FIELD = "speedup_vs_sequential"
 EFFICIENCY_FIELD = "parallel_efficiency"
 NATIVE_SECONDS_FIELD = "median_native_execution_seconds"
 
-THROUGHPUT_METRICS = (
+THROUGHPUT_BASE_METRICS = (
     FigureMetricSpec(
         "raw_seconds",
         "cppipe_throughput_wall_seconds",
         "Batch wall time for independent samples",
         "Batch wall seconds",
-        minimum_ylim=0.0,
-        log_variant=True,
-    ),
-    FigureMetricSpec(
-        "speedup",
-        "cppipe_throughput_speedup",
-        "Throughput speedup versus native CellProfiler",
-        "Speedup (x)",
-        baseline_line=1.0,
         minimum_ylim=0.0,
         log_variant=True,
     ),
@@ -60,6 +52,24 @@ THROUGHPUT_METRICS = (
         log_variant=True,
     ),
 )
+THROUGHPUT_CP_SPEEDUP_METRIC = FigureMetricSpec(
+    "speedup",
+    "cppipe_throughput_speedup_vs_native_cp",
+    "Throughput speedup versus native CellProfiler",
+    "Speedup (x)",
+    baseline_line=1.0,
+    minimum_ylim=0.0,
+    log_variant=True,
+)
+THROUGHPUT_SELF_SPEEDUP_METRIC = FigureMetricSpec(
+    "speedup",
+    "cppipe_throughput_speedup_vs_openhcs_1job",
+    "Throughput speedup versus OpenHCS 1-job execution",
+    "Speedup (x)",
+    baseline_line=1.0,
+    minimum_ylim=0.0,
+    log_variant=True,
+)
 
 
 def generate_cppipe_scaling_figures(
@@ -74,23 +84,55 @@ def generate_cppipe_scaling_figures(
     """Generate v7-style grouped-bar charts from ``throughput_batches.csv``."""
     table_rows = _load_summary_rows(summary_csv)
     native_seconds_by_case = _load_native_seconds(native_summary_csv)
-    metric_rows = tuple(
+    base_rows = tuple(
         _throughput_metric_rows(
             table_rows,
             native_seconds_by_case=native_seconds_by_case,
+            speedup_denominator=SpeedupDenominator.NATIVE_CP,
+            include_average=include_average,
+        )
+    )
+    native_speedup_rows = base_rows
+    self_speedup_rows = tuple(
+        _throughput_metric_rows(
+            table_rows,
+            native_seconds_by_case=native_seconds_by_case,
+            speedup_denominator=SpeedupDenominator.OPENHCS_1JOB,
             include_average=include_average,
         )
     )
     output_dir.mkdir(parents=True, exist_ok=True)
     methods = _worker_methods(table_rows)
-    pipeline_names = tuple(dict.fromkeys(row.pipeline_name for row in metric_rows))
+    pipeline_names = tuple(dict.fromkeys(row.pipeline_name for row in base_rows))
     long_csv_path = output_dir / "cppipe_throughput_metrics_long.csv"
-    _write_metric_rows(long_csv_path, metric_rows)
+    _write_metric_rows(
+        long_csv_path,
+        native_speedup_rows=native_speedup_rows,
+        self_speedup_rows=self_speedup_rows,
+    )
     return (
         long_csv_path,
         *generate_grouped_benchmark_metric_figures(
-            metric_rows,
-            metrics=THROUGHPUT_METRICS,
+            base_rows,
+            metrics=THROUGHPUT_BASE_METRICS,
+            methods=methods,
+            pipeline_names=pipeline_names,
+            output_dir=output_dir,
+            output_formats=output_formats,
+            wrap_after=wrap_after,
+        ),
+        *generate_grouped_benchmark_metric_figures(
+            native_speedup_rows,
+            metrics=(THROUGHPUT_CP_SPEEDUP_METRIC,),
+            methods=methods,
+            pipeline_names=pipeline_names,
+            output_dir=output_dir,
+            output_formats=output_formats,
+            wrap_after=wrap_after,
+        ),
+        *generate_grouped_benchmark_metric_figures(
+            self_speedup_rows,
+            metrics=(THROUGHPUT_SELF_SPEEDUP_METRIC,),
             methods=methods,
             pipeline_names=pipeline_names,
             output_dir=output_dir,
@@ -125,6 +167,7 @@ def _throughput_metric_rows(
     rows: Sequence[dict[str, str]],
     *,
     native_seconds_by_case: dict[str, float],
+    speedup_denominator: "SpeedupDenominator",
     include_average: bool,
 ) -> Iterable[BenchmarkMetricRow]:
     for row in rows:
@@ -133,7 +176,7 @@ def _throughput_metric_rows(
             method=_worker_method(row),
             accuracy_fraction=_optional_float(row, EFFICIENCY_FIELD),
             raw_seconds=_optional_float(row, WALL_SECONDS_FIELD),
-            speedup=_cp_native_speedup(row, native_seconds_by_case),
+            speedup=_speedup(row, native_seconds_by_case, speedup_denominator),
             peak_memory_mb=_optional_float(row, PEAK_MEMORY_MB_FIELD),
         )
     if include_average:
@@ -141,6 +184,7 @@ def _throughput_metric_rows(
             _throughput_metric_rows(
                 rows,
                 native_seconds_by_case=native_seconds_by_case,
+                speedup_denominator=speedup_denominator,
                 include_average=False,
             )
         )
@@ -163,19 +207,28 @@ def _average_rows(rows: Iterable[BenchmarkMetricRow]) -> Iterable[BenchmarkMetri
         )
 
 
-def _write_metric_rows(path: Path, rows: Sequence[BenchmarkMetricRow]) -> None:
+def _write_metric_rows(
+    path: Path,
+    *,
+    native_speedup_rows: Sequence[BenchmarkMetricRow],
+    self_speedup_rows: Sequence[BenchmarkMetricRow],
+) -> None:
     fieldnames = (
         "pipeline_name",
         "method",
         "efficiency_fraction",
         "wall_seconds",
         "speedup_vs_native_cp",
+        "speedup_vs_openhcs_1job",
         "peak_memory_mb",
     )
+    self_speedup_index = {
+        (row.pipeline_name, row.method): row.speedup for row in self_speedup_rows
+    }
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
         writer.writeheader()
-        for row in rows:
+        for row in native_speedup_rows:
             writer.writerow(
                 {
                     "pipeline_name": row.pipeline_name,
@@ -183,6 +236,9 @@ def _write_metric_rows(path: Path, rows: Sequence[BenchmarkMetricRow]) -> None:
                     "efficiency_fraction": row.accuracy_fraction,
                     "wall_seconds": row.raw_seconds,
                     "speedup_vs_native_cp": row.speedup,
+                    "speedup_vs_openhcs_1job": self_speedup_index.get(
+                        (row.pipeline_name, row.method)
+                    ),
                     "peak_memory_mb": row.peak_memory_mb,
                 }
             )
@@ -208,16 +264,19 @@ def _load_native_seconds(path: Path | None) -> dict[str, float]:
     }
 
 
-def _cp_native_speedup(
+def _speedup(
     row: dict[str, str],
     native_seconds_by_case: dict[str, float],
+    speedup_denominator: "SpeedupDenominator",
 ) -> float | None:
+    if speedup_denominator is SpeedupDenominator.OPENHCS_1JOB:
+        return _optional_float(row, SPEEDUP_FIELD)
     native_seconds = native_seconds_by_case.get(row[CASE_NAME_FIELD])
     wall_seconds = _optional_float(row, WALL_SECONDS_FIELD)
     replicas = int(row[REPLICAS_FIELD])
     if native_seconds is not None and wall_seconds is not None and wall_seconds > 0.0:
         return native_seconds * replicas / wall_seconds
-    return _optional_float(row, SPEEDUP_FIELD)
+    return None
 
 
 def _worker_methods(rows: Sequence[dict[str, str]]) -> tuple[str, ...]:
@@ -257,3 +316,10 @@ def _mean_present(values: Iterable[float | None]) -> float | None:
     if not present:
         return None
     return sum(present) / len(present)
+
+
+class SpeedupDenominator(Enum):
+    """Throughput speedup denominator."""
+
+    NATIVE_CP = auto()
+    OPENHCS_1JOB = auto()
