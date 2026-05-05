@@ -4,26 +4,11 @@
 from __future__ import annotations
 
 import argparse
-import csv
 import json
 import logging
 import os
-from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-
-from nominal_refactor_advisor.record_algebra import product_record
-
-CASE_NAME_FIELD = "case_name"
-
-
-BarSeries = product_record(
-    "BarSeries",
-    "values: tuple[float, ...]; color: str; label: str | None; offset: float; width: float",
-    defaults={"label": None, "offset": 0.0, "width": 0.7},
-    doc="Declarative bar-series rendering contract.",
-    module_name=__name__,
-)
 
 
 def main() -> int:
@@ -185,135 +170,14 @@ def _plot_command(args: argparse.Namespace) -> int:
 
 
 def plot_summary(summary_csv: Path, output_dir: Path) -> None:
-    """Create lab-meeting-ready runtime and parity figures from summary CSV."""
-    import matplotlib.pyplot as plt
+    """Create lab-meeting-ready runtime, speedup, parity, and memory figures."""
+    from benchmark.reports.cppipe_figures import SummarySource
+    from benchmark.reports.cppipe_figures import generate_cppipe_benchmark_figures
 
-    rows = _summary_rows(summary_csv)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    names = [row[CASE_NAME_FIELD] for row in rows]
-    native = [float(row["median_native_execution_seconds"]) for row in rows]
-    openhcs = [float(row["median_openhcs_execution_seconds"]) for row in rows]
-    speedups = [float(row["median_speedup"]) for row in rows]
-    accuracy = [float(row["min_parity_accuracy"]) * 100.0 for row in rows]
-
-    fig, axis = plt.subplots(figsize=(max(8.0, len(names) * 0.55), 4.8))
-    x_positions = range(len(names))
-    width = 0.38
-    _plot_bar_series(
-        axis,
-        names=names,
-        x_positions=tuple(x_positions),
-        series=(
-            BarSeries(
-                tuple(native),
-                "#333333",
-                label="CellProfiler",
-                offset=-width / 2,
-                width=width,
-            ),
-            BarSeries(
-                tuple(openhcs),
-                "#0f8b8d",
-                label="OpenHCS",
-                offset=width / 2,
-                width=width,
-            ),
-        ),
+    generate_cppipe_benchmark_figures(
+        (SummarySource("OH1", summary_csv),),
+        output_dir=output_dir,
     )
-    axis.set_ylabel("Execution time (s)")
-    axis.set_title("Single-thread execution runtime")
-    axis.set_xticks(list(x_positions))
-    axis.set_xticklabels(names, rotation=45, ha="right")
-    axis.legend(frameon=False)
-    axis.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(output_dir / "runtime_cellprofiler_vs_openhcs.png", dpi=240)
-    fig.savefig(output_dir / "runtime_cellprofiler_vs_openhcs.svg")
-    plt.close(fig)
-
-    fig, axis = plt.subplots(figsize=(max(8.0, len(names) * 0.55), 4.8))
-    bars = _plot_bar_series(
-        axis,
-        names=names,
-        x_positions=tuple(range(len(names))),
-        series=(BarSeries(tuple(speedups), "#d95f02"),),
-    )[0]
-    axis.axhline(1.0, color="#333333", linewidth=1.0)
-    axis.set_ylabel("Speedup vs CellProfiler (x)")
-    axis.set_title("OpenHCS execution speedup")
-    axis.set_xticklabels(names, rotation=45, ha="right")
-    axis.grid(axis="y", alpha=0.25)
-    for bar, value in zip(bars, speedups, strict=True):
-        axis.text(
-            bar.get_x() + bar.get_width() / 2,
-            bar.get_height(),
-            f"{value:.1f}x",
-            ha="center",
-            va="bottom",
-            fontsize=8,
-        )
-    fig.tight_layout()
-    fig.savefig(output_dir / "speedup_openhcs_vs_cellprofiler.png", dpi=240)
-    fig.savefig(output_dir / "speedup_openhcs_vs_cellprofiler.svg")
-    plt.close(fig)
-
-    fig, axis = plt.subplots(figsize=(max(8.0, len(names) * 0.55), 3.8))
-    _plot_bar_series(
-        axis,
-        names=names,
-        x_positions=tuple(range(len(names))),
-        series=(BarSeries(tuple(accuracy), "#1b9e77"),),
-    )
-    axis.set_ylim(0, 105)
-    axis.set_ylabel("Parity pass rate (%)")
-    axis.set_title("Semantic parity at 1e-6 numeric tolerance")
-    axis.set_xticklabels(names, rotation=45, ha="right")
-    axis.grid(axis="y", alpha=0.25)
-    fig.tight_layout()
-    fig.savefig(output_dir / "parity_accuracy.png", dpi=240)
-    fig.savefig(output_dir / "parity_accuracy.svg")
-    plt.close(fig)
-
-
-def _plot_bar_series(
-    axis,
-    *,
-    names: Sequence[str],
-    x_positions: tuple[int, ...],
-    series: tuple[BarSeries, ...],
-):
-    """Render bar series through one declarative plotting surface."""
-    containers = []
-    for spec in series:
-        containers.append(
-            axis.bar(
-                [x + spec.offset for x in x_positions],
-                spec.values,
-                width=spec.width,
-                label=spec.label,
-                color=spec.color,
-            )
-        )
-    axis.set_xticks(list(x_positions))
-    axis.set_xticklabels(names, rotation=45, ha="right")
-    return tuple(containers)
-
-
-def _summary_rows(path: Path) -> list[dict[str, str]]:
-    with Path(path).open(encoding="utf-8", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    required = {
-        CASE_NAME_FIELD,
-        "median_native_execution_seconds",
-        "median_openhcs_execution_seconds",
-        "median_speedup",
-        "min_parity_accuracy",
-    }
-    missing = required - set(rows[0] if rows else ())
-    if missing:
-        raise ValueError(f"Summary CSV missing columns: {sorted(missing)!r}")
-    return rows
 
 
 def _configure_reproducible_runtime_env() -> None:

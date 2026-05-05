@@ -20,6 +20,7 @@ from nominal_refactor_advisor.record_algebra import product_record
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.adapters.cellprofiler import native_cellprofiler_reference_is_complete
+from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
 from benchmark.runner import CellProfilerCompatibilityResult
 from benchmark.runner import run_cellprofiler_cppipe_parity
@@ -38,6 +39,8 @@ NATIVE_EXECUTION_SECONDS_FIELD = "native_execution_seconds"
 OPENHCS_EXECUTION_SECONDS_FIELD = "openhcs_execution_seconds"
 NATIVE_TOTAL_PHASE_SECONDS_FIELD = "native_total_phase_seconds"
 OPENHCS_TOTAL_PHASE_SECONDS_FIELD = "openhcs_total_phase_seconds"
+NATIVE_PEAK_MEMORY_MB_FIELD = "native_peak_memory_mb"
+OPENHCS_PEAK_MEMORY_MB_FIELD = "openhcs_peak_memory_mb"
 SPEEDUP_FIELD = "speedup"
 TOTAL_PHASE_SPEEDUP_FIELD = "total_phase_speedup"
 SPEEDUP_TARGET_FIELD = "speedup_target"
@@ -60,6 +63,8 @@ MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD = "median_native_execution_seconds"
 MEDIAN_OPENHCS_EXECUTION_SECONDS_FIELD = "median_openhcs_execution_seconds"
 MEDIAN_NATIVE_TOTAL_PHASE_SECONDS_FIELD = "median_native_total_phase_seconds"
 MEDIAN_OPENHCS_TOTAL_PHASE_SECONDS_FIELD = "median_openhcs_total_phase_seconds"
+MEDIAN_NATIVE_PEAK_MEMORY_MB_FIELD = "median_native_peak_memory_mb"
+MEDIAN_OPENHCS_PEAK_MEMORY_MB_FIELD = "median_openhcs_peak_memory_mb"
 MEDIAN_SPEEDUP_FIELD = "median_speedup"
 MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD = "median_total_phase_speedup"
 MIN_PARITY_ACCURACY_FIELD = "min_parity_accuracy"
@@ -101,7 +106,8 @@ ToolExecutionSummary = product_record(
     (
         "tool: str; success: bool; output_path: str; "
         "execution_seconds: float | None; total_metric_seconds: float | None; "
-        "cached: bool; error_message: str | None; phase_seconds: Mapping[str, float]"
+        "peak_memory_mb: float | None; cached: bool; error_message: str | None; "
+        "phase_seconds: Mapping[str, float]"
     ),
     doc="Execution and phase timing summary for one tool run.",
     module_name=__name__,
@@ -398,6 +404,14 @@ def _summary_csv_rows(
                 observation.openhcs.total_metric_seconds
                 for observation in case_observations
             ),
+            MEDIAN_NATIVE_PEAK_MEMORY_MB_FIELD: _median_present(
+                observation.native_cellprofiler.peak_memory_mb
+                for observation in case_observations
+            ),
+            MEDIAN_OPENHCS_PEAK_MEMORY_MB_FIELD: _median_present(
+                observation.openhcs.peak_memory_mb
+                for observation in case_observations
+            ),
             MEDIAN_SPEEDUP_FIELD: median_speedup,
             MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD: median_total_phase_speedup,
             SPEEDUP_TARGET_FIELD: speedup_target,
@@ -426,6 +440,8 @@ _OBSERVATION_TABLE = CsvTableSpec(
         OPENHCS_EXECUTION_SECONDS_FIELD,
         NATIVE_TOTAL_PHASE_SECONDS_FIELD,
         OPENHCS_TOTAL_PHASE_SECONDS_FIELD,
+        NATIVE_PEAK_MEMORY_MB_FIELD,
+        OPENHCS_PEAK_MEMORY_MB_FIELD,
         SPEEDUP_FIELD,
         TOTAL_PHASE_SPEEDUP_FIELD,
         PARITY_ACCURACY_FIELD,
@@ -459,6 +475,8 @@ def _summary_table(speedup_target: float) -> CsvTableSpec:
             MEDIAN_OPENHCS_EXECUTION_SECONDS_FIELD,
             MEDIAN_NATIVE_TOTAL_PHASE_SECONDS_FIELD,
             MEDIAN_OPENHCS_TOTAL_PHASE_SECONDS_FIELD,
+            MEDIAN_NATIVE_PEAK_MEMORY_MB_FIELD,
+            MEDIAN_OPENHCS_PEAK_MEMORY_MB_FIELD,
             MEDIAN_SPEEDUP_FIELD,
             MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD,
             SPEEDUP_TARGET_FIELD,
@@ -524,7 +542,7 @@ def _run_comparison_case(
     result = run_cellprofiler_cppipe_parity(
         case.dataset_path,
         case.cppipe_path,
-        metrics=[TimeMetric()],
+        metrics=[TimeMetric(), MemoryMetric()],
         dataset_id=case.dataset_id,
         pipeline_name=case.name,
         microscope_type=case.microscope_type,
@@ -600,6 +618,7 @@ def _failed_comparison_observation(
             "",
             None,
             None,
+            None,
             False,
             f"{type(error).__name__}: {error}",
             {},
@@ -608,6 +627,7 @@ def _failed_comparison_observation(
             "OpenHCS",
             False,
             "",
+            None,
             None,
             None,
             False,
@@ -659,6 +679,7 @@ def _tool_execution_summary(
 ) -> ToolExecutionSummary:
     phase_seconds = _phase_seconds(result)
     metric_seconds = result.metrics.get("execution_time_seconds")
+    peak_memory_mb = result.metrics.get("peak_memory_mb")
     total_phase_seconds = sum(phase_seconds.values()) if phase_seconds else None
     return ToolExecutionSummary(
         tool=result.tool_name,
@@ -668,6 +689,9 @@ def _tool_execution_summary(
         total_metric_seconds=total_phase_seconds
         if total_phase_seconds is not None
         else (float(metric_seconds) if metric_seconds is not None else None),
+        peak_memory_mb=(
+            float(peak_memory_mb) if peak_memory_mb is not None else None
+        ),
         cached=bool(cached) if cached is not None else _result_is_cached(result),
         error_message=result.error_message,
         phase_seconds=phase_seconds,
@@ -723,6 +747,8 @@ def _observation_csv_row(
             observation.native_cellprofiler.total_metric_seconds
         ),
         OPENHCS_TOTAL_PHASE_SECONDS_FIELD: observation.openhcs.total_metric_seconds,
+        NATIVE_PEAK_MEMORY_MB_FIELD: observation.native_cellprofiler.peak_memory_mb,
+        OPENHCS_PEAK_MEMORY_MB_FIELD: observation.openhcs.peak_memory_mb,
         SPEEDUP_FIELD: observation.speedup,
         TOTAL_PHASE_SPEEDUP_FIELD: observation.total_phase_speedup,
         PARITY_ACCURACY_FIELD: observation.parity_accuracy,
