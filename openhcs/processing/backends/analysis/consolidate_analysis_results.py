@@ -13,35 +13,202 @@ Usage:
     FunctionStep(func=consolidate_analysis_results_pipeline, ...)
 """
 
-import pandas as pd
-import numpy as np
-import re
+from abc import ABC, abstractmethod
+from collections.abc import Mapping
+from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+import re
+from typing import TYPE_CHECKING
+
+import numpy as np
+import pandas as pd
 
 from openhcs.core.memory import numpy as numpy_func
 from openhcs.core.pipeline.function_contracts import artifact_outputs
 from openhcs.processing.materialization import CsvOptions, MaterializationSpec
 
-# Import config classes with TYPE_CHECKING to avoid circular imports
-from typing import TYPE_CHECKING
-
 if TYPE_CHECKING:
     from openhcs.core.config import (
         AnalysisConsolidationConfig,
         PlateMetadataConfig,
-        GlobalPipelineConfig,
     )
     from openhcs.microscopes.microscope_interfaces import FilenameParser
 
 logger = logging.getLogger(__name__)
 
 
-def extract_well_id(filename: str, pattern: str = r"([A-Z]\d{2})") -> Optional[str]:
-    """Extract well ID from filename using regex pattern."""
-    match = re.search(pattern, filename)
-    return match.group(1) if match else None
+@dataclass(frozen=True, slots=True)
+class AnalysisTableRecord:
+    """One typed analysis table ready for per-well consolidation."""
+
+    well_id: str
+    analysis_type: str
+    table: pd.DataFrame
+    source_name: str
+
+    def __post_init__(self) -> None:
+        if not self.well_id:
+            raise ValueError("AnalysisTableRecord.well_id cannot be empty.")
+        if not self.analysis_type:
+            raise ValueError("AnalysisTableRecord.analysis_type cannot be empty.")
+        if not self.source_name:
+            raise ValueError("AnalysisTableRecord.source_name cannot be empty.")
+        if not isinstance(self.table, pd.DataFrame):
+            raise TypeError(
+                "AnalysisTableRecord.table must be a pandas DataFrame, got "
+                f"{type(self.table).__name__}."
+            )
+
+
+class AnalysisTableSource(ABC):
+    """Nominal source of analysis tables independent of storage backend."""
+
+    @abstractmethod
+    def records(self) -> tuple[AnalysisTableRecord, ...]:
+        """Return typed analysis table records."""
+
+
+class AnalysisWellResolver(ABC):
+    """Semantic authority for resolving a well component from an analysis file."""
+
+    @abstractmethod
+    def well_id_for(self, filename: str) -> str | None:
+        """Return the well component encoded by an analysis filename."""
+
+
+@dataclass(frozen=True, slots=True)
+class FilenameParserWellResolver(AnalysisWellResolver):
+    """Resolve wells through an OpenHCS microscope filename parser."""
+
+    filename_parser: "FilenameParser"
+
+    def well_id_for(self, filename: str) -> str | None:
+        parsed = self.filename_parser.parse_filename(filename)
+        if parsed is None:
+            return None
+        value = parsed.get("well")
+        if value is None:
+            return None
+        return str(value)
+
+
+@dataclass(frozen=True, slots=True)
+class AutoDetectFilenameParserWellResolver(AnalysisWellResolver):
+    """Resolve wells using the registered OpenHCS filename parser family."""
+
+    parser_types: tuple[type["FilenameParser"], ...]
+
+    @classmethod
+    def from_registered_parsers(cls) -> "AutoDetectFilenameParserWellResolver":
+        from openhcs.microscopes.microscope_interfaces import FilenameParser
+
+        return cls(tuple(FilenameParser.__registry__.values()))
+
+    def well_id_for(self, filename: str) -> str | None:
+        for parser_type in self.parser_types:
+            if not parser_type.can_parse(filename):
+                continue
+            return FilenameParserWellResolver(parser_type()).well_id_for(filename)
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class ConfiguredWellListResolver(AnalysisWellResolver):
+    """Resolve wells from an explicit caller-provided legacy well set."""
+
+    well_ids: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "well_ids", tuple(self.well_ids))
+
+    def well_id_for(self, filename: str) -> str | None:
+        filename_lower = filename.lower()
+        for candidate_well in self.well_ids:
+            if candidate_well.lower() in filename_lower:
+                return candidate_well
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class CsvAnalysisTableSource(AnalysisTableSource):
+    """Analysis table source backed by materialized CSV result files."""
+
+    results_directory: Path
+    well_resolver: AnalysisWellResolver
+    consolidation_config: "AnalysisConsolidationConfig"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "results_directory", Path(self.results_directory))
+        if not isinstance(self.well_resolver, AnalysisWellResolver):
+            raise TypeError(
+                "CsvAnalysisTableSource.well_resolver must be "
+                "AnalysisWellResolver."
+            )
+        if not self.results_directory.exists():
+            raise FileNotFoundError(
+                f"Results directory does not exist: {self.results_directory}"
+            )
+
+    def records(self) -> tuple[AnalysisTableRecord, ...]:
+        return tuple(
+            record
+            for file_path in self._candidate_files()
+            for record in self._record_for_file(file_path)
+        )
+
+    def _candidate_files(self) -> tuple[Path, ...]:
+        files = tuple(
+            file_path
+            for extension in self.consolidation_config.file_extensions
+            for file_path in self.results_directory.glob(f"*{extension}")
+        )
+        exclude_patterns = _exclude_patterns(self.consolidation_config)
+        if not exclude_patterns:
+            return files
+        return tuple(
+            file_path
+            for file_path in files
+            if not any(
+                re.search(pattern, file_path.name)
+                for pattern in exclude_patterns
+            )
+        )
+
+    def _record_for_file(
+        self,
+        file_path: Path,
+    ) -> tuple[AnalysisTableRecord, ...]:
+        well_id = self.well_resolver.well_id_for(file_path.name)
+        if well_id is None:
+            logger.warning(
+                "Could not resolve well component from filename %s, skipping",
+                file_path.name,
+            )
+            return ()
+        return (
+            AnalysisTableRecord(
+                well_id=well_id,
+                analysis_type=extract_analysis_type(file_path.name, well_id),
+                table=pd.read_csv(file_path),
+                source_name=str(file_path),
+            ),
+        )
+
+
+def _exclude_patterns(
+    consolidation_config: "AnalysisConsolidationConfig",
+) -> tuple[str, ...]:
+    """Return typed exclude regex patterns from consolidation config."""
+    patterns = consolidation_config.exclude_patterns
+    if patterns is None:
+        return ()
+    if isinstance(patterns, str):
+        raise TypeError(
+            "AnalysisConsolidationConfig.exclude_patterns must be a sequence "
+            "of regex strings, not a string."
+        )
+    return tuple(str(pattern) for pattern in patterns)
 
 
 def extract_analysis_type(filename: str, well_id: str) -> str:
@@ -78,8 +245,9 @@ def extract_analysis_type(filename: str, well_id: str) -> str:
 
 
 def create_metaxpress_header(
-    summary_df: pd.DataFrame, plate_metadata: Optional[Dict[str, str]] = None
-) -> List[List[str]]:
+    summary_df: pd.DataFrame,
+    plate_metadata: Mapping[str, str] | None = None,
+) -> list[list[str]]:
     """
     Create MetaXpress-style header rows with metadata.
 
@@ -120,8 +288,8 @@ def create_metaxpress_header(
 def save_with_metaxpress_header(
     summary_df: pd.DataFrame,
     output_path: str,
-    plate_metadata: Optional[Dict[str, str]] = None,
-):
+    plate_metadata: Mapping[str, str] | None = None,
+) -> None:
     """
     Save DataFrame with MetaXpress-style header structure.
     """
@@ -151,8 +319,10 @@ def save_with_metaxpress_header(
 
 
 def auto_summarize_column(
-    series: pd.Series, column_name: str, analysis_type: str
-) -> Dict[str, Any]:
+    series: pd.Series,
+    column_name: str,
+    analysis_type: str,
+) -> dict[str, object]:
     """
     Automatically summarize a pandas series with MetaXpress-style naming.
 
@@ -247,82 +417,216 @@ def auto_summarize_column(
     return summary
 
 
-def summarize_analysis_file(file_path: str, analysis_type: str) -> Dict[str, Any]:
+def summarize_analysis_table(
+    df: pd.DataFrame,
+    analysis_type: str,
+    *,
+    source_name: str,
+) -> dict[str, object]:
     """
-    Summarize a single analysis CSV file with MetaXpress-style metrics.
+    Summarize a single analysis table with MetaXpress-style metrics.
 
     Returns a dictionary of key summary statistics with clean names.
     """
-    try:
-        df = pd.read_csv(file_path)
-
-        if df.empty:
-            logger.warning(f"Empty CSV file: {file_path}")
-            return {}
-
-        summary = {}
-        clean_analysis = analysis_type.replace("_", " ").title()
-
-        # Add key file-level metrics first
-        summary[f"Number of Objects ({clean_analysis})"] = len(df)
-
-        # Prioritize important columns based on common analysis patterns
-        priority_columns = []
-        other_columns = []
-
-        for column in df.columns:
-            # Skip common index/ID columns
-            if column.lower() in [
-                "index",
-                "unnamed: 0",
-                "slice_index",
-                "cell_id",
-                "match_id",
-                "skeleton_id",
-            ]:
-                continue
-
-            # Prioritize key metrics
-            col_lower = column.lower()
-            if any(
-                key in col_lower
-                for key in [
-                    "area",
-                    "count",
-                    "length",
-                    "distance",
-                    "intensity",
-                    "confidence",
-                    "branch",
-                ]
-            ):
-                priority_columns.append(column)
-            else:
-                other_columns.append(column)
-
-        # Process priority columns first
-        for column in priority_columns:
-            col_summary = auto_summarize_column(df[column], column, analysis_type)
-            summary.update(col_summary)
-
-        # Process other columns but limit to avoid too many metrics
-        for column in other_columns[:5]:  # Limit to 5 additional columns
-            col_summary = auto_summarize_column(df[column], column, analysis_type)
-            summary.update(col_summary)
-
-        return summary
-
-    except Exception as e:
-        logger.error(f"Error processing {file_path}: {e}")
+    if df.empty:
+        logger.warning("Empty analysis table: %s", source_name)
         return {}
+
+    summary: dict[str, object] = {}
+    clean_analysis = analysis_type.replace("_", " ").title()
+
+    summary[f"Number of Objects ({clean_analysis})"] = len(df)
+
+    priority_columns: list[str] = []
+    other_columns: list[str] = []
+
+    for column in df.columns:
+        if column.lower() in {
+            "index",
+            "unnamed: 0",
+            "slice_index",
+            "cell_id",
+            "match_id",
+            "skeleton_id",
+        }:
+            continue
+
+        col_lower = column.lower()
+        if any(
+            key in col_lower
+            for key in (
+                "area",
+                "count",
+                "length",
+                "distance",
+                "intensity",
+                "confidence",
+                "branch",
+            )
+        ):
+            priority_columns.append(column)
+        else:
+            other_columns.append(column)
+
+    for column in priority_columns:
+        summary.update(auto_summarize_column(df[column], column, analysis_type))
+
+    for column in other_columns[:5]:
+        summary.update(auto_summarize_column(df[column], column, analysis_type))
+
+    return summary
+
+
+def summarize_analysis_file(
+    file_path: str,
+    analysis_type: str,
+) -> dict[str, object]:
+    """Summarize one materialized CSV analysis file."""
+    return summarize_analysis_table(
+        pd.read_csv(file_path),
+        analysis_type,
+        source_name=file_path,
+    )
+
+
+def consolidate_analysis_table_records(
+    records: tuple[AnalysisTableRecord, ...],
+    consolidation_config: "AnalysisConsolidationConfig",
+) -> pd.DataFrame:
+    """Create the per-well summary table from typed analysis records."""
+    records_by_well: dict[str, dict[str, AnalysisTableRecord]] = {}
+    analysis_types: set[str] = set()
+    for record in records:
+        analysis_types.add(record.analysis_type)
+        records_by_well.setdefault(record.well_id, {})[record.analysis_type] = record
+
+    logger.info(
+        "Processing %d wells with analysis types: %s",
+        len(records_by_well),
+        sorted(analysis_types),
+    )
+
+    summary_rows: list[dict[str, object]] = []
+    for well_id in sorted(records_by_well):
+        well_summary: dict[str, object] = {"Well": well_id}
+        for analysis_type in sorted(analysis_types):
+            record = records_by_well[well_id].get(analysis_type)
+            if record is None:
+                continue
+            well_summary.update(
+                summarize_analysis_table(
+                    record.table,
+                    record.analysis_type,
+                    source_name=record.source_name,
+                )
+            )
+        summary_rows.append(well_summary)
+
+    return order_consolidated_summary_columns(
+        pd.DataFrame(summary_rows),
+        metaxpress_style=consolidation_config.metaxpress_style,
+    )
+
+
+def order_consolidated_summary_columns(
+    summary_df: pd.DataFrame,
+    *,
+    metaxpress_style: bool,
+) -> pd.DataFrame:
+    """Apply stable OpenHCS/MetaXpress column ordering."""
+    if summary_df.empty:
+        return summary_df
+    if metaxpress_style:
+        analysis_groups: dict[str, list[str]] = {}
+        other_cols: list[str] = []
+        for column in summary_df.columns:
+            if column == "Well":
+                continue
+            if "(" in column and ")" in column:
+                analysis_name = column.split("(")[-1].replace(")", "")
+                analysis_groups.setdefault(analysis_name, []).append(column)
+                continue
+            other_cols.append(column)
+
+        ordered_cols = ["Well"]
+        for analysis_name in sorted(analysis_groups):
+            ordered_cols.extend(sorted(analysis_groups[analysis_name]))
+        ordered_cols.extend(sorted(other_cols))
+        return summary_df[ordered_cols]
+
+    if "Well" not in summary_df.columns:
+        return summary_df.reindex(sorted(summary_df.columns), axis=1)
+    other_cols = [column for column in summary_df.columns if column != "Well"]
+    return summary_df[["Well", *sorted(other_cols)]]
+
+
+def consolidated_plate_metadata(
+    results_dir: Path,
+    summary_df: pd.DataFrame,
+    plate_metadata_config: "PlateMetadataConfig",
+) -> dict[str, str]:
+    """Return MetaXpress-compatible metadata for a consolidated summary."""
+    return {
+        "barcode": plate_metadata_config.barcode or f"OpenHCS-{results_dir.name}",
+        "plate_name": plate_metadata_config.plate_name or results_dir.name,
+        "plate_id": plate_metadata_config.plate_id
+        or str(hash(str(results_dir)) % 100000),
+        "description": plate_metadata_config.description
+        or (
+            "Consolidated analysis results from OpenHCS pipeline: "
+            f"{len(summary_df)} wells analyzed"
+        ),
+        "acquisition_user": plate_metadata_config.acquisition_user,
+        "z_step": plate_metadata_config.z_step,
+    }
+
+
+def write_consolidated_analysis_summary(
+    summary_df: pd.DataFrame,
+    output_path: str,
+    results_dir: Path,
+    consolidation_config: "AnalysisConsolidationConfig",
+    plate_metadata_config: "PlateMetadataConfig",
+) -> None:
+    """Persist one consolidated analysis summary."""
+    if consolidation_config.metaxpress_style:
+        save_with_metaxpress_header(
+            summary_df,
+            output_path,
+            consolidated_plate_metadata(
+                results_dir,
+                summary_df,
+                plate_metadata_config,
+            ),
+        )
+        logger.info("Saved MetaXpress-style summary with header to: %s", output_path)
+        return
+
+    summary_df.to_csv(output_path, index=False)
+    logger.info("Saved consolidated summary to: %s", output_path)
+
+
+def analysis_well_resolver(
+    *,
+    filename_parser: "FilenameParser | None" = None,
+    well_ids: tuple[str, ...] = (),
+) -> AnalysisWellResolver:
+    """Return the explicit well resolver for an analysis consolidation run."""
+    if filename_parser is not None:
+        return FilenameParserWellResolver(filename_parser)
+    if well_ids:
+        return ConfiguredWellListResolver(well_ids)
+    return AutoDetectFilenameParserWellResolver.from_registered_parsers()
 
 
 def consolidate_analysis_results(
     results_directory: str,
-    well_ids: List[str],
     consolidation_config: "AnalysisConsolidationConfig",
     plate_metadata_config: "PlateMetadataConfig",
-    output_path: Optional[str] = None,
+    *,
+    well_ids: list[str] | None = None,
+    output_path: str | None = None,
+    filename_parser: "FilenameParser | None" = None,
 ) -> pd.DataFrame:
     """
     Consolidate analysis results into a single summary table using configuration objects.
@@ -337,169 +641,48 @@ def consolidate_analysis_results(
         DataFrame with wells as rows and analysis metrics as columns
     """
     results_dir = Path(results_directory)
-
-    if not results_dir.exists():
-        raise FileNotFoundError(
-            f"Results directory does not exist: {results_directory}"
-        )
-
-    logger.info(f"Consolidating analysis results from: {results_directory}")
-
+    logger.info("Consolidating analysis results from: %s", results_dir)
     logger.debug("consolidation_config type: %s", type(consolidation_config))
     logger.debug("well_pattern: %r", consolidation_config.well_pattern)
     logger.debug("file_extensions: %r", consolidation_config.file_extensions)
-    logger.debug(
-        "exclude_patterns: %r",
-        consolidation_config.exclude_patterns,
+    logger.debug("exclude_patterns: %r", consolidation_config.exclude_patterns)
+
+    source = CsvAnalysisTableSource(
+        results_directory=results_dir,
+        well_resolver=analysis_well_resolver(
+            filename_parser=filename_parser,
+            well_ids=tuple(well_ids or ()),
+        ),
+        consolidation_config=consolidation_config,
     )
-
-    # Find all relevant files
-    all_files = []
-    for ext in consolidation_config.file_extensions:
-        pattern = f"*{ext}"
-        files = list(results_dir.glob(pattern))
-        all_files.extend([str(f) for f in files])
-
+    records = source.records()
     logger.info(
-        f"Found {len(all_files)} files with extensions {consolidation_config.file_extensions}"
+        "Found %d analysis table records from %s",
+        len(records),
+        results_dir,
     )
-
-    # Apply exclude filters
-    if consolidation_config.exclude_patterns:
-        # Handle case where exclude_patterns might be a string representation
-        exclude_patterns = consolidation_config.exclude_patterns
-        if isinstance(exclude_patterns, str):
-            # If it's a string representation of a tuple, convert it back
-            import ast
-
-            logger.info(f"DEBUG: exclude_patterns is string: {repr(exclude_patterns)}")
-            try:
-                exclude_patterns = ast.literal_eval(exclude_patterns)
-                logger.info(f"DEBUG: Successfully parsed to: {repr(exclude_patterns)}")
-            except Exception as e:
-                logger.warning(
-                    f"Could not parse exclude_patterns string: {exclude_patterns}, error: {e}"
-                )
-                exclude_patterns = []
-
-        filtered_files = []
-        for file_path in all_files:
-            filename = Path(file_path).name
-            if not any(re.search(pattern, filename) for pattern in exclude_patterns):
-                filtered_files.append(file_path)
-        all_files = filtered_files
-        logger.info(f"After filtering: {len(all_files)} files to process")
-
-    # Group files by well ID and analysis type
-    wells_data = {}
-    analysis_types = set()
-
-    for file_path in all_files:
-        filename = Path(file_path).name
-
-        # Find well ID by case-insensitive substring matching
-        # (Opera Phenix parser returns uppercase R02C02 but CSV filenames have lowercase r02c02)
-        well_id = None
-        filename_lower = filename.lower()
-        for candidate_well in well_ids:
-            if candidate_well.lower() in filename_lower:
-                well_id = candidate_well
-                break
-
-        if not well_id:
-            logger.warning(
-                f"Could not find any well ID from {well_ids} in filename {filename}, skipping"
-            )
-            continue
-
-        analysis_type = extract_analysis_type(filename, well_id)
-        analysis_types.add(analysis_type)
-
-        if well_id not in wells_data:
-            wells_data[well_id] = {}
-
-        wells_data[well_id][analysis_type] = file_path
-
+    summary_df = consolidate_analysis_table_records(
+        records,
+        consolidation_config,
+    )
     logger.info(
-        f"Processing {len(wells_data)} wells with analysis types: {sorted(analysis_types)}"
+        "Created summary table with %d wells and %d metrics",
+        len(summary_df),
+        len(summary_df.columns),
     )
 
-    # Process each well and create summary
-    summary_rows = []
-
-    for well_id in sorted(wells_data.keys()):
-        # Always use a consistent well ID column name
-        well_summary = {"Well": well_id}
-
-        # Process each analysis type for this well
-        for analysis_type in sorted(analysis_types):
-            if analysis_type in wells_data[well_id]:
-                file_path = wells_data[well_id][analysis_type]
-                analysis_summary = summarize_analysis_file(file_path, analysis_type)
-                well_summary.update(analysis_summary)
-
-        summary_rows.append(well_summary)
-
-    # Create DataFrame
-    summary_df = pd.DataFrame(summary_rows)
-
-    if consolidation_config.metaxpress_style:
-        # MetaXpress-style column ordering: Well first, then grouped by analysis type
-        # Group columns by analysis type (text in parentheses)
-        analysis_groups = {}
-        other_cols = []
-
-        for col in summary_df.columns:
-            if col == "Well":
-                continue
-            if "(" in col and ")" in col:
-                analysis_name = col.split("(")[-1].replace(")", "")
-                if analysis_name not in analysis_groups:
-                    analysis_groups[analysis_name] = []
-                analysis_groups[analysis_name].append(col)
-            else:
-                other_cols.append(col)
-
-        # Reorder columns: Well first, then grouped by analysis type
-        ordered_cols = ["Well"]
-        for analysis_name in sorted(analysis_groups.keys()):
-            ordered_cols.extend(sorted(analysis_groups[analysis_name]))
-        ordered_cols.extend(sorted(other_cols))
-
-        summary_df = summary_df[ordered_cols]
-    else:
-        # Original style: sort all columns alphabetically
-        if "Well" in summary_df.columns:
-            other_cols = [col for col in summary_df.columns if col != "Well"]
-            summary_df = summary_df[["Well"] + sorted(other_cols)]
-
-    logger.info(
-        f"Created summary table with {len(summary_df)} wells and {len(summary_df.columns)} metrics"
+    resolved_output_path = (
+        output_path
+        if output_path is not None
+        else str(results_dir / consolidation_config.output_filename)
     )
-
-    # Save to CSV if output path specified
-    if output_path is None:
-        output_path = str(results_dir / consolidation_config.output_filename)
-
-    if consolidation_config.metaxpress_style:
-        # Create plate metadata dictionary from config
-        plate_metadata = {
-            "barcode": plate_metadata_config.barcode or f"OpenHCS-{results_dir.name}",
-            "plate_name": plate_metadata_config.plate_name or results_dir.name,
-            "plate_id": plate_metadata_config.plate_id
-            or str(hash(str(results_dir)) % 100000),
-            "description": plate_metadata_config.description
-            or f"Consolidated analysis results from OpenHCS pipeline: {len(summary_df)} wells analyzed",
-            "acquisition_user": plate_metadata_config.acquisition_user,
-            "z_step": plate_metadata_config.z_step,
-        }
-
-        save_with_metaxpress_header(summary_df, output_path, plate_metadata)
-        logger.info(f"Saved MetaXpress-style summary with header to: {output_path}")
-    else:
-        summary_df.to_csv(output_path, index=False)
-        logger.info(f"Saved consolidated summary to: {output_path}")
-
+    write_consolidated_analysis_summary(
+        summary_df,
+        resolved_output_path,
+        results_dir,
+        consolidation_config,
+        plate_metadata_config,
+    )
     return summary_df
 
 
@@ -533,11 +716,11 @@ def consolidate_analysis_results_pipeline(
 
 
 def merge_result_type_summaries(
-    summary_paths: List[str],
+    summary_paths: list[str],
     output_path: str,
-    plate_names: Optional[List[str]] = None,
-    plate_folder_name: Optional[str] = None,
-    plate_id: Optional[str] = None,
+    plate_names: list[str] | None = None,
+    plate_folder_name: str | None = None,
+    plate_id: str | None = None,
 ) -> pd.DataFrame:
     """
     Merge multiple MetaXpress-style summaries from different result types within the SAME plate.
@@ -634,7 +817,9 @@ def merge_result_type_summaries(
 
 
 def consolidate_multi_plate_summaries(
-    summary_paths: List[str], output_path: str, plate_names: Optional[List[str]] = None
+    summary_paths: list[str],
+    output_path: str,
+    plate_names: list[str] | None = None,
 ) -> pd.DataFrame:
     """
     Consolidate multiple MetaXpress-style summaries from DIFFERENT plates into a single table.
@@ -724,12 +909,12 @@ def consolidate_multi_plate_summaries(
 
 
 def consolidate_results_directories(
-    results_dirs: List[Path],
+    results_dirs: list[Path],
     plate_path: Path,
     analysis_consolidation_config: "AnalysisConsolidationConfig",
     plate_metadata_config: "PlateMetadataConfig",
     filename_parser: "FilenameParser",
-) -> tuple[List[str], List[tuple[str, str]]]:
+) -> tuple[list[str], list[tuple[str, str]]]:
     """
     Consolidate multiple results directories and create global summary.
 
@@ -771,38 +956,19 @@ def consolidate_results_directories(
             logger.info(f"Skipping {results_dir} - no CSV files found")
             continue
 
-        # Extract well IDs from CSV filenames using parser or regex
-        well_ids = set()
-        for csv_file in csv_files:
-            well_id = None
-
-            # Extract well ID using filename parser (required - handles all microscope formats)
-            parsed = filename_parser.parse_filename(csv_file.name)
-            if parsed and "well" in parsed:
-                well_id = parsed["well"]
-            else:
-                logger.error(
-                    f"Parser failed to extract well ID from {csv_file.name}: {parsed}"
-                )
-
-            if well_id:
-                well_ids.add(well_id)
-
-        well_ids = sorted(list(well_ids))
-        if not well_ids:
-            logger.warning(f"No well IDs found in {results_dir}, skipping")
-            continue
-
         logger.info(
-            f"Consolidating {len(csv_files)} CSV files from {len(well_ids)} wells in {results_dir}"
+            "Consolidating %d CSV files in %s using %s",
+            len(csv_files),
+            results_dir,
+            type(filename_parser).__name__,
         )
 
         try:
             consolidate_fn(
                 results_directory=str(results_dir),
-                well_ids=well_ids,
                 consolidation_config=analysis_consolidation_config,
                 plate_metadata_config=plate_metadata_config,
+                filename_parser=filename_parser,
             )
             successful_dirs.append(results_dir.name)
 

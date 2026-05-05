@@ -1189,29 +1189,9 @@ class OpenHCSMainWindow(QMainWindow):
             # Get global config
             global_config = get_current_global_config(GlobalPipelineConfig)
 
-            # Extract well IDs from CSV filenames
-            well_ids = set()
-            for csv_file in csv_files:
-                import re
-
-                match = re.search(r"([A-Z]\d{2})", csv_file.name, re.IGNORECASE)
-                if match:
-                    well_ids.add(match.group(1).upper())
-
-            well_ids = sorted(list(well_ids))
-
-            if not well_ids:
-                QMessageBox.warning(
-                    self,
-                    "No Wells Found",
-                    f"Could not extract well IDs from CSV filenames in:\n{results_dir}",
-                )
-                return
-
             # Run consolidation
-            consolidate_analysis_results(
+            summary_df = consolidate_analysis_results(
                 results_directory=str(results_path),
-                well_ids=well_ids,
                 consolidation_config=global_config.analysis_consolidation_config,
                 plate_metadata_config=global_config.plate_metadata_config,
             )
@@ -1224,7 +1204,7 @@ class OpenHCSMainWindow(QMainWindow):
             QMessageBox.information(
                 self,
                 "Consolidation Complete",
-                f"Successfully consolidated {len(csv_files)} CSV files from {len(well_ids)} wells.\n\n"
+                f"Successfully consolidated {len(csv_files)} CSV files from {len(summary_df)} wells.\n\n"
                 f"Output: {output_file.name}",
             )
 
