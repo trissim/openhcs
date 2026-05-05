@@ -2,6 +2,21 @@
 
 from pathlib import Path
 from dataclasses import dataclass
+from enum import Enum
+
+
+class ArchiveFormat(Enum):
+    """Supported dataset archive formats."""
+
+    ZIP = "zip"
+
+
+class DatasetValidationRule(Enum):
+    """Dataset acquisition validation strategies."""
+
+    IMAGE_COUNT = "image_count"
+    MANIFEST = "manifest"
+    NON_EMPTY = "non_empty"
 
 
 @dataclass(frozen=True)
@@ -21,14 +36,14 @@ class DatasetSpec:
     size_bytes: int
     """Total expected size after download"""
 
-    archive_format: str
-    """Archive format: 'zip', 'tar.gz', etc."""
+    archive_format: ArchiveFormat
+    """Archive format."""
 
     microscope_type: str
     """Microscope handler type (e.g., 'bbbc021', 'bbbc038')"""
 
-    validation_rule: str
-    """How to validate: 'count' or 'manifest'"""
+    validation_rule: DatasetValidationRule
+    """How to validate extracted data."""
 
     reference_cppipe_urls: tuple[str, ...] = ()
     """Canonical CellProfiler pipelines associated with the dataset, if any."""

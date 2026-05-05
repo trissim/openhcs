@@ -6,6 +6,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from openhcs.constants import AllComponents
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
     ImageAssignment,
@@ -14,8 +15,10 @@ from openhcs.core.pipeline_image_schema import (
     ImportedMetadataJoin,
     ImportedMetadataTable,
     PipelineImageSchema,
+    SOURCE_IMAGE_TYPE_METADATA_FIELD,
 )
 from openhcs.core.source_bindings import (
+    ComponentSelector,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -181,6 +184,142 @@ def test_materialize_source_schema_workspace_uses_single_default_well_for_ordere
     }
     assert primary["wells"] == {"source": None}
     assert primary["sites"] == {"1": None, "2": None}
+    for path in primary["workspace_mapping"]:
+        assert (
+            primary["source_metadata"][path][SOURCE_IMAGE_TYPE_METADATA_FIELD]
+            == "Grayscale image"
+        )
+
+
+def test_materialize_source_schema_workspace_disambiguates_duplicate_site_metadata(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Plate_A01_s1_w1_GUID1.tif", value=1)
+    _write_image(source_root / "Plate_A01_s1_w1_GUID2.tif", value=2)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=r"^Plate_(?P<Well>[A-Z][0-9]{2})_s(?P<Site>[0-9]+)_w(?P<ChannelNumber>[0-9]+)",
+                ),
+            ),
+            assignments_by_alias={
+                "DNA": ImageAssignment(
+                    alias="DNA",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s002_w1_z001_t001.tif",
+    }
+    assert primary["source_metadata"]["A01_s002_w1_z001_t001.tif"]["Site"] == "1"
+
+
+def test_materialize_source_schema_workspace_matches_numeric_component_values(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Sample_ch00.tif", value=1)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=r"^Sample_ch(?P<ChannelNumber>[0-9]+)",
+                ),
+            ),
+            assignments_by_alias={
+                "typeI": ImageAssignment(
+                    alias="typeI",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        components=(ComponentSelector(AllComponents.CHANNEL, "0"),),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert primary["workspace_mapping"]["source_s001_w1_z001_t001.tif"].endswith(
+        "source/Sample_ch00.tif"
+    )
+
+
+def test_materialize_source_schema_workspace_applies_source_filters_relative_to_root(
+    tmp_path: Path,
+) -> None:
+    hidden_parent = tmp_path / ".cache" / "dataset"
+    hidden_parent.mkdir(parents=True)
+    _write_image(hidden_parent / "Sample_ch00.tif", value=1)
+
+    result = materialize_source_schema_workspace(
+        hidden_parent,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            images_rule=ImagesRule(
+                filters=(
+                    SourceFilterClause(
+                        subject=SourceFilterSubject.EXTENSION,
+                        match_type=SourceFilterMatchType.IS_IMAGE,
+                    ),
+                    SourceFilterClause(
+                        subject=SourceFilterSubject.DIRECTORY,
+                        match_type=SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
+                        value=r"[\\/]\.",
+                    ),
+                ),
+            ),
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=r"^Sample_ch(?P<ChannelNumber>[0-9]+)",
+                ),
+            ),
+            assignments_by_alias={
+                "typeI": ImageAssignment(
+                    alias="typeI",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        components=(ComponentSelector(AllComponents.CHANNEL, "00"),),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert primary["workspace_mapping"]["source_s001_w1_z001_t001.tif"].endswith(
+        ".cache/dataset/Sample_ch00.tif"
+    )
 
 
 def test_materialize_source_schema_workspace_includes_embedded_image_planes(

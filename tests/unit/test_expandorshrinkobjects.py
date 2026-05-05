@@ -45,6 +45,27 @@ def test_expand_or_shrink_objects_expands_by_euclidean_distance():
     assert np.array_equal(result.labels, expected)
 
 
+def test_expand_or_shrink_objects_expands_stacked_labels_planewise():
+    image = np.zeros((2, 9, 9), dtype=float)
+    labels = np.zeros((2, 9, 9), dtype=np.int32)
+    labels[0, 4, 4] = 1
+    labels[1, 2, 6] = 2
+
+    _, result = expand_or_shrink_objects(
+        image,
+        labels,
+        mode="expand_defined_pixels",
+        iterations=2,
+        dtype_config=DtypeConfig(),
+    )
+
+    yy, xx = np.indices(labels.shape[-2:])
+    expected = np.zeros_like(labels, dtype=np.float32)
+    expected[0] = ((yy - 4) ** 2 + (xx - 4) ** 2 <= 4).astype(np.float32)
+    expected[1] = (((yy - 2) ** 2 + (xx - 6) ** 2 <= 4) * 2).astype(np.float32)
+    np.testing.assert_array_equal(result.labels, expected)
+
+
 def test_expand_or_shrink_objects_declares_output_label_extent():
     image = np.zeros((9, 9), dtype=float)
     labels = np.zeros((9, 9), dtype=np.int32)

@@ -57,6 +57,7 @@ from .mask_objects_settings import MASK_OBJECTS_SETTINGS
 from .module_function_resolution import measurement_target_scope
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
+from .resize_settings import resize_bound_kwargs
 from .settings_binder import (
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -1058,6 +1059,22 @@ class ImageMathModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     ) -> BoundModuleSettings:
         del param_mapping
         return BoundModuleSettings(image_math_bound_kwargs(module, binder))
+
+
+class ResizeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind Resize's factor/size/interpolation settings."""
+
+    module_name = "Resize"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(resize_bound_kwargs(module, binder))
 
 
 class MeasureObjectNeighborsModuleSettingsBindingStrategy(

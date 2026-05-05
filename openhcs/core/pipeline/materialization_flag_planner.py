@@ -12,6 +12,7 @@ from typing import List
 
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.config import MaterializationBackend
@@ -131,7 +132,11 @@ class MaterializationFlagPlanner:
         if not step_plan.artifact_outputs:
             return True
         image_kinds = {ArtifactKind.IMAGE, ArtifactKind.OBJECT_LABELS}
-        return any(output.kind in image_kinds for output in step_plan.artifact_outputs.values())
+        return any(
+            output.kind in image_kinds
+            and output.materialization is not NO_ARTIFACT_MATERIALIZATION
+            for output in step_plan.artifact_outputs.values()
+        )
 
     @staticmethod
     def _detect_backend_for_context(context: ProcessingContext, fallback_backend: str) -> str:
@@ -139,5 +144,4 @@ class MaterializationFlagPlanner:
         # Use the microscope handler's get_primary_backend method
         # This handles both OpenHCS (metadata-based) and other microscopes (compatibility-based)
         return context.microscope_handler.get_primary_backend(context.input_dir, context.filemanager)
-
 

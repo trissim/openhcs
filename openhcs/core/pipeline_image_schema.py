@@ -22,6 +22,9 @@ from openhcs.core.source_bindings import (
 )
 
 
+SOURCE_IMAGE_TYPE_METADATA_FIELD = "OpenHCSImageType"
+
+
 @dataclass(frozen=True, slots=True)
 class ImagePlaneSource:
     """One explicit CellProfiler image-plane source URI embedded in a pipeline."""
@@ -152,6 +155,7 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
     image_type_key: ClassVar[str | None] = None
     PARTICIPATES_IN_IMAGE_STACK: ClassVar[bool]
     ARTIFACT_KIND: ClassVar[ArtifactKind] = ArtifactKind.IMAGE
+    LOAD_AS_MONOCHROME: ClassVar[bool] = False
 
     @classmethod
     def for_image_type(cls, image_type: str) -> "ImageTypeSourceRole":
@@ -175,11 +179,23 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
 
         return type(self).ARTIFACT_KIND
 
+    @property
+    def load_as_monochrome(self) -> bool:
+        """Whether source pixels must be collapsed to CellProfiler monochrome."""
+
+        return type(self).LOAD_AS_MONOCHROME
+
 
 class ImageStackSourceRole(ImageTypeSourceRole):
     """Image type that projects into the OpenHCS channel stack."""
 
     PARTICIPATES_IN_IMAGE_STACK = True
+
+
+class MonochromeImageStackSourceRole(ImageStackSourceRole):
+    """Image stack role whose source reader must emit one grayscale plane."""
+
+    LOAD_AS_MONOCHROME = True
 
 
 class SourceArtifactImageTypeSourceRole(ImageTypeSourceRole):
@@ -217,7 +233,7 @@ for _image_type_role_spec in (
     ImageTypeSourceRoleSpec(
         "GrayscaleImageTypeSourceRole",
         "grayscale image",
-        ImageStackSourceRole,
+        MonochromeImageStackSourceRole,
     ),
     ImageTypeSourceRoleSpec(
         "ColorImageTypeSourceRole",
@@ -227,17 +243,17 @@ for _image_type_role_spec in (
     ImageTypeSourceRoleSpec(
         "BinaryImageTypeSourceRole",
         "binary image",
-        ImageStackSourceRole,
+        MonochromeImageStackSourceRole,
     ),
     ImageTypeSourceRoleSpec(
         "BinaryMaskImageTypeSourceRole",
         "binary mask",
-        ImageStackSourceRole,
+        MonochromeImageStackSourceRole,
     ),
     ImageTypeSourceRoleSpec(
         "MaskImageTypeSourceRole",
         "mask",
-        ImageStackSourceRole,
+        MonochromeImageStackSourceRole,
     ),
     ImageTypeSourceRoleSpec(
         "IlluminationFunctionImageTypeSourceRole",
@@ -263,6 +279,12 @@ def image_type_artifact_kind(image_type: str) -> ArtifactKind:
     """Return the artifact kind represented by a source image type."""
 
     return ImageTypeSourceRole.for_image_type(image_type).artifact_kind
+
+
+def image_type_loads_as_monochrome(image_type: str) -> bool:
+    """Return whether source loading should mirror CellProfiler MonochromeImage."""
+
+    return ImageTypeSourceRole.for_image_type(image_type).load_as_monochrome
 
 
 def image_type_source_role_key(image_type: str) -> str:

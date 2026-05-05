@@ -35,6 +35,11 @@ def _expand_defined_pixels(labels: np.ndarray, iterations: int) -> np.ndarray:
     if iterations <= 0:
         return labels.copy()
     labels_int = labels.astype(np.int32, copy=False)
+    if labels_int.ndim > 2:
+        return _apply_label_planes(
+            labels_int,
+            lambda plane: _expand_defined_pixels(plane, iterations),
+        )
     if _labels_are_points_numba(np.ascontiguousarray(labels_int)):
         return _expand_point_labels_defined_pixels_numba(
             np.ascontiguousarray(labels_int),
@@ -122,6 +127,9 @@ def _expand_point_labels_defined_pixels_numba(
 def _expand_until_touching(labels: np.ndarray) -> np.ndarray:
     """Expand labeled objects until they touch (Voronoi-like expansion)."""
     from scipy.ndimage import distance_transform_edt
+
+    if labels.ndim > 2:
+        return _apply_label_planes(labels, _expand_until_touching)
     
     if labels.max() == 0:
         return labels.copy()
@@ -142,6 +150,11 @@ def _shrink_defined_pixels(labels: np.ndarray, iterations: int, fill: bool) -> n
         return labels.copy()
 
     original = labels.astype(np.int32, copy=False)
+    if original.ndim > 2:
+        return _apply_label_planes(
+            original,
+            lambda plane: _shrink_defined_pixels(plane, iterations, fill),
+        )
     result = original.copy()
     for _ in range(iterations):
         same_neighbors = np.zeros(result.shape, dtype=bool)
@@ -184,6 +197,11 @@ def _restore_eroded_objects_to_centroids(
 def _shrink_to_point(labels: np.ndarray, fill: bool) -> np.ndarray:
     """Shrink each labeled object to a single point at its centroid."""
     labels_int = labels.astype(np.int32, copy=False)
+    if labels_int.ndim > 2:
+        return _apply_label_planes(
+            labels_int,
+            lambda plane: _shrink_to_point(plane, fill),
+        )
     if labels_int.size == 0 or int(labels_int.max()) <= 0:
         return np.zeros_like(labels_int)
     return _shrink_to_point_numba(np.ascontiguousarray(labels_int))
@@ -233,6 +251,9 @@ def _shrink_to_point_numba(labels: np.ndarray) -> np.ndarray:
 def _add_dividing_lines(labels: np.ndarray) -> np.ndarray:
     """Add 1-pixel dividing lines between touching objects."""
     from scipy.ndimage import maximum_filter, minimum_filter
+
+    if labels.ndim > 2:
+        return _apply_label_planes(labels, _add_dividing_lines)
     
     if labels.max() == 0:
         return labels.copy()
@@ -257,6 +278,11 @@ def _despur(labels: np.ndarray, iterations: int) -> np.ndarray:
     
     if iterations <= 0:
         return labels.copy()
+    if labels.ndim > 2:
+        return _apply_label_planes(
+            labels,
+            lambda plane: _despur(plane, iterations),
+        )
     
     result = np.zeros_like(labels)
     struct = generate_binary_structure(2, 1)
@@ -274,6 +300,9 @@ def _despur(labels: np.ndarray, iterations: int) -> np.ndarray:
 def _skeletonize_labels(labels: np.ndarray) -> np.ndarray:
     """Reduce labeled objects to their skeletons."""
     from skimage.morphology import skeletonize
+
+    if labels.ndim > 2:
+        return _apply_label_planes(labels, _skeletonize_labels)
     
     result = np.zeros_like(labels)
     
@@ -283,6 +312,18 @@ def _skeletonize_labels(labels: np.ndarray) -> np.ndarray:
         result[skeleton] = label_id
     
     return result
+
+
+def _apply_label_planes(
+    labels: np.ndarray,
+    operation,
+) -> np.ndarray:
+    output = np.empty_like(labels, dtype=np.int32)
+    label_planes = labels.reshape((-1, *labels.shape[-2:]))
+    output_planes = output.reshape((-1, *output.shape[-2:]))
+    for plane_index in range(label_planes.shape[0]):
+        output_planes[plane_index] = operation(label_planes[plane_index])
+    return output
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

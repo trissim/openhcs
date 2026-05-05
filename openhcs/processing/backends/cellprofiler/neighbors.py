@@ -284,6 +284,8 @@ def _measure_neighbor_topology_numba(
             ):
                 continue
             object_index = object_number - 1
+            if perimeter_outlines[y, x] != object_number:
+                continue
             for offset_index in range(offset_y.size):
                 neighbor_y = y + offset_y[offset_index]
                 neighbor_x = x + offset_x[offset_index]
@@ -301,8 +303,6 @@ def _measure_neighbor_topology_numba(
                     continue
                 adjacency[object_index, neighbor_number] = True
 
-            if perimeter_outlines[y, x] != object_number:
-                continue
             for offset_index in range(touching_offset_y.size):
                 neighbor_y = y + touching_offset_y[offset_index]
                 neighbor_x = x + touching_offset_x[offset_index]

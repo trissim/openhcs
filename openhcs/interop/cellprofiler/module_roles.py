@@ -12,6 +12,7 @@ class CellProfilerModuleRole(Enum):
 
     INFRASTRUCTURE = auto()
     PROCESSING = auto()
+    DISABLED = auto()
 
 
 INFRASTRUCTURE_MODULE_NAMES = frozenset(

@@ -22,6 +22,7 @@ from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import detect_memory_type
 from openhcs.core.aligned_image_payload import payload_slices_for_alignment
+from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     NamedSourceBinding,
@@ -38,6 +39,10 @@ from openhcs.core.source_matching import (
     merge_source_metadata,
     metadata_from_rules,
     source_filters_match,
+    source_component_metadata_values,
+    source_component_metadata_value,
+    source_metadata_component,
+    source_metadata_values_equal,
     source_metadata_value,
 )
 from openhcs.core.runtime_stores import (
@@ -919,6 +924,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
             MatchedSourceCandidatesRequest.from_resolution(
                 request,
                 matched=matched,
+                candidates=parsed_candidates,
                 source_description="step input",
             )
         )
@@ -976,6 +982,7 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             MatchedSourceCandidatesRequest.from_resolution(
                 request,
                 matched=matched,
+                candidates=parsed_candidates,
                 source_description="pipeline start",
             )
         )
@@ -1079,7 +1086,11 @@ class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
         )
         return [
             _source_payload_with_metadata(
-                payload,
+                _source_payload_for_declared_image_type(
+                    payload,
+                    source_path=source_path,
+                    request=request,
+                ),
                 source_path=source_path,
                 request=request,
             )
@@ -1203,6 +1214,25 @@ def _source_payload_with_metadata(
     )
 
 
+def _source_payload_for_declared_image_type(
+    payload: Any,
+    *,
+    source_path: str,
+    request: PipelineStartSourceLoadRequest,
+) -> Any:
+    """Apply setup-declared source image semantics before module execution."""
+
+    source_metadata = _context_source_metadata(
+        source_path,
+        request.adapter.source_binding_context,
+    )
+    return apply_source_image_loading_semantics(
+        payload,
+        source_metadata=source_metadata,
+        source_path=source_path,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class ParsedSourceCandidate:
     """One parsed file candidate used for source-binding selector resolution."""
@@ -1218,6 +1248,7 @@ class MatchedSourceCandidatesRequest(SourceBindingRequestBase):
     """Typed request for fail-loud source-candidate selection."""
 
     matched: tuple[ParsedSourceCandidate, ...]
+    candidates: tuple[ParsedSourceCandidate, ...]
     source_description: str
 
     @classmethod
@@ -1226,12 +1257,14 @@ class MatchedSourceCandidatesRequest(SourceBindingRequestBase):
         request: SourceBindingResolutionRequest,
         *,
         matched: tuple[ParsedSourceCandidate, ...],
+        candidates: tuple[ParsedSourceCandidate, ...],
         source_description: str,
     ) -> "MatchedSourceCandidatesRequest":
         return cls(
             alias=request.alias,
             binding=request.binding,
             matched=matched,
+            candidates=candidates,
             source_description=source_description,
         )
 
@@ -1480,7 +1513,11 @@ def _match_candidates(
     }
     effective_components = (
         {
-            **inherit_components,
+            **{
+                name: value
+                for name, value in inherit_components.items()
+                if name not in component_selectors
+            },
             **component_selectors,
         }
         if binding.selector.inherit_current_scope
@@ -1491,7 +1528,14 @@ def _match_candidates(
         candidate
         for candidate in candidates
         if _candidate_matches_explicit_components(candidate, component_selectors)
-        and _candidate_matches_inherited_scope(candidate, effective_components)
+        and _candidate_matches_inherited_scope(
+            candidate,
+            {
+                name: value
+                for name, value in effective_components.items()
+                if name not in component_selectors
+            },
+        )
         and _candidate_matches_metadata(candidate, binding.selector.metadata)
         and source_filters_match(candidate.resolved_path, binding.selector.filters)
     )
@@ -1502,10 +1546,29 @@ def _candidate_matches_explicit_components(
     expected_components: Mapping[str, str],
 ) -> bool:
     return all(
-        (metadata_value := source_metadata_value(candidate.metadata, component_name))
-        is not None
-        and metadata_value == value
+        _candidate_matches_explicit_component(candidate, component_name, value)
         for component_name, value in expected_components.items()
+    )
+
+
+def _candidate_matches_explicit_component(
+    candidate: ParsedSourceCandidate,
+    component_name: str,
+    expected_value: str,
+) -> bool:
+    component = source_metadata_component(component_name)
+    if component is None:
+        metadata_value = source_metadata_value(candidate.metadata, component_name)
+        return metadata_value is not None and source_metadata_values_equal(
+            metadata_value,
+            expected_value,
+        )
+    return any(
+        source_metadata_values_equal(metadata_value, expected_value)
+        for metadata_value in source_component_metadata_values(
+            candidate.metadata,
+            component,
+        )
     )
 
 
@@ -1514,11 +1577,21 @@ def _candidate_matches_inherited_scope(
     inherited_scope: Mapping[str, str],
 ) -> bool:
     return all(
-        (metadata_value := source_metadata_value(candidate.metadata, field_name))
+        (metadata_value := _semantic_metadata_value(candidate.metadata, field_name))
         is None
-        or metadata_value == value
+        or source_metadata_values_equal(metadata_value, value)
         for field_name, value in inherited_scope.items()
     )
+
+
+def _semantic_metadata_value(
+    metadata: Mapping[str, Any],
+    field_name: str,
+) -> str | None:
+    component = source_metadata_component(field_name)
+    if component is not None:
+        return source_component_metadata_value(metadata, component)
+    return source_metadata_value(metadata, field_name)
 
 
 def _candidate_matches_metadata(
@@ -1528,7 +1601,7 @@ def _candidate_matches_metadata(
     return all(
         (metadata_value := source_metadata_value(candidate.metadata, selector.field))
         is not None
-        and metadata_value == selector.value
+        and source_metadata_values_equal(metadata_value, selector.value)
         for selector in metadata_selectors
     )
 
@@ -1538,9 +1611,9 @@ def _candidate_matches_image_set_metadata(
     image_set_metadata: Mapping[str, str],
 ) -> bool:
     return all(
-        (metadata_value := source_metadata_value(candidate.metadata, field_name))
+        (metadata_value := _semantic_metadata_value(candidate.metadata, field_name))
         is not None
-        and metadata_value == value
+        and source_metadata_values_equal(metadata_value, value)
         for field_name, value in image_set_metadata.items()
     )
 
@@ -1550,10 +1623,24 @@ def _require_matched_candidates(
 ) -> tuple[ParsedSourceCandidate, ...]:
     if request.matched:
         return request.matched
+    candidate_summary = _source_candidate_summary(request.candidates)
     raise RuntimeError(
         f"CellProfiler source alias '{request.alias}' with selector "
         f"{request.binding.selector!r} matched no files in the "
-        f"{request.source_description} source universe."
+        f"{request.source_description} source universe. "
+        f"Candidate sample: {candidate_summary!r}."
+    )
+
+
+def _source_candidate_summary(
+    candidates: tuple[ParsedSourceCandidate, ...],
+) -> tuple[Mapping[str, object], ...]:
+    return tuple(
+        {
+            "path": candidate.path,
+            "metadata": dict(candidate.metadata),
+        }
+        for candidate in candidates[:5]
     )
 
 
@@ -1658,9 +1745,21 @@ def _select_current_step_source_stack(
     if selected_indexes is None:
         return None
     if len(context.step_input_files) == 1:
-        return _natural_step_input_payload(current_image)
+        return apply_source_image_loading_semantics(
+            _natural_step_input_payload(current_image),
+            source_metadata=_context_source_metadata(selected_paths[0], context),
+            source_path=selected_paths[0],
+        )
     slices = _unstack_payload(current_image)
-    return _restack_like_payload([slices[index] for index in selected_indexes], current_image)
+    selected_slices = [
+        apply_source_image_loading_semantics(
+            slices[index],
+            source_metadata=_context_source_metadata(selected_path, context),
+            source_path=selected_path,
+        )
+        for index, selected_path in zip(selected_indexes, selected_paths)
+    ]
+    return _restack_like_payload(selected_slices, current_image)
 
 
 def _current_step_source_indexes(
@@ -1787,7 +1886,9 @@ def _inherited_scope_components(
             continue
         normalized_value = str(value)
         if all(
-            source_metadata_value(candidate.metadata, field_name) == normalized_value
+            (candidate_value := _semantic_metadata_value(candidate.metadata, field_name))
+            is not None
+            and source_metadata_values_equal(candidate_value, normalized_value)
             for candidate in candidates[1:]
         ):
             shared[field_name] = normalized_value

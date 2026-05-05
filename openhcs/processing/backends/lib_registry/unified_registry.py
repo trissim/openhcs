@@ -33,6 +33,7 @@ from functools import wraps
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Type, get_type_hints
 
 
+import numpy as np
 from openhcs.core.xdg_paths import get_cache_file_path
 from openhcs.core.memory import unstack_slices, stack_slices
 from openhcs.core.runtime_values import (
@@ -132,21 +133,22 @@ def _aggregate_runtime_array_payload_slices(
 
     if not all(isinstance(value, ObjectLabelPayload) for value in values):
         return None
-    labels = stack_slices([value.labels for value in values], memory_type, 0)
+    labels = _stack_runtime_array_slices(
+        [value.labels for value in values],
+        memory_type,
+    )
     unedited_labels = (
-        stack_slices(
+        _stack_runtime_array_slices(
             [value.labels_for_variant("unedited") for value in values],
             memory_type,
-            0,
         )
         if any(value.unedited_labels is not None for value in values)
         else None
     )
     small_removed_labels = (
-        stack_slices(
+        _stack_runtime_array_slices(
             [value.labels_for_variant("small_removed") for value in values],
             memory_type,
-            0,
         )
         if any(value.small_removed_labels is not None for value in values)
         else None
@@ -162,6 +164,12 @@ def _aggregate_runtime_array_payload_slices(
         ),
         declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
     )
+
+
+def _stack_runtime_array_slices(values: list[Any], memory_type: str) -> Any:
+    if all(_is_2d_array_like(value) for value in values):
+        return stack_slices(values, memory_type, 0)
+    return np.stack(tuple(np.asarray(value) for value in values), axis=0)
 
 
 def _is_2d_array_like(value: Any) -> bool:

@@ -3,6 +3,7 @@ import sys
 import types
 import numpy as np
 import pytest
+import skimage.morphology
 import skimage.segmentation
 
 from benchmark.cellprofiler_library import (
@@ -108,6 +109,34 @@ def test_active_absorbed_cellprofiler_functions_import_cleanly():
     loaded_functions = {name: get_function(name) for name in function_names}
 
     assert all(func is not None for func in loaded_functions.values())
+
+
+def test_opening_default_backend_matches_skimage_grayscale_opening() -> None:
+    image = np.arange(15 * 17, dtype=np.float32).reshape(15, 17)
+    image[3:8, 4:9] = 2.0
+    footprint = skimage.morphology.disk(3)
+    expected = skimage.morphology.opening(image, footprint)
+    raw_opening = opening
+    while hasattr(raw_opening, "__wrapped__"):
+        raw_opening = raw_opening.__wrapped__
+
+    observed = raw_opening(image, structuring_element="disk", size=3)
+
+    np.testing.assert_array_equal(observed, expected)
+
+
+def test_closing_default_backend_matches_skimage_grayscale_closing() -> None:
+    image = np.arange(15 * 17, dtype=np.float32).reshape(15, 17)
+    image[3:8, 4:9] = 2.0
+    footprint = skimage.morphology.disk(3)
+    expected = skimage.morphology.closing(image, footprint)
+    raw_closing = closing
+    while hasattr(raw_closing, "__wrapped__"):
+        raw_closing = raw_closing.__wrapped__
+
+    observed = raw_closing(image, structuring_element="disk", size=3)
+
+    np.testing.assert_array_equal(observed, expected)
 
 
 def test_threshold_unwraps_image_metadata_payload() -> None:
@@ -1219,6 +1248,47 @@ def test_identify_primary_objects_removes_true_physical_edge_objects():
     assert 2 not in filtered
 
 
+def test_identify_primary_objects_filters_stacked_label_sizes_planewise():
+    labels = np.zeros((2, 6, 6), dtype=np.int32)
+    labels[0, 1:3, 1:3] = 1
+    labels[0, 3:6, 3:6] = 2
+    labels[1, 1:4, 1:4] = 10
+    labels[1, 4:6, 4:6] = 20
+
+    small_removed, final = identifyprimaryobjects_module._filter_labels_by_diameter_range(
+        labels,
+        min_diameter=2.5,
+        max_diameter=3.5,
+    )
+
+    assert 1 not in small_removed[0]
+    assert 2 in small_removed[0]
+    assert 10 in small_removed[1]
+    assert 20 not in small_removed[1]
+    assert 1 not in final[0]
+    assert 2 in final[0]
+    assert 10 in final[1]
+    assert 20 not in final[1]
+
+
+def test_identify_primary_objects_filters_stacked_border_objects_planewise():
+    labels = np.zeros((2, 5, 5), dtype=np.int32)
+    labels[0, 1:3, 1:3] = 1
+    labels[0, 0:2, 3:5] = 2
+    labels[1, 2:4, 2:4] = 10
+    labels[1, 3:5, 0:2] = 20
+
+    filtered = _filter_border_objects(
+        labels,
+        image_mask=np.ones_like(labels, dtype=bool),
+    )
+
+    assert 1 in filtered[0]
+    assert 2 not in filtered[0]
+    assert 10 in filtered[1]
+    assert 20 not in filtered[1]
+
+
 def test_cellprofiler_legacy_watershed_keeps_descending_pixel_priority():
     from benchmark.cellprofiler_library.functions.watershed import (
         cellprofiler_legacy_watershed,
@@ -1271,6 +1341,45 @@ def test_cellprofiler_fast_legacy_watershed_matches_reference_path():
         )
 
         np.testing.assert_array_equal(fast, reference)
+
+
+def test_cellprofiler_legacy_watershed_handles_stacked_planes_planewise():
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+    from openhcs.processing.backends.cellprofiler.watershed import (
+        cellprofiler_legacy_watershed,
+    )
+
+    image = np.stack(
+        (
+            np.array([[0.0, 1.0, 0.0]], dtype=np.float64),
+            np.array([[0.0, 0.5, 0.0]], dtype=np.float64),
+        )
+    )
+    markers = np.stack(
+        (
+            np.array([[1, 0, 2]], dtype=np.int32),
+            np.array([[10, 0, 20]], dtype=np.int32),
+        )
+    )
+    mask = np.ones_like(image, dtype=bool)
+
+    labels = cellprofiler_legacy_watershed(
+        image,
+        markers=markers,
+        mask=mask,
+        connectivity=np.ones((1, 3), dtype=bool),
+        backend_provider=CellProfilerBackendProvider.NUMBA,
+    )
+
+    expected = np.stack(
+        (
+            np.array([[1, 1, 2]], dtype=np.int32),
+            np.array([[10, 10, 20]], dtype=np.int32),
+        )
+    )
+    np.testing.assert_array_equal(labels, expected)
 
 
 def test_cellprofiler_fast_legacy_watershed_uses_required_numba_backend():
@@ -1473,6 +1582,43 @@ def test_measure_object_intensity_uses_cellprofiler_mad_interpolation():
 
     assert measurements[0].median_intensity == 15.0
     assert measurements[0].mad_intensity == 10.0
+
+
+def test_measure_object_intensity_accepts_replicated_rgb_grayscale_like_cellprofiler():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    plane = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32)
+    image = np.repeat(plane[..., None], 3, axis=-1)
+    labels = np.array([[1, 1], [0, 2]], dtype=np.int32)
+
+    _, measurements = measure_object_intensity(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    by_label = {measurement.object_label: measurement for measurement in measurements}
+    assert by_label[1].integrated_intensity == 3.0
+    assert by_label[2].integrated_intensity == 4.0
+
+
+def test_measure_object_intensity_rejects_true_color_images_like_cellprofiler():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    image = np.zeros((2, 2, 3), dtype=np.float32)
+    image[..., 1] = 1.0
+    labels = np.ones((2, 2), dtype=np.int32)
+
+    with pytest.raises(ValueError, match="requires a 2-D grayscale image"):
+        measure_object_intensity(
+            image,
+            labels,
+            dtype_config=DtypeConfig(),
+        )
 
 
 def test_measure_image_quality_uses_openhcs_image_quality_backend():

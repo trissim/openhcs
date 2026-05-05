@@ -19,6 +19,7 @@ from benchmark.adapters.openhcs import OpenHCSAdapter
 from benchmark.contracts.dataset import DatasetSpec
 from benchmark.contracts.tool_adapter import BenchmarkResult, ToolAdapter
 from benchmark.datasets.acquire import acquire_dataset
+from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.pipelines.registry import get_pipeline_spec
 
 
@@ -196,7 +197,7 @@ def run_cellprofiler_cppipe_parity(
     if equivalence_reference_output_dir is None:
         native_adapter.validate_installation()
 
-    resolved_dataset_path = Path(dataset_path)
+    resolved_dataset_path = resolve_visible_source_path(Path(dataset_path))
     resolved_cppipe_path = Path(cppipe_path)
     resolved_dataset_id = dataset_id or resolved_dataset_path.name
     resolved_pipeline_name = pipeline_name or resolved_cppipe_path.stem

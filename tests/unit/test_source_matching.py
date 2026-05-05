@@ -7,9 +7,12 @@ from openhcs.core.source_bindings import (
     SourceFilterSubject,
 )
 from openhcs.core.source_matching import (
+    source_component_metadata_values,
     merge_source_metadata,
+    source_component_metadata_value,
     source_filters_match,
     source_metadata_component,
+    source_metadata_values_equal,
 )
 
 
@@ -71,6 +74,28 @@ def test_source_metadata_component_matches_semantic_component_names(
     component: AllComponents,
 ):
     assert source_metadata_component(field) is component
+
+
+def test_source_component_metadata_value_matches_alias_fields():
+    metadata = {"ChannelNumber": "01", "Metadata_Site": "A"}
+
+    assert source_component_metadata_value(metadata, AllComponents.CHANNEL) == "01"
+    assert source_component_metadata_value(metadata, AllComponents.SITE) == "A"
+
+
+def test_source_component_metadata_values_include_native_and_alias_fields():
+    metadata = {"channel": "1", "ChannelNumber": "00"}
+
+    assert source_component_metadata_values(metadata, AllComponents.CHANNEL) == (
+        "1",
+        "00",
+    )
+
+
+def test_source_metadata_values_equal_normalizes_numeric_padding():
+    assert source_metadata_values_equal("01", "1")
+    assert source_metadata_values_equal(" 02 ", "2")
+    assert not source_metadata_values_equal("ch01", "1")
 
 
 def test_merge_source_metadata_accepts_equivalent_absolute_paths(

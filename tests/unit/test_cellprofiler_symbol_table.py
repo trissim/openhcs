@@ -1957,3 +1957,22 @@ def test_partition_cppipe_modules_skips_setup_and_export_modules():
     assert [module.name for module in partition.processing_modules] == [
         "IdentifyPrimaryObjects",
     ]
+
+
+def test_partition_cppipe_modules_preserves_disabled_modules_outside_execution():
+    modules = (
+        _module(1, "Images", {}),
+        ModuleBlock(
+            name="IdentifyPrimaryObjects",
+            module_num=2,
+            enabled=False,
+            settings={},
+        ),
+        _identify_primary(3),
+    )
+
+    partition = partition_cppipe_modules(modules)
+
+    assert [module.module_num for module in partition.infrastructure_modules] == [1]
+    assert [module.module_num for module in partition.processing_modules] == [3]
+    assert [module.module_num for module in partition.disabled_modules] == [2]

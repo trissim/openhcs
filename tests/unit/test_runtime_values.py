@@ -335,6 +335,26 @@ def test_aggregate_pure_2d_auxiliary_output_preserves_image_payload_metadata() -
     assert image_payload_metadata(stacked).for_channel(1).source_dtype == "uint8"
 
 
+def test_aggregate_pure_2d_auxiliary_output_preserves_stacked_object_labels() -> None:
+    first = ObjectLabelPayload(
+        labels=np.ones((2, 3, 4), dtype=np.int32),
+        unedited_labels=np.ones((2, 3, 4), dtype=np.int32) * 2,
+    )
+    second = ObjectLabelPayload(
+        labels=np.ones((2, 3, 4), dtype=np.int32) * 3,
+        unedited_labels=np.ones((2, 3, 4), dtype=np.int32) * 4,
+    )
+
+    stacked = _aggregate_pure_2d_auxiliary_output([first, second], "numpy")
+
+    assert isinstance(stacked, ObjectLabelPayload)
+    assert stacked.labels.shape == (2, 2, 3, 4)
+    assert stacked.unedited_labels is not None
+    assert stacked.unedited_labels.shape == (2, 2, 3, 4)
+    np.testing.assert_array_equal(stacked.labels[0], first.labels)
+    np.testing.assert_array_equal(stacked.labels[1], second.labels)
+
+
 def test_normalize_image_payload_intensity_uses_semantic_scale() -> None:
     image = np.array([[0, 4095]], dtype=np.uint16)
     payload = image_payload_with_context(

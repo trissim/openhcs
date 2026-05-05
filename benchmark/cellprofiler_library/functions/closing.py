@@ -18,7 +18,9 @@ def closing(
     image: np.ndarray,
     structuring_element: StructuringElement = StructuringElement.DISK,
     size: int = 3,
-    morphology_backend_provider: CellProfilerBackendProvider | None = None,
+    morphology_backend_provider: CellProfilerBackendProvider | None = (
+        CellProfilerBackendProvider.OPENCV
+    ),
 ) -> np.ndarray:
     """
     Apply morphological closing to an image.

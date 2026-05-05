@@ -369,6 +369,53 @@ def source_metadata_value(
     return None
 
 
+def source_component_metadata_value(
+    metadata: Mapping[str, Any],
+    component: AllComponents,
+) -> str | None:
+    """Return metadata for an OpenHCS component across canonical and alias fields."""
+
+    value = source_metadata_value(metadata, component.value)
+    if value is not None:
+        return value
+    for field, field_value in metadata.items():
+        if source_metadata_component(str(field)) is component:
+            return str(field_value)
+    return None
+
+
+def source_component_metadata_values(
+    metadata: Mapping[str, Any],
+    component: AllComponents,
+) -> tuple[str, ...]:
+    """Return all metadata values that semantically describe a component."""
+
+    values: list[str] = []
+    for field, field_value in metadata.items():
+        field_text = str(field)
+        if (
+            normalize_source_metadata_key(field_text)
+            == normalize_source_metadata_key(component.value)
+            or source_metadata_component(field_text) is component
+        ):
+            values.append(str(field_value))
+    return tuple(dict.fromkeys(values))
+
+
+def source_metadata_values_equal(left: str, right: str) -> bool:
+    """Compare metadata selector values with source-schema numeric normalization."""
+
+    if left == right:
+        return True
+    stripped_left = left.strip()
+    stripped_right = right.strip()
+    if stripped_left == stripped_right:
+        return True
+    if stripped_left.isdigit() and stripped_right.isdigit():
+        return int(stripped_left) == int(stripped_right)
+    return False
+
+
 def normalize_source_metadata_key(key: str) -> str:
     """Normalize metadata keys across parser, regex, and setup-module spellings."""
 

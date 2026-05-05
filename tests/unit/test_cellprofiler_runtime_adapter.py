@@ -19,6 +19,7 @@ from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpe
 from openhcs.core.config import DtypeConfig
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
@@ -742,6 +743,110 @@ def test_cellprofiler_adapter_resolves_pipeline_start_component_selector_with_in
     ]
 
 
+def test_cellprofiler_adapter_matches_explicit_component_alias_metadata():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="TypeI",
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "00"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "source_s001_w1_z001_t001.tif",
+            "source_s001_w2_z001_t001.tif",
+        ),
+        source_metadata_by_path={
+            "source_s001_w1_z001_t001.tif": {"ChannelNumber": "00"},
+            "source_s001_w2_z001_t001.tif": {"ChannelNumber": "01"},
+        },
+    )
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    current_stack = np.stack(
+        [
+            np.full((2, 2), 7.0, dtype=np.float32),
+            np.full((2, 2), 9.0, dtype=np.float32),
+        ]
+    )
+
+    resolved = adapter.resolve_source_image("TypeI", current_stack)
+
+    np.testing.assert_array_equal(resolved, current_stack[0])
+
+
+def test_cellprofiler_adapter_explicit_component_overrides_inherited_scope():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="TypeI",
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "00"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "source_s001_w1_z001_t001.tif",
+            "source_s001_w2_z001_t001.tif",
+        ),
+        source_metadata_by_path={
+            "source_s001_w1_z001_t001.tif": {
+                "channel": "1",
+                "ChannelNumber": "00",
+            },
+            "source_s001_w2_z001_t001.tif": {
+                "channel": "2",
+                "ChannelNumber": "01",
+            },
+        },
+    )
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+    current_stack = np.stack(
+        [
+            np.full((2, 2), 7.0, dtype=np.float32),
+            np.full((2, 2), 9.0, dtype=np.float32),
+        ]
+    )
+
+    resolved = adapter.resolve_source_image("TypeI", current_stack)
+
+    np.testing.assert_array_equal(resolved, current_stack[0])
+
+
 def test_cellprofiler_adapter_rejects_metadata_selector_fields_not_exposed_by_parser():
     source_bindings = StepSourceBindingsConfig(
         groups=(
@@ -1453,9 +1558,6 @@ def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image()
     source_binding_context = SourceBindingRuntimeContext(
         step_input_files=("A01_s001_w1_z001_t001.png",),
         step_input_dir="/workspace",
-        step_input_source_paths={
-            "A01_s001_w1_z001_t001.png": expected_source,
-        },
         pipeline_input_files=(expected_source,),
         pipeline_input_backend="memory",
     )
@@ -1478,6 +1580,66 @@ def test_cellprofiler_adapter_attaches_source_metadata_to_pipeline_start_image()
     metadata = image_payload_metadata(resolved)
     assert metadata.intensity_scale == 65535.0
     assert metadata.source_dtype == "uint16"
+    assert metadata.source_path == expected_source
+
+
+def test_cellprofiler_adapter_converts_declared_grayscale_rgb_sources():
+    from skimage.color import rgb2gray
+
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias="RawData",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(),
+                    ),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    filemanager = FileManagerStub()
+    expected_source = "/real/color_declared_gray.png"
+    source_pixels = np.array(
+        [
+            [[255, 0, 0], [0, 255, 0]],
+            [[0, 0, 255], [255, 255, 255]],
+        ],
+        dtype=np.uint8,
+    )
+    filemanager.saved[("memory", expected_source)] = source_pixels
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=("A01_s001_w1_z001_t001.png",),
+        step_input_dir="/workspace",
+        source_metadata_by_path={
+            expected_source: {
+                SOURCE_IMAGE_TYPE_METADATA_FIELD: "Grayscale image",
+            },
+        },
+        pipeline_input_files=(expected_source,),
+        pipeline_input_backend="memory",
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    resolved = adapter.resolve_source_image(
+        "RawData",
+        np.full((2, 2), 1.0, dtype=np.float32),
+    )
+
+    np.testing.assert_allclose(resolved, rgb2gray(source_pixels))
+    metadata = image_payload_metadata(resolved)
+    assert metadata.intensity_scale is None
+    assert metadata.source_dtype == "float64"
     assert metadata.source_path == expected_source
 
 

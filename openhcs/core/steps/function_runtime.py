@@ -35,6 +35,7 @@ from openhcs.core.runtime_stores import (
     replace_runtime_artifact_payload,
 )
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
+from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     SourceBindingOrigin,
@@ -163,6 +164,39 @@ class SourceBindingExecutionCache:
             virtual_workspace_projections={},
             physical_source_files={},
         )
+
+
+def _source_projection_metadata(
+    projection: VirtualWorkspaceSourceProjection,
+    *,
+    virtual_path: str,
+    full_virtual_path: str,
+) -> Mapping[str, str] | None:
+    for key in (virtual_path, full_virtual_path):
+        metadata = projection.source_metadata_by_path.get(str(key))
+        if metadata is not None:
+            return metadata
+    source_path = _source_projection_source_path(
+        projection,
+        virtual_path=virtual_path,
+        full_virtual_path=full_virtual_path,
+        fallback_path=full_virtual_path,
+    )
+    return projection.source_metadata_by_path.get(source_path)
+
+
+def _source_projection_source_path(
+    projection: VirtualWorkspaceSourceProjection,
+    *,
+    virtual_path: str,
+    full_virtual_path: str,
+    fallback_path: str,
+) -> str:
+    for key in (virtual_path, full_virtual_path):
+        source_path = projection.source_paths_by_virtual_path.get(str(key))
+        if source_path is not None:
+            return source_path
+    return fallback_path
 
 
 _SOURCE_BINDING_EXECUTION_CACHES: WeakKeyDictionary[
@@ -766,6 +800,11 @@ class PatternGroupRuntime:
             full_file_paths,
             Backend.MEMORY.value,
         )
+        raw_slices = self._apply_source_image_loading_semantics(
+            raw_slices,
+            matching_files,
+            full_file_paths,
+        )
 
         if not raw_slices:
             raise ValueError(
@@ -789,6 +828,37 @@ class PatternGroupRuntime:
             source_binding_context=self._source_binding_context(matching_files),
         )
 
+    def _apply_source_image_loading_semantics(
+        self,
+        raw_slices: Sequence[Any],
+        matching_files: Sequence[str],
+        full_file_paths: Sequence[str],
+    ) -> list[Any]:
+        source_projection = self._source_schema_workspace_projection()
+        if source_projection is None:
+            return list(raw_slices)
+        return [
+            apply_source_image_loading_semantics(
+                payload,
+                source_metadata=_source_projection_metadata(
+                    source_projection,
+                    virtual_path=virtual_path,
+                    full_virtual_path=full_virtual_path,
+                ),
+                source_path=_source_projection_source_path(
+                    source_projection,
+                    virtual_path=virtual_path,
+                    full_virtual_path=full_virtual_path,
+                    fallback_path=full_virtual_path,
+                ),
+            )
+            for payload, virtual_path, full_virtual_path in zip(
+                raw_slices,
+                matching_files,
+                full_file_paths,
+            )
+        ]
+
     def _source_binding_context(
         self,
         matching_files: list[str],
@@ -797,14 +867,15 @@ class PatternGroupRuntime:
             self.context.input_dir,
             self.context.filemanager,
         )
+        source_projection = self._source_schema_workspace_projection()
         step_input_source_paths = (
-            self._virtual_workspace_source_paths_by_virtual_path()
-            if source_backend == Backend.VIRTUAL_WORKSPACE.value
+            source_projection.source_paths_by_virtual_path
+            if source_projection is not None
             else {}
         )
         source_metadata_by_path = (
-            self._virtual_workspace_source_metadata_by_path()
-            if source_backend == Backend.VIRTUAL_WORKSPACE.value
+            source_projection.source_metadata_by_path
+            if source_projection is not None
             else {}
         )
         pipeline_input_files, pipeline_input_backend = (
@@ -880,8 +951,39 @@ class PatternGroupRuntime:
     ) -> Mapping[str, Mapping[str, str]]:
         return self._virtual_workspace_source_projection().source_metadata_by_path
 
+    def _source_schema_workspace_projection(
+        self,
+    ) -> VirtualWorkspaceSourceProjection | None:
+        """Return source-schema metadata projection when OpenHCS metadata declares one."""
+
+        metadata = self._openhcs_metadata_dict()
+        if not self._declares_source_schema_workspace_projection(metadata):
+            return None
+        return self._virtual_workspace_source_projection_from_metadata(metadata)
+
+    @staticmethod
+    def _declares_source_schema_workspace_projection(
+        metadata: Mapping[str, Any],
+    ) -> bool:
+        from openhcs.microscopes.openhcs import FIELDS
+
+        return any(
+            bool(subdirectory.get("workspace_mapping"))
+            for subdirectory in metadata.get(FIELDS.SUBDIRECTORIES, {}).values()
+            if isinstance(subdirectory, Mapping)
+        )
+
     def _virtual_workspace_source_projection(self) -> VirtualWorkspaceSourceProjection:
         """Return cached virtual-workspace source-binding projection for this plate."""
+        return self._virtual_workspace_source_projection_from_metadata(
+            self._openhcs_metadata_dict()
+        )
+
+    def _virtual_workspace_source_projection_from_metadata(
+        self,
+        metadata: Mapping[str, Any],
+    ) -> VirtualWorkspaceSourceProjection:
+        """Return cached source-schema projection for this plate metadata."""
         plate_path = str(Path(self.context.plate_path))
         cache = _source_binding_execution_cache(self.context)
         projection = cache.virtual_workspace_projections.get(plate_path)
@@ -890,7 +992,6 @@ class PatternGroupRuntime:
 
         from openhcs.microscopes.openhcs import FIELDS
 
-        metadata = self._openhcs_metadata_dict()
         workspace_source_paths: dict[str, str] = {}
         source_metadata_by_path: dict[str, Mapping[str, str]] = {}
         source_metadata_by_real_path: dict[str, Mapping[str, str] | None] = {}

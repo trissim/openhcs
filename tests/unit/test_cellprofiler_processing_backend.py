@@ -121,6 +121,27 @@ def test_cellprofiler_threshold_diagnostics_backend_resolves_numpy() -> None:
     assert sum_of_entropies <= 0.0
 
 
+def test_cellprofiler_threshold_diagnostics_handles_color_slices_planewise() -> None:
+    from openhcs.processing.backends.cellprofiler.thresholding import (
+        ThresholdDiagnosticsBackendStrategy,
+    )
+
+    strategy = ThresholdDiagnosticsBackendStrategy.for_memory_type(MemoryType.NUMPY)
+    image = np.array(
+        [
+            [[0.1, 0.2, 0.3], [0.7, 0.8, 0.9]],
+            [[0.2, 0.3, 0.4], [0.6, 0.7, 0.8]],
+        ],
+        dtype=np.float32,
+    )
+    binary = image > 0.5
+
+    weighted_variance, sum_of_entropies = strategy.diagnostics(image, None, binary)
+
+    assert weighted_variance.shape == (3,)
+    assert sum_of_entropies.shape == (3,)
+
+
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -295,6 +316,166 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
             backend_provider=CellProfilerBackendProvider.CENTROSOME,
         )
     ) is CentrosomeNumpyShapeZernikeBackendStrategy
+
+
+def test_numba_neighbor_topology_outline_frontier_matches_dense_reference() -> None:
+    from openhcs.processing.backends.cellprofiler.neighbors import (
+        NumbaNumpyNeighborTopologyBackendStrategy,
+    )
+
+    labels = np.zeros((20, 20), dtype=np.int32)
+    labels[2:8, 2:8] = 1
+    labels[2:8, 11:17] = 2
+    labels[12:18, 3:9] = 3
+    perimeter = _labeled_perimeter(labels)
+    footprint = _disk_footprint(4)
+    touching_footprint = _disk_footprint(4.5)
+
+    observed = NumbaNumpyNeighborTopologyBackendStrategy().measure_topology(
+        labels,
+        labels,
+        perimeter,
+        np.array([1, 2, 3], dtype=np.int32),
+        distance=4,
+        neighbors_are_same_objects=True,
+        footprint=footprint,
+        touching_footprint=touching_footprint,
+        variant_object_count=3,
+        variant_neighbor_count=3,
+    )
+    expected_neighbor_count, expected_touching = _dense_neighbor_topology_reference(
+        labels,
+        labels,
+        perimeter,
+        footprint,
+        touching_footprint,
+        neighbors_are_same_objects=True,
+        variant_object_count=3,
+        variant_neighbor_count=3,
+    )
+
+    np.testing.assert_array_equal(observed.neighbor_count, expected_neighbor_count)
+    np.testing.assert_array_equal(observed.touching_pixel_count, expected_touching)
+
+
+def _disk_footprint(radius: float) -> np.ndarray:
+    limit = int(np.ceil(radius))
+    yy, xx = np.ogrid[-limit : limit + 1, -limit : limit + 1]
+    return (yy * yy + xx * xx) <= radius * radius
+
+
+def _labeled_perimeter(labels: np.ndarray) -> np.ndarray:
+    perimeter = np.zeros_like(labels)
+    height, width = labels.shape
+    for y in range(height):
+        for x in range(width):
+            object_number = labels[y, x]
+            if object_number == 0:
+                continue
+            for offset_y, offset_x in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+                neighbor_y = y + offset_y
+                neighbor_x = x + offset_x
+                if (
+                    neighbor_y < 0
+                    or neighbor_y >= height
+                    or neighbor_x < 0
+                    or neighbor_x >= width
+                    or labels[neighbor_y, neighbor_x] != object_number
+                ):
+                    perimeter[y, x] = object_number
+                    break
+    return perimeter
+
+
+def _dense_neighbor_topology_reference(
+    working_labels: np.ndarray,
+    neighbor_working_labels: np.ndarray,
+    perimeter_outlines: np.ndarray,
+    footprint: np.ndarray,
+    touching_footprint: np.ndarray,
+    *,
+    neighbors_are_same_objects: bool,
+    variant_object_count: int,
+    variant_neighbor_count: int,
+) -> tuple[np.ndarray, np.ndarray]:
+    adjacency = np.zeros((variant_object_count, variant_neighbor_count + 1), dtype=bool)
+    touching_pixel_count = np.zeros(variant_object_count, dtype=float)
+    height, width = working_labels.shape
+    offsets = _footprint_offsets(footprint)
+    touching_offsets = _footprint_offsets(touching_footprint)
+
+    for y in range(height):
+        for x in range(width):
+            object_number = working_labels[y, x]
+            if object_number <= 0 or object_number > variant_object_count:
+                continue
+            object_index = object_number - 1
+            for offset_y, offset_x in offsets:
+                neighbor_y = y + offset_y
+                neighbor_x = x + offset_x
+                if (
+                    neighbor_y < 0
+                    or neighbor_y >= height
+                    or neighbor_x < 0
+                    or neighbor_x >= width
+                ):
+                    continue
+                neighbor_number = neighbor_working_labels[neighbor_y, neighbor_x]
+                if neighbor_number <= 0 or neighbor_number > variant_neighbor_count:
+                    continue
+                if neighbors_are_same_objects and neighbor_number == object_number:
+                    continue
+                adjacency[object_index, neighbor_number] = True
+
+            if perimeter_outlines[y, x] != object_number:
+                continue
+            for offset_y, offset_x in touching_offsets:
+                neighbor_y = y + offset_y
+                neighbor_x = x + offset_x
+                if (
+                    neighbor_y < 0
+                    or neighbor_y >= height
+                    or neighbor_x < 0
+                    or neighbor_x >= width
+                ):
+                    continue
+                if neighbors_are_same_objects:
+                    touches = (
+                        working_labels[neighbor_y, neighbor_x] != 0
+                        and working_labels[neighbor_y, neighbor_x] != object_number
+                    )
+                else:
+                    touches = neighbor_working_labels[neighbor_y, neighbor_x] != 0
+                if touches:
+                    touching_pixel_count[object_index] += 1.0
+                    break
+
+    return adjacency[:, 1:].sum(axis=1).astype(float), touching_pixel_count
+
+
+def _footprint_offsets(footprint: np.ndarray) -> tuple[tuple[int, int], ...]:
+    center_y = footprint.shape[0] // 2
+    center_x = footprint.shape[1] // 2
+    return tuple(
+        (int(y - center_y), int(x - center_x))
+        for y, x in np.argwhere(footprint)
+    )
+
+
+def test_shape_distance_to_edge_handles_stacked_planes_planewise() -> None:
+    from openhcs.processing.backends.cellprofiler.shape import (
+        ShapeMeasurementBackendStrategy,
+    )
+
+    backend = ShapeMeasurementBackendStrategy.for_memory_type(MemoryType.NUMPY)
+    labels = np.zeros((2, 6, 6), dtype=np.int32)
+    labels[0, 1:5, 1:5] = 1
+    labels[1, 2:4, 2:4] = 2
+
+    distances = backend.distance_to_edge(labels)
+
+    np.testing.assert_allclose(distances[0], backend.distance_to_edge(labels[0]))
+    np.testing.assert_allclose(distances[1], backend.distance_to_edge(labels[1]))
 
 
 def test_cellprofiler_backend_provider_rejects_raw_strings() -> None:

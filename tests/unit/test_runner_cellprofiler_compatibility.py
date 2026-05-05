@@ -18,6 +18,13 @@ from benchmark.adapters.openhcs import (
     _runtime_execution_cache_key_for_snapshot,
     _runtime_execution_cache_key_matches,
 )
+from benchmark.adapters.cellprofiler import NATIVE_CELLPROFILER_SUCCESS_MARKER
+from benchmark.cellprofiler_comparison import (
+    CellProfilerComparisonCase,
+    _native_reference_location,
+    _benchmark_path_slug,
+)
+from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.runner import (
     _LEGACY_SOURCE_TREE_CACHE_KEY,
     _source_file_cache_domains,
@@ -107,6 +114,37 @@ def test_cellprofiler_cppipe_parity_runner_accepts_local_cppipe(
         == str(native_adapter.output_path)
     )
     assert native_adapter.output_path.parent.name == "CellProfiler_examplefly_official_Example_Fly"
+
+
+def test_native_reference_lookup_uses_visible_source_identity(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    visible_root = tmp_path / "visible_sources"
+    monkeypatch.setenv("OPENHCS_BENCHMARK_VISIBLE_SOURCE_ROOT", str(visible_root))
+    dataset_path = tmp_path / ".cache" / "datasets" / "images"
+    dataset_path.mkdir(parents=True)
+    cppipe_path = tmp_path / "pipeline.cppipe"
+    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    case = CellProfilerComparisonCase(
+        name="Example",
+        dataset_path=dataset_path,
+        cppipe_path=cppipe_path,
+        dataset_id="HiddenDataset",
+    )
+    visible_dataset_path = resolve_visible_source_path(dataset_path)
+    native_reference_root = tmp_path / "native_refs"
+    reference_dir = (
+        native_reference_root
+        / _benchmark_path_slug(f"{case.resolved_dataset_id}_{case.name}")
+        / f"{visible_dataset_path.name}_{case.name}_native_cellprofiler"
+    )
+    reference_dir.mkdir(parents=True)
+    (reference_dir / NATIVE_CELLPROFILER_SUCCESS_MARKER).write_text("{}")
+
+    location = _native_reference_location(case, native_reference_root)
+
+    assert location.reference_output_dir == reference_dir
 
 
 def test_cellprofiler_cppipe_parity_runner_reuses_cached_openhcs_output(

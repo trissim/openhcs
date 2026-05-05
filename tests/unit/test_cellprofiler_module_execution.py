@@ -45,7 +45,10 @@ from benchmark.cellprofiler_library.functions.filterobjects import (
     filter_objects,
 )
 from benchmark.cellprofiler_library.functions.enhanceorsuppressfeatures import (
+    EnhanceMethod,
+    NeuriteMethod,
     SpeckleAccuracy,
+    _hessian_eigenvalues_2d,
     enhance_or_suppress_features,
 )
 from benchmark.cellprofiler_library.functions.expandorshrinkobjects import (
@@ -70,6 +73,7 @@ from benchmark.cellprofiler_library.functions.identifyobjectsingrid import (
 from benchmark.cellprofiler_library.functions.measureobjectsizeshape import (
     measure_object_size_shape,
 )
+from benchmark.cellprofiler_library.functions.maskobjects import mask_objects
 from benchmark.cellprofiler_library.functions import identifysecondaryobjects as iso
 from benchmark.cellprofiler_library.functions.identifysecondaryobjects import (
     DistanceMaskedSegmentationStrategy,
@@ -1018,6 +1022,27 @@ def test_cellprofiler_contract_executor_broadcasts_2d_image_to_stacked_kwargs():
     np.testing.assert_array_equal(result, labels + 1)
 
 
+def test_mask_objects_uses_object_labels_as_primary_execution_domain() -> None:
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="MaskObjects",
+            inputs=(
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("CarrierImage", ArtifactKind.IMAGE),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("CarrierImage", ArtifactKind.IMAGE),
+            ),
+            outputs=(),
+        )
+    )
+
+    assert executor._primary_image_inputs(mask_objects) == ()
+
+
 def test_module_executor_slices_aligned_object_labels_for_pure_2d_module():
     calls = []
 
@@ -1259,6 +1284,32 @@ def test_enhance_or_suppress_features_fast_speckles_uses_cellprofiler_disk():
         footprint=footprint,
     )
     np.testing.assert_allclose(image_payload_data(result), expected.astype(np.float32))
+
+
+def test_enhance_or_suppress_features_tubeness_matches_hessian_reference():
+    from scipy import ndimage as ndi
+
+    image = np.zeros((21, 21), dtype=np.float32)
+    image[5:16, 10] = 1.0
+    image[10, 5:16] = 0.5
+    smoothing_value = 2.0
+
+    result = enhance_or_suppress_features(
+        image,
+        enhance_method=EnhanceMethod.NEURITES,
+        neurite_method=NeuriteMethod.TUBENESS,
+        smoothing_value=smoothing_value,
+        dtype_config=DtypeConfig(),
+    )
+
+    smoothed = ndi.gaussian_filter(image, smoothing_value)
+    eigenvalues = _hessian_eigenvalues_2d(smoothed)
+    expected = (
+        -eigenvalues[..., 0]
+        * (eigenvalues[..., 0] < 0)
+        * (smoothing_value ** 2)
+    ).astype(np.float32)
+    np.testing.assert_allclose(image_payload_data(result), expected, rtol=1e-6, atol=1e-7)
 
 
 def test_cellprofiler_module_executor_normalizes_integer_image_inputs() -> None:

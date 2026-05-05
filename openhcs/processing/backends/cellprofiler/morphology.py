@@ -115,6 +115,14 @@ class MorphologyBackendStrategy(
         """Return the local-maxima suppression footprint for declumping."""
 
     @abstractmethod
+    def grayscale_opening(
+        self,
+        image: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
+        """Return grayscale morphological opening for a 2-D image."""
+
+    @abstractmethod
     def grayscale_closing(
         self,
         image: np.ndarray,
@@ -243,6 +251,13 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         footprint: np.ndarray,
     ) -> np.ndarray:
         return _skimage_grayscale_closing(image, footprint)
+
+    def grayscale_opening(
+        self,
+        image: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
+        return _skimage_grayscale_opening(image, footprint)
 
     def block_labels(
         self,
@@ -435,12 +450,40 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     ) -> tuple[np.ndarray, int]:
         mask_array = np.asarray(mask, dtype=bool)
         if mask_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba morphology backend currently supports 2-D connected components."
+            return self._connected_components_planewise(
+                mask_array,
+                connectivity=connectivity,
             )
         if connectivity != 2:
             return super().connected_components(mask_array, connectivity=connectivity)
         return _foreground_components_2d_numba(np.ascontiguousarray(mask_array))
+
+    def _connected_components_planewise(
+        self,
+        mask: np.ndarray,
+        *,
+        connectivity: int,
+    ) -> tuple[np.ndarray, int]:
+        if mask.ndim < 2:
+            raise ValueError("Connected components requires at least two dimensions.")
+        labels = np.zeros(mask.shape, dtype=np.int32)
+        plane_count = int(np.prod(mask.shape[:-2], dtype=np.int64))
+        source_planes = mask.reshape((plane_count, *mask.shape[-2:]))
+        target_planes = labels.reshape((plane_count, *mask.shape[-2:]))
+        label_offset = 0
+        for plane_index in range(plane_count):
+            plane_labels, plane_count_labels = self.connected_components(
+                source_planes[plane_index],
+                connectivity=connectivity,
+            )
+            if plane_count_labels:
+                target_planes[plane_index] = np.where(
+                    plane_labels > 0,
+                    plane_labels + label_offset,
+                    0,
+                )
+                label_offset += plane_count_labels
+        return labels, label_offset
 
     def convex_hull_image(self, mask: np.ndarray) -> np.ndarray:
         mask_array = np.asarray(mask, dtype=bool)
@@ -463,6 +506,24 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             )
         footprint_offsets = _footprint_offsets(footprint_array)
         return _grayscale_closing_2d_numba(
+            np.ascontiguousarray(image_array),
+            footprint_offsets[:, 0],
+            footprint_offsets[:, 1],
+        )
+
+    def grayscale_opening(
+        self,
+        image: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
+        image_array = np.asarray(image)
+        footprint_array = np.asarray(footprint, dtype=bool)
+        if image_array.ndim != 2 or footprint_array.ndim != 2:
+            raise NotImplementedError(
+                "Numba morphology backend currently supports 2-D grayscale opening."
+            )
+        footprint_offsets = _footprint_offsets(footprint_array)
+        return _grayscale_opening_2d_numba(
             np.ascontiguousarray(image_array),
             footprint_offsets[:, 0],
             footprint_offsets[:, 1],
@@ -513,8 +574,13 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         image_array = np.asarray(image)
         mask_array = np.asarray(mask, dtype=bool)
         if image_array.ndim != 2 or mask_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba morphology backend currently supports 2-D declumping smoothing."
+            return self._smooth_image_for_declumping_planewise(
+                image_array,
+                mask_array,
+                filter_size,
+                declump_method=declump_method,
+                suppress_size=suppress_size,
+                min_diameter=min_diameter,
             )
         if image_array.shape != mask_array.shape:
             raise ValueError(
@@ -535,6 +601,39 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             kernel,
         )
 
+    def _smooth_image_for_declumping_planewise(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray,
+        filter_size: float,
+        *,
+        declump_method: CellProfilerDeclumpMethod,
+        suppress_size: float | None,
+        min_diameter: float | None,
+    ) -> np.ndarray:
+        if image.ndim < 2 or mask.ndim < 2:
+            raise ValueError("Declumping smoothing requires at least two dimensions.")
+        if image.shape != mask.shape:
+            raise ValueError(
+                "Declumping smoothing mask must match the image shape; got "
+                f"mask {mask.shape!r} for image {image.shape!r}."
+            )
+        smoothed = np.empty_like(image)
+        plane_count = int(np.prod(image.shape[:-2], dtype=np.int64))
+        image_planes = image.reshape((plane_count, *image.shape[-2:]))
+        mask_planes = mask.reshape((plane_count, *mask.shape[-2:]))
+        target_planes = smoothed.reshape((plane_count, *image.shape[-2:]))
+        for plane_index in range(plane_count):
+            target_planes[plane_index] = self.smooth_image_for_declumping(
+                image_planes[plane_index],
+                mask_planes[plane_index],
+                filter_size,
+                declump_method=declump_method,
+                suppress_size=suppress_size,
+                min_diameter=min_diameter,
+            )
+        return smoothed
+
     def fill_labeled_holes(
         self,
         labels: np.ndarray,
@@ -543,11 +642,42 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     ) -> np.ndarray:
         labels_array = np.asarray(labels)
         if labels_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba morphology backend currently supports 2-D hole filling."
+            return self._fill_labeled_holes_planewise(
+                labels_array,
+                size_predicate=size_predicate,
             )
+        return self._fill_labeled_holes_2d(
+            labels_array,
+            size_predicate=size_predicate,
+        )
+
+    def _fill_labeled_holes_planewise(
+        self,
+        labels: np.ndarray,
+        *,
+        size_predicate: HolePredicate | None = None,
+    ) -> np.ndarray:
+        if labels.ndim < 2:
+            raise ValueError("Hole filling requires at least two dimensions.")
+        filled = np.empty_like(labels)
+        plane_count = int(np.prod(labels.shape[:-2], dtype=np.int64))
+        source_planes = labels.reshape((plane_count, *labels.shape[-2:]))
+        target_planes = filled.reshape((plane_count, *labels.shape[-2:]))
+        for plane_index in range(plane_count):
+            target_planes[plane_index] = self._fill_labeled_holes_2d(
+                source_planes[plane_index],
+                size_predicate=size_predicate,
+            )
+        return filled
+
+    def _fill_labeled_holes_2d(
+        self,
+        labels: np.ndarray,
+        *,
+        size_predicate: HolePredicate | None = None,
+    ) -> np.ndarray:
         components, sizes, touches_border, component_count = (
-            _background_components_2d_numba(np.ascontiguousarray(labels_array))
+            _background_components_2d_numba(np.ascontiguousarray(labels))
         )
         fill_flags = np.zeros(component_count + 1, dtype=np.bool_)
         for component_id in range(1, component_count + 1):
@@ -559,15 +689,15 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             ):
                 fill_flags[component_id] = True
         if not np.any(fill_flags):
-            return labels_array
-        if labels_array.dtype == np.bool_:
+            return labels
+        if labels.dtype == np.bool_:
             return _fill_binary_holes_from_components_numba(
-                np.ascontiguousarray(labels_array),
+                np.ascontiguousarray(labels),
                 components,
                 fill_flags,
             )
         return _fill_labeled_holes_single_label_components_numba(
-            np.ascontiguousarray(labels_array),
+            np.ascontiguousarray(labels),
             components,
             fill_flags,
         )
@@ -603,11 +733,40 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     ) -> np.ndarray:
         labels_array = np.asarray(labels)
         if labels_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba morphology backend currently supports 2-D hole filling."
+            return self._fill_labeled_holes_below_size_planewise(
+                labels_array,
+                maximum_hole_size,
             )
+        return self._fill_labeled_holes_below_size_2d(
+            labels_array,
+            maximum_hole_size,
+        )
+
+    def _fill_labeled_holes_below_size_planewise(
+        self,
+        labels: np.ndarray,
+        maximum_hole_size: int,
+    ) -> np.ndarray:
+        if labels.ndim < 2:
+            raise ValueError("Hole filling requires at least two dimensions.")
+        filled = np.empty_like(labels)
+        plane_count = int(np.prod(labels.shape[:-2], dtype=np.int64))
+        source_planes = labels.reshape((plane_count, *labels.shape[-2:]))
+        target_planes = filled.reshape((plane_count, *labels.shape[-2:]))
+        for plane_index in range(plane_count):
+            target_planes[plane_index] = self._fill_labeled_holes_below_size_2d(
+                source_planes[plane_index],
+                maximum_hole_size,
+            )
+        return filled
+
+    def _fill_labeled_holes_below_size_2d(
+        self,
+        labels: np.ndarray,
+        maximum_hole_size: int,
+    ) -> np.ndarray:
         components, sizes, touches_border, component_count = (
-            _background_components_2d_numba(np.ascontiguousarray(labels_array))
+            _background_components_2d_numba(np.ascontiguousarray(labels))
         )
         fill_flags = _hole_fill_flags_below_size_numba(
             sizes,
@@ -615,14 +774,14 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             component_count,
             int(maximum_hole_size),
         )
-        if labels_array.dtype == np.bool_:
+        if labels.dtype == np.bool_:
             return _fill_binary_holes_from_components_numba(
-                np.ascontiguousarray(labels_array),
+                np.ascontiguousarray(labels),
                 components,
                 fill_flags,
             )
         return _fill_labeled_holes_single_label_components_numba(
-            np.ascontiguousarray(labels_array),
+            np.ascontiguousarray(labels),
             components,
             fill_flags,
         )
@@ -648,8 +807,11 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         image_array = np.asarray(image)
         labels_array = np.asarray(labels)
         if image_array.ndim != 2 or labels_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba morphology backend currently supports 2-D declumping seeds."
+            return self._declumping_seed_points_planewise(
+                image_array,
+                labels_array,
+                footprint,
+                image_resize_factor,
             )
         if image_array.shape != labels_array.shape:
             raise ValueError(
@@ -671,15 +833,74 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         maxima[np.asarray(image_array) <= 0] = 0
         return self.shrink_components_to_seed_points(maxima)
 
+    def _declumping_seed_points_planewise(
+        self,
+        image: np.ndarray,
+        labels: np.ndarray,
+        footprint: np.ndarray,
+        image_resize_factor: float,
+    ) -> np.ndarray:
+        if image.ndim < 2 or labels.ndim < 2:
+            raise ValueError("Declumping seed extraction requires at least two dimensions.")
+        if image.shape != labels.shape:
+            raise ValueError(
+                "image and labels must have identical shapes for declumping seed extraction"
+            )
+        seeds = np.empty(labels.shape, dtype=bool)
+        plane_count = int(np.prod(labels.shape[:-2], dtype=np.int64))
+        image_planes = image.reshape((plane_count, *image.shape[-2:]))
+        label_planes = labels.reshape((plane_count, *labels.shape[-2:]))
+        seed_planes = seeds.reshape((plane_count, *labels.shape[-2:]))
+        for plane_index in range(plane_count):
+            seed_planes[plane_index] = self.declumping_seed_points(
+                image_planes[plane_index],
+                label_planes[plane_index],
+                footprint,
+                image_resize_factor,
+            )
+        return seeds
+
     def relabel_sequential(self, labels: np.ndarray) -> tuple[np.ndarray, int]:
         labels_array = np.asarray(labels)
-        if labels_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba morphology backend currently supports 2-D relabeling."
+        if labels_array.ndim > 2:
+            relabeled_planes, count = _relabel_sequential_3d_numba(
+                np.ascontiguousarray(
+                    labels_array.reshape((-1, *labels_array.shape[-2:])),
+                    dtype=np.int64,
+                ),
             )
+            return relabeled_planes.reshape(labels_array.shape), int(count)
+        if labels_array.ndim != 2:
+            raise ValueError("Relabeling requires at least two dimensions.")
         return _relabel_sequential_numba(
             np.ascontiguousarray(labels_array, dtype=np.int64),
         )
+
+
+class OpenCVNumpyMorphologyBackendStrategy(NumbaNumpyMorphologyBackendStrategy):
+    """OpenCV-accelerated NumPy morphology backend."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.OPENCV,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.OPENCV
+    is_default_backend = False
+
+    def grayscale_closing(
+        self,
+        image: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
+        return _opencv_morphology(image, footprint, operation="closing")
+
+    def grayscale_opening(
+        self,
+        image: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
+        return _opencv_morphology(image, footprint, operation="opening")
 
 
 def _scipy_disk_footprint(radius: float) -> np.ndarray:
@@ -937,6 +1158,39 @@ def _skimage_grayscale_closing(
         skimage_closing(image_array, np.asarray(footprint, dtype=bool)),
         dtype=image_array.dtype,
     )
+
+
+def _skimage_grayscale_opening(
+    image: np.ndarray,
+    footprint: np.ndarray,
+) -> np.ndarray:
+    from skimage.morphology import opening as skimage_opening
+
+    image_array = np.asarray(image)
+    return np.asarray(
+        skimage_opening(image_array, np.asarray(footprint, dtype=bool)),
+        dtype=image_array.dtype,
+    )
+
+
+def _opencv_morphology(
+    image: np.ndarray,
+    footprint: np.ndarray,
+    *,
+    operation: str,
+) -> np.ndarray:
+    import cv2
+
+    image_array = np.asarray(image)
+    footprint_array = np.asarray(footprint, dtype=np.uint8)
+    op = cv2.MORPH_OPEN if operation == "opening" else cv2.MORPH_CLOSE
+    result = cv2.morphologyEx(
+        np.ascontiguousarray(image_array),
+        op,
+        footprint_array,
+        borderType=cv2.BORDER_REFLECT,
+    )
+    return np.asarray(result, dtype=image_array.dtype)
 
 
 def _scipy_declumping_seed_points(
@@ -1272,6 +1526,48 @@ def _grayscale_closing_2d_numba(
                     best = value
             closed[row, col] = best
     return closed
+
+
+@njit(cache=True, parallel=True)
+def _grayscale_opening_2d_numba(
+    image: np.ndarray,
+    offset_rows: np.ndarray,
+    offset_cols: np.ndarray,
+) -> np.ndarray:
+    height, width = image.shape
+    eroded = np.empty_like(image)
+    opened = np.empty_like(image)
+    footprint_size = offset_rows.size
+    for row in prange(height):
+        for col in range(width):
+            best = image[
+                _reflect_index_1d(row + int(offset_rows[0]), height),
+                _reflect_index_1d(col + int(offset_cols[0]), width),
+            ]
+            for offset_index in range(1, footprint_size):
+                value = image[
+                    _reflect_index_1d(row + int(offset_rows[offset_index]), height),
+                    _reflect_index_1d(col + int(offset_cols[offset_index]), width),
+                ]
+                if value < best:
+                    best = value
+            eroded[row, col] = best
+
+    for row in prange(height):
+        for col in range(width):
+            best = eroded[
+                _reflect_index_1d(row + int(offset_rows[0]), height),
+                _reflect_index_1d(col + int(offset_cols[0]), width),
+            ]
+            for offset_index in range(1, footprint_size):
+                value = eroded[
+                    _reflect_index_1d(row + int(offset_rows[offset_index]), height),
+                    _reflect_index_1d(col + int(offset_cols[offset_index]), width),
+                ]
+                if value > best:
+                    best = value
+            opened[row, col] = best
+    return opened
 
 
 @njit(cache=True)
@@ -2282,6 +2578,45 @@ def _relabel_sequential_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
             label = labels[y, x]
             if label > 0:
                 output[y, x] = mapping[label]
+    return output, count
+
+
+@njit(cache=True)
+def _relabel_sequential_3d_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
+    plane_count, height, width = labels.shape
+    max_label = 0
+    for plane_index in range(plane_count):
+        for y in range(height):
+            for x in range(width):
+                label = labels[plane_index, y, x]
+                if label > max_label:
+                    max_label = label
+
+    if max_label <= 0:
+        return np.zeros((plane_count, height, width), dtype=np.int32), 0
+
+    present = np.zeros(max_label + 1, dtype=np.bool_)
+    for plane_index in range(plane_count):
+        for y in range(height):
+            for x in range(width):
+                label = labels[plane_index, y, x]
+                if label > 0:
+                    present[label] = True
+
+    mapping = np.zeros(max_label + 1, dtype=np.int32)
+    count = 0
+    for label in range(1, max_label + 1):
+        if present[label]:
+            count += 1
+            mapping[label] = count
+
+    output = np.zeros((plane_count, height, width), dtype=np.int32)
+    for plane_index in range(plane_count):
+        for y in range(height):
+            for x in range(width):
+                label = labels[plane_index, y, x]
+                if label > 0:
+                    output[plane_index, y, x] = mapping[label]
     return output, count
 
 

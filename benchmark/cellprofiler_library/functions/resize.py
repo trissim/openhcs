@@ -10,6 +10,7 @@ import numpy as np
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from ._enum import _coerce_function_enum
 
 
 class ResizeMethod(Enum):
@@ -49,6 +50,9 @@ def resize(
         Resized image with shape (new_H, new_W)
     """
     import skimage.transform
+
+    resize_method = _coerce_function_enum(ResizeMethod, resize_method)
+    interpolation = _coerce_function_enum(InterpolationMethod, interpolation)
     
     height, width = image.shape[:2]
     
@@ -112,6 +116,9 @@ def resize_volumetric(
         Resized volumetric image with shape (new_D, new_H, new_W)
     """
     import skimage.transform
+
+    resize_method = _coerce_function_enum(ResizeMethod, resize_method)
+    interpolation = _coerce_function_enum(InterpolationMethod, interpolation)
     
     planes, height, width = image.shape[:3]
     

@@ -99,6 +99,7 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 from openhcs.processing.materialization import tabular_field_names_from_materialization
 
 from benchmark.cellprofiler_library import canonical_module_name, require_function
+from benchmark.cellprofiler_library.image_geometry import cellprofiler_grayscale_plane
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
     CellProfilerMeasurementTargetScope,
@@ -1313,23 +1314,13 @@ class CellProfilerModuleExecutor:
         self,
         func: Callable[..., Any],
     ) -> tuple[ArtifactSpec, ...]:
-        declared_inputs = self._declared_input_specs()
-        image_inputs = _specs_of_kind(
-            declared_inputs,
-            ArtifactKind.IMAGE,
+        return CellProfilerPrimaryImageInputPolicy.for_module(
+            self._canonical_module_name
+        ).primary_image_inputs(
+            self.module_name,
+            func,
+            self._declared_input_specs(),
         )
-        special_image_count = len(
-            CellProfilerSpecialInputPolicy.for_module(
-                self._canonical_module_name
-            ).special_image_inputs(
-                self.module_name,
-                func,
-                declared_inputs,
-            )
-        )
-        if special_image_count == 0:
-            return image_inputs
-        return image_inputs[: len(image_inputs) - special_image_count]
 
     def _input_source_image_name(
         self,
@@ -2123,6 +2114,83 @@ class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
         request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         """Return absorbed-function kwargs for object-label runtime inputs."""
+
+
+class CellProfilerPrimaryImageInputPolicy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal policy for image artifacts that drive absorbed execution."""
+
+    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
+    __skip_if_no_key__ = True
+    module_name: ClassVar[str | None] = None
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def for_module(cls, module_name: str) -> "CellProfilerPrimaryImageInputPolicy":
+        policy_type = cls.__registry__.get(
+            canonical_module_name(module_name),
+            DefaultPrimaryImageInputPolicy,
+        )
+        return policy_type()
+
+    @abstractmethod
+    def primary_image_inputs(
+        self,
+        module_name: str,
+        func: Callable[..., Any],
+        declared_inputs: tuple[ArtifactSpec, ...],
+    ) -> tuple[ArtifactSpec, ...]:
+        """Return image inputs that should drive function invocation slices."""
+
+
+class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
+    """Use non-special image inputs as the algorithmic image domain."""
+
+    def primary_image_inputs(
+        self,
+        module_name: str,
+        func: Callable[..., Any],
+        declared_inputs: tuple[ArtifactSpec, ...],
+    ) -> tuple[ArtifactSpec, ...]:
+        image_inputs = _specs_of_kind(declared_inputs, ArtifactKind.IMAGE)
+        special_image_count = len(
+            CellProfilerSpecialInputPolicy.for_module(
+                canonical_module_name(module_name)
+            ).special_image_inputs(
+                module_name,
+                func,
+                declared_inputs,
+            )
+        )
+        if special_image_count == 0:
+            return image_inputs
+        return image_inputs[: len(image_inputs) - special_image_count]
+
+
+class ObjectLabelDrivenPrimaryImageInputPolicy(DefaultPrimaryImageInputPolicy):
+    """Treat declared images as carriers; object labels define the domain."""
+
+    module_names: ClassVar[frozenset[str]] = frozenset({"MaskObjects"})
+
+    def primary_image_inputs(
+        self,
+        module_name: str,
+        func: Callable[..., Any],
+        declared_inputs: tuple[ArtifactSpec, ...],
+    ) -> tuple[ArtifactSpec, ...]:
+        del module_name, func, declared_inputs
+        return ()
+
+
+for _object_label_driven_module_name in ObjectLabelDrivenPrimaryImageInputPolicy.module_names:
+    type(
+        f"{_object_label_driven_module_name}PrimaryImageInputPolicy",
+        (ObjectLabelDrivenPrimaryImageInputPolicy,),
+        {
+            "__module__": __name__,
+            "module_name": _object_label_driven_module_name,
+        },
+    )
+del _object_label_driven_module_name
 
 
 class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
@@ -4221,11 +4289,19 @@ def _measurement_image_for_labels(
         return aligned_image
     if is_color_image_stack(image):
         if labels.ndim == 3:
-            aligned_image = image[..., 0]
+            aligned_image = np.stack(
+                tuple(
+                    cellprofiler_grayscale_plane(image[index], "measurement image")
+                    for index in range(image.shape[0])
+                )
+            )
         elif labels.ndim == 2:
-            aligned_image = image[0, :, :, 0]
+            aligned_image = cellprofiler_grayscale_plane(
+                image[0],
+                "measurement image",
+            )
     elif is_color_image_slice(image) and labels.ndim == 2:
-        aligned_image = image[:, :, 0]
+        aligned_image = cellprofiler_grayscale_plane(image, "measurement image")
     elif image.ndim == labels.ndim:
         aligned_image = image
     elif (

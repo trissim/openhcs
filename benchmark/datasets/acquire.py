@@ -9,9 +9,14 @@ from pathlib import Path
 import requests
 from tqdm import tqdm
 
-from benchmark.contracts.dataset import AcquiredDataset, DatasetSpec
+from benchmark.contracts.dataset import (
+    AcquiredDataset,
+    ArchiveFormat,
+    DatasetSpec,
+    DatasetValidationRule,
+)
 
-IMAGE_EXTENSIONS = {".tif", ".tiff", ".png", ".jpg", ".jpeg"}
+IMAGE_EXTENSIONS = {".bmp", ".tif", ".tiff", ".png", ".jpg", ".jpeg"}
 
 
 class DatasetAcquisitionError(Exception):
@@ -95,15 +100,24 @@ def _validate_manifest(root: Path, manifest: Path) -> int:
     return count
 
 
+def _validate_non_empty(root: Path) -> int:
+    """Validate that extraction produced files; return discovered image count."""
+    if not any(root.rglob("*")):
+        raise DatasetAcquisitionError(f"Extracted dataset is empty: {root}")
+    return _count_images(root)
+
+
 def _validate_dataset(spec: DatasetSpec, dataset_dir: Path) -> int:
     """Run validation rules and return image count."""
-    if spec.validation_rule == "count":
+    if spec.validation_rule is DatasetValidationRule.IMAGE_COUNT:
         return _validate_count(dataset_dir, spec.expected_count)
-    if spec.validation_rule == "manifest":
+    if spec.validation_rule is DatasetValidationRule.MANIFEST:
         if spec.manifest_path is None:
             raise DatasetAcquisitionError("manifest_path must be provided for manifest validation")
         return _validate_manifest(dataset_dir, spec.manifest_path)
-    raise DatasetAcquisitionError(f"Unknown validation rule '{spec.validation_rule}'")
+    if spec.validation_rule is DatasetValidationRule.NON_EMPTY:
+        return _validate_non_empty(dataset_dir)
+    raise DatasetAcquisitionError(f"Unknown validation rule '{spec.validation_rule.name}'")
 
 
 def acquire_dataset(spec: DatasetSpec) -> AcquiredDataset:
@@ -152,10 +166,10 @@ def acquire_dataset(spec: DatasetSpec) -> AcquiredDataset:
 
     for url in spec.urls:
         archive_path = archive_dir / Path(url).name
-        if spec.archive_format.lower() == "zip":
+        if spec.archive_format is ArchiveFormat.ZIP:
             _extract_zip(archive_path, tmp_extract)
         else:
-            raise DatasetAcquisitionError(f"Unsupported archive format: {spec.archive_format}")
+            raise DatasetAcquisitionError(f"Unsupported archive format: {spec.archive_format.name}")
 
     # Replace existing extraction atomically
     if extract_dir.exists():

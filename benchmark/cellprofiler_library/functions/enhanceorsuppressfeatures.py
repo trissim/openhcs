@@ -8,8 +8,10 @@ import skimage.exposure
 import skimage.filters
 import skimage.morphology
 import skimage.transform
+from numba import njit
 
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
     image_payload_data,
@@ -18,6 +20,7 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from benchmark.cellprofiler_library.image_geometry import cellprofiler_grayscale_plane
 
 
 class OperationMethod(Enum):
@@ -64,7 +67,10 @@ def enhance_or_suppress_features(
     enhance_method = _coerce_function_enum(EnhanceMethod, enhance_method)
     speckle_accuracy = _coerce_function_enum(SpeckleAccuracy, speckle_accuracy)
     neurite_method = _coerce_function_enum(NeuriteMethod, neurite_method)
-    image_data = np.asarray(image_payload_data(image))
+    image_data = cellprofiler_grayscale_plane(
+        image_payload_data(image),
+        "enhancement image",
+    )
     if image_data.dtype != np.float32 and image_data.dtype != np.float64:
         image_data = image_data.astype(np.float32)
     mask = _enhancement_mask(image, image_data)
@@ -225,11 +231,10 @@ def _enhance_neurites(
 ) -> np.ndarray:
     masked = _masked_image(image_data, mask)
     if neurite_method is NeuriteMethod.TUBENESS:
-        smoothed = skimage.filters.gaussian(masked, sigma=smoothing_value)
-        result = skimage.filters.sato(
-            smoothed,
-            sigmas=range(1, max(2, int(round(radius))) + 1),
-            black_ridges=False,
+        smoothed = scipy.ndimage.gaussian_filter(masked, smoothing_value)
+        result = _tubeness_response_2d_numba(
+            np.ascontiguousarray(smoothed, dtype=np.float64),
+            float(smoothing_value),
         )
     else:
         footprint = _structuring_element(radius)
@@ -242,6 +247,71 @@ def _enhance_neurites(
     if neurite_rescale:
         result = skimage.exposure.rescale_intensity(result, out_range=(0.0, 1.0))
     return _restore_masked_background(result, image_data, mask)
+
+
+@njit(cache=True)
+def _tubeness_response_2d_numba(image: np.ndarray, smoothing_value: float) -> np.ndarray:
+    height, width = image.shape
+    result = np.zeros((height, width), dtype=np.float64)
+    scale = smoothing_value * smoothing_value
+    for y in range(height):
+        for x in range(width):
+            a = 0.0
+            b = 0.0
+            c = 0.0
+            if 0 < y < height - 1:
+                a = image[y - 1, x] - (2.0 * image[y, x]) + image[y + 1, x]
+            if 0 < x < width - 1:
+                c = image[y, x - 1] - (2.0 * image[y, x]) + image[y, x + 1]
+            if 0 < y < height - 1 and 0 < x < width - 1:
+                b = (
+                    image[y + 1, x + 1]
+                    + image[y - 1, x - 1]
+                    - image[y + 1, x - 1]
+                    - image[y - 1, x + 1]
+                ) / 4.0
+
+            linear = -(a + c)
+            constant = a * c - b * b
+            discriminant = linear * linear - 4.0 * constant
+            if discriminant < 0.0:
+                discriminant = 0.0
+            sqrt_discriminant = np.sqrt(discriminant)
+            root0 = (-linear + sqrt_discriminant) / 2.0
+            root1 = (-linear - sqrt_discriminant) / 2.0
+            selected = root0
+            if abs(root1) > abs(root0):
+                selected = root1
+            if selected < 0.0:
+                result[y, x] = -selected * scale
+    return result
+
+
+def _hessian_eigenvalues_2d(image: np.ndarray) -> np.ndarray:
+    """Return centrosome-compatible ordered Hessian eigenvalues for one plane."""
+    hessian = np.zeros((*image.shape, 2, 2), dtype=np.float64)
+    hessian[1:-1, :, 0, 0] = image[:-2, :] - (2 * image[1:-1, :]) + image[2:, :]
+    hessian[1:-1, 1:-1, 0, 1] = (
+        image[2:, 2:]
+        + image[:-2, :-2]
+        - image[2:, :-2]
+        - image[:-2, 2:]
+    ) / 4
+    hessian[:, 1:-1, 1, 1] = image[:, :-2] - (2 * image[:, 1:-1]) + image[:, 2:]
+
+    a = hessian[:, :, 0, 0]
+    b = hessian[:, :, 0, 1]
+    c = hessian[:, :, 1, 1]
+    linear = -(a + c)
+    constant = a * c - b * b
+    discriminant = np.maximum(linear * linear - 4 * constant, 0)
+    roots = np.empty((*image.shape, 2), dtype=np.float64)
+    sqrt_discriminant = np.sqrt(discriminant)
+    roots[:, :, 0] = (-linear + sqrt_discriminant) / 2
+    roots[:, :, 1] = (-linear - sqrt_discriminant) / 2
+    swap = np.abs(roots[:, :, 1]) > np.abs(roots[:, :, 0])
+    roots[swap] = roots[swap, ::-1]
+    return roots
 
 
 def _enhance_dark_holes(
@@ -308,3 +378,16 @@ def _enhance_dic(
     )
     result = np.maximum(forward - backward, 0)
     return _restore_masked_background(result, image_data, mask)
+
+
+@processing_prepare(enhance_or_suppress_features)
+def _prepare_enhance_or_suppress_features() -> None:
+    """Compile accelerated enhancement kernels before timed execution."""
+    image = np.zeros((32, 32), dtype=np.float32)
+    image[8:24, 16] = 1.0
+    enhance_or_suppress_features.__wrapped__(
+        image,
+        enhance_method=EnhanceMethod.NEURITES,
+        neurite_method=NeuriteMethod.TUBENESS,
+        smoothing_value=2.0,
+    )

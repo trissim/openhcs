@@ -2,6 +2,14 @@
 
 import numpy as np
 from openhcs.core.memory import numpy
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_metadata,
+    with_image_payload_data,
+)
+from openhcs.processing.backends.cellprofiler._backend import (
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 from .structuring_elements import StructuringElement, build_structuring_element
@@ -12,6 +20,9 @@ def opening(
     image: np.ndarray,
     structuring_element: StructuringElement = StructuringElement.DISK,
     size: int = 3,
+    morphology_backend_provider: CellProfilerBackendProvider | None = (
+        CellProfilerBackendProvider.OPENCV
+    ),
 ) -> np.ndarray:
     """
     Apply morphological opening to an image.
@@ -28,10 +39,21 @@ def opening(
     Returns:
         Opened image with shape (H, W)
     """
-    from skimage.morphology import opening as skimage_opening
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        MorphologyBackendStrategy,
+    )
 
-    result = skimage_opening(
-        image,
+    pixel_data = image_payload_data(image)
+    morphology = MorphologyBackendStrategy.for_callable(
+        opening,
+        backend_provider=morphology_backend_provider,
+    )
+    result = morphology.grayscale_opening(
+        pixel_data,
         build_structuring_element(structuring_element, size),
     )
-    return result.astype(image.dtype)
+    return with_image_payload_data(
+        image,
+        result.astype(pixel_data.dtype, copy=False),
+        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
+    )

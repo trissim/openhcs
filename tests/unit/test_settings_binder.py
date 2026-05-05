@@ -928,3 +928,32 @@ def test_track_objects_binds_tracking_identity_settings():
     assert bound.kwargs["object_name"] == "Embryos"
     assert bound.kwargs["tracking_method"] == "overlap"
     assert bound.kwargs["pixel_radius"] == 50
+
+
+def test_resize_binds_factor_and_interpolation_settings():
+    module = ModuleBlock(
+        name="Resize",
+        module_num=5,
+        settings={
+            "Resizing method": "Resize by a fraction or multiple of the original size",
+            "Resizing factor": "2.0",
+            "Width of the final image": "100",
+            "Height of the final image": "100",
+            "Interpolation method": "Nearest Neighbor",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("Resize").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {
+        "resize_method": "by_factor",
+        "resizing_factor_x": 2.0,
+        "resizing_factor_y": 2.0,
+        "specific_width": 100,
+        "specific_height": 100,
+        "interpolation": "nearest_neighbor",
+    }

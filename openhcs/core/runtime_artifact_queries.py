@@ -641,15 +641,20 @@ def measurement_feature_candidates(feature_name: str) -> frozenset[str]:
     """Return normalized feature aliases accepted for row/field lookup."""
     normalized = normalize_measurement_token(feature_name)
     parts = tuple(part for part in normalized.split("_") if part)
-    candidates = {normalized}
+    candidates = {normalized, normalized.replace("_", "")}
+    candidates.update(parts)
     if len(parts) >= 2:
         candidates.add("_".join(parts[1:]))
+        candidates.add("".join(parts[1:]))
         candidates.add(parts[-1])
     if len(parts) >= 3:
         candidates.add("_".join(parts[1:-1]))
+        candidates.add("".join(parts[1:-1]))
     for start in range(len(parts)):
         for stop in range(start + 2, len(parts) + 1):
-            candidates.add("_".join(parts[start:stop]))
+            candidate_parts = parts[start:stop]
+            candidates.add("_".join(candidate_parts))
+            candidates.add("".join(candidate_parts))
     return frozenset(candidates)
 
 
@@ -659,7 +664,8 @@ def matching_measurement_field(
 ) -> str | None:
     """Return the first row field whose name matches one feature candidate."""
     for field_name in row:
-        if normalize_measurement_token(field_name) in candidates:
+        normalized = normalize_measurement_token(field_name)
+        if normalized in candidates or normalized.replace("_", "") in candidates:
             return field_name
     return None
 

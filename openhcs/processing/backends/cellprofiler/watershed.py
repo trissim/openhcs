@@ -132,6 +132,17 @@ def _cellprofiler_legacy_watershed_numpy(
         raise ValueError("markers must have the same shape as image")
     if mask_array.shape != image_array.shape:
         raise ValueError("mask must have the same shape as image")
+    if _is_planewise_watershed(
+        image_array,
+        connectivity,
+    ):
+        return _cellprofiler_legacy_watershed_planewise(
+            image_array,
+            markers=marker_array,
+            mask=mask_array,
+            connectivity=connectivity,
+            prefer_fast=prefer_fast,
+        )
 
     connectivity_array, offset = _validate_connectivity(
         image_array.ndim,
@@ -177,6 +188,41 @@ def _cellprofiler_legacy_watershed_numpy(
         marker_locations,
     )
     return crop(output, pad_width, copy=True)
+
+
+def _is_planewise_watershed(
+    image: np.ndarray,
+    connectivity: int | np.ndarray,
+) -> bool:
+    if image.ndim <= 2:
+        return False
+    if np.isscalar(connectivity):
+        return True
+    return np.asarray(connectivity).ndim == 2
+
+
+def _cellprofiler_legacy_watershed_planewise(
+    image: np.ndarray,
+    *,
+    markers: np.ndarray,
+    mask: np.ndarray,
+    connectivity: int | np.ndarray,
+    prefer_fast: bool,
+) -> np.ndarray:
+    output = np.empty(markers.shape, dtype=np.int32)
+    image_planes = image.reshape((-1, *image.shape[-2:]))
+    marker_planes = markers.reshape((-1, *markers.shape[-2:]))
+    mask_planes = mask.reshape((-1, *mask.shape[-2:]))
+    output_planes = output.reshape((-1, *output.shape[-2:]))
+    for plane_index in range(image_planes.shape[0]):
+        output_planes[plane_index] = _cellprofiler_legacy_watershed_numpy(
+            image_planes[plane_index],
+            markers=marker_planes[plane_index],
+            mask=mask_planes[plane_index],
+            connectivity=connectivity,
+            prefer_fast=prefer_fast,
+        )
+    return output
 
 
 def _legacy_watershed_raveled_python(

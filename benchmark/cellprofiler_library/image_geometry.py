@@ -196,5 +196,25 @@ def collapse_singleton_plane_stack(payload: Any) -> Any:
     return payload
 
 
+def cellprofiler_grayscale_plane(payload: Any, name: str) -> np.ndarray:
+    """Return CP's must_be_grayscale pixel plane for one image payload.
+
+    CellProfiler does not split arbitrary RGB images for grayscale modules. It
+    accepts a multichannel image only when the first three channels are identical
+    and then exposes channel 0 through GrayscaleImage.pixel_data.
+    """
+    array = collapse_singleton_plane_stack(np.asarray(payload))
+    if array.ndim == 2:
+        return array
+    if is_color_image_slice(array) and array.shape[-1] >= 3:
+        color = array[..., :3]
+        if np.all(color == color[..., :1]):
+            return array[..., 0]
+    raise ValueError(
+        f"CellProfiler requires a 2-D grayscale {name} plane or replicated "
+        f"RGB/RGBA grayscale plane, got shape {array.shape!r}."
+    )
+
+
 def _is_stack_payload(payload: Any) -> bool:
     return is_grayscale_image_stack(payload) or is_color_image_stack(payload)

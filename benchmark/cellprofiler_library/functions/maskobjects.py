@@ -13,6 +13,8 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
+    aligned_dense_object_label_arrays,
+    project_dense_object_label_stack,
 )
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.relationships import (
@@ -92,6 +94,18 @@ def mask_objects(
     overlap_handling = _coerce_function_enum(OverlapHandling, overlap_handling)
     numbering = _coerce_function_enum(NumberingChoice, numbering)
     
+    try:
+        labels = project_dense_object_label_stack(labels).astype(np.int32, copy=False)
+    except ValueError as exc:
+        raise ValueError(
+            "MaskObjects could not project object labels; "
+            f"image shape={getattr(image, 'shape', None)!r}, "
+            f"labels shape={getattr(labels, 'shape', None)!r}, "
+            f"mask shape={getattr(mask, 'shape', None)!r}."
+        ) from exc
+    _aligned_labels, mask = aligned_dense_object_label_arrays(labels, mask)
+    labels = _aligned_labels.astype(np.int32, copy=False)
+
     # Handle mask - convert label image to binary if needed
     if mask.max() > 1:
         binary_mask = mask > 0
@@ -116,14 +130,9 @@ def mask_objects(
         relationships = ParentChildRelationshipPayload(parent_ids=(), child_ids=())
         return image, stats, relationships, masked_labels
     
-    # Resize mask to match labels if needed
-    if binary_mask.shape != labels.shape:
-        # Simple resize by cropping or padding
-        min_h = min(binary_mask.shape[0], labels.shape[0])
-        min_w = min(binary_mask.shape[1], labels.shape[1])
-        resized_mask = np.zeros(labels.shape, dtype=bool)
-        resized_mask[:min_h, :min_w] = binary_mask[:min_h, :min_w]
-        binary_mask = resized_mask
+    # CellProfiler size_similarly semantics: masks smaller than labels create
+    # manufactured false pixels; larger masks are cropped to label geometry.
+    binary_mask = _size_binary_mask_like_labels(labels, binary_mask)
     
     # Apply mask according to overlap choice
     if overlap_handling == OverlapHandling.MASK:
@@ -197,3 +206,21 @@ def mask_objects(
     )
 
     return image, stats, relationships, masked_labels
+
+
+def _size_binary_mask_like_labels(
+    labels: np.ndarray,
+    binary_mask: np.ndarray,
+) -> np.ndarray:
+    """Return a binary mask sized like CP size_similarly(labels, mask)."""
+    if binary_mask.shape == labels.shape:
+        return binary_mask
+    result = np.zeros(labels.shape, dtype=bool)
+    common_slices = tuple(
+        slice(0, min(label_extent, mask_extent))
+        for label_extent, mask_extent in zip(labels.shape, binary_mask.shape, strict=False)
+    )
+    if not common_slices:
+        return result
+    result[common_slices] = binary_mask[common_slices]
+    return result

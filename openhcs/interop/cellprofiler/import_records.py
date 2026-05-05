@@ -58,6 +58,11 @@ class CellProfilerPipelineProvenance:
         """Modules whose semantics are handled by import/runtime infrastructure."""
         return self.modules_with_role(CellProfilerModuleRole.INFRASTRUCTURE)
 
+    @property
+    def disabled_modules(self) -> tuple[CellProfilerModuleReference, ...]:
+        """Modules preserved for provenance but excluded from execution."""
+        return self.modules_with_role(CellProfilerModuleRole.DISABLED)
+
     def modules_with_role(
         self,
         role: CellProfilerModuleRole,

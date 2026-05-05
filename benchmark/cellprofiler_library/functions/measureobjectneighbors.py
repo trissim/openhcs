@@ -10,6 +10,9 @@ Measures neighbor relationships between objects including:
 """
 
 import numpy as np
+import logging
+import os
+import time
 from abc import ABC, abstractmethod
 from typing import ClassVar, Tuple
 from dataclasses import dataclass
@@ -26,6 +29,26 @@ from openhcs.processing.backends.cellprofiler.outlines import object_outline_bac
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _runtime_profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_runtime_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _runtime_profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+
+
+def _profile_elapsed(label: str, start: float, **fields: object) -> float:
+    now = time.perf_counter()
+    _log_runtime_profile(label, now - start, **fields)
+    return now
 
 
 class DistanceMethod(Enum):
@@ -324,6 +347,8 @@ def measure_object_neighbors(
     Returns:
         Tuple of (image, list of NeighborMeasurements)
     """
+    profile_start = time.perf_counter()
+    profile_mark = profile_start
     labels = labels.astype(np.int32, copy=False)
     final_labels = labels
     neighbor_final_labels = (
@@ -349,6 +374,11 @@ def measure_object_neighbors(
         neighbor_final_labels,
         neighbor_variant_labels,
         "small_removed_neighbor_labels",
+    )
+    profile_mark = _profile_elapsed(
+        "measure_object_neighbors.normalize_inputs",
+        profile_mark,
+        shape=final_labels.shape,
     )
 
     final_object_count = int(final_labels.max()) if final_labels.size else 0
@@ -390,6 +420,12 @@ def measure_object_neighbors(
             neighbor_topology_labels,
             neighbor_backend=neighbor_backend,
         )
+    )
+    profile_mark = _profile_elapsed(
+        "measure_object_neighbors.variant_mapping",
+        profile_mark,
+        final_object_count=final_object_count,
+        neighbors_are_same_objects=neighbors_are_same_objects,
     )
     final_has_pixels = (
         np.bincount(final_labels.ravel(), minlength=final_object_count + 1)[1:] > 0
@@ -462,6 +498,13 @@ def measure_object_neighbors(
         measured_topology_labels,
         neighbor_distance,
     )
+    profile_mark = _profile_elapsed(
+        "measure_object_neighbors.distance_plan",
+        profile_mark,
+        method=normalized_distance_method.value,
+        variant_object_count=variant_object_count,
+        variant_neighbor_count=variant_neighbor_count,
+    )
     working_labels = distance_plan.working_labels
     distance = distance_plan.distance
     measurement_scale = distance_plan.measurement_scale
@@ -483,6 +526,12 @@ def measure_object_neighbors(
             neighbor_variant_labels,
             relationship_backend_provider=relationship_backend_provider,
         )
+        profile_mark = _profile_elapsed(
+            "measure_object_neighbors.centers",
+            profile_mark,
+            variant_object_count=variant_object_count,
+            variant_neighbor_count=variant_neighbor_count,
+        )
         
         # Calculate perimeters
         perimeter_outlines = _outline(
@@ -492,6 +541,11 @@ def measure_object_neighbors(
         perimeters = neighbor_backend.perimeter_counts(
             perimeter_outlines,
             variant_object_count=variant_object_count,
+        )
+        profile_mark = _profile_elapsed(
+            "measure_object_neighbors.outline_perimeters",
+            profile_mark,
+            shape=working_labels.shape,
         )
         
         # Find nearest neighbors using variant-label center distances.
@@ -515,6 +569,12 @@ def measure_object_neighbors(
             angle = closest.angle_between_neighbors
             final_first_object_number = closest.final_first_object_number
             final_second_object_number = closest.final_second_object_number
+            profile_mark = _profile_elapsed(
+                "measure_object_neighbors.closest",
+                profile_mark,
+                variant_object_count=variant_object_count,
+                variant_neighbor_count=variant_neighbor_count,
+            )
         
         strel = _strel_disk(
             distance,
@@ -540,6 +600,11 @@ def measure_object_neighbors(
         neighbor_count = topology.neighbor_count
         pixel_count = topology.touching_pixel_count
         percent_touching = pixel_count * 100 / perimeters
+        profile_mark = _profile_elapsed(
+            "measure_object_neighbors.topology",
+            profile_mark,
+            distance=distance,
+        )
 
     neighbor_count_image = np.zeros(final_labels.shape, dtype=float)
     percent_touching_image = np.zeros(final_labels.shape, dtype=float)
@@ -555,6 +620,11 @@ def measure_object_neighbors(
         percent_touching_values[valid_variant_mask] = percent_touching[variant_indexes]
         neighbor_count_image[object_mask] = neighbor_count_values
         percent_touching_image[object_mask] = percent_touching_values
+    profile_mark = _profile_elapsed(
+        "measure_object_neighbors.metric_images",
+        profile_mark,
+        final_object_count=final_object_count,
+    )
 
     # Build measurement results
     measurements = []
@@ -596,7 +666,19 @@ def measure_object_neighbors(
             second_closest_distance=float(second_dist),
             angle_between_neighbors=float(angle[object_index])
         ))
+    profile_mark = _profile_elapsed(
+        "measure_object_neighbors.rows",
+        profile_mark,
+        row_count=len(measurements),
+    )
     
+    _log_runtime_profile(
+        "measure_object_neighbors.total",
+        time.perf_counter() - profile_start,
+        final_object_count=final_object_count,
+        variant_object_count=variant_object_count,
+        variant_neighbor_count=variant_neighbor_count,
+    )
     return _neighbor_output(
         image,
         measurements,
@@ -610,3 +692,19 @@ def measure_object_neighbors(
             percent_touching_colormap=percent_touching_colormap,
         ),
     )
+
+
+def _prepare_measure_object_neighbors() -> None:
+    """Compile neighbor topology kernels before benchmark execution."""
+    labels = np.zeros((16, 16), dtype=np.int32)
+    labels[4:8, 4:8] = 1
+    labels[4:8, 10:14] = 2
+    measure_object_neighbors.__wrapped__(
+        np.zeros_like(labels, dtype=np.float32),
+        labels,
+        distance_method=DistanceMethod.WITHIN,
+        neighbor_distance=3,
+    )
+
+
+measure_object_neighbors.__openhcs_prepare__ = _prepare_measure_object_neighbors

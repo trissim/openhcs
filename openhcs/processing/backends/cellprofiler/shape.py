@@ -328,9 +328,7 @@ class LegacyFastNumpyShapeMeasurementBackendStrategy(
     def distance_to_edge(self, labels: np.ndarray) -> np.ndarray:
         label_array = np.asarray(labels, dtype=np.int32)
         if label_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba shape distance-to-edge currently supports 2-D labels."
-            )
+            return _distance_to_edge_planewise(self, label_array)
         return _distance_to_label_edge_numba(np.ascontiguousarray(label_array))
 
     def maximum_position_of_labels(
@@ -417,9 +415,7 @@ class NumbaNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStrategy)
     def distance_to_edge(self, labels: np.ndarray) -> np.ndarray:
         label_array = np.asarray(labels, dtype=np.int32)
         if label_array.ndim != 2:
-            raise NotImplementedError(
-                "Numba shape distance-to-edge currently supports 2-D labels."
-            )
+            return _distance_to_edge_planewise(self, label_array)
         return _distance_to_label_edge_numba(np.ascontiguousarray(label_array))
 
     def maximum_position_of_labels(
@@ -465,6 +461,21 @@ class NumbaNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStrategy)
             "Pure Numba Zernike polynomial construction is not implemented in "
             "the shape backend. Use the zernike backend family instead."
         )
+
+
+def _distance_to_edge_planewise(
+    backend: ShapeMeasurementBackendStrategy,
+    labels: np.ndarray,
+) -> np.ndarray:
+    if labels.ndim < 2:
+        raise ValueError("Distance-to-edge requires at least two dimensions.")
+    distances = np.empty(labels.shape, dtype=np.float64)
+    plane_count = int(np.prod(labels.shape[:-2], dtype=np.int64))
+    source_planes = labels.reshape((plane_count, *labels.shape[-2:]))
+    target_planes = distances.reshape((plane_count, *labels.shape[-2:]))
+    for plane_index in range(plane_count):
+        target_planes[plane_index] = backend.distance_to_edge(source_planes[plane_index])
+    return distances
 
 
 def shape_measurement_backend(

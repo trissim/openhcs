@@ -46,6 +46,80 @@ def test_fill_labeled_holes_honors_size_predicate() -> None:
     assert not filled[4, 4]
 
 
+def test_fill_labeled_holes_handles_stacked_planes_planewise() -> None:
+    labels = np.zeros((2, 6, 6), dtype=np.int32)
+    labels[:, 1:5, 1:5] = 3
+    labels[0, 2, 2] = 0
+    labels[1, 2:4, 2:4] = 0
+
+    filled = MORPHOLOGY.fill_labeled_holes_below_size(labels, 2)
+
+    assert filled[0, 2, 2] == 3
+    assert filled[1, 2, 2] == 0
+    np.testing.assert_array_equal(
+        filled[0],
+        MORPHOLOGY.fill_labeled_holes_below_size(labels[0], 2),
+    )
+    np.testing.assert_array_equal(
+        filled[1],
+        MORPHOLOGY.fill_labeled_holes_below_size(labels[1], 2),
+    )
+
+
+def test_connected_components_handles_stacked_planes_planewise() -> None:
+    mask = np.zeros((2, 5, 5), dtype=bool)
+    mask[0, 1:3, 1:3] = True
+    mask[1, 1:3, 1:3] = True
+    mask[1, 4, 4] = True
+
+    labels, count = MORPHOLOGY.connected_components(mask)
+
+    assert count == 3
+    assert labels[0, 1, 1] == 1
+    assert labels[1, 1, 1] == 2
+    assert labels[1, 4, 4] == 3
+    assert labels[0, 0, 0] == 0
+
+
+def test_smooth_image_for_declumping_handles_stacked_planes_planewise() -> None:
+    image = np.zeros((2, 9, 9), dtype=np.float32)
+    image[0, 4, 4] = 1.0
+    image[1, 2:5, 2:5] = 1.0
+    mask = image > 0
+
+    smoothed = MORPHOLOGY.smooth_image_for_declumping(image, mask, 3.0)
+
+    np.testing.assert_allclose(
+        smoothed[0],
+        MORPHOLOGY.smooth_image_for_declumping(image[0], mask[0], 3.0),
+    )
+    np.testing.assert_allclose(
+        smoothed[1],
+        MORPHOLOGY.smooth_image_for_declumping(image[1], mask[1], 3.0),
+    )
+
+
+def test_declumping_seed_points_handles_stacked_planes_planewise() -> None:
+    image = np.zeros((2, 9, 9), dtype=np.float32)
+    labels = np.zeros((2, 9, 9), dtype=np.int32)
+    labels[:, 1:8, 1:8] = 1
+    image[0, 4, 4] = 10.0
+    image[1, 3, 3] = 10.0
+    image[1, 5, 5] = 9.0
+    footprint = MORPHOLOGY.disk_footprint(1)
+
+    seeds = MORPHOLOGY.declumping_seed_points(image, labels, footprint, 1.0)
+
+    np.testing.assert_array_equal(
+        seeds[0],
+        MORPHOLOGY.declumping_seed_points(image[0], labels[0], footprint, 1.0),
+    )
+    np.testing.assert_array_equal(
+        seeds[1],
+        MORPHOLOGY.declumping_seed_points(image[1], labels[1], footprint, 1.0),
+    )
+
+
 def test_local_maxima_by_label_isolates_adjacent_labels() -> None:
     image = np.array(
         [
@@ -395,6 +469,30 @@ def test_relabel_sequential_compacts_positive_labels() -> None:
     np.testing.assert_array_equal(
         relabeled,
         np.array([[0, 2, 2], [1, 0, 3]], dtype=np.int32),
+    )
+
+
+def test_relabel_sequential_compacts_stacked_labels_globally() -> None:
+    labels = np.array(
+        [
+            [[0, 7, 7], [3, 0, 0]],
+            [[0, 9, 0], [11, 11, 0]],
+        ],
+        dtype=np.int32,
+    )
+
+    relabeled, count = MORPHOLOGY.relabel_sequential(labels)
+
+    assert count == 4
+    np.testing.assert_array_equal(
+        relabeled,
+        np.array(
+            [
+                [[0, 2, 2], [1, 0, 0]],
+                [[0, 3, 0], [4, 4, 0]],
+            ],
+            dtype=np.int32,
+        ),
     )
 
 

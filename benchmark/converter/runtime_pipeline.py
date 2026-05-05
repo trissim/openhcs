@@ -68,6 +68,7 @@ class CPPipeModulePartition:
     modules: tuple[ModuleBlock, ...]
     processing_modules: tuple[ModuleBlock, ...]
     infrastructure_modules: tuple[ModuleBlock, ...]
+    disabled_modules: tuple[ModuleBlock, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -77,6 +78,7 @@ class CPPipePipelineArtifact(ABC):
     cppipe_path: Path
     processing_modules: tuple[ModuleBlock, ...]
     infrastructure_modules: tuple[ModuleBlock, ...]
+    disabled_modules: tuple[ModuleBlock, ...]
     source_schema: PipelineImageSchema
     generated_pipeline: GeneratedPipeline
     provenance: CellProfilerPipelineProvenance
@@ -216,17 +218,23 @@ def partition_cppipe_modules(
     processing_modules = tuple(
         module
         for module in modules
-        if module.name not in infrastructure_module_names
+        if module.enabled and module.name not in infrastructure_module_names
     )
     infrastructure_modules = tuple(
         module
         for module in modules
-        if module.name in infrastructure_module_names
+        if module.enabled and module.name in infrastructure_module_names
+    )
+    disabled_modules = tuple(
+        module
+        for module in modules
+        if not module.enabled
     )
     return CPPipeModulePartition(
         modules=tuple(modules),
         processing_modules=processing_modules,
         infrastructure_modules=infrastructure_modules,
+        disabled_modules=disabled_modules,
     )
 
 
@@ -283,6 +291,7 @@ def generate_pipeline_from_cppipe(
         modules=partition.modules,
         processing_modules=partition.processing_modules,
         infrastructure_modules=partition.infrastructure_modules,
+        disabled_modules=partition.disabled_modules,
         source_schema=generated_pipeline.source_schema,
         generated_pipeline=generated_pipeline,
         provenance=provenance,
@@ -348,6 +357,7 @@ def prepare_generated_pipeline(
         pipeline=pipeline,
         processing_modules=converted.processing_modules,
         infrastructure_modules=converted.infrastructure_modules,
+        disabled_modules=converted.disabled_modules,
         source_schema=converted.source_schema,
         generated_pipeline=converted.generated_pipeline,
         provenance=converted.provenance,
@@ -558,6 +568,12 @@ def _provenance_from_partition(
         {
             module.module_num: CellProfilerModuleRole.INFRASTRUCTURE
             for module in partition.infrastructure_modules
+        }
+    )
+    role_by_module_num.update(
+        {
+            module.module_num: CellProfilerModuleRole.DISABLED
+            for module in partition.disabled_modules
         }
     )
     return CellProfilerPipelineProvenance(

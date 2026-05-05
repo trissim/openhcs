@@ -20,6 +20,7 @@ from benchmark.cellprofiler_comparison import (
     CellProfilerComparisonCase,
     load_comparison_cases,
 )
+from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
 
@@ -490,10 +491,11 @@ def _reference_output_dir(
     if native_reference_root is None:
         return None
     run_slug = _path_slug(f"{case.resolved_dataset_id}_{case.name}")
+    resolved_dataset_path = resolve_visible_source_path(case.dataset_path)
     expected = (
         Path(native_reference_root)
         / run_slug
-        / f"{case.dataset_path.name}_{case.name}_native_cellprofiler"
+        / f"{resolved_dataset_path.name}_{case.name}_native_cellprofiler"
     )
     return expected if native_cellprofiler_reference_is_complete(expected) else None
 

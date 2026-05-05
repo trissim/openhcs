@@ -20,6 +20,7 @@ from nominal_refactor_advisor.record_algebra import product_record
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.adapters.cellprofiler import native_cellprofiler_reference_is_complete
+from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
 from benchmark.runner import CellProfilerCompatibilityResult
@@ -580,9 +581,10 @@ def _native_reference_location(
     native_output_dir = Path(native_reference_root) / _benchmark_path_slug(
         f"{case.resolved_dataset_id}_{case.name}"
     )
+    resolved_dataset_path = resolve_visible_source_path(case.dataset_path)
     expected_reference = (
         native_output_dir
-        / f"{case.dataset_path.name}_{case.name}_native_cellprofiler"
+        / f"{resolved_dataset_path.name}_{case.name}_native_cellprofiler"
     )
     if native_cellprofiler_reference_is_complete(expected_reference):
         return NativeReferenceLocation(

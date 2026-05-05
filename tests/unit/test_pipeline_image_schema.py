@@ -6,6 +6,7 @@ from openhcs.core.pipeline_image_schema import (
     PipelineImageSchemaBuilder,
     SourceArtifactAssignment,
     image_type_artifact_kind,
+    image_type_loads_as_monochrome,
     image_type_participates_in_image_stack,
 )
 from openhcs.core.source_bindings import (
@@ -66,3 +67,21 @@ def test_image_type_roles_define_artifact_kind_and_stack_participation(
 ):
     assert image_type_artifact_kind(image_type) is artifact_kind
     assert image_type_participates_in_image_stack(image_type) is participates_in_stack
+
+
+@pytest.mark.parametrize(
+    ("image_type", "loads_as_monochrome"),
+    (
+        ("Grayscale image", True),
+        ("Binary image", True),
+        ("Binary mask", True),
+        ("Mask", True),
+        ("Color image", False),
+        ("Objects", False),
+    ),
+)
+def test_image_type_roles_define_source_monochrome_loading(
+    image_type: str,
+    loads_as_monochrome: bool,
+):
+    assert image_type_loads_as_monochrome(image_type) is loads_as_monochrome

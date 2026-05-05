@@ -10,6 +10,7 @@ import numpy as np
 
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_values import image_payload_data
+from benchmark.cellprofiler_library.image_geometry import cellprofiler_grayscale_plane
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity import object_intensity_backend
 
@@ -189,15 +190,8 @@ def _measure_object_intensity_measurements(
 
 
 def _single_plane(array: np.ndarray, name: str) -> np.ndarray:
-    """Return a 2-D plane from OpenHCS' singleton stack convention."""
-    if array.ndim == 2:
-        return array
-    if array.ndim == 3 and array.shape[0] == 1:
-        return array[0]
-    raise ValueError(
-        f"MeasureObjectIntensity expects a 2-D {name} plane or singleton stack, "
-        f"got shape {array.shape!r}."
-    )
+    """Return CP's must_be_grayscale plane from OpenHCS payload conventions."""
+    return cellprofiler_grayscale_plane(array, name)
 
 
 def _prepare_measure_object_intensity() -> None:
