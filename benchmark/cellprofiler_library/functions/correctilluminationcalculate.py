@@ -496,29 +496,7 @@ def _blockwise_background_minimum(
     block_size: int,
     morphology: MorphologyBackendStrategy,
 ) -> np.ndarray:
-    from scipy.ndimage import minimum
-
-    labels, indexes = morphology.block_labels(pixel_data.shape[:2], block_size)
-    labels = labels.copy()
-    if mask is not None:
-        labels[~mask] = -1
-
-    valid = labels != -1
-    result = np.zeros(pixel_data.shape, dtype=pixel_data.dtype)
-    if not np.any(valid):
-        return result
-
-    if pixel_data.ndim == 2:
-        minima = morphology.fix_labeled_result(minimum(pixel_data, labels, indexes))
-        result[valid] = minima[labels[valid]]
-        return result
-
-    for channel in range(pixel_data.shape[2]):
-        minima = morphology.fix_labeled_result(
-            minimum(pixel_data[:, :, channel], labels, indexes)
-        )
-        result[valid, channel] = minima[labels[valid]]
-    return result
+    return morphology.blockwise_minimum(pixel_data, mask, block_size)
 
 
 def _preprocess_for_averaging(
@@ -991,6 +969,17 @@ def _prepare_correct_illumination_calculate() -> None:
         smoothing_method=SmoothingMethod.MEDIAN_FILTER,
         filter_size_method=FilterSizeMethod.MANUALLY,
         manual_filter_size=32,
+        rescale_option=RescaleOption.NO,
+    )
+    nonconstant_background = np.zeros((96, 96), dtype=np.float32)
+    nonconstant_background[24:72, 24:72] = 0.25
+    nonconstant_background[40:56, 40:56] = 0.5
+    correct_illumination_calculate.__wrapped__(
+        nonconstant_background,
+        intensity_choice=IntensityChoice.REGULAR,
+        smoothing_method=SmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=FilterSizeMethod.MANUALLY,
+        manual_filter_size=96,
         rescale_option=RescaleOption.NO,
     )
 

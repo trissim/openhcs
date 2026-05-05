@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+import logging
+import os
+import time
 from typing import NamedTuple
 
 import numpy as np
@@ -15,6 +18,20 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 class ConvexHullSmoothingBackendStrategy(
@@ -92,7 +109,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             raise ValueError(
                 "Rank-median illumination mask must match the image shape; got "
                 f"mask {np.asarray(mask).shape!r} for image {image.shape!r}."
-            )
+        )
         footprint = np.asarray(morphology.disk_footprint(radius), dtype=np.bool_)
         row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
         scaled = (image * 65535.0).astype(np.uint16)
@@ -104,26 +121,75 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
         effective_scaled = scaled.copy()
         effective_scaled[~mask_array] = np.uint16(0)
         minimum_value = np.min(effective_scaled)
+        phase_started_at = time.perf_counter()
+        if np.all(effective_scaled == minimum_value):
+            _log_profile(
+                "rank_median_constant_minimum",
+                time.perf_counter() - phase_started_at,
+                radius=radius,
+            )
+            return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
+        _log_profile(
+            "rank_median_constant_minimum",
+            time.perf_counter() - phase_started_at,
+            radius=radius,
+        )
+
+        phase_started_at = time.perf_counter()
         if _rank_median_global_minimum_is_majority_everywhere_numba(
             np.ascontiguousarray(effective_scaled),
             row_offsets_y,
             row_radii_x,
             minimum_value,
         ):
+            _log_profile(
+                "rank_median_minimum_majority",
+                time.perf_counter() - phase_started_at,
+                radius=radius,
+                result=True,
+            )
             return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
+        _log_profile(
+            "rank_median_minimum_majority",
+            time.perf_counter() - phase_started_at,
+            radius=radius,
+            result=False,
+        )
 
+        phase_started_at = time.perf_counter()
         values, inverse = np.unique(effective_scaled, return_inverse=True)
+        _log_profile(
+            "rank_median_unique_codes",
+            time.perf_counter() - phase_started_at,
+            radius=radius,
+            value_count=int(values.size),
+        )
         if _rank_median_skimage_rank_backend_is_preferred(
             RankMedianWorkload(radius=radius, value_count=int(values.size)),
         ):
-            return _rank_median_native_reference(scaled, footprint)
+            phase_started_at = time.perf_counter()
+            result = _rank_median_native_reference(scaled, footprint)
+            _log_profile(
+                "rank_median_native_reference",
+                time.perf_counter() - phase_started_at,
+                radius=radius,
+                value_count=int(values.size),
+            )
+            return result
 
+        phase_started_at = time.perf_counter()
         code_image = inverse.reshape(image.shape).astype(np.int32, copy=False)
         result_codes = _rank_median_codes_2d_sliding_histogram_numba(
             np.ascontiguousarray(code_image),
             row_offsets_y,
             row_radii_x,
             int(values.size),
+        )
+        _log_profile(
+            "rank_median_numba_codes",
+            time.perf_counter() - phase_started_at,
+            radius=radius,
+            value_count=int(values.size),
         )
         result = values[result_codes]
         return result.astype(np.float32) / 65535.0

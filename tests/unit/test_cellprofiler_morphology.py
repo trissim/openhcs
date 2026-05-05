@@ -200,6 +200,35 @@ def test_block_labels_match_cellprofiler_scaled_partitioning() -> None:
         np.testing.assert_array_equal(indexes, expected_indexes)
 
 
+def test_numba_blockwise_minimum_matches_scipy_backend() -> None:
+    scipy_backend = NumpyMorphologyBackendStrategy()
+    numba_backend = NumbaNumpyMorphologyBackendStrategy()
+    image = (np.arange(10 * 12, dtype=np.float32).reshape(10, 12) + 1) / 100
+    image[2:8, 3:9] = image[2:8, 3:9][::-1, ::-1]
+    mask = np.ones(image.shape, dtype=bool)
+    mask[1:4, 2:5] = False
+    mask[8:, 9:] = False
+
+    expected = scipy_backend.blockwise_minimum(image, mask, 3)
+    observed = numba_backend.blockwise_minimum(image, mask, 3)
+
+    np.testing.assert_array_equal(observed, expected)
+
+
+def test_numba_blockwise_minimum_handles_color_planes() -> None:
+    scipy_backend = NumpyMorphologyBackendStrategy()
+    numba_backend = NumbaNumpyMorphologyBackendStrategy()
+    base = np.arange(8 * 9, dtype=np.float32).reshape(8, 9) / 50
+    image = np.stack((base, base[::-1], base[:, ::-1]), axis=2)
+    mask = np.ones(base.shape, dtype=bool)
+    mask[:2, :3] = False
+
+    expected = scipy_backend.blockwise_minimum(image, mask, 4)
+    observed = numba_backend.blockwise_minimum(image, mask, 4)
+
+    np.testing.assert_array_equal(observed, expected)
+
+
 def test_explicit_centrosome_block_labels_match_centrosome_partitioning() -> None:
     from centrosome.cpmorphology import block
 

@@ -139,6 +139,15 @@ class MorphologyBackendStrategy(
         """Partition a 2-D plane into square block labels."""
 
     @abstractmethod
+    def blockwise_minimum(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray | None,
+        block_size: int,
+    ) -> np.ndarray:
+        """Broadcast the masked minimum of each CellProfiler block to its pixels."""
+
+    @abstractmethod
     def fix_labeled_result(self, values: np.ndarray) -> np.ndarray:
         """Normalize scipy.ndimage labeled reductions to an ndarray."""
 
@@ -265,6 +274,19 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         block_size: int,
     ) -> tuple[np.ndarray, np.ndarray]:
         return _scipy_block_labels(image_shape, block_size)
+
+    def blockwise_minimum(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray | None,
+        block_size: int,
+    ) -> np.ndarray:
+        return _scipy_blockwise_minimum(
+            image,
+            mask,
+            block_size,
+            morphology=self,
+        )
 
     def fix_labeled_result(self, values: np.ndarray) -> np.ndarray:
         return _scipy_fix_labeled_result(values)
@@ -542,6 +564,32 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         return _block_labels_2d_numba(
             int(height),
             int(width),
+            max(1, int(block_size)),
+        )
+
+    def blockwise_minimum(
+        self,
+        image: np.ndarray,
+        mask: np.ndarray | None,
+        block_size: int,
+    ) -> np.ndarray:
+        image_array = np.asarray(image)
+        if image_array.ndim not in (2, 3):
+            return super().blockwise_minimum(image_array, mask, block_size)
+        mask_array = (
+            np.empty((0, 0), dtype=np.bool_)
+            if mask is None
+            else np.asarray(mask, dtype=np.bool_)
+        )
+        if mask is not None and mask_array.shape != image_array.shape[:2]:
+            raise ValueError(
+                "Blockwise minimum mask must match image spatial shape; got "
+                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
+            )
+        return _blockwise_minimum_numba(
+            np.ascontiguousarray(image_array),
+            np.ascontiguousarray(mask_array),
+            mask is not None,
             max(1, int(block_size)),
         )
 
@@ -944,6 +992,49 @@ def _scipy_block_labels(
     return labels, np.asarray(indexes, dtype=np.int32)
 
 
+def _scipy_blockwise_minimum(
+    image: np.ndarray,
+    mask: np.ndarray | None,
+    block_size: int,
+    *,
+    morphology: MorphologyBackendStrategy,
+) -> np.ndarray:
+    from scipy.ndimage import minimum
+
+    image_array = np.asarray(image)
+    labels, indexes = morphology.block_labels(image_array.shape[:2], block_size)
+    labels = labels.copy()
+    if mask is not None:
+        mask_array = np.asarray(mask, dtype=bool)
+        if mask_array.shape != image_array.shape[:2]:
+            raise ValueError(
+                "Blockwise minimum mask must match image spatial shape; got "
+                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
+            )
+        labels[~mask_array] = -1
+
+    valid = labels != -1
+    result = np.zeros(image_array.shape, dtype=image_array.dtype)
+    if not np.any(valid):
+        return result
+
+    if image_array.ndim == 2:
+        minima = morphology.fix_labeled_result(minimum(image_array, labels, indexes))
+        result[valid] = minima[labels[valid]]
+        return result
+
+    if image_array.ndim != 3:
+        raise NotImplementedError(
+            "Blockwise minimum currently supports 2-D images or 3-D color images."
+        )
+    for channel in range(image_array.shape[2]):
+        minima = morphology.fix_labeled_result(
+            minimum(image_array[:, :, channel], labels, indexes)
+        )
+        result[valid, channel] = minima[labels[valid]]
+    return result
+
+
 @njit(cache=True)
 def _block_labels_2d_numba(
     height: int,
@@ -968,6 +1059,80 @@ def _block_labels_2d_numba(
                 for x in range(x_start, x_stop):
                     labels[y, x] = label
     return labels, indexes
+
+
+@njit(cache=True)
+def _blockwise_minimum_numba(
+    image: np.ndarray,
+    mask: np.ndarray,
+    has_mask: bool,
+    block_size: int,
+) -> np.ndarray:
+    height = image.shape[0]
+    width = image.shape[1]
+    row_blocks = max(1, int(np.floor(float(height) / float(block_size))))
+    column_blocks = max(1, int(np.floor(float(width) / float(block_size))))
+    label_count = row_blocks * column_blocks
+    output = np.zeros(image.shape, dtype=image.dtype)
+
+    if image.ndim == 2:
+        minima = np.empty(label_count, dtype=image.dtype)
+        has_value = np.zeros(label_count, dtype=np.bool_)
+        for row in range(row_blocks):
+            y_start = int(np.ceil(float(row * height) / float(row_blocks)))
+            y_stop = int(np.ceil(float((row + 1) * height) / float(row_blocks)))
+            for column in range(column_blocks):
+                x_start = int(np.ceil(float(column * width) / float(column_blocks)))
+                x_stop = int(
+                    np.ceil(float((column + 1) * width) / float(column_blocks))
+                )
+                label = row * column_blocks + column
+                for y in range(y_start, y_stop):
+                    for x in range(x_start, x_stop):
+                        if has_mask and not mask[y, x]:
+                            continue
+                        value = image[y, x]
+                        if not has_value[label] or value < minima[label]:
+                            minima[label] = value
+                            has_value[label] = True
+                if has_value[label]:
+                    value = minima[label]
+                    for y in range(y_start, y_stop):
+                        for x in range(x_start, x_stop):
+                            if not has_mask or mask[y, x]:
+                                output[y, x] = value
+        return output
+
+    channel_count = image.shape[2]
+    minima = np.empty((label_count, channel_count), dtype=image.dtype)
+    has_value = np.zeros(label_count, dtype=np.bool_)
+    for row in range(row_blocks):
+        y_start = int(np.ceil(float(row * height) / float(row_blocks)))
+        y_stop = int(np.ceil(float((row + 1) * height) / float(row_blocks)))
+        for column in range(column_blocks):
+            x_start = int(np.ceil(float(column * width) / float(column_blocks)))
+            x_stop = int(np.ceil(float((column + 1) * width) / float(column_blocks)))
+            label = row * column_blocks + column
+            for y in range(y_start, y_stop):
+                for x in range(x_start, x_stop):
+                    if has_mask and not mask[y, x]:
+                        continue
+                    if not has_value[label]:
+                        for channel in range(channel_count):
+                            minima[label, channel] = image[y, x, channel]
+                        has_value[label] = True
+                    else:
+                        for channel in range(channel_count):
+                            value = image[y, x, channel]
+                            if value < minima[label, channel]:
+                                minima[label, channel] = value
+            if has_value[label]:
+                for y in range(y_start, y_stop):
+                    for x in range(x_start, x_stop):
+                        if not has_mask or mask[y, x]:
+                            for channel in range(channel_count):
+                                output[y, x, channel] = minima[label, channel]
+    return output
 
 
 def _scipy_connected_components(
