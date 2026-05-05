@@ -107,6 +107,11 @@ from .straighten_worms_settings import (
     straighten_worms_input_objects_name,
     straighten_worms_output_objects_name,
 )
+from .untangle_worms_settings import (
+    UNTANGLE_WORMS_INPUT_IMAGE_SETTING,
+    UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING,
+    UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING,
+)
 from .unmix_colors_settings import (
     unmix_colors_input_name,
     unmix_colors_output_rows,
@@ -295,7 +300,7 @@ class CellProfilerSymbolTable:
 
 INPUT_IMAGE_SETTING = SettingNameFamily(
     "Select the input image",
-    aliases=("Select an input image", "Input"),
+    aliases=("Select an input image", "Select the input binary image", "Input"),
 )
 INPUT_OBJECTS_SETTING = SettingNameFamily(
     "Select the input objects",
@@ -1667,6 +1672,38 @@ def _straighten_worms(
     )
 
 
+def _untangle_worms(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image = builder.require(
+        _setting(module, UNTANGLE_WORMS_INPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    overlapping_objects = builder.declare(
+        _setting(module, UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING),
+        CellProfilerSymbolKind.OBJECTS,
+        module,
+    )
+    nonoverlapping_objects = builder.declare(
+        _setting(module, UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING),
+        CellProfilerSymbolKind.OBJECTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=[image],
+        outputs=[measurements, overlapping_objects, nonoverlapping_objects],
+    )
+
+
 def _infrastructure_module_contract(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1927,6 +1964,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("MeasureObjectNeighbors",), _measure_object_neighbors),
     (("CalculateMath",), _calculate_math),
     (("RelateObjects",), _relate_objects),
+    (("UntangleWorms",), _untangle_worms),
     (("StraightenWorms",), _straighten_worms),
 )
 

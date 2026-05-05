@@ -3927,6 +3927,36 @@ def test_runtime_measurement_snapshot_derives_required_object_numbers_from_label
     }
 
 
+def test_runtime_measurement_snapshot_projects_identity_only_object_exports(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "reference"
+    reference_root.mkdir()
+    (reference_root / "StraightenedWorms.csv").write_text(
+        "ImageNumber,ObjectNumber\n1,1\n1,2\n1,3\n",
+        encoding="utf-8",
+    )
+    subject = RuntimeMeasurementSubjectKey(
+        MeasurementScope.OBJECT,
+        "StraightenedWorms",
+    )
+    key = RuntimeMeasurementFeatureKey(subject, "object_number")
+
+    snapshot = RuntimeMeasurementSnapshot.from_output_snapshot(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        policy=RuntimeEquivalencePolicy(),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[key].items()
+    } == {
+        ("number", "1.0", 1),
+        ("number", "2.0", 1),
+        ("number", "3.0", 1),
+    }
+
+
 def test_runtime_measurement_snapshot_deduplicates_aggregate_group_tables(
     tmp_path: Path,
 ) -> None:

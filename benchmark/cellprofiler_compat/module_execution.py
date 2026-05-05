@@ -940,14 +940,18 @@ class CellProfilerModuleExecutor:
             rows=len(combined_rows),
         )
 
+        rows_declare_object_name = _measurement_rows_declare_object_name(combined_rows)
         record_started_at = time.perf_counter()
         _record_measurements(
             cellprofiler_runtime,
             measurement_outputs[0].name,
             combined_rows,
             fields=_measurement_record_fields(measurement_outputs[0], combined_rows, func),
-            source_image_name=_single_measurement_image_source_name(
-                measurement_images
+            object_name=None if rows_declare_object_name else _MISSING_MEASUREMENT_OBJECT_NAME,
+            source_image_name=(
+                None
+                if rows_declare_object_name
+                else _single_measurement_image_source_name(measurement_images)
             ),
         )
         _log_module_profile(
@@ -2768,15 +2772,24 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
         rows = _measurement_table_rows(request.value)
+        rows_declare_object_name = _measurement_rows_declare_object_name(rows)
         return CellProfilerMeasurementRecord(
             rows=rows,
-            object_name=_measurement_object_name(
-                request.executor._declared_input_specs()
+            object_name=(
+                None
+                if rows_declare_object_name
+                else _measurement_object_name(
+                    request.executor._declared_input_specs()
+                )
             ),
             source_image_name=(
-                request.source_image_name
-                or _measurement_source_name_for_specs(
-                    request.executor._primary_image_inputs(request.func)
+                None
+                if rows_declare_object_name
+                else (
+                    request.source_image_name
+                    or _measurement_source_name_for_specs(
+                        request.executor._primary_image_inputs(request.func)
+                    )
                 )
             ),
             fields=_measurement_record_fields(request.spec, rows, request.func),
@@ -3388,6 +3401,16 @@ def _measurement_table_rows(rows: Any) -> list[Any]:
     if isinstance(rows, tuple):
         return list(rows)
     return [rows]
+
+
+def _measurement_rows_declare_object_name(rows: Sequence[Any]) -> bool:
+    return any(
+        measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD) not in (
+            None,
+            "",
+        )
+        for row in rows
+    )
 
 
 def _measurement_row_has_object_identity(row: Mapping[str, Any]) -> bool:

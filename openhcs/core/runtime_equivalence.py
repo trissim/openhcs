@@ -1682,6 +1682,10 @@ def _record_static_wide_measurement_table_snapshot(
         if index not in identity_indexes
     )
     if not feature_column_indexes:
+        record_measurement_facts(
+            values_by_feature,
+            _identity_facts_from_table_snapshot(table, policy),
+        )
         return True
     feature_column_indexes = tuple(
         index
@@ -1691,6 +1695,10 @@ def _record_static_wide_measurement_table_snapshot(
         )
     )
     if not feature_column_indexes:
+        record_measurement_facts(
+            values_by_feature,
+            _identity_facts_from_table_snapshot(table, policy),
+        )
         return True
     column_subject_contexts = {
         index: _export_column_subject_context(table, index)
@@ -2335,6 +2343,8 @@ def _measurement_facts_from_table_snapshot(
             policy.measurement_dialect,
         )
     )
+    if not feature_indexes:
+        return _identity_facts_from_table_snapshot(table, policy)
     padding_groups_by_index = _contextual_measurement_padding_groups(
         table.column_context,
         table.header,
@@ -2413,6 +2423,33 @@ def _measurement_facts_from_table_snapshot(
                     policy,
                 )
             )
+    return tuple(facts)
+
+
+def _identity_facts_from_table_snapshot(
+    table: RuntimeTableSnapshot,
+    policy: RuntimeEquivalencePolicy,
+) -> _RuntimeMeasurementFacts:
+    """Project object identity-only exports into semantic object-number facts."""
+    facts: _RuntimeMeasurementFactList = []
+    for row in table.rows:
+        row_mapping = dict(zip(table.header, row, strict=True))
+        row_subject = _measurement_subject_from_export_row(table.path, row_mapping)
+        if row_subject.scope is not MeasurementScope.OBJECT:
+            continue
+        normalized_row_mapping = {
+            _normalize_identifier(field_name): value
+            for field_name, value in row_mapping.items()
+        }
+        object_number = measurement_object_label(normalized_row_mapping)
+        if object_number is None:
+            continue
+        facts.append(
+            (
+                RuntimeMeasurementFeatureKey(row_subject, "object_number"),
+                _cell_signature(str(object_number), policy),
+            )
+        )
     return tuple(facts)
 
 

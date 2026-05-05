@@ -123,6 +123,20 @@ def _module(module_num: int, name: str, settings: dict[str, str]) -> ModuleBlock
     return ModuleBlock(name=name, module_num=module_num, settings=settings)
 
 
+def _module_from_cppipe(
+    module_num: int,
+    name: str,
+    settings: dict[str, str],
+    cppipe_path: Path,
+) -> ModuleBlock:
+    return ModuleBlock(
+        name=name,
+        module_num=module_num,
+        settings=settings,
+        cppipe_path=cppipe_path,
+    )
+
+
 def _generated_pipeline(
     modules: list[ModuleBlock],
     *,
@@ -261,6 +275,52 @@ def test_generator_binds_untangle_worms_overlap_style():
     )
 
     assert "'overlap_style': 'both'" in generated.code
+
+
+def test_generator_binds_untangle_worms_training_xml(tmp_path: Path):
+    images = tmp_path / "images"
+    images.mkdir()
+    (images / "WormModel.xml").write_text(
+        """<?xml version="1.0"?>
+<training-set>
+  <min-area>12.5</min-area>
+  <max-area>30.0</max-area>
+  <cost-threshold>4.5</cost-threshold>
+  <num-control-points>9</num-control-points>
+  <min-path-length>6.5</min-path-length>
+  <max-path-length>70.0</max-path-length>
+  <overlap-weight>2.0</overlap-weight>
+  <leftover-weight>8.0</leftover-weight>
+</training-set>
+""",
+        encoding="utf-8",
+    )
+
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="cellprofiler_generated_runtime_smoke",
+        source_cppipe=tmp_path / "worm.cppipe",
+        modules=[
+            _module_from_cppipe(
+                1,
+                UNTANGLE_WORMS,
+                {
+                    "Select the input binary image": SOURCE_IMAGE,
+                    "Overlap style": "Both",
+                    "Name the output overlapping worm objects": "OverlappingWorms",
+                    "Name the output non-overlapping worm objects": (
+                        "NonOverlappingWorms"
+                    ),
+                    "Training set file name": "WormModel.xml",
+                    "Number of control points": "21",
+                },
+                tmp_path / "worm.cppipe",
+            )
+        ],
+    )
+
+    assert "'min_worm_area': 12.5" in generated.code
+    assert "'max_worm_area': 30.0" in generated.code
+    assert "'num_control_points': 9" in generated.code
 
 
 def _artifact_output_plans(contract) -> dict[str, ArtifactOutputPlan]:

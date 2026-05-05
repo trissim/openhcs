@@ -9,6 +9,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 
+from openhcs.core.source_matching import is_image_path
+
 from benchmark.runtime_env import configure_headless_cpu_benchmark_runtime
 
 
@@ -118,10 +120,16 @@ def _official_cp3_manifest_command(args: argparse.Namespace) -> int:
             args.examples_root,
             cppipe_path.stem,
         )
+        dataset_wrapper_path = args.examples_root / dataset_name
+        dataset_path = _official_cellprofiler3_source_root(dataset_wrapper_path)
+        resolved_cppipe_path = _official_cellprofiler3_cppipe_path(
+            cppipe_path,
+            dataset_wrapper_path,
+        )
         case: dict[str, object] = {
             "name": cppipe_path.stem,
-            "dataset_path": str(args.examples_root / dataset_name),
-            "cppipe_path": str(cppipe_path),
+            "dataset_path": str(dataset_path),
+            "cppipe_path": str(resolved_cppipe_path),
             "dataset_id": dataset_name,
             "value_only": args.value_only,
         }
@@ -138,6 +146,38 @@ def _official_cp3_manifest_command(args: argparse.Namespace) -> int:
     print(str(args.output))
     print(f"cases={len(cases)}")
     return 0
+
+
+def _official_cellprofiler3_cppipe_path(
+    central_cppipe_path: Path,
+    dataset_wrapper_path: Path,
+) -> Path:
+    """Prefer source-colocated pipelines when the example ships one.
+
+    CellProfiler's official examples can carry a central corpus copy and a
+    source-directory copy. The source-directory copy is authoritative when
+    present because it preserves auxiliary relative-path semantics such as
+    training-set XML files.
+    """
+    colocated_cppipe_path = dataset_wrapper_path / central_cppipe_path.name
+    if colocated_cppipe_path.exists():
+        return colocated_cppipe_path
+    return central_cppipe_path
+
+
+def _official_cellprofiler3_source_root(dataset_wrapper_path: Path) -> Path:
+    """Return the acquisition/source payload root for an official example."""
+    images_path = dataset_wrapper_path / "images"
+    if images_path.is_dir() and not _has_image_payloads(dataset_wrapper_path):
+        return images_path
+    return dataset_wrapper_path
+
+
+def _has_image_payloads(path: Path) -> bool:
+    return any(
+        candidate.is_file() and is_image_path(str(candidate))
+        for candidate in path.iterdir()
+    )
 
 
 def _official_cellprofiler3_source_name_for_pipeline(

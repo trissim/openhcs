@@ -2333,6 +2333,58 @@ def test_module_executor_records_multiple_declared_object_outputs() -> None:
     np.testing.assert_array_equal(runtime.objects[1][1], labels_without_overlap)
 
 
+def test_default_measurement_builder_preserves_row_declared_object_scope() -> None:
+    image = np.zeros((4, 5), dtype=np.float32)
+
+    def object_rows(image: np.ndarray) -> tuple[np.ndarray, list[dict[str, object]]]:
+        return image, [
+            {
+                "object_name": "Worms",
+                "object_number": 1,
+                "worm_length": 10.0,
+            }
+        ]
+
+    object_rows.__processing_contract__ = ProcessingContract.PURE_2D
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "WormBinary": _FakeRuntimeImage(
+                image,
+                source_image_name="WormBinary",
+            ),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="UntangleWorms",
+            inputs=(ArtifactSpec("WormBinary", ArtifactKind.IMAGE),),
+            outputs=(
+                ArtifactSpec("UntangleWorms_3_measurements", ArtifactKind.MEASUREMENTS),
+            ),
+        )
+    )
+
+    executor.run(
+        object_rows,
+        image,
+        cellprofiler_runtime=runtime,
+    )
+
+    assert runtime.measurements == [
+        (
+            "UntangleWorms_3_measurements",
+            [
+                {
+                    "object_name": "Worms",
+                    "object_number": 1,
+                    "worm_length": 10.0,
+                }
+            ],
+            {"object_name": None, "source_image_name": None},
+        )
+    ]
+
+
 def test_module_executor_routes_spatial_grid_artifacts() -> None:
     image = np.zeros((20, 20), dtype=np.float32)
     grid = SpatialGrid(

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+from skimage.draw import line
 from scipy.interpolate import interp1d
 from scipy.ndimage import convolve
 
@@ -82,7 +83,7 @@ def sample_control_points(
     cumul_lengths: np.ndarray,
     num_control_points: int,
 ) -> np.ndarray:
-    """Sample exactly N control points at equal path-distance intervals."""
+    """Sample exactly N control points using CellProfiler's path indexing."""
     if num_control_points <= 0:
         raise ValueError("num_control_points must be positive.")
     if len(path_coords) == 0:
@@ -97,11 +98,110 @@ def sample_control_points(
     cumul_lengths = cumul_lengths[unique_mask]
     if len(path_coords) == 1 or cumul_lengths[-1] <= 0:
         return np.repeat(path_coords[:1], num_control_points, axis=0)
+    if num_control_points == 1:
+        return path_coords[:1]
 
-    distances = np.linspace(0.0, float(cumul_lengths[-1]), num_control_points)
-    row_coords = np.interp(distances, cumul_lengths, path_coords[:, 0])
-    column_coords = np.interp(distances, cumul_lengths, path_coords[:, 1])
-    return np.column_stack((row_coords, column_coords))
+    first = float(cumul_lengths[-1]) / float(num_control_points - 1)
+    last = float(cumul_lengths[-1]) - first
+    if num_control_points == 2:
+        return path_coords[[0, -1]]
+
+    path_index_for_distance = interp1d(
+        cumul_lengths,
+        np.linspace(0.0, float(len(path_coords) - 1), len(path_coords)),
+    )
+    fractional_indexes = path_index_for_distance(
+        np.linspace(first, last, num_control_points - 2)
+    )
+    indexes = fractional_indexes.astype(int)
+    fractions = fractional_indexes - indexes
+    sampled = (
+        path_coords[indexes, :] * (1 - fractions[:, np.newaxis])
+        + path_coords[indexes + 1, :] * fractions[:, np.newaxis]
+    )
+    return np.vstack((path_coords[:1, :], sampled, path_coords[-1:, :]))
+
+
+def rebuild_worm_from_control_points_approx(
+    control_coords: np.ndarray,
+    worm_radii: np.ndarray,
+    shape: tuple[int, int],
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rebuild a CP-style worm mask from control points and trained radii."""
+    if len(control_coords) < 2:
+        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+
+    line_rows: list[np.ndarray] = []
+    line_cols: list[np.ndarray] = []
+    line_segment_indexes: list[np.ndarray] = []
+    line_segment_fractions: list[np.ndarray] = []
+    for segment_index, (start, stop) in enumerate(
+        zip(control_coords[:-1], control_coords[1:], strict=True)
+    ):
+        rows, cols = line(
+            int(round(start[0])),
+            int(round(start[1])),
+            int(round(stop[0])),
+            int(round(stop[1])),
+        )
+        if segment_index:
+            rows = rows[1:]
+            cols = cols[1:]
+        if len(rows) == 0:
+            continue
+        denominator = max(len(rows) - 1, 1)
+        fractions = np.arange(len(rows), dtype=float) / float(denominator)
+        line_rows.append(rows)
+        line_cols.append(cols)
+        line_segment_indexes.append(np.full(len(rows), segment_index, dtype=int))
+        line_segment_fractions.append(fractions)
+    if not line_rows:
+        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+
+    rows = np.concatenate(line_rows)
+    cols = np.concatenate(line_cols)
+    segment_indexes = np.concatenate(line_segment_indexes)
+    fractions = np.concatenate(line_segment_fractions)
+    radii = np.asarray(worm_radii, dtype=float)
+    if len(radii) < len(control_coords):
+        radii = np.pad(radii, (0, len(control_coords) - len(radii)), mode="edge")
+    radius = (
+        radii[segment_indexes] * (1.0 - fractions)
+        + radii[segment_indexes + 1] * fractions
+    )
+    max_radius = int(np.max(np.ceil(radius))) if len(radius) else 0
+    if max_radius <= 0:
+        valid = (rows >= 0) & (cols >= 0) & (rows < shape[0]) & (cols < shape[1])
+        return rows[valid], cols[valid]
+
+    delta_rows, delta_cols = np.mgrid[
+        -max_radius : max_radius + 1,
+        -max_radius : max_radius + 1,
+    ]
+    distances = np.sqrt((delta_rows * delta_rows + delta_cols * delta_cols).astype(float))
+    disk = distances <= max_radius
+    delta_rows = delta_rows[disk]
+    delta_cols = delta_cols[disk]
+    distances = distances[disk]
+
+    expanded_rows = (rows[:, np.newaxis] + delta_rows[np.newaxis, :]).ravel()
+    expanded_cols = (cols[:, np.newaxis] + delta_cols[np.newaxis, :]).ravel()
+    keep = (radius[:, np.newaxis] >= distances[np.newaxis, :]).ravel()
+    expanded_rows = expanded_rows[keep]
+    expanded_cols = expanded_cols[keep]
+    valid = (
+        (expanded_rows >= 0)
+        & (expanded_cols >= 0)
+        & (expanded_rows < shape[0])
+        & (expanded_cols < shape[1])
+    )
+    coords = np.unique(
+        np.column_stack((expanded_rows[valid], expanded_cols[valid])),
+        axis=0,
+    )
+    if len(coords) == 0:
+        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+    return coords[:, 0], coords[:, 1]
 
 
 def control_points_for_label_image(

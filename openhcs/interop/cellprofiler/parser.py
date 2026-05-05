@@ -54,6 +54,7 @@ class ModuleBlock:
     settings: dict[str, str] = field(default_factory=dict)
     setting_records: list[ModuleSetting] = field(default_factory=list)
     metadata: dict[str, CellProfilerMetadataValue] = field(default_factory=dict)
+    cppipe_path: Path | None = None
     
     @property
     def library_module_name(self) -> str:
@@ -200,7 +201,8 @@ class CPPipeParser:
                     name=module_name,
                     module_num=int(metadata.get('module_num', 0)),
                     enabled=metadata.get('enabled', 'True') == 'True',
-                    metadata=metadata
+                    metadata=metadata,
+                    cppipe_path=path,
                 )
                 continue
 
