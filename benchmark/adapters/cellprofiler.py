@@ -151,6 +151,7 @@ class CellProfilerAdapter(ToolAdapter):
                 with phase_timing.phase(BenchmarkPhase.EXECUTE_NATIVE_CP):
                     result = subprocess.run(
                         command,
+                        cwd=native_output_root,
                         env=subprocess_env,
                         capture_output=True,
                         text=True,

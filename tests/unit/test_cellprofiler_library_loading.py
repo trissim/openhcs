@@ -1908,6 +1908,26 @@ def test_measure_object_neighbors_returns_retained_count_image():
     assert [measurement.number_of_neighbors for measurement in measurements] == [1, 1]
 
 
+def test_medianfilter_matches_scipy_reflect_default():
+    from scipy.ndimage import median_filter as scipy_median_filter
+
+    from benchmark.cellprofiler_library.functions.medianfilter import medianfilter
+
+    image = np.arange(35, dtype=np.float32).reshape(5, 7)
+    image[1, 2] = 100.0
+    image[3, 5] = -20.0
+
+    observed = medianfilter(
+        image,
+        window_size=3,
+        mode="reflect",
+        dtype_config=DtypeConfig(),
+    )
+    expected = scipy_median_filter(image, size=3, mode="reflect").astype(image.dtype)
+
+    np.testing.assert_array_equal(observed, expected)
+
+
 def test_image_math_coerces_cellprofiler_operation_strings():
     image = np.array([[0.0, 0.25], [0.5, 1.0]], dtype=np.float32)
 
