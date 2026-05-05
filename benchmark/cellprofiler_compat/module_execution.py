@@ -2565,7 +2565,7 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             feature_kwarg="operand1_feature",
             object_kwarg="operand1_object_name",
             object_inputs=request.object_inputs,
-            labels_for=request.labels_for,
+            labels_for=request.label_payload_for,
         )
         _log_module_profile(
             "calculate_math_operand_bind",
@@ -2579,7 +2579,7 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             feature_kwarg="operand2_feature",
             object_kwarg="operand2_object_name",
             object_inputs=request.object_inputs,
-            labels_for=request.labels_for,
+            labels_for=request.label_payload_for,
         )
         _log_module_profile(
             "calculate_math_operand_bind",
