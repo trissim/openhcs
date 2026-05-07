@@ -505,7 +505,7 @@ def expand_or_shrink_objects(
         iterations=iterations,
         fill_holes=fill_holes,
     )
-    object_ids = dense_object_label_id_domain(labels)
+    object_ids = dense_object_label_id_domain(result_labels)
 
     return image, object_label_payload_with_dense_labels(
         labels,

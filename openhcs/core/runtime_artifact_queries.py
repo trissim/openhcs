@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from functools import lru_cache
 import re
@@ -334,20 +334,26 @@ def runtime_spatial_grid(
     return SpatialGrid.from_runtime_value(record.value)
 
 
+def iter_measurement_rows(
+    measurement_tables: Iterable[MeasurementTable],
+) -> Iterator[object]:
+    """Yield row payloads from measurement tables without materializing them."""
+    for table in measurement_tables:
+        table_rows = table.rows
+        if isinstance(table_rows, ColumnarRows):
+            yield from _columnar_measurement_rows(table_rows)
+            continue
+        if isinstance(table_rows, list | tuple):
+            yield from table_rows
+            continue
+        yield table_rows
+
+
 def measurement_rows(
     measurement_tables: tuple[MeasurementTable, ...],
 ) -> tuple[object, ...]:
     """Flatten row payloads from measurement tables."""
-    rows: list[object] = []
-    for table in measurement_tables:
-        table_rows = table.rows
-        if isinstance(table_rows, ColumnarRows):
-            rows.extend(_columnar_measurement_rows(table_rows))
-            continue
-        if isinstance(table_rows, list | tuple):
-            rows.extend(table_rows)
-            continue
-        rows.append(table_rows)
+    return tuple(iter_measurement_rows(measurement_tables))
     return tuple(rows)
 
 

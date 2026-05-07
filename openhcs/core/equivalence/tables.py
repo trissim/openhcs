@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import math
+import pickle
 from collections import Counter
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from nominal_refactor_advisor.collection_algebra import sorted_tuple
 
@@ -23,8 +26,8 @@ from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_OBJECT_NAME_FIELD,
     MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     MEASUREMENT_VALUE_FIELDS,
+    iter_measurement_rows,
     measurement_row_mapping,
-    measurement_rows,
 )
 from openhcs.core.runtime_values import MeasurementTable
 
@@ -52,6 +55,89 @@ CSV_HEADER_CONTEXT_STOPWORDS = frozenset(
 RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS = frozenset(
     {"image_id", "image_number", "slice_index"}
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementRowFingerprint:
+    """Exact canonical fingerprint for measurement rows without retaining rows."""
+
+    row_count: int
+    digest: bytes
+
+
+@dataclass(slots=True)
+class RuntimeMeasurementRowFingerprintBuilder:
+    """Incrementally fingerprint canonical row payloads."""
+
+    digest_size: int = 32
+    _hash: Any = field(init=False, repr=False)
+    _row_count: int = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._hash = hashlib.blake2b(digest_size=self.digest_size)
+        self._row_count = 0
+
+    def add_row_mapping(self, row_mapping: Mapping[str, object]) -> None:
+        row_payload = tuple(
+            (
+                normalize_runtime_identifier(str(field_name)),
+                measurement_table_cell_payload(value),
+            )
+            for field_name, value in row_mapping.items()
+        )
+        self._hash.update(
+            pickle.dumps(row_payload, protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        self._row_count += 1
+
+    def finish(self) -> RuntimeMeasurementRowFingerprint:
+        return RuntimeMeasurementRowFingerprint(
+            row_count=self._row_count,
+            digest=self._hash.digest(),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementTableIdentity:
+    """Compact exact identity for runtime measurement table dedupe."""
+
+    name: str | None
+    subject: str
+    object_name: str | None
+    object_id_field: str | None
+    source_image_name: str | None
+    fields: tuple[tuple[str, object, bool], ...]
+    rows: RuntimeMeasurementRowFingerprint
+
+    @classmethod
+    def from_table_rows(
+        cls,
+        table: MeasurementTable,
+        rows: Iterable[object],
+    ) -> "RuntimeMeasurementTableIdentity":
+        builder = RuntimeMeasurementRowFingerprintBuilder()
+        for row in rows:
+            builder.add_row_mapping(measurement_row_mapping(row))
+        return cls.from_table_row_fingerprint(table, builder.finish())
+
+    @classmethod
+    def from_table_row_fingerprint(
+        cls,
+        table: MeasurementTable,
+        rows: RuntimeMeasurementRowFingerprint,
+    ) -> "RuntimeMeasurementTableIdentity":
+        return cls(
+            table.name,
+            repr(table.subject),
+            table.object_name,
+            table.object_id_field,
+            table.source_image_name,
+            tuple(
+                (field.name, field.dtype, field.required)
+                for field in table.fields
+            ),
+            rows,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +220,7 @@ class RuntimeTableSnapshot:
 
 def aggregate_measurement_table_key(
     table: MeasurementTable,
-) -> tuple[object, ...] | None:
+) -> RuntimeMeasurementTableIdentity | None:
     """Return a semantic key for duplicate full-axis measurement tables.
 
     Grouped execution can materialize an already-aggregated measurement table
@@ -142,11 +228,6 @@ def aggregate_measurement_table_key(
     measurement scope, so exact duplicate full-axis tables should only
     contribute once. Group-local tables remain count-preserving.
     """
-    rows = tuple(measurement_rows((table,)))
-    if not rows:
-        return None
-
-    row_mappings = tuple(measurement_row_mapping(row) for row in rows)
     normalized_field_cache: dict[str, str] = {}
 
     def normalized_field(field_name: str) -> str:
@@ -157,7 +238,10 @@ def aggregate_measurement_table_key(
         return cached
 
     row_identity_values: set[tuple[str, object]] = set()
-    for row_mapping in row_mappings:
+    row_fingerprint = RuntimeMeasurementRowFingerprintBuilder()
+    for row in iter_measurement_rows((table,)):
+        row_mapping = measurement_row_mapping(row)
+        row_fingerprint.add_row_mapping(row_mapping)
         for field_name, value in row_mapping.items():
             normalized_field_name = normalized_field(str(field_name))
             if normalized_field_name in RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS:
@@ -167,77 +251,25 @@ def aggregate_measurement_table_key(
                         measurement_table_cell_payload(value),
                     )
                 )
-        if len(row_identity_values) > 1:
-            break
+    fingerprint = row_fingerprint.finish()
+    if fingerprint.row_count == 0:
+        return None
 
     if len(row_identity_values) <= 1:
         return None
-
-    row_payloads: list[tuple[tuple[str, object], ...]] = []
-    for row_mapping in row_mappings:
-        row_payloads.append(
-            tuple(
-                (
-                    normalized_field(str(field_name)),
-                    measurement_table_cell_payload(value),
-                )
-                for field_name, value in row_mapping.items()
-            )
-        )
-
-    field_payloads = tuple(
-        (field.name, field.dtype, field.required)
-        for field in table.fields
-    )
-    return (
-        table.name,
-        repr(table.subject),
-        table.object_name,
-        table.object_id_field,
-        table.source_image_name,
-        field_payloads,
-        tuple(row_payloads),
+    return RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
+        table,
+        fingerprint,
     )
 
 
 def exact_measurement_table_key(
     table: MeasurementTable,
-) -> tuple[object, ...]:
+) -> RuntimeMeasurementTableIdentity:
     """Return an exact semantic key for duplicate runtime measurement tables."""
-    row_payloads: list[tuple[tuple[str, object], ...]] = []
-    normalized_field_cache: dict[str, str] = {}
-
-    def normalized_field(field_name: str) -> str:
-        cached = normalized_field_cache.get(field_name)
-        if cached is None:
-            cached = normalize_runtime_identifier(field_name)
-            normalized_field_cache[field_name] = cached
-        return cached
-
-    for row in measurement_rows((table,)):
-        row_mapping = measurement_row_mapping(row)
-        row_payloads.append(
-            tuple(
-                (
-                    normalized_field(str(field_name)),
-                    measurement_table_cell_payload(value),
-                )
-                for field_name, value in row_mapping.items()
-            )
-        )
-
-    field_payloads = tuple(
-        (field.name, field.dtype, field.required)
-        for field in table.fields
-    )
-    return (
-        table.name,
-        repr(table.subject),
-        table.object_name,
-        table.object_id_field,
-        table.source_image_name,
-        field_payloads,
-        tuple(row_payloads),
+    return RuntimeMeasurementTableIdentity.from_table_rows(
+        table,
+        iter_measurement_rows((table,)),
     )
 
 

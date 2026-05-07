@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import pytest
+from pathlib import Path
 
 from benchmark.adapters.openhcs import (
     OPENHCS_AXIS_FILTER_PARAM,
     OPENHCS_MAX_AXIS_COUNT_PARAM,
     OpenHCSAxisSelection,
+    OpenHCSRunRequest,
+    RuntimeExecutionCacheWritePolicy,
 )
 
 
@@ -43,3 +46,43 @@ def test_openhcs_axis_selection_treats_single_string_as_one_axis() -> None:
     )
 
     assert selection.resolve(("B01", "B02")) == ("B02",)
+
+
+def test_runtime_execution_cache_policy_disables_discarded_candidate_runs() -> None:
+    request = OpenHCSRunRequest(
+        dataset_path=Path("/tmp/dataset"),
+        pipeline_name="pipeline",
+        pipeline_params={
+            "runtime_execution_cache_manifest": "/tmp/out/cache.json",
+            "runtime_execution_cache_key": {"case": "x"},
+            "cache_candidate_measurement_snapshot": False,
+        },
+        metrics=(),
+        output_dir=Path("/tmp/out"),
+    )
+
+    policy = RuntimeExecutionCacheWritePolicy.for_request(request)
+
+    assert not policy.write_manifest
+    assert not policy.include_image_records
+    assert not policy.include_non_image_records
+
+
+def test_runtime_execution_cache_policy_uses_snapshots_for_value_only_runs() -> None:
+    request = OpenHCSRunRequest(
+        dataset_path=Path("/tmp/dataset"),
+        pipeline_name="pipeline",
+        pipeline_params={
+            "runtime_execution_cache_manifest": "/tmp/out/cache.json",
+            "runtime_execution_cache_key": {"case": "x"},
+            "compare_image_outputs": False,
+        },
+        metrics=(),
+        output_dir=Path("/tmp/out"),
+    )
+
+    policy = RuntimeExecutionCacheWritePolicy.for_request(request)
+
+    assert not policy.write_manifest
+    assert not policy.include_image_records
+    assert not policy.include_non_image_records

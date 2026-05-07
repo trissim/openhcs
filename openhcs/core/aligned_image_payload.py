@@ -44,6 +44,7 @@ class ImagePayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
     """Source-domain adapter for image payload data and masks."""
 
     value_type = (ImageMetadataPayload, MaskedImagePayload)
+    value_type_label = "image_payload"
     value: Any
     source_domain: SourceSpatialDomain
 
@@ -100,11 +101,38 @@ class ImagePayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
         return tuple(int(value) for value in array.shape[-2:])
 
 
+class NumPyImagePayloadSourceSpatialDomainAdapter(ImagePayloadSourceSpatialDomainAdapter):
+    """Source-domain adapter for raw NumPy image arrays."""
+
+    value_type = np.ndarray
+    value_type_label = "numpy_image"
+
+    @classmethod
+    def for_value(
+        cls,
+        value: Any,
+        *,
+        source_shape_override_yx: tuple[int, int] | None = None,
+    ) -> "NumPyImagePayloadSourceSpatialDomainAdapter | None":
+        if not isinstance(value, np.ndarray):
+            return None
+        return cls(
+            value,
+            SourceSpatialDomain(
+                origin_yx=(0, 0),
+                source_shape_yx=source_shape_override_yx,
+                fill_value=0,
+                value_name="NumPy image payload",
+            ),
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectLabelPayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
     """Source-domain adapter for object-label payload values."""
 
     value_type = (ObjectLabelPayload, ObjectLabelSet)
+    value_type_label = "object_label_payload"
     value: ObjectLabelPayload | ObjectLabelSet
     source_shape_override_yx: tuple[int, int] | None = None
 
@@ -378,8 +406,8 @@ class ImageBundleSourceDomainAligner:
     def payload_adapters(self) -> tuple[SourceSpatialDomainAdapter, ...]:
         adapters: list[SourceSpatialDomainAdapter] = []
         for payload in self.image_payloads:
-            adapter = ImagePayloadSourceSpatialDomainAdapter.for_value(payload)
-            if adapter is None:
+            adapter = SourceSpatialDomainAdapter.for_value(payload)
+            if not isinstance(adapter, ImagePayloadSourceSpatialDomainAdapter):
                 raise TypeError(
                     "Image bundle alignment requires image payload adapters."
                 )

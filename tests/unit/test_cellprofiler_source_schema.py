@@ -357,8 +357,8 @@ def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
     dapi = schema.assignment_for_alias("DAPI")
     assert dapi is not None
     assert dapi.origin is SourceBindingOrigin.STEP_INPUT
-    assert dapi.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "1"),
+    assert dapi.selector.metadata == (
+        MetadataSelector("channel", "1"),
     )
 
     illumination = schema.source_artifact_for_alias("DAPIillum")
@@ -378,11 +378,7 @@ def test_compile_image_schema_lowers_names_and_types_to_typed_selectors():
     assert schema.grouping is not None
     assert schema.grouping.metadata_fields == ("folder", "well")
     assert schema.metadata_rules[0].source is MetadataSource.FILE_NAME
-    assert schema.metadata_rules[0].filters[0].subject is SourceFilterSubject.FILE
-    assert (
-        schema.metadata_rules[0].filters[0].match_type
-        is SourceFilterMatchType.CONTAINS
-    )
+    assert schema.metadata_rules[0].filters == ()
 
 
 def test_compile_image_schema_lowers_object_loads_to_source_artifacts():
@@ -406,8 +402,8 @@ def test_compile_image_schema_lowers_object_loads_to_source_artifacts():
 
     assert source_artifact is not None
     assert source_artifact.kind is ArtifactKind.OBJECT_LABELS
-    assert source_artifact.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "3"),
+    assert source_artifact.selector.metadata == (
+        MetadataSelector("channel", "3"),
     )
     assert schema.assignment_for_alias("IgnoredImageAlias") is None
 
@@ -487,8 +483,8 @@ def test_compile_image_schema_treats_binary_masks_as_stack_images():
 
     assert assignment is not None
     assert assignment.origin is SourceBindingOrigin.STEP_INPUT
-    assert assignment.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "mask"),
+    assert assignment.selector.metadata == (
+        MetadataSelector("channel", "mask"),
     )
 
 
@@ -700,8 +696,8 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     bindings = contract.source_bindings.groups[0].bindings
 
     assert bindings[0].alias == "DAPI"
-    assert bindings[0].selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "1"),
+    assert bindings[0].selector.metadata == (
+        MetadataSelector("channel", "1"),
     )
     assert bindings[1].alias == "DAPIillum"
     assert bindings[1].origin is SourceBindingOrigin.PIPELINE_START
@@ -717,7 +713,7 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
         skipped_modules=setup_modules,
     )
 
-    assert "ComponentSelector(AllComponents.CHANNEL, '1')" in generated.code
+    assert "MetadataSelector('channel', '1')" in generated.code
     assert "MetadataSelector('illum', 'DAPI')" in generated.code
     assert "MetadataExtractionRule(" in generated.code
     assert "SourceBindingMatchPlan(" in generated.code
@@ -885,11 +881,11 @@ def test_compile_image_schema_preserves_real_names_and_types_block_order():
     actin = schema.assignment_for_alias("Actin")
     assert dna is not None
     assert actin is not None
-    assert dna.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "1"),
+    assert dna.selector.metadata == (
+        MetadataSelector("channel", "1"),
     )
-    assert actin.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "2"),
+    assert actin.selector.metadata == (
+        MetadataSelector("channel", "2"),
     )
     assert schema.match_plan is not None
     assert schema.match_plan.dimensions[0].field_for_alias("DNA") == "well"
@@ -1059,11 +1055,11 @@ def test_compile_image_schema_for_bbbc021_analysis_preserves_real_matching_plan(
     assert tubulin is not None
     assert actin_illum is not None
     assert dapi.origin is SourceBindingOrigin.STEP_INPUT
-    assert dapi.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "1"),
+    assert dapi.selector.metadata == (
+        MetadataSelector("channel", "1"),
     )
-    assert tubulin.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "4"),
+    assert tubulin.selector.metadata == (
+        MetadataSelector("channel", "4"),
     )
     assert actin_illum.origin is SourceBindingOrigin.PIPELINE_START
     assert actin_illum.selector.metadata == (
@@ -1114,11 +1110,11 @@ def test_compile_image_schema_for_bbbc021_illumination_pipeline():
     assert dapi is not None
     assert tubulin is not None
     assert dapi.origin is SourceBindingOrigin.STEP_INPUT
-    assert dapi.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "1"),
+    assert dapi.selector.metadata == (
+        MetadataSelector("channel", "1"),
     )
-    assert tubulin.selector.components == (
-        ComponentSelector(AllComponents.CHANNEL, "4"),
+    assert tubulin.selector.metadata == (
+        MetadataSelector("channel", "4"),
     )
 
     assert schema.grouping is not None

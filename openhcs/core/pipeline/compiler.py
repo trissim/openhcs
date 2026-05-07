@@ -72,6 +72,7 @@ from openhcs.constants.constants import (
     WRITE_BACKEND,
     Backend,
 )
+from openhcs.core.callable_contract import RUNTIME_IMAGE_EXECUTION_MODE_ATTR
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.config import (
     MaterializationBackend,
@@ -163,7 +164,7 @@ _FUNCTION_REFERENCE_PRESERVED_ATTRS = (
     "__artifact_outputs__",
     "__runtime_adapter__",
     "__openhcs_prepare__",
-    "__openhcs_runtime_image_execution_mode__",
+    RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
     "input_memory_type",
     "output_memory_type",
 )

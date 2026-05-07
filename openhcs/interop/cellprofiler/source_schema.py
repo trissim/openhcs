@@ -7,7 +7,6 @@ import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from types import MappingProxyType
 from typing import ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
@@ -27,7 +26,6 @@ from openhcs.core.pipeline_image_schema import (
     image_type_participates_in_image_stack,
 )
 from openhcs.core.source_bindings import (
-    ComponentSelector,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -64,38 +62,143 @@ _SOURCE_FILTER_SUBJECT_PATTERN = re.compile(
     r"\((file|directory|extension) does",
     re.IGNORECASE,
 )
-_FILTER_SUBJECTS_BY_LITERAL = MappingProxyType(
-    {
-        "file": SourceFilterSubject.FILE,
-        "directory": SourceFilterSubject.DIRECTORY,
-        "extension": SourceFilterSubject.EXTENSION,
-    }
-)
-_FILTER_MATCH_TYPES_BY_LITERAL = MappingProxyType(
-    {
-        ("contain", False): SourceFilterMatchType.CONTAINS,
-        ("contain", True): SourceFilterMatchType.DOES_NOT_CONTAIN,
-        ("containregexp", False): SourceFilterMatchType.CONTAINS_REGEX,
-        ("containregexp", True): SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
-        ("eq", False): SourceFilterMatchType.EQUALS,
-        ("eq", True): SourceFilterMatchType.DOES_NOT_EQUAL,
-        ("startwith", False): SourceFilterMatchType.STARTS_WITH,
-        ("startwith", True): SourceFilterMatchType.DOES_NOT_START_WITH,
-        ("endwith", False): SourceFilterMatchType.ENDS_WITH,
-        ("endwith", True): SourceFilterMatchType.DOES_NOT_END_WITH,
-        ("isimage", False): SourceFilterMatchType.IS_IMAGE,
-        ("istif", False): SourceFilterMatchType.IS_TIF,
-    }
-)
-_SOURCE_BINDING_MATCH_METHODS_BY_LITERAL = MappingProxyType(
-    {
-        "metadata": SourceBindingMatchMethod.METADATA,
-        "order": SourceBindingMatchMethod.ORDER,
-    }
-)
 _LOAD_IMAGES_MATCH_TEXT_SETTING = (
     "Type the text that these images have in common (case-sensitive)"
 )
+
+
+class SourceSchemaLiteralResolver(ABC, metaclass=AutoRegisterMeta):
+    """Nominal parser for one CellProfiler setup-schema literal family."""
+
+    __registry_key__ = "literal"
+    __skip_if_no_key__ = True
+    literal: ClassVar[str | None] = None
+
+    @classmethod
+    def for_literal(cls, value: str) -> "SourceSchemaLiteralResolver":
+        normalized = cls.normalize(value)
+        resolver_type = cls.__registry__.get(normalized)
+        if resolver_type is None:
+            raise ValueError(cls.unsupported_message(value))
+        return resolver_type()
+
+    @classmethod
+    def normalize(cls, value: str) -> str:
+        return value.strip().lower()
+
+    @classmethod
+    @abstractmethod
+    def unsupported_message(cls, value: str) -> str:
+        """Return the error emitted for an unsupported literal."""
+
+
+class SourceFilterSubjectLiteral(SourceSchemaLiteralResolver):
+    """Registered CellProfiler source-filter subject literal."""
+
+    __registry__: ClassVar[dict[str, type["SourceFilterSubjectLiteral"]]] = {}
+    subject: ClassVar[SourceFilterSubject]
+
+    @classmethod
+    def unsupported_message(cls, value: str) -> str:
+        return f"Unsupported source filter subject: {value!r}."
+
+
+class FileFilterSubjectLiteral(SourceFilterSubjectLiteral):
+    literal = "file"
+    subject = SourceFilterSubject.FILE
+
+
+class DirectoryFilterSubjectLiteral(SourceFilterSubjectLiteral):
+    literal = "directory"
+    subject = SourceFilterSubject.DIRECTORY
+
+
+class ExtensionFilterSubjectLiteral(SourceFilterSubjectLiteral):
+    literal = "extension"
+    subject = SourceFilterSubject.EXTENSION
+
+
+class SourceFilterOperatorLiteral(SourceSchemaLiteralResolver):
+    """Registered CellProfiler source-filter operator literal."""
+
+    __registry__: ClassVar[dict[str, type["SourceFilterOperatorLiteral"]]] = {}
+    match_type: ClassVar[SourceFilterMatchType]
+    negated_match_type: ClassVar[SourceFilterMatchType | None] = None
+
+    @classmethod
+    def unsupported_message(cls, value: str) -> str:
+        return f"Unsupported source filter operator: {value!r}."
+
+    def match_type_for_negation(self, negated: bool) -> SourceFilterMatchType:
+        if negated:
+            if self.negated_match_type is None:
+                raise ValueError(
+                    "Unsupported source filter operator/negation pair: "
+                    f"{self.literal!r}, negated=True."
+                )
+            return self.negated_match_type
+        return self.match_type
+
+
+class ContainsFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "contain"
+    match_type = SourceFilterMatchType.CONTAINS
+    negated_match_type = SourceFilterMatchType.DOES_NOT_CONTAIN
+
+
+class ContainsRegexFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "containregexp"
+    match_type = SourceFilterMatchType.CONTAINS_REGEX
+    negated_match_type = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX
+
+
+class EqualsFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "eq"
+    match_type = SourceFilterMatchType.EQUALS
+    negated_match_type = SourceFilterMatchType.DOES_NOT_EQUAL
+
+
+class StartsWithFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "startwith"
+    match_type = SourceFilterMatchType.STARTS_WITH
+    negated_match_type = SourceFilterMatchType.DOES_NOT_START_WITH
+
+
+class EndsWithFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "endwith"
+    match_type = SourceFilterMatchType.ENDS_WITH
+    negated_match_type = SourceFilterMatchType.DOES_NOT_END_WITH
+
+
+class IsImageFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "isimage"
+    match_type = SourceFilterMatchType.IS_IMAGE
+
+
+class IsTifFilterOperatorLiteral(SourceFilterOperatorLiteral):
+    literal = "istif"
+    match_type = SourceFilterMatchType.IS_TIF
+
+
+class SourceBindingMatchMethodLiteral(SourceSchemaLiteralResolver):
+    """Registered NamesAndTypes image-set matching method literal."""
+
+    __registry__: ClassVar[dict[str, type["SourceBindingMatchMethodLiteral"]]] = {}
+    method: ClassVar[SourceBindingMatchMethod]
+
+    @classmethod
+    def unsupported_message(cls, value: str) -> str:
+        return f"Unsupported NamesAndTypes image set matching method: {value!r}."
+
+
+class MetadataMatchMethodLiteral(SourceBindingMatchMethodLiteral):
+    literal = "metadata"
+    method = SourceBindingMatchMethod.METADATA
+
+
+class OrderMatchMethodLiteral(SourceBindingMatchMethodLiteral):
+    literal = "order"
+    method = SourceBindingMatchMethod.ORDER
 _LOAD_IMAGES_ALIAS_SETTING = (
     "What do you want to call this image in CellProfiler?"
 )
@@ -865,11 +968,13 @@ def _filter_clause_from_match(match: re.Match[str]) -> SourceFilterClause | None
 
 
 def _filter_subject(value: str) -> SourceFilterSubject:
-    normalized = value.strip().lower()
-    try:
-        return _FILTER_SUBJECTS_BY_LITERAL[normalized]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported source filter subject: {value!r}.") from exc
+    resolver = SourceFilterSubjectLiteral.for_literal(value)
+    if not isinstance(resolver, SourceFilterSubjectLiteral):
+        raise TypeError(
+            "Expected source-filter subject resolver, got "
+            f"{type(resolver).__name__}."
+        )
+    return resolver.subject
 
 
 def _filter_match_type(
@@ -877,36 +982,34 @@ def _filter_match_type(
     operator: str,
     negated: bool,
 ) -> SourceFilterMatchType:
-    normalized_operator = operator.strip().lower()
-    try:
-        return _FILTER_MATCH_TYPES_BY_LITERAL[(normalized_operator, negated)]
-    except KeyError as exc:
-        raise ValueError(
-            "Unsupported source filter operator/negation pair: "
-            f"{operator!r}, negated={negated}."
-        ) from exc
+    resolver = SourceFilterOperatorLiteral.for_literal(operator)
+    if not isinstance(resolver, SourceFilterOperatorLiteral):
+        raise TypeError(
+            "Expected source-filter operator resolver, got "
+            f"{type(resolver).__name__}."
+        )
+    return resolver.match_type_for_negation(negated)
 
 
 def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:
-    component_selectors: list[ComponentSelector] = []
     metadata_selectors: list[MetadataSelector] = []
     for match in _METADATA_MATCH_PATTERN.finditer(rule_criteria):
         field = match.group("field")
         value = match.group("value")
-        component = source_metadata_component(field)
-        if component is not None:
-            component_selectors.append(ComponentSelector(component, value))
-        else:
-            metadata_selectors.append(MetadataSelector(field, value))
+        metadata_selectors.append(MetadataSelector(field, value))
     return SourceSelector(
-        components=tuple(component_selectors),
         metadata=tuple(metadata_selectors),
         filters=_filter_clauses_from_criteria(rule_criteria),
     )
 
 
 def _origin_for_selector(selector: SourceSelector) -> SourceBindingOrigin:
-    if selector.metadata or selector.filters:
+    if selector.filters:
+        return SourceBindingOrigin.PIPELINE_START
+    if selector.metadata and not all(
+        source_metadata_component(metadata.field) is not None
+        for metadata in selector.metadata
+    ):
         return SourceBindingOrigin.PIPELINE_START
     return SourceBindingOrigin.STEP_INPUT
 
@@ -964,13 +1067,13 @@ def _match_plan_from_names_and_types(
 
 
 def _source_binding_match_method(value: str) -> SourceBindingMatchMethod:
-    normalized = value.strip().lower()
-    try:
-        return _SOURCE_BINDING_MATCH_METHODS_BY_LITERAL[normalized]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unsupported NamesAndTypes image set matching method: {value!r}."
-        ) from exc
+    resolver = SourceBindingMatchMethodLiteral.for_literal(value)
+    if not isinstance(resolver, SourceBindingMatchMethodLiteral):
+        raise TypeError(
+            "Expected source-binding match-method resolver, got "
+            f"{type(resolver).__name__}."
+        )
+    return resolver.method
 
 
 def _match_dimensions(

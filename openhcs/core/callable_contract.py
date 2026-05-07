@@ -159,6 +159,10 @@ def attach_callable_contract_metadata(
             DECLARED_PROCESSING_CONTRACT_ATTR,
             declared_processing_contract,
         )
+        _attach_nominal_processing_contract_if_supported(
+            func,
+            declared_processing_contract,
+        )
     if raw_processing_function is not None:
         if not callable(raw_processing_function):
             raise TypeError(
@@ -192,6 +196,21 @@ def attach_callable_contract_metadata(
             RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
             runtime_image_execution_mode,
         )
+
+
+def _attach_nominal_processing_contract_if_supported(
+    func: Any,
+    declared_processing_contract: str,
+) -> None:
+    """Coerce declared contract names to nominal metadata at the declaration boundary."""
+    if hasattr(func, PROCESSING_CONTRACT_ATTR):
+        return
+
+    from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+    contract = ProcessingContract.from_declared_name(declared_processing_contract)
+    if contract is not None:
+        setattr(func, PROCESSING_CONTRACT_ATTR, contract)
 
 
 def processing_prepare(*targets: Any) -> Any:

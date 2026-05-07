@@ -75,6 +75,7 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.runtime_values import (
     FieldSpec,
+    RuntimeArrayPayload,
     MeasurementTable,
     NamedImage,
     ObjectLabelPayload,
@@ -2470,7 +2471,7 @@ def _select_step_input_stack(
 
 
 def _natural_step_input_payload(current_image: Any) -> Any:
-    if not hasattr(current_image, "ndim"):
+    if not isinstance(current_image, (RuntimeArrayPayload, np.ndarray)):
         return current_image
     if current_image.ndim == 2:
         return current_image
@@ -2618,13 +2619,9 @@ def _matlab_numeric_arrays(
 
 
 def _is_numeric_array_payload(payload: Any) -> bool:
-    dtype = getattr(payload, "dtype", None)
-    return (
-        hasattr(payload, "ndim")
-        and dtype is not None
-        and dtype.kind in {"b", "u", "i", "f", "c"}
-        and payload.ndim >= 2
-    )
+    if not isinstance(payload, (RuntimeArrayPayload, np.ndarray)):
+        return False
+    return payload.dtype.kind in {"b", "u", "i", "f", "c"} and payload.ndim >= 2
 
 
 def _unstack_payload(payload: Any) -> list[Any]:

@@ -14,6 +14,7 @@ from functools import lru_cache, wraps
 from typing import Any
 
 from benchmark.cellprofiler_library import (
+    coerce_absorbed_processing_contract,
     function_inventory,
     get_contract,
     list_modules,
@@ -90,21 +91,17 @@ def unavailable_cellprofiler_functions() -> Mapping[str, str]:
 
 def _declared_processing_contract(
     module_name: str,
+    function_name: str,
     absorbed_function: Callable[..., Any],
-) -> ProcessingContract:
-    contract = CallableContract.from_callable(absorbed_function).processing_contract
+) -> ProcessingContract | None:
+    contract = coerce_absorbed_processing_contract(
+        module_name,
+        function_name,
+        absorbed_function,
+    )
     if isinstance(contract, ProcessingContract):
         return contract
-    if isinstance(contract, str):
-        resolved_contract = ProcessingContract.from_declared_name(contract)
-        if resolved_contract is not None:
-            return resolved_contract
-    contract_payload = get_contract(module_name) or {}
-    declared_name = str(contract_payload.get("contract", "flexible"))
-    declared_contract = ProcessingContract.from_declared_name(declared_name)
-    if declared_contract is not None:
-        return declared_contract
-    return ProcessingContract.FLEXIBLE
+    return None
 
 
 def _make_processing_wrapper(
@@ -167,7 +164,13 @@ def _load_cellprofiler_functions() -> tuple[dict[str, Callable[..., Any]], dict[
         module_name = default_modules.get(location.module_stem, location.module_stem)
         absorbed_function = _function_from_inventory(function_name)
 
-        contract = _declared_processing_contract(module_name, absorbed_function)
+        contract = _declared_processing_contract(
+            module_name,
+            function_name,
+            absorbed_function,
+        )
+        if contract is None:
+            continue
         wrapped_function = _make_processing_wrapper(
             module_name=module_name,
             func=absorbed_function,

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
+from abc import ABC
 import hashlib
 import importlib.util
 import inspect
@@ -14,13 +14,10 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any, ClassVar
-
-from metaclass_registry import AutoRegisterMeta
+from typing import Any
 
 from openhcs.constants import Backend, MULTIPROCESSING_AXIS
 from openhcs.core.callable_contract import CallableContract
-from openhcs.core.config import DtypeConfig
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.progress import set_progress_queue
@@ -57,7 +54,6 @@ from openhcs.processing.func_registry import register_function
 
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 
-from .contract_inference import InferredContract, infer_contract
 from .pipeline_generator import GeneratedPipeline, PipelineGenerator
 
 
@@ -157,56 +153,6 @@ def register_benchmark_cellprofiler_dialect_compiler() -> (
     compiler = BenchmarkCellProfilerDialectCompiler()
     register_cellprofiler_dialect_compiler(compiler)
     return compiler
-
-
-class InferredContractMapper(ABC, metaclass=AutoRegisterMeta):
-    """Map one inferred absorbed-function contract onto OpenHCS runtime semantics."""
-
-    __registry_key__ = "contract"
-    __skip_if_no_key__ = True
-    contract: ClassVar[InferredContract | None] = None
-
-    @classmethod
-    def for_contract(
-        cls,
-        contract: InferredContract,
-    ) -> InferredContractMapper | None:
-        mapper_cls = cls.__registry__.get(contract)
-        if mapper_cls is None:
-            return None
-        return mapper_cls()
-
-    @abstractmethod
-    def processing_contract(self) -> ProcessingContract | None:
-        """Return the OpenHCS processing contract for one inferred contract."""
-
-
-class Pure2DInferredContractMapper(InferredContractMapper):
-    contract = InferredContract.PURE_2D
-
-    def processing_contract(self) -> ProcessingContract:
-        return ProcessingContract.PURE_2D
-
-
-class Pure3DInferredContractMapper(InferredContractMapper):
-    contract = InferredContract.PURE_3D
-
-    def processing_contract(self) -> ProcessingContract:
-        return ProcessingContract.PURE_3D
-
-
-class FlexibleInferredContractMapper(InferredContractMapper):
-    contract = InferredContract.FLEXIBLE
-
-    def processing_contract(self) -> ProcessingContract:
-        return ProcessingContract.FLEXIBLE
-
-
-class VolumetricToSliceInferredContractMapper(InferredContractMapper):
-    contract = InferredContract.VOLUMETRIC_TO_SLICE
-
-    def processing_contract(self) -> ProcessingContract:
-        return ProcessingContract.VOLUMETRIC_TO_SLICE
 
 
 def partition_cppipe_modules(
@@ -638,30 +584,11 @@ def _processing_contract_for(func: Callable[..., Any]) -> ProcessingContract:
     contract = CallableContract.from_callable(func)
     if isinstance(contract.processing_contract, ProcessingContract):
         return contract.processing_contract
-    if contract.declared_processing_contract == "unknown":
-        inferred = _infer_unknown_processing_contract(func)
-        if inferred is not None:
-            return inferred
-    if contract.declared_processing_contract is not None:
-        mapped = ProcessingContract.from_declared_name(
-            contract.declared_processing_contract
-        )
-        if mapped is not None:
-            return mapped
-    return ProcessingContract.FLEXIBLE
-
-
-def _infer_unknown_processing_contract(
-    func: Callable[..., Any],
-) -> ProcessingContract | None:
-    """Infer contract for absorbed functions whose stored registry contract is unknown."""
-    contract = CallableContract.from_callable(func)
-    raw_func = contract.raw_processing_function or func
-    inference = infer_contract(raw_func, dtype_config=DtypeConfig())
-    mapper = InferredContractMapper.for_contract(inference.contract)
-    if mapper is None:
-        return None
-    return mapper.processing_contract()
+    raise TypeError(
+        f"Generated function {contract.function_name!r} has no nominal "
+        "__processing_contract__ metadata. Coerce declared contracts during "
+        "callable metadata attachment before registry registration."
+    )
 
 
 def _generated_metadata_name(func: Callable[..., Any]) -> str:

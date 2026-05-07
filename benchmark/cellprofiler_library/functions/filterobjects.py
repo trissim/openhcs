@@ -15,6 +15,7 @@ from typing import ClassVar, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
+from benchmark.cellprofiler_compat.measurement_lookup import child_count_feature_child_name
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_artifact_queries import (
@@ -1071,10 +1072,6 @@ def _selection_measurement_values(
     )
 
 
-_CHILD_COUNT_FEATURE_PREFIX = "Children_"
-_CHILD_COUNT_FEATURE_SUFFIX = "_Count"
-
-
 def _relationship_tuple(
     relationship: ObjectRelationship | ParentChildRelationshipPayload | None,
     relationships: Sequence[ObjectRelationship | ParentChildRelationshipPayload],
@@ -1099,7 +1096,7 @@ def _relationship_child_count_values_or_none(
     request: FilterObjectsSelectionRequest,
     feature_name: str,
 ) -> np.ndarray | None:
-    child_name = _child_count_feature_child_name(feature_name)
+    child_name = child_count_feature_child_name(feature_name)
     if child_name is None:
         return None
     for relationship in request.parent_child_relationships:
@@ -1112,17 +1109,6 @@ def _relationship_child_count_values_or_none(
                 counts[parent_id - 1] += 1.0
         return counts
     return None
-
-
-def _child_count_feature_child_name(feature_name: str) -> str | None:
-    if not feature_name.startswith(_CHILD_COUNT_FEATURE_PREFIX):
-        return None
-    if not feature_name.endswith(_CHILD_COUNT_FEATURE_SUFFIX):
-        return None
-    child_name = feature_name[
-        len(_CHILD_COUNT_FEATURE_PREFIX) : -len(_CHILD_COUNT_FEATURE_SUFFIX)
-    ]
-    return child_name or None
 
 
 def _relationship_parent_ids_for_child(

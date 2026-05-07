@@ -492,6 +492,7 @@ class ObjectMeasurementFeatureRole(str, Enum):
     COUNT = "count"
     IDENTIFIER = "identifier"
     LOCATION = "location"
+    SHAPE_DESCRIPTOR = "shape_descriptor"
 
 
 class MeasurementStatistic(str, Enum):
@@ -1183,6 +1184,122 @@ class DenseObjectLabelPairAlignment:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceSpatialAlignmentValue:
+    """One dense label value with optional source-spatial semantics."""
+
+    value: Any
+    adapter: SourceSpatialDomainAdapter | None = None
+
+    @classmethod
+    def from_value(cls, value: Any) -> "SourceSpatialAlignmentValue":
+        return cls(value, SourceSpatialDomainAdapter.for_value(value))
+
+    @property
+    def array(self) -> Any:
+        if self.adapter is not None:
+            return self.adapter.array
+        return self.value
+
+    @property
+    def native_shape_yx(self) -> tuple[int, int] | None:
+        import numpy as np
+
+        array = np.asarray(self.array)
+        if array.ndim < 2:
+            return None
+        return tuple(int(axis) for axis in array.shape[-2:])
+
+    @property
+    def source_domain(self) -> SourceSpatialDomain | None:
+        if self.adapter is None:
+            return None
+        if self.adapter.domain.source_shape_yx is None:
+            return None
+        return self.adapter.domain
+
+    def shares_native_shape(self, other: "SourceSpatialAlignmentValue") -> bool:
+        return (
+            self.native_shape_yx is not None
+            and other.native_shape_yx is not None
+            and self.native_shape_yx == other.native_shape_yx
+        )
+
+    def materialize(self) -> Any:
+        if self.adapter is not None:
+            return self.adapter.materialize()
+        return self.value
+
+    def materialize_in_domain(self, domain: SourceSpatialDomain) -> Any:
+        return domain.materialize(self.array)
+
+    def projection(self) -> SourceSpatialDomainProjection | None:
+        if self.adapter is None:
+            return None
+        return SourceSpatialDomainProjection.from_adapter(self.adapter)
+
+    def projection_in_domain(
+        self,
+        domain: SourceSpatialDomain,
+    ) -> SourceSpatialDomainProjection | None:
+        shape_yx = self.native_shape_yx
+        if shape_yx is None:
+            return None
+        return SourceSpatialDomainProjection(domain, shape_yx)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSpatialAlignmentPair:
+    """Pairwise source-domain alignment for dense label arrays."""
+
+    values: tuple[SourceSpatialAlignmentValue, SourceSpatialAlignmentValue]
+
+    @classmethod
+    def from_values(
+        cls,
+        first: Any,
+        second: Any,
+    ) -> "SourceSpatialAlignmentPair":
+        return cls(
+            (
+                SourceSpatialAlignmentValue.from_value(first),
+                SourceSpatialAlignmentValue.from_value(second),
+            )
+        )
+
+    def aligned(self) -> DenseObjectLabelPairAlignment:
+        source_domain = self.shared_source_domain_for_native_pair()
+        if source_domain is not None:
+            aligned_values = tuple(
+                value.materialize_in_domain(source_domain) for value in self.values
+            )
+            projections = tuple(
+                value.projection_in_domain(source_domain) for value in self.values
+            )
+        else:
+            aligned_values = tuple(value.materialize() for value in self.values)
+            projections = tuple(value.projection() for value in self.values)
+        return DenseObjectLabelPairAlignment(
+            aligned_values[0],
+            aligned_values[1],
+            projections[0],
+            projections[1],
+        )
+
+    def shared_source_domain_for_native_pair(self) -> SourceSpatialDomain | None:
+        source_domains = tuple(
+            value.source_domain
+            for value in self.values
+            if value.source_domain is not None
+        )
+        if len(source_domains) != 1:
+            return None
+        first, second = self.values
+        if not first.shares_native_shape(second):
+            return None
+        return source_domains[0]
+
+
+@dataclass(frozen=True, slots=True)
 class DenseObjectLabelStackAlignment:
     """Aligned dense label stacks with native-domain restoration hooks."""
 
@@ -1214,16 +1331,10 @@ class DenseObjectLabelPairAligner:
         return alignment.first, alignment.second
 
     def alignment(self) -> DenseObjectLabelPairAlignment:
-        import numpy as np
-
         alignment = self._source_domain_alignment()
         first, second = alignment.first, alignment.second
-        first = _collapse_singleton_dense_label_stack(
-            np.asarray(first, dtype=np.int32)
-        )
-        second = _collapse_singleton_dense_label_stack(
-            np.asarray(second, dtype=np.int32)
-        )
+        first = DenseObjectLabelStack.from_labels(first).collapse_singleton_plane()
+        second = DenseObjectLabelStack.from_labels(second).collapse_singleton_plane()
         if first.shape == second.shape:
             return DenseObjectLabelPairAlignment(
                 first,
@@ -1276,65 +1387,10 @@ class DenseObjectLabelPairAligner:
         )
 
     def _source_domain_alignment(self) -> DenseObjectLabelPairAlignment:
-        import numpy as np
-
-        first_adapter = SourceSpatialDomainAdapter.for_value(self.first_labels)
-        second_adapter = SourceSpatialDomainAdapter.for_value(self.second_labels)
-
-        if first_adapter is None and second_adapter is None:
-            return DenseObjectLabelPairAlignment(
-                np.asarray(self.first_labels),
-                np.asarray(self.second_labels),
-            )
-        if first_adapter is not None and second_adapter is not None:
-            return DenseObjectLabelPairAlignment(
-                first_adapter.materialize(),
-                second_adapter.materialize(),
-                SourceSpatialDomainProjection.from_adapter(first_adapter),
-                SourceSpatialDomainProjection.from_adapter(second_adapter),
-            )
-        if first_adapter is not None:
-            second = np.asarray(self.second_labels)
-            first_projection = SourceSpatialDomainProjection.from_adapter(first_adapter)
-            if self._same_xy_shape(first_adapter.array, second):
-                return DenseObjectLabelPairAlignment(
-                    first_adapter.materialize(),
-                    first_adapter.domain.materialize(second),
-                    first_projection,
-                    SourceSpatialDomainProjection(first_adapter.domain, second.shape[-2:]),
-                )
-            return DenseObjectLabelPairAlignment(
-                first_adapter.materialize(),
-                second,
-                first_projection,
-            )
-
-        first = np.asarray(self.first_labels)
-        if second_adapter is None:
-            return DenseObjectLabelPairAlignment(first, np.asarray(self.second_labels))
-        second_projection = SourceSpatialDomainProjection.from_adapter(second_adapter)
-        if self._same_xy_shape(first, second_adapter.array):
-            return DenseObjectLabelPairAlignment(
-                second_adapter.domain.materialize(first),
-                second_adapter.materialize(),
-                SourceSpatialDomainProjection(second_adapter.domain, first.shape[-2:]),
-                second_projection,
-            )
-        return DenseObjectLabelPairAlignment(
-            first,
-            second_adapter.materialize(),
-            second_projection=second_projection,
-        )
-
-    @staticmethod
-    def _same_xy_shape(left: Any, right: Any) -> bool:
-        import numpy as np
-
-        left_array = np.asarray(left)
-        right_array = np.asarray(right)
-        if left_array.ndim < 2 or right_array.ndim < 2:
-            return False
-        return tuple(left_array.shape[-2:]) == tuple(right_array.shape[-2:])
+        return SourceSpatialAlignmentPair.from_values(
+            self.first_labels,
+            self.second_labels,
+        ).aligned()
 
     @staticmethod
     def _stack_view(value: Any, slice_count: int) -> Any | None:
@@ -1348,6 +1404,189 @@ class DenseObjectLabelPairAligner:
         return None
 
 
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelStack:
+    """Dense object-label stack semantics independent of payload wrapper type."""
+
+    array: np.ndarray
+
+    @classmethod
+    def from_labels(cls, labels: Any) -> "DenseObjectLabelStack":
+        return cls(np.asarray(labels, dtype=np.int32))
+
+    def collapse_singleton_plane(self) -> np.ndarray:
+        if self.array.ndim == 3 and self.array.shape[0] == 1:
+            return self.array[0]
+        return self.array
+
+    def project_xy_plane_without_relabeling(self) -> np.ndarray:
+        stack = self.array
+        if stack.ndim != 3:
+            return stack
+        if stack.shape[0] == 1:
+            return stack[0]
+
+        positive = stack > 0
+        if not np.any(positive):
+            return np.zeros(stack.shape[1:], dtype=np.int32)
+
+        max_label = np.where(positive, stack, 0).max(axis=0)
+        sentinel = np.iinfo(np.int32).max
+        min_positive = np.where(positive, stack, sentinel).min(axis=0)
+        positive_count = np.count_nonzero(positive, axis=0)
+        conflicts = (positive_count > 1) & (min_positive != max_label)
+        if np.any(conflicts):
+            raise ValueError(
+                "Cannot project dense object-label stack with conflicting positive "
+                "labels at the same XY coordinate."
+            )
+        return max_label.astype(np.int32, copy=False)
+
+
+@dataclass(frozen=True, slots=True)
+class ConsecutiveObjectLabelIdProjection:
+    """Projection from arbitrary positive object IDs to consecutive IDs."""
+
+    positive_label_ids: Any
+
+    @classmethod
+    def from_dense_array(cls, labels: np.ndarray) -> "ConsecutiveObjectLabelIdProjection":
+        label_array = np.asarray(labels)
+        positive_ids = np.unique(label_array[label_array > 0])
+        return cls(positive_ids.astype(np.int64, copy=False))
+
+    @property
+    def object_count(self) -> int:
+        return int(len(self.positive_label_ids))
+
+    @property
+    def has_objects(self) -> bool:
+        return self.object_count > 0
+
+    def relabel_numpy_array(
+        self,
+        labels: np.ndarray,
+        *,
+        dtype: Any | None = None,
+    ) -> np.ndarray:
+        """Apply this ID projection to one dense NumPy label array."""
+        label_array = np.asarray(labels)
+        output_dtype = np.dtype(dtype or label_array.dtype)
+        if not self.has_objects:
+            return np.zeros_like(label_array, dtype=output_dtype)
+        if self.labels_are_already_consecutive:
+            return label_array.astype(output_dtype, copy=False)
+        if self.lookup_table_is_bounded(label_array):
+            return self.lookup_table_relabel(label_array, output_dtype)
+        return self.searchsorted_relabel(label_array, output_dtype)
+
+    @property
+    def labels_are_already_consecutive(self) -> bool:
+        return bool(
+            np.array_equal(
+                self.positive_label_ids,
+                np.arange(1, self.object_count + 1, dtype=np.int64),
+            )
+        )
+
+    def lookup_table_is_bounded(self, labels: Any) -> bool:
+        label_array = np.asarray(labels)
+        max_label = int(self.positive_label_ids[-1])
+        return max_label <= max(label_array.size * 2, self.object_count * 16)
+
+    def lookup_table_relabel(self, labels: np.ndarray, dtype: Any) -> np.ndarray:
+        label_array = np.asarray(labels)
+        lookup = np.zeros(int(self.positive_label_ids[-1]) + 1, dtype=dtype)
+        lookup[self.positive_label_ids] = np.arange(
+            1,
+            self.object_count + 1,
+            dtype=dtype,
+        )
+        return lookup[label_array]
+
+    def searchsorted_relabel(self, labels: np.ndarray, dtype: Any) -> np.ndarray:
+        label_array = np.asarray(labels)
+        flat = label_array.reshape(-1)
+        remapped = np.zeros(flat.shape, dtype=dtype)
+        foreground = flat > 0
+        positions = np.searchsorted(self.positive_label_ids, flat[foreground])
+        remapped[foreground] = positions.astype(dtype, copy=False) + 1
+        return remapped.reshape(label_array.shape)
+
+
+class DenseObjectLabelConsecutiveRelabelingStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered backend strategy for consecutive dense object-label IDs."""
+
+    value_type: ClassVar[type[object] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_labels(
+        cls,
+        labels: object,
+    ) -> "DenseObjectLabelConsecutiveRelabelingStrategy":
+        strategy = cls.for_nominal_value(labels)
+        return (
+            strategy
+            if strategy is not None
+            else RawDenseObjectLabelConsecutiveRelabelingStrategy()
+        )
+
+    @abstractmethod
+    def relabel(self, labels: object, *, dtype: Any | None = None) -> object:
+        """Return labels with materially present positive IDs remapped to 1..N."""
+
+
+class NumpyDenseObjectLabelConsecutiveRelabelingStrategy(
+    DenseObjectLabelConsecutiveRelabelingStrategy
+):
+    """Consecutive-ID relabeling for dense NumPy object-label arrays."""
+
+    value_type = np.ndarray
+
+    def relabel(self, labels: object, *, dtype: Any | None = None) -> np.ndarray:
+        if not isinstance(labels, np.ndarray):
+            raise TypeError(
+                "NumpyDenseObjectLabelConsecutiveRelabelingStrategy requires ndarray, "
+                f"got {type(labels).__name__}."
+            )
+        projection = ConsecutiveObjectLabelIdProjection.from_dense_array(labels)
+        return projection.relabel_numpy_array(
+            labels,
+            dtype=dtype,
+        )
+
+
+class RawDenseObjectLabelConsecutiveRelabelingStrategy(
+    DenseObjectLabelConsecutiveRelabelingStrategy
+):
+    """Compatibility relabeling for legacy dense array-like object labels."""
+
+    def relabel(self, labels: object, *, dtype: Any | None = None) -> np.ndarray:
+        label_array = np.asarray(labels)
+        return ConsecutiveObjectLabelIdProjection.from_dense_array(
+            label_array
+        ).relabel_numpy_array(label_array, dtype=dtype)
+
+
+def relabel_dense_object_labels_consecutive(
+    labels: Any,
+    *,
+    dtype: Any | None = None,
+) -> Any:
+    """Return dense object labels remapped to consecutive positive IDs."""
+    return DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(labels).relabel(
+        labels,
+        dtype=dtype,
+    )
+
+
 def dense_object_label_id_domain(
     labels: Any,
     *,
@@ -1356,10 +1595,10 @@ def dense_object_label_id_domain(
 ) -> tuple[int, ...]:
     """Return the semantic object-id domain represented by dense labels.
 
-    Dense label images commonly encode object identity as labels 1..N. Some
-    producers also declare object identities that have no pixels in the current
-    image. The returned domain preserves those declared IDs and otherwise uses
-    the dense label convention up to the maximum positive label ID.
+    Producers that need object identities without current pixels must declare
+    them explicitly. Undeclared dense/sparse payloads use materially present
+    positive IDs so sparse or non-contiguous labels do not fabricate phantom
+    measurement rows.
     """
     payload_ids: tuple[int, ...] = ()
     payload_count: int | None = None
@@ -1384,14 +1623,7 @@ def dense_object_label_id_domain(
         if count < 0:
             raise ValueError("declared_object_count cannot be negative.")
         return tuple(range(1, count + 1))
-    else:
-        count = 0
-
-    count = max(
-        count,
-        ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels),
-    )
-    return tuple(range(1, count + 1))
+    return ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
 
 
 def dense_object_label_present_ids(labels: Any) -> tuple[int, ...]:
@@ -1464,35 +1696,7 @@ def dense_object_label_identity_domains(
 
 def project_dense_object_label_stack(labels: Any) -> Any:
     """Project a dense label stack to one XY plane without relabeling."""
-    import numpy as np
-
-    stack = np.asarray(labels).astype(np.int32, copy=False)
-    if stack.ndim != 3:
-        return stack
-    if stack.shape[0] == 1:
-        return stack[0]
-
-    positive = stack > 0
-    if not np.any(positive):
-        return np.zeros(stack.shape[1:], dtype=np.int32)
-
-    max_label = np.where(positive, stack, 0).max(axis=0)
-    sentinel = np.iinfo(np.int32).max
-    min_positive = np.where(positive, stack, sentinel).min(axis=0)
-    positive_count = np.count_nonzero(positive, axis=0)
-    conflicts = (positive_count > 1) & (min_positive != max_label)
-    if np.any(conflicts):
-        raise ValueError(
-            "Cannot project dense object-label stack with conflicting positive "
-            "labels at the same XY coordinate."
-        )
-    return max_label.astype(np.int32, copy=False)
-
-
-def _collapse_singleton_dense_label_stack(labels: Any) -> Any:
-    if hasattr(labels, "ndim") and labels.ndim == 3 and labels.shape[0] == 1:
-        return labels[0]
-    return labels
+    return DenseObjectLabelStack.from_labels(labels).project_xy_plane_without_relabeling()
 
 
 def _dense_label_array_in_source_domain(labels: Any) -> Any:

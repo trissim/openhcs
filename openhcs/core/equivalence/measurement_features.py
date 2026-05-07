@@ -12,12 +12,14 @@ from openhcs.core.equivalence.keys import (
     RuntimeMeasurementFeatureKey,
     RuntimeMeasurementSubjectKey,
 )
+from openhcs.core.equivalence.policy import normalize_runtime_identifier
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import (
     MeasurementStatistic,
     MeasurementScope,
     ObjectCoreMeasurementFeature,
     ObjectMeasurementFeatureRole,
+    ObjectShapeMeasurementFeature,
 )
 
 
@@ -126,6 +128,42 @@ class ObjectLocationFeatureRoleStrategy(ObjectMeasurementFeatureRoleStrategy):
             key.subject.scope is MeasurementScope.OBJECT
             and key.statistic == MeasurementStatistic.VALUE.value
             and key.feature_name in self.feature_names
+        )
+
+
+class ObjectShapeDescriptorFeatureRoleStrategy(ObjectMeasurementFeatureRoleStrategy):
+    """Object geometry and shape-descriptor features."""
+
+    role = ObjectMeasurementFeatureRole.SHAPE_DESCRIPTOR
+    indexed_feature_prefixes: ClassVar[frozenset[str]] = frozenset(
+        normalize_runtime_identifier(feature.value)
+        for feature in (
+            ObjectShapeMeasurementFeature.SPATIAL_MOMENT,
+            ObjectShapeMeasurementFeature.CENTRAL_MOMENT,
+            ObjectShapeMeasurementFeature.NORMALIZED_MOMENT,
+            ObjectShapeMeasurementFeature.HU_MOMENT,
+            ObjectShapeMeasurementFeature.INERTIA_TENSOR,
+            ObjectShapeMeasurementFeature.INERTIA_TENSOR_EIGENVALUES,
+            ObjectShapeMeasurementFeature.ZERNIKE,
+        )
+    )
+    feature_names: ClassVar[frozenset[str]] = frozenset(
+        normalize_runtime_identifier(feature.value)
+        for feature in ObjectShapeMeasurementFeature
+    )
+
+    def matches(self, key: RuntimeMeasurementFeatureKey) -> bool:
+        return (
+            key.subject.scope is MeasurementScope.OBJECT
+            and key.statistic == MeasurementStatistic.VALUE.value
+            and key.source_name is None
+            and (
+                key.feature_name in self.feature_names
+                or any(
+                    key.feature_name.startswith(f"{prefix}_")
+                    for prefix in self.indexed_feature_prefixes
+                )
+            )
         )
 
 

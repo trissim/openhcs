@@ -10,6 +10,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.runtime_semantics import relabel_dense_object_labels_consecutive
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
@@ -172,13 +173,7 @@ def watershed(
     if exclude_border:
         labels = clear_border(labels)
     
-    # Relabel to ensure consecutive labels
-    unique_labels = np.unique(labels)
-    unique_labels = unique_labels[unique_labels > 0]
-    new_labels = np.zeros_like(labels)
-    for new_label, old_label in enumerate(unique_labels, start=1):
-        new_labels[labels == old_label] = new_label
-    labels = new_labels
+    labels = relabel_dense_object_labels_consecutive(labels, dtype=np.int32)
     
     # Compute statistics
     props = regionprops(labels)

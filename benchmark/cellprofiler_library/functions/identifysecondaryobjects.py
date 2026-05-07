@@ -296,6 +296,9 @@ class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
             )
         )
         labels_out[request.labels > 0] = request.labels[request.labels > 0]
+        accepted_labels = np.unique(request.labels[request.labels > 0])
+        if accepted_labels.size:
+            labels_out[~np.isin(labels_out, accepted_labels)] = 0
         return labels_out
 
 

@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 
 import numpy as np
+import pytest
 import skimage.measure
 import skimage.morphology
 
@@ -129,6 +130,7 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_metadata,
     image_payload_with_context,
+    object_label_dense_array,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
@@ -529,7 +531,6 @@ def test_complete_object_measurement_rows_uses_slice_local_label_domain() -> Non
     }
     assert values_by_key == {
         (0, 1): 10.0,
-        (0, 2): 0.0,
         (0, 3): 30.0,
         (1, 1): 100.0,
         (1, 2): 200.0,
@@ -873,7 +874,7 @@ def test_filterobjects_uses_upstream_form_factor_table_when_available() -> None:
     assert exported_form_factor > 1.0
     _output_image, stats, filtered_labels = result[:3]
     assert stats.objects_post_filter == 0
-    assert filtered_labels.max() == 0
+    assert object_label_dense_array(filtered_labels).max() == 0
 
 
 def test_filterobjects_derives_form_factor_when_measurement_table_is_absent() -> None:
@@ -897,7 +898,7 @@ def test_filterobjects_derives_form_factor_when_measurement_table_is_absent() ->
 
     _output_image, stats, filtered_labels = result[:3]
     assert stats.objects_post_filter == 1
-    assert filtered_labels.max() == 1
+    assert object_label_dense_array(filtered_labels).max() == 1
 
 
 def test_cellprofiler_contract_executor_stacks_color_slice_outputs():
@@ -1067,6 +1068,7 @@ def test_module_executor_rewraps_single_image_output_for_openhcs_main_flow() -> 
     def to_gray(image: np.ndarray) -> np.ndarray:
         return image[..., 0]
 
+    to_gray.__processing_contract__ = ProcessingContract.PURE_2D
     color_slice = np.zeros((4, 5, 3), dtype=np.float32)
     color_stack = color_slice[np.newaxis, ...]
     runtime = _FakeCellProfilerRuntime(
@@ -1114,7 +1116,7 @@ def test_module_executor_preserves_duplicate_image_roles_for_illumination_apply(
     np.testing.assert_allclose(image_payload_data(result), np.ones((1, 4, 5)))
     np.testing.assert_allclose(
         image_payload_data(runtime.images["CorrGreen"].data),
-        np.ones((1, 4, 5)),
+        np.ones((4, 5)),
     )
 
 
@@ -1200,9 +1202,9 @@ def test_cellprofiler_contract_executor_aggregates_volume_label_auxiliary():
         {},
     )
 
-    assert result_image.shape == stack.shape
+    assert result_image.shape == (6, 4, 5)
     assert isinstance(result_labels, np.ndarray)
-    assert result_labels.shape == stack.shape
+    assert result_labels.shape == (6, 4, 5)
 
 
 def test_cellprofiler_contract_executor_preserves_single_slice_dataclass_auxiliary():
@@ -1642,8 +1644,10 @@ def test_distance_b_limits_expansion_from_accepted_primary_labels(monkeypatch):
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
+        *,
+        max_distance: float | None = None,
     ) -> np.ndarray:
-        del image, labels, mask, regularization
+        del image, labels, mask, regularization, max_distance
         return np.array([[1, 0, 0, 1, 4]], dtype=np.int32)
 
     monkeypatch.setattr(iso, "_propagate_labels", fake_propagate)
@@ -1662,7 +1666,7 @@ def test_distance_b_limits_expansion_from_accepted_primary_labels(monkeypatch):
         )
     )
 
-    expected = np.array([[1, 0, 0, 0, 0]], dtype=np.int32)
+    expected = np.array([[1, 0, 0, 1, 0]], dtype=np.int32)
     np.testing.assert_array_equal(segmented, expected)
 
 
@@ -1897,6 +1901,7 @@ def test_cellprofiler_module_executor_normalizes_integer_image_inputs() -> None:
         seen.append(image)
         return image
 
+    capture.__processing_contract__ = ProcessingContract.PURE_2D
     executor = CellProfilerModuleExecutor(
         ModuleArtifactContract(
             module_name="Opening",
@@ -1932,6 +1937,7 @@ def test_cellprofiler_module_executor_uses_payload_intensity_scale() -> None:
         seen.append(image)
         return image
 
+    capture.__processing_contract__ = ProcessingContract.PURE_2D
     executor = CellProfilerModuleExecutor(
         ModuleArtifactContract(
             module_name="Opening",
@@ -2399,8 +2405,9 @@ def test_module_executor_runs_object_distribution_measurements_per_declared_imag
                 "object_label": 1,
                 "mean": float(np.mean(image[labels > 0])),
             }
-        ]
+            ]
 
+    measure_distribution.__processing_contract__ = ProcessingContract.PURE_2D
     labels = np.zeros((4, 5), dtype=np.int32)
     labels[1:3, 1:3] = 1
     fallback = np.zeros((4, 5), dtype=np.float32)
@@ -2631,7 +2638,7 @@ def test_expand_or_shrink_executor_declares_output_label_extent() -> None:
     _name, recorded_payload, _kwargs = runtime.objects[0]
     assert isinstance(recorded_payload, ObjectLabelPayload)
     assert recorded_payload.declared_object_count is None
-    assert recorded_payload.declared_object_ids == (1, 2, 3, 4)
+    assert recorded_payload.declared_object_ids == (4,)
     assert int(np.max(recorded_payload.labels)) == 4
 
 
@@ -2830,6 +2837,7 @@ def test_measure_object_neighbors_binds_small_removed_label_variant() -> None:
         )
         return image, []
 
+    measure_neighbors.__processing_contract__ = ProcessingContract.FLEXIBLE
     final_labels = np.zeros((4, 4), dtype=np.int32)
     final_labels[1, 1] = 1
     small_removed = final_labels.copy()
@@ -3058,6 +3066,8 @@ def test_module_executor_routes_spatial_grid_artifacts() -> None:
     def define_grid_like(image: np.ndarray) -> tuple[np.ndarray, SpatialGrid]:
         return image, grid
 
+    define_grid_like.__processing_contract__ = ProcessingContract.PURE_2D
+
     @special_inputs("grid")
     def identify_grid_like(
         image: np.ndarray,
@@ -3065,6 +3075,8 @@ def test_module_executor_routes_spatial_grid_artifacts() -> None:
     ) -> tuple[np.ndarray, np.ndarray]:
         labels = np.full(image.shape, grid.rows * grid.columns, dtype=np.int32)
         return image, labels
+
+    identify_grid_like.__processing_contract__ = ProcessingContract.PURE_2D
 
     define_executor.run(define_grid_like, image, cellprofiler_runtime=runtime)
     identify_executor.run(identify_grid_like, image, cellprofiler_runtime=runtime)
@@ -4073,7 +4085,7 @@ def test_unstack_cellprofiler_image_slices_collapses_pairwise_slice_grid() -> No
     np.testing.assert_array_equal(image_payload_data(slices[1]), np.full((5, 6), 4.0))
 
 
-def test_cellprofiler_contract_executor_infers_unknown_absorbed_contract():
+def test_cellprofiler_contract_executor_rejects_uncoerced_unknown_absorbed_contract():
     def two_dimensional_only(image: np.ndarray, **kwargs) -> np.ndarray:
         if image.ndim != 2:
             raise RuntimeError("2D only")
@@ -4084,9 +4096,8 @@ def test_cellprofiler_contract_executor_infers_unknown_absorbed_contract():
         declared_processing_contract="unknown",
     )
 
-    assert _processing_contract_for_callable(two_dimensional_only) is (
-        ProcessingContract.PURE_2D
-    )
+    with pytest.raises(TypeError, match="no nominal __processing_contract__"):
+        _processing_contract_for_callable(two_dimensional_only)
 
 
 def test_measurement_image_for_labels_preserves_source_stack_for_2d_labels() -> None:
@@ -4404,9 +4415,9 @@ def test_filterobjects_relabels_additional_object_inputs_by_primary_retention() 
 
     assert stats.objects_pre_filter == 2
     assert stats.objects_post_filter == 1
-    assert filtered_primary.max() == 1
+    assert object_label_dense_array(filtered_primary).max() == 1
     assert filtered_primary[3, 3] == 1
-    assert filtered_cells.max() == 1
+    assert object_label_dense_array(filtered_cells).max() == 1
     assert filtered_cells[3, 3] == 1
     assert filtered_cells[0, 0] == 0
     assert primary_outline.max() == 1

@@ -10,6 +10,8 @@ from typing import Any
 
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 
+from benchmark.cellprofiler_compat.measurement_lookup import child_count_feature_child_name
+
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
     SettingNameFamily,
@@ -40,8 +42,6 @@ FILTER_OBJECTS_MAIN_OUTLINE_SETTING = (
     "Retain the outlines of filtered objects for use later in the pipeline "
     "(for example, in SaveImages)?"
 )
-_CHILD_COUNT_FEATURE_PREFIX = "Children_"
-_CHILD_COUNT_FEATURE_SUFFIX = "_Count"
 FILTER_OBJECTS_OUTLINE_IMAGE_SETTING = "Name the outline image"
 FILTER_OBJECTS_ADDITIONAL_INPUT_SETTING = "Select additional object to relabel"
 FILTER_OBJECTS_ADDITIONAL_OUTPUT_SETTING = "Name the relabeled objects"
@@ -380,21 +380,10 @@ def filter_objects_child_count_object_names(module: ModuleBlock) -> tuple[str, .
     child_names = tuple(
         child_name
         for rule in filter_objects_measurement_rules(module)
-        for child_name in (_child_count_object_name(rule.feature_name),)
+        for child_name in (child_count_feature_child_name(rule.feature_name),)
         if child_name is not None
     )
     return tuple(dict.fromkeys(child_names))
-
-
-def _child_count_object_name(feature_name: str) -> str | None:
-    if not feature_name.startswith(_CHILD_COUNT_FEATURE_PREFIX):
-        return None
-    if not feature_name.endswith(_CHILD_COUNT_FEATURE_SUFFIX):
-        return None
-    child_name = feature_name[
-        len(_CHILD_COUNT_FEATURE_PREFIX) : -len(_CHILD_COUNT_FEATURE_SUFFIX)
-    ]
-    return child_name or None
 
 
 def _mapping_measurement_rules(

@@ -30,6 +30,10 @@ from openhcs.interop.cellprofiler.measurement_dialect import (
 from openhcs.core.runtime_execution_validation import (
     RuntimeArtifactExecutionObservation,
 )
+from openhcs.core.equivalence.tables import (
+    RuntimeMeasurementRowFingerprint,
+    exact_measurement_table_key,
+)
 from openhcs.core.runtime_exports import (
     RuntimeImageExportBitDepth,
     RuntimeImageExportSpec,
@@ -4368,6 +4372,29 @@ def test_runtime_measurement_snapshot_deduplicates_aggregate_group_tables(
         ("number", "10.0", 1),
         ("number", "20.0", 1),
     }
+
+
+def test_runtime_measurement_table_dedupe_identity_uses_row_fingerprint() -> None:
+    table = MeasurementTable(
+        name="Measurements",
+        rows=(
+            {"image_number": 1, "feature_name": "Area", "result_value": 10},
+            {"image_number": 2, "feature_name": "Area", "result_value": 20},
+        ),
+    )
+    equivalent_table = MeasurementTable(
+        name="Measurements",
+        rows=(
+            {"image_number": 1, "feature_name": "Area", "result_value": 10},
+            {"image_number": 2, "feature_name": "Area", "result_value": 20},
+        ),
+    )
+
+    identity = exact_measurement_table_key(table)
+
+    assert identity == exact_measurement_table_key(equivalent_table)
+    assert isinstance(identity.rows, RuntimeMeasurementRowFingerprint)
+    assert identity.rows.row_count == 2
 
 
 def test_runtime_measurement_equivalence_normalizes_long_form_image_number_features(

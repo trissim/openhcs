@@ -8,6 +8,7 @@ from arraybridge.framework_config import _FRAMEWORK_CONFIG
 
 from openhcs.core.runtime_values import (
     register_array_payload_predicate,
+    register_columnar_rows_type,
 )
 
 
@@ -15,6 +16,12 @@ from openhcs.core.runtime_values import (
 def register_runtime_payload_integrations() -> None:
     """Register runtime payload predicates from ArrayBridge backend metadata."""
     register_array_payload_predicate(_is_arraybridge_payload)
+    try:
+        import pandas as pd
+    except ImportError:
+        pass
+    else:
+        register_columnar_rows_type(pd.DataFrame)
 
 
 def _is_arraybridge_payload(data: object) -> bool:

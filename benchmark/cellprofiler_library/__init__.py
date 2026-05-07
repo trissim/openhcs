@@ -12,6 +12,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from openhcs.core.callable_contract import PROCESSING_CONTRACT_ATTR
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
 
 _LIBRARY_ROOT = Path(__file__).parent
 _CONTRACTS_PATH = _LIBRARY_ROOT / "contracts.json"
@@ -77,6 +80,7 @@ class AbsorbedFunctionLocation:
 _contracts: Mapping[str, AbsorbedFunctionMetadata] = MappingProxyType({})
 _canonical_module_names: Mapping[str, str] = MappingProxyType({})
 _function_locations: Mapping[str, AbsorbedFunctionLocation] = MappingProxyType({})
+_default_function_contracts: Mapping[str, ProcessingContract] = MappingProxyType({})
 _function_cache: dict[tuple[str, str], Callable[..., Any]] = {}
 
 
@@ -116,6 +120,11 @@ def get_function(
     function = module.__dict__.get(resolved_function_name)
     if not callable(function):
         return None
+    coerce_absorbed_processing_contract(
+        canonical_name,
+        resolved_function_name,
+        function,
+    )
     _function_cache[cache_key] = function
     return function
 
@@ -159,6 +168,57 @@ def function_inventory() -> Mapping[str, AbsorbedFunctionLocation]:
     return _function_locations
 
 
+def coerce_absorbed_processing_contract(
+    module_name: str,
+    function_name: str,
+    function: Callable[..., Any],
+) -> ProcessingContract | None:
+    """Return or install nominal processing metadata for an executable function.
+
+    The JSON catalog is the ingestion contract for canonical module functions.
+    This boundary converts that external declaration into a nominal
+    ProcessingContract attribute exactly once. Downstream executable registries
+    only consume callable metadata; undecorated helper functions stay private to
+    their implementation modules.
+    """
+    raw_contract = vars(function).get(PROCESSING_CONTRACT_ATTR)
+    if isinstance(raw_contract, ProcessingContract):
+        return raw_contract
+    if raw_contract is not None:
+        raise TypeError(
+            f"Absorbed CellProfiler function {function_name!r} declares "
+            f"{PROCESSING_CONTRACT_ATTR} as {type(raw_contract).__name__}; "
+            "expected ProcessingContract."
+        )
+
+    declared_contract = _default_function_contracts.get(function_name)
+    if declared_contract is None:
+        return None
+    canonical_name = canonical_module_name(module_name)
+    metadata = _contracts.get(canonical_name)
+    if metadata is None or metadata.function_name != function_name:
+        return None
+
+    setattr(function, PROCESSING_CONTRACT_ATTR, declared_contract)
+    return declared_contract
+
+
+def coerce_registered_absorbed_processing_contract(
+    function_name: str,
+    function: Callable[..., Any],
+) -> ProcessingContract | None:
+    """Install nominal processing metadata for a registered absorbed function."""
+    for metadata in _contracts.values():
+        if metadata.function_name != function_name:
+            continue
+        return coerce_absorbed_processing_contract(
+            metadata.module_name,
+            function_name,
+            function,
+        )
+    return None
+
+
 def _load_contracts() -> Mapping[str, AbsorbedFunctionMetadata]:
     if not _CONTRACTS_PATH.exists():
         return MappingProxyType({})
@@ -179,6 +239,25 @@ def _load_canonical_module_names(
         for alias in metadata.aliases:
             _register_module_name(canonical_names, alias, module_name)
     return MappingProxyType(canonical_names)
+
+
+def _load_default_function_contracts(
+    contracts: Mapping[str, AbsorbedFunctionMetadata],
+) -> Mapping[str, ProcessingContract]:
+    declared_contracts: dict[str, ProcessingContract] = {}
+    for module_name, metadata in contracts.items():
+        contract = ProcessingContract.from_declared_name(metadata.contract)
+        if contract is None:
+            continue
+        existing = declared_contracts.get(metadata.function_name)
+        if existing is not None and existing is not contract:
+            raise ValueError(
+                f"Absorbed CellProfiler function {metadata.function_name!r} "
+                f"has conflicting declared contracts {existing.name!r} and "
+                f"{contract.name!r}."
+            )
+        declared_contracts[metadata.function_name] = contract
+    return MappingProxyType(declared_contracts)
 
 
 def _register_module_name(
@@ -276,6 +355,7 @@ def _is_public_api_export(name: str, value: object) -> bool:
 
 _contracts = _load_contracts()
 _canonical_module_names = _load_canonical_module_names(_contracts)
+_default_function_contracts = _load_default_function_contracts(_contracts)
 _function_locations = _discover_function_locations()
 __all__ = tuple(
     name

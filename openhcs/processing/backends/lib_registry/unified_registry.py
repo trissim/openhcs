@@ -27,7 +27,7 @@ import logging
 import os
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field, is_dataclass, replace
+from dataclasses import dataclass, field, fields, is_dataclass, replace
 from enum import Enum
 from functools import wraps
 from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple, Type, get_type_hints
@@ -36,15 +36,21 @@ from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optio
 import numpy as np
 from openhcs.core.xdg_paths import get_cache_file_path
 from openhcs.core.memory import unstack_slices, stack_slices
-from openhcs.core.runtime_semantics import ObjectLabelDomainScope
+from openhcs.core.image_stack_layout import ImageStackLayout
+from openhcs.core.runtime_semantics import (
+    MeasurementRowAxisField,
+    ObjectLabelDomainScope,
+)
 from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     MaskedImagePayload,
     NativeRuntimeValue,
     ObjectLabelPayload,
+    RuntimeArrayPayload,
     compose_image_payload_metadata,
     image_payload_data,
     image_payload_mask,
+    image_payload_slice_context,
     image_payload_with_context,
 )
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
@@ -54,47 +60,163 @@ from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStep
 logger = logging.getLogger(__name__)
 
 
-def _pure_2d_slice_results(
-    results: Iterable[Any],
-) -> tuple[list[Any], tuple[list[Any], ...]]:
-    """Split per-slice PURE_2D results into main outputs and auxiliary groups."""
-    collected = list(results)
-    if not collected:
-        raise ValueError("PURE_2D execution cannot aggregate zero slice results.")
+@dataclass(frozen=True, slots=True)
+class Pure2DSliceResultBatch:
+    """Typed decomposition of per-slice PURE_2D outputs."""
 
-    first_result = collected[0]
-    if not isinstance(first_result, tuple):
-        return collected, ()
+    main_outputs: list[Any]
+    auxiliary_groups: tuple[list[Any], ...] = ()
 
-    tuple_length = len(first_result)
-    if tuple_length == 0:
-        raise ValueError("PURE_2D slice result tuples cannot be empty.")
+    @classmethod
+    def from_results(cls, results: Iterable[Any]) -> "Pure2DSliceResultBatch":
+        collected = list(results)
+        if not collected:
+            raise ValueError("PURE_2D execution cannot aggregate zero slice results.")
 
-    main_outputs: list[Any] = []
-    auxiliary_groups = [list() for _ in range(tuple_length - 1)]
-    for result in collected:
-        if not isinstance(result, tuple):
+        first_result = collected[0]
+        if not isinstance(first_result, tuple):
+            return cls(main_outputs=collected)
+
+        tuple_length = len(first_result)
+        if tuple_length == 0:
+            raise ValueError("PURE_2D slice result tuples cannot be empty.")
+
+        main_outputs: list[Any] = []
+        auxiliary_groups = [list() for _ in range(tuple_length - 1)]
+        for result in collected:
+            if not isinstance(result, tuple):
+                raise TypeError(
+                    "PURE_2D execution cannot mix tuple and non-tuple slice results."
+                )
+            if len(result) != tuple_length:
+                raise ValueError(
+                    "PURE_2D execution requires all tuple slice results to have the "
+                    "same arity."
+                )
+            main_outputs.append(result[0])
+            for index, value in enumerate(result[1:]):
+                auxiliary_groups[index].append(value)
+
+        return cls(main_outputs=main_outputs, auxiliary_groups=tuple(auxiliary_groups))
+
+
+class Pure2DInputSlicer(ABC, metaclass=AutoRegisterMeta):
+    """Unstack a PURE_2D main-flow input into nominal per-slice values."""
+
+    __registry_key__ = "value_type"
+    __registry__: ClassVar[dict[Any, type["Pure2DInputSlicer"]]] = {}
+    value_type: ClassVar[type[Any] | None] = None
+    can_slice_family: ClassVar[bool] = True
+
+    @classmethod
+    def slice(cls, value: Any, memory_type: str) -> tuple[Any, ...]:
+        candidates: list[Pure2DInputSlicer] = []
+        for slicer_type in cls.registered_slicer_families():
+            slicer = slicer_type()
+            if slicer.supports(value):
+                candidates.append(slicer)
+        if not candidates:
             raise TypeError(
-                "PURE_2D execution cannot mix tuple and non-tuple slice results."
+                "PURE_2D execution requires a registered input slicer for "
+                f"{type(value).__name__}."
             )
-        if len(result) != tuple_length:
-            raise ValueError(
-                "PURE_2D execution requires all tuple slice results to have the "
-                "same arity."
+        slicer = min(
+            candidates,
+            key=lambda candidate: candidate.type_distance(value),
+        )
+        return slicer.slice_value(value, memory_type)
+
+    @classmethod
+    def registered_slicer_families(cls) -> tuple[type["Pure2DInputSlicer"], ...]:
+        family_types: list[type[Pure2DInputSlicer]] = []
+        for slicer_type in cls.__registry__.values():
+            for candidate_type in slicer_type.mro():
+                if (
+                    candidate_type is cls
+                    or not isinstance(candidate_type, type)
+                    or not issubclass(candidate_type, cls)
+                    or not candidate_type.can_slice_family
+                    or candidate_type in family_types
+                ):
+                    continue
+                family_types.append(candidate_type)
+        return tuple(family_types)
+
+    @classmethod
+    def accepted_value_types(cls) -> tuple[type[Any], ...]:
+        """Return nominal value types owned by this registered slicer family."""
+        return tuple(
+            slicer_type.value_type
+            for slicer_type in Pure2DInputSlicer.__registry__.values()
+            if (
+                slicer_type.value_type is not None
+                and issubclass(slicer_type, cls)
             )
-        main_outputs.append(result[0])
-        for index, value in enumerate(result[1:]):
-            auxiliary_groups[index].append(value)
+        )
 
-    return main_outputs, tuple(auxiliary_groups)
+    def supports(self, value: Any) -> bool:
+        accepted_types = self.accepted_value_types()
+        return bool(accepted_types) and isinstance(value, accepted_types)
+
+    def type_distance(self, value: Any) -> int:
+        declared_types = self.accepted_value_types()
+        if not declared_types:
+            return len(object.__mro__)
+        return min(
+            type(value).mro().index(declared_type)
+            for declared_type in declared_types
+            if isinstance(value, declared_type)
+        )
+
+    @abstractmethod
+    def slice_value(self, value: Any, memory_type: str) -> tuple[Any, ...]:
+        """Return nominal per-slice values for one PURE_2D input."""
 
 
-def _aggregate_pure_2d_auxiliary_output(
-    values: list[Any],
-    memory_type: str,
-) -> Any:
-    """Aggregate one auxiliary PURE_2D output across slices."""
-    return Pure2DAuxiliaryOutputAggregator.aggregate(values, memory_type)
+class RegisteredImageLayoutPure2DInputSlicer(Pure2DInputSlicer):
+    """Slice plain arrays through the registered OpenHCS image-stack layouts."""
+
+    value_type = np.ndarray
+
+    def slice_value(self, value: np.ndarray, memory_type: str) -> tuple[Any, ...]:
+        return tuple(
+            ImageStackLayout.for_stack(value).unstack(
+                array=value,
+                memory_type=memory_type,
+                gpu_id=0,
+            )
+        )
+
+
+class ImagePayloadPure2DInputSlicer(Pure2DInputSlicer):
+    """Slice image payloads while preserving per-slice image context."""
+
+    value_type = None
+    can_slice_family = True
+
+    def slice_value(self, value: Any, memory_type: str) -> tuple[Any, ...]:
+        data = image_payload_data(value)
+        slices = ImageStackLayout.for_stack(data).unstack(
+            array=data,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
+        return tuple(
+            image_payload_slice_context(value, slice_data, slice_index)
+            for slice_index, slice_data in enumerate(slices)
+        )
+
+
+class MaskedImagePayloadPure2DInputSlicer(ImagePayloadPure2DInputSlicer):
+    """Register masked image payloads for PURE_2D input slicing."""
+
+    value_type = MaskedImagePayload
+
+
+class ImageMetadataPayloadPure2DInputSlicer(ImagePayloadPure2DInputSlicer):
+    """Register image metadata payloads for PURE_2D input slicing."""
+
+    value_type = ImageMetadataPayload
 
 
 class Pure2DAuxiliaryOutputAggregator(ABC, metaclass=AutoRegisterMeta):
@@ -221,6 +343,17 @@ class RuntimeArrayPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
             "Concrete runtime-array aggregators must implement aggregate_values."
         )
 
+    def stack_array_slices(self, values: list[Any], memory_type: str) -> Any:
+        """Stack dense slice arrays through OpenHCS image-layout semantics."""
+        try:
+            return ImageStackLayout.for_slices(values).stack(
+                slices=values,
+                memory_type=memory_type,
+                gpu_id=0,
+            )
+        except ValueError:
+            return np.stack(tuple(np.asarray(value) for value in values), axis=0)
+
 
 class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOutputAggregator):
     """Stack image payload slices and reattach composed runtime image context."""
@@ -236,7 +369,12 @@ class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOut
         ) or super()._accepts_mixed_value(value)
 
     def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
-        data = stack_slices([image_payload_data(value) for value in values], memory_type, 0)
+        data_values = [image_payload_data(value) for value in values]
+        data = ImageStackLayout.stack_slices_or_single_stack(
+            data_values,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
         masks = [image_payload_mask(value) for value in values]
         present_masks = [mask for mask in masks if mask is not None]
         if present_masks and len(present_masks) != len(masks):
@@ -246,7 +384,11 @@ class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOut
             if not present_masks
             else present_masks[0]
             if len(present_masks) == 1
-            else stack_slices(present_masks, memory_type, 0)
+            else ImageStackLayout.stack_slices_or_single_stack(
+                present_masks,
+                memory_type=memory_type,
+                gpu_id=0,
+            )
         )
         return image_payload_with_context(
             data,
@@ -277,46 +419,36 @@ class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxili
         return isinstance(value, self.value_type)
 
     def aggregate_values(self, values: list[Any], memory_type: str) -> ObjectLabelPayload:
-        return _aggregate_object_label_payload_slices(values, memory_type)
-
-
-def _aggregate_object_label_payload_slices(
-    values: list[ObjectLabelPayload],
-    memory_type: str,
-) -> ObjectLabelPayload:
-    labels = _stack_runtime_array_slices(
-        [value.labels for value in values],
-        memory_type,
-    )
-    unedited_labels = (
-        _stack_runtime_array_slices(
-            [value.labels_for_variant("unedited") for value in values],
-            memory_type,
+        labels = self.stack_array_slices([value.labels for value in values], memory_type)
+        unedited_labels = (
+            self.stack_array_slices(
+                [value.labels_for_variant("unedited") for value in values],
+                memory_type,
+            )
+            if any(value.unedited_labels is not None for value in values)
+            else None
         )
-        if any(value.unedited_labels is not None for value in values)
-        else None
-    )
-    small_removed_labels = (
-        _stack_runtime_array_slices(
-            [value.labels_for_variant("small_removed") for value in values],
-            memory_type,
+        small_removed_labels = (
+            self.stack_array_slices(
+                [value.labels_for_variant("small_removed") for value in values],
+                memory_type,
+            )
+            if any(value.small_removed_labels is not None for value in values)
+            else None
         )
-        if any(value.small_removed_labels is not None for value in values)
-        else None
-    )
-    declared_counts = {value.declared_object_count for value in values}
-    declared_ids = {value.declared_object_ids for value in values}
-    domain_scopes = {value.domain_scope for value in values}
-    return ObjectLabelPayload(
-        labels=labels,
-        unedited_labels=unedited_labels,
-        small_removed_labels=small_removed_labels,
-        declared_object_count=(
-            declared_counts.pop() if len(declared_counts) == 1 else None
-        ),
-        declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
-        domain_scope=ObjectLabelDomainScope.common(domain_scopes),
-    )
+        declared_counts = {value.declared_object_count for value in values}
+        declared_ids = {value.declared_object_ids for value in values}
+        domain_scopes = {value.domain_scope for value in values}
+        return ObjectLabelPayload(
+            labels=labels,
+            unedited_labels=unedited_labels,
+            small_removed_labels=small_removed_labels,
+            declared_object_count=(
+                declared_counts.pop() if len(declared_counts) == 1 else None
+            ),
+            declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
+            domain_scope=ObjectLabelDomainScope.common(domain_scopes),
+        )
 
 
 class RegisteredImageLayoutPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
@@ -325,10 +457,11 @@ class RegisteredImageLayoutPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutput
     value_type = np.ndarray
 
     def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
-        stack_payload = _stack_registered_image_layout_slices(values, memory_type)
-        if stack_payload is not None:
-            return stack_payload
-        return stack_slices(values, memory_type, 0)
+        return ImageStackLayout.for_slices(values).stack(
+            slices=values,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
 
 
 class FlatSequencePure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
@@ -363,94 +496,202 @@ class TuplePure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggr
     value_type = tuple
 
 
-def _stack_runtime_array_slices(values: list[Any], memory_type: str) -> Any:
-    stack_payload = _stack_registered_image_layout_slices(values, memory_type)
-    if stack_payload is not None:
-        return stack_payload
-    return np.stack(tuple(np.asarray(value) for value in values), axis=0)
+class Pure2DSliceIndexProjector(ABC, metaclass=AutoRegisterMeta):
+    """Project execution slice identity into nominal PURE_2D outputs."""
 
+    __registry_key__ = "value_type"
+    __registry__: ClassVar[dict[Any, type["Pure2DSliceIndexProjector"]]] = {}
+    value_type: ClassVar[type[Any] | None] = None
+    can_project_family: ClassVar[bool] = True
 
-def _stack_registered_image_layout_slices(
-    values: list[Any],
-    memory_type: str,
-) -> Any | None:
-    try:
-        from openhcs.core.image_stack_layout import ImageStackLayout
+    @classmethod
+    def project(cls, value: Any, slice_index: int) -> Any:
+        for projector_type in cls.registered_projector_families():
+            projector = projector_type()
+            if projector.supports(value):
+                return projector.project_value(value, slice_index)
+        return value
 
-        return ImageStackLayout.for_slices(values).stack(
-            slices=values,
-            memory_type=memory_type,
-            gpu_id=0,
+    @classmethod
+    def registered_projector_families(
+        cls,
+    ) -> tuple[type["Pure2DSliceIndexProjector"], ...]:
+        family_types: list[type[Pure2DSliceIndexProjector]] = []
+        for projector_type in cls.__registry__.values():
+            for candidate_type in projector_type.mro():
+                if (
+                    candidate_type is cls
+                    or not isinstance(candidate_type, type)
+                    or not issubclass(candidate_type, cls)
+                    or not candidate_type.can_project_family
+                    or candidate_type in family_types
+                ):
+                    continue
+                family_types.append(candidate_type)
+        return tuple(family_types)
+
+    @classmethod
+    def accepted_value_types(cls) -> tuple[type[Any], ...]:
+        return tuple(
+            projector_type.value_type
+            for projector_type in Pure2DSliceIndexProjector.__registry__.values()
+            if (
+                projector_type.value_type is not None
+                and issubclass(projector_type, cls)
+            )
         )
-    except ValueError:
-        return None
+
+    def supports(self, value: Any) -> bool:
+        accepted_types = self.accepted_value_types()
+        return bool(accepted_types) and isinstance(value, accepted_types)
+
+    @abstractmethod
+    def project_value(self, value: Any, slice_index: int) -> Any:
+        """Return value with authoritative execution slice identity projected."""
 
 
-def _rewrite_slice_index(value: Any, slice_index: int) -> Any:
-    """Project the real slice index into nested slice-local outputs."""
-    if hasattr(value, "ndim"):
+class RuntimeArraySliceIndexProjector(Pure2DSliceIndexProjector):
+    """Runtime array payloads already carry pixel/object domain identity."""
+
+    value_type = RuntimeArrayPayload
+
+    def project_value(self, value: RuntimeArrayPayload, slice_index: int) -> RuntimeArrayPayload:
+        del slice_index
         return value
-    if is_dataclass(value) and not isinstance(value, type):
-        if hasattr(value, "slice_index"):
-            return replace(value, slice_index=slice_index)
+
+
+class NumpyArraySliceIndexProjector(Pure2DSliceIndexProjector):
+    """Plain arrays have no row-level slice field to rewrite."""
+
+    value_type = np.ndarray
+
+    def project_value(self, value: np.ndarray, slice_index: int) -> np.ndarray:
+        del slice_index
         return value
-    if isinstance(value, dict):
-        if "slice_index" in value:
-            return {**value, "slice_index": slice_index}
-        if _is_flat_mapping_row(value):
-            return {**value, "slice_index": slice_index}
+
+
+class DataclassSliceIndexProjector(Pure2DSliceIndexProjector):
+    """Dataclass rows expose slice identity as a declared dataclass field."""
+
+    value_type = object
+
+    def supports(self, value: Any) -> bool:
+        return is_dataclass(value) and not isinstance(value, type)
+
+    def project_value(self, value: Any, slice_index: int) -> Any:
+        if self.slice_axis_field in self.field_names(value):
+            return replace(value, **{self.slice_axis_field.value: slice_index})
+        return value
+
+    @property
+    def slice_axis_field(self) -> MeasurementRowAxisField:
+        return MeasurementRowAxisField.SLICE_INDEX
+
+    def field_names(self, value: Any) -> frozenset[MeasurementRowAxisField]:
+        return frozenset(
+            axis_field
+            for axis_field in MeasurementRowAxisField
+            if any(field.name == axis_field.value for field in fields(value))
+        )
+
+
+class MappingSliceIndexProjector(Pure2DSliceIndexProjector):
+    """Mapping rows use typed measurement-axis fields at serialization boundaries."""
+
+    value_type = dict
+
+    @property
+    def slice_axis_field(self) -> MeasurementRowAxisField:
+        return MeasurementRowAxisField.SLICE_INDEX
+
+    def project_value(self, value: dict[Any, Any], slice_index: int) -> dict[Any, Any]:
+        slice_field = self.slice_axis_field.value
+        if slice_field in value:
+            return {**value, slice_field: slice_index}
+        if self.is_flat_measurement_row(value):
+            return {**value, slice_field: slice_index}
         return {
-            key: _rewrite_slice_index(item, slice_index)
+            key: Pure2DSliceIndexProjector.project(item, slice_index)
             for key, item in value.items()
         }
-    if isinstance(value, list):
-        if _is_slice_index_free_flat_sequence(value):
+
+    def is_flat_measurement_row(self, value: Mapping[Any, Any]) -> bool:
+        return all(
+            not self.value_may_contain_slice_axis(item)
+            for item in value.values()
+        )
+
+    @classmethod
+    def value_may_contain_slice_axis(cls, value: Any) -> bool:
+        return (
+            isinstance(value, (RuntimeArrayPayload, np.ndarray))
+            or isinstance(value, (dict, list, tuple))
+            or (is_dataclass(value) and not isinstance(value, type))
+        )
+
+
+class SequenceSliceIndexProjector(Pure2DSliceIndexProjector):
+    """Project slice identity recursively through nested output sequences."""
+
+    value_type = None
+    can_project_family = False
+
+    def project_value(self, value: Any, slice_index: int) -> Any:
+        del value, slice_index
+        raise NotImplementedError
+
+    def is_slice_axis_free_flat_sequence(self, value: list[Any] | tuple[Any, ...]) -> bool:
+        if not value:
+            return True
+        first = value[0]
+        if is_dataclass(first) and not isinstance(first, type):
+            row_type = type(first)
+            return (
+                MeasurementRowAxisField.SLICE_INDEX
+                not in DataclassSliceIndexProjector().field_names(first)
+                and all(type(item) is row_type for item in value)
+            )
+        return False
+
+
+class ListSliceIndexProjector(SequenceSliceIndexProjector):
+    """Register list outputs for recursive slice-index projection."""
+
+    value_type = list
+    can_project_family = True
+
+    def project_value(self, value: list[Any], slice_index: int) -> list[Any]:
+        if self.is_slice_axis_free_flat_sequence(value):
             return value
         rewritten = None
         for index, item in enumerate(value):
-            rewritten_item = _rewrite_slice_index(item, slice_index)
+            rewritten_item = Pure2DSliceIndexProjector.project(item, slice_index)
             if rewritten is not None:
                 rewritten.append(rewritten_item)
             elif rewritten_item is not item:
                 rewritten = [*value[:index], rewritten_item]
         return value if rewritten is None else rewritten
-    if isinstance(value, tuple):
-        if _is_slice_index_free_flat_sequence(value):
+
+
+class TupleSliceIndexProjector(SequenceSliceIndexProjector):
+    """Register tuple outputs for recursive slice-index projection."""
+
+    value_type = tuple
+    can_project_family = True
+
+    def project_value(self, value: tuple[Any, ...], slice_index: int) -> tuple[Any, ...]:
+        if self.is_slice_axis_free_flat_sequence(value):
             return value
-        rewritten_items = tuple(_rewrite_slice_index(item, slice_index) for item in value)
+        rewritten_items = tuple(
+            Pure2DSliceIndexProjector.project(item, slice_index)
+            for item in value
+        )
         if all(
             rewritten_item is item
             for rewritten_item, item in zip(rewritten_items, value, strict=True)
         ):
             return value
         return rewritten_items
-    return value
-
-
-def _is_slice_index_free_flat_sequence(value: list[Any] | tuple[Any, ...]) -> bool:
-    """Return whether a sequence is a flat measurement-row collection."""
-    if not value:
-        return True
-    first = value[0]
-    if is_dataclass(first) and not isinstance(first, type):
-        row_type = type(first)
-        return (
-            not hasattr(first, "slice_index")
-            and all(type(item) is row_type for item in value)
-        )
-    return False
-
-
-def _is_flat_mapping_row(value: Mapping[Any, Any]) -> bool:
-    return all(not _value_may_contain_slice_index(item) for item in value.values())
-
-
-def _value_may_contain_slice_index(value: Any) -> bool:
-    return (
-        hasattr(value, "ndim")
-        or isinstance(value, (dict, list, tuple))
-        or (is_dataclass(value) and not isinstance(value, type))
-    )
 
 
 # Enums for OpenHCS principle compliance (replace magic strings)
@@ -836,18 +1077,24 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Execute 2D→2D function with unstack/restack wrapper."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
-        slices = unstack_slices(image, memory_type, 0)
+        slices = Pure2DInputSlicer.slice(image, memory_type)
         slice_results = [
-            _rewrite_slice_index(func(slice_2d, *args, **kwargs), slice_index)
+            Pure2DSliceIndexProjector.project(
+                func(slice_2d, *args, **kwargs),
+                slice_index,
+            )
             for slice_index, slice_2d in enumerate(slices)
         ]
-        main_outputs, auxiliary_groups = _pure_2d_slice_results(slice_results)
-        stacked_main_output = stack_slices(main_outputs, memory_type, 0)
-        if not auxiliary_groups:
+        result_batch = Pure2DSliceResultBatch.from_results(slice_results)
+        stacked_main_output = Pure2DAuxiliaryOutputAggregator.aggregate(
+            result_batch.main_outputs,
+            memory_type,
+        )
+        if not result_batch.auxiliary_groups:
             return stacked_main_output
         aggregated_auxiliary_outputs = tuple(
-            _aggregate_pure_2d_auxiliary_output(values, memory_type)
-            for values in auxiliary_groups
+            Pure2DAuxiliaryOutputAggregator.aggregate(values, memory_type)
+            for values in result_batch.auxiliary_groups
         )
         return (stacked_main_output, *aggregated_auxiliary_outputs)
 
@@ -1182,10 +1429,10 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
             if isinstance(result_3d, tuple):
                 # Check the first element if it's a tuple
                 first_result = result_3d[0] if len(result_3d) > 0 else None
-                if hasattr(first_result, 'ndim') and first_result.ndim == 2:
+                if isinstance(first_result, (RuntimeArrayPayload, np.ndarray)) and first_result.ndim == 2:
                     return ProcessingContract.VOLUMETRIC_TO_SLICE
             # Handle single array results
-            elif hasattr(result_3d, 'ndim') and result_3d.ndim == 2:
+            elif isinstance(result_3d, (RuntimeArrayPayload, np.ndarray)) and result_3d.ndim == 2:
                 return ProcessingContract.VOLUMETRIC_TO_SLICE
         return ProcessingContract.FLEXIBLE
 

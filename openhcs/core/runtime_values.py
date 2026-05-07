@@ -531,6 +531,28 @@ def with_derived_image_payload_data(
     )
 
 
+def image_payload_slice_context(
+    payload: Any,
+    data: Any,
+    channel_index: int,
+) -> Any:
+    """Attach one channel/slice of a payload's image context to slice data."""
+    mask = image_payload_mask(payload)
+    return image_payload_with_context(
+        data,
+        mask=None if mask is None else image_payload_mask_slice(mask, channel_index),
+        metadata=image_payload_metadata(payload).for_channel(channel_index),
+    )
+
+
+def image_payload_mask_slice(mask: Any, channel_index: int) -> Any:
+    """Return the mask plane matching one image channel/slice."""
+    mask_array = np.asarray(mask)
+    if mask_array.ndim == 3:
+        return mask_array[channel_index]
+    return mask
+
+
 def image_payload_spatial_shape_yx(payload: Any) -> tuple[int, int] | None:
     """Return the XY image shape for a nominal image payload."""
     import numpy as np
@@ -1708,7 +1730,7 @@ class ObjectLabelPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
             declared_object_count=(
                 declared_object_count
                 if declared_object_count is not None
-                else source.declared_object_count
+                else None if declared_object_ids else source.declared_object_count
             ),
             declared_object_ids=(
                 declared_object_ids
@@ -1745,7 +1767,7 @@ class ObjectLabelSetPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
             declared_object_count=(
                 declared_object_count
                 if declared_object_count is not None
-                else source.declared_object_count
+                else None if declared_object_ids else source.declared_object_count
             ),
             declared_object_ids=(
                 declared_object_ids

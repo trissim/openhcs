@@ -224,6 +224,40 @@ class OpenHCSRunRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeExecutionCacheWritePolicy:
+    """Typed cache-write contract for OpenHCS runtime execution observations."""
+
+    write_manifest: bool
+    include_image_records: bool
+    include_non_image_records: bool
+
+    @classmethod
+    def for_request(cls, request: OpenHCSRunRequest) -> "RuntimeExecutionCacheWritePolicy":
+        if (
+            request.runtime_execution_cache_manifest is None
+            or request.runtime_execution_cache_key is None
+        ):
+            return cls.disabled()
+        if not request.cache_candidate_measurement_snapshot:
+            return cls.disabled()
+        if not request.compare_image_outputs:
+            return cls.disabled()
+        return cls(
+            write_manifest=True,
+            include_image_records=request.compare_image_outputs,
+            include_non_image_records=True,
+        )
+
+    @classmethod
+    def disabled(cls) -> "RuntimeExecutionCacheWritePolicy":
+        return cls(
+            write_manifest=False,
+            include_image_records=False,
+            include_non_image_records=False,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class _RuntimeExecutionCacheHit:
     """Cached OpenHCS execution state, before external equivalence comparison."""
 
@@ -770,36 +804,45 @@ class OpenHCSAdapter(ToolAdapter):
         """Persist completed OpenHCS execution state before equivalence comparison."""
         manifest_path = request.runtime_execution_cache_manifest
         cache_key = request.runtime_execution_cache_key
-        if manifest_path is None or cache_key is None:
+        policy = RuntimeExecutionCacheWritePolicy.for_request(request)
+        if not policy.write_manifest or manifest_path is None or cache_key is None:
             return
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
-        validation_path = (
-            manifest_path.parent / _RUNTIME_EXECUTION_OBSERVATION_PICKLE_NAME
-        )
-        non_image_validation_path = (
-            manifest_path.parent
-            / _RUNTIME_EXECUTION_NON_IMAGE_OBSERVATION_PICKLE_NAME
-        )
-        with validation_path.open("wb") as handle:
-            pickle.dump(
-                _validation_cache_payload(validation),
-                handle,
-                protocol=pickle.HIGHEST_PROTOCOL,
+        validation_path = None
+        if policy.include_image_records:
+            validation_path = (
+                manifest_path.parent / _RUNTIME_EXECUTION_OBSERVATION_PICKLE_NAME
             )
-        with non_image_validation_path.open("wb") as handle:
-            pickle.dump(
-                _validation_cache_payload(validation, include_image_records=False),
-                handle,
-                protocol=pickle.HIGHEST_PROTOCOL,
+            with validation_path.open("wb") as handle:
+                pickle.dump(
+                    _validation_cache_payload(validation),
+                    handle,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+        non_image_validation_path = None
+        if policy.include_non_image_records:
+            non_image_validation_path = (
+                manifest_path.parent
+                / _RUNTIME_EXECUTION_NON_IMAGE_OBSERVATION_PICKLE_NAME
             )
+            with non_image_validation_path.open("wb") as handle:
+                pickle.dump(
+                    _validation_cache_payload(validation, include_image_records=False),
+                    handle,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
         manifest_path.write_text(
             json.dumps(
                 {
                     "schema_version": _RUNTIME_EXECUTION_CACHE_SCHEMA_VERSION,
                     "cache_key": cache_key,
-                    "validation_pickle_path": validation_path.name,
+                    "validation_pickle_path": (
+                        validation_path.name if validation_path is not None else None
+                    ),
                     "non_image_validation_pickle_path": (
                         non_image_validation_path.name
+                        if non_image_validation_path is not None
+                        else None
                     ),
                     "output_roots": tuple(str(root) for root in output_roots),
                     "execution_output_root": str(execution_output_root),

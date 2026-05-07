@@ -45,12 +45,18 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.runtime_semantics import ObjectLabelVariant, SpatialGridOrdering
 from openhcs.processing.backends.lib_registry.unified_registry import (
-    _aggregate_pure_2d_auxiliary_output,
+    Pure2DAuxiliaryOutputAggregator,
 )
 
 
 class ArrayLike(RuntimeArrayPayload):
     shape = (3, 3)
+
+    def array_payload_data(self):
+        return np.zeros(self.shape, dtype=np.int32)
+
+    def with_data(self, data):
+        return data
 
 
 def test_object_label_dense_data_uses_nominal_payload_registry() -> None:
@@ -575,7 +581,7 @@ def test_compose_image_payload_metadata_preserves_shared_spatial_context() -> No
     )
 
 
-def test_aggregate_pure_2d_auxiliary_output_preserves_image_payload_metadata() -> None:
+def test_pure_2d_auxiliary_aggregator_preserves_image_payload_metadata() -> None:
     first = image_payload_with_context(
         np.zeros((2, 3), dtype=np.float32),
         metadata=ImagePayloadMetadata(intensity_scale=65535.0, source_dtype="uint16"),
@@ -585,7 +591,7 @@ def test_aggregate_pure_2d_auxiliary_output_preserves_image_payload_metadata() -
         metadata=ImagePayloadMetadata(intensity_scale=255.0, source_dtype="uint8"),
     )
 
-    stacked = _aggregate_pure_2d_auxiliary_output([first, second], "numpy")
+    stacked = Pure2DAuxiliaryOutputAggregator.aggregate([first, second], "numpy")
 
     assert isinstance(stacked, ImageMetadataPayload)
     assert image_payload_data(stacked).shape == (2, 2, 3)
@@ -593,7 +599,7 @@ def test_aggregate_pure_2d_auxiliary_output_preserves_image_payload_metadata() -
     assert image_payload_metadata(stacked).for_channel(1).source_dtype == "uint8"
 
 
-def test_aggregate_pure_2d_auxiliary_output_preserves_stacked_object_labels() -> None:
+def test_pure_2d_auxiliary_aggregator_preserves_stacked_object_labels() -> None:
     first = ObjectLabelPayload(
         labels=np.ones((2, 3, 4), dtype=np.int32),
         unedited_labels=np.ones((2, 3, 4), dtype=np.int32) * 2,
@@ -603,7 +609,7 @@ def test_aggregate_pure_2d_auxiliary_output_preserves_stacked_object_labels() ->
         unedited_labels=np.ones((2, 3, 4), dtype=np.int32) * 4,
     )
 
-    stacked = _aggregate_pure_2d_auxiliary_output([first, second], "numpy")
+    stacked = Pure2DAuxiliaryOutputAggregator.aggregate([first, second], "numpy")
 
     assert isinstance(stacked, ObjectLabelPayload)
     assert stacked.labels.shape == (2, 2, 3, 4)

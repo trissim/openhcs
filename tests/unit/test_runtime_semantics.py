@@ -22,6 +22,7 @@ from openhcs.core.runtime_semantics import (
     dense_object_label_plane_id_domains,
     dense_object_label_present_ids,
     object_label_parent_child_payload,
+    relabel_dense_object_labels_consecutive,
 )
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
@@ -271,10 +272,10 @@ def test_dense_object_label_id_domain_uses_declared_count_for_empty_labels() -> 
     assert dense_object_label_id_domain(payload) == (1, 2, 3, 4)
 
 
-def test_dense_object_label_id_domain_preserves_missing_dense_ids() -> None:
+def test_dense_object_label_id_domain_uses_present_dense_ids_without_declaration() -> None:
     labels = np.array([[1, 0, 3]], dtype=np.int32)
 
-    assert dense_object_label_id_domain(labels) == (1, 2, 3)
+    assert dense_object_label_id_domain(labels) == (1, 3)
 
 
 def test_object_label_id_domain_uses_sparse_ijv_labels_without_densifying() -> None:
@@ -291,7 +292,7 @@ def test_object_label_id_domain_uses_sparse_ijv_labels_without_densifying() -> N
 
     assert dense_object_label_present_ids(rows) == (2, 4)
     assert dense_object_label_max_present_id(rows) == 4
-    assert dense_object_label_id_domain(rows) == (1, 2, 3, 4)
+    assert dense_object_label_id_domain(rows) == (2, 4)
 
 
 def test_object_label_id_domain_delegates_through_sparse_payload_wrappers() -> None:
@@ -325,7 +326,30 @@ def test_dense_object_label_plane_id_domains_do_not_repeat_stack_declaration() -
         domain_scope=ObjectLabelDomainScope.PLANE,
     )
 
-    assert dense_object_label_plane_id_domains(labels) == ((1, 2, 3), (1, 2))
+    assert dense_object_label_plane_id_domains(labels) == ((1, 3), (2,))
+
+
+def test_relabel_dense_object_labels_consecutive_uses_single_semantic_remap() -> None:
+    labels = np.array(
+        [
+            [0, 1000, 7],
+            [42, 0, 1000],
+        ],
+        dtype=np.int32,
+    )
+
+    relabeled = relabel_dense_object_labels_consecutive(labels, dtype=np.int32)
+
+    np.testing.assert_array_equal(
+        relabeled,
+        np.array(
+            [
+                [0, 3, 1],
+                [2, 0, 3],
+            ],
+            dtype=np.int32,
+        ),
+    )
 
 
 def test_payload_object_label_identity_domain_does_not_repeat_stack_planes() -> None:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, fields as dataclass_fields, is_dataclass
 from enum import Enum
 from functools import lru_cache
@@ -111,9 +111,9 @@ from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.source_matching import is_image_path
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
-    _aggregate_pure_2d_auxiliary_output,
-    _pure_2d_slice_results,
-    _rewrite_slice_index,
+    Pure2DAuxiliaryOutputAggregator,
+    Pure2DSliceIndexProjector,
+    Pure2DSliceResultBatch,
 )
 from openhcs.processing.materialization import tabular_field_names_from_materialization
 
@@ -141,13 +141,14 @@ from openhcs.interop.cellprofiler.runtime.invocation import (
     requested_image_execution_mode,
 )
 from benchmark.cellprofiler_compat.measurement_lookup import (
+    CellProfilerMeasurementFeature,
+    CellProfilerMeasurementFeatureKind,
     count_feature_object_name,
 )
 from benchmark.cellprofiler_compat.runtime_adapter import (
     CellProfilerRuntimeAdapter,
     prepare_cellprofiler_runtime_adapter,
 )
-from benchmark.converter.contract_inference import InferredContract, infer_contract
 
 _MODULE_NAME_REGISTRY_KEY = "module_name"
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
@@ -765,15 +766,14 @@ class CellProfilerModuleExecutor:
                     else None
                 )
                 combined_rows.extend(
-                    _annotate_measurement_rows(
-                        measurement_rows,
+                    MeasurementRowOwnership(
                         object_name=(
                             object_spec.name
                             if row_object_names_required
                             else None
                         ),
                         source_image_name=source_image_name,
-                    )
+                    ).annotate_rows(measurement_rows)
                 )
                 annotate_seconds += time.perf_counter() - annotate_started_at
 
@@ -881,10 +881,9 @@ class CellProfilerModuleExecutor:
                 else None
             )
             rows.extend(
-                _annotate_measurement_rows(
-                    _measurement_rows_from_output(artifact_values),
+                MeasurementRowOwnership(
                     source_image_name=source_image_name,
-                )
+                ).annotate_rows(_measurement_rows_from_output(artifact_values))
             )
             split_rows_seconds += time.perf_counter() - split_rows_started_at
         _log_module_profile(
@@ -976,10 +975,9 @@ class CellProfilerModuleExecutor:
                 else None
             )
             combined_rows.extend(
-                _annotate_measurement_rows(
-                    _measurement_rows_from_output(artifact_values),
+                MeasurementRowOwnership(
                     source_image_name=source_image_name,
-                )
+                ).annotate_rows(_measurement_rows_from_output(artifact_values))
             )
             split_rows_seconds += time.perf_counter() - split_rows_started_at
 
@@ -1279,7 +1277,7 @@ class CellProfilerModuleExecutor:
         main_output: Any,
         artifact_values: tuple[Any, ...],
         *,
-        source_image_payload: Any,
+        source_image_payload: Any | None = None,
         source_image_name: str | None,
     ) -> None:
         if not self.outputs:
@@ -2752,32 +2750,21 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicy):
         }
 
 
-_FILTER_OBJECTS_CHILD_COUNT_PREFIX = "Children_"
-_FILTER_OBJECTS_CHILD_COUNT_SUFFIX = "_Count"
-
-
 def _filter_objects_child_count_object_names(
     kwargs: Mapping[str, Any],
 ) -> tuple[str, ...]:
     feature_names = tuple(kwargs.get("measurement_features", ()))
     child_names = tuple(
-        child_name
+        parsed.object_name
         for feature_name in feature_names
-        for child_name in (_filter_objects_child_count_object_name(str(feature_name)),)
-        if child_name is not None
+        for parsed in (CellProfilerMeasurementFeature.parse(str(feature_name)),)
+        if (
+            parsed is not None
+            and parsed.kind is CellProfilerMeasurementFeatureKind.CHILD_COUNT
+            and parsed.object_name is not None
+        )
     )
     return tuple(dict.fromkeys(child_names))
-
-
-def _filter_objects_child_count_object_name(feature_name: str) -> str | None:
-    if not feature_name.startswith(_FILTER_OBJECTS_CHILD_COUNT_PREFIX):
-        return None
-    if not feature_name.endswith(_FILTER_OBJECTS_CHILD_COUNT_SUFFIX):
-        return None
-    child_name = feature_name[
-        len(_FILTER_OBJECTS_CHILD_COUNT_PREFIX) : -len(_FILTER_OBJECTS_CHILD_COUNT_SUFFIX)
-    ]
-    return child_name or None
 
 
 @dataclass(frozen=True, slots=True)
@@ -2964,9 +2951,9 @@ class CellProfilerOutputRecordRequest:
     spec: ArtifactSpec
     value: Any
     output_values: Mapping[str, Any]
-    source_image_payload: Any
     source_image_name: str | None
     func: Callable[..., Any]
+    source_image_payload: Any | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3406,7 +3393,10 @@ class NumpyCellProfilerImageOutputStrategy(CellProfilerImageOutputContextStrateg
     def runtime_image_value(self, value: Any, source_image_payload: Any) -> Any:
         if not isinstance(value, np.ndarray):
             raise TypeError("Numpy image output strategy requires numpy.ndarray.")
-        return with_derived_image_payload_data(source_image_payload, value)
+        return with_derived_image_payload_data(
+            source_image_payload,
+            _collapse_singleton_stack_output(value),
+        )
 
 
 class CellProfilerOutputRecorder(ABC, metaclass=AutoRegisterMeta):
@@ -3424,12 +3414,29 @@ class CellProfilerOutputRecorder(ABC, metaclass=AutoRegisterMeta):
             raise TypeError(f"Unsupported CellProfiler output kind {kind.value}.")
         return recorder_type()
 
+    @classmethod
+    def recording_dependency_depth(cls) -> int:
+        """Return dependency order from the recorder inheritance chain."""
+        return cls.mro().index(CellProfilerOutputRecorder)
+
     @abstractmethod
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
         """Record one output artifact through the runtime adapter."""
 
 
-class ImageOutputRecorder(CellProfilerOutputRecorder):
+class ImmediateOutputRecorder(CellProfilerOutputRecorder):
+    """Recorder family for artifacts that create no later recording dependency."""
+
+
+class RelationshipDependentOutputRecorder(ImmediateOutputRecorder):
+    """Recorder family for artifacts that require object endpoints to exist."""
+
+
+class MeasurementDependentOutputRecorder(RelationshipDependentOutputRecorder):
+    """Recorder family for artifacts that may require prior relationships."""
+
+
+class ImageOutputRecorder(ImmediateOutputRecorder):
     """Record image outputs."""
 
     kind = ArtifactKind.IMAGE
@@ -3448,7 +3455,7 @@ class ImageOutputRecorder(CellProfilerOutputRecorder):
         )
 
 
-class ObjectLabelsOutputRecorder(CellProfilerOutputRecorder):
+class ObjectLabelsOutputRecorder(ImmediateOutputRecorder):
     """Record object-label outputs."""
 
     kind = ArtifactKind.OBJECT_LABELS
@@ -3461,7 +3468,7 @@ class ObjectLabelsOutputRecorder(CellProfilerOutputRecorder):
         )
 
 
-class MeasurementsOutputRecorder(CellProfilerOutputRecorder):
+class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
     """Record measurement outputs with inferred image/object ownership."""
 
     kind = ArtifactKind.MEASUREMENTS
@@ -3481,7 +3488,7 @@ class MeasurementsOutputRecorder(CellProfilerOutputRecorder):
         )
 
 
-class RelationshipsOutputRecorder(CellProfilerOutputRecorder):
+class RelationshipsOutputRecorder(RelationshipDependentOutputRecorder):
     """Record parent-child relationship artifacts."""
 
     kind = ArtifactKind.RELATIONSHIPS
@@ -3508,7 +3515,7 @@ class RelationshipsOutputRecorder(CellProfilerOutputRecorder):
         )
 
 
-class SpatialGridOutputRecorder(CellProfilerOutputRecorder):
+class SpatialGridOutputRecorder(ImmediateOutputRecorder):
     """Record spatial-grid outputs."""
 
     kind = ArtifactKind.SPATIAL_GRID
@@ -3520,24 +3527,15 @@ class SpatialGridOutputRecorder(CellProfilerOutputRecorder):
         )
 
 
-_OUTPUT_RECORDING_PRIORITY = MappingProxyType(
-    {
-        ArtifactKind.IMAGE: 0,
-        ArtifactKind.OBJECT_LABELS: 0,
-        ArtifactKind.SPATIAL_GRID: 0,
-        ArtifactKind.RELATIONSHIPS: 1,
-        ArtifactKind.MEASUREMENTS: 2,
-    }
-)
-
-
 def _output_recording_order(
     output_specs: tuple[ArtifactSpec, ...],
 ) -> tuple[ArtifactSpec, ...]:
     return tuple(
         sorted(
             output_specs,
-            key=lambda spec: _OUTPUT_RECORDING_PRIORITY.get(spec.kind, 99),
+            key=lambda spec: type(
+                CellProfilerOutputRecorder.for_kind(spec.kind)
+            ).recording_dependency_depth(),
         )
     )
 
@@ -3590,7 +3588,7 @@ class CellProfilerOutputValueResolution:
             declared_output_specs=declared_specs,
         )
         context_values = _output_values_by_kind(
-            retained_specs,
+            declared_specs or retained_specs,
             main_output,
             artifact_values,
             func=func,
@@ -4188,48 +4186,76 @@ def _coerce_measurement_object_label_value(value: Any) -> int | None:
     return int(float(value))
 
 
-def _annotate_measurement_rows(
-    rows: Sequence[Any],
-    *,
-    object_name: str | None = None,
-    source_image_name: str | None = None,
-) -> list[Any]:
-    """Return rows with ownership qualifiers added in one mapping pass."""
-    normalized_object_name = _normalized_optional_measurement_owner(
-        object_name,
-        field_name=MEASUREMENT_OBJECT_NAME_FIELD,
-    )
-    normalized_source_image_name = _normalized_optional_measurement_owner(
-        source_image_name,
-        field_name=MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
-    )
-    if normalized_object_name is None and normalized_source_image_name is None:
-        return list(rows)
+@dataclass(frozen=True, slots=True)
+class MeasurementRowQualifier:
+    """One typed ownership qualifier attached to a measurement row."""
 
-    annotated_rows: list[Mapping[str, Any]] = []
-    for row in rows:
-        annotated_row = dict(measurement_row_mapping(row))
-        if normalized_object_name is not None:
-            annotated_row[MEASUREMENT_OBJECT_NAME_FIELD] = normalized_object_name
-        if normalized_source_image_name is not None:
-            annotated_row[MEASUREMENT_SOURCE_IMAGE_NAME_FIELD] = (
-                normalized_source_image_name
+    field_name: str
+    value: str
+
+    @classmethod
+    def optional(
+        cls,
+        *,
+        field_name: str,
+        value: str | None,
+    ) -> "MeasurementRowQualifier | None":
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"{field_name} cannot be empty.")
+        return cls(field_name=field_name, value=normalized)
+
+    def apply(self, row: MutableMapping[str, Any]) -> None:
+        row[self.field_name] = self.value
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementRowOwnership:
+    """Shared object/source ownership qualifiers for measurement rows."""
+
+    object_name: str | None = None
+    source_image_name: str | None = None
+
+    @property
+    def qualifiers(self) -> tuple[MeasurementRowQualifier, ...]:
+        return tuple(
+            qualifier
+            for qualifier in (
+                MeasurementRowQualifier.optional(
+                    field_name=MEASUREMENT_OBJECT_NAME_FIELD,
+                    value=self.object_name,
+                ),
+                MeasurementRowQualifier.optional(
+                    field_name=MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+                    value=self.source_image_name,
+                ),
             )
-        annotated_rows.append(annotated_row)
-    return annotated_rows
+            if qualifier is not None
+        )
 
+    def annotate_rows(self, rows: Sequence[Any]) -> list[Any]:
+        """Attach ownership qualifiers, copying only non-mutable row values."""
+        qualifiers = self.qualifiers
+        if not qualifiers:
+            return list(rows)
+        return [self.annotate_row(row, qualifiers=qualifiers) for row in rows]
 
-def _normalized_optional_measurement_owner(
-    value: str | None,
-    *,
-    field_name: str,
-) -> str | None:
-    if value is None:
-        return None
-    normalized = value.strip()
-    if not normalized:
-        raise ValueError(f"{field_name} cannot be empty.")
-    return normalized
+    def annotate_row(
+        self,
+        row: Any,
+        *,
+        qualifiers: Sequence[MeasurementRowQualifier],
+    ) -> Mapping[str, Any]:
+        annotated_row = (
+            row
+            if isinstance(row, MutableMapping)
+            else dict(measurement_row_mapping(row))
+        )
+        for qualifier in qualifiers:
+            qualifier.apply(annotated_row)
+        return annotated_row
 
 
 def _field_specs_for_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[FieldSpec, ...]:
@@ -5570,7 +5596,7 @@ def _relationship_child_count_rows_for_ids(
     for parent_id in related_parent_ids:
         if parent_id > 0:
             counts[parent_id] = counts.get(parent_id, 0) + 1
-    feature_name = f"Children_{child_object_name}_Count"
+    feature_name = CellProfilerMeasurementFeature.child_count(child_object_name).name
     rows: list[dict[str, int | str]] = []
     for parent_id, count in counts.items():
         row = {
@@ -6634,6 +6660,12 @@ class ImageMetadataPayloadPure2DOutputAggregator(ImagePayloadPure2DOutputAggrega
     output_type = ImageMetadataPayload
 
 
+class NumPyImagePure2DOutputAggregator(ImagePayloadPure2DOutputAggregator):
+    """Register NumPy image arrays for CellProfiler pure-2D aggregation."""
+
+    output_type = np.ndarray
+
+
 class CellProfilerImagePayloadOutputTypes:
     """Nominal image-payload ownership derived from registered output aggregators."""
 
@@ -6686,7 +6718,7 @@ class RegistryPure2DOutputAggregator(CellProfilerPure2DOutputAggregator):
         slice_outputs: Sequence[Any],
         memory_type: str,
     ) -> Any:
-        return _aggregate_pure_2d_auxiliary_output(list(slice_outputs), memory_type)
+        return Pure2DAuxiliaryOutputAggregator.aggregate(list(slice_outputs), memory_type)
 
 
 def _stack_cellprofiler_slice_outputs(
@@ -6883,7 +6915,7 @@ class CellProfilerFunctionContractExecutor:
                 f"AlignedImageStack, got {type(image).__name__}."
             )
         slice_results = tuple(
-            _rewrite_slice_index(
+            Pure2DSliceIndexProjector.project(
                 _collapse_singleton_stack_output(
                     func(
                         slice_payload,
@@ -6899,19 +6931,21 @@ class CellProfilerFunctionContractExecutor:
             )
             for slice_index, slice_payload in enumerate(image.slices)
         )
-        main_outputs, auxiliary_groups = _pure_2d_slice_results(slice_results)
-        memory_type = detect_memory_type(image_payload_data(main_outputs[0]))
+        result_batch = Pure2DSliceResultBatch.from_results(slice_results)
+        memory_type = detect_memory_type(
+            image_payload_data(result_batch.main_outputs[0])
+        )
         stacked_main_output = CellProfilerPure2DOutputAggregator.aggregate(
-            main_outputs,
+            result_batch.main_outputs,
             memory_type,
         )
-        if not auxiliary_groups:
+        if not result_batch.auxiliary_groups:
             return stacked_main_output
         return (
             stacked_main_output,
             *(
                 CellProfilerPure2DOutputAggregator.aggregate(values, memory_type)
-                for values in auxiliary_groups
+                for values in result_batch.auxiliary_groups
             ),
         )
 
@@ -6979,12 +7013,12 @@ class CellProfilerFunctionContractExecutor:
             slices=slice_count,
         )
         aggregate_started_at = time.perf_counter()
-        main_outputs, auxiliary_groups = _pure_2d_slice_results(slice_results)
+        result_batch = Pure2DSliceResultBatch.from_results(slice_results)
         stacked_main_output = CellProfilerPure2DOutputAggregator.aggregate(
-            main_outputs,
+            result_batch.main_outputs,
             memory_type,
         )
-        if not auxiliary_groups:
+        if not result_batch.auxiliary_groups:
             result = stacked_main_output
         else:
             result = (
@@ -6994,14 +7028,14 @@ class CellProfilerFunctionContractExecutor:
                         values,
                         memory_type,
                     )
-                    for values in auxiliary_groups
+                    for values in result_batch.auxiliary_groups
                 ),
             )
         _log_module_profile(
             "cp_pure_2d_aggregate_outputs",
             time.perf_counter() - aggregate_started_at,
             function=function_name,
-            auxiliary_groups=len(auxiliary_groups),
+            auxiliary_groups=len(result_batch.auxiliary_groups),
         )
         return result
 
@@ -7058,7 +7092,7 @@ def _execute_pure_2d_slice(
     slice_index: int,
     slice_count: int,
 ) -> Any:
-    return _rewrite_slice_index(
+    return Pure2DSliceIndexProjector.project(
         func(
             slice_2d,
             **_slice_pure_2d_kwargs(kwargs, slice_index, slice_count),
@@ -7074,17 +7108,21 @@ def _processing_contract_for_callable(func: Callable[..., Any]) -> ProcessingCon
     contract = CallableContract.from_callable(func)
     if isinstance(contract.processing_contract, ProcessingContract):
         return _cache_processing_contract(func, contract.processing_contract)
-    if contract.declared_processing_contract == "unknown":
-        inferred = _infer_processing_contract(func)
-        if inferred is not None:
-            return _cache_processing_contract(func, inferred)
-    if contract.declared_processing_contract is not None:
-        declared = ProcessingContract.from_declared_name(
-            contract.declared_processing_contract
-        )
-        if declared is not None:
-            return _cache_processing_contract(func, declared)
-    return _cache_processing_contract(func, ProcessingContract.FLEXIBLE)
+    from benchmark.cellprofiler_library import (
+        coerce_registered_absorbed_processing_contract,
+    )
+
+    absorbed_contract = coerce_registered_absorbed_processing_contract(
+        contract.function_name,
+        func,
+    )
+    if absorbed_contract is not None:
+        return _cache_processing_contract(func, absorbed_contract)
+    raise TypeError(
+        f"CellProfiler executable {contract.function_name!r} has no nominal "
+        "__processing_contract__ metadata. Coerce the absorbed catalog contract "
+        "before runtime execution."
+    )
 
 
 def _cache_processing_contract(
@@ -7093,15 +7131,6 @@ def _cache_processing_contract(
 ) -> ProcessingContract:
     _PROCESSING_CONTRACT_CACHE[func] = contract
     return contract
-
-
-def _infer_processing_contract(
-    func: Callable[..., Any],
-) -> ProcessingContract | None:
-    inferred = infer_contract(func, dtype_config=DtypeConfig()).contract
-    if inferred is InferredContract.UNKNOWN or inferred is InferredContract.ERROR:
-        return None
-    return ProcessingContract.from_declared_name(inferred.name)
 
 
 def _slice_pure_2d_kwargs(
@@ -7845,6 +7874,16 @@ def _slice_aligned_stack_view(
 ) -> Any | None:
     if isinstance(value, (str, bytes, bytearray, Mapping)):
         return None
+    if isinstance(value, (tuple, list)):
+        try:
+            value = np.asarray(value)
+        except ValueError:
+            return None
+    elif not isinstance(value, np.ndarray):
+        try:
+            value = np.asarray(value)
+        except ValueError:
+            return None
     try:
         stack = _cellprofiler_grayscale_plane_stack_view(
             value,

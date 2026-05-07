@@ -32,11 +32,11 @@ from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_OBJECT_NAME_FIELD,
     MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     MEASUREMENT_VALUE_FIELDS,
+    iter_measurement_rows,
     measurement_row_mapping,
     measurement_object_label,
     measurement_row_object_name,
     measurement_row_source_image_name,
-    measurement_rows,
     measurement_table_object_id_field,
 )
 from openhcs.core.runtime_execution_validation import (
@@ -92,6 +92,8 @@ from openhcs.core.equivalence.tables import (
     CSV_HEADER_CONTEXT_STOPWORDS as _CSV_HEADER_CONTEXT_STOPWORDS,
     MEASUREMENT_IDENTITY_FIELDS as _MEASUREMENT_IDENTITY_FIELDS,
     RuntimeTableSnapshot,
+    RuntimeMeasurementRowFingerprintBuilder,
+    RuntimeMeasurementTableIdentity,
     aggregate_measurement_table_key,
     exact_measurement_table_key,
     is_static_wide_measurement_table,
@@ -209,7 +211,7 @@ _RuntimeMeasurementPrimaryRowKey = tuple[
 ]
 _RuntimeMeasurementPrimaryRowSet = set[_RuntimeMeasurementPrimaryRowKey]
 _OBJECT_LABEL_ROW_IDENTITY_FIELD = "object_label"
-_RuntimeMeasurementObjectSubtableKey = tuple[object, ...]
+_RuntimeMeasurementObjectSubtableKey = RuntimeMeasurementTableIdentity
 _RuntimeMeasurementObjectSubtableSet = set[_RuntimeMeasurementObjectSubtableKey]
 _RuntimeMeasurementNameParts = tuple[tuple[str, ...], tuple[str, ...]]
 _RuntimeSourceTokenGroups = tuple[tuple[str, tuple[str, ...]], ...]
@@ -296,9 +298,33 @@ _StaticWideRuntimeQualifiersByIndex = dict[
     int,
     tuple[_RuntimeMeasurementIndexedQualifier, ...],
 ]
+
+
+@dataclass(slots=True)
+class RuntimeAggregateMeanAccumulator:
+    """Running aggregate mean state without retaining per-row values."""
+
+    total: float = 0.0
+    count: int = 0
+
+    def add(self, value: float) -> None:
+        self.total += value
+        self.count += 1
+
+    @property
+    def has_values(self) -> bool:
+        return self.count > 0
+
+    @property
+    def mean(self) -> float:
+        if self.count == 0:
+            raise ValueError("Cannot compute mean without values.")
+        return self.total / self.count
+
+
 _AggregateValuesByFeature = dict[
     tuple[RuntimeMeasurementFeatureKey, tuple[tuple[str, object], ...]],
-    list[float],
+    RuntimeAggregateMeanAccumulator,
 ]
 _AggregateMeanKeyCache = dict[
     RuntimeMeasurementFeatureKey,
@@ -310,6 +336,41 @@ _RuntimeRowProjectionRecord = tuple[
     RuntimeMeasurementFeatureKey,
     _RuntimeRowProjectionValueT,
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementProjectionCachePlan:
+    """Which auxiliary row caches are needed for a required-key projection."""
+
+    required_keys: _RuntimeRequiredMeasurementKeys
+
+    @property
+    def needs_primary_row_identities(self) -> bool:
+        if self.required_keys is None:
+            return True
+        return any(
+            self._required_key_needs_primary_row_identity_set(key)
+            for key in self.required_keys
+        )
+
+    def _required_key_needs_primary_row_identity_set(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+    ) -> bool:
+        if key.subject.scope is not MeasurementScope.OBJECT:
+            return False
+        if (
+            key.statistic == MeasurementStatistic.COUNT.value
+            and key.feature_name == ObjectCoreMeasurementFeature.OBJECT_COUNT.value
+        ):
+            return True
+        return _runtime_measurement_fact_uses_row_merge(key)
+
+    def primary_row_identities(self) -> _RuntimeMeasurementPrimaryRowSet | None:
+        return set() if self.needs_primary_row_identities else None
+
+    def row_merge_cache(self) -> _RuntimeMeasurementRowMergeCache:
+        return {}
 _RuntimeRowProjectionRecords = tuple[
     _RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT],
     ...,
@@ -778,8 +839,9 @@ class RuntimeMeasurementSnapshot:
     ) -> "RuntimeMeasurementSnapshot":
         """Project typed runtime measurement artifacts into semantic facts."""
         values_by_feature: _RuntimeMeasurementFactCounters = {}
-        row_merge_cache: _RuntimeMeasurementRowMergeCache = {}
-        primary_row_identities: _RuntimeMeasurementPrimaryRowSet = set()
+        cache_plan = RuntimeMeasurementProjectionCachePlan(required_measurement_keys)
+        row_merge_cache = cache_plan.row_merge_cache()
+        primary_row_identities = cache_plan.primary_row_identities()
         object_label_records = []
         object_label_records_by_axis: dict[object, list[object]] = {}
         relationship_records_by_axis: dict[object, list[object]] = {}
@@ -798,14 +860,16 @@ class RuntimeMeasurementSnapshot:
                     continue
                 if record.key.kind is ArtifactKind.MEASUREMENTS:
                     table = MeasurementTable.from_runtime_value(record.value)
-                    exact_table_key = exact_measurement_table_key(table)
-                    if exact_table_key in seen_exact_measurement_tables:
-                        continue
-                    seen_exact_measurement_tables.add(exact_table_key)
-                    table = _dedupe_runtime_measurement_table_object_subtable(
-                        table,
-                        seen_object_subtables,
-                    )
+                    if record.key.scope.group_key is None:
+                        exact_table_key = exact_measurement_table_key(table)
+                        if exact_table_key in seen_exact_measurement_tables:
+                            continue
+                        seen_exact_measurement_tables.add(exact_table_key)
+                    if record.key.scope.group_key is None:
+                        table = _dedupe_runtime_measurement_table_object_subtable(
+                            table,
+                            seen_object_subtables,
+                        )
                     aggregate_table_key = aggregate_measurement_table_key(table)
                     if aggregate_table_key is not None:
                         if aggregate_table_key in seen_aggregate_measurement_tables:
@@ -826,15 +890,12 @@ class RuntimeMeasurementSnapshot:
                         primary_row_identities=primary_row_identities,
                     ):
                         continue
-                    record_measurement_facts(
+                    RuntimeMeasurementTableFactRecorder(
                         values_by_feature,
-                        _measurement_facts_from_runtime_table(
-                            table_projection_context,
-                            row_merge_cache=row_merge_cache,
-                            primary_row_identities=primary_row_identities,
-                        ),
-                        required_keys=required_measurement_keys,
-                    )
+                        table_projection_context,
+                        row_merge_cache=row_merge_cache,
+                        primary_row_identities=primary_row_identities,
+                    ).record()
                     continue
                 if record.key.kind is ArtifactKind.OBJECT_LABELS:
                     object_label_records.append(record)
@@ -862,7 +923,7 @@ class RuntimeMeasurementSnapshot:
                 policy,
                 existing_subjects=explicit_object_count_subjects,
                 required_keys=required_measurement_keys,
-            ),
+            ) if primary_row_identities is not None else (),
             required_keys=required_measurement_keys,
         )
         object_count_subjects = explicit_object_count_subjects | object_measurement_subjects_with_role(
@@ -889,7 +950,7 @@ class RuntimeMeasurementSnapshot:
             row_merge_cache,
             required_keys=required_measurement_keys,
             policy=policy,
-            primary_row_identities=primary_row_identities,
+            primary_row_identities=primary_row_identities or set(),
         )
         explicit_measurement_keys = frozenset(values_by_feature)
         for axis_key, relationship_records in relationship_records_by_axis.items():
@@ -1582,17 +1643,35 @@ def _sparse_object_boundary_value_feature_equivalent(
 ) -> bool:
     if not _object_count_values_stable(feature, reference, candidate, policy):
         return False
-    if feature.feature_name in _ORIENTATION_FEATURES:
-        return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
+    if object_measurement_feature_has_role(
+        feature,
+        ObjectMeasurementFeatureRole.IDENTIFIER,
+    ):
+        return _sparse_object_identifier_counters_equivalent(
             reference.values_by_feature[feature],
             candidate.values_by_feature[feature],
             policy,
         )
     if object_measurement_feature_has_role(
         feature,
-        ObjectMeasurementFeatureRole.IDENTIFIER,
+        ObjectMeasurementFeatureRole.LOCATION,
     ):
-        return _sparse_object_identifier_counters_equivalent(
+        return _sparse_numeric_counters_equivalent(
+            reference.values_by_feature[feature],
+            candidate.values_by_feature[feature],
+            policy,
+            abs_tolerance=policy.object_boundary_jitter_abs_tolerance,
+            rel_tolerance=policy.object_boundary_jitter_rel_tolerance,
+            max_unstable_values=policy.object_boundary_jitter_max_unstable_values,
+            max_unstable_fraction=policy.object_boundary_jitter_max_unstable_fraction,
+        )
+    if not object_measurement_feature_has_role(
+        feature,
+        ObjectMeasurementFeatureRole.SHAPE_DESCRIPTOR,
+    ):
+        return False
+    if feature.feature_name in _ORIENTATION_FEATURES:
+        return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
             reference.values_by_feature[feature],
             candidate.values_by_feature[feature],
             policy,
@@ -2066,15 +2145,16 @@ def _record_static_wide_runtime_measurement_table(
     """Record wide runtime measurement tables without per-row key rebuilding."""
     table = context.table
     policy = context.policy
-    all_rows = measurement_rows((table,))
-    if not all_rows:
+    row_iterator = iter_measurement_rows((table,))
+    first_row = next(row_iterator, None)
+    if first_row is None:
         return True
 
-    first_mapping = measurement_row_mapping(all_rows[0])
+    first_mapping = measurement_row_mapping(first_row)
     if not is_wide_measurement_table(first_mapping):
         return False
     header = tuple(first_mapping)
-    for row in all_rows[1:]:
+    for row in row_iterator:
         row_mapping = measurement_row_mapping(row)
         if tuple(row_mapping) != header:
             return False
@@ -2175,7 +2255,7 @@ def _record_static_wide_runtime_measurement_table(
         table_padding_group,
     )
 
-    for row in all_rows:
+    for row in iter_measurement_rows((table,)):
         row_mapping = measurement_row_mapping(row)
         row_values = tuple(row_mapping.get(field_name) for field_name in header)
         subject = _measurement_subject_from_runtime_row_values(
@@ -2352,9 +2432,10 @@ def _record_row_aggregate_input_value(
             context.row_mapping,
             context.axis_key,
         )
-    context.values_by_feature.setdefault((mean_key, row_identity), []).append(
-        numeric_value
-    )
+    context.values_by_feature.setdefault(
+        (mean_key, row_identity),
+        RuntimeAggregateMeanAccumulator(),
+    ).add(numeric_value)
     return row_identity
 
 
@@ -2396,22 +2477,25 @@ def _dedupe_runtime_measurement_table_object_subtable(
     table: MeasurementTable,
     seen_object_subtables: _RuntimeMeasurementObjectSubtableSet,
 ) -> MeasurementTable:
-    rows = tuple(measurement_rows((table,)))
-    if not rows:
-        return table
-
-    object_rows: list[Mapping[str, object]] = []
     non_object_rows: list[object] = []
-    for row in rows:
+    object_row_fingerprint = RuntimeMeasurementRowFingerprintBuilder()
+    object_row_count = 0
+    total_row_count = 0
+    for row in iter_measurement_rows((table,)):
+        total_row_count += 1
         row_mapping = measurement_row_mapping(row)
         if _runtime_measurement_row_has_object_identity(row_mapping):
-            object_rows.append(row_mapping)
+            object_row_fingerprint.add_row_mapping(row_mapping)
+            object_row_count += 1
         else:
             non_object_rows.append(row)
-    if not object_rows:
+    if total_row_count == 0 or object_row_count == 0:
         return table
 
-    subtable_key = _runtime_measurement_object_subtable_key(table, object_rows)
+    subtable_key = RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
+        table,
+        object_row_fingerprint.finish(),
+    )
     if subtable_key not in seen_object_subtables:
         seen_object_subtables.add(subtable_key)
         return table
@@ -2445,37 +2529,6 @@ def _runtime_measurement_row_has_object_identity(
     except (TypeError, ValueError):
         pass
     return measurement_row_object_name(row_mapping) is not None
-
-
-def _runtime_measurement_object_subtable_key(
-    table: MeasurementTable,
-    object_rows: Iterable[Mapping[str, object]],
-) -> _RuntimeMeasurementObjectSubtableKey:
-    row_payloads = tuple(
-        tuple(
-            (
-                _normalize_identifier(str(field_name)),
-                measurement_table_cell_payload(value),
-            )
-            for field_name, value in row_mapping.items()
-        )
-        for row_mapping in object_rows
-    )
-    field_payloads = tuple(
-        (field.name, field.dtype, field.required)
-        for field in table.fields
-    )
-    return (
-        table.name,
-        repr(table.subject),
-        table.object_name,
-        table.object_id_field,
-        table.source_image_name,
-        field_payloads,
-        row_payloads,
-    )
-
-
 def _merge_runtime_row_measurement_facts(
     row_merge_cache: _RuntimeMeasurementRowMergeCache,
     row_mapping: Mapping[str, object],
@@ -2798,15 +2851,15 @@ def _record_runtime_aggregate_mean_facts(
     *,
     required_keys: _RuntimeRequiredMeasurementKeys,
 ) -> None:
-    for (mean_key, _row_identity), values in aggregate_values_by_feature.items():
-        if not values:
+    for (mean_key, _row_identity), accumulator in aggregate_values_by_feature.items():
+        if not accumulator.has_values:
             continue
         if mean_key in explicit_measurement_keys:
             continue
         if required_keys is not None and mean_key not in required_keys:
             continue
         values_by_feature.setdefault(mean_key, Counter())[
-            _cell_signature(str(sum(values) / len(values)), policy)
+            _cell_signature(str(accumulator.mean), policy)
         ] += 1
 
 
@@ -2837,7 +2890,7 @@ def _table_image_number_offset(
     return min(image_numbers) - 1.0
 
 
-def _runtime_table_image_number_offset(rows: tuple[object, ...]) -> float:
+def _runtime_table_image_number_offset(rows: Iterable[object]) -> float:
     image_numbers: list[float] = []
     for row in rows:
         row_mapping = measurement_row_mapping(row)
@@ -3234,124 +3287,158 @@ def _wide_measurement_table_needs_row_derivation(
     return False
 
 
-def _measurement_facts_from_runtime_table(
-    context: _RuntimeMeasurementTableProjectionContext,
-    *,
-    row_merge_cache: _RuntimeMeasurementRowMergeCache | None = None,
-    primary_row_identities: _RuntimeMeasurementPrimaryRowSet | None = None,
-) -> _RuntimeMeasurementFacts:
-    table = context.table
-    policy = context.policy
-    facts: _RuntimeMeasurementFactList = []
-    row_required_keys = _required_measurement_input_keys(
-        context.required_keys,
-        known_source_names=context.known_source_names,
-    )
-    row_required_subjects = _required_measurement_subjects(row_required_keys)
-    schema_cache: _RuntimeMeasurementRowSchemaCache = {}
-    key_cache: _RuntimeMeasurementFeatureKeyCache = {}
-    long_form_key_cache: _RuntimeMeasurementLongFormKeyCache = {}
-    qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache = {}
-    padding_group_cache: _RuntimeMeasurementPaddingGroupCache = {}
-    subject_schema_cache: dict[
-        tuple[str, ...],
-        _RuntimeMeasurementRowSubjectSchema,
-    ] = {}
-    aggregate_values_by_feature: _AggregateValuesByFeature = {}
-    aggregate_input_key_cache: _AggregateMeanKeyCache = {}
-    table_subject = RuntimeMeasurementSubjectKey.from_subject(table.subject)
-    table_padding_group = _normalize_identifier(table.name) or "measurements"
-    table_rows = tuple(measurement_rows((table,)))
-    image_number_offset = _runtime_table_image_number_offset(table_rows)
-    for row in table_rows:
+@dataclass
+class RuntimeMeasurementTableFactRecorder:
+    """Stream one runtime measurement table into semantic fact counters."""
+
+    values_by_feature: _RuntimeMeasurementFactCounters
+    context: _RuntimeMeasurementTableProjectionContext
+    row_merge_cache: _RuntimeMeasurementRowMergeCache | None = None
+    primary_row_identities: _RuntimeMeasurementPrimaryRowSet | None = None
+
+    def __post_init__(self) -> None:
+        self._schema_cache: _RuntimeMeasurementRowSchemaCache = {}
+        self._key_cache: _RuntimeMeasurementFeatureKeyCache = {}
+        self._long_form_key_cache: _RuntimeMeasurementLongFormKeyCache = {}
+        self._qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache = {}
+        self._padding_group_cache: _RuntimeMeasurementPaddingGroupCache = {}
+        self._subject_schema_cache: dict[
+            tuple[str, ...],
+            _RuntimeMeasurementRowSubjectSchema,
+        ] = {}
+        self._aggregate_values_by_feature: _AggregateValuesByFeature = {}
+        self._aggregate_input_key_cache: _AggregateMeanKeyCache = {}
+        self._explicit_measurement_keys: set[RuntimeMeasurementFeatureKey] = set()
+        self._row_required_keys = _required_measurement_input_keys(
+            self.context.required_keys,
+            known_source_names=self.context.known_source_names,
+        )
+        self._row_required_subjects = _required_measurement_subjects(
+            self._row_required_keys
+        )
+
+    def record(self) -> None:
+        table = self.context.table
+        table_subject = RuntimeMeasurementSubjectKey.from_subject(table.subject)
+        table_padding_group = _normalize_identifier(table.name) or "measurements"
+        image_number_offset = _runtime_table_image_number_offset(
+            iter_measurement_rows((table,))
+        )
+        fact_context = _RuntimeMeasurementFactRecordingContext(
+            self.values_by_feature,
+            self._explicit_measurement_keys,
+            self.context.required_keys,
+        )
+        for row in iter_measurement_rows((table,)):
+            self._record_row(
+                row,
+                table_subject,
+                table_padding_group,
+                image_number_offset,
+                fact_context,
+            )
+        self._record_derived_aggregate_facts()
+
+    def _record_row(
+        self,
+        row: object,
+        table_subject: RuntimeMeasurementSubjectKey,
+        table_padding_group: str,
+        image_number_offset: float,
+        fact_context: _RuntimeMeasurementFactRecordingContext,
+    ) -> None:
+        table = self.context.table
         row_mapping = measurement_row_mapping(row)
         header = tuple(row_mapping)
         row_values = tuple(row_mapping.get(field_name) for field_name in header)
-        subject_schema = subject_schema_cache.get(header)
-        if subject_schema is None:
-            subject_schema = _runtime_measurement_row_subject_schema(header)
-            subject_schema_cache[header] = subject_schema
+        subject_schema = self._subject_schema(header)
         subject = _measurement_subject_from_runtime_row_values(
             table_subject,
             row_values,
             subject_schema,
         )
         if (
-            row_required_subjects is not None
+            self._row_required_subjects is not None
             and subject.scope is MeasurementScope.OBJECT
-            and subject not in row_required_subjects
+            and subject not in self._row_required_subjects
         ):
-            continue
+            return
         source_name = _measurement_source_name_from_runtime_row_values(
             table.source_image_name,
             row_values,
             subject_schema,
         )
         _record_runtime_primary_measurement_row_identity(
-            primary_row_identities,
+            self.primary_row_identities,
             row_mapping,
-            context.axis_key,
+            self.context.axis_key,
             subject,
-            policy,
+            self.context.policy,
         )
         row_context = _RuntimeRowProjectionContext.from_row(
             row_mapping,
             subject,
-            policy,
+            self.context.policy,
             source_name=source_name,
-            known_source_names=context.known_source_names,
-            required_keys=row_required_keys,
+            known_source_names=self.context.known_source_names,
+            required_keys=self._row_required_keys,
             table_padding_group=table_padding_group,
             image_number_offset=image_number_offset,
-            schema_cache=schema_cache,
-            key_cache=key_cache,
-            long_form_key_cache=long_form_key_cache,
-            qualifier_render_cache=qualifier_render_cache,
-            padding_group_cache=padding_group_cache,
+            schema_cache=self._schema_cache,
+            key_cache=self._key_cache,
+            long_form_key_cache=self._long_form_key_cache,
+            qualifier_render_cache=self._qualifier_render_cache,
+            padding_group_cache=self._padding_group_cache,
         )
         row_facts = _measurement_facts_from_runtime_row_cached(row_context)
-        if row_merge_cache is not None:
-            row_facts = _merge_runtime_row_measurement_facts(
-                row_merge_cache,
-                row_mapping,
-                context.axis_key,
-                row_facts,
-                policy,
-            )
-        facts.extend(row_facts)
         if not row_facts:
-            continue
-        row_identity: _RuntimeMeasurementRowIdentityOrMissing = None
+            return
         aggregate_input_context = _AggregateInputRecordingContext(
-            aggregate_values_by_feature,
+            self._aggregate_values_by_feature,
             row_mapping,
-            context.axis_key,
-            context.required_keys,
-            aggregate_input_key_cache,
+            self.context.axis_key,
+            self.context.required_keys,
+            self._aggregate_input_key_cache,
         )
-        for key, value in row_facts:
-            row_identity = _record_row_aggregate_input_value(
-                aggregate_input_context,
-                key,
-                value,
-                row_identity=row_identity,
-            )
+        _record_runtime_measurement_facts_for_row(
+            fact_context,
+            aggregate_input_context,
+            row_facts,
+            row_mapping=row_mapping,
+            axis_key=self.context.axis_key,
+            row_merge_cache=self.row_merge_cache,
+            policy=self.context.policy,
+        )
 
-    explicit_keys = frozenset(key for key, _value in facts)
-    derived_facts: _RuntimeMeasurementFactList = []
-    for (mean_key, _row_identity), values in aggregate_values_by_feature.items():
-        if not values or mean_key in explicit_keys:
-            continue
-        if context.required_keys is not None and mean_key not in context.required_keys:
-            continue
-        derived_facts.append(
-            (
-                mean_key,
-                _cell_signature(str(sum(values) / len(values)), policy),
-            )
-        )
-    facts.extend(derived_facts)
-    return tuple(facts)
+    def _subject_schema(
+        self,
+        header: tuple[str, ...],
+    ) -> _RuntimeMeasurementRowSubjectSchema:
+        subject_schema = self._subject_schema_cache.get(header)
+        if subject_schema is None:
+            subject_schema = _runtime_measurement_row_subject_schema(header)
+            self._subject_schema_cache[header] = subject_schema
+        return subject_schema
+
+    def _record_derived_aggregate_facts(self) -> None:
+        policy = self.context.policy
+        for (
+            mean_key,
+            _row_identity,
+        ), accumulator in self._aggregate_values_by_feature.items():
+            if (
+                not accumulator.has_values
+                or mean_key in self._explicit_measurement_keys
+            ):
+                continue
+            if (
+                self.context.required_keys is not None
+                and mean_key not in self.context.required_keys
+            ):
+                continue
+            self.values_by_feature.setdefault(mean_key, Counter())[
+                _cell_signature(str(accumulator.mean), policy)
+            ] += 1
 
 
 @dataclass(frozen=True, slots=True)
@@ -5059,9 +5146,10 @@ def _object_measurement_values_by_label(
         object_id_field = measurement_table_object_id_field(table)
         table_source_name = table.source_image_name
         table_padding_group = _normalize_identifier(table.name) or "measurements"
-        table_rows = tuple(measurement_rows((table,)))
-        image_number_offset = _runtime_table_image_number_offset(table_rows)
-        for row in table_rows:
+        image_number_offset = _runtime_table_image_number_offset(
+            iter_measurement_rows((table,))
+        )
+        for row in iter_measurement_rows((table,)):
             row_mapping = measurement_row_mapping(row)
             try:
                 object_label = measurement_object_label(
@@ -5332,7 +5420,7 @@ def _measurement_source_names_from_artifact_execution(
             table = MeasurementTable.from_runtime_value(record.value)
             if table.source_image_name is not None:
                 source_names.update(_source_name_aliases(table.source_image_name))
-            for row in measurement_rows((table,)):
+            for row in iter_measurement_rows((table,)):
                 row_source_name = measurement_row_source_image_name(
                     measurement_row_mapping(row)
                 )

@@ -469,7 +469,11 @@ from openhcs.constants.input_source import InputSource
                 "    CellProfilerInvocationOptions,\n"
                 ")\n"
                 "from openhcs.core.module_artifact_contract import ModuleArtifactContract\n"
-                "from openhcs.core.callable_contract import attach_callable_contract_metadata, prepare_processing_callable\n"
+                "from openhcs.core.callable_contract import (\n"
+                "    RUNTIME_IMAGE_EXECUTION_MODE_ATTR,\n"
+                "    attach_callable_contract_metadata,\n"
+                "    prepare_processing_callable,\n"
+                ")\n"
                 "from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs\n"
                 "from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract\n"
                 "from openhcs.core.runtime_adapters import runtime_adapter\n\n"
@@ -986,7 +990,7 @@ from openhcs.constants.input_source import InputSource
                 f"raw_processing_function={raw_binding}, "
                 f"prepare={prepare_binding}, "
                 "runtime_image_execution_mode="
-                f"getattr({raw_binding}, '__openhcs_runtime_image_execution_mode__', None))"
+                f"getattr({raw_binding}, RUNTIME_IMAGE_EXECUTION_MODE_ATTR, None))"
             )
             lines.append("")
 
@@ -1068,7 +1072,6 @@ from openhcs.constants.input_source import InputSource
             module_name,
             function_name,
             str(self._module_metadata(module_name)["contract"]),
-            prefer_callable_metadata=True,
         )
         return repr(resolved_contract.contract.name)
 
@@ -1082,7 +1085,6 @@ from openhcs.constants.input_source import InputSource
             module_name,
             function_name,
             str(self._module_metadata(module_name)["contract"]),
-            prefer_callable_metadata=True,
         )
         return f"ProcessingContract.{resolved_contract.contract.name}"
 
