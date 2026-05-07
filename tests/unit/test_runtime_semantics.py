@@ -3,12 +3,35 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    ObjectLabelPayloadSourceSpatialDomainAdapter,
+    aligned_image_stack_kwarg,
+    compose_one_image_bundle,
+)
 from openhcs.core.runtime_semantics import (
+    ObjectLabelDomainScope,
+    ObjectLabelRepresentation,
+    SourceSpatialDomainAdapter,
     aligned_dense_object_label_arrays,
+    aligned_dense_object_label_stack_alignment,
+    aligned_dense_object_label_stacks,
     dense_object_label_id_domain,
+    dense_object_label_identity_domains,
+    dense_object_label_max_present_id,
+    dense_object_label_plane_id_domains,
+    dense_object_label_present_ids,
     object_label_parent_child_payload,
 )
-from openhcs.core.runtime_values import ObjectLabelPayload
+from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    ObjectLabelPayload,
+    ObjectLabelSet,
+    SparseIJVLabelRows,
+    image_payload_data,
+    image_payload_metadata,
+    image_payload_with_context,
+)
 
 
 def test_aligned_dense_object_label_arrays_projects_unambiguous_stack() -> None:
@@ -35,6 +58,85 @@ def test_aligned_dense_object_label_arrays_projects_unambiguous_stack() -> None:
 
     np.testing.assert_array_equal(aligned_stack, first_plane)
     np.testing.assert_array_equal(aligned_reference, reference)
+
+
+def test_compose_one_image_bundle_preserves_shared_crop_domain() -> None:
+    metadata = ImagePayloadMetadata(source_dtype="float32").with_spatial_crop(
+        input_shape_yx=(8, 9),
+        output_shape_yx=(5, 5),
+        offset_yx=(1, 2),
+        physical_border_edges_yx=(False, False, False, False),
+    )
+    first = image_payload_with_context(
+        np.ones((5, 5), dtype=np.float32),
+        metadata=metadata,
+    )
+    second = image_payload_with_context(
+        np.full((5, 5), 2, dtype=np.float32),
+        metadata=metadata,
+    )
+
+    bundle = compose_one_image_bundle((first, second))
+
+    assert image_payload_data(bundle).shape[-2:] == (5, 5)
+    assert image_payload_metadata(bundle).spatial_origin_yx == (1, 2)
+    assert image_payload_metadata(bundle).source_spatial_shape_yx == (8, 9)
+
+
+def test_aligned_image_stack_exposes_slice_source_spatial_domain() -> None:
+    metadata = ImagePayloadMetadata(source_dtype="float32").with_spatial_crop(
+        input_shape_yx=(8, 9),
+        output_shape_yx=(5, 5),
+        offset_yx=(1, 2),
+        physical_border_edges_yx=(False, False, False, False),
+    )
+    reference = image_payload_with_context(
+        np.ones((5, 5), dtype=np.float32),
+        metadata=metadata,
+    )
+    stack = AlignedImageStack((reference,))
+    adapter = stack.first_slice_source_spatial_adapter()
+
+    assert adapter is not None
+    assert adapter.payload_domain.origin_yx == (1, 2)
+    assert adapter.payload_domain.spatial_shape_yx == (5, 5)
+    assert adapter.payload_domain.source_shape_yx == (8, 9)
+
+
+def test_aligned_image_stack_kwarg_resolver_selects_nominal_stack_slice() -> None:
+    first = np.zeros((3, 4), dtype=np.int32)
+    second = np.ones((3, 4), dtype=np.int32)
+    stack = AlignedImageStack((first, second))
+
+    resolved = aligned_image_stack_kwarg(
+        stack,
+        slice_index=1,
+        slice_count=2,
+        reference_payload=second,
+    )
+
+    assert resolved is second
+
+
+def test_source_spatial_domain_adapter_extracts_source_array_to_payload_domain() -> None:
+    metadata = ImagePayloadMetadata(source_dtype="float32").with_spatial_crop(
+        input_shape_yx=(8, 9),
+        output_shape_yx=(5, 5),
+        offset_yx=(1, 2),
+        physical_border_edges_yx=(False, False, False, False),
+    )
+    image = image_payload_with_context(
+        np.ones((5, 5), dtype=np.float32),
+        metadata=metadata,
+    )
+    labels = np.arange(72, dtype=np.int32).reshape(8, 9)
+    adapter = SourceSpatialDomainAdapter.for_value(image)
+
+    assert adapter is not None
+    extracted = adapter.extract_source_array(labels)
+
+    assert extracted.shape == (5, 5)
+    np.testing.assert_array_equal(extracted, labels[1:6, 2:7])
 
 
 def test_aligned_dense_object_label_arrays_rejects_conflicting_stack_projection() -> None:
@@ -71,6 +173,95 @@ def test_object_label_parent_child_payload_aligns_parent_stack_to_child_plane() 
     assert payload.child_ids == (1, 2)
 
 
+def test_aligned_dense_object_label_arrays_applies_payload_domain_to_matching_raw_labels() -> None:
+    compact_parent = np.array(
+        [
+            [1, 1],
+            [0, 2],
+        ],
+        dtype=np.int32,
+    )
+    compact_child = np.array(
+        [
+            [1, 1],
+            [0, 2],
+        ],
+        dtype=np.int32,
+    )
+    parent_payload = ObjectLabelPayload(
+        labels=compact_parent,
+        spatial_origin_yx=(2, 3),
+        source_spatial_shape_yx=(6, 7),
+    )
+
+    assert isinstance(
+        SourceSpatialDomainAdapter.for_value(parent_payload),
+        ObjectLabelPayloadSourceSpatialDomainAdapter,
+    )
+    parent, child = aligned_dense_object_label_arrays(parent_payload, compact_child)
+
+    assert parent.shape == (6, 7)
+    assert child.shape == (6, 7)
+    np.testing.assert_array_equal(parent[2:4, 3:5], compact_parent)
+    np.testing.assert_array_equal(child[2:4, 3:5], compact_child)
+
+
+def test_aligned_dense_object_label_stacks_share_payload_source_domain() -> None:
+    compact_primary = np.stack(
+        (
+            np.array([[1, 0], [0, 2]], dtype=np.int32),
+            np.array([[1, 1], [0, 0]], dtype=np.int32),
+        )
+    )
+    compact_secondary = compact_primary.copy()
+    primary_payload = ObjectLabelPayload(
+        labels=compact_primary,
+        spatial_origin_yx=(1, 2),
+        source_spatial_shape_yx=(5, 6),
+    )
+
+    stacks = aligned_dense_object_label_stacks(
+        primary_payload,
+        compact_secondary,
+        slice_count=2,
+    )
+
+    assert stacks is not None
+    primary_stack, secondary_stack = stacks
+    assert primary_stack.shape == (2, 5, 6)
+    assert secondary_stack.shape == (2, 5, 6)
+    np.testing.assert_array_equal(primary_stack[:, 1:3, 2:4], compact_primary)
+    np.testing.assert_array_equal(secondary_stack[:, 1:3, 2:4], compact_secondary)
+
+
+def test_aligned_dense_object_label_stack_alignment_restores_secondary_domain() -> None:
+    compact_primary = np.stack(
+        (
+            np.array([[1, 0], [0, 2]], dtype=np.int32),
+            np.array([[1, 1], [0, 0]], dtype=np.int32),
+        )
+    )
+    compact_secondary = compact_primary.copy()
+    primary_payload = ObjectLabelPayload(
+        labels=compact_primary,
+        spatial_origin_yx=(1, 2),
+        source_spatial_shape_yx=(5, 6),
+    )
+    alignment = aligned_dense_object_label_stack_alignment(
+        primary_payload,
+        compact_secondary,
+        slice_count=2,
+    )
+
+    assert alignment is not None
+    source_domain_output = np.zeros_like(alignment.second_stack)
+    source_domain_output[:, 1:3, 2:4] = compact_secondary
+    restored = alignment.restore_second_stack(source_domain_output)
+
+    assert restored.shape == compact_secondary.shape
+    np.testing.assert_array_equal(restored, compact_secondary)
+
+
 def test_dense_object_label_id_domain_uses_declared_count_for_empty_labels() -> None:
     payload = ObjectLabelPayload(
         labels=np.zeros((3, 3), dtype=np.int32),
@@ -84,3 +275,69 @@ def test_dense_object_label_id_domain_preserves_missing_dense_ids() -> None:
     labels = np.array([[1, 0, 3]], dtype=np.int32)
 
     assert dense_object_label_id_domain(labels) == (1, 2, 3)
+
+
+def test_object_label_id_domain_uses_sparse_ijv_labels_without_densifying() -> None:
+    rows = SparseIJVLabelRows.from_yx_label(
+        np.array(
+            [
+                [0, 0, 4],
+                [1, 2, 2],
+                [4, 5, 4],
+            ],
+            dtype=np.int32,
+        )
+    )
+
+    assert dense_object_label_present_ids(rows) == (2, 4)
+    assert dense_object_label_max_present_id(rows) == 4
+    assert dense_object_label_id_domain(rows) == (1, 2, 3, 4)
+
+
+def test_object_label_id_domain_delegates_through_sparse_payload_wrappers() -> None:
+    rows = SparseIJVLabelRows.from_slices(
+        (
+            SparseIJVLabelRows.from_yx_label(np.array([[0, 0, 3]], dtype=np.int32)),
+            SparseIJVLabelRows.from_yx_label(np.array([[0, 0, 1]], dtype=np.int32)),
+        )
+    )
+    payload = ObjectLabelPayload(labels=rows)
+    label_set = ObjectLabelSet(
+        name="Worms",
+        labels=rows,
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+
+    assert dense_object_label_present_ids(payload) == (1, 3)
+    assert dense_object_label_present_ids(label_set) == (1, 3)
+
+
+def test_dense_object_label_plane_id_domains_do_not_repeat_stack_declaration() -> None:
+    labels = ObjectLabelPayload(
+        labels=np.array(
+            [
+                [[1, 3], [0, 0]],
+                [[0, 2], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        declared_object_count=4,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    assert dense_object_label_plane_id_domains(labels) == ((1, 2, 3), (1, 2))
+
+
+def test_payload_object_label_identity_domain_does_not_repeat_stack_planes() -> None:
+    labels = ObjectLabelPayload(
+        labels=np.array(
+            [
+                [[1, 2], [0, 0]],
+                [[1, 2], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+    )
+
+    assert dense_object_label_plane_id_domains(labels) == ((1, 2), (1, 2))
+    assert dense_object_label_identity_domains(labels) == ((1, 2),)

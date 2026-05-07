@@ -11,6 +11,7 @@ from pathlib import Path
 
 from openhcs.core.source_matching import is_image_path
 
+from benchmark.datasets.cppipe_case_catalog import official_cp3_case_category
 from benchmark.runtime_env import configure_headless_cpu_benchmark_runtime
 
 
@@ -49,6 +50,24 @@ def main() -> int:
         action="store_true",
         help="Disable OpenHCS benchmark/runtime execution cache reuse.",
     )
+    run_parser.add_argument(
+        "--openhcs-axis",
+        action="append",
+        dest="openhcs_axis_filter",
+        default=None,
+        help=(
+            "OpenHCS axis value to execute. Repeat for multiple axes. "
+            "Defaults to all axes."
+        ),
+    )
+    run_parser.add_argument(
+        "--openhcs-max-axis-count",
+        type=int,
+        help=(
+            "Execute only the first N OpenHCS axes after discovery/filtering. "
+            "Useful for parity/speed smoke runs on large plates."
+        ),
+    )
     run_parser.set_defaults(handler=_run_command)
 
     manifest_parser = subparsers.add_parser(
@@ -64,6 +83,23 @@ def main() -> int:
     manifest_parser.add_argument("--value-only", action="store_true")
     manifest_parser.add_argument("--microscope-type")
     manifest_parser.add_argument("--cellprofiler-timeout-seconds", type=float)
+    manifest_parser.add_argument(
+        "--dataset-cache-root",
+        type=Path,
+        help=(
+            "Benchmark dataset cache root used to materialize registry-backed "
+            "cppipe cases. Defaults to ~/.cache/openhcs/benchmark_datasets."
+        ),
+    )
+    manifest_parser.add_argument(
+        "--include-dataset-registry-cases",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Append case-bearing DatasetSpec entries from DATASET_REGISTRY to "
+            "the official CP3 examples manifest."
+        ),
+    )
     manifest_parser.add_argument(
         "--log-level",
         default=os.environ.get("OPENHCS_BENCHMARK_LOG_LEVEL", "WARNING"),
@@ -102,6 +138,8 @@ def _run_command(args: argparse.Namespace) -> int:
         native_reference_root=args.native_reference_root,
         discard_openhcs_outputs=args.discard_openhcs_outputs,
         continue_on_error=args.continue_on_error,
+        openhcs_axis_filter=tuple(args.openhcs_axis_filter or ()),
+        openhcs_max_axis_count=args.openhcs_max_axis_count,
     )
     print(f"suite_id={suite_id}")
     print(f"observations={len(observations)}")
@@ -111,6 +149,12 @@ def _run_command(args: argparse.Namespace) -> int:
 
 def _official_cp3_manifest_command(args: argparse.Namespace) -> int:
     configure_headless_cpu_benchmark_runtime(args.log_level)
+    from benchmark.datasets.manifest import (
+        cached_case_bearing_datasets,
+        comparison_manifest_payload,
+    )
+    from benchmark.datasets.registry import DATASET_REGISTRY
+
     cppipe_dir = args.examples_root / "CellProfiler3Pipelines"
     if not cppipe_dir.is_dir():
         raise FileNotFoundError(f"CellProfiler3Pipelines directory not found: {cppipe_dir}")
@@ -133,11 +177,22 @@ def _official_cp3_manifest_command(args: argparse.Namespace) -> int:
             "dataset_id": dataset_name,
             "value_only": args.value_only,
         }
+        category = official_cp3_case_category(cppipe_path.stem)
+        case["assay_category"] = category.assay
+        case["module_category"] = category.module
         if args.microscope_type is not None:
             case["microscope_type"] = args.microscope_type
         if args.cellprofiler_timeout_seconds is not None:
             case["cellprofiler_timeout_seconds"] = args.cellprofiler_timeout_seconds
         cases.append(case)
+    if args.include_dataset_registry_cases:
+        registry_manifest = comparison_manifest_payload(
+            cached_case_bearing_datasets(
+                DATASET_REGISTRY.values(),
+                cache_base=args.dataset_cache_root,
+            )
+        )
+        cases.extend(registry_manifest["cases"])
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps({"cases": cases}, indent=2, sort_keys=True),

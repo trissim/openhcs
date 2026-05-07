@@ -12,6 +12,7 @@ may reside outside the original object (e.g., U-shaped objects).
 
 import numpy as np
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -55,12 +56,13 @@ def shrink_to_object_centers(
             - CentroidStats dataclass with object count
             - Centroid label image (H, W) with single-pixel objects
     """
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-        labels.astype(np.int32, copy=False)
+        label_array
     )
     
     # Create output label image with same shape as input
-    output_labels = np.zeros_like(labels, dtype=np.int32)
+    output_labels = np.zeros_like(label_array, dtype=np.int32)
     
     # Place each object's label at its centroid location
     for index, label_id in enumerate(region_props.label):
@@ -70,7 +72,7 @@ def shrink_to_object_centers(
         )
         
         # Ensure centroid is within image bounds
-        if all(0 <= centroid_int[i] < labels.shape[i] for i in range(len(centroid_int))):
+        if all(0 <= centroid_int[i] < label_array.shape[i] for i in range(len(centroid_int))):
             output_labels[centroid_int] = int(label_id)
     
     stats = CentroidStats(
@@ -109,12 +111,13 @@ def shrink_to_object_centers_3d(
             - Centroid label image (D, H, W) with single-voxel objects
     """
     from skimage.measure import regionprops
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     
     # Get region properties to find centroids
-    props = regionprops(labels.astype(np.int32))
+    props = regionprops(label_array)
     
     # Create output label image with same shape as input
-    output_labels = np.zeros_like(labels, dtype=np.int32)
+    output_labels = np.zeros_like(label_array, dtype=np.int32)
     
     # Place each object's label at its centroid location
     for region in props:
@@ -124,7 +127,7 @@ def shrink_to_object_centers_3d(
         centroid_int = tuple(int(round(c)) for c in centroid)
         
         # Ensure centroid is within image bounds
-        if all(0 <= centroid_int[i] < labels.shape[i] for i in range(len(centroid_int))):
+        if all(0 <= centroid_int[i] < label_array.shape[i] for i in range(len(centroid_int))):
             output_labels[centroid_int] = region.label
     
     stats = CentroidStats(

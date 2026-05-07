@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import csv
 import math
+import re
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib
@@ -18,8 +18,15 @@ from matplotlib.ticker import LogLocator
 from matplotlib.ticker import NullFormatter
 from matplotlib.ticker import NullLocator
 
+from benchmark.contracts.dataset import BenchmarkCategory
+from benchmark.datasets.cppipe_case_catalog import DEFAULT_BENCHMARK_CATEGORY
+from benchmark.datasets.cppipe_case_catalog import official_cp3_case_category
+from nominal_refactor_advisor.record_algebra import product_record
+
 
 CASE_NAME_FIELD = "case_name"
+ASSAY_CATEGORY_FIELD = "assay_category"
+MODULE_CATEGORY_FIELD = "module_category"
 NATIVE_SECONDS_FIELD = "median_native_execution_seconds"
 OPENHCS_SECONDS_FIELD = "median_openhcs_execution_seconds"
 NATIVE_MEMORY_FIELD = "median_native_peak_memory_mb"
@@ -30,41 +37,59 @@ CELLPROFILER_LABEL = "CP"
 DEFAULT_OPENHCS_LABEL = "OH1"
 DEFAULT_FORMATS = ("png", "svg")
 DEFAULT_WRAP_AFTER = 14
+DEFAULT_GROUP_WIDTH_INCHES = 0.82
+SINGLE_PANEL_HEIGHT_INCHES = 3.6
+MULTI_PANEL_HEIGHT_INCHES = 5.6
+ACCURACY_ZOOM_PANEL_HEIGHT_INCHES = 3.8
+GROUPED_BAR_MAX_WIDTH = 0.22
+GROUPED_BAR_FRACTION = 0.9
+PIPELINE_LABEL_FONT_SIZE = 6.4
+PIPELINE_LABEL_WRAP_THRESHOLD = 29
 ACCURACY_ZOOM_HALF_RANGE_PERCENT = 0.001
+PIPELINE_NAME_FIELD = "pipeline_name"
+METHOD_FIELD = "method"
+AGGREGATE_LABEL = "Aggregate"
+ACCURACY_FRACTION_FIELD = "accuracy_fraction"
+RAW_SECONDS_FIELD = "raw_seconds"
+PEAK_MEMORY_MB_FIELD = "peak_memory_mb"
+SummaryRow = dict[str, str]
+SummaryTable = dict[str, SummaryRow]
+SummaryTables = Sequence[SummaryTable]
 
 
-@dataclass(frozen=True, slots=True)
-class SummarySource:
-    """One OpenHCS benchmark variant summary CSV."""
-
-    label: str
-    path: Path
-
-
-@dataclass(frozen=True, slots=True)
-class BenchmarkMetricRow:
-    """Long-form metric values for one method on one pipeline."""
-
-    pipeline_name: str
-    method: str
-    accuracy_fraction: float | None
-    raw_seconds: float | None
-    speedup: float | None
-    peak_memory_mb: float | None
-
-
-@dataclass(frozen=True, slots=True)
-class FigureMetricSpec:
-    """One grouped-bar chart projection."""
-
-    key: str
-    filename_stem: str
-    title: str
-    ylabel: str
-    percentage: bool = False
-    baseline_line: float | None = None
-    minimum_ylim: float | None = None
-    log_variant: bool = False
+SummarySource = product_record(
+    "SummarySource",
+    "label: str; path: Path",
+    doc="One OpenHCS benchmark variant summary CSV.",
+    module_name=__name__,
+)
+BenchmarkMetricRow = product_record(
+    "BenchmarkMetricRow",
+    (
+        "pipeline_name: str; method: str; assay_category: str; "
+        "module_category: str; accuracy_fraction: float | None; "
+        "raw_seconds: float | None; speedup: float | None; "
+        "peak_memory_mb: float | None"
+    ),
+    doc="Long-form metric values for one method on one pipeline.",
+    module_name=__name__,
+)
+FigureMetricSpec = product_record(
+    "FigureMetricSpec",
+    (
+        "key: str; filename_stem: str; title: str; ylabel: str; "
+        "percentage: bool; baseline_line: float | None; "
+        "minimum_ylim: float | None; log_variant: bool"
+    ),
+    defaults={
+        "percentage": False,
+        "baseline_line": None,
+        "minimum_ylim": None,
+        "log_variant": False,
+    },
+    doc="One grouped-bar chart projection.",
+    module_name=__name__,
+)
 
 
 FIGURE_METRICS = (
@@ -130,6 +155,7 @@ def generate_cppipe_benchmark_figures(
     output_formats: Sequence[str] = DEFAULT_FORMATS,
     include_average: bool = True,
     wrap_after: int = DEFAULT_WRAP_AFTER,
+    group_width_inches: float = DEFAULT_GROUP_WIDTH_INCHES,
 ) -> tuple[Path, ...]:
     """Generate grouped CP/OH cppipe benchmark figures and a long-form CSV."""
     if not summary_sources:
@@ -162,6 +188,36 @@ def generate_cppipe_benchmark_figures(
             output_dir=output_dir,
             output_formats=output_formats,
             wrap_after=wrap_after,
+            group_width_inches=group_width_inches,
+        )
+    )
+    category_rows = tuple(_category_metric_rows(rows, category_key=ASSAY_CATEGORY_FIELD))
+    module_rows = tuple(_category_metric_rows(rows, category_key=MODULE_CATEGORY_FIELD))
+    category_csv_path = output_dir / "cppipe_comparison_category_metrics_long.csv"
+    _write_metric_rows(category_csv_path, (*category_rows, *module_rows))
+    outputs.append(category_csv_path)
+    outputs.extend(
+        generate_grouped_benchmark_metric_figures(
+            category_rows,
+            metrics=_category_metrics(ASSAY_CATEGORY_FIELD),
+            methods=methods,
+            pipeline_names=_category_order(category_rows),
+            output_dir=output_dir,
+            output_formats=output_formats,
+            wrap_after=wrap_after,
+            group_width_inches=group_width_inches,
+        )
+    )
+    outputs.extend(
+        generate_grouped_benchmark_metric_figures(
+            module_rows,
+            metrics=_category_metrics(MODULE_CATEGORY_FIELD),
+            methods=methods,
+            pipeline_names=_category_order(module_rows),
+            output_dir=output_dir,
+            output_formats=output_formats,
+            wrap_after=wrap_after,
+            group_width_inches=group_width_inches,
         )
     )
     for metric in FIGURE_METRICS:
@@ -174,6 +230,7 @@ def generate_cppipe_benchmark_figures(
                     output_dir=output_dir,
                     output_formats=output_formats,
                     wrap_after=wrap_after,
+                    group_width_inches=group_width_inches,
                 )
             )
     return tuple(outputs)
@@ -188,6 +245,7 @@ def generate_grouped_benchmark_metric_figures(
     output_dir: Path,
     output_formats: Sequence[str] = DEFAULT_FORMATS,
     wrap_after: int = DEFAULT_WRAP_AFTER,
+    group_width_inches: float = DEFAULT_GROUP_WIDTH_INCHES,
 ) -> tuple[Path, ...]:
     """Generate v7-style grouped-bar figures for long-form benchmark rows."""
     outputs: list[Path] = []
@@ -203,6 +261,7 @@ def generate_grouped_benchmark_metric_figures(
                 output_dir=output_dir,
                 output_formats=output_formats,
                 wrap_after=wrap_after,
+                group_width_inches=group_width_inches,
                 log_y=False,
             )
         )
@@ -216,13 +275,14 @@ def generate_grouped_benchmark_metric_figures(
                     output_dir=output_dir,
                     output_formats=output_formats,
                     wrap_after=wrap_after,
+                    group_width_inches=group_width_inches,
                     log_y=True,
                 )
             )
     return tuple(outputs)
 
 
-def _load_summary_table(source: SummarySource) -> dict[str, dict[str, str]]:
+def _load_summary_table(source: SummarySource) -> SummaryTable:
     with source.path.open(encoding="utf-8", newline="") as handle:
         rows = tuple(csv.DictReader(handle))
     if not rows:
@@ -241,7 +301,7 @@ def _load_summary_table(source: SummarySource) -> dict[str, dict[str, str]]:
     return {row[CASE_NAME_FIELD]: row for row in rows}
 
 
-def _pipeline_order(source_tables: Sequence[dict[str, dict[str, str]]]) -> tuple[str, ...]:
+def _pipeline_order(source_tables: SummaryTables) -> tuple[str, ...]:
     ordered: list[str] = []
     seen: set[str] = set()
     for table in source_tables:
@@ -254,7 +314,7 @@ def _pipeline_order(source_tables: Sequence[dict[str, dict[str, str]]]) -> tuple
 
 
 def _benchmark_metric_rows(
-    source_tables: Sequence[dict[str, dict[str, str]]],
+    source_tables: SummaryTables,
     *,
     summary_sources: Sequence[SummarySource],
     pipeline_names: Sequence[str],
@@ -263,9 +323,12 @@ def _benchmark_metric_rows(
     first_table = source_tables[0]
     for pipeline_name in pipeline_names:
         baseline_row = first_table.get(pipeline_name)
+        baseline_category = _category_from_summary_row(pipeline_name, baseline_row)
         yield BenchmarkMetricRow(
             pipeline_name=pipeline_name,
             method=CELLPROFILER_LABEL,
+            assay_category=baseline_category.assay,
+            module_category=baseline_category.module,
             accuracy_fraction=1.0,
             raw_seconds=_optional_float_from_row(baseline_row, NATIVE_SECONDS_FIELD),
             speedup=1.0,
@@ -275,9 +338,12 @@ def _benchmark_metric_rows(
             row = table.get(pipeline_name)
             native_seconds = _optional_float_from_row(row, NATIVE_SECONDS_FIELD)
             openhcs_seconds = _optional_float_from_row(row, OPENHCS_SECONDS_FIELD)
+            category = _category_from_summary_row(pipeline_name, row or baseline_row)
             yield BenchmarkMetricRow(
                 pipeline_name=pipeline_name,
                 method=source.label,
+                assay_category=category.assay,
+                module_category=category.module,
                 accuracy_fraction=_optional_float_from_row(row, ACCURACY_FIELD),
                 raw_seconds=openhcs_seconds,
                 speedup=_speedup(row, native_seconds, openhcs_seconds),
@@ -294,6 +360,22 @@ def _benchmark_metric_rows(
         )
 
 
+def _category_from_summary_row(
+    pipeline_name: str,
+    row: SummaryRow | None,
+) -> BenchmarkCategory:
+    """Read persisted case metadata, falling back for old pre-category summaries."""
+    if row is not None:
+        assay_category = row.get(ASSAY_CATEGORY_FIELD)
+        module_category = row.get(MODULE_CATEGORY_FIELD)
+        if assay_category or module_category:
+            return BenchmarkCategory(
+                assay=assay_category or DEFAULT_BENCHMARK_CATEGORY.assay,
+                module=module_category or DEFAULT_BENCHMARK_CATEGORY.module,
+            )
+    return official_cp3_case_category(pipeline_name)
+
+
 def _average_rows(rows: Iterable[BenchmarkMetricRow]) -> Iterable[BenchmarkMetricRow]:
     by_method: dict[str, list[BenchmarkMetricRow]] = {}
     for row in rows:
@@ -302,6 +384,8 @@ def _average_rows(rows: Iterable[BenchmarkMetricRow]) -> Iterable[BenchmarkMetri
         yield BenchmarkMetricRow(
             pipeline_name="Average",
             method=method,
+            assay_category=AGGREGATE_LABEL,
+            module_category=AGGREGATE_LABEL,
             accuracy_fraction=_mean_present(
                 row.accuracy_fraction for row in method_rows
             ),
@@ -313,12 +397,14 @@ def _average_rows(rows: Iterable[BenchmarkMetricRow]) -> Iterable[BenchmarkMetri
 
 def _write_metric_rows(path: Path, rows: Sequence[BenchmarkMetricRow]) -> None:
     fieldnames = (
-        "pipeline_name",
-        "method",
-        "accuracy_fraction",
-        "raw_seconds",
+        PIPELINE_NAME_FIELD,
+        METHOD_FIELD,
+        ASSAY_CATEGORY_FIELD,
+        MODULE_CATEGORY_FIELD,
+        ACCURACY_FRACTION_FIELD,
+        RAW_SECONDS_FIELD,
         "speedup",
-        "peak_memory_mb",
+        PEAK_MEMORY_MB_FIELD,
     )
     with path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=fieldnames)
@@ -326,14 +412,79 @@ def _write_metric_rows(path: Path, rows: Sequence[BenchmarkMetricRow]) -> None:
         for row in rows:
             writer.writerow(
                 {
-                    "pipeline_name": row.pipeline_name,
-                    "method": row.method,
-                    "accuracy_fraction": row.accuracy_fraction,
-                    "raw_seconds": row.raw_seconds,
+                    PIPELINE_NAME_FIELD: row.pipeline_name,
+                    METHOD_FIELD: row.method,
+                    ASSAY_CATEGORY_FIELD: row.assay_category,
+                    MODULE_CATEGORY_FIELD: row.module_category,
+                    ACCURACY_FRACTION_FIELD: row.accuracy_fraction,
+                    RAW_SECONDS_FIELD: row.raw_seconds,
                     "speedup": row.speedup,
-                    "peak_memory_mb": row.peak_memory_mb,
+                    PEAK_MEMORY_MB_FIELD: row.peak_memory_mb,
                 }
             )
+
+
+def _category_metric_rows(
+    rows: Sequence[BenchmarkMetricRow],
+    *,
+    category_key: str,
+) -> Iterable[BenchmarkMetricRow]:
+    grouped: dict[tuple[str, str], list[BenchmarkMetricRow]] = {}
+    for row in rows:
+        if row.pipeline_name == "Average":
+            continue
+        category_name = str(getattr(row, category_key))
+        grouped.setdefault((category_name, row.method), []).append(row)
+
+    for (category_name, method), category_rows in grouped.items():
+        yield BenchmarkMetricRow(
+            pipeline_name=category_name,
+            method=method,
+            assay_category=(
+                category_name
+                if category_key == ASSAY_CATEGORY_FIELD
+                else AGGREGATE_LABEL
+            ),
+            module_category=(
+                category_name
+                if category_key == MODULE_CATEGORY_FIELD
+                else AGGREGATE_LABEL
+            ),
+            accuracy_fraction=_mean_present(
+                row.accuracy_fraction for row in category_rows
+            ),
+            raw_seconds=_mean_present(row.raw_seconds for row in category_rows),
+            speedup=_mean_present(row.speedup for row in category_rows),
+            peak_memory_mb=_mean_present(row.peak_memory_mb for row in category_rows),
+        )
+
+
+def _category_metrics(category_key: str) -> tuple[FigureMetricSpec, ...]:
+    prefix = (
+        "cppipe_assay_category"
+        if category_key == ASSAY_CATEGORY_FIELD
+        else "cppipe_module_category"
+    )
+    label = (
+        "assay category" if category_key == ASSAY_CATEGORY_FIELD else "module category"
+    )
+    return tuple(
+        FigureMetricSpec(
+            key=metric.key,
+            filename_stem=f"{prefix}_{metric.key}",
+            title=f"{metric.title} by {label}",
+            ylabel=metric.ylabel,
+            percentage=metric.percentage,
+            baseline_line=metric.baseline_line,
+            minimum_ylim=metric.minimum_ylim,
+            log_variant=metric.log_variant,
+        )
+        for metric in FIGURE_METRICS
+    )
+
+
+def _category_order(rows: Sequence[BenchmarkMetricRow]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(row.pipeline_name for row in rows))
 
 
 def _plot_grouped_metric(
@@ -345,11 +496,16 @@ def _plot_grouped_metric(
     output_dir: Path,
     output_formats: Sequence[str],
     wrap_after: int,
+    group_width_inches: float,
     log_y: bool,
 ) -> tuple[Path, ...]:
     panels = _pipeline_panels(pipeline_names, wrap_after)
-    fig_width = max(11.0, max(len(panel) for panel in panels) * 0.82)
-    fig_height = 5.4 if len(panels) == 1 else 8.4
+    fig_width = max(8.0, max(len(panel) for panel in panels) * group_width_inches)
+    fig_height = (
+        SINGLE_PANEL_HEIGHT_INCHES
+        if len(panels) == 1
+        else MULTI_PANEL_HEIGHT_INCHES
+    )
     fig, axes = plt.subplots(
         len(panels),
         1,
@@ -357,7 +513,7 @@ def _plot_grouped_metric(
         layout="constrained",
     )
     panel_axes = (axes,) if len(panels) == 1 else tuple(axes)
-    width = min(0.16, 0.78 / max(len(methods), 1))
+    width = _bar_width(len(methods))
     offsets = _bar_offsets(len(methods), width)
     row_index = {(row.pipeline_name, row.method): row for row in rows}
 
@@ -387,7 +543,13 @@ def _plot_grouped_metric(
             )
         axis.set_ylabel(metric.ylabel)
         axis.set_xticks(list(x_positions))
-        axis.set_xticklabels(panel_names, rotation=45, ha="right", fontsize=8)
+        axis.set_xticklabels(
+            [_split_pipeline_label(name) for name in panel_names],
+            rotation=45,
+            ha="right",
+            fontsize=PIPELINE_LABEL_FONT_SIZE,
+        )
+        axis.margins(x=0.01)
         axis.grid(axis="y", alpha=0.25)
         if metric.minimum_ylim is not None and not log_y:
             axis.set_ylim(bottom=metric.minimum_ylim)
@@ -400,9 +562,6 @@ def _plot_grouped_metric(
             axis.yaxis.set_major_formatter(FuncFormatter(_plain_log_tick_label))
             axis.yaxis.set_minor_formatter(NullFormatter())
 
-    panel_axes[0].set_title(
-        f"{metric.title} (log scale)" if log_y else metric.title
-    )
     panel_axes[0].legend(frameon=False, ncol=min(len(methods), 5), loc="upper left")
     outputs: list[Path] = []
     filename_stem = f"{metric.filename_stem}_log" if log_y else metric.filename_stem
@@ -422,20 +581,21 @@ def _plot_accuracy_zoom(
     output_dir: Path,
     output_formats: Sequence[str],
     wrap_after: int,
+    group_width_inches: float,
 ) -> tuple[Path, ...]:
     """Plot accuracy with a broken y-axis so tiny parity drift is visible."""
     panels = _pipeline_panels(pipeline_names, wrap_after)
     panel_count = len(panels)
-    fig_width = max(11.0, max(len(panel) for panel in panels) * 0.82)
+    fig_width = max(8.0, max(len(panel) for panel in panels) * group_width_inches)
     fig, axes = plt.subplots(
         panel_count * 2,
         1,
-        figsize=(fig_width, 5.6 * panel_count),
+        figsize=(fig_width, ACCURACY_ZOOM_PANEL_HEIGHT_INCHES * panel_count),
         gridspec_kw={"height_ratios": tuple((2.7, 1.0) * panel_count)},
         layout="constrained",
     )
-    all_axes = (axes,) if panel_count == 1 else tuple(axes)
-    width = min(0.16, 0.78 / max(len(methods), 1))
+    all_axes = tuple(axes.flat)
+    width = _bar_width(len(methods))
     offsets = _bar_offsets(len(methods), width)
     row_index = {(row.pipeline_name, row.method): row for row in rows}
     metric = FIGURE_METRICS[0]
@@ -473,10 +633,16 @@ def _plot_accuracy_zoom(
         zoom_axis.set_xticklabels(())
         context_axis.set_ylim(0.0, 5.0)
         context_axis.set_ylabel("0-5%")
-        context_axis.set_xticklabels(panel_names, rotation=45, ha="right", fontsize=8)
+        context_axis.set_xticklabels(
+            [_split_pipeline_label(name) for name in panel_names],
+            rotation=45,
+            ha="right",
+            fontsize=PIPELINE_LABEL_FONT_SIZE,
+        )
+        zoom_axis.margins(x=0.01)
+        context_axis.margins(x=0.01)
         _mark_axis_break(zoom_axis, context_axis)
 
-    all_axes[0].set_title("Semantic parity accuracy, broken y-axis zoom")
     all_axes[0].legend(frameon=False, ncol=min(len(methods), 5), loc="upper left")
     outputs: list[Path] = []
     for output_format in output_formats:
@@ -546,6 +712,42 @@ def _percent_tick_label(value: float, position: int) -> str:
 def _bar_offsets(method_count: int, width: float) -> tuple[float, ...]:
     center = (method_count - 1) / 2.0
     return tuple((index - center) * width for index in range(method_count))
+
+
+def _bar_width(method_count: int) -> float:
+    return min(GROUPED_BAR_MAX_WIDTH, GROUPED_BAR_FRACTION / max(method_count, 1))
+
+
+def _split_pipeline_label(label: str) -> str:
+    tokens = _pipeline_label_tokens(label)
+    if len(tokens) < 2 or len(" ".join(tokens)) < PIPELINE_LABEL_WRAP_THRESHOLD:
+        return label
+    split_at = min(
+        range(1, len(tokens)),
+        key=lambda index: _label_split_cost(tokens, index),
+    )
+    return f"{' '.join(tokens[:split_at])}\n{' '.join(tokens[split_at:])}"
+
+
+def _label_split_cost(tokens: Sequence[str], index: int) -> tuple[int, int]:
+    left_length = len(" ".join(tokens[:index]))
+    right_length = len(" ".join(tokens[index:]))
+    return max(left_length, right_length), abs(left_length - right_length)
+
+
+def _pipeline_label_tokens(label: str) -> tuple[str, ...]:
+    spaced = label.replace("_", " ")
+    tokens: list[str] = []
+    for part in spaced.split():
+        tokens.extend(
+            token
+            for token in re.findall(
+                r"[A-Z]?[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)|\d+",
+                part,
+            )
+            if token
+        )
+    return tuple(tokens) or (label,)
 
 
 def _metric_value(

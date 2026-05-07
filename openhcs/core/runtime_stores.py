@@ -147,9 +147,11 @@ class RuntimeValueStore:
     """Source of truth for validated runtime artifact values in one context."""
 
     def __init__(self) -> None:
-        self._records_by_key: OrderedDict[ArtifactKey, StoredRuntimeValue] = (
-            OrderedDict()
-        )
+        self._records_by_location: OrderedDict[
+            tuple[ArtifactKey, RuntimeArtifactLocation],
+            StoredRuntimeValue,
+        ] = OrderedDict()
+        self._current_location_by_key: dict[ArtifactKey, RuntimeArtifactLocation] = {}
         self._revision = 0
         self._find_cache: dict[
             tuple[
@@ -180,10 +182,11 @@ class RuntimeValueStore:
             value=value,
             location=RuntimeArtifactLocation(path=path, backend=backend),
         )
-        existing = self._records_by_key.get(value.key)
+        existing = self._current_record(value.key)
         if existing is not None:
             _validate_overwrite(existing, record)
-        self._records_by_key[value.key] = record
+        self._records_by_location[(value.key, record.location)] = record
+        self._current_location_by_key[value.key] = record.location
         self._mark_mutated()
         return record
 
@@ -204,7 +207,8 @@ class RuntimeValueStore:
             value=value,
             location=RuntimeArtifactLocation(path=path, backend=backend),
         )
-        self._records_by_key[value.key] = record
+        self._records_by_location[(value.key, record.location)] = record
+        self._current_location_by_key[value.key] = record.location
         self._mark_mutated()
         return record
 
@@ -216,7 +220,9 @@ class RuntimeValueStore:
     ) -> StoredRuntimeValue:
         """Resolve exactly one runtime artifact record for a planned operation."""
         records = tuple(
-            record for record in self._records_by_key.values() if query.matches(record)
+            record
+            for record in self._records_by_location.values()
+            if query.matches(record)
         )
         if not records:
             raise RuntimeError(
@@ -233,10 +239,10 @@ class RuntimeValueStore:
 
     def get(self, key: ArtifactKey) -> StoredRuntimeValue:
         """Return one stored value by exact typed artifact key."""
-        try:
-            return self._records_by_key[key]
-        except KeyError as exc:
-            raise KeyError(f"Runtime artifact key not found: {key!r}") from exc
+        record = self._current_record(key)
+        if record is None:
+            raise KeyError(f"Runtime artifact key not found: {key!r}")
+        return record
 
     def find(
         self,
@@ -253,7 +259,7 @@ class RuntimeValueStore:
         if cached is not None:
             return cached
         records: list[StoredRuntimeValue] = []
-        for record in self._records_by_key.values():
+        for record in self._records_by_location.values():
             key = record.key
             if name is not None and key.name != name:
                 continue
@@ -278,20 +284,26 @@ class RuntimeValueStore:
         location = RuntimeArtifactLocation(path=path, backend=backend)
         return tuple(
             record
-            for record in self._records_by_key.values()
+            for record in self._records_by_location.values()
             if record.location == location
         )
 
     def keys(self) -> tuple[ArtifactKey, ...]:
         """Return stored keys in insertion order."""
-        return tuple(self._records_by_key.keys())
+        return tuple(record.key for record in self._records_by_location.values())
 
     def values(self) -> tuple[StoredRuntimeValue, ...]:
         """Return stored records in insertion order."""
-        return tuple(self._records_by_key.values())
+        return tuple(self._records_by_location.values())
 
     def __len__(self) -> int:
-        return len(self._records_by_key)
+        return len(self._records_by_location)
+
+    def _current_record(self, key: ArtifactKey) -> StoredRuntimeValue | None:
+        location = self._current_location_by_key.get(key)
+        if location is None:
+            return None
+        return self._records_by_location.get((key, location))
 
     def _mark_mutated(self) -> None:
         self._revision += 1

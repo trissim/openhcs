@@ -11,9 +11,15 @@ from typing import Tuple
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+
+from benchmark.cellprofiler_library.functions.spatial_axes import (
+    trailing_spatial_factors,
+    trailing_spatial_target_shape,
+)
 
 
 class ResizeMethod(Enum):
@@ -46,8 +52,10 @@ def resize_objects(
     method: ResizeMethod = ResizeMethod.FACTOR,
     factor_x: float = 0.25,
     factor_y: float = 0.25,
+    factor_z: float = 1.0,
     width: int = 100,
     height: int = 100,
+    planes: int = 10,
 ) -> Tuple[np.ndarray, ResizeObjectsStats, np.ndarray]:
     """
     Resize object label matrices by a factor or to specific dimensions.
@@ -69,18 +77,28 @@ def resize_objects(
         Tuple of (original image, resize statistics, resized labels)
     """
     from scipy.ndimage import zoom
+    labels = object_label_dense_array(labels, dtype=np.int32)
     
     original_shape = labels.shape
     
+    method = _coerce_resize_method(method)
+
     if method == ResizeMethod.DIMENSIONS:
-        # Resize to specific dimensions
-        target_size = (height, width)
+        target_size = _resize_objects_target_shape(
+            labels.shape,
+            planes=planes,
+            height=height,
+            width=width,
+        )
         zoom_factors = np.divide(np.multiply(1.0, target_size), labels.shape)
-        resized_labels = zoom(labels, zoom_factors, order=0, mode="nearest")
     else:
-        # Resize by factor
-        zoom_factors = (factor_y, factor_x)
-        resized_labels = zoom(labels, zoom_factors, order=0, mode="nearest")
+        zoom_factors = _resize_objects_zoom_factors(
+            labels.ndim,
+            factor_z=factor_z,
+            factor_y=factor_y,
+            factor_x=factor_x,
+        )
+    resized_labels = zoom(labels, zoom_factors, order=0, mode="nearest")
     
     # Ensure labels remain integer type
     resized_labels = resized_labels.astype(np.int32)
@@ -91,14 +109,51 @@ def resize_objects(
     
     stats = ResizeObjectsStats(
         slice_index=0,
-        original_height=original_shape[0],
-        original_width=original_shape[1],
-        new_height=resized_labels.shape[0],
-        new_width=resized_labels.shape[1],
+        original_height=original_shape[-2],
+        original_width=original_shape[-1],
+        new_height=resized_labels.shape[-2],
+        new_width=resized_labels.shape[-1],
         object_count=object_count
     )
     
     return image, stats, resized_labels
+
+
+def _coerce_resize_method(value: ResizeMethod | str) -> ResizeMethod:
+    if isinstance(value, ResizeMethod):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"factor", "by_factor"}:
+        return ResizeMethod.FACTOR
+    if normalized in {"dimensions", "to_size", "manual"}:
+        return ResizeMethod.DIMENSIONS
+    return ResizeMethod(value)
+
+
+def _resize_objects_target_shape(
+    shape: tuple[int, ...],
+    *,
+    planes: int,
+    height: int,
+    width: int,
+) -> tuple[int, ...]:
+    spatial_shape = (planes, height, width) if len(shape) >= 3 else (height, width)
+    return trailing_spatial_target_shape(shape, spatial_shape)
+
+
+def _resize_objects_zoom_factors(
+    ndim: int,
+    *,
+    factor_z: float,
+    factor_y: float,
+    factor_x: float,
+) -> tuple[float, ...]:
+    spatial_factors = (
+        (factor_z, factor_y, factor_x)
+        if ndim >= 3
+        else (factor_y, factor_x)
+    )
+    return trailing_spatial_factors(ndim, spatial_factors)
 
 
 @numpy(contract=ProcessingContract.PURE_3D)
@@ -142,6 +197,7 @@ def resize_objects_3d(
         Tuple of (original image, resize statistics dict, resized labels)
     """
     from scipy.ndimage import zoom
+    labels = object_label_dense_array(labels, dtype=np.int32)
     
     original_shape = labels.shape
     

@@ -21,6 +21,7 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     image_payload_mask,
     image_payload_with_context,
+    object_label_dense_array,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -1168,6 +1169,7 @@ def measure_colocalization_objects(
 ) -> Tuple[np.ndarray, list[ObjectColocalizationMeasurements]]:
     """Measure colocalization between two channels within labeled objects."""
     image_data = image_payload_data(image)
+    labels = object_label_dense_array(labels, dtype=np.int32)
     max_label = int(np.max(labels)) if labels.size else 0
     if max_label <= 0:
         return _channel_output_payload(image, image_data, channel_1), []
@@ -1200,10 +1202,9 @@ def measure_colocalization_objects(
         channel_1,
         channel_2,
     )
-    object_mask = (
-        (labels > 0)
-        & pair_valid_mask
-    )
+    object_mask = labels > 0
+    if pair_valid_mask is not None:
+        object_mask = object_mask & pair_valid_mask
     if not np.any(object_mask):
         return (
             _channel_output_payload(image, image_data, channel_1),
@@ -1216,9 +1217,12 @@ def measure_colocalization_objects(
     first_pixels = first_image[object_mask]
     second_pixels = second_image[object_mask]
     object_labels = labels[object_mask].astype(np.int32, copy=False)
-    full_mask = pair_valid_mask
-    full_fi = first_image[full_mask]
-    full_si = second_image[full_mask]
+    if pair_valid_mask is None:
+        full_fi = first_image.ravel()
+        full_si = second_image.ravel()
+    else:
+        full_fi = first_image[pair_valid_mask]
+        full_si = second_image[pair_valid_mask]
     object_counts = scipy.ndimage.sum(
         np.ones(len(first_pixels)),
         object_labels,

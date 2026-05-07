@@ -37,6 +37,8 @@ from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectLabelPayload,
     ObjectRelationship,
+    object_label_dense_array,
+    object_label_payload_with_dense_labels,
 )
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
@@ -608,13 +610,10 @@ def _filtered_object_payload(
     input_value: np.ndarray,
     output_labels: np.ndarray,
 ) -> np.ndarray | ObjectLabelPayload:
-    if not isinstance(input_value, ObjectLabelPayload):
-        return output_labels
-    return ObjectLabelPayload(
-        labels=output_labels,
+    return object_label_payload_with_dense_labels(
+        input_value,
+        output_labels,
         declared_object_count=int(np.max(output_labels)) if output_labels.size else 0,
-        spatial_origin_yx=input_value.spatial_origin_yx,
-        source_spatial_shape_yx=input_value.source_spatial_shape_yx,
     )
 
 
@@ -736,14 +735,35 @@ def _best_child_indexes_both_parents(
     measurement_values: np.ndarray,
     keep_max: bool,
 ) -> list[int]:
-    return _selected_labels_to_list(
-        _best_child_selected_mask_both_parents_numba(
-            np.ascontiguousarray(child_labels, dtype=np.int32),
-            np.ascontiguousarray(enclosing_labels, dtype=np.int32),
-            np.ascontiguousarray(measurement_values, dtype=np.float64),
-            bool(keep_max),
-        )
+    import scipy.ndimage
+
+    values = np.asarray(measurement_values, dtype=np.float64)
+    if values.size == 0:
+        return []
+    child_array = np.asarray(child_labels, dtype=np.int32)
+    parent_array = np.asarray(enclosing_labels, dtype=np.int32)
+    max_parent = int(parent_array.max()) if parent_array.size else 0
+    if max_parent <= 0:
+        return []
+
+    pixel_values = np.empty(values.size + 1, dtype=np.float64)
+    pixel_values[1:] = values
+    pixel_values[0] = -np.inf if keep_max else np.inf
+    source_values = pixel_values[child_array]
+    parent_range = np.arange(1, max_parent + 1)
+    position_fn = scipy.ndimage.maximum_position if keep_max else scipy.ndimage.minimum_position
+    positions = position_fn(source_values, parent_array, parent_range)
+    positions = np.asarray(
+        (positions,) if isinstance(positions, tuple) else positions,
+        dtype=np.uint32,
     )
+    if positions.size == 0:
+        return []
+    indexes = tuple(map(tuple, positions.transpose()))
+    selected = sorted(set(int(label) for label in child_array[indexes]))
+    if selected and selected[0] == 0:
+        selected = selected[1:]
+    return selected
 
 
 @njit(cache=True)
@@ -1189,7 +1209,9 @@ def _validate_measurement_rule_lengths(
 
 def _label_plane(labels: np.ndarray) -> np.ndarray:
     """Return the label plane FilterObjects should operate on."""
-    return project_dense_object_label_stack(labels)
+    return project_dense_object_label_stack(
+        object_label_dense_array(labels, dtype=np.int32)
+    )
 
 
 def _aligned_label_plane(
@@ -1199,7 +1221,7 @@ def _aligned_label_plane(
     """Return labels aligned to the primary FilterObjects label geometry."""
     _aligned_reference, aligned_labels = aligned_dense_object_label_arrays(
         reference_labels,
-        labels,
+        object_label_dense_array(labels, dtype=np.int32),
     )
     return aligned_labels.astype(np.int32, copy=False)
 
@@ -1313,7 +1335,7 @@ def filter_objects_by_size(
     Returns:
         Tuple of (image, stats, filtered_labels)
     """
-    labels = labels.astype(np.int32)
+    labels = object_label_dense_array(labels, dtype=np.int32)
     max_label = labels.max()
     
     if max_label == 0:
@@ -1379,7 +1401,7 @@ def filter_border_objects(
     Returns:
         Tuple of (image, stats, filtered_labels)
     """
-    labels = labels.astype(np.int32)
+    labels = object_label_dense_array(labels, dtype=np.int32)
     max_label = labels.max()
     
     if max_label == 0:

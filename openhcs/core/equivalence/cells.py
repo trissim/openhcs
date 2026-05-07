@@ -177,7 +177,8 @@ def runtime_cell_signature(
     elif math.isinf(numeric):
         canonical = "inf" if numeric > 0 else "-inf"
     else:
-        canonical = repr(round(numeric, policy.numeric_decimal_places))
+        rounded = round(numeric, policy.numeric_decimal_places)
+        canonical = repr(0.0 if rounded == 0 else rounded)
     return RuntimeCellSignature(RuntimeCellValueKind.NUMBER, canonical)
 
 

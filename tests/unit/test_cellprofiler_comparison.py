@@ -69,6 +69,8 @@ def test_comparison_writers_emit_raw_phase_and_summary_tables(
         name="ExampleFly",
         dataset_path=tmp_path / "ExampleFly",
         cppipe_path=tmp_path / "ExampleFly.cppipe",
+        assay_category="Tissue/object morphology",
+        module_category="Segmentation + object measurement",
     )
     observation = comparison_observation_from_result(
         CellProfilerCompatibilityResult(
@@ -103,6 +105,11 @@ def test_comparison_writers_emit_raw_phase_and_summary_tables(
     phase_rows = _csv_rows(tmp_path / "phase_timing.csv")
     summary_rows = _csv_rows(tmp_path / "summary.csv")
     assert observation_rows[0]["case_name"] == "ExampleFly"
+    assert observation_rows[0]["assay_category"] == "Tissue/object morphology"
+    assert (
+        observation_rows[0]["module_category"]
+        == "Segmentation + object measurement"
+    )
     assert observation_rows[0]["difference_count"] == "4"
     assert observation_rows[0]["openhcs_error_message"] == "semantic mismatch"
     assert observation_rows[0]["parity_accuracy"] == "0.0"
@@ -112,6 +119,8 @@ def test_comparison_writers_emit_raw_phase_and_summary_tables(
         "EXECUTE_OPENHCS",
     }
     assert summary_rows[0]["median_speedup"] == "6.0"
+    assert summary_rows[0]["assay_category"] == "Tissue/object morphology"
+    assert summary_rows[0]["module_category"] == "Segmentation + object measurement"
     assert summary_rows[0]["median_total_phase_speedup"] == "6.0"
     assert summary_rows[0]["speedup_target"] == "5.0"
     assert summary_rows[0]["meets_execution_speedup_target"] == "True"
@@ -132,6 +141,8 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
                         "cppipe_path": "pipes/human.cppipe",
                         "dataset_id": "human",
                         "microscope_type": "imagexpress",
+                        "assay_category": "Cell morphology",
+                        "module_category": "Segmentation + intensity measurement",
                         "value_only": True,
                         "equivalence_reference_output_dir": "native/human",
                         "cellprofiler_timeout_seconds": 120,
@@ -151,6 +162,8 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
             cppipe_path=Path("pipes/human.cppipe"),
             dataset_id="human",
             microscope_type="imagexpress",
+            assay_category="Cell morphology",
+            module_category="Segmentation + intensity measurement",
             value_only=True,
             equivalence_reference_output_dir=Path("native/human"),
             cellprofiler_timeout_seconds=120.0,

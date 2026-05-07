@@ -16,6 +16,11 @@ from openhcs.interop.cellprofiler.measurement_scope import (
 from .classify_objects_settings import ClassifyObjectsVariant
 from .grid_settings import DefineGridVariant, IdentifyObjectsInGridVariant
 from .parser import ModuleBlock
+from .resize_objects_settings import (
+    RESIZE_OBJECTS_FACTOR_Z_SETTING,
+    RESIZE_OBJECTS_PLANES_SETTING,
+)
+from .resize_settings import RESIZE_FACTOR_Z_SETTING, RESIZE_PLANES_SETTING
 from .setting_names import (
     OBJECT_MEASUREMENT_SETTING,
     SettingNameFamily,
@@ -219,6 +224,56 @@ class IdentifyObjectsInGridFunctionResolutionStrategy(
                 module
             ).function_name
         )
+
+
+class VolumetricSettingFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+    """Resolve modules with a distinct absorbed function for volumetric settings."""
+
+    volumetric_function_name: ClassVar[str | None] = None
+    volumetric_settings: ClassVar[tuple[SettingNameFamily, ...]] = ()
+
+    def resolve(
+        self,
+        module: ModuleBlock,
+        *,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        if self._has_volumetric_settings(module):
+            return ResolvedModuleFunction(
+                function_name=_required_class_attr(
+                    type(self).volumetric_function_name,
+                    "volumetric_function_name",
+                )
+            )
+        return ResolvedModuleFunction(function_name=default_function_name)
+
+    def _has_volumetric_settings(self, module: ModuleBlock) -> bool:
+        return any(
+            setting_values(module, setting)
+            for setting in _required_class_attr(
+                type(self).volumetric_settings,
+                "volumetric_settings",
+            )
+        )
+
+
+class ResizeFunctionResolutionStrategy(VolumetricSettingFunctionResolutionStrategy):
+    """Resolve Resize to its volumetric function when CP exposes Z dimensions."""
+
+    module_name = "Resize"
+    volumetric_function_name = "resize_volumetric"
+    volumetric_settings = (RESIZE_FACTOR_Z_SETTING, RESIZE_PLANES_SETTING)
+
+
+class ResizeObjectsFunctionResolutionStrategy(VolumetricSettingFunctionResolutionStrategy):
+    """Resolve ResizeObjects to its volumetric function when CP exposes Z dimensions."""
+
+    module_name = "ResizeObjects"
+    volumetric_function_name = "resize_objects_3d"
+    volumetric_settings = (
+        RESIZE_OBJECTS_FACTOR_Z_SETTING,
+        RESIZE_OBJECTS_PLANES_SETTING,
+    )
 
 
 def _scope_setting_value(

@@ -40,6 +40,15 @@ def main() -> int:
         default=14,
         help="Split long grouped charts into two stacked panels above this count.",
     )
+    parser.add_argument(
+        "--group-width-inches",
+        type=float,
+        default=0.82,
+        help=(
+            "Horizontal inches allocated per pipeline group. "
+            "Use about 0.41 for twice-dense single-row lab-meeting figures."
+        ),
+    )
     args = parser.parse_args()
 
     outputs = generate_cppipe_benchmark_figures(
@@ -50,6 +59,7 @@ def main() -> int:
         ),
         include_average=not args.no_average,
         wrap_after=args.wrap_after,
+        group_width_inches=args.group_width_inches,
     )
     for output in outputs:
         print(output)

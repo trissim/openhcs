@@ -12,6 +12,7 @@ from typing import Tuple, List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
@@ -92,9 +93,10 @@ def compute_aggregate_measurements(
         Tuple of (original image, aggregate statistics dataclass)
     """
     from skimage.measure import regionprops
+    labels = object_label_dense_array(labels, dtype=np.int32)
     
     # Get object properties
-    props = regionprops(labels.astype(np.int32), intensity_image=image)
+    props = regionprops(labels, intensity_image=image)
     
     if len(props) == 0:
         # No objects found
@@ -173,8 +175,9 @@ def extract_object_measurements(
         Tuple of (original image, list of measurement dictionaries)
     """
     from skimage.measure import regionprops
+    labels = object_label_dense_array(labels, dtype=np.int32)
     
-    props = regionprops(labels.astype(np.int32), intensity_image=image)
+    props = regionprops(labels, intensity_image=image)
     
     measurements = []
     for i, prop in enumerate(props):

@@ -1,3 +1,5 @@
+from dataclasses import dataclass
+
 import pytest
 
 from openhcs.core.artifacts import (
@@ -24,6 +26,7 @@ from openhcs.core.pipeline.artifact_planning import (
     extract_artifact_declarations,
     normalize_pattern,
 )
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.processing.materialization import csv_only
 
 
@@ -41,6 +44,11 @@ def skipped(image):
 
 def third(image):
     return image
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ExampleInvocationOptions(RuntimeInvocationOptions):
+    mode: str
 
 
 first.__artifact_outputs__ = {"positions": ArtifactSpec("positions")}
@@ -217,6 +225,35 @@ def test_compile_function_pattern_builds_invocation_source_of_truth():
     assert group.invocations[0].artifact_input_keys == ("positions",)
     assert group.invocations[0].artifact_output_keys == ("positions",)
     assert group.invocations[1].artifact_output_keys == ("measurements",)
+
+
+def test_compile_function_pattern_preserves_typed_invocation_options():
+    options = ExampleInvocationOptions(mode="once")
+
+    compiled = compile_function_pattern(
+        (first, {"sigma": 1}, options),
+        {},
+        {},
+    )
+
+    invocation = compiled.default_group.invocations[0]
+    assert invocation.kwargs == (("sigma", 1),)
+    assert invocation.invocation_options is options
+
+
+def test_inject_kwargs_preserves_typed_invocation_options():
+    options = ExampleInvocationOptions(mode="once")
+
+    pattern = inject_kwargs_into_pattern(
+        (first, {"sigma": 1}, options),
+        {"dtype_config": "inherited"},
+    )
+
+    assert pattern == (
+        first,
+        {"dtype_config": "inherited", "sigma": 1},
+        options,
+    )
 
 
 def test_compiled_function_pattern_filters_detected_groups_by_compiled_keys():

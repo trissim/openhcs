@@ -537,14 +537,15 @@ def _is_inner_boundary_pixel(
     label: int,
 ) -> bool:
     height, width = labels.shape
-    if y == 0 or x == 0 or y == height - 1 or x == width - 1:
+    if y > 0 and labels[y - 1, x] != label:
         return True
-    return (
-        labels[y - 1, x] != label
-        or labels[y + 1, x] != label
-        or labels[y, x - 1] != label
-        or labels[y, x + 1] != label
-    )
+    if y + 1 < height and labels[y + 1, x] != label:
+        return True
+    if x > 0 and labels[y, x - 1] != label:
+        return True
+    if x + 1 < width and labels[y, x + 1] != label:
+        return True
+    return False
 
 
 __all__ = [

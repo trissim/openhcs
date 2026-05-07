@@ -9,6 +9,20 @@ from typing import Protocol
 class FileManagerLike(Protocol):
     """Minimal FileManager surface required by backend-explicit callers."""
 
+    def list_files(
+        self,
+        directory: str | Path,
+        backend: str,
+        **kwargs: object,
+    ) -> list[str]:
+        """List files from the selected backend."""
+
+    def exists(self, path: str | Path, backend: str) -> bool:
+        """Return whether a path exists in the selected backend."""
+
+    def is_dir(self, path: str | Path, backend: str) -> bool:
+        """Return whether a path is a directory in the selected backend."""
+
     def load(self, file_path: str | Path, backend: str, **kwargs: object) -> object:
         """Load an object from the selected backend."""
 

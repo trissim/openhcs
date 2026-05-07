@@ -19,6 +19,7 @@ from dataclasses import dataclass
 from enum import Enum
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.neighbors import (
@@ -349,24 +350,28 @@ def measure_object_neighbors(
     """
     profile_start = time.perf_counter()
     profile_mark = profile_start
-    labels = labels.astype(np.int32, copy=False)
+    labels = object_label_dense_array(labels, dtype=np.int32)
     final_labels = labels
     neighbor_final_labels = (
         final_labels
         if neighbor_labels is None
-        else neighbor_labels.astype(np.int32, copy=False)
+        else object_label_dense_array(neighbor_labels, dtype=np.int32)
     )
     measured_variant_labels = _labels_or_default(
-        small_removed_labels,
+        None
+        if small_removed_labels is None
+        else object_label_dense_array(small_removed_labels, dtype=np.int32),
         final_labels,
-    ).astype(np.int32, copy=False)
+    )
     neighbor_variant_labels = (
         measured_variant_labels
         if neighbors_are_same_objects and small_removed_neighbor_labels is None
         else _labels_or_default(
-            small_removed_neighbor_labels,
+            None
+            if small_removed_neighbor_labels is None
+            else object_label_dense_array(small_removed_neighbor_labels, dtype=np.int32),
             neighbor_final_labels,
-        ).astype(np.int32, copy=False)
+        )
     )
 
     _require_matching_shape(final_labels, measured_variant_labels, "small_removed_labels")

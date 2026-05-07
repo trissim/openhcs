@@ -43,6 +43,7 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
 import benchmark.cellprofiler_library.functions.identifyprimaryobjects as identifyprimaryobjects_module
 from benchmark.cellprofiler_library.functions.measurecolocalization import (
     measure_colocalization,
+    measure_colocalization_objects,
     _bisection_costes,
     _costes_first_channel_bin_threshold,
     _divide_costes_measurements,
@@ -50,6 +51,7 @@ from benchmark.cellprofiler_library.functions.measurecolocalization import (
     _thresholded_colocalization_metrics_numba,
 )
 from benchmark.cellprofiler_library.functions.opening import opening
+from benchmark.cellprofiler_library.functions.overlayobjects import overlay_objects
 from benchmark.cellprofiler_library.functions.overlayoutlines import overlay_outlines
 from benchmark.cellprofiler_library.functions.relateobjects import (
     DistanceMethod,
@@ -109,6 +111,129 @@ def test_active_absorbed_cellprofiler_functions_import_cleanly():
     loaded_functions = {name: get_function(name) for name in function_names}
 
     assert all(func is not None for func in loaded_functions.values())
+
+
+def test_absorbed_watershed_accepts_grayscale_volumes() -> None:
+    from benchmark.cellprofiler_library.functions.watershed import watershed
+
+    image = np.zeros((5, 12, 12), dtype=np.float32)
+    image[:, 2:5, 2:5] = 1.0
+    image[:, 7:10, 7:10] = 1.0
+    raw_watershed = watershed
+    while hasattr(raw_watershed, "__wrapped__"):
+        raw_watershed = raw_watershed.__wrapped__
+
+    output, stats, labels = raw_watershed(image, footprint=3)
+
+    assert output.shape == image.shape
+    assert labels.shape == image.shape
+    assert labels.dtype == np.int32
+    assert stats.object_count >= 1
+
+
+def test_resize_objects_preserves_leading_axes_for_volume_stacks() -> None:
+    from benchmark.cellprofiler_library.functions.resizeobjects import resize_objects
+
+    image = np.zeros((2, 3, 4, 5), dtype=np.float32)
+    labels = np.zeros_like(image, dtype=np.int32)
+    labels[:, :, 1:3, 1:3] = 1
+    raw_resize_objects = resize_objects
+    while hasattr(raw_resize_objects, "__wrapped__"):
+        raw_resize_objects = raw_resize_objects.__wrapped__
+
+    _output, stats, resized = raw_resize_objects(
+        image,
+        labels,
+        method="factor",
+        factor_x=2.0,
+        factor_y=2.0,
+        factor_z=1.0,
+    )
+
+    assert resized.shape == (2, 3, 8, 10)
+    assert stats.original_height == 4
+    assert stats.original_width == 5
+    assert stats.new_height == 8
+    assert stats.new_width == 10
+
+
+def test_erode_objects_preserves_leading_axes_for_volume_stacks() -> None:
+    from benchmark.cellprofiler_library.functions.erodeobjects import erode_objects
+
+    image = np.zeros((2, 3, 7, 7), dtype=np.float32)
+    labels = np.zeros_like(image, dtype=np.int32)
+    labels[:, :, 2:5, 2:5] = 1
+    raw_erode_objects = erode_objects
+    while hasattr(raw_erode_objects, "__wrapped__"):
+        raw_erode_objects = raw_erode_objects.__wrapped__
+
+    _output, stats, eroded = raw_erode_objects(
+        image,
+        labels,
+        structuring_element="ball",
+        size=1,
+    )
+
+    assert eroded.shape == labels.shape
+    assert stats.input_object_count == 1
+    assert stats.output_object_count == 1
+
+
+def test_erode_image_preserves_leading_axes_for_volume_stacks() -> None:
+    from benchmark.cellprofiler_library.functions.erodeimage import erode_image
+
+    image = np.zeros((2, 3, 7, 7), dtype=np.float32)
+    image[:, :, 2:5, 2:5] = 1
+    raw_erode_image = erode_image
+    while hasattr(raw_erode_image, "__wrapped__"):
+        raw_erode_image = raw_erode_image.__wrapped__
+
+    eroded = raw_erode_image(
+        image,
+        structuring_element="ball",
+        size=1,
+    )
+
+    assert eroded.shape == image.shape
+    assert np.count_nonzero(eroded) < np.count_nonzero(image)
+
+
+def test_convert_objects_to_image_accepts_volume_label_stacks() -> None:
+    from benchmark.cellprofiler_library.functions.convertobjectstoimage import (
+        convert_objects_to_image,
+    )
+
+    labels = np.zeros((2, 3, 4, 5), dtype=np.int32)
+    labels[:, :, 1:3, 1:3] = 1
+    raw_convert_objects_to_image = convert_objects_to_image
+    while hasattr(raw_convert_objects_to_image, "__wrapped__"):
+        raw_convert_objects_to_image = raw_convert_objects_to_image.__wrapped__
+
+    converted = raw_convert_objects_to_image(
+        np.zeros_like(labels, dtype=np.float32),
+        labels,
+        image_mode="color",
+    )
+
+    assert converted.shape == labels.shape
+    assert converted.dtype == np.float32
+    assert np.all(converted[labels == 0] == 0.0)
+    assert np.all(converted[labels == 1] > 0.0)
+
+
+def test_overlay_objects_aligns_labels_to_image_geometry() -> None:
+    image = np.zeros((8, 10), dtype=np.float32)
+    labels = np.zeros((4, 5), dtype=np.int32)
+    labels[1:3, 2:4] = 1
+    raw_overlay_objects = overlay_objects
+    while hasattr(raw_overlay_objects, "__wrapped__"):
+        raw_overlay_objects = raw_overlay_objects.__wrapped__
+
+    overlay = raw_overlay_objects(image, labels)
+
+    assert overlay.shape == (8, 10, 3)
+    assert overlay.dtype == np.float32
+    assert np.any(overlay[2:6, 4:8] > 0.0)
 
 
 def test_opening_default_backend_matches_skimage_grayscale_opening() -> None:
@@ -302,6 +427,35 @@ def test_cellprofiler_disk_structuring_element_uses_radius_setting():
     )
 
 
+def test_cellprofiler_ball_structuring_element_uses_radius_setting():
+    from benchmark.cellprofiler_library.functions.structuring_elements import (
+        StructuringElement,
+        build_structuring_element,
+    )
+    from skimage.morphology import ball
+
+    np.testing.assert_array_equal(
+        build_structuring_element(StructuringElement.BALL, 2),
+        ball(2),
+    )
+
+
+def test_cellprofiler_structuring_element_rank_adapts_by_center_section():
+    from benchmark.cellprofiler_library.functions.structuring_elements import (
+        StructuringElement,
+        adapt_structuring_element_rank,
+        build_structuring_element,
+    )
+    from skimage.morphology import disk
+
+    footprint = build_structuring_element(StructuringElement.BALL, 2)
+
+    np.testing.assert_array_equal(
+        adapt_structuring_element_rank(footprint, 2),
+        disk(2),
+    )
+
+
 def test_examplefly_absorbed_functions_import_cleanly():
     function_names = (
         "IdentifyPrimaryObjects",
@@ -330,6 +484,29 @@ def test_measure_colocalization_object_costes_preserves_undefined_ratios():
 
     assert np.isnan(row.costes_m1)
     assert row.costes_m2 == 0.5
+
+
+def test_measure_colocalization_objects_accepts_unmasked_finite_images():
+    image = np.stack(
+        (
+            np.array([[1.0, 2.0], [3.0, 4.0]], dtype=np.float32),
+            np.array([[1.0, 3.0], [5.0, 7.0]], dtype=np.float32),
+        )
+    )
+    labels = np.array([[1, 1], [2, 2]], dtype=np.int32)
+
+    output, rows = measure_colocalization_objects.__wrapped__(
+        image,
+        labels,
+        do_costes=False,
+        do_manders=False,
+        do_rwc=False,
+        do_overlap=False,
+    )
+
+    assert np.array_equal(output, image[0:1])
+    assert [row.object_label for row in rows] == [1, 2]
+    assert all(np.isfinite(row.correlation) for row in rows)
 
 
 def test_measure_colocalization_costes_first_threshold_snaps_to_scale_bin():
@@ -2676,6 +2853,33 @@ def test_crop_no_removal_returns_masked_zeroed_image_domain() -> None:
     )
 
 
+def test_crop_previous_cropping_accepts_typed_mask_input() -> None:
+    image = np.arange(4 * 5, dtype=np.float32).reshape(4, 5)
+    previous_mask = np.array(
+        [
+            [False, False, False, False, False],
+            [False, True, True, True, False],
+            [False, True, True, True, False],
+            [False, False, False, False, False],
+        ],
+        dtype=bool,
+    )
+
+    cropped, crop_mask, measurements = crop(
+        image,
+        mask_plane=previous_mask,
+        crop_shape=CropShape.CROPPING,
+        removal_method=RemovalMethod.EDGES,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert isinstance(cropped, MaskedImagePayload)
+    np.testing.assert_array_equal(crop_mask, previous_mask)
+    np.testing.assert_array_equal(cropped.data, image[1:3, 1:4])
+    np.testing.assert_array_equal(cropped.mask, np.ones((2, 3), dtype=bool))
+    assert measurements.area_retained == 6
+
+
 def test_crop_objects_accepts_dense_label_stack_as_foreground_union() -> None:
     image = np.ones((4, 5), dtype=np.float32)
     labels = np.zeros((2, 4, 5), dtype=np.int32)
@@ -2769,6 +2973,26 @@ def test_mask_image_applies_2d_object_mask_to_singleton_image_stack():
     assert np.array_equal(image_payload_mask(masked), (labels > 0)[np.newaxis, ...])
 
 
+def test_mask_image_accepts_source_backed_singleton_image_plane():
+    image = image_payload_with_context(
+        np.ones((1, 5, 6), dtype=np.float32),
+        metadata=ImagePayloadMetadata(source_path="source.tif"),
+    )
+    labels = np.zeros((5, 6), dtype=np.int32)
+    labels[1:4, 2:5] = 1
+
+    masked = mask_image(
+        image,
+        labels,
+        mask_source="objects",
+        dtype_config=DtypeConfig(),
+    )
+
+    assert masked.shape == (1, 5, 6)
+    assert np.count_nonzero(image_payload_data(masked)[0]) == 9
+    assert np.array_equal(image_payload_mask(masked), (labels > 0)[np.newaxis, ...])
+
+
 def test_mask_image_uses_aligned_mask_stack_planes():
     image = np.ones((2, 5, 6), dtype=np.float32)
     mask = np.zeros_like(image)
@@ -2809,6 +3033,72 @@ def test_mask_image_projects_mask_stack_to_single_image_plane():
     assert np.count_nonzero(image_payload_data(masked)) == np.count_nonzero(
         expected_mask
     )
+
+
+def test_mask_image_projects_volume_mask_stack_to_image_planes():
+    image = np.ones((3, 5, 6), dtype=np.float32)
+    mask = np.zeros((2, 3, 5, 6), dtype=np.int32)
+    mask[0, :, 1:3, 1:3] = 1
+    mask[1, :, 2:5, 3:6] = 2
+
+    masked = mask_image(
+        image,
+        mask,
+        mask_source="objects",
+        dtype_config=DtypeConfig(),
+    )
+
+    expected_mask = np.any(mask > 0, axis=0)
+    assert masked.shape == image.shape
+    assert isinstance(masked, MaskedImagePayload)
+    assert np.array_equal(image_payload_mask(masked), expected_mask)
+    assert np.count_nonzero(image_payload_data(masked)) == np.count_nonzero(
+        expected_mask
+    )
+
+
+def test_mask_image_projects_resized_volume_mask_stack_to_image_planes():
+    image = np.ones((3, 5, 6), dtype=np.float32)
+    mask = np.zeros((2, 2, 3, 4), dtype=np.int32)
+    mask[0, :, 1:, 1:] = 1
+    mask[1, :, :2, :2] = 2
+
+    masked = mask_image(
+        image,
+        mask,
+        mask_source="objects",
+        dtype_config=DtypeConfig(),
+    )
+
+    assert masked.shape == image.shape
+    assert isinstance(masked, MaskedImagePayload)
+    assert image_payload_mask(masked).shape == image.shape
+    assert all(
+        np.array_equal(image_payload_mask(masked)[0], image_payload_mask(masked)[index])
+        for index in range(1, image.shape[0])
+    )
+    assert np.count_nonzero(image_payload_data(masked)) > 0
+
+
+def test_mask_image_projects_flat_grouped_mask_planes_to_image_planes():
+    image = np.ones((3, 5, 6), dtype=np.float32)
+    mask = np.zeros((2, 3, 5, 6), dtype=np.float32)
+    mask[0, 0, 1:3, 1:3] = 1.0
+    mask[0, 1, 2:4, 2:4] = 1.0
+    mask[1, 1, 0:2, 0:2] = 1.0
+    flattened_mask = mask.reshape((-1, *mask.shape[-2:]))
+
+    masked = mask_image(
+        image,
+        flattened_mask,
+        mask_source="image",
+        dtype_config=DtypeConfig(),
+    )
+
+    expected_mask = np.any(mask > 0, axis=0)
+    assert masked.shape == image.shape
+    assert isinstance(masked, MaskedImagePayload)
+    assert np.array_equal(image_payload_mask(masked), expected_mask)
 
 
 def test_relate_objects_aligns_parent_label_stack_to_child_plane():

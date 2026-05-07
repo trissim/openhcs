@@ -1,0 +1,98 @@
+digraph G {
+  graph [
+    rankdir=LR,
+    bgcolor="white",
+    margin=0.12,
+    pad=0.18,
+    nodesep=0.45,
+    ranksep=0.7,
+    color="transparent",
+    pencolor="transparent",
+    penwidth=0,
+    fontname="Helvetica"
+  ];
+  node [
+    shape=rect,
+    style="rounded,filled",
+    fontname="Helvetica",
+    fontsize=14,
+    color="#263238",
+    penwidth=1.3,
+    fillcolor="#FAFAFA"
+  ];
+  edge [
+    color="#546E7A",
+    penwidth=1.6,
+    arrowsize=0.75,
+    fontname="Helvetica",
+    fontsize=11
+  ];
+
+  label=<
+    <B>Figure 8. Benchmark categories are declared semantics, not filename heuristics</B>
+  >;
+  labelloc=t;
+  fontsize=20;
+
+  manifest [label=<
+    <B>Dataset manifest</B><BR ALIGN="LEFT"/>
+    .cppipe path<BR ALIGN="LEFT"/>
+    dataset source<BR ALIGN="LEFT"/>
+    expected outputs<BR ALIGN="LEFT"/>
+    acquisition recipe
+  >, fillcolor="#E3F2FD", color="#1565C0", penwidth=2.0];
+
+  source [label=<
+    <B>Source category</B><BR ALIGN="LEFT"/>
+    official example<BR ALIGN="LEFT"/>
+    official tutorial<BR ALIGN="LEFT"/>
+    public third-party workflow
+  >, fillcolor="#E8F5E9"];
+
+  assay [label=<
+    <B>Assay family</B><BR ALIGN="LEFT"/>
+    cell / nuclei morphology<BR ALIGN="LEFT"/>
+    colocalization<BR ALIGN="LEFT"/>
+    tracking<BR ALIGN="LEFT"/>
+    worm morphology<BR ALIGN="LEFT"/>
+    illumination correction<BR ALIGN="LEFT"/>
+    neuron morphology
+  >, fillcolor="#FFF8E1"];
+
+  semantic [label=<
+    <B>Semantic pressure</B><BR ALIGN="LEFT"/>
+    thresholding<BR ALIGN="LEFT"/>
+    object labeling<BR ALIGN="LEFT"/>
+    object relationships<BR ALIGN="LEFT"/>
+    measurement tables<BR ALIGN="LEFT"/>
+    image math<BR ALIGN="LEFT"/>
+    temporal linkage
+  >, fillcolor="#F3E5F5"];
+
+  output [label=<
+    <B>Output pressure</B><BR ALIGN="LEFT"/>
+    image artifacts<BR ALIGN="LEFT"/>
+    object labels<BR ALIGN="LEFT"/>
+    measurement CSVs<BR ALIGN="LEFT"/>
+    overlays<BR ALIGN="LEFT"/>
+    mixed artifacts
+  >, fillcolor="#FCE4EC"];
+
+  plots [label=<
+    <B>Figure grouping</B><BR ALIGN="LEFT"/>
+    parity by category<BR ALIGN="LEFT"/>
+    speed by category<BR ALIGN="LEFT"/>
+    RAM by category<BR ALIGN="LEFT"/>
+    category summaries<BR ALIGN="LEFT"/>
+    point overlays per workflow
+  >, fillcolor="#E0F2F1", color="#00796B", penwidth=2.0];
+
+  manifest -> source;
+  manifest -> assay;
+  manifest -> semantic;
+  manifest -> output;
+  source -> plots;
+  assay -> plots;
+  semantic -> plots;
+  output -> plots;
+}

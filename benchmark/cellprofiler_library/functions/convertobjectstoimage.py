@@ -13,6 +13,7 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.runtime_values import object_label_dense_array
 
 
 class ImageMode(Enum):
@@ -85,19 +86,14 @@ class ColorImageModeRenderer(ImageModeRenderer):
         *,
         colormap_value: str,
     ) -> np.ndarray:
-        h, w = labels.shape
         max_label = labels.max()
         colors = _get_colormap(colormap_value, max_label)
-        pixel_data = np.zeros((h, w, 3), dtype=np.float32)
-        for label_id in range(1, max_label + 1):
-            mask = labels == label_id
-            if np.any(mask):
-                pixel_data[mask] = colors[label_id]
+        pixel_data = colors[labels]
         return (
-            0.299 * pixel_data[:, :, 0]
-            + 0.587 * pixel_data[:, :, 1]
-            + 0.114 * pixel_data[:, :, 2]
-        )
+            np.float32(0.299) * pixel_data[..., 0]
+            + np.float32(0.587) * pixel_data[..., 1]
+            + np.float32(0.114) * pixel_data[..., 2]
+        ).astype(np.float32, copy=False)
 
 
 class Uint16ImageModeRenderer(ImageModeRenderer):
@@ -120,7 +116,7 @@ def _get_colormap(colormap_name: str, num_labels: int) -> np.ndarray:
 
     cmap = colormaps.get_cmap(colormap_name)
     
-    colors = np.zeros((num_labels + 1, 3))
+    colors = np.zeros((num_labels + 1, 3), dtype=np.float32)
     for i in range(1, num_labels + 1):
         colors[i] = cmap(i / max(num_labels, 1))[:3]
     return colors
@@ -155,7 +151,7 @@ def convert_objects_to_image(
         - UINT16: (H, W) integer labels
     """
     del image
-    labels = labels.astype(np.int32)
+    labels = object_label_dense_array(labels, dtype=np.int32)
     resolved_image_mode = _coerce_image_mode(image_mode)
     return ImageModeRenderer.for_image_mode(resolved_image_mode).render(
         labels,

@@ -13,6 +13,7 @@ from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactKind,
     ArtifactOutputPlan,
+    ArtifactSpec,
 )
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_adapters import runtime_adapter_spec_from_callable
@@ -54,6 +55,7 @@ COLOR_IMAGE = "ColorImage"
 IDENTIFY_PRIMARY_OBJECTS = "IdentifyPrimaryObjects"
 IDENTIFY_SECONDARY_OBJECTS = "IdentifySecondaryObjects"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
+THRESHOLD = "Threshold"
 CONVERT_OBJECTS_TO_IMAGE = "ConvertObjectsToImage"
 OPENING = "Opening"
 EROSION = "Erosion"
@@ -703,6 +705,46 @@ def test_generator_prunes_dead_unmaterialized_image_artifacts_when_requested():
     assert [contract.module_name for contract in generated.artifact_contracts] == [
         IDENTIFY_PRIMARY_OBJECTS
     ]
+
+
+def test_generator_prunes_dead_outputs_from_retained_modules():
+    generated = _generated_pipeline(
+        [
+            _module(
+                1,
+                THRESHOLD,
+                {
+                    "Select the input image": SOURCE_IMAGE,
+                    "Name the output image": "UnusedThresholdImage",
+                },
+            ),
+        ],
+        prune_dead_unmaterialized_artifact_steps=True,
+    )
+
+    (contract,) = generated.artifact_contracts
+
+    assert contract.module_name == THRESHOLD
+    assert [output.kind for output in contract.outputs] == [ArtifactKind.MEASUREMENTS]
+    assert "image:UnusedThresholdImage" not in generated.code
+
+
+def test_generator_retains_observable_object_label_outputs_when_pruning():
+    generated = _generated_pipeline(
+        _filter_objects_measurement_pipeline_modules(),
+        prune_dead_unmaterialized_artifact_steps=True,
+    )
+
+    filter_contract = next(
+        contract
+        for contract in generated.artifact_contracts
+        if contract.module_name == FILTER_OBJECTS
+    )
+
+    assert 'name="FilterObjects"' in generated.code
+    assert ArtifactSpec(FILTERED_NUCLEI, ArtifactKind.OBJECT_LABELS) in (
+        filter_contract.outputs
+    )
 
 
 def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages():

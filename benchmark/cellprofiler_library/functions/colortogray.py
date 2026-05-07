@@ -8,7 +8,10 @@ from typing import Any
 
 import numpy as np
 
-from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
+from openhcs.core.image_shapes import (
+    is_channel_last_image_slice,
+    is_channel_last_image_stack,
+)
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
     image_payload_data,
@@ -108,12 +111,12 @@ def _channel(color_stack: np.ndarray, channel_index: int) -> np.ndarray:
 
 
 def _as_nhwc_color_stack(image: np.ndarray) -> np.ndarray:
-    if is_color_image_stack(image):
+    if is_channel_last_image_stack(image):
         return image
-    if is_color_image_slice(image):
+    if is_channel_last_image_slice(image):
         return image[np.newaxis, ...]
     raise ValueError(
-        "ColorToGray requires an OpenHCS color image shaped (H, W, C) or "
+        "ColorToGray requires a channel-last image shaped (H, W, C) or "
         f"(N, H, W, C), got {getattr(image, 'shape', 'unknown')}."
     )
 
@@ -122,7 +125,7 @@ def _restore_singleton_slice_shape(
     original: np.ndarray,
     stack: np.ndarray,
 ) -> np.ndarray:
-    if is_color_image_slice(original):
+    if is_channel_last_image_slice(original):
         return stack[0]
     return stack
 

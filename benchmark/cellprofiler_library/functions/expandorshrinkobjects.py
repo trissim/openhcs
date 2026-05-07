@@ -3,13 +3,25 @@ Converted from CellProfiler: ExpandOrShrinkObjects
 Original: expand_or_shrink_objects
 """
 
-import numpy as np
+from abc import ABC, abstractmethod
 from enum import Enum
+from typing import ClassVar
+
+from metaclass_registry import AutoRegisterMeta
+import numpy as np
 from numba import njit
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.runtime_semantics import dense_object_label_id_domain
-from openhcs.core.runtime_values import ObjectLabelPayload
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_semantics import (
+    ObjectLabelDomainScope,
+    dense_object_label_id_domain,
+)
+from openhcs.core.runtime_values import (
+    ObjectLabelPayload,
+    object_label_dense_array,
+    object_label_payload_with_dense_labels,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import segmentation_mask_rois
@@ -26,6 +38,143 @@ class ExpandShrinkMode(Enum):
     ADD_DIVIDING_LINES = "add_dividing_lines"
     DESPUR = "despur"
     SKELETONIZE = "skeletonize"
+
+
+class ExpandShrinkOperationStrategy(
+    EnumKeyedStrategyMixin[ExpandShrinkMode],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal operation strategy for one ExpandOrShrinkObjects mode."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "mode"
+    mode: ClassVar[ExpandShrinkMode | None] = None
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_mode(
+        cls,
+        mode: ExpandShrinkMode | str,
+    ) -> "ExpandShrinkOperationStrategy":
+        resolved = _coerce_function_enum(ExpandShrinkMode, mode)
+        return cls.for_enum_member(resolved)
+
+    @abstractmethod
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        """Return transformed labels for this operation mode."""
+
+
+class ExpandDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
+    """Expand labeled objects by a fixed pixel radius."""
+
+    mode = ExpandShrinkMode.EXPAND_DEFINED_PIXELS
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _expand_defined_pixels(labels, iterations)
+
+
+class ExpandInfiniteStrategy(ExpandShrinkOperationStrategy):
+    """Expand labeled objects until all background is assigned."""
+
+    mode = ExpandShrinkMode.EXPAND_INFINITE
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _expand_until_touching(labels)
+
+
+class ShrinkDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
+    """Shrink labeled objects by a fixed pixel radius."""
+
+    mode = ExpandShrinkMode.SHRINK_DEFINED_PIXELS
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _shrink_defined_pixels(labels, iterations, fill_holes)
+
+
+class ShrinkToPointStrategy(ExpandShrinkOperationStrategy):
+    """Shrink each object to its center point."""
+
+    mode = ExpandShrinkMode.SHRINK_TO_POINT
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _shrink_to_point(labels, fill_holes)
+
+
+class AddDividingLinesStrategy(ExpandShrinkOperationStrategy):
+    """Remove touching object boundary pixels."""
+
+    mode = ExpandShrinkMode.ADD_DIVIDING_LINES
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _add_dividing_lines(labels)
+
+
+class DespurStrategy(ExpandShrinkOperationStrategy):
+    """Remove object spurs by repeated opening."""
+
+    mode = ExpandShrinkMode.DESPUR
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _despur(labels, iterations)
+
+
+class SkeletonizeStrategy(ExpandShrinkOperationStrategy):
+    """Reduce each object to a skeleton."""
+
+    mode = ExpandShrinkMode.SKELETONIZE
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _skeletonize_labels(labels)
 
 
 def _expand_defined_pixels(labels: np.ndarray, iterations: int) -> np.ndarray:
@@ -349,40 +498,20 @@ def expand_or_shrink_objects(
     Returns:
         Tuple of (image, modified_labels)
     """
-    mode = _coerce_function_enum(ExpandShrinkMode, mode)
-    labels_int = np.asarray(labels).astype(np.int32)
-    
-    if mode == ExpandShrinkMode.EXPAND_DEFINED_PIXELS:
-        result_labels = _expand_defined_pixels(labels_int, iterations)
-    elif mode == ExpandShrinkMode.EXPAND_INFINITE:
-        result_labels = _expand_until_touching(labels_int)
-    elif mode == ExpandShrinkMode.SHRINK_DEFINED_PIXELS:
-        result_labels = _shrink_defined_pixels(labels_int, iterations, fill_holes)
-    elif mode == ExpandShrinkMode.SHRINK_TO_POINT:
-        result_labels = _shrink_to_point(labels_int, fill_holes)
-    elif mode == ExpandShrinkMode.ADD_DIVIDING_LINES:
-        result_labels = _add_dividing_lines(labels_int)
-    elif mode == ExpandShrinkMode.DESPUR:
-        result_labels = _despur(labels_int, iterations)
-    elif mode == ExpandShrinkMode.SKELETONIZE:
-        result_labels = _skeletonize_labels(labels_int)
-    else:
-        result_labels = labels_int.copy()
-    object_ids = dense_object_label_id_domain(result_labels)
+    labels_int = object_label_dense_array(labels, dtype=np.int32)
 
-    return image, ObjectLabelPayload(
-        labels=result_labels.astype(np.float32),
+    result_labels = ExpandShrinkOperationStrategy.for_mode(mode).apply(
+        labels_int,
+        iterations=iterations,
+        fill_holes=fill_holes,
+    )
+    object_ids = dense_object_label_id_domain(labels)
+
+    return image, object_label_payload_with_dense_labels(
+        labels,
+        result_labels.astype(np.int32, copy=False),
         declared_object_ids=object_ids,
-        spatial_origin_yx=(
-            labels.spatial_origin_yx
-            if isinstance(labels, ObjectLabelPayload)
-            else None
-        ),
-        source_spatial_shape_yx=(
-            labels.source_spatial_shape_yx
-            if isinstance(labels, ObjectLabelPayload)
-            else None
-        ),
+        domain_scope=ObjectLabelDomainScope.PLANE,
     )
 
 

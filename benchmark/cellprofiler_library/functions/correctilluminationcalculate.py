@@ -971,9 +971,12 @@ def _prepare_correct_illumination_calculate() -> None:
         manual_filter_size=32,
         rescale_option=RescaleOption.NO,
     )
-    nonconstant_background = np.zeros((96, 96), dtype=np.float32)
-    nonconstant_background[24:72, 24:72] = 0.25
-    nonconstant_background[40:56, 40:56] = 0.5
+    nonconstant_background = np.linspace(
+        0.0,
+        1.0,
+        96 * 96,
+        dtype=np.float32,
+    ).reshape((96, 96))
     correct_illumination_calculate.__wrapped__(
         nonconstant_background,
         intensity_choice=IntensityChoice.REGULAR,

@@ -10,6 +10,8 @@ from benchmark.converter.settings_binder import (
 )
 from benchmark.converter.parser import ModuleBlock, ModuleSetting
 from benchmark.converter.module_settings_binding import ModuleSettingsBindingStrategy
+from benchmark.converter.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
+from openhcs.interop.cellprofiler.setting_names import setting_names
 
 
 class ThresholdMethod(Enum):
@@ -194,7 +196,7 @@ def test_identify_primary_objects_binds_threshold_semantics():
     assert "lower_and_upper_bounds_on_threshold" not in bound.unmapped_kwargs
 
 
-def test_identify_secondary_objects_binds_ordered_threshold_semantics():
+def test_identify_secondary_objects_binds_global_threshold_method_semantics():
     module = ModuleBlock(
         name="IdentifySecondaryObjects",
         module_num=9,
@@ -238,10 +240,56 @@ def test_identify_secondary_objects_binds_ordered_threshold_semantics():
     assert bound.kwargs["method"] == "Propagation"
     assert bound.kwargs["regularization_factor"] == 0.05
     assert bound.kwargs["threshold_scope"] == "Global"
-    assert bound.kwargs["threshold_method"] == "Otsu"
+    assert bound.kwargs["threshold_method"] == "Minimum Cross-Entropy"
     assert bound.kwargs["threshold_smoothing_scale"] == 0
     assert bound.kwargs["threshold_min"] == 0
     assert bound.kwargs["threshold_max"] == 1
+    assert "thresholding_method" not in bound.unmapped_kwargs
+
+
+def test_identify_secondary_objects_binds_adaptive_threshold_method_semantics():
+    module = ModuleBlock(
+        name="IdentifySecondaryObjects",
+        module_num=9,
+        settings={
+            "Select the method to identify the secondary objects": "Propagation",
+            "Regularization factor": "0.05",
+        },
+        setting_records=[
+            ModuleSetting("Select the input objects", "Nuclei"),
+            ModuleSetting("Name the objects to be identified", "Cells"),
+            ModuleSetting(
+                "Select the method to identify the secondary objects",
+                "Propagation",
+            ),
+            ModuleSetting("Regularization factor", "0.05"),
+            ModuleSetting("Threshold strategy", "Adaptive"),
+            ModuleSetting("Thresholding method", "Minimum Cross-Entropy"),
+            ModuleSetting("Threshold smoothing scale", "0"),
+            ModuleSetting("Threshold correction factor", "1"),
+            ModuleSetting("Lower and upper bounds on threshold", "0,1"),
+            ModuleSetting(
+                "Two-class or three-class thresholding?",
+                "Two classes",
+            ),
+            ModuleSetting(
+                "Assign pixels in the middle intensity class to the foreground or the background?",
+                "Foreground",
+            ),
+            ModuleSetting("Thresholding method", "Otsu"),
+        ],
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module(
+        "IdentifySecondaryObjects"
+    ).bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["threshold_scope"] == "Adaptive"
+    assert bound.kwargs["threshold_method"] == "Otsu"
     assert "thresholding_method" not in bound.unmapped_kwargs
 
 
@@ -956,4 +1004,42 @@ def test_resize_binds_factor_and_interpolation_settings():
         "specific_width": 100,
         "specific_height": 100,
         "interpolation": "nearest_neighbor",
+    }
+
+
+def test_resize_objects_binds_volumetric_factor_settings():
+    setting_values = {
+        "method": "Factor",
+        "factor_x": "2",
+        "factor_y": "2",
+        "factor_z": "1.0",
+        "width": "100",
+        "height": "100",
+        "planes": "10",
+    }
+    module = ModuleBlock(
+        name="ResizeObjects",
+        module_num=11,
+        settings={
+            setting_names(binding.setting_name)[0]: setting_values[
+                binding.parameter_name
+            ]
+            for binding in RESIZE_OBJECTS_SETTINGS
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("ResizeObjects").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {
+        "method": "factor",
+        "factor_x": 2.0,
+        "factor_y": 2.0,
+        "factor_z": 1.0,
+        "width": 100,
+        "height": 100,
+        "planes": 10,
     }

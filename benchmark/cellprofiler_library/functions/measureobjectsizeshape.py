@@ -14,9 +14,15 @@ from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 
 from openhcs.core.runtime_semantics import (
+    ObjectLabelRepresentation,
     ObjectShapeMeasurementFeature,
     indexed_measurement_feature_name,
     object_shape_measurement_field_names,
+)
+from openhcs.core.runtime_values import (
+    ObjectLabelSet,
+    SparseIJVLabelRows,
+    object_label_dense_array,
 )
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler.shape import ShapeMeasurementBackendStrategy
@@ -54,7 +60,7 @@ def _log_profile(label: str, seconds: float, **fields: object) -> None:
 )
 def measure_object_size_shape(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: np.ndarray | ObjectLabelSet,
     calculate_advanced: bool = True,
     calculate_zernikes: bool = True,
     shape_backend_provider: CellProfilerBackendProvider | None = None,
@@ -73,7 +79,27 @@ def measure_object_size_shape(
         Tuple of (original image, list of measurement rows per object)
     """
     total_started_at = time.perf_counter()
-    label_array = labels.astype(np.int32, copy=False)
+    if (
+        isinstance(labels, ObjectLabelSet)
+        and labels.representation is ObjectLabelRepresentation.SPARSE_IJV
+    ):
+        rows = _object_size_shape_sparse_ijv_rows(
+            labels,
+            calculate_advanced=calculate_advanced,
+            calculate_zernikes=calculate_zernikes,
+            shape_backend_provider=shape_backend_provider,
+            zernike_backend_provider=zernike_backend_provider,
+        )
+        _log_profile(
+            "moss_total",
+            time.perf_counter() - total_started_at,
+            function="measure_object_size_shape",
+            objects=len(rows),
+            representation=labels.representation.value,
+        )
+        return image, rows
+
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     if not np.any(label_array > 0):
         return image, []
 
@@ -227,10 +253,12 @@ def _measure_object_size_shape_features_2d(
     center_x = _compact_values_with_dense_tail(
         np.asarray(props["centroid-1"], dtype=float),
         dense_center_x,
+        measured_labels=measured_labels,
     )
     center_y = _compact_values_with_dense_tail(
         np.asarray(props["centroid-0"], dtype=float),
         dense_center_y,
+        measured_labels=measured_labels,
     )
 
     features = {
@@ -316,6 +344,135 @@ def _measure_object_size_shape_features_2d(
         objects=nobjects,
     )
     return features, measured_labels
+
+
+def _object_size_shape_sparse_ijv_rows(
+    labels: ObjectLabelSet,
+    *,
+    calculate_advanced: bool,
+    calculate_zernikes: bool,
+    shape_backend_provider: CellProfilerBackendProvider | None,
+    zernike_backend_provider: CellProfilerBackendProvider | None,
+) -> list[dict[str, Any]]:
+    raw_labels = labels.labels
+    sparse_rows = (
+        raw_labels
+        if isinstance(raw_labels, SparseIJVLabelRows)
+        else SparseIJVLabelRows.from_yx_label(raw_labels)
+    )
+    if sparse_rows.as_array().size == 0:
+        return []
+    if sparse_rows.has_slice_index:
+        rows: list[dict[str, Any]] = []
+        for slice_index in sparse_rows.slice_indices():
+            slice_ijv = np.asarray(sparse_rows.slice(slice_index).as_array(), dtype=np.int32)
+            for row in _object_size_shape_sparse_ijv_2d_rows(
+                labels,
+                slice_ijv,
+                calculate_advanced=calculate_advanced,
+                calculate_zernikes=calculate_zernikes,
+                shape_backend_provider=shape_backend_provider,
+                zernike_backend_provider=zernike_backend_provider,
+            ):
+                row["slice_index"] = int(slice_index)
+                rows.append(row)
+        return rows
+    ijv = np.asarray(sparse_rows.as_yx_label_array(), dtype=np.int32)
+    return _object_size_shape_sparse_ijv_2d_rows(
+        labels,
+        ijv,
+        calculate_advanced=calculate_advanced,
+        calculate_zernikes=calculate_zernikes,
+        shape_backend_provider=shape_backend_provider,
+        zernike_backend_provider=zernike_backend_provider,
+    )
+
+
+def _object_size_shape_sparse_ijv_2d_rows(
+    labels: ObjectLabelSet,
+    ijv: np.ndarray,
+    *,
+    calculate_advanced: bool,
+    calculate_zernikes: bool,
+    shape_backend_provider: CellProfilerBackendProvider | None,
+    zernike_backend_provider: CellProfilerBackendProvider | None,
+) -> list[dict[str, Any]]:
+    object_ids = _sparse_ijv_object_ids(labels, ijv)
+    rows: list[dict[str, Any]] = []
+    for object_id in object_ids:
+        object_pixels = ijv[ijv[:, 2] == int(object_id)]
+        if object_pixels.size == 0:
+            rows.append(_empty_sparse_ijv_shape_row(int(object_id)))
+            continue
+        pixel_y = object_pixels[:, 0]
+        pixel_x = object_pixels[:, 1]
+        min_y = int(pixel_y.min())
+        min_x = int(pixel_x.min())
+        max_y = int(pixel_y.max()) + 1
+        max_x = int(pixel_x.max()) + 1
+        local = np.zeros((max_y - min_y, max_x - min_x), dtype=np.int32)
+        local[pixel_y - min_y, pixel_x - min_x] = int(object_id)
+        feature_values, measured_labels = _measure_object_size_shape_features_2d(
+            local,
+            calculate_advanced=calculate_advanced,
+            calculate_zernikes=calculate_zernikes,
+            shape_backend_provider=shape_backend_provider,
+            zernike_backend_provider=zernike_backend_provider,
+        )
+        if len(measured_labels) == 0:
+            rows.append(_empty_sparse_ijv_shape_row(int(object_id)))
+            continue
+        _offset_sparse_ijv_shape_features(feature_values, offset_y=min_y, offset_x=min_x)
+        row = _object_size_shape_rows(
+            feature_values,
+            np.asarray([int(object_id)], dtype=np.int32),
+        )[0]
+        row["object_label"] = int(object_id)
+        rows.append(row)
+    return rows
+
+
+def _sparse_ijv_object_ids(labels: ObjectLabelSet, ijv: np.ndarray) -> np.ndarray:
+    if labels.declared_object_ids:
+        return np.asarray(labels.declared_object_ids, dtype=np.int32)
+    if labels.declared_object_count is not None:
+        return np.arange(1, labels.declared_object_count + 1, dtype=np.int32)
+    return np.unique(ijv[:, 2]).astype(np.int32, copy=False)
+
+
+def _empty_sparse_ijv_shape_row(object_id: int) -> dict[str, Any]:
+    row: dict[str, Any] = {
+        field: _missing_shape_feature_value(field)
+        for field in object_shape_measurement_field_names()
+    }
+    row["slice_index"] = 0
+    row["object_label"] = object_id
+    row["Center_Z"] = 0.0
+    return row
+
+
+def _offset_sparse_ijv_shape_features(
+    feature_values: dict[str, np.ndarray],
+    *,
+    offset_y: int,
+    offset_x: int,
+) -> None:
+    x_fields = (
+        _shape_feature(ObjectShapeMeasurementFeature.CENTER_X),
+        _shape_feature(ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_X),
+        _shape_feature(ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_X),
+    )
+    y_fields = (
+        _shape_feature(ObjectShapeMeasurementFeature.CENTER_Y),
+        _shape_feature(ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_Y),
+        _shape_feature(ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_Y),
+    )
+    for field in x_fields:
+        if field in feature_values:
+            feature_values[field] = np.asarray(feature_values[field], dtype=float) + offset_x
+    for field in y_fields:
+        if field in feature_values:
+            feature_values[field] = np.asarray(feature_values[field], dtype=float) + offset_y
 
 
 def _measure_object_size_shape_features_3d(
@@ -477,6 +634,10 @@ def _object_size_shape_rows(
     measured_labels: np.ndarray,
 ) -> list[dict[str, float | int]]:
     rows: list[dict[str, float | int]] = []
+    measured_label_ids = tuple(int(label) for label in np.asarray(measured_labels))
+    measured_label_index = {
+        object_id: index for index, object_id in enumerate(measured_label_ids)
+    }
     feature_items = tuple(
         (
             feature_name,
@@ -486,8 +647,8 @@ def _object_size_shape_rows(
         )
         for feature_name, values in feature_values.items()
     )
-    row_count = max(
-        len(np.asarray(measured_labels)),
+    domain_count = max(
+        max(measured_label_ids, default=0),
         *(
             values.shape[0]
             for _feature_name, values, _python_values, _missing_value in feature_items
@@ -495,23 +656,46 @@ def _object_size_shape_rows(
         ),
         0,
     )
-    for index in range(row_count):
+    for index in range(domain_count):
+        object_label = index + 1
         row: dict[str, float | int] = {
             "slice_index": 0,
-            "object_label": index + 1,
+            "object_label": object_label,
             "Center_Z": 0.0,
         }
         for feature_name, values, python_values, missing_value in feature_items:
             if values.ndim > 0:
-                if index >= values.shape[0]:
+                value_index = _feature_value_index(
+                    object_label,
+                    values=values,
+                    domain_count=domain_count,
+                    measured_label_index=measured_label_index,
+                )
+                if value_index is None:
                     value = missing_value
                 else:
-                    value = python_values[index]
+                    value = python_values[value_index]
             else:
                 value = python_values
             row[feature_name] = value
         rows.append(row)
     return rows
+
+
+def _feature_value_index(
+    object_label: int,
+    *,
+    values: np.ndarray,
+    domain_count: int,
+    measured_label_index: dict[int, int],
+) -> int | None:
+    if values.shape[0] == domain_count:
+        value_index = object_label - 1
+        return value_index if value_index < values.shape[0] else None
+    value_index = measured_label_index.get(object_label)
+    if value_index is None or value_index >= values.shape[0]:
+        return None
+    return value_index
 
 
 def _python_feature_values(values: np.ndarray) -> object:
@@ -574,13 +758,18 @@ def _dense_label_centers_2d_numba(
 def _compact_values_with_dense_tail(
     compact_values: np.ndarray,
     dense_values: np.ndarray,
+    *,
+    measured_labels: np.ndarray,
 ) -> np.ndarray:
     compact = np.asarray(compact_values, dtype=float)
     dense = np.asarray(dense_values, dtype=float)
     if dense.shape[0] <= compact.shape[0]:
         return compact
     values = dense.copy()
-    values[: compact.shape[0]] = compact
+    for index, object_label in enumerate(np.asarray(measured_labels, dtype=np.int32)):
+        value_index = int(object_label) - 1
+        if 0 <= value_index < values.shape[0] and index < compact.shape[0]:
+            values[value_index] = compact[index]
     return values
 
 

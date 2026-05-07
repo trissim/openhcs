@@ -213,6 +213,63 @@ def test_compile_image_schema_lowers_images_module_to_source_universe_filters():
     assert schema.images_rule.filters[1].value == "A01"
 
 
+def test_compile_image_schema_lowers_extension_is_suffix_filters():
+    names_and_types_module = _module_with_records(
+        1,
+        "NamesAndTypes",
+        [
+            ("Assignments count", "1"),
+            ("Select the rule criteria", "and (extension does ispng)"),
+            ("Name to assign these images", "DNA"),
+            ("Select the image type", "Grayscale image"),
+        ],
+    )
+
+    schema = compile_image_schema([names_and_types_module])
+    assignment = schema.assignment_for_alias("DNA")
+
+    assert assignment is not None
+    assert assignment.selector.filters[0].subject is SourceFilterSubject.EXTENSION
+    assert assignment.selector.filters[0].match_type is SourceFilterMatchType.EQUALS
+    assert assignment.selector.filters[0].value == ".png"
+
+
+def test_compile_image_schema_drops_empty_scalar_filter_clauses():
+    metadata_module = _module_with_records(
+        1,
+        "Metadata",
+        [
+            ("Extract metadata?", "Yes"),
+            ("Metadata extraction method", "Extract from file/folder names"),
+            ("Metadata source", "File name"),
+            ("Regular expression to extract from file name", r"(?P<Well>A01)"),
+            ("Select the filtering criteria", 'and (file doesnot contain "")'),
+        ],
+    )
+
+    schema = compile_image_schema([metadata_module])
+
+    assert schema.metadata_rules[0].filters == ()
+
+
+def test_compile_image_schema_combines_imported_metadata_location_and_filename():
+    metadata_module = _module_with_records(
+        1,
+        "Metadata",
+        [
+            ("Extract metadata?", "Yes"),
+            ("Metadata extraction method", "Import from file"),
+            ("Metadata file location", "Default Input Folder|metadata"),
+            ("Metadata file name", "plate.csv"),
+            ("Match file and image metadata", "[]"),
+        ],
+    )
+
+    schema = compile_image_schema([metadata_module])
+
+    assert schema.imported_metadata_tables[0].location == "metadata/plate.csv"
+
+
 def test_compile_image_schema_does_not_conjoin_images_module_disjunctions():
     images_module = _module_with_records(
         1,
@@ -222,6 +279,25 @@ def test_compile_image_schema_does_not_conjoin_images_module_disjunctions():
             (
                 "Select the rule criteria",
                 'or (extension does isimage) (file does endwith ".npy")',
+            ),
+        ],
+    )
+
+    schema = compile_image_schema([images_module])
+
+    assert schema.images_rule is None
+
+
+def test_compile_image_schema_does_not_conjoin_nested_images_module_disjunctions():
+    images_module = _module_with_records(
+        1,
+        "Images",
+        [
+            ("Filter images?", "Images only"),
+            (
+                "Select the rule criteria",
+                'and (extension does isimage) (or (file does contain "_s1_") '
+                '(file does contain "_s2_"))',
             ),
         ],
     )
@@ -748,11 +824,8 @@ def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
     assert "SourceFilterClause(" in generated.code
     assert "SourceFilterMatchType.CONTAINS" in generated.code
     assert "input_source=InputSource.PIPELINE_START," in generated.code
-    assert (
-        "variable_components=[VariableComponents.SITE, "
-        "VariableComponents.CHANNEL],"
-    ) in generated.code
-    assert "group_by=GroupBy.NONE," in generated.code
+    assert "variable_components=[VariableComponents.CHANNEL]," in generated.code
+    assert "group_by=GroupBy.SITE," in generated.code
 
 
 def test_compile_image_schema_decodes_legacy_escaped_match_metadata():

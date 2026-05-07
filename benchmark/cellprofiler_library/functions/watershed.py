@@ -100,7 +100,6 @@ def watershed(
     from scipy.ndimage import distance_transform_edt, gaussian_filter, label as ndi_label
     from skimage.segmentation import watershed as skimage_watershed
     from skimage.feature import peak_local_max
-    from skimage.morphology import disk, square, diamond, star
     from skimage.measure import regionprops
     from skimage.segmentation import clear_border
     
@@ -116,16 +115,6 @@ def watershed(
     if gaussian_sigma > 0:
         binary = gaussian_filter(binary, gaussian_sigma)
         binary = (binary > 0.5).astype(np.float32)
-    
-    # Get structuring element
-    selem_map = {
-        "disk": disk,
-        "square": square,
-        "diamond": diamond,
-        "star": star,
-    }
-    selem_func = selem_map.get(structuring_element, disk)
-    selem = selem_func(structuring_element_size)
     
     # Compute distance transform for watershed
     if watershed_method == "distance":
@@ -144,22 +133,21 @@ def watershed(
         coords = peak_local_max(
             distance,
             min_distance=min_distance,
-            footprint=np.ones((footprint, footprint)),
+            footprint=np.ones((footprint,) * image.ndim),
             labels=binary.astype(int),
             exclude_border=exclude_border
         )
         
         # Limit seeds if specified
         if max_seeds > 0 and len(coords) > max_seeds:
-            # Sort by distance value and keep top seeds
-            distances_at_coords = distance[coords[:, 0], coords[:, 1]]
+            distances_at_coords = distance[tuple(coords.T)]
             top_indices = np.argsort(distances_at_coords)[-max_seeds:]
             coords = coords[top_indices]
         
         # Create marker image
         markers = np.zeros_like(binary, dtype=np.int32)
-        for i, (y, x) in enumerate(coords):
-            markers[y, x] = i + 1
+        for i, coord in enumerate(coords):
+            markers[tuple(coord)] = i + 1
     else:
         # Regional maxima - use h-maxima approach
         from skimage.morphology import reconstruction

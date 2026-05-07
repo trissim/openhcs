@@ -53,10 +53,10 @@ def test_runtime_value_store_rejects_same_key_different_path():
         store.record(value, path="/other/measurements.pkl", backend="memory")
 
 
-def test_runtime_value_store_replace_updates_current_binding():
+def test_runtime_value_store_replace_updates_current_binding_and_keeps_locations():
     store = RuntimeValueStore()
     value = _runtime_value()
-    store.record(value, path="/memory/measurements.pkl", backend="memory")
+    original = store.record(value, path="/memory/measurements.pkl", backend="memory")
 
     replacement = store.replace(
         value,
@@ -68,7 +68,7 @@ def test_runtime_value_store_replace_updates_current_binding():
     assert store.find_by_location(
         path="/memory/measurements.pkl",
         backend="memory",
-    ) == ()
+    ) == (original,)
     assert store.find_by_location(
         path="/other/measurements.pkl",
         backend="memory",

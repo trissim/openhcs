@@ -9,7 +9,13 @@ from typing import Any, Callable, List, Mapping, Tuple
 import numpy as np
 
 from openhcs.core.memory import numpy
-from openhcs.core.runtime_values import image_payload_data
+from openhcs.core.runtime_values import (
+    DenseObjectLabelSliceStack,
+    ObjectLabelPayload,
+    ObjectLabelSet,
+    image_payload_data,
+    object_label_dense_array,
+)
 from benchmark.cellprofiler_library.image_geometry import cellprofiler_grayscale_plane
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity import object_intensity_backend
@@ -51,6 +57,9 @@ class ObjectIntensityResults:
     measurements: List[ObjectIntensityMeasurement]
 
 
+ObjectIntensityLabelInput = np.ndarray | ObjectLabelPayload | ObjectLabelSet
+
+
 def _fixup_scipy_result(result):
     """Convert scipy.ndimage result to proper array format."""
     if np.isscalar(result):
@@ -76,7 +85,11 @@ def _measure_object_intensity_batch(
     slice_count: int,
     execute_slice: Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
 ) -> list[Any]:
-    label_stack = _measurement_label_stack(kwargs["labels"], slice_count)
+    label_stack = DenseObjectLabelSliceStack.from_payload(
+        kwargs["labels"],
+        slice_count=slice_count,
+        dtype=np.int32,
+    )
     if label_stack is None:
         return [
             execute_slice(func, slice_2d, kwargs, slice_index, slice_count)
@@ -88,23 +101,12 @@ def _measure_object_intensity_batch(
     for slice_index, slice_2d in enumerate(slices_2d):
         measurements = _measure_object_intensity_measurements(
             image_payload_data(slice_2d),
-            label_stack[slice_index],
+            label_stack.slice(slice_index),
             slice_index=slice_index,
             backend_provider=backend_provider,
         )
         results.append((slice_2d, measurements))
     return results
-
-
-def _measurement_label_stack(labels: Any, slice_count: int) -> np.ndarray | None:
-    label_array = np.asarray(image_payload_data(labels), dtype=np.int32)
-    if label_array.ndim == 3 and label_array.shape[0] == slice_count:
-        return np.ascontiguousarray(label_array)
-    if label_array.ndim == 2:
-        return np.ascontiguousarray(
-            np.broadcast_to(label_array, (slice_count, *label_array.shape))
-        )
-    return None
 
 
 def _measurements_from_arrays(arrays: Any, slice_index: int) -> list[ObjectIntensityMeasurement]:
@@ -143,7 +145,7 @@ def _measurements_from_arrays(arrays: Any, slice_index: int) -> list[ObjectInten
 @numpy
 def measure_object_intensity(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectIntensityLabelInput,
     object_intensity_backend_provider: CellProfilerBackendProvider | None = None,
 ) -> Tuple[np.ndarray, List[ObjectIntensityMeasurement]]:
     """
@@ -172,7 +174,7 @@ def measure_object_intensity(
 
 def _measure_object_intensity_measurements(
     image: np.ndarray,
-    labels: np.ndarray,
+    labels: ObjectIntensityLabelInput,
     *,
     slice_index: int,
     backend_provider: CellProfilerBackendProvider | None,
@@ -182,7 +184,7 @@ def _measure_object_intensity_measurements(
         backend_provider=backend_provider,
     ).measure(
         _single_plane(np.asarray(image), "image"),
-        _single_plane(np.asarray(labels), "labels"),
+        _single_plane(object_label_dense_array(labels, dtype=np.int32), "labels"),
     )
     if intensity_arrays.object_labels.size == 0:
         return []

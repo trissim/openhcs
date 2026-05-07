@@ -22,6 +22,7 @@ from benchmark.cellprofiler_library.functions.measureobjectintensitydistribution
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
 )
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
 from .calculate_math_settings import calculate_math_bound_kwargs
@@ -34,6 +35,7 @@ from .expand_or_shrink_settings import expand_or_shrink_bound_kwargs
 from .filter_objects_settings import filter_objects_bound_kwargs
 from .grid_settings import (
     define_grid_bound_kwargs,
+    define_grid_invocation_options,
     identify_objects_in_grid_bound_kwargs,
 )
 from .gray_to_color_settings import (
@@ -57,6 +59,7 @@ from .mask_objects_settings import MASK_OBJECTS_SETTINGS
 from .module_function_resolution import measurement_target_scope
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
+from .resize_objects_settings import resize_objects_bound_kwargs
 from .resize_settings import resize_bound_kwargs
 from .settings_binder import (
     parse_cellprofiler_bool,
@@ -85,10 +88,19 @@ class BoundModuleSettings:
 
     kwargs: Mapping[str, Any]
     unmapped_kwargs: Mapping[str, Any] = field(default_factory=dict)
+    invocation_options: RuntimeInvocationOptions | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kwargs", dict(self.kwargs))
         object.__setattr__(self, "unmapped_kwargs", dict(self.unmapped_kwargs))
+        if (
+            self.invocation_options is not None
+            and not isinstance(self.invocation_options, RuntimeInvocationOptions)
+        ):
+            raise TypeError(
+                "BoundModuleSettings.invocation_options must inherit "
+                "RuntimeInvocationOptions."
+            )
 
 
 class ModuleSettingsBindingStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -218,21 +230,22 @@ def _active_threshold_setting_value(
 ) -> str | None:
     """Return the active ordered value for threshold settings.
 
-    Legacy threshold version 10 pipelines can carry duplicate method rows.
-    The public pipeline semantics for the cached CP-compatible examples follow
-    the first method row, not an inferred migration rewrite.
+    CellProfiler threshold settings can carry both the global and adaptive
+    threshold method rows in one module block. The active method is selected by
+    the threshold strategy: global uses the first method row, adaptive uses the
+    last method row.
     """
     values = setting_values(module, setting_name)
     if not values:
         return None
-    legacy_version = _legacy_cellprofiler_threshold_version(module)
-    if (
-        setting_name == _CELLPROFILER_THRESHOLD_METHOD_SETTING
-        and len(values) > 1
-        and legacy_version is not None
-        and legacy_version <= 10
-    ):
-        return values[0]
+    if setting_name == _CELLPROFILER_THRESHOLD_METHOD_SETTING and len(values) > 1:
+        threshold_scope = _cellprofiler_threshold_setting_token(
+            _last_optional_setting_value(module, "Threshold strategy") or ""
+        )
+        if threshold_scope == "global":
+            return values[0]
+        if threshold_scope == "adaptive":
+            return values[-1]
     return values[-1]
 
 
@@ -1077,6 +1090,22 @@ class ResizeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(resize_bound_kwargs(module, binder))
 
 
+class ResizeObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind ResizeObjects' factor/size settings."""
+
+    module_name = "ResizeObjects"
+
+    def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(resize_objects_bound_kwargs(module, binder))
+
+
 class MeasureObjectNeighborsModuleSettingsBindingStrategy(
     ModuleSettingsBindingStrategy
 ):
@@ -1372,6 +1401,7 @@ STRUCTURING_ELEMENT_MODULE_NAMES = (
     "Closing",
     "ErodeImage",
     "DilateImage",
+    "ErodeObjects",
 )
 
 
@@ -1417,7 +1447,10 @@ class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
         del param_mapping
-        return BoundModuleSettings(define_grid_bound_kwargs(module, binder))
+        return BoundModuleSettings(
+            define_grid_bound_kwargs(module, binder),
+            invocation_options=define_grid_invocation_options(module),
+        )
 
 
 class IdentifyObjectsInGridModuleSettingsBindingStrategy(

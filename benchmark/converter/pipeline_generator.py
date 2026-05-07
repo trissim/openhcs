@@ -12,24 +12,39 @@ Takes parsed .cppipe modules and generates a complete pipeline file with:
 - Pipeline configuration
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import re
-from dataclasses import dataclass
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Dict, List, Optional, Any
+from typing import Any, ClassVar, Dict, List, Mapping, Optional
 
+from metaclass_registry import AutoRegisterMeta
 from openhcs.constants import Backend
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
+from openhcs.core.artifact_observability import externally_required_artifact_outputs
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.vfs_protocol import FileManagerLike
+from openhcs.interop.cellprofiler.runtime import (
+    CellProfilerGridCycleScope,
+    CellProfilerInvocationOptions,
+)
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 from benchmark.cellprofiler_library import canonical_module_name
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
+    CalculationScope,
+)
 
+from .artifact_semantics import artifact_setting_symbols
 from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .processing_contract_resolution import resolve_processing_contract
@@ -56,6 +71,122 @@ _INPUTLESS_ARTIFACT_ONLY_KINDS = frozenset(
     }
 )
 _SAVE_IMAGES_SOURCE_IMAGE_SETTING = SettingNameFamily("Select the image to save")
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleProcessingComponents:
+    """Generated OpenHCS processing-component literals for one module."""
+
+    variable_components: tuple[str, ...]
+    group_by_literal: str | None = None
+
+
+class ModuleProcessingComponentStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for lowering module runtime-scope semantics."""
+
+    __registry_key__ = "module_name"
+    module_name: ClassVar[str]
+
+    @classmethod
+    def for_module(cls, module_name: str) -> "ModuleProcessingComponentStrategy":
+        canonical_name = canonical_module_name(module_name)
+        strategy_type = cls.__registry__.get(canonical_name)
+        if strategy_type is None:
+            return DefaultModuleProcessingComponentStrategy()
+        return strategy_type()
+
+    @abstractmethod
+    def components(
+        self,
+        *,
+        category: str,
+        contract: ModuleArtifactContracts,
+        bound_kwargs: Mapping[str, Any],
+        category_defaults: Mapping[str, tuple[str, ...]],
+    ) -> ModuleProcessingComponents:
+        """Return generated processing-component literals for this module."""
+
+
+class DefaultModuleProcessingComponentStrategy(ModuleProcessingComponentStrategy):
+    """Default conversion from source bindings/contracts to OpenHCS runtime scope."""
+
+    module_name = "__default__"
+
+    def components(
+        self,
+        *,
+        category: str,
+        contract: ModuleArtifactContracts,
+        bound_kwargs: Mapping[str, Any],
+        category_defaults: Mapping[str, tuple[str, ...]],
+    ) -> ModuleProcessingComponents:
+        del bound_kwargs
+        if canonical_module_name(contract.module_name) == "TrackObjects":
+            return ModuleProcessingComponents(
+                (
+                    "VariableComponents.SITE",
+                    "VariableComponents.CHANNEL",
+                ),
+                "GroupBy.NONE",
+            )
+        source_bindings = contract.source_bindings
+        if not source_bindings.is_empty:
+            if source_bindings.requires_step_input_channel_stack:
+                return ModuleProcessingComponents(
+                    ("VariableComponents.CHANNEL",),
+                    "GroupBy.SITE",
+                )
+            if source_bindings.requires_pipeline_start_resolution:
+                return ModuleProcessingComponents(
+                    ("VariableComponents.CHANNEL",),
+                    "GroupBy.SITE",
+                )
+            return ModuleProcessingComponents(("VariableComponents.SITE",))
+        if contract.runtime_artifact_inputs:
+            return ModuleProcessingComponents(("VariableComponents.SITE",), "GroupBy.NONE")
+        if _is_inputless_artifact_only_contract(contract):
+            return ModuleProcessingComponents(("VariableComponents.SITE",), "GroupBy.NONE")
+        return ModuleProcessingComponents(
+            tuple(
+                category_defaults.get(
+                    category,
+                    ("VariableComponents.SITE",),
+                )
+            )
+        )
+
+
+class CorrectIlluminationCalculateProcessingComponentStrategy(
+    DefaultModuleProcessingComponentStrategy
+):
+    """Lower CellProfiler all-image illumination scope to a site stack per channel."""
+
+    module_name = "CorrectIlluminationCalculate"
+
+    def components(
+        self,
+        *,
+        category: str,
+        contract: ModuleArtifactContracts,
+        bound_kwargs: Mapping[str, Any],
+        category_defaults: Mapping[str, tuple[str, ...]],
+    ) -> ModuleProcessingComponents:
+        raw_scope = bound_kwargs.get("calculation_scope", CalculationScope.EACH)
+        scope = _coerce_function_enum(CalculationScope, raw_scope)
+        if scope in {
+            CalculationScope.ALL_FIRST_CYCLE,
+            CalculationScope.ALL_ACROSS_CYCLES,
+        }:
+            return ModuleProcessingComponents(
+                ("VariableComponents.SITE",),
+                "GroupBy.CHANNEL",
+            )
+        return super().components(
+            category=category,
+            contract=contract,
+            bound_kwargs=bound_kwargs,
+            category_defaults=category_defaults,
+        )
 
 
 def _is_inputless_artifact_only_contract(contract: ModuleArtifactContracts) -> bool:
@@ -333,6 +464,10 @@ from openhcs.constants.input_source import InputSource
                 "    CellProfilerModuleExecutor,\n"
                 "    cellprofiler_runtime_adapter_factory,\n"
                 ")\n"
+                "from openhcs.interop.cellprofiler.runtime import (\n"
+                "    CellProfilerGridCycleScope,\n"
+                "    CellProfilerInvocationOptions,\n"
+                ")\n"
                 "from openhcs.core.module_artifact_contract import ModuleArtifactContract\n"
                 "from openhcs.core.callable_contract import attach_callable_contract_metadata, prepare_processing_callable\n"
                 "from openhcs.core.pipeline.function_contracts import artifact_inputs, artifact_outputs\n"
@@ -369,13 +504,13 @@ from openhcs.constants.input_source import InputSource
                     "attach_callable_contract_metadata("
                     f"{binding_name}, "
                     "declared_processing_contract="
-                    f"{repr(self._module_metadata(module.name)['contract'])})"
+                    f"{self._resolved_processing_contract_literal(module.name, func_name)})"
                 )
             imports += "\n".join(func_assignments) + "\n\n"
 
         imports += self._generate_artifact_contracts(
-            symbol_table,
             executable_modules,
+            contracts_by_module,
             externally_materialized_outputs=save_images_required_artifacts,
         )
         imports += self._generate_runtime_wrappers(
@@ -431,6 +566,12 @@ from openhcs.constants.input_source import InputSource
                 output.materialization is not None
                 or output.kind in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
             )
+        } | {
+            _artifact_key(output)
+            for contract in artifact_contracts.values()
+            for output in externally_required_artifact_outputs(
+                contract.declared_outputs
+            )
         }
         if externally_required_artifacts:
             live_artifacts.update(externally_required_artifacts)
@@ -447,6 +588,23 @@ from openhcs.constants.input_source import InputSource
             if not keep:
                 continue
             live_module_nums.add(module.module_num)
+            retained_outputs = tuple(
+                output
+                for output in contract.outputs
+                if (
+                    output.materialization is not None
+                    or output.kind in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
+                    or _artifact_key(output) in live_artifacts
+                )
+            )
+            artifact_contracts[module.module_num] = replace(
+                contract,
+                output_symbols=tuple(
+                    symbol
+                    for symbol in contract.output_symbols
+                    if symbol.artifact_spec() in retained_outputs
+                ),
+            )
             live_artifacts.update(
                 _artifact_key(input_spec)
                 for input_spec in contract.runtime_artifact_inputs
@@ -490,11 +648,6 @@ from openhcs.constants.input_source import InputSource
             step_name = module.name
             artifact_contract = artifact_contracts[module.module_num]
 
-            # Map category to variable_components
-            variable_components, group_by_literal = self._processing_components_for(
-                category,
-                artifact_contract,
-            )
             input_source_literal = (
                 "InputSource.PIPELINE_START"
                 if artifact_contract.external_source_symbols
@@ -512,6 +665,28 @@ from openhcs.constants.input_source import InputSource
             )
             translated_kwargs = dict(bound_settings.kwargs)
             unmapped_kwargs = dict(bound_settings.unmapped_kwargs)
+            translated_kwargs = self._prune_dead_output_setting_kwargs(
+                module=module,
+                translated_kwargs=translated_kwargs,
+                param_mapping=param_mapping,
+                artifact_contract=artifact_contract,
+            )
+            unmapped_kwargs = self._prune_dead_output_setting_comments(
+                module=module,
+                unmapped_kwargs=unmapped_kwargs,
+                artifact_contract=artifact_contract,
+            )
+            invocation_options_literal = self._invocation_options_literal(
+                bound_settings.invocation_options
+            )
+            processing_components = ModuleProcessingComponentStrategy.for_module(
+                module.name
+            ).components(
+                category=category,
+                contract=artifact_contract,
+                bound_kwargs=translated_kwargs,
+                category_defaults=self.CATEGORY_TO_VARIABLE_COMPONENTS,
+            )
 
             # Build func parameter - either just the function or (function, kwargs_dict)
             lines.append("    FunctionStep(")
@@ -524,9 +699,21 @@ from openhcs.constants.input_source import InputSource
                 kwargs_lines.append("        }")
                 kwargs_str = "\n".join(kwargs_lines)
 
-                lines.append(f"        func=({binding_name}, {kwargs_str}),")
+                if invocation_options_literal is None:
+                    lines.append(f"        func=({binding_name}, {kwargs_str}),")
+                else:
+                    lines.append(
+                        f"        func=({binding_name}, {kwargs_str}, "
+                        f"{invocation_options_literal}),"
+                    )
             else:
-                lines.append(f"        func={binding_name},")
+                if invocation_options_literal is None:
+                    lines.append(f"        func={binding_name},")
+                else:
+                    lines.append(
+                        f"        func=({binding_name}, {{}}, "
+                        f"{invocation_options_literal}),"
+                    )
 
             lines.append(f'        name="{step_name}",')
             if not artifact_contract.source_bindings.is_empty:
@@ -537,11 +724,13 @@ from openhcs.constants.input_source import InputSource
             lines.append("        processing_config=LazyProcessingConfig(")
             lines.append(
                 "            variable_components=["
-                + ", ".join(variable_components)
+                + ", ".join(processing_components.variable_components)
                 + "],"
             )
-            if group_by_literal is not None:
-                lines.append(f"            group_by={group_by_literal},")
+            if processing_components.group_by_literal is not None:
+                lines.append(
+                    f"            group_by={processing_components.group_by_literal},"
+                )
             if input_source_literal is not None:
                 lines.append(f"            input_source={input_source_literal},")
             lines.append("        ),")
@@ -557,43 +746,102 @@ from openhcs.constants.input_source import InputSource
         lines.append("]")
         return "\n".join(lines)
 
-    def _processing_components_for(
+    def _prune_dead_output_setting_kwargs(
         self,
-        category: str,
-        contract: ModuleArtifactContracts,
-    ) -> tuple[tuple[str, ...], str | None]:
-        """Derive native stack/group semantics for one converted step."""
-        if canonical_module_name(contract.module_name) == "TrackObjects":
-            return (
-                "VariableComponents.SITE",
-                "VariableComponents.CHANNEL",
-            ), "GroupBy.NONE"
-        source_bindings = contract.source_bindings
-        if not source_bindings.is_empty:
-            if source_bindings.requires_step_input_channel_stack:
-                return ("VariableComponents.CHANNEL",), "GroupBy.SITE"
-            if source_bindings.requires_pipeline_start_resolution:
-                return (
-                    "VariableComponents.SITE",
-                    "VariableComponents.CHANNEL",
-                ), "GroupBy.NONE"
-            return ("VariableComponents.SITE",), None
-        if contract.runtime_artifact_inputs:
-            return ("VariableComponents.SITE",), "GroupBy.NONE"
-        if _is_inputless_artifact_only_contract(contract):
-            return ("VariableComponents.SITE",), "GroupBy.NONE"
-        variable_components = list(
-            self.CATEGORY_TO_VARIABLE_COMPONENTS.get(
-                category,
-                ("VariableComponents.SITE",),
-            )
+        *,
+        module: ModuleBlock,
+        translated_kwargs: dict[str, Any],
+        param_mapping: Mapping[str, Any],
+        artifact_contract: ModuleArtifactContracts,
+    ) -> dict[str, Any]:
+        """Drop function kwargs for output-name settings pruned from artifacts."""
+        dead_settings = self._dead_output_setting_names(
+            module=module,
+            artifact_contract=artifact_contract,
         )
-        return tuple(variable_components), None
+        pruned_kwargs = dict(translated_kwargs)
+        for setting_name in dead_settings:
+            mapped_parameter = param_mapping.get(setting_name)
+            if mapped_parameter is None:
+                mapped_parameter = setting_name
+            if isinstance(mapped_parameter, list):
+                for parameter_name in mapped_parameter:
+                    pruned_kwargs.pop(parameter_name, None)
+            else:
+                pruned_kwargs.pop(mapped_parameter, None)
+        return pruned_kwargs
+
+    def _prune_dead_output_setting_comments(
+        self,
+        *,
+        module: ModuleBlock,
+        unmapped_kwargs: dict[str, Any],
+        artifact_contract: ModuleArtifactContracts,
+    ) -> dict[str, Any]:
+        """Drop comments for output-name settings pruned from artifacts."""
+        dead_settings = self._dead_output_setting_names(
+            module=module,
+            artifact_contract=artifact_contract,
+        )
+        return {
+            setting_name: value
+            for setting_name, value in unmapped_kwargs.items()
+            if setting_name not in dead_settings
+        }
+
+    def _dead_output_setting_names(
+        self,
+        *,
+        module: ModuleBlock,
+        artifact_contract: ModuleArtifactContracts,
+    ) -> frozenset[str]:
+        retained_outputs = frozenset(
+            (symbol.kind.artifact_kind, symbol.name)
+            for symbol in artifact_contract.output_symbols
+        )
+        output_symbols_by_setting: dict[str, set[tuple[ArtifactKind, str]]] = {}
+        for symbol in artifact_setting_symbols(module):
+            if symbol.role.is_input:
+                continue
+            normalized_setting = normalize_cellprofiler_setting_name(
+                symbol.setting_name
+            )
+            output_symbols_by_setting.setdefault(normalized_setting, set()).add(
+                (symbol.role.artifact_kind, symbol.name)
+            )
+        return frozenset(
+            setting_name
+            for setting_name, output_symbols in output_symbols_by_setting.items()
+            if output_symbols and not output_symbols & retained_outputs
+        )
+
+    def _invocation_options_literal(
+        self,
+        options: RuntimeInvocationOptions | None,
+    ) -> str | None:
+        """Return generated-code literal for typed invocation options."""
+        if options is None:
+            return None
+        if isinstance(options, CellProfilerInvocationOptions):
+            scope = options.grid_cycle_scope
+            if not isinstance(scope, CellProfilerGridCycleScope):
+                raise TypeError(
+                    "CellProfilerInvocationOptions.grid_cycle_scope must be "
+                    "CellProfilerGridCycleScope."
+                )
+            return (
+                "CellProfilerInvocationOptions("
+                f"grid_cycle_scope=CellProfilerGridCycleScope.{scope.name})"
+            )
+        raise TypeError(
+            "Unsupported RuntimeInvocationOptions for generated pipeline: "
+            f"{type(options).__name__}."
+        )
 
     def _generate_artifact_contracts(
         self,
-        symbol_table: CellProfilerSymbolTable,
         modules: List[ModuleBlock],
+        artifact_contracts: dict[int, ModuleArtifactContracts],
         *,
         externally_materialized_outputs: frozenset[tuple[ArtifactKind, str]] = (
             frozenset()
@@ -602,7 +850,7 @@ from openhcs.constants.input_source import InputSource
         """Emit converter-owned artifact contracts into generated pipeline code."""
         contracts = []
         for module in modules:
-            contract = symbol_table.contract_for(module)
+            contract = artifact_contracts[module.module_num]
             if contract.inputs or contract.outputs:
                 contracts.append(contract)
         if not contracts:
@@ -613,9 +861,17 @@ from openhcs.constants.input_source import InputSource
             for contract in contracts
             for spec in contract.outputs
         )
+        uses_sidecar_roles = any(
+            spec.sidecar_role is not None
+            for contract in contracts
+            for spec in (*contract.outputs, *contract.declared_outputs)
+        )
+        artifact_imports = "ArtifactKind, ArtifactSpec"
+        if uses_sidecar_roles:
+            artifact_imports += ", ArtifactSidecarRole"
         lines = [
             "# CellProfiler name-to-artifact contracts compiled from .cppipe",
-            "from openhcs.core.artifacts import ArtifactKind, ArtifactSpec",
+            f"from openhcs.core.artifacts import {artifact_imports}",
         ]
         if requires_no_materialization_import:
             lines.append(
@@ -684,7 +940,8 @@ from openhcs.constants.input_source import InputSource
                 "manages_artifact_inputs=True)"
             )
             lines.append(
-                f"def {runtime_binding}(image, *, cellprofiler_runtime, enabled=True, **kwargs):"
+                f"def {runtime_binding}(image, *, cellprofiler_runtime, "
+                "runtime_invocation_options=None, enabled=True, **kwargs):"
             )
             lines.append(
                 "    if not enabled:"
@@ -698,7 +955,8 @@ from openhcs.constants.input_source import InputSource
             lines.append(
                 f"    return {executor_name}.run("
                 f"{raw_binding}, image, "
-                "cellprofiler_runtime=cellprofiler_runtime, **kwargs)"
+                "cellprofiler_runtime=cellprofiler_runtime, "
+                "invocation_options=runtime_invocation_options, **kwargs)"
             )
             prepare_binding = f"_prepare_{runtime_binding}"
             lines.append(
@@ -724,7 +982,7 @@ from openhcs.constants.input_source import InputSource
                 "attach_callable_contract_metadata("
                 f"{runtime_binding}, "
                 "declared_processing_contract="
-                f"{repr(self._module_metadata(module.name)['contract'])}, "
+                f"{self._resolved_processing_contract_literal(module.name, resolved_function.function_name)}, "
                 f"raw_processing_function={raw_binding}, "
                 f"prepare={prepare_binding}, "
                 "runtime_image_execution_mode="
@@ -801,6 +1059,19 @@ from openhcs.constants.input_source import InputSource
             return "ProcessingContract.FLEXIBLE"
         return self._processing_contract_expression(module_name, function_name)
 
+    def _resolved_processing_contract_literal(
+        self,
+        module_name: str,
+        function_name: str,
+    ) -> str:
+        resolved_contract = resolve_processing_contract(
+            module_name,
+            function_name,
+            str(self._module_metadata(module_name)["contract"]),
+            prefer_callable_metadata=True,
+        )
+        return repr(resolved_contract.contract.name)
+
     def _processing_contract_expression(
         self,
         module_name: str,
@@ -811,6 +1082,7 @@ from openhcs.constants.input_source import InputSource
             module_name,
             function_name,
             str(self._module_metadata(module_name)["contract"]),
+            prefer_callable_metadata=True,
         )
         return f"ProcessingContract.{resolved_contract.contract.name}"
 

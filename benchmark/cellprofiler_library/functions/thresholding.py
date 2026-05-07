@@ -24,7 +24,7 @@ from openhcs.core.runtime_values import normalize_image_payload_intensity
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
 
 CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
-CELLPROFILER_MULTI_OTSU_BINS = 4096
+CELLPROFILER_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET = 0.0
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"

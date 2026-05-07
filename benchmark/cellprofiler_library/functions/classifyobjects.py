@@ -12,6 +12,7 @@ from typing import Tuple, List, Optional, Dict, Any
 from dataclasses import dataclass, field
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.classification import (
@@ -98,6 +99,7 @@ def classify_objects_single_measurement(
     Returns:
         Tuple of (classified_labels, classification_results)
     """
+    labels = object_label_dense_array(labels, dtype=np.int32)
     if classification_rules:
         results: list[ClassificationResult] = []
         classified_labels = labels
@@ -302,6 +304,7 @@ def classify_objects_two_measurements(
     """
     import json
 
+    labels = object_label_dense_array(labels, dtype=np.int32)
     threshold1_method = _coerce_function_enum(ThresholdMethod, threshold1_method)
     threshold2_method = _coerce_function_enum(ThresholdMethod, threshold2_method)
     classification_backend = ObjectClassificationBackendStrategy.for_memory_type(
@@ -420,6 +423,7 @@ def classify_objects_by_intensity_bins(
         Tuple of (classified_labels, classification_results)
     """
     import json
+    labels = object_label_dense_array(labels, dtype=np.int32)
     classification_backend = ObjectClassificationBackendStrategy.for_memory_type(
         backend_provider=classification_backend_provider,
     )

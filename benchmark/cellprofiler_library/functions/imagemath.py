@@ -163,13 +163,10 @@ def image_math(
     if len(factors) < n_images:
         factors = tuple(factors) + (1.0,) * (n_images - len(factors))
     
-    # For single-image operations, only use first image
-    if operation in SINGLE_IMAGE_OPS:
-        n_images = 1
-    
     # Apply factors to each image (except for binary output operations)
     pixel_data = []
-    for i in range(n_images):
+    operand_count = 1 if operation in SINGLE_IMAGE_OPS else n_images
+    for i in range(operand_count):
         pd = image[i].astype(np.float64)
         if operation not in BINARY_OUTPUT_OPS and factors[i] != 1.0:
             pd = pd * factors[i]
@@ -179,7 +176,12 @@ def image_math(
     def use_logical_operation(data_list):
         return all(pd.dtype == bool for pd in data_list if not np.isscalar(pd))
     
-    output_pixel_data = pixel_data[0].copy()
+    if operation in SINGLE_IMAGE_OPS:
+        output_pixel_data = image.astype(np.float64, copy=True)
+        if operation not in BINARY_OUTPUT_OPS and factors[0] != 1.0:
+            output_pixel_data *= factors[0]
+    else:
+        output_pixel_data = pixel_data[0].copy()
     
     if operation == MathOperation.ADD:
         for pd in pixel_data[1:]:

@@ -12,9 +12,10 @@ from numba import njit
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
+    aligned_dense_object_label_arrays,
+    aligned_dense_object_label_stack_alignment,
     object_label_parent_child_payload,
 )
-from openhcs.core.runtime_values import image_payload_data
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.outlines import ObjectOutlineBackendStrategy
 
@@ -68,15 +69,6 @@ def _parent_child_relationship(
     )
 
 
-def _label_stack_view(value: Any, slice_count: int) -> np.ndarray | None:
-    array = np.asarray(image_payload_data(value), dtype=np.int32)
-    if array.ndim == 3 and array.shape[0] == slice_count:
-        return np.ascontiguousarray(array)
-    if array.ndim == 2:
-        return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
-    return None
-
-
 def _identify_tertiary_objects_batch(
     func: Callable[..., Any],
     slices_2d: tuple[Any, ...],
@@ -84,18 +76,18 @@ def _identify_tertiary_objects_batch(
     slice_count: int,
     execute_slice: Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
 ) -> list[Any]:
-    primary_stack = _label_stack_view(kwargs["primary_labels"], slice_count)
-    secondary_stack = _label_stack_view(kwargs["secondary_labels"], slice_count)
-    if primary_stack is None or secondary_stack is None:
+    alignment = aligned_dense_object_label_stack_alignment(
+        kwargs["primary_labels"],
+        kwargs["secondary_labels"],
+        slice_count=slice_count,
+    )
+    if alignment is None:
         return [
             execute_slice(func, slice_2d, kwargs, slice_index, slice_count)
             for slice_index, slice_2d in enumerate(slices_2d)
         ]
-    if primary_stack.shape != secondary_stack.shape:
-        raise ValueError(
-            "Primary and secondary label stacks must match. "
-            f"Got {primary_stack.shape} vs {secondary_stack.shape}."
-        )
+    primary_stack = alignment.first_stack
+    secondary_stack = alignment.second_stack
 
     tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts = (
         _tertiary_stack_numba(
@@ -104,6 +96,7 @@ def _identify_tertiary_objects_batch(
             bool(kwargs.get("shrink_primary", True)),
         )
     )
+    output_tertiary_stack = alignment.restore_second_stack(tertiary_stack)
 
     return [
         (
@@ -124,7 +117,7 @@ def _identify_tertiary_objects_batch(
                 primary_parent_count=int(primary_counts[slice_index]),
                 secondary_parent_count=int(secondary_counts[slice_index]),
             ),
-            tertiary_stack[slice_index],
+            output_tertiary_stack[slice_index],
         )
         for slice_index in range(slice_count)
     ]
@@ -271,6 +264,10 @@ def identify_tertiary_objects(
         primary_labels = primary_labels[0]
     if secondary_labels.ndim == 3:
         secondary_labels = secondary_labels[0]
+    primary_labels, secondary_labels = aligned_dense_object_label_arrays(
+        primary_labels,
+        secondary_labels,
+    )
     
     # Ensure shapes match
     if primary_labels.shape != secondary_labels.shape:

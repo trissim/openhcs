@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Callable
 
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.source_bindings import (
     EMPTY_SOURCE_BINDINGS,
     StepSourceBindingsConfig,
@@ -15,7 +16,12 @@ from openhcs.core.steps.function_execution import FunctionStepExecutor
 FunctionSpec = (
     Callable
     | tuple[Callable, dict]
-    | list[Callable | tuple[Callable, dict]]
+    | tuple[Callable, dict, RuntimeInvocationOptions]
+    | list[
+        Callable
+        | tuple[Callable, dict]
+        | tuple[Callable, dict, RuntimeInvocationOptions]
+    ]
 )
 
 

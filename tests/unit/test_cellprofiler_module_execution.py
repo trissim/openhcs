@@ -12,29 +12,42 @@ from openhcs.core.aligned_image_payload import (
     payload_slice_count,
     payload_slices_for_alignment,
 )
+from openhcs.constants.constants import MemoryType
+from openhcs.interop.cellprofiler.runtime.invocation import CellProfilerMeasurementImage
+from openhcs.interop.cellprofiler.runtime import (
+    CellProfilerGridCycleScope,
+    CellProfilerInvocationOptions,
+)
 from benchmark.cellprofiler_compat.module_execution import (
     CellProfilerFunctionContractExecutor,
     CellProfilerMeasurementRecordBuilder,
     CellProfilerMeasurementImageDomain,
     CellProfilerModuleExecutor,
     CellProfilerObjectMeasurementRowPolicy,
+    CellProfilerOutputValueResolution,
     CellProfilerOutputRecordRequest,
     CellProfilerOutputRecorder,
+    CellProfilerPure2DOutputAggregator,
     _coerce_invocation_kwargs,
-    _aggregate_cellprofiler_pure_2d_auxiliary_output,
     _cellprofiler_global_image_number_rows,
     _complete_object_measurement_rows,
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_image,
+    _measurement_labels_for_measurement_image,
     _measurement_record_fields,
+    _measurement_table_slice_count,
     _measurement_table_rows,
+    _object_location_measurement_rows,
     _object_only_reference_image,
+    _output_values_by_kind,
     _processing_contract_for_callable,
+    _unstack_cellprofiler_image_slices,
     _relationship_measurement_rows,
     _slice_pure_2d_value,
 )
 from benchmark.cellprofiler_library.functions.colortogray import color_to_gray
+from benchmark.cellprofiler_library.functions.crop import crop
 from benchmark.cellprofiler_library.functions.correctilluminationapply import (
     correct_illumination_apply,
 )
@@ -68,14 +81,18 @@ from benchmark.cellprofiler_library.functions.definegrid import define_grid_auto
 from benchmark.cellprofiler_library.functions.identifyobjectsingrid import (
     _fill_grid,
     _grid_definition,
+    GridShapeRequest,
     identify_objects_in_grid,
     identify_objects_in_grid_with_guides,
+    NaturalGridShapeStrategy,
 )
 from benchmark.cellprofiler_library.functions.measureobjectsizeshape import (
     measure_object_size_shape,
 )
+from benchmark.cellprofiler_semantics.crop import CropShape, RemovalMethod
 from benchmark.cellprofiler_library.functions.maskobjects import mask_objects
 from benchmark.cellprofiler_library.functions import identifysecondaryobjects as iso
+from benchmark.cellprofiler_library.functions import identifytertiaryobjects as ito
 from benchmark.cellprofiler_library.functions.identifysecondaryobjects import (
     DistanceMaskedSegmentationStrategy,
     PropagationSegmentationStrategy,
@@ -84,16 +101,19 @@ from benchmark.cellprofiler_library.functions.identifysecondaryobjects import (
     _secondary_seed_labels,
 )
 from benchmark.cellprofiler_library.functions.tile import tile
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSpec
 from openhcs.core.callable_contract import attach_callable_contract_metadata
 from openhcs.core.config import DtypeConfig
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
+    ObjectLabelRepresentation,
     ParentChildRelationshipPayload,
     RelationshipSemantics,
     SpatialGridOrdering,
+    object_label_parent_child_payload,
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
@@ -104,6 +124,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelSet,
     ObjectRelationship,
+    SparseIJVLabelRows,
     SpatialGrid,
     image_payload_data,
     image_payload_metadata,
@@ -198,11 +219,16 @@ class _FakeCellProfilerRuntime:
     def add_spatial_grid(
         self,
         name: str,
-        grid: SpatialGrid,
+        grid: SpatialGrid | RuntimeSliceAlignedValues,
     ) -> None:
+        if isinstance(grid, RuntimeSliceAlignedValues):
+            self.spatial_grids[name] = RuntimeSliceAlignedValues(
+                slices=tuple(value.with_name(name) for value in grid.slices)
+            )
+            return
         self.spatial_grids[name] = grid.with_name(name)
 
-    def get_spatial_grid(self, name: str) -> SpatialGrid:
+    def get_spatial_grid(self, name: str) -> SpatialGrid | RuntimeSliceAlignedValues:
         return self.spatial_grids[name]
 
     def add_relationship(self, name: str, **kwargs: object) -> None:
@@ -248,6 +274,79 @@ def test_cellprofiler_contract_executor_applies_pure_2d_after_input_resolution()
     assert calls == [(4, 5), (4, 5)]
     assert result.shape == stack.shape
     np.testing.assert_array_equal(result, np.ones_like(stack))
+
+
+def test_cellprofiler_contract_executor_flattens_volume_stacks_for_pure_2d():
+    calls = []
+
+    def add_labels(image: np.ndarray, *, labels: np.ndarray) -> np.ndarray:
+        calls.append((image.shape, labels.shape, int(labels[0, 0])))
+        return image + labels
+
+    add_labels.__processing_contract__ = ProcessingContract.PURE_2D
+    image = np.zeros((2, 3, 4, 5), dtype=np.float32)
+    labels = np.arange(6, dtype=np.int32).reshape((2, 3, 1, 1))
+    labels = np.broadcast_to(labels, image.shape)
+
+    result = CellProfilerFunctionContractExecutor().execute(
+        add_labels,
+        image,
+        {"labels": labels},
+    )
+
+    assert calls == [((4, 5), (4, 5), index) for index in range(6)]
+    assert result.shape == (6, 4, 5)
+    np.testing.assert_array_equal(result, labels.reshape((6, 4, 5)))
+
+
+def test_cellprofiler_contract_executor_slices_high_rank_labels_by_runtime_axis():
+    calls = []
+
+    def keep_labels(image: np.ndarray, *, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        calls.append((image.shape, labels.shape, int(labels[0, 0, 0])))
+        return image, labels
+
+    keep_labels.__processing_contract__ = ProcessingContract.PURE_2D
+    image = np.zeros((4, 5), dtype=np.float32)
+    labels = np.arange(3, dtype=np.int32).reshape((3, 1, 1, 1))
+    labels = np.broadcast_to(labels, (3, 2, 4, 5))
+
+    result_image, result_labels = CellProfilerFunctionContractExecutor().execute(
+        keep_labels,
+        image,
+        {"labels": labels},
+    )
+
+    assert calls == [((4, 5), (2, 4, 5), index) for index in range(3)]
+    assert result_image.shape == (3, 4, 5)
+    assert result_labels.shape == (3, 2, 4, 5)
+    np.testing.assert_array_equal(result_labels, labels)
+
+
+def test_cellprofiler_contract_executor_projects_flat_grouped_label_kwargs():
+    calls = []
+
+    def keep_labels(image: np.ndarray, *, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        calls.append((image.shape, labels.shape, int(labels[0, 0])))
+        return image, labels
+
+    keep_labels.__processing_contract__ = ProcessingContract.PURE_2D
+    image = np.zeros((3, 4, 5), dtype=np.float32)
+    labels = np.zeros((2, 3, 4, 5), dtype=np.int32)
+    labels[0, :, 1:3, 1:3] = 1
+    labels[1, :, 2:4, 2:4] = 2
+    flattened_labels = labels.reshape((-1, *labels.shape[-2:]))
+
+    result_image, result_labels = CellProfilerFunctionContractExecutor().execute(
+        keep_labels,
+        image,
+        {"labels": flattened_labels},
+    )
+
+    expected_labels = np.max(labels, axis=0)
+    assert calls == [((4, 5), (4, 5), 0) for _ in range(3)]
+    assert result_image.shape == image.shape
+    np.testing.assert_array_equal(result_labels, expected_labels)
 
 
 def test_cellprofiler_contract_executor_stacks_singleton_plane_outputs():
@@ -316,6 +415,46 @@ def test_complete_object_measurement_rows_handles_empty_rows_with_axis_fields() 
     assert [row["object_label"] for row in rows] == [1, 2]
     assert all(np.isnan(row["image_number"]) for row in rows)
     assert all(np.isnan(row["value"]) for row in rows)
+
+
+def test_complete_object_measurement_rows_preserves_sliced_object_label_set_domain() -> None:
+    labels = np.zeros((2, 4, 4), dtype=np.int32)
+    labels[0, 1, 1] = 1
+    labels[1, 2, 2] = 1
+    payload = ObjectLabelSet(
+        name="GridObjects",
+        labels=labels,
+        declared_object_count=3,
+        source_image_name="BF_image",
+    )
+
+    rows = _complete_object_measurement_rows(
+        [
+            {"slice_index": 0, "object_label": 1, "value": 10.0},
+            {"slice_index": 1, "object_label": 1, "value": 20.0},
+        ],
+        label_payload=payload,
+        func=_synthetic_object_measurement_function,
+    )
+
+    by_key = {
+        (row["slice_index"], row["object_label"]): row["value"]
+        for row in rows
+    }
+    assert tuple(by_key) == (
+        (0, 1),
+        (0, 2),
+        (0, 3),
+        (1, 1),
+        (1, 2),
+        (1, 3),
+    )
+    assert by_key[(0, 1)] == 10.0
+    assert by_key[(1, 1)] == 20.0
+    assert np.isnan(by_key[(0, 2)])
+    assert np.isnan(by_key[(0, 3)])
+    assert np.isnan(by_key[(1, 2)])
+    assert np.isnan(by_key[(1, 3)])
 
 
 def test_global_image_number_projection_ignores_missing_axis_values() -> None:
@@ -467,6 +606,8 @@ def test_complete_object_measurement_rows_supports_compact_row_identity() -> Non
     rows = _complete_object_measurement_rows(
         [
             {"object_label": 10, "Area": 10.0},
+            {"object_label": 20},
+            {"object_label": 25, "Area": np.nan},
             {"object_label": 30, "Area": 30.0},
             {"object_label": 50, "Area": 50.0},
         ],
@@ -477,10 +618,11 @@ def test_complete_object_measurement_rows_supports_compact_row_identity() -> Non
 
     assert [row["object_label"] for row in rows] == [1, 2, 3, 4, 5]
     assert [row["Area"] for row in rows[:3]] == [10.0, 30.0, 50.0]
-    assert all(np.isnan(row["Area"]) for row in rows[3:])
+    assert "Area" not in rows[3]
+    assert np.isnan(rows[4]["Area"])
 
 
-def test_measure_object_size_shape_declares_compact_row_identity_policy() -> None:
+def test_measure_object_size_shape_uses_compact_row_identity_policy() -> None:
     assert (
         CellProfilerObjectMeasurementRowPolicy.for_module(
             "MeasureObjectSizeShape"
@@ -685,11 +827,11 @@ def test_measure_object_size_shape_zernikes_preserve_dense_label_gaps() -> None:
 
     assert [row["object_label"] for row in rows] == [1, 2, 3]
     assert np.isfinite(rows[0]["Zernike_0_0"])
-    assert rows[1]["Area"] == 16.0
-    assert rows[1]["Center_X"] == 7.5
-    assert rows[1]["Center_Y"] == 7.5
+    assert np.isnan(rows[1]["Area"])
+    assert np.isnan(rows[1]["Center_X"])
+    assert np.isnan(rows[1]["Center_Y"])
     assert np.isnan(rows[1]["Zernike_0_0"])
-    assert np.isnan(rows[2]["Area"])
+    assert rows[2]["Area"] == 16.0
     assert rows[2]["Center_X"] == 7.5
     assert rows[2]["Center_Y"] == 7.5
     assert np.isfinite(rows[2]["Zernike_0_0"])
@@ -813,6 +955,23 @@ def test_color_to_gray_splits_openhcs_color_slice_by_selected_channels() -> None
     np.testing.assert_array_equal(blue, np.full((4, 5), 3.0, dtype=np.float32))
 
 
+def test_color_to_gray_splits_channel_last_non_rgb_slice() -> None:
+    image = np.zeros((4, 5, 2), dtype=np.float32)
+    image[..., 0] = 7.0
+    image[..., 1] = 11.0
+
+    (first_channel,) = color_to_gray(
+        image,
+        mode="split",
+        image_type="rgb",
+        channel_indices=(0,),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert first_channel.shape == (4, 5)
+    np.testing.assert_array_equal(first_channel, np.full((4, 5), 7.0, dtype=np.float32))
+
+
 def test_color_to_gray_preserves_masked_image_payload() -> None:
     image = np.zeros((3, 4, 3), dtype=np.float32)
     image[..., 0] = 0.75
@@ -893,7 +1052,7 @@ def test_cellprofiler_auxiliary_payload_stack_preserves_metadata() -> None:
         metadata=ImagePayloadMetadata(intensity_scale=255.0, source_dtype="uint8"),
     )
 
-    stacked = _aggregate_cellprofiler_pure_2d_auxiliary_output(
+    stacked = CellProfilerPure2DOutputAggregator.aggregate(
         [first, second],
         "numpy",
     )
@@ -1022,6 +1181,30 @@ def test_cellprofiler_contract_executor_aggregates_object_label_payload_auxiliar
     )
 
 
+def test_cellprofiler_contract_executor_aggregates_volume_label_auxiliary():
+    def keep_volume_labels(image: np.ndarray):
+        labels = (image > 0).astype(np.int32)
+        return image, labels
+
+    keep_volume_labels.__processing_contract__ = ProcessingContract.PURE_2D
+    stack = np.stack(
+        (
+            np.ones((3, 4, 5), dtype=np.float32),
+            np.full((3, 4, 5), 2.0, dtype=np.float32),
+        )
+    )
+
+    result_image, result_labels = CellProfilerFunctionContractExecutor().execute(
+        keep_volume_labels,
+        stack,
+        {},
+    )
+
+    assert result_image.shape == stack.shape
+    assert isinstance(result_labels, np.ndarray)
+    assert result_labels.shape == stack.shape
+
+
 def test_cellprofiler_contract_executor_preserves_single_slice_dataclass_auxiliary():
     @dataclass(frozen=True)
     class SliceStats:
@@ -1142,6 +1325,226 @@ def test_module_executor_slices_aligned_object_labels_for_pure_2d_module():
     assert calls == [((4, 5), (4, 5), 1), ((4, 5), (4, 5), 2)]
     assert result.shape == image_stack.shape
     np.testing.assert_array_equal(result, image_stack + label_stack)
+
+
+def test_module_executor_binds_crop_previous_mask_when_image_output_is_pruned() -> None:
+    image = np.arange(4 * 5, dtype=np.float32).reshape(4, 5)
+    previous_mask = np.zeros((4, 5), dtype=bool)
+    previous_mask[1:3, 1:4] = True
+    runtime = _FakeCellProfilerRuntime(
+        {
+            "OrigRed": _FakeRuntimeImage(image, source_image_name="OrigRed"),
+            "CropBlue__crop_mask": _FakeRuntimeImage(
+                previous_mask.astype(np.float32),
+                source_image_name="OrigBlue",
+            ),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="Crop",
+            inputs=(
+                ArtifactSpec("OrigRed", ArtifactKind.IMAGE),
+                ArtifactSpec("CropBlue__crop_mask", ArtifactKind.IMAGE),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("CropBlue__crop_mask", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("Crop_7_measurements", ArtifactKind.MEASUREMENTS),),
+            declared_outputs=(
+                ArtifactSpec("CropRed", ArtifactKind.IMAGE),
+                ArtifactSpec(
+                    "CropRed__crop_mask",
+                    ArtifactKind.IMAGE,
+                    sidecar_role=ArtifactSidecarRole.CROP_MASK,
+                ),
+                ArtifactSpec("Crop_7_measurements", ArtifactKind.MEASUREMENTS),
+            ),
+        )
+    )
+
+    result = executor.run(
+        crop,
+        image,
+        cellprofiler_runtime=runtime,
+        crop_shape=CropShape.CROPPING,
+        removal_method=RemovalMethod.EDGES,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert result is image
+    assert len(runtime.measurements) == 1
+    name, rows, kwargs = runtime.measurements[0]
+    assert name == "Crop_7_measurements"
+    assert kwargs["source_image_name"] == "CropRed"
+    assert len(rows) == 1
+    assert rows[0]["area_retained"] == 6
+
+
+def test_output_value_matching_skips_pruned_intermediate_artifacts() -> None:
+    image = np.zeros((3, 4), dtype=np.float32)
+    stats = {"objects_pre_filter": 3, "objects_post_filter": 2}
+    labels = np.ones((3, 4), dtype=np.int32)
+    relationship = ParentChildRelationshipPayload(
+        parent_ids=np.asarray([1, 2], dtype=np.int32),
+        child_ids=np.asarray([1, 2], dtype=np.int32),
+        slice_indices=np.asarray([0, 0], dtype=np.int32),
+        slice_count=1,
+    )
+
+    values = _output_values_by_kind(
+        (
+            ArtifactSpec("FilterStats", ArtifactKind.MEASUREMENTS),
+            ArtifactSpec("FilteredObjects", ArtifactKind.OBJECT_LABELS),
+        ),
+        image,
+        (stats, labels, relationship),
+        func=filter_objects,
+    )
+
+    assert values["FilterStats"] is stats
+    assert values["FilteredObjects"] is labels
+
+    relationship_values = _output_values_by_kind(
+        (
+            ArtifactSpec("FilterStats", ArtifactKind.MEASUREMENTS),
+            ArtifactSpec("FilteredRelationships", ArtifactKind.RELATIONSHIPS),
+        ),
+        image,
+        (stats, labels, relationship),
+        func=filter_objects,
+    )
+
+    assert relationship_values["FilterStats"] is stats
+    assert relationship_values["FilteredRelationships"] is relationship
+
+
+def test_output_value_matching_uses_declared_sidecar_specs_for_pruned_outputs() -> None:
+    cropped_image = np.ones((3, 4), dtype=np.float32)
+    crop_mask = np.ones((10, 12), dtype=bool)
+    measurements = [{"area_retained": 12}]
+
+    values = _output_values_by_kind(
+        (
+            ArtifactSpec("CropGreen", ArtifactKind.IMAGE),
+            ArtifactSpec("Crop_6_measurements", ArtifactKind.MEASUREMENTS),
+        ),
+        cropped_image,
+        (crop_mask, measurements),
+        declared_output_specs=(
+            ArtifactSpec("CropGreen", ArtifactKind.IMAGE),
+            ArtifactSpec(
+                "CropGreen__crop_mask",
+                ArtifactKind.IMAGE,
+                sidecar_role=ArtifactSidecarRole.CROP_MASK,
+            ),
+            ArtifactSpec("Crop_6_measurements", ArtifactKind.MEASUREMENTS),
+        ),
+    )
+
+    assert values["CropGreen"] is cropped_image
+    assert values["Crop_6_measurements"] is measurements
+
+
+def test_output_value_resolution_preserves_pruned_context_outputs() -> None:
+    cropped_image = np.zeros((3, 4), dtype=np.float32)
+    crop_mask = np.ones((5, 6), dtype=bool)
+    measurements = {"area_retained": 12}
+
+    resolution = CellProfilerOutputValueResolution.from_returned_values(
+        (ArtifactSpec("Crop_7_measurements", ArtifactKind.MEASUREMENTS),),
+        declared_specs=(
+            ArtifactSpec("CropRed", ArtifactKind.IMAGE),
+            ArtifactSpec(
+                "CropRed__crop_mask",
+                ArtifactKind.IMAGE,
+                sidecar_role=ArtifactSidecarRole.CROP_MASK,
+            ),
+            ArtifactSpec("Crop_7_measurements", ArtifactKind.MEASUREMENTS),
+        ),
+        main_output=cropped_image,
+        artifact_values=(crop_mask, measurements),
+        func=crop,
+    )
+
+    assert resolution.recorded_values == {"Crop_7_measurements": measurements}
+    assert resolution.context_values["CropRed"] is cropped_image
+    assert resolution.context_values["CropRed__crop_mask"] is crop_mask
+    assert resolution.context_values["Crop_7_measurements"] is measurements
+
+
+def test_output_value_resolution_preserves_pruned_object_label_context() -> None:
+    image = np.zeros((3, 4), dtype=np.float32)
+    stats = {"objects_pre_filter": 3, "objects_post_filter": 1}
+    labels = ObjectLabelPayload(
+        labels=np.ones((3, 4), dtype=np.int32),
+        declared_object_count=1,
+    )
+    relationship = ParentChildRelationshipPayload(parent_ids=(1,), child_ids=(1,))
+
+    resolution = CellProfilerOutputValueResolution.from_returned_values(
+        (
+            ArtifactSpec("FilterStats", ArtifactKind.MEASUREMENTS),
+            ArtifactSpec(
+                "Objects1_ColocalizedObjects_relationships",
+                ArtifactKind.RELATIONSHIPS,
+            ),
+        ),
+        declared_specs=(
+            ArtifactSpec("FilterStats", ArtifactKind.MEASUREMENTS),
+            ArtifactSpec("ColocalizedObjects", ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec(
+                "Objects1_ColocalizedObjects_relationships",
+                ArtifactKind.RELATIONSHIPS,
+            ),
+        ),
+        main_output=image,
+        artifact_values=(stats, labels, relationship),
+        func=filter_objects,
+    )
+
+    assert "ColocalizedObjects" not in resolution.recorded_values
+    assert resolution.context_values["FilterStats"] is stats
+    assert resolution.context_values["ColocalizedObjects"] is labels
+    assert (
+        resolution.context_values["Objects1_ColocalizedObjects_relationships"]
+        is relationship
+    )
+
+
+def test_relationship_recorder_resolves_pruned_child_endpoint_from_artifact_name() -> None:
+    runtime = _FakeCellProfilerRuntime(
+        {"Carrier": _FakeRuntimeImage(np.zeros((3, 4), dtype=np.float32))},
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="FilterObjects",
+            inputs=(ArtifactSpec("Objects1", ArtifactKind.OBJECT_LABELS),),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Objects1", ArtifactKind.OBJECT_LABELS),
+            ),
+            outputs=(
+                ArtifactSpec(
+                    "Objects1_ColocalizedObjects_relationships",
+                    ArtifactKind.RELATIONSHIPS,
+                ),
+            ),
+        )
+    )
+    payload = ParentChildRelationshipPayload(parent_ids=(1,), child_ids=(1,))
+
+    executor._record_outputs(
+        lambda image: image,
+        runtime,
+        np.zeros((3, 4), dtype=np.float32),
+        (payload,),
+        source_image_name=None,
+    )
+
+    name, kwargs = runtime.relationships[0]
+    assert name == "Objects1_ColocalizedObjects_relationships"
+    assert kwargs["parent_object_name"] == "Objects1"
+    assert kwargs["child_object_name"] == "ColocalizedObjects"
 
 
 def test_cellprofiler_contract_executor_broadcasts_2d_labels_to_image_stack():
@@ -1293,6 +1696,126 @@ def test_secondary_propagation_uses_threshold_mask_without_seed_or(monkeypatch):
     )
 
     np.testing.assert_array_equal(captured["mask"], thresholded)
+
+
+def test_identify_secondary_objects_collapses_singleton_image_label_and_mask_planes():
+    image = np.zeros((1, 5, 5), dtype=np.float32)
+    image[0, 1:4, 1:4] = 1.0
+    labels = np.zeros((1, 5, 5), dtype=np.int32)
+    labels[0, 2, 2] = 1
+    payload = image_payload_with_context(image, mask=np.ones_like(image, dtype=bool))
+
+    _image, _stats, _relationships, secondary = iso.identify_secondary_objects(
+        payload,
+        labels,
+        method=iso.SecondaryMethod.DISTANCE_B,
+        distance_to_dilate=1,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert secondary.shape == (5, 5)
+    assert secondary.max() == 1
+
+
+def test_secondary_propagation_aligns_label_and_mask_planes_to_image_geometry():
+    image = np.zeros((6, 7), dtype=np.float32)
+    labels = np.zeros((5, 5), dtype=np.int32)
+    labels[2, 2] = 1
+    mask = np.ones((5, 5), dtype=bool)
+
+    propagated = iso._propagate_labels(
+        image,
+        labels,
+        mask,
+        regularization=1.0,
+    )
+
+    assert propagated.shape == image.shape
+
+
+def test_parent_child_relationship_aligns_cropped_object_label_payload_to_source_domain():
+    parent = ObjectLabelPayload(
+        labels=np.array([[1, 0], [0, 0]], dtype=np.int32),
+        spatial_origin_yx=(2, 3),
+        source_spatial_shape_yx=(6, 7),
+    )
+    child = np.zeros((6, 7), dtype=np.int32)
+    child[2, 3] = 4
+
+    relationship = object_label_parent_child_payload(parent, child)
+
+    assert relationship.parent_ids == (1,)
+    assert relationship.child_ids == (4,)
+
+
+def test_pure_2d_object_label_payload_aggregation_preserves_source_domain():
+    payload = ObjectLabelPayload(
+        labels=np.array([[1, 0], [0, 0]], dtype=np.int32),
+        spatial_origin_yx=(2, 3),
+        source_spatial_shape_yx=(6, 7),
+    )
+
+    aggregated = CellProfilerPure2DOutputAggregator.aggregate(
+        [payload],
+        MemoryType.NUMPY.value,
+    )
+
+    assert isinstance(aggregated, ObjectLabelPayload)
+    assert aggregated.spatial_origin_yx == (2, 3)
+    assert aggregated.source_spatial_shape_yx == (6, 7)
+
+
+def test_pure_2d_object_label_payload_aggregation_expands_varying_crop_domains():
+    first = ObjectLabelPayload(
+        labels=np.array([[1]], dtype=np.int32),
+        spatial_origin_yx=(1, 2),
+        source_spatial_shape_yx=(4, 5),
+    )
+    second = ObjectLabelPayload(
+        labels=np.array([[2]], dtype=np.int32),
+        spatial_origin_yx=(2, 3),
+        source_spatial_shape_yx=(4, 5),
+    )
+
+    aggregated = CellProfilerPure2DOutputAggregator.aggregate(
+        [first, second],
+        MemoryType.NUMPY.value,
+    )
+
+    assert isinstance(aggregated, ObjectLabelPayload)
+    assert aggregated.labels.shape == (2, 4, 5)
+    assert aggregated.spatial_origin_yx is None
+    assert aggregated.source_spatial_shape_yx == (4, 5)
+    assert aggregated.labels[0, 1, 2] == 1
+    assert aggregated.labels[1, 2, 3] == 2
+
+
+def test_identify_tertiary_batch_aligns_cropped_primary_labels_to_secondary_domain():
+    primary = ObjectLabelPayload(
+        labels=np.array([[1, 0], [0, 0]], dtype=np.int32),
+        spatial_origin_yx=(2, 3),
+        source_spatial_shape_yx=(6, 7),
+    )
+    secondary = np.zeros((6, 7), dtype=np.int32)
+    secondary[2, 3] = 5
+    secondary[2, 4] = 5
+
+    results = ito._identify_tertiary_objects_batch(
+        ito.identify_tertiary_objects,
+        (np.zeros((6, 7), dtype=np.float32),),
+        {
+            "primary_labels": primary,
+            "secondary_labels": secondary,
+            "shrink_primary": False,
+        },
+        1,
+        lambda func, image, kwargs, _slice_index, _slice_count: func(image, **kwargs),
+    )
+
+    tertiary = results[0][-1]
+    assert tertiary.shape == secondary.shape
+    assert tertiary[2, 3] == 0
+    assert tertiary[2, 4] == 5
 
 
 def test_enhance_or_suppress_features_matches_white_tophat_reference():
@@ -1604,6 +2127,36 @@ def test_compose_image_payload_aligns_multislice_inputs_with_broadcast():
         np.testing.assert_array_equal(composed_slice[1], illumination)
 
 
+def test_compose_image_payload_collapses_pairwise_slice_grids_before_alignment():
+    first = np.zeros((2, 2, 4, 5), dtype=np.float32)
+    second = np.zeros((2, 2, 4, 5), dtype=np.float32)
+    first[0, 0] = 11
+    first[0, 1] = 99
+    first[1, 0] = 98
+    first[1, 1] = 22
+    second[0, 0] = 3
+    second[0, 1] = 97
+    second[1, 0] = 96
+    second[1, 1] = 7
+
+    composition = compose_aligned_image_payload(
+        "MeasureColocalization",
+        (first, second),
+    )
+
+    assert composition.execution_mode is ImagePayloadExecutionMode.ALIGNED_MULTI_IMAGE_STACK
+    assert isinstance(composition.payload, AlignedImageStack)
+    assert len(composition.payload.slices) == 2
+    np.testing.assert_array_equal(
+        composition.payload.slices[0],
+        np.stack((np.full((4, 5), 11, dtype=np.float32), np.full((4, 5), 3, dtype=np.float32))),
+    )
+    np.testing.assert_array_equal(
+        composition.payload.slices[1],
+        np.stack((np.full((4, 5), 22, dtype=np.float32), np.full((4, 5), 7, dtype=np.float32))),
+    )
+
+
 def test_compose_image_bundle_promotes_grayscale_into_color_bundle():
     color = np.zeros((4, 5, 3), dtype=np.float32)
     color[:, :, 0] = 1
@@ -1616,6 +2169,17 @@ def test_compose_image_bundle_promotes_grayscale_into_color_bundle():
     np.testing.assert_array_equal(bundle[1, :, :, 0], grayscale)
     np.testing.assert_array_equal(bundle[1, :, :, 1], grayscale)
     np.testing.assert_array_equal(bundle[1, :, :, 2], grayscale)
+
+
+def test_compose_image_bundle_collapses_singleton_grayscale_plane_stacks():
+    singleton = np.full((1, 4, 5), 3, dtype=np.float32)
+    plane = np.full((4, 5), 7, dtype=np.float32)
+
+    bundle = compose_one_image_bundle((singleton, plane))
+
+    assert bundle.shape == (2, 4, 5)
+    np.testing.assert_array_equal(bundle[0], singleton[0])
+    np.testing.assert_array_equal(bundle[1], plane)
 
 
 def test_compose_image_bundle_intersects_masks() -> None:
@@ -1648,6 +2212,34 @@ def test_compose_image_bundle_intersects_masks() -> None:
     assert isinstance(bundle, MaskedImagePayload)
     assert bundle.data.shape == (2, 4, 5)
     np.testing.assert_array_equal(bundle.mask, mask_a & mask_b)
+
+
+def test_compose_image_bundle_aligns_cropped_payload_to_source_domain() -> None:
+    full = ImageMetadataPayload(
+        data=np.full((4, 5), 2, dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(0, 0),
+            source_spatial_shape_yx=(4, 5),
+        ),
+    )
+    cropped = ImageMetadataPayload(
+        data=np.full((2, 2), 7, dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(1, 2),
+            source_spatial_shape_yx=(4, 5),
+        ),
+    )
+
+    bundle = compose_one_image_bundle((full, cropped))
+
+    assert isinstance(bundle, ImageMetadataPayload)
+    assert bundle.metadata.spatial_origin_yx == (0, 0)
+    assert bundle.metadata.source_spatial_shape_yx == (4, 5)
+    assert bundle.data.shape == (2, 4, 5)
+    np.testing.assert_array_equal(bundle.data[0], full.data)
+    expected_cropped = np.zeros((4, 5), dtype=np.float32)
+    expected_cropped[1:3, 2:4] = 7
+    np.testing.assert_array_equal(bundle.data[1], expected_cropped)
 
 
 def test_tile_preserves_color_stack_output_shape():
@@ -2168,6 +2760,54 @@ def test_align_measurement_builder_records_additional_output_shifts() -> None:
     ]
 
 
+def test_align_measurement_builder_uses_declared_outputs_when_images_pruned() -> None:
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="Align",
+            inputs=(
+                ArtifactSpec("Plate", ArtifactKind.IMAGE),
+                ArtifactSpec("Well", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("AlignMeasurements", ArtifactKind.MEASUREMENTS),),
+            declared_outputs=(
+                ArtifactSpec("AlignedPlate", ArtifactKind.IMAGE),
+                ArtifactSpec("AlignedWell", ArtifactKind.IMAGE),
+                ArtifactSpec("AlignMeasurements", ArtifactKind.MEASUREMENTS),
+            ),
+        )
+    )
+
+    record = CellProfilerMeasurementRecordBuilder.for_module("Align").build(
+        CellProfilerOutputRecordRequest(
+            executor=executor,
+            adapter=None,
+            spec=ArtifactSpec("AlignMeasurements", ArtifactKind.MEASUREMENTS),
+            value=(
+                AlignShiftMeasurement(0, 0, 0.0, 0.0),
+                AlignShiftMeasurement(0, 1, -3.0, 2.0),
+            ),
+            output_values={},
+            source_image_name=None,
+            func=lambda image: image,
+        )
+    )
+
+    assert record.rows[-2:] == [
+        {
+            "slice_index": 0,
+            "source_image_name": "AlignedWell",
+            "feature_name": "Align_Xshift",
+            "result_value": -3.0,
+        },
+        {
+            "slice_index": 0,
+            "source_image_name": "AlignedWell",
+            "feature_name": "Align_Yshift",
+            "result_value": 2.0,
+        },
+    ]
+
+
 def test_measure_object_neighbors_binds_small_removed_label_variant() -> None:
     calls = []
 
@@ -2435,7 +3075,7 @@ def test_module_executor_routes_spatial_grid_artifacts() -> None:
     np.testing.assert_array_equal(runtime.objects[0][1], np.full(image.shape, 4))
 
 
-def test_define_grid_manual_executes_once_for_stacked_image() -> None:
+def test_define_grid_manual_once_scope_executes_once_for_stacked_image() -> None:
     image = np.zeros((3, 20, 20), dtype=np.float32)
     grid = SpatialGrid(
         name="grid_info",
@@ -2466,11 +3106,70 @@ def test_define_grid_manual_executes_once_for_stacked_image() -> None:
         declared_processing_contract="pure_2d",
     )
 
-    executor.run(define_grid_like, image, cellprofiler_runtime=runtime)
+    executor.run(
+        define_grid_like,
+        image,
+        cellprofiler_runtime=runtime,
+        invocation_options=CellProfilerInvocationOptions(
+            grid_cycle_scope=CellProfilerGridCycleScope.ONCE
+        ),
+    )
 
     assert calls == 1
     assert runtime.spatial_grids["Grid"].rows == 2
     assert runtime.spatial_grids["Grid"].columns == 2
+
+
+def test_define_grid_manual_each_cycle_scope_emits_slice_aligned_grids() -> None:
+    image = np.stack(
+        [
+            np.full((20, 20), 1, dtype=np.float32),
+            np.full((20, 20), 2, dtype=np.float32),
+            np.full((20, 20), 3, dtype=np.float32),
+        ],
+        axis=0,
+    )
+    runtime = _FakeCellProfilerRuntime({"DNA": _FakeRuntimeImage(image)})
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="DefineGridManual",
+            inputs=(ArtifactSpec("DNA", ArtifactKind.IMAGE),),
+            outputs=(ArtifactSpec("Grid", ArtifactKind.SPATIAL_GRID),),
+        )
+    )
+    calls = 0
+
+    def define_grid_like(image: np.ndarray) -> tuple[np.ndarray, SpatialGrid]:
+        nonlocal calls
+        calls += 1
+        return image, SpatialGrid(
+            name="grid_info",
+            rows=2,
+            columns=2,
+            x_spacing=8.0,
+            y_spacing=8.0,
+            x_origin=float(image[0, 0]),
+            y_origin=4.0,
+        )
+
+    attach_callable_contract_metadata(
+        define_grid_like,
+        declared_processing_contract="pure_2d",
+    )
+
+    executor.run(
+        define_grid_like,
+        image,
+        cellprofiler_runtime=runtime,
+        invocation_options=CellProfilerInvocationOptions(
+            grid_cycle_scope=CellProfilerGridCycleScope.EACH_CYCLE
+        ),
+    )
+
+    assert calls == 3
+    grids = runtime.spatial_grids["Grid"]
+    assert isinstance(grids, RuntimeSliceAlignedValues)
+    assert [grid.x_origin for grid in grids.slices] == [1.0, 2.0, 3.0]
 
 
 def test_grid_only_module_uses_single_carrier_plane_for_stacked_image() -> None:
@@ -2513,6 +3212,109 @@ def test_grid_only_module_uses_single_carrier_plane_for_stacked_image() -> None:
 
     assert len(runtime.objects) == 1
     assert runtime.objects[0][1].shape == (20, 20)
+
+
+def test_grid_input_module_slices_runtime_aligned_grid_for_2d_carrier() -> None:
+    image = np.zeros((20, 20), dtype=np.float32)
+    runtime = _FakeCellProfilerRuntime({"DNA": _FakeRuntimeImage(image)})
+    runtime.spatial_grids["Grid"] = RuntimeSliceAlignedValues(
+        slices=(
+            SpatialGrid(
+                name="Grid",
+                rows=2,
+                columns=2,
+                x_spacing=8.0,
+                y_spacing=8.0,
+                x_origin=1.0,
+                y_origin=4.0,
+            ),
+            SpatialGrid(
+                name="Grid",
+                rows=2,
+                columns=2,
+                x_spacing=8.0,
+                y_spacing=8.0,
+                x_origin=2.0,
+                y_origin=4.0,
+            ),
+        )
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="IdentifyObjectsInGrid",
+            inputs=(ArtifactSpec("Grid", ArtifactKind.SPATIAL_GRID),),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Grid", ArtifactKind.SPATIAL_GRID),
+            ),
+            outputs=(ArtifactSpec("GridObjects", ArtifactKind.OBJECT_LABELS),),
+        )
+    )
+    seen_origins: list[float] = []
+
+    @special_inputs("grid")
+    def identify_grid_like(
+        image: np.ndarray,
+        grid: SpatialGrid,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        seen_origins.append(grid.x_origin)
+        return image, np.full(image.shape, grid.x_origin, dtype=np.int32)
+
+    attach_callable_contract_metadata(
+        identify_grid_like,
+        declared_processing_contract="pure_2d",
+    )
+
+    executor.run(identify_grid_like, image, cellprofiler_runtime=runtime)
+
+    assert seen_origins == [1.0, 2.0]
+    assert runtime.objects[0][1].shape == (2, 20, 20)
+
+
+def test_grid_input_module_unwraps_singleton_runtime_aligned_grid_for_2d_carrier() -> None:
+    image = np.zeros((20, 20), dtype=np.float32)
+    runtime = _FakeCellProfilerRuntime({"DNA": _FakeRuntimeImage(image)})
+    runtime.spatial_grids["Grid"] = RuntimeSliceAlignedValues(
+        slices=(
+            SpatialGrid(
+                name="Grid",
+                rows=2,
+                columns=2,
+                x_spacing=8.0,
+                y_spacing=8.0,
+                x_origin=1.0,
+                y_origin=4.0,
+            ),
+        )
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="IdentifyObjectsInGrid",
+            inputs=(ArtifactSpec("Grid", ArtifactKind.SPATIAL_GRID),),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Grid", ArtifactKind.SPATIAL_GRID),
+            ),
+            outputs=(ArtifactSpec("GridObjects", ArtifactKind.OBJECT_LABELS),),
+        )
+    )
+    seen_origins: list[float] = []
+
+    @special_inputs("grid")
+    def identify_grid_like(
+        image: np.ndarray,
+        grid: SpatialGrid,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        seen_origins.append(grid.x_origin)
+        return image, np.full(image.shape, grid.x_origin, dtype=np.int32)
+
+    attach_callable_contract_metadata(
+        identify_grid_like,
+        declared_processing_contract="pure_2d",
+    )
+
+    executor.run(identify_grid_like, image, cellprofiler_runtime=runtime)
+
+    assert seen_origins == [1.0]
+    assert runtime.objects[0][1].shape == (1, 20, 20)
 
 
 def test_flexible_object_module_slices_tuple_label_stack() -> None:
@@ -3150,6 +3952,127 @@ def test_identify_objects_in_grid_natural_shape_preserves_accepted_grid_ids() ->
     assert payload.declared_object_count == 3
 
 
+def test_identify_objects_in_grid_natural_shape_uses_filtered_guides() -> None:
+    guide_labels = np.zeros((5, 10), dtype=np.int32)
+    guide_labels[2, 1:4] = 7
+    filtered_guides = np.zeros_like(guide_labels)
+    grid = _grid_definition(
+        image_shape=guide_labels.shape,
+        grid=None,
+        grid_rows=1,
+        grid_columns=2,
+        x_spacing=5.0,
+        y_spacing=5.0,
+        x_origin=2.0,
+        y_origin=2.0,
+        ordering=SpatialGridOrdering.BY_ROWS,
+    )
+
+    labels = NaturalGridShapeStrategy().labels(
+        GridShapeRequest(
+            grid=grid,
+            guiding_labels=guide_labels,
+            filtered_guides=filtered_guides,
+        )
+    )
+    assert not np.any(labels)
+
+    filtered_guides[2, 1:4] = 7
+    labels = NaturalGridShapeStrategy().labels(
+        GridShapeRequest(
+            grid=grid,
+            guiding_labels=guide_labels,
+            filtered_guides=filtered_guides,
+        )
+    )
+
+    np.testing.assert_array_equal(labels[2, 1:4], np.asarray([1, 1, 1]))
+    assert labels[2, 6] == 0
+
+
+def test_object_location_measurements_preserve_declared_empty_grid_cells() -> None:
+    labels = np.zeros((2, 5, 5), dtype=np.int32)
+    labels[0, 1:3, 1:3] = 1
+    labels[1, 3:5, 3:5] = 2
+    payload = ObjectLabelPayload(labels=labels, declared_object_count=3)
+
+    rows = _object_location_measurement_rows(payload, object_name="GridObjects")
+
+    by_key = {
+        (
+            row["slice_index"],
+            row["object_label"],
+            row["feature_name"],
+        ): row["result_value"]
+        for row in rows
+    }
+    assert by_key[(0, 1, "Location_Center_X")] == 1.5
+    assert by_key[(0, 1, "Location_Center_Y")] == 1.5
+    assert np.isnan(by_key[(0, 2, "Location_Center_X")])
+    assert np.isnan(by_key[(0, 3, "Location_Center_Y")])
+    assert np.isnan(by_key[(1, 1, "Location_Center_X")])
+    assert by_key[(1, 2, "Location_Center_X")] == 3.5
+    assert by_key[(1, 2, "Location_Center_Y")] == 3.5
+    assert np.isnan(by_key[(1, 3, "Location_Center_Y")])
+
+
+def test_sparse_object_label_aggregation_preserves_declared_domain() -> None:
+    first = ObjectLabelSet(
+        name="GridObjects",
+        labels=SparseIJVLabelRows.from_yx_label(
+            np.asarray([[0, 0, 1], [1, 1, 3]], dtype=np.int32)
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+        declared_object_count=4,
+    )
+    second = ObjectLabelSet(
+        name="GridObjects",
+        labels=SparseIJVLabelRows.from_yx_label(
+            np.asarray([[0, 0, 2], [1, 1, 4]], dtype=np.int32)
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+        declared_object_count=4,
+    )
+
+    aggregated = CellProfilerPure2DOutputAggregator.aggregate(
+        [first, second],
+        MemoryType.NUMPY.value,
+    )
+
+    assert isinstance(aggregated, ObjectLabelSet)
+    assert aggregated.declared_object_count == 4
+    assert isinstance(aggregated.labels, SparseIJVLabelRows)
+
+
+def test_measurement_table_collection_slice_count_accepts_sharded_offsets() -> None:
+    first = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=[{"slice_index": 0, "object_label": 1, "area": 11.0}],
+        object_name="Objects",
+    )
+    second = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=[{"slice_index": 1, "object_label": 1, "area": 13.0}],
+        object_name="Objects",
+    )
+
+    assert _measurement_table_slice_count((first, second)) == 2
+
+
+def test_unstack_cellprofiler_image_slices_collapses_pairwise_slice_grid() -> None:
+    pairwise = np.zeros((2, 2, 5, 6), dtype=np.float32)
+    pairwise[0, 0] = 1.0
+    pairwise[0, 1] = 2.0
+    pairwise[1, 0] = 3.0
+    pairwise[1, 1] = 4.0
+
+    slices = _unstack_cellprofiler_image_slices(pairwise, MemoryType.NUMPY.value)
+
+    assert len(slices) == 2
+    np.testing.assert_array_equal(image_payload_data(slices[0]), np.full((5, 6), 1.0))
+    np.testing.assert_array_equal(image_payload_data(slices[1]), np.full((5, 6), 4.0))
+
+
 def test_cellprofiler_contract_executor_infers_unknown_absorbed_contract():
     def two_dimensional_only(image: np.ndarray, **kwargs) -> np.ndarray:
         if image.ndim != 2:
@@ -3231,6 +4154,201 @@ def test_measurement_labels_preserve_stack_for_object_domain_alignment() -> None
     np.testing.assert_array_equal(measurement_labels, labels)
 
 
+def test_measurement_labels_collapse_channel_broadcast_label_stack() -> None:
+    image = np.ones((2, 4, 5), dtype=np.float32)
+    label_plane = np.arange(4 * 5, dtype=np.int32).reshape(4, 5)
+    labels = np.stack((label_plane, label_plane))
+
+    measurement_labels = _measurement_labels_for_image(image, labels)
+
+    assert measurement_labels.shape == label_plane.shape
+    np.testing.assert_array_equal(measurement_labels, label_plane)
+
+
+def test_measurement_labels_select_source_named_plane_from_composed_image() -> None:
+    image = np.ones((2, 4, 5), dtype=np.float32)
+    dna_labels = np.full((4, 5), 3, dtype=np.int32)
+    gfp_labels = np.full((4, 5), 7, dtype=np.int32)
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.stack((dna_labels, gfp_labels)),
+        source_image_name="rawDNA",
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="rawDNA__rawGFP",
+        source_image_names=("rawDNA", "rawGFP"),
+        payload=image,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+    )
+
+    assert measurement_labels.shape == dna_labels.shape
+    np.testing.assert_array_equal(measurement_labels, dna_labels)
+
+
+def test_measurement_labels_select_current_source_binding_plane() -> None:
+    class Adapter:
+        def source_binding_plane_index(self, alias: str) -> int | None:
+            return 2 if alias == "rawDNA" else None
+
+    image = np.ones((2, 4, 5), dtype=np.float32)
+    label_planes = np.stack(
+        (
+            np.full((4, 5), 1, dtype=np.int32),
+            np.full((4, 5), 2, dtype=np.int32),
+            np.full((4, 5), 3, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=label_planes,
+        source_image_name="rawDNA",
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="rawDNA__rawGFP",
+        source_image_names=("rawDNA", "rawGFP"),
+        payload=image,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == (4, 5)
+    np.testing.assert_array_equal(measurement_labels, label_planes[2])
+
+
+def test_measurement_labels_select_measurement_source_binding_over_label_origin() -> None:
+    class Adapter:
+        def source_binding_plane_index(self, alias: str) -> int | None:
+            return {"rawDNA": 0, "rawGFP": 1}.get(alias)
+
+    image = np.ones((2, 4, 5), dtype=np.float32)
+    label_planes = np.stack(
+        (
+            np.full((4, 5), 11, dtype=np.int32),
+            np.full((4, 5), 22, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="ExpandedCells",
+        labels=label_planes,
+        source_image_name="rawDNA",
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="rawGFP",
+        source_image_names=("rawGFP",),
+        payload=image,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == (4, 5)
+    np.testing.assert_array_equal(measurement_labels, label_planes[1])
+
+
+def test_measurement_labels_do_not_slice_site_stack_for_single_source_binding() -> None:
+    class Adapter:
+        def source_binding_plane_index(self, alias: str) -> int | None:
+            return 0 if alias == "rawGFP" else None
+
+    image = np.ones((3, 4, 5), dtype=np.float32)
+    labels = np.stack(
+        (
+            np.full((4, 5), 1, dtype=np.int32),
+            np.full((4, 5), 2, dtype=np.int32),
+            np.full((4, 5), 3, dtype=np.int32),
+        )
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="rawGFP",
+        source_image_names=("rawGFP",),
+        payload=image,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == labels.shape
+    np.testing.assert_array_equal(measurement_labels, labels)
+
+
+def test_object_label_payload_preserves_source_metadata_for_measurements() -> None:
+    image = np.ones((4, 5), dtype=np.float32)
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.ones((4, 5), dtype=np.int32),
+        source_image_name="rawDNA",
+    )
+    runtime = _FakeCellProfilerRuntime(
+        {"rawDNA": _FakeRuntimeImage(image)},
+        {"Nuclei": labels},
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="MeasureObjectIntensity",
+            inputs=(
+                ArtifactSpec("rawDNA", ArtifactKind.IMAGE),
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+            ),
+            runtime_artifact_inputs=(ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),),
+            outputs=(ArtifactSpec("Measurements", ArtifactKind.MEASUREMENTS),),
+        )
+    )
+
+    payload = executor._object_label_payload(
+        ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+        runtime,
+        image,
+    )
+
+    assert payload is labels
+    assert payload.source_image_name == "rawDNA"
+
+
+def test_image_request_source_name_uses_primary_images_not_object_inputs() -> None:
+    image = np.ones((4, 5), dtype=np.float32)
+    runtime = _FakeCellProfilerRuntime(
+        {"rawGFP": _FakeRuntimeImage(image)},
+        {
+            "Nuclei": ObjectLabelSet(
+                name="Nuclei",
+                labels=np.ones((4, 5), dtype=np.int32),
+                source_image_name="rawDNA",
+            )
+        },
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="IdentifySecondaryObjects",
+            inputs=(
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("rawGFP", ArtifactKind.IMAGE),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+            ),
+            outputs=(ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),),
+        )
+    )
+
+    image_request = executor._image_request(lambda image: image, image, runtime)
+
+    assert image_request.source_image_name == "rawGFP"
+
+
 def test_object_only_reference_image_uses_one_stack_plane() -> None:
     image = np.arange(3 * 4 * 5, dtype=np.uint16).reshape(3, 4, 5)
 
@@ -3238,6 +4356,15 @@ def test_object_only_reference_image_uses_one_stack_plane() -> None:
 
     assert reference_image.shape == (4, 5)
     np.testing.assert_array_equal(reference_image, image[0])
+
+
+def test_object_only_reference_image_collapses_high_rank_carrier_to_plane() -> None:
+    image = np.arange(2 * 3 * 4 * 5, dtype=np.uint16).reshape(2, 3, 4, 5)
+
+    reference_image = _object_only_reference_image(image)
+
+    assert reference_image.shape == (4, 5)
+    np.testing.assert_array_equal(reference_image, image[0, 0])
 
 
 def test_measurement_table_rows_wrap_scalar_measurement() -> None:

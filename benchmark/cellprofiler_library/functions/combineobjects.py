@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
@@ -146,8 +147,8 @@ def combineobjects(
         Tuple of (original image[0], stats, combined labels)
     """
     # Unstack the two label images from dim 0
-    labels_x = image[0].astype(np.int32)
-    labels_y = image[1].astype(np.int32)
+    labels_x = object_label_dense_array(image[0], dtype=np.int32)
+    labels_y = object_label_dense_array(image[1], dtype=np.int32)
     
     # Count input objects
     num_objects_x = len(np.unique(labels_x)) - (1 if 0 in labels_x else 0)

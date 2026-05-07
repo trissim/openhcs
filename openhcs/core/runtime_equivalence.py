@@ -7,20 +7,23 @@ import inspect
 import math
 import re
 import sys
+from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, make_dataclass
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
-from typing import Generic, TypeVar
+from typing import ClassVar, Generic, TypeVar
 
+from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
 from nominal_refactor_advisor.collection_algebra import sorted_tuple
 from nominal_refactor_advisor.record_algebra import product_record
 
 import openhcs.core.runtime_artifact_queries as runtime_artifact_queries
+import openhcs.core.equivalence.measurement_features as measurement_features
 import openhcs.core.runtime_semantics as runtime_semantics
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.runtime_artifact_queries import (
@@ -41,10 +44,20 @@ from openhcs.core.runtime_execution_validation import (
 )
 from openhcs.core.runtime_exports import RuntimeImageExportSpec
 from openhcs.core.runtime_semantics import (
+    MeasurementStatistic,
     MeasurementScope,
     MeasurementSubject,
+    ObjectInstanceKey,
+    ObjectInstanceRelationship,
+    ObjectLabelInstanceDomains,
+    ObjectLabelDomainScope,
+    ObjectCoreMeasurementFeature,
+    ObjectMeasurementFeatureRole,
     PairMeasurementFeature,
     dense_object_label_id_domain,
+    dense_object_label_identity_domains,
+    dense_object_label_max_present_id,
+    dense_object_label_plane_id_domains,
 )
 from openhcs.core.runtime_values import MeasurementTable
 from openhcs.core.runtime_values import ObjectLabelSet
@@ -80,6 +93,7 @@ from openhcs.core.equivalence.tables import (
     MEASUREMENT_IDENTITY_FIELDS as _MEASUREMENT_IDENTITY_FIELDS,
     RuntimeTableSnapshot,
     aggregate_measurement_table_key,
+    exact_measurement_table_key,
     is_static_wide_measurement_table,
     is_wide_measurement_table,
     measurement_table_cell_payload,
@@ -98,6 +112,11 @@ from openhcs.core.equivalence.measurement_rows import (
 from openhcs.core.equivalence.measurement_facts import (
     record_measurement_facts,
     spatial_grid_measurement_facts,
+)
+from openhcs.core.equivalence.measurement_features import (
+    object_measurement_feature_has_role,
+    object_measurement_subject_row_identities_with_role,
+    object_measurement_subjects_with_role,
 )
 from openhcs.core.equivalence.images import RuntimeImageSnapshot
 from openhcs.core.equivalence.outputs import (
@@ -119,6 +138,7 @@ from openhcs.core.equivalence.comparison import (
 BENCHMARK_CACHE_DOMAINS = frozenset({"parity"})
 _RUNTIME_MEASUREMENT_PROJECTION_MODULES = (
     sys.modules[__name__],
+    measurement_features,
     runtime_artifact_queries,
     runtime_semantics,
 )
@@ -161,7 +181,10 @@ _RuntimeMeasurementFactCounters = dict[
 ]
 _RuntimeMeasurementKeySet = frozenset[RuntimeMeasurementFeatureKey]
 _RuntimeRequiredMeasurementKeys = _RuntimeMeasurementKeySet | None
-_RuntimeObjectValuesByLabel = dict[RuntimeMeasurementFeatureKey, dict[int, float]]
+_RuntimeObjectValuesByLabel = dict[
+    RuntimeMeasurementFeatureKey,
+    dict[ObjectInstanceKey, float],
+]
 _RuntimeObjectValuesByObject = dict[
     tuple[str, _RuntimeRequiredMeasurementKeys],
     _RuntimeObjectValuesByLabel,
@@ -171,6 +194,23 @@ _RuntimeNumericMeasurementValue = tuple[RuntimeMeasurementFeatureKey, float]
 _RuntimeNumericMeasurementValues = tuple[_RuntimeNumericMeasurementValue, ...]
 _RuntimeMeasurementRowIdentity = tuple[tuple[str, object], ...]
 _RuntimeMeasurementRowIdentityOrMissing = _RuntimeMeasurementRowIdentity | None
+_RuntimeMeasurementRowMergeKey = tuple[
+    RuntimeMeasurementFeatureKey,
+    _RuntimeMeasurementRowIdentity,
+]
+_RuntimeMeasurementRowMergeValue = tuple[int, int, RuntimeCellSignature]
+_RuntimeMeasurementRowMergeCache = dict[
+    _RuntimeMeasurementRowMergeKey,
+    _RuntimeMeasurementRowMergeValue,
+]
+_RuntimeMeasurementPrimaryRowKey = tuple[
+    RuntimeMeasurementSubjectKey,
+    _RuntimeMeasurementRowIdentity,
+]
+_RuntimeMeasurementPrimaryRowSet = set[_RuntimeMeasurementPrimaryRowKey]
+_OBJECT_LABEL_ROW_IDENTITY_FIELD = "object_label"
+_RuntimeMeasurementObjectSubtableKey = tuple[object, ...]
+_RuntimeMeasurementObjectSubtableSet = set[_RuntimeMeasurementObjectSubtableKey]
 _RuntimeMeasurementNameParts = tuple[tuple[str, ...], tuple[str, ...]]
 _RuntimeSourceTokenGroups = tuple[tuple[str, tuple[str, ...]], ...]
 
@@ -476,9 +516,11 @@ class _ObjectLabelMeasurementContext:
     policy: RuntimeEquivalencePolicy
     object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey]
     object_location_subjects: frozenset[RuntimeMeasurementSubjectKey]
+    object_count_subjects: frozenset[RuntimeMeasurementSubjectKey]
     required_keys: _RuntimeRequiredMeasurementKeys
     declared_object_count: int | None
     declared_object_ids: tuple[int, ...]
+    domain_scope: ObjectLabelDomainScope
 
     @classmethod
     def from_runtime_value(
@@ -487,6 +529,7 @@ class _ObjectLabelMeasurementContext:
         policy: RuntimeEquivalencePolicy,
         object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey],
         object_location_subjects: frozenset[RuntimeMeasurementSubjectKey],
+        object_count_subjects: frozenset[RuntimeMeasurementSubjectKey],
         required_keys: _RuntimeRequiredMeasurementKeys,
     ) -> "_ObjectLabelMeasurementContext":
         label_set = ObjectLabelSet.from_runtime_value(value)
@@ -496,9 +539,109 @@ class _ObjectLabelMeasurementContext:
             policy,
             object_identifier_subjects,
             object_location_subjects,
+            object_count_subjects,
             required_keys,
             label_set.declared_object_count,
             label_set.declared_object_ids,
+            label_set.domain_scope,
+        )
+
+
+class ObjectIdentifierDomainProjectionStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Project object-label domains into ObjectNumber measurement rows."""
+
+    __registry_key__ = "strategy_key"
+    __skip_if_no_key__ = True
+
+    strategy_key: ClassVar[str | None] = None
+    default_strategy: ClassVar[bool] = False
+
+    @classmethod
+    def for_context(
+        cls,
+        context: _ObjectLabelMeasurementContext,
+    ) -> "ObjectIdentifierDomainProjectionStrategy":
+        strategies = tuple(strategy_type() for strategy_type in cls.__registry__.values())
+        matches = tuple(
+            strategy
+            for strategy in strategies
+            if not strategy.default_strategy and strategy.matches(context)
+        )
+        if len(matches) > 1:
+            names = tuple(strategy.strategy_key for strategy in matches)
+            raise ValueError(
+                "Object identifier domain projection is ambiguous for "
+                f"{context.object_name!r}: {names!r}."
+            )
+        if matches:
+            return matches[0]
+
+        defaults = tuple(strategy for strategy in strategies if strategy.default_strategy)
+        if len(defaults) != 1:
+            names = tuple(strategy.strategy_key for strategy in defaults)
+            raise ValueError(
+                "Object identifier domain projection requires exactly one default "
+                f"strategy, got {names!r}."
+            )
+        return defaults[0]
+
+    @abstractmethod
+    def matches(self, context: _ObjectLabelMeasurementContext) -> bool:
+        """Return whether this strategy owns ``context``."""
+
+    @abstractmethod
+    def domains(
+        self,
+        context: _ObjectLabelMeasurementContext,
+    ) -> tuple[tuple[int, ...], ...]:
+        """Return ObjectNumber domains to emit for ``context``."""
+
+
+class DeclaredObjectIdentifierPlaneDomainProjectionStrategy(
+    ObjectIdentifierDomainProjectionStrategy
+):
+    """Declared object domains are exported once for each measurement plane."""
+
+    strategy_key = "declared_plane_domains"
+
+    def matches(self, context: _ObjectLabelMeasurementContext) -> bool:
+        return (
+            context.declared_object_count is not None
+            or bool(context.declared_object_ids)
+        )
+
+    def domains(
+        self,
+        context: _ObjectLabelMeasurementContext,
+    ) -> tuple[tuple[int, ...], ...]:
+        return dense_object_label_plane_id_domains(
+            context.labels,
+            declared_object_count=context.declared_object_count,
+            declared_object_ids=context.declared_object_ids,
+            domain_scope=context.domain_scope,
+        )
+
+
+class PayloadObjectIdentifierDomainProjectionStrategy(
+    ObjectIdentifierDomainProjectionStrategy
+):
+    """Undeclared payload labels export one identity row per represented object."""
+
+    strategy_key = "payload_identity_domains"
+    default_strategy = True
+
+    def matches(self, context: _ObjectLabelMeasurementContext) -> bool:
+        return False
+
+    def domains(
+        self,
+        context: _ObjectLabelMeasurementContext,
+    ) -> tuple[tuple[int, ...], ...]:
+        return dense_object_label_identity_domains(
+            context.labels,
+            declared_object_count=context.declared_object_count,
+            declared_object_ids=context.declared_object_ids,
+            domain_scope=context.domain_scope,
         )
 
 
@@ -565,7 +708,6 @@ def _finite_numeric_runtime_cell_value(value: RuntimeCellSignature) -> float | N
 _TIE_SENSITIVE_LOCATION_FEATURES = frozenset(
     ("max_intensity_x", "max_intensity_y", "max_intensity_z")
 )
-_OBJECT_LOCATION_FEATURES = frozenset(("center_x", "center_y", "center_z"))
 _LOCATION_VALUE_FEATURE_BY_NAME = MappingProxyType(
     {
         "max_intensity_x": "max_intensity",
@@ -636,12 +778,16 @@ class RuntimeMeasurementSnapshot:
     ) -> "RuntimeMeasurementSnapshot":
         """Project typed runtime measurement artifacts into semantic facts."""
         values_by_feature: _RuntimeMeasurementFactCounters = {}
+        row_merge_cache: _RuntimeMeasurementRowMergeCache = {}
+        primary_row_identities: _RuntimeMeasurementPrimaryRowSet = set()
         object_label_records = []
         object_label_records_by_axis: dict[object, list[object]] = {}
         relationship_records_by_axis: dict[object, list[object]] = {}
         measurement_tables_by_axis: dict[object, list[MeasurementTable]] = {}
         for axis_key, records in observation.records_by_axis.items():
             seen_aggregate_measurement_tables: set[tuple[object, ...]] = set()
+            seen_exact_measurement_tables: set[tuple[object, ...]] = set()
+            seen_object_subtables: _RuntimeMeasurementObjectSubtableSet = set()
             for record in records:
                 if record.key.kind is ArtifactKind.SPATIAL_GRID:
                     record_measurement_facts(
@@ -652,6 +798,14 @@ class RuntimeMeasurementSnapshot:
                     continue
                 if record.key.kind is ArtifactKind.MEASUREMENTS:
                     table = MeasurementTable.from_runtime_value(record.value)
+                    exact_table_key = exact_measurement_table_key(table)
+                    if exact_table_key in seen_exact_measurement_tables:
+                        continue
+                    seen_exact_measurement_tables.add(exact_table_key)
+                    table = _dedupe_runtime_measurement_table_object_subtable(
+                        table,
+                        seen_object_subtables,
+                    )
                     aggregate_table_key = aggregate_measurement_table_key(table)
                     if aggregate_table_key is not None:
                         if aggregate_table_key in seen_aggregate_measurement_tables:
@@ -668,12 +822,16 @@ class RuntimeMeasurementSnapshot:
                     if _record_static_wide_runtime_measurement_table(
                         values_by_feature,
                         table_projection_context,
+                        row_merge_cache=row_merge_cache,
+                        primary_row_identities=primary_row_identities,
                     ):
                         continue
                     record_measurement_facts(
                         values_by_feature,
                         _measurement_facts_from_runtime_table(
                             table_projection_context,
+                            row_merge_cache=row_merge_cache,
+                            primary_row_identities=primary_row_identities,
                         ),
                         required_keys=required_measurement_keys,
                     )
@@ -684,8 +842,33 @@ class RuntimeMeasurementSnapshot:
                     continue
                 if record.key.kind is ArtifactKind.RELATIONSHIPS:
                     relationship_records_by_axis.setdefault(axis_key, []).append(record)
-        object_identifier_subjects = _object_identifier_subjects(values_by_feature)
-        object_location_subjects = _object_location_subjects(values_by_feature)
+        object_identifier_subjects = object_measurement_subjects_with_role(
+            values_by_feature,
+            ObjectMeasurementFeatureRole.IDENTIFIER,
+        )
+        object_location_subjects = object_measurement_subjects_with_role(
+            values_by_feature,
+            ObjectMeasurementFeatureRole.LOCATION,
+        ) | _object_location_subjects_from_row_merge_cache(row_merge_cache)
+        explicit_object_count_subjects = object_measurement_subjects_with_role(
+            values_by_feature,
+            ObjectMeasurementFeatureRole.COUNT,
+        )
+        record_measurement_facts(
+            values_by_feature,
+            _primary_row_object_count_measurement_facts(
+                primary_row_identities,
+                row_merge_cache,
+                policy,
+                existing_subjects=explicit_object_count_subjects,
+                required_keys=required_measurement_keys,
+            ),
+            required_keys=required_measurement_keys,
+        )
+        object_count_subjects = explicit_object_count_subjects | object_measurement_subjects_with_role(
+            values_by_feature,
+            ObjectMeasurementFeatureRole.COUNT,
+        )
         for record in object_label_records:
             record_measurement_facts(
                 values_by_feature,
@@ -695,15 +878,36 @@ class RuntimeMeasurementSnapshot:
                         policy,
                         object_identifier_subjects,
                         object_location_subjects,
+                        object_count_subjects,
                         required_measurement_keys,
                     ),
                 ),
                 required_keys=required_measurement_keys,
             )
+        _record_runtime_row_merge_facts(
+            values_by_feature,
+            row_merge_cache,
+            required_keys=required_measurement_keys,
+            policy=policy,
+            primary_row_identities=primary_row_identities,
+        )
         explicit_measurement_keys = frozenset(values_by_feature)
         for axis_key, relationship_records in relationship_records_by_axis.items():
             object_label_counts = _object_label_counts_by_name(
                 object_label_records_by_axis.get(axis_key, ())
+            )
+            object_label_domains = ObjectLabelInstanceDomains.from_named_plane_domains(
+                (
+                    (
+                        object_labels.name,
+                        dense_object_label_plane_id_domains(
+                            object_labels.labels,
+                            domain_scope=ObjectLabelDomainScope.PLANE,
+                        ),
+                    )
+                    for record in object_label_records_by_axis.get(axis_key, ())
+                    for object_labels in (ObjectLabelSet.from_runtime_value(record.value),)
+                )
             )
             axis_object_label_records = tuple(
                 object_label_records_by_axis.get(axis_key, ())
@@ -764,6 +968,7 @@ class RuntimeMeasurementSnapshot:
                     relationship,
                     policy,
                     object_label_counts=object_label_counts,
+                    object_label_domains=object_label_domains,
                 )
                 record_measurement_facts(
                     values_by_feature,
@@ -788,15 +993,33 @@ class RuntimeMeasurementSnapshot:
                     ),
                     policy,
                     object_label_counts=object_label_counts,
+                    object_label_domains=object_label_domains,
                     existing_measurement_keys=explicit_measurement_keys,
                     required_measurement_keys=required_measurement_keys,
                 )
+                relationship_object_number_aggregate_key = _runtime_measurement_feature_key(
+                    RuntimeMeasurementSubjectKey(
+                        MeasurementScope.OBJECT,
+                        relationship.source.name,
+                    ),
+                    _relationship_aggregate_feature_name(
+                        MeasurementStatistic.MEAN.value,
+                        relationship.target.name,
+                        ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
+                    ),
+                )
+                if any(
+                    key == relationship_object_number_aggregate_key
+                    for key, _value in aggregate_facts
+                ):
+                    values_by_feature.pop(relationship_object_number_aggregate_key, None)
                 record_measurement_facts(
                     values_by_feature,
                     (
                         (key, value)
                         for key, value in aggregate_facts
                         if key not in explicit_measurement_keys
+                        or key == relationship_object_number_aggregate_key
                     ),
                     required_keys=required_measurement_keys,
                 )
@@ -1365,7 +1588,10 @@ def _sparse_object_boundary_value_feature_equivalent(
             candidate.values_by_feature[feature],
             policy,
         )
-    if _is_object_identifier_feature(feature.feature_name):
+    if object_measurement_feature_has_role(
+        feature,
+        ObjectMeasurementFeatureRole.IDENTIFIER,
+    ):
         return _sparse_object_identifier_counters_equivalent(
             reference.values_by_feature[feature],
             candidate.values_by_feature[feature],
@@ -1404,7 +1630,7 @@ def _sparse_object_boundary_mean_feature_equivalent(
     value_feature = RuntimeMeasurementFeatureKey(
         subject=feature.subject,
         feature_name=feature.feature_name,
-        statistic="value",
+        statistic=MeasurementStatistic.VALUE.value,
         source_name=feature.source_name,
     )
     if value_feature not in reference.values_by_feature:
@@ -1450,16 +1676,19 @@ def _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
 
 _SPARSE_OBJECT_BOUNDARY_EQUIVALENCE_BY_STATISTIC = MappingProxyType(
     {
-        "count": lambda feature, reference, candidate, policy: (
-            feature.feature_name == "object_count"
+        MeasurementStatistic.COUNT.value: lambda feature, reference, candidate, policy: (
+            object_measurement_feature_has_role(
+                feature,
+                ObjectMeasurementFeatureRole.COUNT,
+            )
             and _object_count_counters_sparse_equivalent(
                 reference.values_by_feature[feature],
                 candidate.values_by_feature[feature],
                 policy,
             )
         ),
-        "value": _sparse_object_boundary_value_feature_equivalent,
-        "mean": _sparse_object_boundary_mean_feature_equivalent,
+        MeasurementStatistic.VALUE.value: _sparse_object_boundary_value_feature_equivalent,
+        MeasurementStatistic.MEAN.value: _sparse_object_boundary_mean_feature_equivalent,
     }
 )
 
@@ -1472,13 +1701,19 @@ def _object_count_values_stable(
 ) -> bool:
     count_feature = RuntimeMeasurementFeatureKey(
         subject=feature.subject,
-        feature_name="object_count",
-        statistic="count",
+        feature_name=ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
+        statistic=MeasurementStatistic.COUNT.value,
     )
     reference_counts = reference.values_by_feature.get(count_feature)
     candidate_counts = candidate.values_by_feature.get(count_feature)
     if reference_counts is None or candidate_counts is None:
-        return False
+        reference_values = reference.values_by_feature.get(feature)
+        candidate_values = candidate.values_by_feature.get(feature)
+        return (
+            reference_values is not None
+            and candidate_values is not None
+            and sum(reference_values.values()) == sum(candidate_values.values())
+        )
     return _cell_signature_counters_equivalent(
         reference_counts,
         candidate_counts,
@@ -1508,10 +1743,6 @@ def _object_count_counters_sparse_equivalent(
     missing = sum((reference - candidate).values())
     extra = sum((candidate - reference).values())
     return max(missing, extra) <= unstable_cap
-
-
-def _is_object_identifier_feature(feature_name: str) -> bool:
-    return feature_name == "object_number" or "_object_number" in feature_name
 
 
 def _numeric_counters_are_binary(
@@ -1646,7 +1877,7 @@ def _feature_label(feature: RuntimeMeasurementFeatureKey) -> str:
     feature_label = feature.feature_name
     if feature.source_name is not None:
         feature_label = f"{feature_label}@{feature.source_name}"
-    if feature.statistic == "value":
+    if feature.statistic == MeasurementStatistic.VALUE.value:
         return f"{subject_label}/{feature_label}"
     return f"{subject_label}/{feature.statistic}({feature_label})"
 
@@ -1828,6 +2059,9 @@ def _record_static_wide_measurement_table_snapshot(
 def _record_static_wide_runtime_measurement_table(
     values_by_feature: _RuntimeMeasurementFactCounters,
     context: _RuntimeMeasurementTableProjectionContext,
+    *,
+    row_merge_cache: _RuntimeMeasurementRowMergeCache | None = None,
+    primary_row_identities: _RuntimeMeasurementPrimaryRowSet | None = None,
 ) -> bool:
     """Record wide runtime measurement tables without per-row key rebuilding."""
     table = context.table
@@ -1960,6 +2194,13 @@ def _record_static_wide_runtime_measurement_table(
             row_values,
             subject_schema,
         )
+        _record_runtime_primary_measurement_row_identity(
+            primary_row_identities,
+            row_mapping,
+            context.axis_key,
+            subject,
+            policy,
+        )
         derived_row_facts = _static_wide_runtime_measurement_row_facts(
             row_projection_context,
             row_values,
@@ -1979,6 +2220,10 @@ def _record_static_wide_runtime_measurement_table(
             fact_recording_context,
             aggregate_input_context,
             derived_row_facts,
+            row_mapping=row_mapping,
+            axis_key=context.axis_key,
+            row_merge_cache=row_merge_cache,
+            policy=policy,
         )
 
     explicit_measurement_keys = frozenset(table_explicit_measurement_keys)
@@ -2117,9 +2362,25 @@ def _record_runtime_measurement_facts_for_row(
     fact_context: _RuntimeMeasurementFactRecordingContext,
     aggregate_context: _AggregateInputRecordingContext,
     facts: Iterable[_RuntimeMeasurementFact],
+    *,
+    row_mapping: Mapping[str, object] | None = None,
+    axis_key: object | None = None,
+    row_merge_cache: _RuntimeMeasurementRowMergeCache | None = None,
+    policy: RuntimeEquivalencePolicy = RuntimeEquivalencePolicy(),
 ) -> None:
     row_identity: _RuntimeMeasurementRowIdentityOrMissing = None
-    for key, value in facts:
+    merged_facts = (
+        tuple(facts)
+        if row_merge_cache is None or row_mapping is None
+        else _merge_runtime_row_measurement_facts(
+            row_merge_cache,
+            row_mapping,
+            axis_key,
+            facts,
+            policy,
+        )
+    )
+    for key, value in merged_facts:
         fact_context.explicit_measurement_keys.add(key)
         if fact_context.required_keys is None or key in fact_context.required_keys:
             fact_context.values_by_feature.setdefault(key, Counter())[value] += 1
@@ -2129,6 +2390,404 @@ def _record_runtime_measurement_facts_for_row(
             value,
             row_identity=row_identity,
         )
+
+
+def _dedupe_runtime_measurement_table_object_subtable(
+    table: MeasurementTable,
+    seen_object_subtables: _RuntimeMeasurementObjectSubtableSet,
+) -> MeasurementTable:
+    rows = tuple(measurement_rows((table,)))
+    if not rows:
+        return table
+
+    object_rows: list[Mapping[str, object]] = []
+    non_object_rows: list[object] = []
+    for row in rows:
+        row_mapping = measurement_row_mapping(row)
+        if _runtime_measurement_row_has_object_identity(row_mapping):
+            object_rows.append(row_mapping)
+        else:
+            non_object_rows.append(row)
+    if not object_rows:
+        return table
+
+    subtable_key = _runtime_measurement_object_subtable_key(table, object_rows)
+    if subtable_key not in seen_object_subtables:
+        seen_object_subtables.add(subtable_key)
+        return table
+    if not non_object_rows:
+        return MeasurementTable(
+            name=table.name,
+            rows=(),
+            object_name=table.object_name,
+            fields=table.fields,
+            object_id_field=table.object_id_field,
+            source_image_name=table.source_image_name,
+            subject=table.subject,
+        )
+    return MeasurementTable(
+        name=table.name,
+        rows=tuple(non_object_rows),
+        object_name=table.object_name,
+        fields=table.fields,
+        object_id_field=table.object_id_field,
+        source_image_name=table.source_image_name,
+        subject=table.subject,
+    )
+
+
+def _runtime_measurement_row_has_object_identity(
+    row_mapping: Mapping[str, object],
+) -> bool:
+    try:
+        if measurement_object_label(row_mapping) is not None:
+            return True
+    except (TypeError, ValueError):
+        pass
+    return measurement_row_object_name(row_mapping) is not None
+
+
+def _runtime_measurement_object_subtable_key(
+    table: MeasurementTable,
+    object_rows: Iterable[Mapping[str, object]],
+) -> _RuntimeMeasurementObjectSubtableKey:
+    row_payloads = tuple(
+        tuple(
+            (
+                _normalize_identifier(str(field_name)),
+                measurement_table_cell_payload(value),
+            )
+            for field_name, value in row_mapping.items()
+        )
+        for row_mapping in object_rows
+    )
+    field_payloads = tuple(
+        (field.name, field.dtype, field.required)
+        for field in table.fields
+    )
+    return (
+        table.name,
+        repr(table.subject),
+        table.object_name,
+        table.object_id_field,
+        table.source_image_name,
+        field_payloads,
+        row_payloads,
+    )
+
+
+def _merge_runtime_row_measurement_facts(
+    row_merge_cache: _RuntimeMeasurementRowMergeCache,
+    row_mapping: Mapping[str, object],
+    axis_key: object | None,
+    facts: Iterable[_RuntimeMeasurementFact],
+    policy: RuntimeEquivalencePolicy,
+) -> _RuntimeMeasurementFacts:
+    """Defer row-identifiable alias families until all runtime tables are seen."""
+    remaining_facts: _RuntimeMeasurementFactList = []
+    for key, value in facts:
+        if not _runtime_measurement_fact_uses_row_merge(key):
+            remaining_facts.append((key, value))
+            continue
+        row_identity = _runtime_object_measurement_row_identity(
+            row_mapping,
+            axis_key,
+        )
+        if row_identity is None:
+            remaining_facts.append((key, value))
+            continue
+        merge_key = (key, row_identity)
+        priority = _runtime_row_measurement_fact_priority(row_mapping, key, policy)
+        candidate = (
+            priority,
+            priority,
+            value,
+        )
+        current = row_merge_cache.get(merge_key)
+        if current is None or _runtime_row_merge_candidate_preferred(
+            candidate,
+            current,
+        ):
+            row_merge_cache[merge_key] = (
+                candidate[0],
+                candidate[1] if current is None else min(candidate[1], current[1]),
+                candidate[2],
+            )
+        elif current is not None:
+            row_merge_cache[merge_key] = (
+                current[0],
+                min(current[1], priority),
+                current[2],
+            )
+    return tuple(remaining_facts)
+
+
+def _runtime_measurement_fact_uses_row_merge(
+    key: RuntimeMeasurementFeatureKey,
+) -> bool:
+    return (
+        key.subject.scope is MeasurementScope.OBJECT
+        and key.statistic == MeasurementStatistic.VALUE.value
+        and key.source_name is None
+        and object_measurement_feature_has_role(
+            key,
+            ObjectMeasurementFeatureRole.LOCATION,
+        )
+    )
+
+
+def _runtime_object_measurement_row_identity(
+    row_mapping: Mapping[str, object],
+    axis_key: object | None,
+) -> _RuntimeMeasurementRowIdentityOrMissing:
+    try:
+        object_label = measurement_object_label(row_mapping)
+    except (TypeError, ValueError):
+        return None
+    if object_label is None:
+        return None
+    return (
+        *axis_scoped_measurement_row_identity(row_mapping, axis_key),
+        (_OBJECT_LABEL_ROW_IDENTITY_FIELD, measurement_table_cell_payload(object_label)),
+    )
+
+
+def _runtime_row_measurement_fact_priority(
+    row_mapping: Mapping[str, object],
+    key: RuntimeMeasurementFeatureKey,
+    policy: RuntimeEquivalencePolicy,
+) -> int:
+    """Return dialect category priority for the row field that produced ``key``."""
+    candidates: list[str] = []
+    long_form_feature = _first_row_value(row_mapping, _MEASUREMENT_FEATURE_NAME_FIELDS)
+    if long_form_feature is not None:
+        candidates.append(str(long_form_feature))
+    else:
+        candidates.extend(str(field_name) for field_name in row_mapping)
+
+    priorities = tuple(
+        priority
+        for feature_name in candidates
+        if (
+            priority := _measurement_feature_source_priority(
+                feature_name,
+                key,
+                policy,
+            )
+        )
+        is not None
+    )
+    return min(priorities, default=sys.maxsize)
+
+
+def _measurement_feature_source_priority(
+    feature_name: str,
+    key: RuntimeMeasurementFeatureKey,
+    policy: RuntimeEquivalencePolicy,
+) -> int | None:
+    normalized = _normalize_identifier(feature_name)
+    if _is_normalized_measurement_identity_field(
+        normalized,
+        policy.measurement_dialect,
+    ):
+        return None
+    canonical_feature_name, canonical_source_name = (
+        _canonical_measurement_feature_name_and_source(
+            feature_name,
+            policy,
+            source_name=None,
+            known_source_names=(),
+        )
+    )
+    if canonical_feature_name != key.feature_name or canonical_source_name != key.source_name:
+        return None
+
+    parts = tuple(part for part in normalized.split("_") if part)
+    for index, prefix in enumerate(policy.measurement_dialect.category_prefixes):
+        if _should_strip_measurement_category_prefix(parts, prefix):
+            return index
+    canonical_feature_name, _canonical_source_name = (
+        _canonical_measurement_feature_name_and_source(
+            feature_name,
+            policy,
+            source_name=None,
+            known_source_names=(),
+        )
+    )
+    return -1 if canonical_feature_name else None
+
+
+def _runtime_row_merge_candidate_preferred(
+    candidate: _RuntimeMeasurementRowMergeValue,
+    current: _RuntimeMeasurementRowMergeValue,
+) -> bool:
+    candidate_priority, _candidate_row_priority, candidate_value = candidate
+    current_priority, _current_row_priority, current_value = current
+    candidate_missing = RuntimeCellMissingStrategy.for_kind(
+        candidate_value.kind
+    ).is_missing(candidate_value)
+    current_missing = RuntimeCellMissingStrategy.for_kind(
+        current_value.kind
+    ).is_missing(current_value)
+    if current_missing and not candidate_missing:
+        return True
+    if candidate_missing and not current_missing:
+        return False
+    return candidate_priority < current_priority
+
+
+def _record_runtime_primary_measurement_row_identity(
+    primary_row_identities: _RuntimeMeasurementPrimaryRowSet | None,
+    row_mapping: Mapping[str, object],
+    axis_key: object | None,
+    subject: RuntimeMeasurementSubjectKey,
+    policy: RuntimeEquivalencePolicy,
+) -> None:
+    if primary_row_identities is None:
+        return
+    if subject.scope is not MeasurementScope.OBJECT:
+        return
+    if not _runtime_measurement_row_has_primary_object_features(row_mapping, policy):
+        return
+    row_identity = _runtime_object_measurement_row_identity(row_mapping, axis_key)
+    if row_identity is None:
+        return
+    primary_row_identities.add((subject, row_identity))
+
+
+def _runtime_measurement_row_has_primary_object_features(
+    row_mapping: Mapping[str, object],
+    policy: RuntimeEquivalencePolicy,
+) -> bool:
+    primary_location_priority = _object_location_primary_row_priority(policy)
+    long_form_feature = _first_row_value(row_mapping, _MEASUREMENT_FEATURE_NAME_FIELDS)
+    feature_names = (
+        (str(long_form_feature),)
+        if long_form_feature is not None
+        else tuple(str(field_name) for field_name in row_mapping)
+    )
+    for feature_name in feature_names:
+        normalized = _normalize_identifier(feature_name)
+        if _is_normalized_measurement_identity_field(
+            normalized,
+            policy.measurement_dialect,
+        ):
+            continue
+        priority = _measurement_feature_category_priority(
+            feature_name,
+            policy,
+        )
+        if priority is not None and priority <= primary_location_priority:
+            return True
+    return False
+
+
+def _measurement_feature_category_priority(
+    feature_name: str,
+    policy: RuntimeEquivalencePolicy,
+) -> int | None:
+    normalized = _normalize_identifier(feature_name)
+    parts = tuple(part for part in normalized.split("_") if part)
+    for index, prefix in enumerate(policy.measurement_dialect.category_prefixes):
+        if _should_strip_measurement_category_prefix(parts, prefix):
+            return index
+    return -1
+
+
+def _object_location_subjects_from_row_merge_cache(
+    row_merge_cache: _RuntimeMeasurementRowMergeCache,
+) -> frozenset[RuntimeMeasurementSubjectKey]:
+    return frozenset(
+        key.subject
+        for key, _row_identity in row_merge_cache
+        if _runtime_measurement_fact_uses_row_merge(key)
+    )
+
+
+def _record_runtime_row_merge_facts(
+    values_by_feature: _RuntimeMeasurementFactCounters,
+    row_merge_cache: _RuntimeMeasurementRowMergeCache,
+    *,
+    required_keys: _RuntimeRequiredMeasurementKeys,
+    policy: RuntimeEquivalencePolicy,
+    primary_row_identities: _RuntimeMeasurementPrimaryRowSet,
+) -> None:
+    for (key, row_identity), (_priority, _row_priority, value) in row_merge_cache.items():
+        if (key.subject, row_identity) not in primary_row_identities:
+            continue
+        if required_keys is not None and key not in required_keys:
+            continue
+        values_by_feature.setdefault(key, Counter())[value] += 1
+
+
+def _primary_row_object_count_measurement_facts(
+    primary_row_identities: _RuntimeMeasurementPrimaryRowSet,
+    row_merge_cache: _RuntimeMeasurementRowMergeCache,
+    policy: RuntimeEquivalencePolicy,
+    *,
+    existing_subjects: frozenset[RuntimeMeasurementSubjectKey],
+    required_keys: _RuntimeRequiredMeasurementKeys,
+) -> _RuntimeMeasurementFacts:
+    counts_by_image: dict[
+        tuple[RuntimeMeasurementSubjectKey, _RuntimeMeasurementRowIdentity],
+        set[object],
+    ] = {}
+    source_row_identities = (
+        object_measurement_subject_row_identities_with_role(
+            row_merge_cache,
+            ObjectMeasurementFeatureRole.LOCATION,
+        )
+        or primary_row_identities
+    )
+    for subject, row_identity in source_row_identities:
+        image_identity = tuple(
+            field
+            for field in row_identity
+            if field[0] != _OBJECT_LABEL_ROW_IDENTITY_FIELD
+        )
+        object_label = next(
+            (
+                field[1]
+                for field in row_identity
+                if field[0] == _OBJECT_LABEL_ROW_IDENTITY_FIELD
+            ),
+            None,
+        )
+        if object_label is None:
+            continue
+        counts_by_image.setdefault((subject, image_identity), set()).add(object_label)
+
+    facts: _RuntimeMeasurementFactList = []
+    for (subject, _image_identity), object_labels in counts_by_image.items():
+        if subject in existing_subjects:
+            continue
+        key = RuntimeMeasurementFeatureKey(
+            subject,
+            ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
+            MeasurementStatistic.COUNT.value,
+        )
+        if required_keys is not None and key not in required_keys:
+            continue
+        facts.append((key, _cell_signature(str(len(object_labels)), policy)))
+    return tuple(facts)
+
+
+def _object_location_primary_row_priority(policy: RuntimeEquivalencePolicy) -> int:
+    location_priority = _measurement_category_priority(
+        ("location",),
+        policy.measurement_dialect,
+    )
+    return sys.maxsize if location_priority is None else location_priority - 1
+
+
+def _measurement_category_priority(
+    prefix: tuple[str, ...],
+    dialect: RuntimeMeasurementDialect,
+) -> int | None:
+    try:
+        return dialect.category_prefixes.index(prefix)
+    except ValueError:
+        return None
 
 
 def _record_runtime_aggregate_mean_facts(
@@ -2259,31 +2918,6 @@ def _parts_contain_adjacent_image_number(parts: tuple[str, ...]) -> bool:
     return any(
         parts[index] == "image" and parts[index + 1] == "number"
         for index in range(len(parts) - 1)
-    )
-
-
-def _object_location_subjects(
-    values_by_feature: Mapping[RuntimeMeasurementFeatureKey, object],
-) -> frozenset[RuntimeMeasurementSubjectKey]:
-    return frozenset(
-        key.subject
-        for key in values_by_feature
-        if key.subject.scope is MeasurementScope.OBJECT
-        and key.statistic == "value"
-        and key.feature_name in _OBJECT_LOCATION_FEATURES
-    )
-
-
-def _object_identifier_subjects(
-    values_by_feature: Mapping[RuntimeMeasurementFeatureKey, object],
-) -> frozenset[RuntimeMeasurementSubjectKey]:
-    return frozenset(
-        key.subject
-        for key in values_by_feature
-        if key.subject.scope is MeasurementScope.OBJECT
-        and key.statistic == "value"
-        and key.source_name is None
-        and _is_object_identifier_feature(key.feature_name)
     )
 
 
@@ -2446,7 +3080,10 @@ def _identity_facts_from_table_snapshot(
             continue
         facts.append(
             (
-                RuntimeMeasurementFeatureKey(row_subject, "object_number"),
+                RuntimeMeasurementFeatureKey(
+                    row_subject,
+                    ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
+                ),
                 _cell_signature(str(object_number), policy),
             )
         )
@@ -2599,6 +3236,9 @@ def _wide_measurement_table_needs_row_derivation(
 
 def _measurement_facts_from_runtime_table(
     context: _RuntimeMeasurementTableProjectionContext,
+    *,
+    row_merge_cache: _RuntimeMeasurementRowMergeCache | None = None,
+    primary_row_identities: _RuntimeMeasurementPrimaryRowSet | None = None,
 ) -> _RuntimeMeasurementFacts:
     table = context.table
     policy = context.policy
@@ -2647,6 +3287,13 @@ def _measurement_facts_from_runtime_table(
             row_values,
             subject_schema,
         )
+        _record_runtime_primary_measurement_row_identity(
+            primary_row_identities,
+            row_mapping,
+            context.axis_key,
+            subject,
+            policy,
+        )
         row_context = _RuntimeRowProjectionContext.from_row(
             row_mapping,
             subject,
@@ -2663,6 +3310,14 @@ def _measurement_facts_from_runtime_table(
             padding_group_cache=padding_group_cache,
         )
         row_facts = _measurement_facts_from_runtime_row_cached(row_context)
+        if row_merge_cache is not None:
+            row_facts = _merge_runtime_row_measurement_facts(
+                row_merge_cache,
+                row_mapping,
+                context.axis_key,
+                row_facts,
+                policy,
+            )
         facts.extend(row_facts)
         if not row_facts:
             continue
@@ -2990,12 +3645,12 @@ def _required_measurement_input_keys(
         return None
     keys: set[RuntimeMeasurementFeatureKey] = set(required_keys)
     for key in required_keys:
-        if key.statistic == "mean":
+        if key.statistic == MeasurementStatistic.MEAN.value:
             keys.add(
                 RuntimeMeasurementFeatureKey(
                     key.subject,
                     key.feature_name,
-                    "value",
+                    MeasurementStatistic.VALUE.value,
                     key.source_name,
                 )
             )
@@ -3630,14 +4285,14 @@ def _aggregate_measurement_feature_key(
     if not scope_policy.accepts_aggregate_feature_key:
         return None
     parts = tuple(part for part in _normalize_identifier(field_name).split("_") if part)
-    if len(parts) >= 2 and parts[0] == "count":
+    if len(parts) >= 2 and parts[0] == MeasurementStatistic.COUNT.value:
         return _runtime_measurement_feature_key(
             RuntimeMeasurementSubjectKey(
                 MeasurementScope.OBJECT,
                 "_".join(parts[1:]),
             ),
-            "object_count",
-            "count",
+            ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
+            MeasurementStatistic.COUNT.value,
         )
     if len(parts) < 3 or parts[0] not in _MEASUREMENT_AGGREGATE_PREFIXES:
         return None
@@ -3699,7 +4354,9 @@ def _required_mean_measurement_keys(
 ) -> _RuntimeRequiredMeasurementKeys:
     if required_keys is None:
         return None
-    return frozenset(key for key in required_keys if key.statistic == "mean")
+    return frozenset(
+        key for key in required_keys if key.statistic == MeasurementStatistic.MEAN.value
+    )
 
 
 def _object_label_measurement_facts(
@@ -3760,14 +4417,11 @@ def _object_identifier_measurement_facts(
     if label_array is None:
         return ()
 
-    planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
+    object_number_domains = ObjectIdentifierDomainProjectionStrategy.for_context(
+        context
+    ).domains(context)
     facts: _RuntimeMeasurementFactList = []
-    for plane in planes:
-        object_ids = dense_object_label_id_domain(
-            plane,
-            declared_object_count=context.declared_object_count,
-            declared_object_ids=context.declared_object_ids,
-        )
+    for object_ids in object_number_domains:
         for key in keys:
             facts.extend(
                 (key, _cell_signature(str(object_id), context.policy))
@@ -3781,14 +4435,20 @@ def _required_object_identifier_keys(
     required_keys: _RuntimeRequiredMeasurementKeys,
 ) -> tuple[RuntimeMeasurementFeatureKey, ...]:
     if required_keys is None:
-        return (RuntimeMeasurementFeatureKey(subject, "object_number"),)
+        return (
+            RuntimeMeasurementFeatureKey(
+                subject,
+                ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
+            ),
+        )
     return tuple(
         key
         for key in sorted(required_keys, key=lambda item: item.sort_key)
         if key.subject == subject
-        and key.statistic == "value"
-        and key.source_name is None
-        and _is_object_identifier_feature(key.feature_name)
+        and object_measurement_feature_has_role(
+            key,
+            ObjectMeasurementFeatureRole.IDENTIFIER,
+        )
     )
 
 
@@ -3798,30 +4458,33 @@ def _object_count_measurement_facts(
     if context.object_name is None:
         return ()
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
-    key = RuntimeMeasurementFeatureKey(subject, "object_count", "count")
+    if subject in context.object_count_subjects:
+        return ()
+    key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
+        MeasurementStatistic.COUNT.value,
+    )
     if context.required_keys is not None and key not in context.required_keys:
         return ()
     label_array = _runtime_object_label_array(context.labels)
     if label_array is None:
         return ()
-    planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
+    plane_domains = dense_object_label_plane_id_domains(
+        context.labels,
+        declared_object_count=context.declared_object_count,
+        declared_object_ids=context.declared_object_ids,
+        domain_scope=context.domain_scope,
+    )
     return tuple(
         (
             key,
             _cell_signature(
-                str(
-                    len(
-                        dense_object_label_id_domain(
-                            plane,
-                            declared_object_count=context.declared_object_count,
-                            declared_object_ids=context.declared_object_ids,
-                        )
-                    )
-                ),
+                str(len(object_ids)),
                 context.policy,
             ),
         )
-        for plane in planes
+        for object_ids in plane_domains
     )
 
 
@@ -3831,18 +4494,18 @@ def _object_location_measurement_facts(
     if context.object_name is None:
         return ()
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
-    if subject in context.object_location_subjects:
-        return ()
     required_feature_names = _required_object_location_feature_names(
         subject,
         context.required_keys,
-        statistic="value",
+        statistic=MeasurementStatistic.VALUE,
     )
     required_mean_feature_names = _required_object_location_feature_names(
         subject,
         context.required_keys,
-        statistic="mean",
+        statistic=MeasurementStatistic.MEAN,
     )
+    if subject in context.object_location_subjects:
+        required_feature_names = frozenset()
     if (
         required_feature_names is not None
         and not required_feature_names
@@ -3853,14 +4516,21 @@ def _object_location_measurement_facts(
     label_array = _runtime_object_label_array(context.labels)
     if label_array is None:
         return ()
-    object_ids = dense_object_label_id_domain(context.labels)
-    if not object_ids:
+    plane_domains = dense_object_label_plane_id_domains(
+        context.labels,
+        declared_object_count=context.declared_object_count,
+        declared_object_ids=context.declared_object_ids,
+        domain_scope=context.domain_scope,
+    )
+    if not any(plane_domains):
         return ()
 
-    include_missing_locations = context.declared_object_count is not None
     facts: _RuntimeMeasurementFactList = []
     planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
-    for plane in planes:
+    include_missing_locations = (
+        label_array.ndim <= 2 and context.declared_object_count is not None
+    )
+    for plane, object_ids in zip(planes, plane_domains, strict=True):
         facts.extend(
             _object_location_measurement_facts_for_plane(
                 plane,
@@ -3879,7 +4549,7 @@ def _required_object_location_feature_names(
     subject: RuntimeMeasurementSubjectKey,
     required_keys: _RuntimeRequiredMeasurementKeys,
     *,
-    statistic: str,
+    statistic: MeasurementStatistic,
 ) -> frozenset[str] | None:
     if required_keys is None:
         return None
@@ -3887,9 +4557,17 @@ def _required_object_location_feature_names(
         key.feature_name
         for key in required_keys
         if key.subject == subject
-        and key.statistic == statistic
+        and key.statistic == statistic.value
         and key.source_name is None
-        and key.feature_name in _OBJECT_LOCATION_FEATURES
+        and object_measurement_feature_has_role(
+            RuntimeMeasurementFeatureKey(
+                key.subject,
+                key.feature_name,
+                MeasurementStatistic.VALUE.value,
+                source_name=key.source_name,
+            ),
+            ObjectMeasurementFeatureRole.LOCATION,
+        )
     )
 
 
@@ -4030,7 +4708,7 @@ def _object_label_counts_by_name(
         object_labels = ObjectLabelSet.from_runtime_value(record.value)
         counts[object_labels.name] = max(
             counts.get(object_labels.name, 0),
-            _max_positive_label_id(object_labels.labels),
+            dense_object_label_max_present_id(object_labels.labels),
         )
     return counts
 
@@ -4047,7 +4725,7 @@ def _object_label_measurement_values_for_name(
     required_feature_names = _required_object_location_feature_names(
         subject,
         required_keys,
-        statistic="value",
+        statistic=MeasurementStatistic.VALUE,
     )
     if required_feature_names is not None and not required_feature_names:
         return {}
@@ -4084,12 +4762,14 @@ def _object_label_location_values_by_label(
 
     values_by_feature: _RuntimeObjectValuesByLabel = {}
     planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
-    for plane in planes:
+    plane_indexes = (None,) if label_array.ndim <= 2 else tuple(range(len(planes)))
+    for plane_index, plane in zip(plane_indexes, planes, strict=True):
         for key, values in _object_label_location_values_by_label_for_plane(
             plane,
             subject,
             required_feature_names=required_feature_names,
             object_ids=object_ids,
+            slice_index=plane_index,
         ).items():
             values_by_feature.setdefault(key, {}).update(values)
     return values_by_feature
@@ -4101,6 +4781,7 @@ def _object_label_location_values_by_label_for_plane(
     *,
     required_feature_names: frozenset[str] | None = None,
     object_ids: tuple[int, ...] | None = None,
+    slice_index: int | None = None,
 ) -> _RuntimeObjectValuesByLabel:
     if required_feature_names is not None and not required_feature_names:
         return {}
@@ -4143,7 +4824,7 @@ def _object_label_location_values_by_label_for_plane(
     )
     return {
         RuntimeMeasurementFeatureKey(subject, feature_name): {
-            label: float(values[label])
+            ObjectInstanceKey(label, slice_index=slice_index): float(values[label])
             for label in resolved_object_ids
         }
         for feature_name, values in (
@@ -4155,29 +4836,21 @@ def _object_label_location_values_by_label_for_plane(
     }
 
 
-def _max_positive_label_id(labels: object) -> int:
-    values = np.asarray(labels)
-    if values.size == 0:
-        return 0
-    positive = values[values > 0]
-    if positive.size == 0:
-        return 0
-    return int(np.max(positive))
-
-
 def _relationship_measurement_facts(
     relationship: ObjectRelationship,
     policy: RuntimeEquivalencePolicy,
     *,
     object_label_counts: Mapping[str, int] | None = None,
+    object_label_domains: ObjectLabelInstanceDomains | None = None,
 ) -> _RuntimeMeasurementFacts:
     source_ids = tuple(int(value) for value in np.asarray(relationship.source_ids).ravel())
     target_ids = tuple(int(value) for value in np.asarray(relationship.target_ids).ravel())
-    if len(source_ids) != len(target_ids):
-        raise ValueError(
-            f"Relationship '{relationship.name}' has {len(source_ids)} source ids "
-            f"and {len(target_ids)} target ids."
-        )
+    instance_relationship = ObjectInstanceRelationship.from_id_columns(
+        source_ids,
+        target_ids,
+        slice_indices=relationship.slice_indices,
+        slice_count=relationship.slice_count,
+    )
 
     source_subject = RuntimeMeasurementSubjectKey(
         MeasurementScope.OBJECT,
@@ -4197,33 +4870,45 @@ def _relationship_measurement_facts(
     )
 
     object_label_counts = object_label_counts or {}
-    source_count = max(
-        max(source_ids, default=0),
+    object_label_domains = object_label_domains or ObjectLabelInstanceDomains({})
+    source_domain = instance_relationship.source_domain(
         object_label_counts.get(relationship.source.name, 0),
+        declared_keys=object_label_domains.for_name(relationship.source.name),
     )
-    target_count = max(
-        max(target_ids, default=0),
+    target_domain = instance_relationship.target_domain(
         object_label_counts.get(relationship.target.name, 0),
+        declared_keys=object_label_domains.for_name(relationship.target.name),
     )
-    counts = {source_id: 0 for source_id in range(1, source_count + 1)}
-    parent_by_target: dict[int, int] = {}
-    for source_id, target_id in zip(source_ids, target_ids, strict=True):
-        if source_id > 0:
-            counts[source_id] = counts.get(source_id, 0) + 1
-        if target_id > 0:
-            parent_by_target[target_id] = source_id
+    child_keys_by_parent = instance_relationship.child_keys_by_parent(
+        source_object_count=object_label_counts.get(relationship.source.name, 0),
+        declared_source_keys=object_label_domains.for_name(relationship.source.name),
+    )
+    parent_key_by_child = instance_relationship.parent_key_by_child()
 
     return (
         *(
-            (child_count_key, _cell_signature(str(count), policy))
-            for _, count in sorted(counts.items())
+            (
+                child_count_key,
+                _cell_signature(
+                    str(len(child_keys_by_parent.get(source_key, ()))),
+                    policy,
+                ),
+            )
+            for source_key in source_domain
         ),
         *(
             (
                 parent_key,
-                _cell_signature(str(parent_by_target.get(target_id, 0)), policy),
+                _cell_signature(
+                    str(
+                        parent_key_by_child[target_key].object_id
+                        if target_key in parent_key_by_child
+                        else 0
+                    ),
+                    policy,
+                ),
             )
-            for target_id in range(1, target_count + 1)
+            for target_key in target_domain
         ),
     )
 
@@ -4245,7 +4930,7 @@ def _relationship_required_child_measurement_keys(
         relationship.target.name,
     )
     aggregate_prefix = (
-        f"mean_{_normalize_identifier(relationship.target.name)}_"
+        f"{MeasurementStatistic.MEAN.value}_{_normalize_identifier(relationship.target.name)}_"
     )
     return frozenset(
         _runtime_measurement_feature_key(
@@ -4255,7 +4940,7 @@ def _relationship_required_child_measurement_keys(
         )
         for key in required_measurement_keys
         if key.subject == parent_subject
-        and key.statistic == "value"
+        and key.statistic == MeasurementStatistic.VALUE.value
         and key.feature_name.startswith(aggregate_prefix)
         and key.feature_name != aggregate_prefix
     )
@@ -4265,11 +4950,12 @@ def _relationship_aggregate_measurement_facts(
     relationship: ObjectRelationship,
     child_values_by_feature: Mapping[
         RuntimeMeasurementFeatureKey,
-        Mapping[int, float],
+        Mapping[ObjectInstanceKey, float],
     ],
     policy: RuntimeEquivalencePolicy,
     *,
     object_label_counts: Mapping[str, int] | None = None,
+    object_label_domains: ObjectLabelInstanceDomains | None = None,
     existing_measurement_keys: _RuntimeMeasurementKeySet = frozenset(),
     required_measurement_keys: _RuntimeRequiredMeasurementKeys = None,
 ) -> _RuntimeMeasurementFacts:
@@ -4277,18 +4963,18 @@ def _relationship_aggregate_measurement_facts(
         key: dict(values_by_child_id)
         for key, values_by_child_id in child_values_by_feature.items()
     }
-    child_values.setdefault(
+    child_values[
         _runtime_measurement_feature_key(
             RuntimeMeasurementSubjectKey(
                 MeasurementScope.OBJECT,
                 relationship.target.name,
             ),
-            "object_number",
-        ),
-        _relationship_target_object_number_values(
-            relationship,
-            object_label_counts=object_label_counts,
-        ),
+            ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
+        )
+    ] = _relationship_target_object_number_values(
+        relationship,
+        object_label_counts=object_label_counts,
+        object_label_domains=object_label_domains,
     )
     if not child_values:
         return ()
@@ -4296,6 +4982,7 @@ def _relationship_aggregate_measurement_facts(
     child_ids_by_parent = _relationship_child_ids_by_parent(
         relationship,
         object_label_counts=object_label_counts,
+        object_label_domains=object_label_domains,
     )
     parent_subject = RuntimeMeasurementSubjectKey(
         MeasurementScope.OBJECT,
@@ -4319,7 +5006,10 @@ def _relationship_aggregate_measurement_facts(
             ),
             source_name=child_key.source_name,
         )
-        if aggregate_key in existing_measurement_keys:
+        if (
+            aggregate_key in existing_measurement_keys
+            and child_key.feature_name != ObjectCoreMeasurementFeature.OBJECT_NUMBER.value
+        ):
             continue
         if required_measurement_keys is not None and aggregate_key not in required_measurement_keys:
             continue
@@ -4327,7 +5017,7 @@ def _relationship_aggregate_measurement_facts(
             child_ids_by_parent,
             values_by_child_id,
         )
-        for _parent_id, child_ids in sorted(child_ids_by_parent.items()):
+        for _parent_id, child_ids in child_ids_by_parent.items():
             aggregate_facts.append(
                 (
                     aggregate_key,
@@ -4417,7 +5107,12 @@ def _object_measurement_values_by_label(
                     continue
                 if key.statistic != "value":
                     continue
-                values_by_feature.setdefault(key, {})[object_label] = value
+                values_by_feature.setdefault(key, {})[
+                    ObjectInstanceKey.from_measurement_row(
+                        row_mapping,
+                        object_label,
+                    )
+                ] = value
     return values_by_feature
 
 
@@ -4544,36 +5239,44 @@ def _relationship_target_object_number_values(
     relationship: ObjectRelationship,
     *,
     object_label_counts: Mapping[str, int] | None,
-) -> dict[int, float]:
+    object_label_domains: ObjectLabelInstanceDomains | None,
+) -> dict[ObjectInstanceKey, float]:
     target_ids = tuple(int(value) for value in np.asarray(relationship.target_ids).ravel())
-    target_count = max(
-        max(target_ids, default=0),
-        (object_label_counts or {}).get(relationship.target.name, 0),
+    instance_relationship = ObjectInstanceRelationship.from_id_columns(
+        tuple(int(value) for value in np.asarray(relationship.source_ids).ravel()),
+        target_ids,
+        slice_indices=relationship.slice_indices,
+        slice_count=relationship.slice_count,
     )
-    return {target_id: float(target_id) for target_id in range(1, target_count + 1)}
+    domains = object_label_domains or ObjectLabelInstanceDomains({})
+    return {
+        target_key: float(target_key.object_id)
+        for target_key in instance_relationship.target_domain(
+            (object_label_counts or {}).get(relationship.target.name, 0),
+            declared_keys=domains.for_name(relationship.target.name),
+        )
+    }
 
 
 def _relationship_child_ids_by_parent(
     relationship: ObjectRelationship,
     *,
     object_label_counts: Mapping[str, int] | None,
-) -> dict[int, tuple[int, ...]]:
+    object_label_domains: ObjectLabelInstanceDomains | None,
+) -> dict[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
     source_ids = tuple(int(value) for value in np.asarray(relationship.source_ids).ravel())
     target_ids = tuple(int(value) for value in np.asarray(relationship.target_ids).ravel())
-    source_count = max(
-        max(source_ids, default=0),
-        (object_label_counts or {}).get(relationship.source.name, 0),
+    instance_relationship = ObjectInstanceRelationship.from_id_columns(
+        source_ids,
+        target_ids,
+        slice_indices=relationship.slice_indices,
+        slice_count=relationship.slice_count,
     )
-    children: dict[int, list[int]] = {
-        source_id: [] for source_id in range(1, source_count + 1)
-    }
-    for source_id, target_id in zip(source_ids, target_ids, strict=True):
-        if source_id > 0 and target_id > 0:
-            children.setdefault(source_id, []).append(target_id)
-    return {
-        source_id: sorted_tuple(child_ids)
-        for source_id, child_ids in sorted(children.items())
-    }
+    domains = object_label_domains or ObjectLabelInstanceDomains({})
+    return instance_relationship.child_keys_by_parent(
+        source_object_count=(object_label_counts or {}).get(relationship.source.name, 0),
+        declared_source_keys=domains.for_name(relationship.source.name),
+    )
 
 
 def _relationship_aggregate_feature_name(
@@ -4593,8 +5296,8 @@ def _relationship_aggregate_feature_name(
 
 
 def _mean_child_value(
-    child_ids: tuple[int, ...],
-    values_by_child_id: Mapping[int, float],
+    child_ids: tuple[ObjectInstanceKey, ...],
+    values_by_child_id: Mapping[ObjectInstanceKey, float],
 ) -> float:
     values = tuple(values_by_child_id[child_id] for child_id in child_ids if child_id in values_by_child_id)
     if not values:
@@ -4603,10 +5306,10 @@ def _mean_child_value(
 
 
 def _mean_child_values_by_parent(
-    child_ids_by_parent: Mapping[int, tuple[int, ...]],
-    values_by_child_id: Mapping[int, float],
-) -> dict[tuple[int, ...], float]:
-    means: dict[tuple[int, ...], float] = {}
+    child_ids_by_parent: Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]],
+    values_by_child_id: Mapping[ObjectInstanceKey, float],
+) -> dict[tuple[ObjectInstanceKey, ...], float]:
+    means: dict[tuple[ObjectInstanceKey, ...], float] = {}
     for child_ids in child_ids_by_parent.values():
         if child_ids in means:
             continue

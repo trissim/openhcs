@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_FEATURE_NAME_FIELD,
     MEASUREMENT_MEASUREMENT_VALUE_FIELD,
@@ -242,6 +243,8 @@ def track_objects(
 
         new_object_count = int(np.sum(parent_obj_nums == 0))
         lost_object_count, split_count, merge_count = _tracking_transition_counts(
+            old_labels,
+            current_labels,
             old_object_numbers,
             new_labels,
         )
@@ -300,7 +303,7 @@ def _initial_tracking_state() -> Dict[str, Any]:
 
 
 def _label_frames(labels: np.ndarray) -> np.ndarray:
-    label_array = np.asarray(labels)
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     if label_array.ndim == 2:
         return label_array[np.newaxis, ...]
     if label_array.ndim == 3:
@@ -399,24 +402,88 @@ def _tracking_object_rows(
 
 
 def _tracking_transition_counts(
+    previous_labels: np.ndarray | None,
+    current_labels: np.ndarray,
     previous_track_labels: np.ndarray,
     current_track_labels: np.ndarray,
 ) -> tuple[int, int, int]:
     previous_counts = _positive_value_counts(previous_track_labels)
     current_counts = _positive_value_counts(current_track_labels)
-    track_labels = set(previous_counts) | set(current_counts)
-    lost_count = sum(
-        previous_counts[track_label]
-        for track_label in track_labels
-        if current_counts.get(track_label, 0) == 0
-    )
     split_count = sum(1 for count in current_counts.values() if count > 1)
-    merge_count = sum(
+    if previous_labels is None:
+        return 0, int(split_count), 0
+
+    lost_count, overlap_merge_count = _tracking_overlap_transition_counts(
+        previous_labels,
+        current_labels,
+        previous_track_labels,
+        current_track_labels,
+    )
+    track_merge_count = sum(
         previous_counts[track_label] - current_counts[track_label]
-        for track_label in track_labels
+        for track_label in set(previous_counts) | set(current_counts)
         if 0 < current_counts.get(track_label, 0) < previous_counts.get(track_label, 0)
     )
+    merge_count = max(overlap_merge_count, track_merge_count)
     return int(lost_count), int(split_count), int(merge_count)
+
+
+def _tracking_overlap_transition_counts(
+    previous_labels: np.ndarray,
+    current_labels: np.ndarray,
+    previous_track_labels: np.ndarray,
+    current_track_labels: np.ndarray,
+) -> tuple[int, int]:
+    """Return CP-style lost/merged object counts from inter-frame label overlap."""
+    previous = np.asarray(previous_labels, dtype=int)
+    current = np.asarray(current_labels, dtype=int)
+    previous_object_ids = set(int(value) for value in np.unique(previous) if value > 0)
+    current_object_ids = set(int(value) for value in np.unique(current) if value > 0)
+    if not previous_object_ids:
+        return 0, 0
+    if not current_object_ids:
+        return len(previous_object_ids), 0
+
+    previous_ids_by_current: dict[int, set[int]] = {
+        label_id: set() for label_id in current_object_ids
+    }
+    current_ids_by_previous: dict[int, set[int]] = {
+        label_id: set() for label_id in previous_object_ids
+    }
+    for previous_id, current_id in zip(previous.ravel(), current.ravel(), strict=False):
+        previous_label = int(previous_id)
+        current_label = int(current_id)
+        if previous_label <= 0 or current_label <= 0:
+            continue
+        current_ids_by_previous.setdefault(previous_label, set()).add(current_label)
+        previous_ids_by_current.setdefault(current_label, set()).add(previous_label)
+
+    current_tracks = {
+        int(value) for value in np.asarray(current_track_labels).ravel() if value > 0
+    }
+    lost_count = 0
+    for previous_id in previous_object_ids:
+        previous_track = (
+            int(previous_track_labels[previous_id - 1])
+            if previous_id <= len(previous_track_labels)
+            else 0
+        )
+        if current_ids_by_previous[previous_id] or previous_track in current_tracks:
+            continue
+        lost_count += 1
+    previous_tracks_by_current = {
+        current_id: {
+            int(previous_track_labels[previous_id - 1])
+            for previous_id in previous_ids_by_current[current_id]
+            if previous_id <= len(previous_track_labels)
+            and int(previous_track_labels[previous_id - 1]) > 0
+        }
+        for current_id in current_object_ids
+    }
+    merge_count = sum(
+        1 for tracks in previous_tracks_by_current.values() if len(tracks) > 1
+    )
+    return int(lost_count), int(merge_count)
 
 
 def _positive_value_counts(values: np.ndarray) -> dict[int, int]:

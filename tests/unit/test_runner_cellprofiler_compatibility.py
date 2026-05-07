@@ -147,6 +147,33 @@ def test_native_reference_lookup_uses_visible_source_identity(
     assert location.reference_output_dir == reference_dir
 
 
+def test_native_reference_lookup_reuses_semantic_snapshot_without_marker(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "ExampleIlluminationCorrection" / "images"
+    dataset_path.mkdir(parents=True)
+    cppipe_path = tmp_path / "ExampleIlluminationCorrection" / "pipeline.cppipe"
+    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    case = CellProfilerComparisonCase(
+        name="Example1_AllMethod",
+        dataset_path=dataset_path,
+        cppipe_path=cppipe_path,
+        dataset_id="ExampleIlluminationCorrection",
+    )
+    native_reference_root = tmp_path / "native_refs"
+    reference_dir = (
+        native_reference_root
+        / _benchmark_path_slug(f"{case.resolved_dataset_id}_{case.name}")
+        / f"{dataset_path.name}_{case.name}_native_cellprofiler"
+    )
+    reference_dir.mkdir(parents=True)
+    np.save(reference_dir / "Illum.npy", np.ones((2, 2), dtype=np.float32))
+
+    location = _native_reference_location(case, native_reference_root)
+
+    assert location.reference_output_dir == reference_dir
+
+
 def test_cellprofiler_cppipe_parity_runner_reuses_cached_openhcs_output(
     tmp_path: Path,
 ) -> None:

@@ -18,6 +18,7 @@ from collections import OrderedDict
 import hashlib
 from numba import njit, prange
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.processing.materialization import csv_materializer
@@ -242,7 +243,7 @@ def measure_granularity_objects(
         reconstructions=len(series.reconstructions),
     )
     
-    labels = np.asarray(labels, dtype=np.int32)
+    labels = object_label_dense_array(labels, dtype=np.int32)
     phase_started_at = time.perf_counter()
     label_to_index = _label_to_index_lookup_numba(object_range)
     pixel_rows, pixel_cols, pixel_object_indices, object_counts = (

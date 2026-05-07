@@ -11,9 +11,11 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from collections.abc import Iterable, Mapping
 from dataclasses import asdict, dataclass, field
-from pathlib import Path
+from enum import IntEnum
+from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import ClassVar
+from urllib.parse import unquote, urlparse
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -28,6 +30,7 @@ from openhcs.core.pipeline_image_schema import (
     SOURCE_IMAGE_TYPE_METADATA_FIELD,
     SourceAssignmentBase,
 )
+from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.core.source_bindings import (
     SourceBindingMatchMethod,
     SourceSelector,
@@ -224,6 +227,195 @@ class SourceSchemaCandidate:
         object.__setattr__(self, "path", Path(self.path))
         object.__setattr__(self, "relative_path", self.relative_path.replace(os.sep, "/"))
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaCandidateCollection:
+    """Deduplicated ordered source-schema candidates."""
+
+    candidates: tuple[SourceSchemaCandidate, ...]
+
+    def __post_init__(self) -> None:
+        deduplicated: list[SourceSchemaCandidate] = []
+        seen: set[tuple[str, str, tuple[tuple[str, str], ...]]] = set()
+        for candidate in self.candidates:
+            if not isinstance(candidate, SourceSchemaCandidate):
+                raise TypeError(
+                    "SourceSchemaCandidateCollection values must be "
+                    f"SourceSchemaCandidate, got {type(candidate).__name__}."
+                )
+            key = (
+                str(candidate.path),
+                candidate.relative_path,
+                tuple(sorted(candidate.metadata.items())),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduplicated.append(candidate)
+        object.__setattr__(self, "candidates", tuple(deduplicated))
+
+    @classmethod
+    def merge(
+        cls,
+        *candidate_groups: Iterable[SourceSchemaCandidate],
+    ) -> "SourceSchemaCandidateCollection":
+        return cls(
+            tuple(
+                candidate
+                for candidate_group in candidate_groups
+                for candidate in candidate_group
+            )
+        )
+
+
+class ImagePlaneSourceResolutionStage(IntEnum):
+    """Ordered source-resolution stages for explicit image-plane sources."""
+
+    LOCAL_EQUIVALENT = 10
+    DECLARED_FILE = 20
+    MATERIALIZED_REMOTE = 30
+
+
+class ImagePlaneSourceResolver(ABC, metaclass=AutoRegisterMeta):
+    """Nominal family for resolving explicit image-plane sources into candidates."""
+
+    __registry_key__ = "resolver_key"
+    __skip_if_no_key__ = True
+    resolver_key: ClassVar[str | None] = None
+    stage: ClassVar[ImagePlaneSourceResolutionStage]
+
+    @classmethod
+    def resolve(
+        cls,
+        source: ImagePlaneSource,
+        *,
+        source_index: int,
+        workspace_root: Path,
+        schema: PipelineImageSchema,
+        local_candidates: tuple[SourceSchemaCandidate, ...],
+    ) -> SourceSchemaCandidate:
+        source_metadata = metadata_from_rules(source.uri, schema.metadata_rules)
+        for resolver_type in sorted(
+            cls.__registry__.values(),
+            key=lambda registered_type: registered_type.stage,
+        ):
+            candidate = resolver_type().candidate(
+                source,
+                source_index=source_index,
+                workspace_root=workspace_root,
+                source_metadata=source_metadata,
+                local_candidates=local_candidates,
+            )
+            if candidate is not None:
+                return candidate
+        raise ValueError(f"Could not resolve image-plane source URI {source.uri!r}.")
+
+    @abstractmethod
+    def candidate(
+        self,
+        source: ImagePlaneSource,
+        *,
+        source_index: int,
+        workspace_root: Path,
+        source_metadata: Mapping[str, str],
+        local_candidates: tuple[SourceSchemaCandidate, ...],
+    ) -> SourceSchemaCandidate | None:
+        """Return the resolved source candidate or None if this resolver does not apply."""
+
+
+class LocalEquivalentImagePlaneSourceResolver(ImagePlaneSourceResolver):
+    """Resolve embedded URI sources to already-visible local files when equivalent."""
+
+    resolver_key = "local_equivalent"
+    stage = ImagePlaneSourceResolutionStage.LOCAL_EQUIVALENT
+
+    def candidate(
+        self,
+        source: ImagePlaneSource,
+        *,
+        source_index: int,
+        workspace_root: Path,
+        source_metadata: Mapping[str, str],
+        local_candidates: tuple[SourceSchemaCandidate, ...],
+    ) -> SourceSchemaCandidate | None:
+        del source_index, workspace_root
+        source_name = _image_plane_source_basename(source)
+        matches = tuple(
+            candidate
+            for candidate in local_candidates
+            if candidate.path.name == source_name
+            and _source_metadata_matches(candidate.metadata, source_metadata)
+        )
+        if len(matches) > 1:
+            raise ValueError(
+                f"Image-plane source {source.uri!r} matched multiple local "
+                f"source files: {[match.relative_path for match in matches]}"
+            )
+        return matches[0] if matches else None
+
+
+class DeclaredFileImagePlaneSourceResolver(ImagePlaneSourceResolver):
+    """Resolve explicit local file image-plane sources."""
+
+    resolver_key = "declared_file"
+    stage = ImagePlaneSourceResolutionStage.DECLARED_FILE
+
+    def candidate(
+        self,
+        source: ImagePlaneSource,
+        *,
+        source_index: int,
+        workspace_root: Path,
+        source_metadata: Mapping[str, str],
+        local_candidates: tuple[SourceSchemaCandidate, ...],
+    ) -> SourceSchemaCandidate | None:
+        del source_index, workspace_root, local_candidates
+        parsed = urlparse(source.uri)
+        if parsed.scheme not in ("", "file"):
+            return None
+        path = Path(unquote(parsed.path if parsed.scheme == "file" else source.uri))
+        return SourceSchemaCandidate(
+            path=path,
+            relative_path=source.uri,
+            metadata=source_metadata,
+        )
+
+
+class RemoteMaterializedImagePlaneSourceResolver(ImagePlaneSourceResolver):
+    """Materialize remote image-plane sources when no local equivalent exists."""
+
+    resolver_key = "remote_materialized"
+    stage = ImagePlaneSourceResolutionStage.MATERIALIZED_REMOTE
+
+    def candidate(
+        self,
+        source: ImagePlaneSource,
+        *,
+        source_index: int,
+        workspace_root: Path,
+        source_metadata: Mapping[str, str],
+        local_candidates: tuple[SourceSchemaCandidate, ...],
+    ) -> SourceSchemaCandidate | None:
+        del local_candidates
+        parsed = urlparse(source.uri)
+        if parsed.scheme not in ("http", "https"):
+            return None
+        target_dir = (
+            workspace_root
+            / SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR
+            / "image_planes"
+            / f"{source_index:03d}"
+        )
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target_path = target_dir / Path(unquote(parsed.path)).name
+        with urllib.request.urlopen(source.uri) as response, target_path.open("wb") as handle:
+            shutil.copyfileobj(response, handle)
+        return SourceSchemaCandidate(
+            path=target_path,
+            relative_path=source.uri,
+            metadata=source_metadata,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -487,15 +679,22 @@ class OrderImageSetAssembler(ImageSetAssembler):
     ) -> tuple[ImageSetRecord, ...]:
         aliases = tuple(candidates_by_alias)
         lengths = {alias: len(candidates_by_alias[alias]) for alias in aliases}
-        if len(set(lengths.values())) != 1:
+        image_set_count = max(lengths.values(), default=0)
+        non_singleton_lengths = {
+            length for length in lengths.values() if length not in (0, 1)
+        }
+        if len(non_singleton_lengths) > 1:
             raise ValueError(
                 "Order-based source projection requires each image alias to match "
-                f"the same number of files, got {lengths!r}."
+                "the same number of files, except singleton aliases that can be "
+                f"broadcast across image sets; got {lengths!r}."
             )
         image_sets: list[ImageSetRecord] = []
-        for index in range(next(iter(lengths.values()), 0)):
+        for index in range(image_set_count):
             candidates = {
-                alias: candidates_by_alias[alias][index]
+                alias: candidates_by_alias[alias][
+                    0 if len(candidates_by_alias[alias]) == 1 else index
+                ]
                 for alias in aliases
             }
             image_sets.append(
@@ -512,6 +711,10 @@ def materialize_source_schema_workspace(
     source_root: Path,
     workspace_root: Path,
     schema: PipelineImageSchema,
+    *,
+    filemanager: FileManagerLike | None = None,
+    source_backend: Backend | str = Backend.DISK,
+    workspace_backend: Backend | str = Backend.DISK,
 ) -> SourceSchemaWorkspaceMaterialization:
     """Create an OpenHCS virtual workspace from typed source-schema semantics."""
 
@@ -519,15 +722,26 @@ def materialize_source_schema_workspace(
     workspace_root = Path(workspace_root)
     if schema.is_empty:
         raise ValueError("Cannot materialize an empty source schema.")
-    if not source_root.is_dir():
+    source_backend_name = _backend_name(source_backend)
+    workspace_backend_name = _backend_name(workspace_backend)
+    if not _vfs_is_dir(source_root, filemanager=filemanager, backend=source_backend_name):
         raise FileNotFoundError(f"Source root does not exist: {source_root}")
-    workspace_root.mkdir(parents=True, exist_ok=True)
-
-    source_files = _source_files(source_root)
-    candidates = (
-        *_source_candidates(source_root, source_files, schema),
-        *_image_plane_source_candidates(workspace_root, schema),
+    _vfs_ensure_directory(
+        workspace_root,
+        filemanager=filemanager,
+        backend=workspace_backend_name,
     )
+
+    source_files = _source_files(
+        source_root,
+        filemanager=filemanager,
+        backend=source_backend_name,
+    )
+    local_candidates = _source_candidates(source_root, source_files, schema)
+    candidates = SourceSchemaCandidateCollection.merge(
+        local_candidates,
+        _image_plane_source_candidates(workspace_root, schema, local_candidates),
+    ).candidates
     stack_assignments, auxiliary_assignments = _partition_assignments(schema)
     stack_candidates = _matched_candidates_by_alias(
         candidates,
@@ -539,16 +753,25 @@ def materialize_source_schema_workspace(
         auxiliary_assignments,
         require_match=False,
     )
-    image_sets = ImageSetAssembler.for_schema(schema).image_sets(
-        schema,
-        stack_candidates,
-    )
-    primary_mappings, primary_source_metadata, component_values = _primary_workspace_mappings(
-        workspace_root,
-        schema,
-        image_sets,
-        tuple(stack_assignments),
-    )
+    if stack_assignments:
+        image_sets = ImageSetAssembler.for_schema(schema).image_sets(
+            schema,
+            stack_candidates,
+        )
+        primary_mappings, primary_source_metadata, component_values = _primary_workspace_mappings(
+            workspace_root,
+            schema,
+            image_sets,
+            tuple(stack_assignments),
+        )
+    else:
+        primary_mappings, primary_source_metadata, component_values = (
+            _source_artifact_anchor_workspace_mappings(
+                workspace_root,
+                auxiliary_candidates,
+                {assignment.alias: assignment for assignment in auxiliary_assignments},
+            )
+        )
     auxiliary_mappings, auxiliary_source_metadata = _auxiliary_workspace_mappings(
         workspace_root,
         auxiliary_candidates,
@@ -568,6 +791,8 @@ def materialize_source_schema_workspace(
         component_values,
         primary_source_metadata,
         auxiliary_source_metadata,
+        filemanager=filemanager,
+        backend=workspace_backend_name,
     )
     return SourceSchemaWorkspaceMaterialization(
         source_root=source_root,
@@ -624,19 +849,26 @@ def expand_source_schema_workspace_wells(
             raise ValueError(
                 f"Cannot parse source-schema virtual filename {virtual_path!r}."
             )
+
+    used_expanded_paths: set[str] = set()
+    for virtual_path, real_path in workspace_mapping.items():
+        parsed = parser.parse_filename(str(virtual_path))
+        if parsed is None:
+            raise ValueError(
+                f"Cannot parse source-schema virtual filename {virtual_path!r}."
+            )
         path_source_metadata = original_source_metadata.get(str(virtual_path), {})
         if not isinstance(path_source_metadata, dict):
             raise ValueError(
                 f"source_metadata for {virtual_path!r} is not a mapping."
             )
         for well_id in target_wells:
-            expanded_path = parser.construct_filename(
-                well=well_id,
-                site=parsed["site"],
-                channel=parsed["channel"],
-                z_index=parsed["z_index"],
-                timepoint=parsed["timepoint"],
-                extension=parsed["extension"],
+            expanded_path = _source_schema_virtual_path_for_well(
+                parser,
+                str(virtual_path),
+                parsed,
+                well_id,
+                used_paths=used_expanded_paths,
             )
             _add_mapping(expanded_mapping, expanded_path, str(real_path))
             expanded_source_metadata[expanded_path] = {
@@ -652,6 +884,80 @@ def expand_source_schema_workspace_wells(
     return target_wells
 
 
+def _source_schema_virtual_path_for_well(
+    parser: SourceSchemaFilenameParser,
+    virtual_path: str,
+    parsed: Mapping[str, object],
+    well_id: str,
+    *,
+    used_paths: set[str],
+) -> str:
+    preferred_path = _source_schema_virtual_path_for_well_site(
+        parser,
+        virtual_path,
+        parsed,
+        well_id,
+        parsed["site"],
+    )
+    if preferred_path not in used_paths:
+        used_paths.add(preferred_path)
+        return preferred_path
+
+    ordinal_site = 1
+    while True:
+        expanded_path = _source_schema_virtual_path_for_well_site(
+            parser,
+            virtual_path,
+            parsed,
+            well_id,
+            ordinal_site,
+        )
+        if expanded_path not in used_paths:
+            used_paths.add(expanded_path)
+            return expanded_path
+        ordinal_site += 1
+
+
+def _source_schema_virtual_path_for_well_site(
+    parser: SourceSchemaFilenameParser,
+    virtual_path: str,
+    parsed: Mapping[str, object],
+    well_id: str,
+    site: object,
+) -> str:
+    path = PurePosixPath(virtual_path)
+    original_name = path.name
+    original_stem = parser.construct_filename(
+        well=parsed["well"],
+        site=parsed["site"],
+        channel=parsed["channel"],
+        z_index=parsed["z_index"],
+        timepoint=parsed["timepoint"],
+        extension="",
+    )
+    expanded_stem = parser.construct_filename(
+        well=well_id,
+        site=site,
+        channel=parsed["channel"],
+        z_index=parsed["z_index"],
+        timepoint=parsed["timepoint"],
+        extension="",
+    )
+    expanded_name = (
+        f"{expanded_stem}{original_name[len(original_stem):]}"
+        if original_name.startswith(original_stem)
+        else parser.construct_filename(
+            well=well_id,
+            site=site,
+            channel=parsed["channel"],
+            z_index=parsed["z_index"],
+            timepoint=parsed["timepoint"],
+            extension=str(parsed["extension"]),
+        )
+    )
+    return str(path.with_name(expanded_name))
+
+
 def _partition_assignments(
     schema: PipelineImageSchema,
 ) -> tuple[tuple[ImageAssignment, ...], tuple[SourceAssignmentBase, ...]]:
@@ -664,12 +970,67 @@ def _partition_assignments(
         else:
             auxiliary_assignments.append(assignment)
     auxiliary_assignments.extend(schema.source_artifacts_by_alias.values())
-    if not stack_assignments:
-        raise ValueError("Source schema declares no image-stack assignments.")
     return tuple(stack_assignments), tuple(auxiliary_assignments)
 
 
-def _source_files(source_root: Path) -> tuple[Path, ...]:
+def _backend_name(backend: Backend | str) -> str:
+    return backend.value if isinstance(backend, Backend) else str(backend)
+
+
+def _vfs_is_dir(
+    path: Path,
+    *,
+    filemanager: FileManagerLike | None,
+    backend: str,
+) -> bool:
+    if filemanager is None:
+        return path.is_dir()
+    return bool(filemanager.is_dir(str(path), backend))
+
+
+def _vfs_ensure_directory(
+    path: Path,
+    *,
+    filemanager: FileManagerLike | None,
+    backend: str,
+) -> None:
+    if filemanager is None:
+        path.mkdir(parents=True, exist_ok=True)
+        return
+    filemanager.ensure_directory(str(path), backend)
+
+
+def _vfs_save_json(
+    path: Path,
+    payload: Mapping[str, object],
+    *,
+    filemanager: FileManagerLike | None,
+    backend: str,
+) -> None:
+    if filemanager is None:
+        path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        return
+    filemanager.ensure_directory(str(path.parent), backend)
+    filemanager.save(dict(payload), str(path), backend)
+
+
+def _source_files(
+    source_root: Path,
+    *,
+    filemanager: FileManagerLike | None,
+    backend: str,
+) -> tuple[Path, ...]:
+    if filemanager is not None:
+        paths: list[Path] = []
+        for raw_path in sorted(
+            filemanager.list_files(str(source_root), backend, recursive=True)
+        ):
+            path = Path(raw_path)
+            if not path.is_absolute():
+                path = source_root / path
+            if path.name != "openhcs_metadata.json":
+                paths.append(path)
+        return tuple(paths)
     return tuple(
         sorted(
             path
@@ -693,7 +1054,11 @@ def _source_candidates(
             schema.images_rule.filters,
         ):
             continue
-        metadata = metadata_from_rules(relative_path, schema.metadata_rules)
+        metadata = metadata_from_rules(
+            str(path),
+            schema.metadata_rules,
+            filter_path=relative_path,
+        )
         metadata = _metadata_with_imported_tables(
             metadata,
             imported_metadata,
@@ -712,54 +1077,41 @@ def _source_candidates(
 def _image_plane_source_candidates(
     workspace_root: Path,
     schema: PipelineImageSchema,
+    local_candidates: tuple[SourceSchemaCandidate, ...],
 ) -> tuple[SourceSchemaCandidate, ...]:
     if not schema.image_plane_sources:
         return ()
     candidates: list[SourceSchemaCandidate] = []
     for index, source in enumerate(schema.image_plane_sources, start=1):
-        path = _materialized_image_plane_source_path(
-            source,
-            workspace_root=workspace_root,
-            source_index=index,
-        )
-        metadata = metadata_from_rules(source.uri, schema.metadata_rules)
         candidates.append(
-            SourceSchemaCandidate(
-                path=path,
-                relative_path=source.uri,
-                metadata=metadata,
+            ImagePlaneSourceResolver.resolve(
+                source,
+                source_index=index,
+                workspace_root=workspace_root,
+                schema=schema,
+                local_candidates=local_candidates,
             )
         )
     return tuple(candidates)
 
 
-def _materialized_image_plane_source_path(
-    source: ImagePlaneSource,
-    *,
-    workspace_root: Path,
-    source_index: int,
-) -> Path:
-    from urllib.parse import unquote, urlparse
-
+def _image_plane_source_basename(source: ImagePlaneSource) -> str:
     parsed = urlparse(source.uri)
-    if parsed.scheme in ("", "file"):
-        return Path(unquote(parsed.path if parsed.scheme == "file" else source.uri))
-    if parsed.scheme not in ("http", "https"):
-        raise ValueError(
-            f"Unsupported embedded image-plane source URI scheme "
-            f"{parsed.scheme!r} for {source.uri!r}."
+    path = unquote(parsed.path if parsed.scheme else source.uri)
+    return Path(path).name
+
+
+def _source_metadata_matches(
+    candidate_metadata: Mapping[str, str],
+    source_metadata: Mapping[str, str],
+) -> bool:
+    return all(
+        source_metadata_values_equal(
+            source_metadata_value(candidate_metadata, field),
+            value,
         )
-    target_dir = (
-        workspace_root
-        / SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR
-        / "image_planes"
-        / f"{source_index:03d}"
+        for field, value in source_metadata.items()
     )
-    target_dir.mkdir(parents=True, exist_ok=True)
-    target_path = target_dir / Path(unquote(parsed.path)).name
-    with urllib.request.urlopen(source.uri) as response, target_path.open("wb") as handle:
-        shutil.copyfileobj(response, handle)
-    return target_path
 
 
 def _imported_metadata_rows(
@@ -810,9 +1162,31 @@ def _imported_metadata_path(
     if table.location is None:
         raise ValueError("Imported metadata tables require a location.")
     location = Path(table.location)
+    candidates = tuple(
+        dict.fromkeys(_imported_metadata_path_candidates(source_root, location))
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
+
+
+def _imported_metadata_path_candidates(
+    source_root: Path,
+    location: Path,
+) -> tuple[Path, ...]:
     if location.is_absolute():
-        return location
-    return source_root / location
+        return (
+            location,
+            source_root / location.name,
+            source_root.parent / location.name,
+        )
+    return (
+        source_root / location,
+        source_root / location.name,
+        source_root.parent / location,
+        source_root.parent / location.name,
+    )
 
 
 def _metadata_with_imported_tables(
@@ -828,7 +1202,7 @@ def _metadata_with_imported_tables(
         row = _matched_imported_metadata_row(merged, table_rows, path=path)
         if row is None:
             continue
-        merge_source_metadata(merged, row, path=path)
+        _merge_imported_metadata_row(merged, row, path=path)
     return MappingProxyType(merged)
 
 
@@ -858,24 +1232,50 @@ def _matched_imported_metadata_row(
     if not present_join_values:
         return None
     if len(present_join_values) != len(joins):
-        missing = tuple(
-            field for field, value in join_values.items() if value is None
-        )
-        raise ValueError(
-            f"Source candidate {path!r} is missing imported metadata join "
-            f"fields {missing!r}."
-        )
+        return None
     matched_rows = tuple(
         row
         for row in imported_metadata.rows
         if _imported_metadata_row_matches(row, image_metadata, joins)
     )
-    if len(matched_rows) != 1:
+    if not matched_rows:
         raise ValueError(
             f"Source candidate {path!r} matched {len(matched_rows)} imported "
             f"metadata rows; expected exactly one."
         )
+    if len(matched_rows) > 1:
+        return _consensus_imported_metadata_row(matched_rows)
     return matched_rows[0]
+
+
+def _consensus_imported_metadata_row(
+    rows: tuple[Mapping[str, str], ...],
+) -> Mapping[str, str]:
+    """Return fields with identical values across repeated imported metadata rows."""
+    common_fields = set(rows[0])
+    for row in rows[1:]:
+        common_fields.intersection_update(row)
+    return MappingProxyType(
+        {
+            field: rows[0][field]
+            for field in sorted(common_fields)
+            if all(row[field] == rows[0][field] for row in rows[1:])
+        }
+    )
+
+
+def _merge_imported_metadata_row(
+    metadata: dict[str, str],
+    row: Mapping[str, str],
+    *,
+    path: str,
+) -> None:
+    additions = {
+        key: value
+        for key, value in row.items()
+        if source_metadata_value(metadata, key) in (None, str(value))
+    }
+    merge_source_metadata(metadata, additions, path=path)
 
 
 def _imported_metadata_row_matches(
@@ -1142,6 +1542,84 @@ def _primary_workspace_mappings(
     )
 
 
+def _empty_workspace_component_values(
+) -> Mapping[AllComponents, Mapping[str, str | None]]:
+    return MappingProxyType(
+        {
+            AllComponents.CHANNEL: MappingProxyType({}),
+            AllComponents.WELL: MappingProxyType({}),
+            AllComponents.SITE: MappingProxyType({}),
+            AllComponents.Z_INDEX: MappingProxyType({}),
+            AllComponents.TIMEPOINT: MappingProxyType({}),
+        }
+    )
+
+
+def _source_artifact_anchor_workspace_mappings(
+    workspace_root: Path,
+    auxiliary_candidates: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+    assignments_by_alias: Mapping[str, SourceAssignmentBase],
+) -> tuple[
+    Mapping[str, str],
+    Mapping[str, Mapping[str, str]],
+    Mapping[AllComponents, Mapping[str, str | None]],
+]:
+    anchor_alias, anchor_candidate = _source_artifact_anchor_candidate(
+        auxiliary_candidates
+    )
+    parser = SourceSchemaFilenameParser()
+    virtual_path = parser.construct_filename(
+        well=SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE,
+        site=1,
+        channel=1,
+        z_index=1,
+        timepoint=1,
+        extension=anchor_candidate.path.suffix,
+    )
+    mappings = MappingProxyType(
+        {
+            virtual_path: _workspace_relative_path(
+                workspace_root,
+                anchor_candidate.path,
+            )
+        }
+    )
+    source_metadata = MappingProxyType(
+        {
+            virtual_path: _source_metadata_for_virtual_path(
+                {"source_alias": anchor_alias},
+                anchor_candidate.metadata,
+                assignment=assignments_by_alias.get(anchor_alias),
+            )
+        }
+    )
+    component_values = MappingProxyType(
+        {
+            AllComponents.CHANNEL: MappingProxyType({"1": anchor_alias}),
+            AllComponents.WELL: MappingProxyType(
+                {SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE: None}
+            ),
+            AllComponents.SITE: MappingProxyType({"1": None}),
+            AllComponents.Z_INDEX: MappingProxyType({"1": None}),
+            AllComponents.TIMEPOINT: MappingProxyType({"1": None}),
+        }
+    )
+    return mappings, source_metadata, component_values
+
+
+def _source_artifact_anchor_candidate(
+    auxiliary_candidates: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+) -> tuple[str, SourceSchemaCandidate]:
+    for alias in sorted(auxiliary_candidates):
+        for candidate in auxiliary_candidates[alias]:
+            if is_image_path(str(candidate.path)):
+                return alias, candidate
+    raise ValueError(
+        "Source schema declares no image-stack assignments and no loadable "
+        "source artifact image that can anchor OpenHCS execution."
+    )
+
+
 def _collision_free_site_component(
     parser: SourceSchemaFilenameParser,
     *,
@@ -1377,6 +1855,9 @@ def _write_workspace_metadata(
     component_values: Mapping[AllComponents, Mapping[str, str | None]],
     primary_source_metadata: Mapping[str, Mapping[str, str]],
     auxiliary_source_metadata: Mapping[str, Mapping[str, str]],
+    *,
+    filemanager: FileManagerLike | None,
+    backend: str,
 ) -> None:
     subdirectories = {
         FIELDS.DEFAULT_SUBDIRECTORY: _metadata_dict(
@@ -1395,9 +1876,11 @@ def _write_workspace_metadata(
             source_metadata=auxiliary_source_metadata,
             main=False,
         )
-    metadata_path.write_text(
-        json.dumps({FIELDS.SUBDIRECTORIES: subdirectories}, indent=2),
-        encoding="utf-8",
+    _vfs_save_json(
+        metadata_path,
+        {FIELDS.SUBDIRECTORIES: subdirectories},
+        filemanager=filemanager,
+        backend=backend,
     )
 
 

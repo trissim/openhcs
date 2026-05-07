@@ -6,6 +6,7 @@ from dataclasses import dataclass, replace
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.runtime_values import object_label_dense_array
 
 
 class DisplayMode(Enum):
@@ -194,6 +195,7 @@ def _display_data_on_slice(request: DisplayDataOnImageRequest) -> np.ndarray:
             return output.astype(np.float32) / 255.0
     
     elif request.objects_or_image == ObjectsOrImage.OBJECTS and labels is not None:
+        labels = object_label_dense_array(labels, dtype=np.int32)
         if request.display_mode == DisplayMode.COLOR and measurements is not None:
             # Color map mode
             from matplotlib import cm
@@ -237,7 +239,7 @@ def _display_data_on_slice(request: DisplayDataOnImageRequest) -> np.ndarray:
             # Text mode
             # Get object centers
             if request.center_x is None or request.center_y is None:
-                props = regionprops(labels.astype(np.int32))
+                props = regionprops(labels)
                 centers = [(p.centroid[1], p.centroid[0]) for p in props]
             else:
                 centers = list(zip(request.center_x, request.center_y))

@@ -233,7 +233,10 @@ class DirectorySourceFilterTargetResolver(SourceFilterTargetResolver):
     subject_key = SourceFilterSubject.DIRECTORY.value
 
     def resolve_text(self, file_path: str) -> str:
-        return str(Path(file_path).parent)
+        parent = Path(file_path).parent
+        if str(parent) == ".":
+            return ""
+        return str(parent)
 
 
 class ExtensionSourceFilterTargetResolver(SourceFilterTargetResolver):
@@ -247,12 +250,15 @@ class ExtensionSourceFilterTargetResolver(SourceFilterTargetResolver):
 def metadata_from_rules(
     file_path: str,
     metadata_rules: tuple[MetadataExtractionRule, ...],
+    *,
+    filter_path: str | None = None,
 ) -> dict[str, str]:
     """Extract metadata fields from one source path using typed rules."""
 
     extracted: dict[str, str] = {}
+    filter_candidate = file_path if filter_path is None else filter_path
     for rule in metadata_rules:
-        if not rule_filters_match(file_path, rule.filters):
+        if not rule_filters_match(filter_candidate, rule.filters):
             continue
         target = metadata_source_text(file_path, rule.source)
         match = re.search(rule.pattern, target)

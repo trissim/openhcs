@@ -77,11 +77,11 @@ def _resolve_function_references(func_value):
     if isinstance(func_value, FunctionReference):
         # Resolve FunctionReference to actual function
         return func_value.resolve()
-    elif isinstance(func_value, tuple) and len(func_value) == 2:
-        # Tuple: (function_or_ref, kwargs) → (resolved_function, kwargs)
-        func_or_ref, kwargs = func_value
+    elif isinstance(func_value, tuple) and len(func_value) in {2, 3}:
+        # Tuple: (function_or_ref, kwargs[, invocation_options])
+        func_or_ref, kwargs, *rest = func_value
         resolved_func = _resolve_function_references(func_or_ref)
-        return (resolved_func, kwargs)
+        return (resolved_func, kwargs, *rest)
     elif isinstance(func_value, list):
         # List of functions/tuples → List of resolved functions/tuples
         return [_resolve_function_references(item) for item in func_value]
@@ -188,7 +188,7 @@ def prepare_patterns_and_functions(patterns, processing_funcs, component='defaul
         except ImportError:
             is_func_ref = False
 
-        if isinstance(func_item, tuple) and len(func_item) == 2:
+        if isinstance(func_item, tuple) and len(func_item) in {2, 3}:
             first_elem = func_item[0]
             # Check if first element is FunctionReference or callable
             try:
@@ -198,7 +198,7 @@ def prepare_patterns_and_functions(patterns, processing_funcs, component='defaul
                 is_first_func_ref = False
 
             if is_first_func_ref or callable(first_elem):
-                # It's a (function/FunctionReference, kwargs) tuple
+                # It's a (function/FunctionReference, kwargs[, invocation_options]) tuple
                 return first_elem, func_item[1]
 
         if is_func_ref or callable(func_item):
@@ -271,4 +271,3 @@ def prepare_patterns_and_functions(patterns, processing_funcs, component='defaul
         component_to_args[comp_value] = {}
 
     return grouped_patterns, component_to_funcs, component_to_args
-

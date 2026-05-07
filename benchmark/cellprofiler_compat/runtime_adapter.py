@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import Hashable, Mapping
+from collections.abc import Hashable, Mapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 import logging
@@ -18,9 +18,10 @@ from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
 from openhcs.constants.constants import Backend, FileFormat
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactInputPlan, ArtifactKind, ArtifactOutputPlan
+from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.image_stack_layout import ImageStackLayout
-from openhcs.core.memory import detect_memory_type
+from openhcs.core.memory import detect_memory_type, stack_slices
 from openhcs.core.aligned_image_payload import payload_slices_for_alignment
 from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
 from openhcs.core.source_bindings import (
@@ -47,12 +48,17 @@ from openhcs.core.source_matching import (
 )
 from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
+    RuntimeArtifactQuery,
     RuntimeValueStore,
     StoredRuntimeValue,
     replace_runtime_artifact_payload,
 )
+from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_artifact_queries import (
+    MEASUREMENT_OBJECT_NAME_FIELD,
     RuntimeArtifactQueryContext,
+    measurement_row_mapping,
+    measurement_table_object_name,
     measurement_values_for_label_slices,
     measurement_value_index,
     runtime_measurement_tables,
@@ -63,6 +69,7 @@ from openhcs.core.runtime_artifact_queries import (
 )
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
+    ObjectLabelDomainScope,
     RelationshipSemantics,
     dense_object_label_id_domain,
 )
@@ -74,6 +81,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelSet,
     ObjectLabelRepresentation,
     ObjectRelationship,
+    SparseIJVLabelRows,
     SpatialGrid,
     compose_image_payload_metadata,
     image_payload_data,
@@ -96,6 +104,7 @@ _PIPELINE_START_PAYLOAD_PROCESS_CACHE: OrderedDict[
     tuple[Hashable, ...],
     tuple[Any, ...],
 ] = OrderedDict()
+_MAX_DENSE_LABEL_STACK_BYTES = 1 << 30
 
 
 def _runtime_profile_enabled() -> bool:
@@ -110,6 +119,41 @@ def _log_adapter_profile(label: str, seconds: float, **fields: Any) -> None:
 
 
 @dataclass(frozen=True, slots=True)
+class ObjectLabelSourceImageDomain:
+    """Source-domain metadata inherited by object labels produced from an image."""
+
+    spatial_origin_yx: tuple[int, int] | None = None
+    source_spatial_shape_yx: tuple[int, int] | None = None
+
+    @classmethod
+    def for_adapter_source_image(
+        cls,
+        adapter: "CellProfilerRuntimeAdapter",
+        source_image_name: str | None,
+    ) -> "ObjectLabelSourceImageDomain":
+        if source_image_name is None:
+            return cls()
+        try:
+            source_image = adapter.get_image(source_image_name)
+        except RuntimeError:
+            return cls()
+        metadata = image_payload_metadata(source_image.data)
+        return cls(
+            spatial_origin_yx=metadata.spatial_origin_yx,
+            source_spatial_shape_yx=metadata.source_spatial_shape_yx,
+        )
+
+    def origin_or(self, existing: tuple[int, int] | None) -> tuple[int, int] | None:
+        return existing if existing is not None else self.spatial_origin_yx
+
+    def source_shape_or(
+        self,
+        existing: tuple[int, int] | None,
+    ) -> tuple[int, int] | None:
+        return existing if existing is not None else self.source_spatial_shape_yx
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerRuntimeAdapter:
     """CellProfiler-like API backed by typed OpenHCS runtime state.
 
@@ -121,6 +165,7 @@ class CellProfilerRuntimeAdapter:
 
     runtime_value_store: RuntimeValueStore
     axis_id: str
+    artifact_inputs: Mapping[str, ArtifactInputPlan] = field(default_factory=dict)
     artifact_outputs: Mapping[str, ArtifactOutputPlan] = field(default_factory=dict)
     source_binding_plan: CompiledSourceBindingPlan = field(
         default_factory=CompiledSourceBindingPlan.empty
@@ -218,6 +263,54 @@ class CellProfilerRuntimeAdapter:
             request
         )
 
+    def source_binding_plane_index(self, alias: str) -> int | None:
+        """Return the current axis-local plane index for a source alias."""
+        binding = self.source_binding_plan.binding_for_alias(alias, self.group_key)
+        if binding is None or binding.origin is not SourceBindingOrigin.PIPELINE_START:
+            return None
+        context = self.source_binding_context
+        if not context.pipeline_input_files or not context.step_input_files:
+            return None
+
+        step_candidates = self.source_candidates(context.step_input_files)
+        pipeline_candidates = self.source_candidates(context.pipeline_input_files)
+        axis_candidates = _axis_scoped_source_candidates(
+            _ordered_binding_candidates(binding=binding, candidates=pipeline_candidates),
+            axis_id=self.axis_id,
+            step_input_candidates=step_candidates,
+        )
+        if not axis_candidates:
+            return None
+
+        target_candidates = _match_candidates(
+            candidates=pipeline_candidates,
+            binding=binding,
+            inherit_components={},
+        )
+        current_candidates = _match_image_set_candidates(
+            alias,
+            self.source_binding_plan.match_plan,
+            step_candidates,
+            target_candidates,
+            pipeline_candidates,
+            source_binding_plan=self.source_binding_plan,
+            group_key=self.group_key,
+        )
+        current_paths = {candidate.resolved_path for candidate in current_candidates}
+        matched_indexes = tuple(
+            index
+            for index, candidate in enumerate(axis_candidates)
+            if candidate.resolved_path in current_paths
+        )
+        if not matched_indexes:
+            return None
+        if len(matched_indexes) != 1:
+            raise RuntimeError(
+                f"Source binding alias {alias!r} matched multiple source planes "
+                f"for axis {self.axis_id!r}: {matched_indexes!r}."
+            )
+        return matched_indexes[0]
+
     def resolve_source_objects(
         self,
         alias: str,
@@ -233,37 +326,7 @@ class CellProfilerRuntimeAdapter:
         )
         return ObjectLabelSet(
             name=alias,
-            labels=labels.labels if isinstance(labels, ObjectLabelPayload) else labels,
-            unedited_labels=(
-                labels.unedited_labels
-                if isinstance(labels, ObjectLabelPayload)
-                else None
-            ),
-            small_removed_labels=(
-                labels.small_removed_labels
-                if isinstance(labels, ObjectLabelPayload)
-                else None
-            ),
-            declared_object_count=(
-                labels.declared_object_count
-                if isinstance(labels, ObjectLabelPayload)
-                else None
-            ),
-            declared_object_ids=(
-                labels.declared_object_ids
-                if isinstance(labels, ObjectLabelPayload)
-                else ()
-            ),
-            spatial_origin_yx=(
-                labels.spatial_origin_yx
-                if isinstance(labels, ObjectLabelPayload)
-                else None
-            ),
-            source_spatial_shape_yx=(
-                labels.source_spatial_shape_yx
-                if isinstance(labels, ObjectLabelPayload)
-                else None
-            ),
+            labels=labels,
             source_image_name=alias,
         )
 
@@ -341,18 +404,26 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> NamedImage:
-        cache_key = (group_key, name)
+        resolved_group_key = self.group_key if group_key is None else group_key
+        cache_key = (resolved_group_key, name)
         cached = self._image_cache.get(cache_key)
         if cached is not None:
             return cached
-        record = self._query_context(group_key).resolve(
+        records = self._resolve_runtime_records(
             name=name,
             kind=ArtifactKind.IMAGE,
+            group_key=group_key,
+        )
+        record = records[-1]
+        data = (
+            _stack_image_record_payloads(records)
+            if len(records) > 1
+            else record.value.data
         )
         schema = record.value.schema
         image = NamedImage(
             name=name,
-            data=record.value.data,
+            data=data,
             dimensions=schema.dimensions,
             source_image_name=schema.source_image_name,
         )
@@ -371,29 +442,72 @@ class CellProfilerRuntimeAdapter:
         ),
     ) -> StoredRuntimeValue:
         construct_started_at = time.perf_counter()
-        object_labels = (
-            ObjectLabelSet(
+        if isinstance(labels, ObjectLabelSet):
+            source_domain = ObjectLabelSourceImageDomain.for_adapter_source_image(
+                self,
+                source_image_name or labels.source_image_name,
+            )
+            normalized_labels = _normalize_dense_object_label_payload(labels.labels)
+            object_labels = ObjectLabelSet(
                 name=name,
-                labels=labels.labels,
-                unedited_labels=labels.unedited_labels,
-                small_removed_labels=labels.small_removed_labels,
+                labels=normalized_labels,
+                unedited_labels=_normalize_dense_object_label_payload(
+                    labels.unedited_labels
+                ),
+                small_removed_labels=_normalize_dense_object_label_payload(
+                    labels.small_removed_labels
+                ),
                 declared_object_count=labels.declared_object_count,
                 declared_object_ids=labels.declared_object_ids,
-                spatial_origin_yx=labels.spatial_origin_yx,
-                source_spatial_shape_yx=labels.source_spatial_shape_yx,
-                source_image_name=source_image_name,
-                dimensions=dimensions,
-                representation=representation,
+                domain_scope=labels.domain_scope,
+                spatial_origin_yx=source_domain.origin_or(labels.spatial_origin_yx),
+                source_spatial_shape_yx=source_domain.source_shape_or(
+                    labels.source_spatial_shape_yx
+                ),
+                source_image_name=source_image_name or labels.source_image_name,
+                dimensions=dimensions or labels.dimensions,
+                representation=labels.representation,
             )
-            if isinstance(labels, ObjectLabelPayload)
-            else ObjectLabelSet(
+        elif isinstance(labels, ObjectLabelPayload):
+            source_domain = ObjectLabelSourceImageDomain.for_adapter_source_image(
+                self,
+                source_image_name,
+            )
+            normalized_labels = _normalize_dense_object_label_payload(labels.labels)
+            object_labels = ObjectLabelSet(
                 name=name,
-                labels=labels,
+                labels=normalized_labels,
+                unedited_labels=_normalize_dense_object_label_payload(
+                    labels.unedited_labels
+                ),
+                small_removed_labels=_normalize_dense_object_label_payload(
+                    labels.small_removed_labels
+                ),
+                declared_object_count=labels.declared_object_count,
+                declared_object_ids=labels.declared_object_ids,
+                domain_scope=labels.domain_scope,
+                spatial_origin_yx=source_domain.origin_or(labels.spatial_origin_yx),
+                source_spatial_shape_yx=source_domain.source_shape_or(
+                    labels.source_spatial_shape_yx
+                ),
                 source_image_name=source_image_name,
                 dimensions=dimensions,
                 representation=representation,
             )
-        )
+        else:
+            source_domain = ObjectLabelSourceImageDomain.for_adapter_source_image(
+                self,
+                source_image_name,
+            )
+            object_labels = ObjectLabelSet(
+                name=name,
+                labels=_normalize_dense_object_label_payload(labels),
+                spatial_origin_yx=source_domain.spatial_origin_yx,
+                source_spatial_shape_yx=source_domain.source_spatial_shape_yx,
+                source_image_name=source_image_name,
+                dimensions=dimensions,
+                representation=representation,
+            )
         _log_adapter_profile(
             "adapter_construct_object_labels",
             time.perf_counter() - construct_started_at,
@@ -413,15 +527,21 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> ObjectLabelSet:
-        cache_key = (group_key, name)
+        resolved_group_key = self.group_key if group_key is None else group_key
+        cache_key = (resolved_group_key, name)
         cached = self._object_cache.get(cache_key)
         if cached is not None:
             return cached
-        record = self._query_context(group_key).resolve(
+        records = self._resolve_runtime_records(
             name=name,
             kind=ArtifactKind.OBJECT_LABELS,
+            group_key=group_key,
         )
-        objects = ObjectLabelSet.from_runtime_value(record.value)
+        objects = (
+            _stack_object_label_records(records)
+            if len(records) > 1
+            else ObjectLabelSet.from_runtime_value(records[0].value)
+        )
         self._object_cache[cache_key] = objects
         return objects
 
@@ -439,7 +559,7 @@ class CellProfilerRuntimeAdapter:
             object_name,
             ArtifactKind.OBJECT_LABELS,
         ):
-            self._query_context().resolve(
+            self._resolve_runtime_record(
                 name=object_name,
                 kind=ArtifactKind.OBJECT_LABELS,
             )
@@ -462,9 +582,10 @@ class CellProfilerRuntimeAdapter:
         *,
         group_key: str | None = None,
     ) -> MeasurementTable:
-        record = self._query_context(group_key).resolve(
+        record = self._resolve_runtime_record(
             name=name,
             kind=ArtifactKind.MEASUREMENTS,
+            group_key=group_key,
         )
         return MeasurementTable.from_runtime_value(record.value)
 
@@ -473,16 +594,28 @@ class CellProfilerRuntimeAdapter:
         object_name: str,
         *,
         group_key: str | None = None,
+        match_group: bool = True,
     ) -> tuple[MeasurementTable, ...]:
         """Return prior measurement tables whose subject is an object set."""
-        cache_key = ("object", group_key, object_name)
+        resolved_group_key = self.group_key if group_key is None else group_key
+        cache_key = (
+            "object",
+            self.runtime_value_store.revision,
+            resolved_group_key if match_group else None,
+            match_group,
+            object_name,
+        )
         cached = self._measurement_cache.get(cache_key)
         if cached is not None:
             return cached
         tables = runtime_measurement_tables_for_object(
-            self._query_context(group_key),
+            self._measurement_query_context(
+                group_key=group_key,
+                match_group=match_group,
+            ),
             object_name,
         )
+        tables = _measurement_tables_with_repeated_scalar_slice_offsets(tables)
         self._measurement_cache[cache_key] = tables
         return tables
 
@@ -508,6 +641,7 @@ class CellProfilerRuntimeAdapter:
         resolved_group_key = self.group_key if group_key is None else group_key
         cache_key = (
             "object_label_values",
+            self.runtime_value_store.revision,
             resolved_group_key,
             object_name,
             feature_name,
@@ -517,13 +651,114 @@ class CellProfilerRuntimeAdapter:
         if cached is not None:
             return cached
         values = measurement_values_for_label_slices(
-            self.measurement_tables_for_object(object_name, group_key=group_key),
+            self._measurement_tables_for_multiplane_labels(
+                object_name,
+                labels,
+                group_key=group_key,
+            ),
             feature_name,
             labels,
             object_name=object_name,
         )
         self._measurement_cache[cache_key] = values
         return values
+
+    def _measurement_tables_for_multiplane_labels(
+        self,
+        object_name: str,
+        labels: object,
+        *,
+        group_key: str | None,
+    ) -> tuple[MeasurementTable, ...]:
+        """Return object tables aligned from producer groups into label planes."""
+        label_array = np.asarray(labels)
+        cache_key = (
+            "multiplane_object_tables",
+            self.runtime_value_store.revision,
+            self.axis_id,
+            object_name,
+            id(labels),
+        )
+        cached = self._measurement_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        records = self.runtime_value_store.find(
+            kind=ArtifactKind.MEASUREMENTS,
+            axis_id=self.axis_id,
+            match_group=False,
+        )
+        scoped_tables: list[tuple[str | None, MeasurementTable]] = []
+        for record in records:
+            table = MeasurementTable.from_runtime_value(record.value)
+            if _measurement_table_matches_object(table, object_name):
+                scoped_tables.append((record.key.scope.group_key, table))
+
+        if not scoped_tables:
+            tables = self.measurement_tables_for_object(
+                object_name,
+                group_key=group_key,
+                match_group=False,
+            )
+            self._measurement_cache[cache_key] = tables
+            return tables
+
+        group_order = tuple(
+            dict.fromkeys(
+                group_key for group_key, _table in scoped_tables if group_key is not None
+            )
+        )
+        group_slice_counts = {
+            group_key: max(
+                _measurement_table_slice_count(table)
+                for table_group_key, table in scoped_tables
+                if table_group_key == group_key
+            )
+            for group_key in group_order
+        }
+        if (
+            label_array.ndim > 2
+            and not group_order
+            and len(scoped_tables) == 1
+            and _measurement_table_slice_count(scoped_tables[0][1]) == 1
+            and _label_stack_repeats_first_plane(label_array)
+        ):
+            tables = (
+                _measurement_table_broadcast_to_slice_count(
+                    scoped_tables[0][1],
+                    label_array.shape[0],
+                ),
+            )
+            self._measurement_cache[cache_key] = tables
+            return tables
+
+        group_offsets: dict[str, int] = {}
+        offset = 0
+        for group_key in group_order:
+            group_offsets[group_key] = offset
+            offset += group_slice_counts[group_key]
+
+        tables = tuple(
+            (
+                _measurement_table_with_slice_offset(
+                    table,
+                    group_offsets[table_group_key],
+                )
+                if table_group_key is not None
+                else table
+            )
+            for table_group_key, table in scoped_tables
+        )
+        if offset and label_array.ndim > 2 and offset != label_array.shape[0]:
+            _log_adapter_profile(
+                "adapter_multiplane_measurement_slice_mismatch",
+                0.0,
+                object=object_name,
+                measurement_slices=offset,
+                label_slices=label_array.shape[0],
+            )
+        self._measurement_cache[cache_key] = tables
+        return tables
 
     def _measurement_values_for_label_plane(
         self,
@@ -537,6 +772,7 @@ class CellProfilerRuntimeAdapter:
         domain = self._dense_label_domain(labels)
         cache_key = (
             "object_feature_index",
+            self.runtime_value_store.revision,
             resolved_group_key,
             object_name,
             feature_name,
@@ -573,7 +809,12 @@ class CellProfilerRuntimeAdapter:
     ) -> tuple[MeasurementTable, ...]:
         """Return measurement tables visible to the current runtime scope."""
         resolved_group_key = self.group_key if group_key is None else group_key
-        cache_key = ("all", resolved_group_key if match_group else None, match_group)
+        cache_key = (
+            "all",
+            self.runtime_value_store.revision,
+            resolved_group_key if match_group else None,
+            match_group,
+        )
         cached = self._measurement_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -598,6 +839,7 @@ class CellProfilerRuntimeAdapter:
         resolved_group_key = self.group_key if group_key is None else group_key
         cache_key = (
             "scope",
+            self.runtime_value_store.revision,
             resolved_group_key if match_group else None,
             match_group,
             scope,
@@ -628,14 +870,15 @@ class CellProfilerRuntimeAdapter:
         slice_indices: tuple[int, ...] = (),
         slice_count: int | None = None,
     ) -> StoredRuntimeValue:
-        self._query_context().resolve(
-            name=parent_object_name,
-            kind=ArtifactKind.OBJECT_LABELS,
-        )
-        self._query_context().resolve(
-            name=child_object_name,
-            kind=ArtifactKind.OBJECT_LABELS,
-        )
+        if not self._is_declared_output(name, ArtifactKind.RELATIONSHIPS):
+            self._require_artifact_declared_or_available(
+                name=parent_object_name,
+                kind=ArtifactKind.OBJECT_LABELS,
+            )
+            self._require_artifact_declared_or_available(
+                name=child_object_name,
+                kind=ArtifactKind.OBJECT_LABELS,
+            )
         semantics = RelationshipSemantics.parent_child(
             parent_object_name,
             child_object_name,
@@ -669,8 +912,19 @@ class CellProfilerRuntimeAdapter:
     def add_spatial_grid(
         self,
         name: str,
-        grid: SpatialGrid | Mapping[str, Any],
+        grid: SpatialGrid | Mapping[str, Any] | RuntimeSliceAlignedValues[Any],
     ) -> StoredRuntimeValue:
+        if isinstance(grid, RuntimeSliceAlignedValues):
+            return self._record_native_value(
+                name,
+                ArtifactKind.SPATIAL_GRID,
+                RuntimeSliceAlignedValues(
+                    slices=tuple(
+                        _spatial_grid_native_value(name, value)
+                        for value in grid.slices
+                    )
+                ),
+            )
         spatial_grid = (
             grid.with_name(name)
             if isinstance(grid, SpatialGrid)
@@ -687,11 +941,14 @@ class CellProfilerRuntimeAdapter:
         name: str,
         *,
         group_key: str | None = None,
-    ) -> SpatialGrid:
-        return runtime_spatial_grid(
-            self._query_context(group_key),
+    ) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
+        records = self._resolve_runtime_records(
             name=name,
+            kind=ArtifactKind.SPATIAL_GRID,
+            group_key=group_key,
         )
+        grids = tuple(_spatial_grid_record_value(name, record) for record in records)
+        return _single_spatial_grid(name, grids)
 
     def _record_native_value(
         self,
@@ -701,7 +958,7 @@ class CellProfilerRuntimeAdapter:
     ) -> StoredRuntimeValue:
         total_started_at = time.perf_counter()
         plan_started_at = time.perf_counter()
-        plan = self._require_output_plan(name, expected_kind)
+        plan = self._require_output_plan(name, expected_kind).for_group(self.group_key)
         _log_adapter_profile(
             "adapter_require_output_plan",
             time.perf_counter() - plan_started_at,
@@ -778,11 +1035,102 @@ class CellProfilerRuntimeAdapter:
         self,
         group_key: str | None = None,
     ) -> RuntimeArtifactQueryContext:
+        resolved_group_key = self.group_key if group_key is None else group_key
         return RuntimeArtifactQueryContext(
             self.runtime_value_store,
             self.axis_id,
-            group_key,
+            resolved_group_key,
         )
+
+    def _resolve_runtime_record(
+        self,
+        *,
+        name: str,
+        kind: ArtifactKind,
+        group_key: str | None = None,
+    ) -> StoredRuntimeValue:
+        records = self._resolve_runtime_records(
+            name=name,
+            kind=kind,
+            group_key=group_key,
+        )
+        if len(records) != 1:
+            raise RuntimeError(
+                f"CellProfiler runtime artifact input '{name}' resolved to "
+                f"{len(records)} grouped records; use a typed grouped accessor."
+            )
+        return records[0]
+
+    def _resolve_runtime_records(
+        self,
+        *,
+        name: str,
+        kind: ArtifactKind,
+        group_key: str | None = None,
+    ) -> tuple[StoredRuntimeValue, ...]:
+        input_plan = self.artifact_inputs.get(name)
+        resolved_group_key = self.group_key if group_key is None else group_key
+        if input_plan is not None:
+            if input_plan.kind is not kind:
+                raise ValueError(
+                    f"CellProfiler artifact input '{name}' expected kind "
+                    f"{kind.value}, got compiled kind {input_plan.kind.value}."
+                )
+            if _is_global_grouped_input_request(input_plan, resolved_group_key):
+                return tuple(
+                    self.runtime_value_store.resolve(
+                        _runtime_query_for_input_plan(
+                            input_plan,
+                            axis_id=self.axis_id,
+                            group_key=input_group_key,
+                            backend=self.backend,
+                        ),
+                        purpose="CellProfiler grouped runtime artifact input",
+                    )
+                    for input_group_key in input_plan.group_keys
+                )
+            return (
+                self.runtime_value_store.resolve(
+                    _runtime_query_for_input_plan(
+                        input_plan,
+                        axis_id=self.axis_id,
+                        group_key=resolved_group_key,
+                        backend=self.backend,
+                    ),
+                    purpose="CellProfiler runtime artifact input",
+                ),
+            )
+        try:
+            return (self._query_context(group_key).resolve(name=name, kind=kind),)
+        except RuntimeError:
+            records = self.runtime_value_store.find(
+                name=name,
+                kind=kind,
+                axis_id=self.axis_id,
+            )
+            if len(records) > 1 and resolved_group_key in (None, "default"):
+                return records
+            raise
+
+    def _require_artifact_declared_or_available(
+        self,
+        *,
+        name: str,
+        kind: ArtifactKind,
+    ) -> None:
+        if name in self.artifact_outputs:
+            plan = self._require_output_plan(name, kind)
+            if plan.kind is kind:
+                return
+        self._resolve_runtime_records(name=name, kind=kind)
+
+    def _is_declared_output(self, name: str, kind: ArtifactKind) -> bool:
+        if name not in self.artifact_outputs:
+            return False
+        try:
+            return self._require_output_plan(name, kind).kind is kind
+        except Exception:
+            return False
 
     def _measurement_query_context(
         self,
@@ -1064,6 +1412,458 @@ def prepare_cellprofiler_runtime_adapter() -> None:
     for method in SourceBindingMatchMethod:
         SourceBindingMatchPlanResolver.for_method(method)
     tuple(PipelineStartSourceFileLoader.__registry__.values())
+
+
+def _measurement_table_matches_object(
+    table: MeasurementTable,
+    object_name: str,
+) -> bool:
+    table_object_name = measurement_table_object_name(table)
+    if table_object_name is not None:
+        return table_object_name == object_name
+    rows = table.rows
+    if not isinstance(rows, list | tuple):
+        rows = (rows,)
+    return any(
+        measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD) == object_name
+        for row in rows
+    )
+
+
+def _measurement_table_slice_count(table: MeasurementTable) -> int:
+    rows = table.rows
+    if not isinstance(rows, list | tuple):
+        rows = (rows,)
+    slice_indexes = [
+        int(row_mapping["slice_index"])
+        for row in rows
+        for row_mapping in (measurement_row_mapping(row),)
+        if "slice_index" in row_mapping
+    ]
+    if not slice_indexes:
+        return 1
+    return max(slice_indexes) + 1
+
+
+def _measurement_table_with_slice_offset(
+    table: MeasurementTable,
+    slice_offset: int,
+) -> MeasurementTable:
+    if slice_offset == 0:
+        return table
+    rows = table.rows
+    if not isinstance(rows, list | tuple):
+        rows = (rows,)
+    return MeasurementTable(
+        name=table.name,
+        rows=[
+            {
+                **dict(measurement_row_mapping(row)),
+                "slice_index": int(
+                    measurement_row_mapping(row).get("slice_index", 0)
+                )
+                + slice_offset,
+            }
+            for row in rows
+        ],
+        object_name=table.object_name,
+        fields=table.fields,
+        object_id_field=table.object_id_field,
+        source_image_name=table.source_image_name,
+        subject=table.subject,
+    )
+
+
+def _measurement_tables_with_repeated_scalar_slice_offsets(
+    tables: tuple[MeasurementTable, ...],
+) -> tuple[MeasurementTable, ...]:
+    """Offset repeated scalar measurement tables from per-cycle executions.
+
+    OpenHCS can record one table per image-cycle using the same artifact key.
+    CellProfiler semantics treat those as consecutive image sets, so consumers
+    that slice flexible object operations need row slice indices to expose that
+    axis.
+    """
+    grouped: dict[tuple[str, str | None, str | None], list[int]] = {}
+    for index, table in enumerate(tables):
+        grouped.setdefault(
+            (table.name, measurement_table_object_name(table), table.source_image_name),
+            [],
+        ).append(index)
+
+    aligned = list(tables)
+    for indexes in grouped.values():
+        if len(indexes) <= 1:
+            continue
+        if any(_measurement_table_slice_count(tables[index]) != 1 for index in indexes):
+            continue
+        for slice_offset, table_index in enumerate(indexes):
+            aligned[table_index] = _measurement_table_with_slice_offset(
+                tables[table_index],
+                slice_offset,
+            )
+    return tuple(aligned)
+
+
+def _measurement_table_broadcast_to_slice_count(
+    table: MeasurementTable,
+    slice_count: int,
+) -> MeasurementTable:
+    if slice_count <= 1:
+        return table
+    rows = table.rows
+    if not isinstance(rows, list | tuple):
+        rows = (rows,)
+    broadcast_rows: list[Mapping[str, Any]] = []
+    for slice_index in range(slice_count):
+        for row in rows:
+            broadcast_rows.append(
+                {
+                    **dict(measurement_row_mapping(row)),
+                    "slice_index": slice_index,
+                }
+            )
+    return MeasurementTable(
+        name=table.name,
+        rows=broadcast_rows,
+        object_name=table.object_name,
+        fields=table.fields,
+        object_id_field=table.object_id_field,
+        source_image_name=table.source_image_name,
+        subject=table.subject,
+    )
+
+
+def _label_stack_repeats_first_plane(label_array: np.ndarray) -> bool:
+    if label_array.ndim <= 2:
+        return False
+    first_plane = label_array[0]
+    return all(np.array_equal(first_plane, label_array[index]) for index in range(1, label_array.shape[0]))
+
+
+def _stack_image_record_payloads(records: tuple[StoredRuntimeValue, ...]) -> Any:
+    payloads = tuple(record.value.data for record in records)
+    arrays = tuple(_grouped_image_array(image_payload_data(payload)) for payload in payloads)
+    memory_type = detect_memory_type(arrays[0])
+    data = stack_slices(
+        list(arrays),
+        memory_type,
+        0,
+    ) if all(getattr(array, "ndim", None) == 2 for array in arrays) else np.stack(
+        tuple(np.asarray(array) for array in arrays),
+        axis=0,
+    )
+    masks = tuple(image_payload_mask(payload) for payload in payloads)
+    present_masks = tuple(mask for mask in masks if mask is not None)
+    if present_masks and len(present_masks) != len(masks):
+        raise ValueError("Cannot stack mixed masked and unmasked grouped image inputs.")
+    mask = (
+        None
+        if not present_masks
+        else stack_slices(list(present_masks), memory_type, 0)
+        if all(getattr(mask, "ndim", None) == 2 for mask in present_masks)
+        else np.stack(tuple(np.asarray(mask) for mask in present_masks), axis=0)
+    )
+    return image_payload_with_context(
+        data,
+        mask=mask,
+        metadata=compose_image_payload_metadata(payloads),
+    )
+
+
+def _grouped_image_array(array: Any) -> Any:
+    if (
+        getattr(array, "ndim", None) == 3
+        and not is_color_image_slice(array)
+        and getattr(array, "shape", ())[0] == 1
+    ):
+        return array[0]
+    return array
+
+
+def _stack_object_label_records(
+    records: tuple[StoredRuntimeValue, ...],
+) -> ObjectLabelSet:
+    values = tuple(ObjectLabelSet.from_runtime_value(record.value) for record in records)
+    first = values[0]
+    representations = {value.representation for value in values}
+    domain_scopes = {value.domain_scope for value in values}
+    if len(representations) != 1:
+        raise ValueError("Cannot stack grouped object labels with mixed representations.")
+    representation = first.representation
+    declared_counts = {value.declared_object_count for value in values}
+    declared_ids = {value.declared_object_ids for value in values}
+    if representation is ObjectLabelRepresentation.SPARSE_IJV:
+        labels = SparseIJVLabelRows.from_slices(
+            tuple(
+                value.labels
+                if isinstance(value.labels, SparseIJVLabelRows)
+                else SparseIJVLabelRows.from_yx_label(value.labels)
+                for value in values
+            )
+        )
+        return ObjectLabelSet(
+            name=first.name,
+            labels=labels,
+            representation=representation,
+            dimensions=first.dimensions,
+            declared_object_count=(
+                declared_counts.pop() if len(declared_counts) == 1 else None
+            ),
+            declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
+            domain_scope=ObjectLabelDomainScope.common(domain_scopes),
+            source_image_name=_single_or_none(value.source_image_name for value in values),
+        )
+
+    memory_type = detect_memory_type(values[0].labels)
+    labels = stack_slices([value.labels for value in values], memory_type, 0)
+    unedited_labels = (
+        stack_slices(
+            [value.labels_for_variant("unedited") for value in values],
+            memory_type,
+            0,
+        )
+        if any(value.unedited_labels is not None for value in values)
+        else None
+    )
+    small_removed_labels = (
+        stack_slices(
+            [value.labels_for_variant("small_removed") for value in values],
+            memory_type,
+            0,
+        )
+        if any(value.small_removed_labels is not None for value in values)
+        else None
+    )
+    return ObjectLabelSet(
+        name=first.name,
+        labels=labels,
+        unedited_labels=unedited_labels,
+        small_removed_labels=small_removed_labels,
+        declared_object_count=(
+            declared_counts.pop() if len(declared_counts) == 1 else None
+        ),
+        declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
+        domain_scope=ObjectLabelDomainScope.common(domain_scopes),
+        representation=representation,
+        dimensions=first.dimensions,
+        source_image_name=_single_or_none(value.source_image_name for value in values),
+    )
+
+
+def _normalize_dense_object_label_payload(labels: Any) -> Any:
+    """Return dense object labels as one array payload, not slice lists."""
+    if labels is None or isinstance(labels, SparseIJVLabelRows):
+        return labels
+    if not _is_sequence_payload(labels):
+        return labels
+    if not labels:
+        return np.asarray(labels, dtype=np.int32)
+    memory_type = detect_memory_type(labels[0])
+    try:
+        return ImageStackLayout.stack_slices_or_single_stack(
+            labels,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
+    except ValueError:
+        return _stack_dense_label_sequence(labels, memory_type)
+
+
+def _stack_dense_label_sequence(labels: Sequence[Any], memory_type: str) -> Any:
+    """Stack a homogeneous dense-label sequence without image-slice assumptions."""
+    label_list = list(labels)
+    arrays = tuple(np.asarray(label) for label in label_list)
+    shapes = {tuple(array.shape) for array in arrays}
+    if len(shapes) == 1:
+        _raise_if_dense_label_stack_too_large(arrays)
+        return np.stack(arrays, axis=0)
+    return stack_slices(label_list, memory_type, 0)
+
+
+def _raise_if_dense_label_stack_too_large(arrays: tuple[np.ndarray, ...]) -> None:
+    total_bytes = sum(array.nbytes for array in arrays)
+    if total_bytes > _MAX_DENSE_LABEL_STACK_BYTES:
+        raise MemoryError(
+            "Refusing to materialize dense object-label stack larger than "
+            f"{_MAX_DENSE_LABEL_STACK_BYTES} bytes; requested {total_bytes} bytes."
+        )
+
+
+def _is_sequence_payload(labels: Any) -> bool:
+    return isinstance(labels, Sequence) and not isinstance(
+        labels,
+        (str, bytes, bytearray, Mapping),
+    )
+
+
+def _single_or_none(values: Any) -> Any | None:
+    unique = tuple(dict.fromkeys(values))
+    if len(unique) == 1:
+        return unique[0]
+    return None
+
+
+def _is_global_grouped_input_request(
+    input_plan: ArtifactInputPlan,
+    group_key: str | None,
+) -> bool:
+    group_keys = tuple(input_plan.group_keys or ())
+    if len(group_keys) <= 1:
+        return False
+    paths_by_group = input_plan.paths_by_group or {}
+    return group_key in (None, "default") and group_key not in paths_by_group
+
+
+def _spatial_grid_payload(name: str, value: Any) -> Mapping[str, Any]:
+    if isinstance(value, SpatialGrid):
+        return value.with_name(name).as_mapping()
+    if isinstance(value, Mapping):
+        return SpatialGrid.from_mapping(name, value).as_mapping()
+    raise TypeError(
+        f"Spatial grid slice '{name}' must be SpatialGrid or mapping-backed, "
+        f"got {type(value).__name__}."
+    )
+
+
+def _spatial_grid_native_value(name: str, value: Any) -> SpatialGrid:
+    if isinstance(value, SpatialGrid):
+        return value.with_name(name)
+    if isinstance(value, Mapping):
+        return SpatialGrid.from_mapping(name, value)
+    raise TypeError(
+        f"Spatial grid slice '{name}' must be SpatialGrid or mapping-backed, "
+        f"got {type(value).__name__}."
+    )
+
+
+def _spatial_grid_record_value(
+    name: str,
+    record: StoredRuntimeValue,
+) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
+    data = record.value.data
+    if isinstance(data, tuple | list) and all(
+        isinstance(value, Mapping) for value in data
+    ):
+        return RuntimeSliceAlignedValues(
+            slices=tuple(
+                SpatialGrid.from_mapping(name, value) for value in data
+            )
+        )
+    return SpatialGrid.from_runtime_value(record.value)
+
+
+def _single_spatial_grid(
+    name: str,
+    grids: tuple[SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid], ...],
+) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
+    if not grids:
+        raise RuntimeError(f"Missing spatial grid artifact {name!r}.")
+    if any(isinstance(grid, RuntimeSliceAlignedValues) for grid in grids):
+        return _single_slice_aligned_spatial_grid(name, grids)
+    first = grids[0]
+    first_payload = _spatial_grid_equivalence_payload(first)
+    if all(_spatial_grid_equivalence_payload(grid) == first_payload for grid in grids):
+        return first.with_name(name)
+    raise RuntimeError(
+        f"Spatial grid artifact {name!r} resolved to non-identical grouped grids."
+    )
+
+
+def _single_slice_aligned_spatial_grid(
+    name: str,
+    grids: tuple[SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid], ...],
+) -> RuntimeSliceAlignedValues[SpatialGrid]:
+    slice_count = max(
+        grid.slice_count if isinstance(grid, RuntimeSliceAlignedValues) else 1
+        for grid in grids
+    )
+    aligned_slices: list[SpatialGrid] = []
+    for slice_index in range(slice_count):
+        candidates = tuple(
+            _spatial_grid_for_aligned_slice(grid, slice_index, slice_count)
+            for grid in grids
+        )
+        first = candidates[0]
+        first_payload = _spatial_grid_equivalence_payload(first)
+        if not all(
+            _spatial_grid_equivalence_payload(candidate) == first_payload
+            for candidate in candidates
+        ):
+            raise RuntimeError(
+                f"Spatial grid artifact {name!r} resolved to non-identical "
+                "slice-aligned grouped grids."
+            )
+        aligned_slices.append(first.with_name(name))
+    return RuntimeSliceAlignedValues(slices=tuple(aligned_slices))
+
+
+def _spatial_grid_for_aligned_slice(
+    grid: SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid],
+    slice_index: int,
+    slice_count: int,
+) -> SpatialGrid:
+    if isinstance(grid, RuntimeSliceAlignedValues):
+        if grid.slice_count == slice_count:
+            return grid.value_for_slice(slice_index)
+        if grid.slice_count == 1:
+            return grid.value_for_slice(0)
+        raise RuntimeError(
+            "Spatial grid artifact resolved to incompatible slice-aligned "
+            f"counts {grid.slice_count} and {slice_count}."
+        )
+    return grid
+
+
+def _spatial_grid_equivalence_payload(grid: SpatialGrid) -> dict[str, Any]:
+    return {**grid.as_mapping(), "slice_index": 0}
+
+
+def _runtime_query_for_input_plan(
+    input_plan: ArtifactInputPlan,
+    *,
+    axis_id: str,
+    group_key: str | None,
+    backend: str,
+) -> RuntimeArtifactQuery:
+    if input_plan.path != "self":
+        return RuntimeArtifactQuery.by_location(
+            name=input_plan.name,
+            kind=input_plan.kind,
+            axis_id=axis_id,
+            location=RuntimeArtifactLocation(
+                path=_input_plan_path_for_group(input_plan, group_key),
+                backend=backend,
+            ),
+        )
+    return RuntimeArtifactQuery.by_group(
+        name=input_plan.name,
+        kind=input_plan.kind,
+        axis_id=axis_id,
+        group_key=_single_input_plan_group_key(input_plan),
+    )
+
+
+def _input_plan_path_for_group(
+    input_plan: ArtifactInputPlan,
+    group_key: str | None,
+) -> str:
+    paths_by_group = input_plan.paths_by_group or {}
+    if group_key in paths_by_group:
+        return paths_by_group[group_key]
+    if None in paths_by_group:
+        return paths_by_group[None]
+    return input_plan.path
+
+
+def _single_input_plan_group_key(input_plan: ArtifactInputPlan) -> str | None:
+    group_keys = input_plan.group_keys or (None,)
+    if len(group_keys) == 1:
+        return group_keys[0]
+    raise RuntimeError(
+        f"Artifact input '{input_plan.name}' uses self-location with multiple "
+        f"producer groups: {group_keys!r}."
+    )
 
 
 class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
@@ -1943,8 +2743,7 @@ class MetadataSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
                 continue
             match_value = _dimension_match_value(
                 dimension=dimension,
-                target_alias=request.alias,
-                step_input_candidates=request.step_input_candidates,
+                request=request,
             )
             if match_value is None:
                 continue
@@ -2019,6 +2818,48 @@ def _ordered_source_candidates(
     return tuple(sorted(candidates, key=lambda candidate: candidate.resolved_path))
 
 
+def _axis_scoped_source_candidates(
+    candidates: tuple[ParsedSourceCandidate, ...],
+    *,
+    axis_id: str,
+    step_input_candidates: tuple[ParsedSourceCandidate, ...],
+) -> tuple[ParsedSourceCandidate, ...]:
+    axis_scope = _axis_scope_components(
+        axis_id=axis_id,
+        step_input_candidates=step_input_candidates,
+    )
+    if not axis_scope:
+        return candidates
+    return tuple(
+        candidate
+        for candidate in candidates
+        if _candidate_matches_inherited_scope(candidate, axis_scope)
+    )
+
+
+def _axis_scope_components(
+    *,
+    axis_id: str,
+    step_input_candidates: tuple[ParsedSourceCandidate, ...],
+) -> Mapping[str, str]:
+    constraints: dict[str, str] = {}
+    for candidate in step_input_candidates:
+        for field_name, value in candidate.metadata.items():
+            if value is None:
+                continue
+            normalized_value = str(value)
+            if not source_metadata_values_equal(normalized_value, axis_id):
+                continue
+            existing = constraints.get(field_name)
+            if existing is not None and existing != normalized_value:
+                raise RuntimeError(
+                    f"Conflicting axis scope values for field {field_name!r}: "
+                    f"{existing!r} != {normalized_value!r}."
+                )
+            constraints[field_name] = normalized_value
+    return MappingProxyType(constraints)
+
+
 def _target_candidates_in_current_scope(
     step_input_candidates: tuple[ParsedSourceCandidate, ...],
     target_candidates: tuple[ParsedSourceCandidate, ...],
@@ -2090,17 +2931,14 @@ def _ordered_binding_candidates(
 def _dimension_match_value(
     *,
     dimension: SourceBindingMatchDimension,
-    target_alias: str,
-    step_input_candidates: tuple[ParsedSourceCandidate, ...],
+    request: SourceBindingMatchPlanRequest,
 ) -> str | None:
+    target_alias = request.alias
     candidate_values = {
         value
         for field in dimension.fields
         if field.alias != target_alias
-        for value in _shared_candidate_values(
-            field,
-            step_input_candidates,
-        )
+        for value in _source_match_field_values(field, request)
     }
     if not candidate_values:
         return None
@@ -2110,6 +2948,36 @@ def _dimension_match_value(
             f"values for alias {target_alias!r}: {sorted(candidate_values)!r}."
         )
     return next(iter(candidate_values))
+
+
+def _source_match_field_values(
+    field: SourceBindingMatchField,
+    request: SourceBindingMatchPlanRequest,
+) -> tuple[str, ...]:
+    try:
+        return _shared_candidate_values(field, request.step_input_candidates)
+    except RuntimeError:
+        alias_candidates = _alias_scoped_step_input_candidates(field.alias, request)
+        if not alias_candidates:
+            raise
+        return _shared_candidate_values(field, alias_candidates)
+
+
+def _alias_scoped_step_input_candidates(
+    alias: str,
+    request: SourceBindingMatchPlanRequest,
+) -> tuple[ParsedSourceCandidate, ...]:
+    binding = request.source_binding_plan.binding_for_alias(alias, request.group_key)
+    if binding is None:
+        return ()
+    matched = _match_candidates(
+        candidates=request.step_input_candidates,
+        binding=binding,
+        inherit_components={},
+    )
+    if matched == request.step_input_candidates:
+        return ()
+    return matched
 
 
 def _shared_candidate_values(

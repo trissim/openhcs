@@ -12,6 +12,7 @@ import hashlib
 from numba import njit, prange
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     radial_distribution_backend,
@@ -133,6 +134,7 @@ def measure_object_intensity_distribution(
         Tuple of (original image, list of measurements)
     """
     total_started_at = time.perf_counter()
+    labels = object_label_dense_array(labels, dtype=np.int32)
     # Handle dimensionality
     if image.ndim == 3:
         # Process first slice for now (2D module)
@@ -326,7 +328,7 @@ def _zernike_measurement_rows(
     backend_provider: CellProfilerBackendProvider | None = None,
 ) -> list[dict[str, Any]]:
     """Return CellProfiler-compatible long-form Zernike measurement rows."""
-    labels_int = labels.astype(np.int32, copy=False)
+    labels_int = object_label_dense_array(labels, dtype=np.int32)
     object_count = int(labels_int.max()) if labels_int.size else 0
     if object_count <= 0:
         return []
@@ -432,7 +434,7 @@ def _find_object_centers(labels: np.ndarray, d_to_edge: np.ndarray, nobjects: in
     indexes = np.arange(1, nobjects + 1, dtype=np.int32)
     centers_i, centers_j = shape_measurement_backend().maximum_position_of_labels(
         d_to_edge,
-        labels.astype(np.int32, copy=False),
+        object_label_dense_array(labels, dtype=np.int32),
         indexes,
     )
     return centers_i.astype(np.float64), centers_j.astype(np.float64)
@@ -445,7 +447,7 @@ def _compute_distance_from_centers(
     nobjects: int
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Compute distance from center for each pixel."""
-    labels_int = labels.astype(np.int32, copy=False)
+    labels_int = object_label_dense_array(labels, dtype=np.int32)
     if nobjects <= 0:
         return (
             np.zeros(labels.shape, dtype=np.float64),

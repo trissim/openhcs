@@ -12,6 +12,7 @@ from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
@@ -244,6 +245,9 @@ def split_or_merge_objects(
     Returns:
         Tuple of (image, stats, output_labels)
     """
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    if parent_labels is not None:
+        parent_labels = object_label_dense_array(parent_labels, dtype=np.int32)
     input_count = len(np.unique(labels)) - (1 if 0 in labels else 0)
     
     if operation == Operation.SPLIT:

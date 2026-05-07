@@ -20,6 +20,8 @@ from nominal_refactor_advisor.record_algebra import product_record
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.adapters.cellprofiler import native_cellprofiler_reference_is_complete
+from benchmark.adapters.openhcs import OPENHCS_AXIS_FILTER_PARAM
+from benchmark.adapters.openhcs import OPENHCS_MAX_AXIS_COUNT_PARAM
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
@@ -32,6 +34,8 @@ SUITE_ID_FIELD = "suite_id"
 CASE_NAME_FIELD = "case_name"
 REPETITION_FIELD = "repetition"
 DATASET_ID_FIELD = "dataset_id"
+ASSAY_CATEGORY_FIELD = "assay_category"
+MODULE_CATEGORY_FIELD = "module_category"
 EQUIVALENT_FIELD = "equivalent"
 DIFFERENCE_COUNT_FIELD = "difference_count"
 NUMERIC_ABS_TOLERANCE_FIELD = "numeric_abs_tolerance"
@@ -93,6 +97,8 @@ class CellProfilerComparisonCase:
     cppipe_path: Path
     dataset_id: str | None = None
     microscope_type: str | None = None
+    assay_category: str | None = None
+    module_category: str | None = None
     value_only: bool = False
     equivalence_reference_output_dir: Path | None = None
     cellprofiler_timeout_seconds: float | None = None
@@ -131,6 +137,8 @@ class CellProfilerComparisonObservation:
     case_name: str
     repetition: int
     dataset_id: str
+    assay_category: str | None
+    module_category: str | None
     cppipe_path: str
     equivalent: bool
     difference_count: int | None
@@ -193,6 +201,16 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
                     if raw_case.get("microscope_type") is not None
                     else None
                 ),
+                assay_category=(
+                    str(raw_case["assay_category"])
+                    if raw_case.get("assay_category") is not None
+                    else None
+                ),
+                module_category=(
+                    str(raw_case["module_category"])
+                    if raw_case.get("module_category") is not None
+                    else None
+                ),
                 value_only=bool(raw_case.get("value_only", False)),
                 equivalence_reference_output_dir=(
                     Path(str(raw_case["equivalence_reference_output_dir"]))
@@ -220,12 +238,16 @@ def run_comparison_suite(
     native_reference_root: Path | None = None,
     discard_openhcs_outputs: bool = False,
     continue_on_error: bool = False,
+    openhcs_axis_filter: Sequence[str] = (),
+    openhcs_max_axis_count: int | None = None,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
         raise ValueError("repeats must be at least 1.")
     if speedup_target <= 0:
         raise ValueError("speedup_target must be positive.")
+    if openhcs_max_axis_count is not None and openhcs_max_axis_count <= 0:
+        raise ValueError("openhcs_max_axis_count must be positive.")
     output_root.mkdir(parents=True, exist_ok=True)
     observations: list[CellProfilerComparisonObservation] = []
     for repetition in range(1, repeats + 1):
@@ -239,6 +261,8 @@ def run_comparison_suite(
                     reuse_openhcs_cache=reuse_openhcs_cache,
                     native_reference_root=native_reference_root,
                     discard_openhcs_outputs=discard_openhcs_outputs,
+                    openhcs_axis_filter=tuple(openhcs_axis_filter),
+                    openhcs_max_axis_count=openhcs_max_axis_count,
                 )
             except Exception as exc:
                 if not continue_on_error:
@@ -268,6 +292,8 @@ def run_comparison_suite(
                 native_reference_root=native_reference_root,
                 discard_openhcs_outputs=discard_openhcs_outputs,
                 continue_on_error=continue_on_error,
+                openhcs_axis_filter=tuple(openhcs_axis_filter),
+                openhcs_max_axis_count=openhcs_max_axis_count,
             )
     return tuple(observations)
 
@@ -385,6 +411,12 @@ def _summary_csv_rows(
         )
         yield {
             CASE_NAME_FIELD: case_name,
+            ASSAY_CATEGORY_FIELD: _common_value(
+                observation.assay_category for observation in case_observations
+            ),
+            MODULE_CATEGORY_FIELD: _common_value(
+                observation.module_category for observation in case_observations
+            ),
             N_FIELD: len(case_observations),
             EQUIVALENT_COUNT_FIELD: sum(
                 1 for observation in case_observations if observation.equivalent
@@ -433,6 +465,8 @@ _OBSERVATION_TABLE = CsvTableSpec(
         CASE_NAME_FIELD,
         REPETITION_FIELD,
         DATASET_ID_FIELD,
+        ASSAY_CATEGORY_FIELD,
+        MODULE_CATEGORY_FIELD,
         EQUIVALENT_FIELD,
         DIFFERENCE_COUNT_FIELD,
         NUMERIC_ABS_TOLERANCE_FIELD,
@@ -470,6 +504,8 @@ def _summary_table(speedup_target: float) -> CsvTableSpec:
     return CsvTableSpec(
         (
             CASE_NAME_FIELD,
+            ASSAY_CATEGORY_FIELD,
+            MODULE_CATEGORY_FIELD,
             N_FIELD,
             EQUIVALENT_COUNT_FIELD,
             MEDIAN_NATIVE_EXECUTION_SECONDS_FIELD,
@@ -501,6 +537,8 @@ def write_suite_metadata(
     native_reference_root: Path | None = None,
     discard_openhcs_outputs: bool = False,
     continue_on_error: bool = False,
+    openhcs_axis_filter: Sequence[str] = (),
+    openhcs_max_axis_count: int | None = None,
 ) -> None:
     """Write reproducibility metadata for the benchmark suite."""
     payload = {
@@ -515,6 +553,8 @@ def write_suite_metadata(
         ),
         "discard_openhcs_outputs": discard_openhcs_outputs,
         "continue_on_error": continue_on_error,
+        OPENHCS_AXIS_FILTER_PARAM: tuple(openhcs_axis_filter),
+        OPENHCS_MAX_AXIS_COUNT_PARAM: openhcs_max_axis_count,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -529,6 +569,8 @@ def _run_comparison_case(
     reuse_openhcs_cache: bool,
     native_reference_root: Path | None,
     discard_openhcs_outputs: bool,
+    openhcs_axis_filter: Sequence[str],
+    openhcs_max_axis_count: int | None,
 ) -> CellProfilerComparisonObservation:
     native_reference = _native_reference_location(case, native_reference_root)
     pipeline_params: dict[str, object] = {
@@ -540,6 +582,10 @@ def _run_comparison_case(
         pipeline_params["cellprofiler_timeout_seconds"] = (
             case.cellprofiler_timeout_seconds
         )
+    if openhcs_axis_filter:
+        pipeline_params[OPENHCS_AXIS_FILTER_PARAM] = tuple(openhcs_axis_filter)
+    if openhcs_max_axis_count is not None:
+        pipeline_params[OPENHCS_MAX_AXIS_COUNT_PARAM] = openhcs_max_axis_count
     result = run_cellprofiler_cppipe_parity(
         case.dataset_path,
         case.cppipe_path,
@@ -609,6 +655,8 @@ def _failed_comparison_observation(
         case_name=case.name,
         repetition=repetition,
         dataset_id=case.resolved_dataset_id,
+        assay_category=case.assay_category,
+        module_category=case.module_category,
         cppipe_path=str(case.cppipe_path),
         equivalent=False,
         difference_count=None,
@@ -653,6 +701,8 @@ def comparison_observation_from_result(
         case_name=case.name,
         repetition=repetition,
         dataset_id=case.resolved_dataset_id,
+        assay_category=case.assay_category,
+        module_category=case.module_category,
         cppipe_path=str(case.cppipe_path),
         equivalent=result.is_equivalent,
         difference_count=_difference_count(result),
@@ -737,6 +787,8 @@ def _observation_csv_row(
         CASE_NAME_FIELD: observation.case_name,
         REPETITION_FIELD: observation.repetition,
         DATASET_ID_FIELD: observation.dataset_id,
+        ASSAY_CATEGORY_FIELD: observation.assay_category,
+        MODULE_CATEGORY_FIELD: observation.module_category,
         EQUIVALENT_FIELD: observation.equivalent,
         DIFFERENCE_COUNT_FIELD: observation.difference_count,
         NUMERIC_ABS_TOLERANCE_FIELD: observation.numeric_abs_tolerance,
@@ -768,6 +820,15 @@ def _median_present(values: Iterable[float | None]) -> float | None:
     if not present:
         return None
     return statistics.median(present)
+
+
+def _common_value(values: Iterable[str | None]) -> str | None:
+    present = {value for value in values if value}
+    if not present:
+        return None
+    if len(present) > 1:
+        return "Mixed"
+    return next(iter(present))
 
 
 def _benchmark_path_slug(value: str) -> str:

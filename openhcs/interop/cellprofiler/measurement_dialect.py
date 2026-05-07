@@ -163,6 +163,13 @@ CELLPROFILER_FEATURE_NUMERIC_TOLERANCES = (
         numeric_rel_tolerance=1e-3,
     ),
     RuntimeMeasurementFeatureNumericTolerance(
+        feature_names=frozenset({PairMeasurementFeature.REGRESSION_SLOPE.value}),
+        subject_scope=MeasurementScope.IMAGE,
+        statistic="value",
+        numeric_abs_tolerance=2e-6,
+        numeric_rel_tolerance=1e-6,
+    ),
+    RuntimeMeasurementFeatureNumericTolerance(
         feature_names=frozenset({"area"}),
         subject_scope=MeasurementScope.OBJECT,
         numeric_abs_tolerance=1.0,

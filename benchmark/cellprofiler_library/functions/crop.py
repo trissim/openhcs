@@ -19,7 +19,7 @@ from benchmark.cellprofiler_semantics.crop import (
 )
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
@@ -27,6 +27,7 @@ from openhcs.core.runtime_values import (
     MaskedImagePayload,
     image_payload_data,
     image_payload_metadata,
+    object_label_dense_array,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
@@ -368,6 +369,7 @@ def _crop_output_metadata(
 
 
 @numpy
+@special_inputs("mask_plane")
 @special_outputs(
     (
         "crop_measurements",
@@ -384,6 +386,7 @@ def _crop_output_metadata(
 )
 def crop(
     image: np.ndarray,
+    mask_plane: np.ndarray | None = None,
     crop_shape: CropShape | str = CropShape.RECTANGLE,
     cropping_method: CroppingMethod | str = CroppingMethod.COORDINATES,
     removal_method: RemovalMethod | str = RemovalMethod.NO,
@@ -397,10 +400,12 @@ def crop(
     """Crop an image and return its CellProfiler crop_mask sidecar."""
     input_pixels = image_payload_data(image)
     input_metadata = image_payload_metadata(image)
-    orig_image_pixels, mask_plane = _split_crop_input(input_pixels)
+    orig_image_pixels, input_mask_plane = _split_crop_input(input_pixels)
+    if mask_plane is not None:
+        input_mask_plane = image_payload_data(mask_plane)
     request = CropMaskRequest(
         orig_image_pixels=orig_image_pixels,
-        mask_plane=mask_plane,
+        mask_plane=input_mask_plane,
         crop_shape=crop_shape,
         cropping_method=cropping_method,
         left_right_rectangle_positions=left_right_rectangle_positions,
@@ -482,7 +487,7 @@ def _validate_crop_mask(
 
 def _object_label_crop_mask(labels: Any, image: np.ndarray) -> np.ndarray:
     """Return a 2-D foreground mask from dense object-label planes."""
-    label_array = np.asarray(labels)
+    label_array = object_label_dense_array(labels)
     image_shape = tuple(np.asarray(image).shape[:2])
     if label_array.shape == image_shape:
         return label_array > 0

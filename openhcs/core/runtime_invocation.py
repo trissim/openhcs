@@ -8,9 +8,14 @@ from dataclasses import dataclass
 from typing import Generic, TypeVar
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 
 PayloadT = TypeVar("PayloadT")
-SliceValueT = TypeVar("SliceValueT")
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuntimeInvocationOptions(ABC):
+    """Typed, non-callable settings that control one runtime invocation."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -44,26 +49,6 @@ class RuntimeFunctionInvocationRequest(
 
     image: PayloadT
     kwargs: Mapping[str, object]
-
-
-@dataclass(frozen=True, slots=True)
-class RuntimeSliceAlignedValues(Generic[SliceValueT]):
-    """Non-image payload with one backend-native value per runtime slice."""
-
-    slices: tuple[SliceValueT, ...]
-
-    def __post_init__(self) -> None:
-        slices = tuple(self.slices)
-        if not slices:
-            raise ValueError("RuntimeSliceAlignedValues.slices cannot be empty.")
-        object.__setattr__(self, "slices", slices)
-
-    @property
-    def slice_count(self) -> int:
-        return len(self.slices)
-
-    def value_for_slice(self, slice_index: int) -> SliceValueT:
-        return self.slices[slice_index]
 
 
 def requested_image_execution_mode(

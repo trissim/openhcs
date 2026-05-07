@@ -14,6 +14,7 @@ import scipy.ndimage
 import scipy.sparse
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -231,8 +232,11 @@ def measure_object_overlap(
             raise ValueError("Labels must be provided either via special_inputs or stacked in image")
     else:
         output_image = image
-        labels_ground_truth = labels_ground_truth.astype(np.int32)
-        labels_test = labels_test.astype(np.int32)
+        labels_ground_truth = object_label_dense_array(
+            labels_ground_truth,
+            dtype=np.int32,
+        )
+        labels_test = object_label_dense_array(labels_test, dtype=np.int32)
     
     # Ensure 2D
     if labels_ground_truth.ndim == 3:

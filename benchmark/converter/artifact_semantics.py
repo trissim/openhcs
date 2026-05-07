@@ -160,6 +160,7 @@ class OutputObjectsSettingClassifier(ArtifactSettingClassifier):
         if any(
             phrase in name
             for phrase in (
+                "combined_object_set",
                 "masked_objects",
                 "output_objects",
                 "objects_to_be_identified",
@@ -227,10 +228,29 @@ class InputObjectsSettingClassifier(ArtifactSettingClassifier):
             return None
         if _contains_any(
             name,
-            ("location", "method", "module", "measurement", "shape"),
+            (
+                "how_to_handle",
+                "location",
+                "method",
+                "module",
+                "measurement",
+                "shape",
+            ),
         ):
             return None
         return ArtifactSettingRole.INPUT_OBJECTS
+
+
+class BareObjectsInputSettingClassifier(ArtifactSettingClassifier):
+    """Classify CellProfiler LabelSubscriber settings named simply ``Objects``."""
+
+    classifier_name = "bare_input_objects"
+    priority = 41
+
+    def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
+        if _normalized_setting(setting.name) == "objects":
+            return ArtifactSettingRole.INPUT_OBJECTS
+        return None
 
 
 class InputSpatialGridSettingClassifier(ArtifactSettingClassifier):

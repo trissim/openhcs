@@ -10,12 +10,18 @@ from benchmark.cellprofiler_compat import (
     CellProfilerRelationshipPayload,
     CellProfilerRuntimeAdapter,
 )
+from benchmark.cellprofiler_compat.runtime_adapter import _single_spatial_grid
 from openhcs.core.runtime_artifact_queries import (
     measurement_values_for_label_slices,
     measurement_values_for_feature,
 )
 from benchmark.cellprofiler_library import get_function
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactKind,
+    ArtifactOutputPlan,
+    ArtifactSpec,
+)
 from openhcs.core.config import DtypeConfig
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_inputs
@@ -41,6 +47,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     FieldSpec,
     ImagePayloadMetadata,
@@ -229,6 +236,314 @@ def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
     assert filemanager.saved[("memory", "/memory/Nuclei.pkl")] is labels
 
 
+def test_cellprofiler_adapter_records_dense_object_label_slice_lists_as_stacks():
+    adapter, filemanager = _adapter(
+        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    )
+    labels = [
+        np.full((3, 4), 1, dtype=np.int32),
+        np.full((3, 4), 2, dtype=np.int32),
+    ]
+
+    adapter.add_objects(NUCLEI, labels)
+    objects = adapter.get_objects(NUCLEI)
+
+    assert objects.labels.shape == (2, 3, 4)
+    np.testing.assert_array_equal(objects.labels, np.stack(labels))
+    np.testing.assert_array_equal(
+        filemanager.saved[("memory", "/memory/Nuclei.pkl")],
+        np.stack(labels),
+    )
+
+
+def test_cellprofiler_adapter_records_dense_object_label_volume_lists_as_stacks():
+    adapter, _filemanager = _adapter(
+        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    )
+    labels = [
+        np.full((2, 3, 4), 1, dtype=np.int32),
+        np.full((2, 3, 4), 2, dtype=np.int32),
+    ]
+
+    adapter.add_objects(NUCLEI, labels)
+    objects = adapter.get_objects(NUCLEI)
+
+    assert objects.labels.shape == (2, 2, 3, 4)
+    np.testing.assert_array_equal(objects.labels, np.stack(labels))
+
+
+def test_cellprofiler_adapter_refuses_explosive_dense_object_label_sequences(monkeypatch):
+    import benchmark.cellprofiler_compat.runtime_adapter as runtime_adapter
+
+    adapter, _filemanager = _adapter(
+        {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}
+    )
+    monkeypatch.setattr(runtime_adapter, "_MAX_DENSE_LABEL_STACK_BYTES", 16)
+    labels = []
+    for slice_index in range(3):
+        stack = np.zeros((3, 2, 4, 5), dtype=np.int32)
+        stack[slice_index] = slice_index + 1
+        labels.append(stack)
+
+    with pytest.raises(MemoryError, match="Refusing to materialize"):
+        adapter.add_objects(NUCLEI, labels)
+
+
+def test_cellprofiler_adapter_reads_declared_inputs_by_compiled_location():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        filemanager=filemanager,
+    )
+    labels = ArrayLike()
+    producer.add_objects(NUCLEI, labels)
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_inputs={
+            NUCLEI: ArtifactInputPlan(
+                name=NUCLEI,
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=(None,),
+            )
+        },
+        filemanager=filemanager,
+    )
+
+    assert consumer.get_objects(NUCLEI).labels is labels
+
+
+def test_cellprofiler_adapter_stacks_unplanned_global_grouped_images():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    first = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="1",
+        artifact_outputs={
+            DNA_IMAGE: ArtifactOutputPlan(
+                name=DNA_IMAGE,
+                path="/memory/DNA_s1.pkl",
+                kind=ArtifactKind.IMAGE,
+                group_keys=("1",),
+                paths_by_group={"1": "/memory/DNA_s1.pkl"},
+            )
+        },
+        filemanager=filemanager,
+    )
+    second = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="2",
+        artifact_outputs={
+            DNA_IMAGE: ArtifactOutputPlan(
+                name=DNA_IMAGE,
+                path="/memory/DNA_s2.pkl",
+                kind=ArtifactKind.IMAGE,
+                group_keys=("2",),
+                paths_by_group={"2": "/memory/DNA_s2.pkl"},
+            )
+        },
+        filemanager=filemanager,
+    )
+    first.add_image(DNA_IMAGE, np.full((2, 3), 1.0, dtype=np.float32))
+    second.add_image(DNA_IMAGE, np.full((2, 3), 2.0, dtype=np.float32))
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        filemanager=filemanager,
+    )
+
+    image = consumer.get_image(DNA_IMAGE)
+
+    assert image.data.shape == (2, 2, 3)
+    np.testing.assert_array_equal(image.data[0], np.full((2, 3), 1.0))
+    np.testing.assert_array_equal(image.data[1], np.full((2, 3), 2.0))
+
+
+def test_cellprofiler_adapter_relationships_validate_declared_inputs_by_location():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+        },
+        filemanager=filemanager,
+    )
+    producer.add_objects(NUCLEI, ArrayLike())
+    producer.add_objects(CELLS, ArrayLike())
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_inputs={
+            NUCLEI: ArtifactInputPlan(
+                name=NUCLEI,
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=(None,),
+            ),
+            CELLS: ArtifactInputPlan(
+                name=CELLS,
+                path="/memory/Cells.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=(None,),
+            ),
+        },
+        artifact_outputs={
+            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS)
+        },
+        filemanager=filemanager,
+    )
+
+    relationship = consumer.add_relationship(
+        PARENT_CHILD,
+        parent_object_name=NUCLEI,
+        child_object_name=CELLS,
+        parent_ids=np.array([1]),
+        child_ids=np.array([2]),
+    )
+
+    assert relationship.value.schema.kind is ArtifactKind.RELATIONSHIPS
+
+
+def test_cellprofiler_adapter_declared_relationship_allows_pruned_child_endpoint():
+    filemanager = FileManagerStub()
+    relationship_name = "Nuclei_FilteredCells_relationships"
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_outputs={
+            relationship_name: _plan(relationship_name, ArtifactKind.RELATIONSHIPS),
+        },
+        filemanager=filemanager,
+    )
+
+    relationship = adapter.add_relationship(
+        relationship_name,
+        parent_object_name=NUCLEI,
+        child_object_name="FilteredCells",
+        parent_ids=np.array([1]),
+        child_ids=np.array([2]),
+    )
+
+    assert relationship.value.schema.kind is ArtifactKind.RELATIONSHIPS
+    assert relationship.value.schema.relationship.target.name == "FilteredCells"
+
+
+def test_cellprofiler_adapter_relationships_accept_grouped_parent_inputs():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    first = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="1",
+        artifact_outputs={
+            CELLS: ArtifactOutputPlan(
+                name=CELLS,
+                path="/memory/Cells_s1.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=("1",),
+                paths_by_group={"1": "/memory/Cells_s1.pkl"},
+            )
+        },
+        filemanager=filemanager,
+    )
+    second = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="2",
+        artifact_outputs={
+            CELLS: ArtifactOutputPlan(
+                name=CELLS,
+                path="/memory/Cells_s2.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=("2",),
+                paths_by_group={"2": "/memory/Cells_s2.pkl"},
+            )
+        },
+        filemanager=filemanager,
+    )
+    first.add_objects(CELLS, np.zeros((2, 3), dtype=np.int32))
+    second.add_objects(CELLS, np.ones((2, 3), dtype=np.int32))
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_outputs={
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
+        },
+        filemanager=filemanager,
+    )
+    consumer.add_objects(NUCLEI, np.zeros((2, 2, 3), dtype=np.int32))
+
+    relationship = consumer.add_relationship(
+        PARENT_CHILD,
+        parent_object_name=CELLS,
+        child_object_name=NUCLEI,
+        parent_ids=np.array([1]),
+        child_ids=np.array([2]),
+    )
+
+    assert relationship.value.schema.kind is ArtifactKind.RELATIONSHIPS
+
+
+def test_cellprofiler_adapter_relationships_allow_same_invocation_child_output():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)},
+        filemanager=filemanager,
+    )
+    producer.add_objects(NUCLEI, ArrayLike())
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_inputs={
+            NUCLEI: ArtifactInputPlan(
+                name=NUCLEI,
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=(None,),
+            )
+        },
+        artifact_outputs={
+            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+            PARENT_CHILD: _plan(PARENT_CHILD, ArtifactKind.RELATIONSHIPS),
+        },
+        filemanager=filemanager,
+    )
+
+    relationship = consumer.add_relationship(
+        PARENT_CHILD,
+        parent_object_name=NUCLEI,
+        child_object_name=CELLS,
+        parent_ids=np.array([1]),
+        child_ids=np.array([2]),
+    )
+
+    assert relationship.value.schema.kind is ArtifactKind.RELATIONSHIPS
+
+
 def test_cellprofiler_adapter_adds_and_reads_spatial_grid_artifacts():
     adapter, filemanager = _adapter({"Grid": _plan("Grid", ArtifactKind.SPATIAL_GRID)})
     grid = SpatialGrid(
@@ -249,6 +564,76 @@ def test_cellprofiler_adapter_adds_and_reads_spatial_grid_artifacts():
     assert stored.columns == 30
     assert stored.x_origin == 27.0
     assert filemanager.saved[("memory", "/memory/Grid.pkl")]["rows"] == 30
+
+
+def test_cellprofiler_adapter_adds_and_reads_slice_aligned_spatial_grids():
+    adapter, filemanager = _adapter({"Grid": _plan("Grid", ArtifactKind.SPATIAL_GRID)})
+    grids = RuntimeSliceAlignedValues(
+        slices=(
+            SpatialGrid(
+                name="grid_info",
+                rows=2,
+                columns=2,
+                x_spacing=8.0,
+                y_spacing=8.0,
+                x_origin=1.0,
+                y_origin=4.0,
+            ),
+            SpatialGrid(
+                name="grid_info",
+                rows=2,
+                columns=2,
+                x_spacing=8.0,
+                y_spacing=8.0,
+                x_origin=2.0,
+                y_origin=4.0,
+            ),
+        )
+    )
+
+    adapter.add_spatial_grid("Grid", grids)
+    stored = adapter.get_spatial_grid("Grid")
+
+    assert isinstance(stored, RuntimeSliceAlignedValues)
+    assert [grid.name for grid in stored.slices] == ["Grid", "Grid"]
+    assert [grid.x_origin for grid in stored.slices] == [1.0, 2.0]
+    assert [grid["x_origin"] for grid in filemanager.saved[("memory", "/memory/Grid.pkl")]] == [
+        1.0,
+        2.0,
+    ]
+
+
+def test_cellprofiler_spatial_grid_resolver_broadcasts_identical_scalar_grid():
+    scalar = SpatialGrid(
+        name="grid_info",
+        rows=2,
+        columns=2,
+        x_spacing=8.0,
+        y_spacing=8.0,
+        x_origin=1.0,
+        y_origin=4.0,
+    )
+    aligned = RuntimeSliceAlignedValues(
+        slices=(
+            scalar,
+            SpatialGrid(
+                name="grid_info",
+                rows=2,
+                columns=2,
+                x_spacing=8.0,
+                y_spacing=8.0,
+                x_origin=1.0,
+                y_origin=4.0,
+                slice_index=1,
+            ),
+        )
+    )
+
+    resolved = _single_spatial_grid("Grid", (scalar, aligned))
+
+    assert isinstance(resolved, RuntimeSliceAlignedValues)
+    assert [grid.name for grid in resolved.slices] == ["Grid", "Grid"]
+    assert [grid.x_origin for grid in resolved.slices] == [1.0, 1.0]
 
 
 def test_cellprofiler_adapter_replaces_existing_payload_with_latest_binding():
@@ -376,6 +761,142 @@ def test_cellprofiler_adapter_lists_measurement_tables_for_object_subject():
     assert [table.name for table in tables] == [NUCLEI_MEASUREMENTS]
     assert tables[0].rows is rows
     assert tables[0].object_name == NUCLEI
+
+
+def test_cellprofiler_adapter_offsets_repeated_scalar_measurement_tables():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    source_binding_plan = CompiledSourceBindingPlan.from_config(
+        StepSourceBindingsConfig(
+            groups=(GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),)
+        )
+    )
+
+    for index, value in enumerate((11.0, 13.0), start=1):
+        producer = CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_id=AXIS_ID,
+            artifact_outputs={
+                NUCLEI_MEASUREMENTS: ArtifactOutputPlan(
+                    name=NUCLEI_MEASUREMENTS,
+                    path=f"/memory/{NUCLEI_MEASUREMENTS}_{index}.pkl",
+                    kind=ArtifactKind.MEASUREMENTS,
+                ),
+            },
+            source_binding_plan=source_binding_plan,
+            filemanager=filemanager,
+        )
+        producer.add_measurements(
+            NUCLEI_MEASUREMENTS,
+            [
+                {
+                    "slice_index": 0,
+                    "object_label": 1,
+                    "object_name": NUCLEI,
+                    "area": value,
+                }
+            ],
+        )
+
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=source_binding_plan,
+        filemanager=filemanager,
+    )
+
+    first, second = adapter.measurement_tables_for_object(NUCLEI)
+
+    assert first.rows[0]["slice_index"] == 0
+    assert second.rows[0]["slice_index"] == 1
+
+
+def test_cellprofiler_adapter_aligns_multiplane_measurements_across_groups():
+    store = RuntimeValueStore()
+    filemanager = FileManagerStub()
+    outputs = {
+        NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+        NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+    }
+    source_binding_plan = CompiledSourceBindingPlan.from_config(
+        StepSourceBindingsConfig(
+            groups=(GroupedSourceBindings(bindings=(NamedSourceBinding(alias=DNA_IMAGE),)),)
+        )
+    )
+
+    for group_key, value in (("site1", 5.0), ("site2", 7.0)):
+        producer = CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_id=AXIS_ID,
+            artifact_outputs=outputs,
+            source_binding_plan=source_binding_plan,
+            filemanager=filemanager,
+            group_key=group_key,
+        )
+        producer.add_measurements(
+            NUCLEI_MEASUREMENTS,
+            [
+                {
+                    "slice_index": 0,
+                    "object_label": 1,
+                    "mean_intensity": value,
+                    "object_name": NUCLEI,
+                }
+            ],
+            source_image_name="rawGFP",
+        )
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        artifact_outputs=outputs,
+        source_binding_plan=source_binding_plan,
+        filemanager=filemanager,
+        group_key="collapsed",
+    )
+    labels = np.array([[[1]], [[1]]], dtype=np.int32)
+
+    values = consumer.measurement_values_for_label_slices(
+        NUCLEI,
+        "Intensity_MeanIntensity_rawGFP",
+        labels,
+    )
+
+    np.testing.assert_allclose(values[0], [5.0])
+    np.testing.assert_allclose(values[1], [7.0])
+
+
+def test_cellprofiler_adapter_broadcasts_single_slice_measurements_for_repeated_labels():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    adapter.add_measurements(
+        NUCLEI_MEASUREMENTS,
+        [
+            {
+                "slice_index": 0,
+                "object_label": 1,
+                "mean_intensity": 5.0,
+                "object_name": NUCLEI,
+            }
+        ],
+        source_image_name="rawGFP",
+    )
+    labels = np.array([[[1]], [[1]], [[1]]], dtype=np.int32)
+
+    values = adapter.measurement_values_for_label_slices(
+        NUCLEI,
+        "Intensity_MeanIntensity_rawGFP",
+        labels,
+    )
+
+    assert len(values) == 3
+    for value in values:
+        np.testing.assert_allclose(value, [5.0])
 
 
 def test_cellprofiler_adapter_adds_relationships_after_objects_exist():
@@ -981,6 +1502,100 @@ def test_cellprofiler_adapter_resolves_metadata_selector_via_compiled_rules(tmp_
     assert resolved.shape == expected.shape
     np.testing.assert_array_equal(resolved, expected)
     assert filemanager.loaded_batches == []
+
+
+def test_cellprofiler_adapter_scopes_match_plan_values_by_source_alias_selector():
+    source_bindings = StepSourceBindingsConfig(
+        groups=(
+            GroupedSourceBindings(
+                bindings=(
+                    NamedSourceBinding(
+                        alias=DNA_IMAGE,
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "1"),
+                            ),
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="Actin",
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "2"),
+                            ),
+                        ),
+                    ),
+                    NamedSourceBinding(
+                        alias="IllumBlue",
+                        origin=SourceBindingOrigin.PIPELINE_START,
+                        selector=SourceSelector(
+                            components=(
+                                ComponentSelector(AllComponents.CHANNEL, "3"),
+                            ),
+                        ),
+                    ),
+                ),
+            ),
+        ),
+        match_plan=SourceBindingMatchPlan(
+            method=SourceBindingMatchMethod.METADATA,
+            dimensions=(
+                SourceBindingMatchDimension(
+                    fields=(
+                        SourceBindingMatchField(
+                            alias=DNA_IMAGE,
+                            metadata_field="site",
+                        ),
+                        SourceBindingMatchField(
+                            alias="IllumBlue",
+                            metadata_field="site",
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    )
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "A01_s001_w1_z001_t001.tif",
+            "A01_s002_w2_z001_t001.tif",
+        ),
+        pipeline_input_files=(
+            "/plate/Images/A01_s001_w3_z001_t001.tif",
+            "/plate/Images/A01_s002_w3_z001_t001.tif",
+        ),
+        pipeline_input_backend="memory",
+    )
+    filemanager = FileManagerStub()
+    expected = np.full((2, 2), 31.0, dtype=np.float32)
+    filemanager.saved[("memory", "/plate/Images/A01_s001_w3_z001_t001.tif")] = expected
+    filemanager.saved[("memory", "/plate/Images/A01_s002_w3_z001_t001.tif")] = np.full(
+        (2, 2),
+        41.0,
+        dtype=np.float32,
+    )
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={},
+        source_binding_plan=CompiledSourceBindingPlan.from_config(source_bindings),
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    resolved = adapter.resolve_source_image(
+        "IllumBlue",
+        np.stack(
+            [
+                np.full((2, 2), 1.0, dtype=np.float32),
+                np.full((2, 2), 2.0, dtype=np.float32),
+            ]
+        ),
+    )
+
+    assert resolved.shape == expected.shape
+    np.testing.assert_array_equal(resolved, expected)
 
 
 def test_cellprofiler_adapter_matches_metadata_keys_by_semantic_identity(tmp_path):
@@ -2057,6 +2672,44 @@ def test_measurement_lookup_aligns_values_to_label_slices():
     assert len(value_slices) == 2
     np.testing.assert_array_equal(value_slices[0], np.array([100.0, 200.0]))
     np.testing.assert_array_equal(value_slices[1], np.array([300.0]))
+
+
+def test_measurement_lookup_broadcasts_singleton_indexed_slice_to_label_stack():
+    value_slices = measurement_values_for_label_slices(
+        (
+            MeasurementTable(
+                name=MEASUREMENTS,
+                rows=(
+                    {
+                        "slice_index": 0,
+                        "object_label": 1,
+                        "mean_intensity": 0.25,
+                        "object_name": NUCLEI,
+                    },
+                    {
+                        "slice_index": 0,
+                        "object_label": 2,
+                        "mean_intensity": 0.5,
+                        "object_name": NUCLEI,
+                    },
+                ),
+                source_image_name="rawGFP",
+            ),
+        ),
+        "Intensity_MeanIntensity_rawGFP",
+        np.array(
+            [
+                [[1, 0], [0, 0]],
+                [[2, 0], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        object_name=NUCLEI,
+    )
+
+    assert len(value_slices) == 2
+    np.testing.assert_array_equal(value_slices[0], np.array([0.25]))
+    np.testing.assert_array_equal(value_slices[1], np.array([0.5]))
 
 
 def test_measurement_lookup_returns_empty_slices_for_empty_objects():

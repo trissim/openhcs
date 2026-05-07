@@ -882,9 +882,9 @@ def measurement_values_for_label_slices(
                 (
                     _measurement_values_for_label_plane(
                         label_plane,
-                        *values_by_slice.get(
+                        *_measurement_value_index_for_label_slice(
+                            values_by_slice,
                             slice_index,
-                            values_by_slice.get(-1, ({}, [])),
                         ),
                         feature_name,
                     )
@@ -900,6 +900,23 @@ def measurement_values_for_label_slices(
         )
         for slice_index, label_plane in enumerate(label_planes)
     )
+
+
+def _measurement_value_index_for_label_slice(
+    values_by_slice: Mapping[int, tuple[dict[int, float], list[float]]],
+    slice_index: int,
+) -> tuple[dict[int, float], list[float]]:
+    """Return the measurement index for a label plane, broadcasting singletons."""
+    if slice_index in values_by_slice:
+        return values_by_slice[slice_index]
+    if -1 in values_by_slice:
+        return values_by_slice[-1]
+    concrete_slice_indexes = tuple(
+        index for index in values_by_slice if index >= 0
+    )
+    if len(concrete_slice_indexes) == 1:
+        return values_by_slice[concrete_slice_indexes[0]]
+    return {}, []
 
 
 def _measurement_value_indexes_by_slice(
@@ -1070,7 +1087,10 @@ def _measurement_values_for_label_plane(
         )
     if positional_values:
         return np.array(positional_values[: len(positive_labels)])
-    raise ValueError(f"Could not resolve measurement feature {feature_name!r}.")
+    raise ValueError(
+        f"Could not resolve measurement feature {feature_name!r} for "
+        f"positive labels {positive_labels[:5]!r}."
+    )
 
 
 def _positive_label_ids(label_plane: Any) -> tuple[int, ...]:

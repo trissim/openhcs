@@ -44,6 +44,7 @@ from benchmark.contracts.tool_adapter import (
     ToolNotInstalledError,
 )
 from benchmark.contracts.metric import MetricCollector
+from openhcs.constants import MULTIPROCESSING_AXIS
 from openhcs.constants.constants import Microscope
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.equivalence import RuntimeEquivalencePolicy
@@ -90,6 +91,52 @@ _RUNTIME_EXECUTION_CACHE_HELPER_KEYS = frozenset({"legacy_source_tree"})
 _MICROSCOPES_BY_NORMALIZED_LITERAL = {
     member.value.lower(): member for member in Microscope
 }
+OPENHCS_AXIS_FILTER_PARAM = "openhcs_axis_filter"
+OPENHCS_MAX_AXIS_COUNT_PARAM = "openhcs_max_axis_count"
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHCSAxisSelection:
+    """Typed benchmark-only axis selection for OpenHCS execution."""
+
+    axis_filter: tuple[str, ...] = ()
+    max_axis_count: int | None = None
+
+    @classmethod
+    def from_pipeline_params(
+        cls,
+        pipeline_params: Mapping[str, Any],
+    ) -> "OpenHCSAxisSelection":
+        max_axis_count = pipeline_params.get(OPENHCS_MAX_AXIS_COUNT_PARAM)
+        return cls(
+            axis_filter=_normalized_axis_filter(
+                pipeline_params.get(OPENHCS_AXIS_FILTER_PARAM)
+            ),
+            max_axis_count=(
+                int(max_axis_count) if max_axis_count is not None else None
+            ),
+        )
+
+    def resolve(self, available_axes: tuple[str, ...]) -> tuple[str, ...]:
+        """Resolve the selected axes against orchestrator-discovered axes."""
+        if self.max_axis_count is not None and self.max_axis_count <= 0:
+            raise ValueError("openhcs max axis count must be positive.")
+        if self.axis_filter:
+            requested = set(self.axis_filter)
+            selected = tuple(axis for axis in available_axes if axis in requested)
+            missing = tuple(axis for axis in self.axis_filter if axis not in selected)
+            if missing:
+                raise ValueError(
+                    "Requested OpenHCS axes are not available: "
+                    + ", ".join(missing)
+                )
+        else:
+            selected = available_axes
+        if self.max_axis_count is not None:
+            selected = selected[: self.max_axis_count]
+        if not selected:
+            raise ValueError("OpenHCS axis selection resolved to no axes.")
+        return selected
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +217,10 @@ class OpenHCSRunRequest:
         if seconds <= 0:
             raise ValueError("openhcs_timeout_seconds must be positive.")
         return seconds
+
+    @property
+    def axis_selection(self) -> OpenHCSAxisSelection:
+        return OpenHCSAxisSelection.from_pipeline_params(self.pipeline_params)
 
 
 @dataclass(frozen=True, slots=True)
@@ -255,8 +306,12 @@ class OpenHCSAdapter(ToolAdapter):
 
     def __init__(self):
         import openhcs
+        from polystore.base import ensure_storage_registry, storage_registry
+        from polystore.filemanager import FileManager
 
         self.version = openhcs.__version__
+        ensure_storage_registry()
+        self._filemanager = FileManager(storage_registry)
 
     def validate_installation(self) -> None:
         """Check OpenHCS is importable."""
@@ -333,7 +388,11 @@ class OpenHCSAdapter(ToolAdapter):
             reused_runtime_execution_cache = True
         else:
             execution_plate_path = request.dataset_path
-            execution_microscope = self._configured_microscope(request.microscope_type)
+            execution_microscope = (
+                Microscope.AUTO
+                if source_workspace_path is not None
+                else self._configured_microscope(request.microscope_type)
+            )
             if source_workspace_path is not None:
                 try:
                     with phase_timing.phase(BenchmarkPhase.MATERIALIZE_SOURCE_SCHEMA):
@@ -341,6 +400,7 @@ class OpenHCSAdapter(ToolAdapter):
                             request.dataset_path,
                             source_workspace_path,
                             prepared.source_schema,
+                            filemanager=self._filemanager,
                         )
                 except Exception as exc:
                     raise ToolExecutionError(
@@ -348,7 +408,6 @@ class OpenHCSAdapter(ToolAdapter):
                         f"{cppipe_path.name}: {exc}"
                     ) from exc
                 execution_plate_path = source_workspace.workspace_root
-                execution_microscope = Microscope.AUTO
 
             global_config = GlobalPipelineConfig(
                 num_workers=1,
@@ -376,6 +435,9 @@ class OpenHCSAdapter(ToolAdapter):
             )
             with phase_timing.phase(BenchmarkPhase.INITIALIZE_RUNTIME):
                 orchestrator.initialize()
+            selected_axes = request.axis_selection.resolve(
+                tuple(orchestrator.get_component_keys(MULTIPROCESSING_AXIS))
+            )
 
             with ExitStack() as stack:
                 for metric in request.metrics:
@@ -384,6 +446,7 @@ class OpenHCSAdapter(ToolAdapter):
                     execution = execute_pipeline_direct(
                         orchestrator,
                         prepared.pipeline,
+                        well_filter=selected_axes,
                         phase_timing=phase_timing,
                     )
             output_roots = runtime_output_roots(
@@ -490,6 +553,11 @@ class OpenHCSAdapter(ToolAdapter):
             "compiled_output_roots": tuple(str(root) for root in output_roots),
             "reused_runtime_execution_cache": reused_runtime_execution_cache,
             "phase_timing_records": phase_timing.payloads(),
+            "axis_selection": {
+                "axis_filter": request.axis_selection.axis_filter,
+                "max_axis_count": request.axis_selection.max_axis_count,
+                "executed_axes": tuple(validation.observation.records_by_axis),
+            },
         }
         if request.runtime_execution_cache_manifest is not None:
             provenance["runtime_execution_cache_manifest"] = str(
@@ -1239,3 +1307,17 @@ def _cache_jsonable(value: object) -> object:
     if isinstance(value, (set, frozenset)):
         return tuple(sorted((_cache_jsonable(item) for item in value), key=repr))
     return repr(value)
+
+
+def _normalized_axis_filter(value: object) -> tuple[str, ...]:
+    """Normalize axis filter pipeline params without stringly call-site logic."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        stripped = value.strip()
+        return (stripped,) if stripped else ()
+    if isinstance(value, (tuple, list, set, frozenset)):
+        return tuple(str(item) for item in value)
+    raise TypeError(
+        f"{OPENHCS_AXIS_FILTER_PARAM} must be a string or sequence of strings."
+    )

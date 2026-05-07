@@ -3,8 +3,10 @@ import numpy as np
 import pandas as pd
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     FieldSpec,
+    DenseObjectLabelSliceStack,
     ImagePayloadMetadata,
     ImageMetadataPayload,
     MeasurementTable,
@@ -13,19 +15,33 @@ from openhcs.core.runtime_values import (
     MaskedImagePayload,
     NamedImage,
     ObjectLabelPayload,
+    ObjectLabelPayloadBuilderStrategy,
     ObjectLabelSet,
+    ObjectLabelDenseDataStrategy,
+    ObjectLabelMeasurementPayloadStrategy,
     ObjectLabelRepresentation,
+    ObjectLabelVariantCompatibilityStrategy,
+    RuntimePayloadDataStrategy,
     RelationshipEndpoint,
     ObjectRelationship,
     RuntimeArrayPayload,
     RuntimeStoragePolicy,
+    SparseIJVLabelRows,
     SpatialGrid,
+    SingletonObjectLabelStackCollapseStrategy,
+    collapse_singleton_object_label_stack,
     compose_image_payload_metadata,
     image_payload_data,
     image_payload_metadata,
     image_payload_with_context,
     normalize_image_payload_intensity,
     normalize_artifact_value,
+    object_label_dense_array,
+    object_label_dense_data,
+    object_label_payload_from_source_image,
+    object_label_payload_with_dense_labels,
+    object_label_payload_with_measurement_labels,
+    object_label_set_with_replacement_labels,
 )
 from openhcs.core.runtime_semantics import ObjectLabelVariant, SpatialGridOrdering
 from openhcs.processing.backends.lib_registry.unified_registry import (
@@ -35,6 +51,190 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
 
 class ArrayLike(RuntimeArrayPayload):
     shape = (3, 3)
+
+
+def test_object_label_dense_data_uses_nominal_payload_registry() -> None:
+    labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
+    payload = ObjectLabelPayload(labels=labels)
+    label_set = ObjectLabelSet(name="Cells", labels=labels)
+
+    assert issubclass(ObjectLabelDenseDataStrategy, RuntimePayloadDataStrategy)
+    assert object_label_dense_data(payload) is labels
+    assert object_label_dense_data(label_set) is labels
+    assert object_label_dense_data(labels) is labels
+    assert object_label_dense_array(payload, dtype=np.int32).dtype == np.int32
+
+
+def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
+    source_labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
+    transformed_labels = np.array([[0, 2], [1, 0]], dtype=np.float32)
+    payload = ObjectLabelPayload(
+        labels=source_labels,
+        declared_object_ids=(1, 2),
+        spatial_origin_yx=(3, 5),
+        source_spatial_shape_yx=(20, 30),
+    )
+
+    rebuilt = object_label_payload_with_dense_labels(
+        payload,
+        transformed_labels,
+        declared_object_count=1,
+        declared_object_ids=(2,),
+    )
+
+    assert isinstance(
+        ObjectLabelPayloadBuilderStrategy.for_source(payload),
+        ObjectLabelPayloadBuilderStrategy,
+    )
+    assert rebuilt.labels is transformed_labels
+    assert rebuilt.declared_object_count == 1
+    assert rebuilt.declared_object_ids == (2,)
+    assert rebuilt.spatial_origin_yx == (3, 5)
+    assert rebuilt.source_spatial_shape_yx == (20, 30)
+
+
+def test_object_label_payload_from_source_image_uses_image_metadata() -> None:
+    image = ImageMetadataPayload(
+        data=np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(2, 3),
+            source_spatial_shape_yx=(10, 12),
+        ),
+    )
+    labels = np.array([[0, 1], [2, 0]], dtype=np.int32)
+
+    payload = object_label_payload_from_source_image(
+        image,
+        labels,
+        declared_object_count=2,
+    )
+
+    assert payload.labels is labels
+    assert payload.declared_object_count == 2
+    assert payload.spatial_origin_yx == (2, 3)
+    assert payload.source_spatial_shape_yx == (10, 12)
+
+
+def test_object_label_set_replacement_preserves_sparse_ijv_representation() -> None:
+    source_rows = SparseIJVLabelRows(
+        np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32)
+    )
+    replacement_rows = SparseIJVLabelRows(
+        np.array([[0, 1, 1]], dtype=np.int32)
+    )
+    source = ObjectLabelSet(
+        name="OverlappingWorms",
+        labels=source_rows,
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+    replacement = ObjectLabelSet(
+        name="OverlappingWorms",
+        labels=replacement_rows,
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+
+    rebuilt = object_label_set_with_replacement_labels(source, replacement)
+
+    assert rebuilt.representation is ObjectLabelRepresentation.SPARSE_IJV
+    assert rebuilt.labels is replacement_rows
+
+
+def test_object_label_payload_with_measurement_labels_preserves_domain_and_variants() -> None:
+    labels = np.zeros((1, 2, 2), dtype=np.int32)
+    unedited = np.ones_like(labels)
+    small_removed = np.full_like(labels, 2)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        unedited_labels=unedited,
+        small_removed_labels=small_removed,
+        declared_object_count=2,
+        declared_object_ids=(1, 2),
+        spatial_origin_yx=(4, 5),
+        source_spatial_shape_yx=(10, 11),
+    )
+    selected = labels[0]
+
+    rebuilt = object_label_payload_with_measurement_labels(payload, selected)
+
+    assert isinstance(
+        ObjectLabelMeasurementPayloadStrategy.for_source(payload),
+        ObjectLabelMeasurementPayloadStrategy,
+    )
+    assert isinstance(rebuilt, ObjectLabelPayload)
+    assert rebuilt.labels is selected
+    assert rebuilt.unedited_labels is None
+    assert rebuilt.small_removed_labels is None
+    assert rebuilt.declared_object_count == 2
+    assert rebuilt.declared_object_ids == (1, 2)
+    assert rebuilt.spatial_origin_yx == (4, 5)
+    assert rebuilt.source_spatial_shape_yx == (10, 11)
+
+
+def test_object_label_variant_compatibility_uses_nominal_registry() -> None:
+    variant = np.ones((1, 2, 2), dtype=np.int32)
+    matching_labels = np.zeros((1, 2, 2), dtype=np.int32)
+    selected_labels = matching_labels[0]
+
+    assert isinstance(
+        ObjectLabelVariantCompatibilityStrategy.for_variant(variant),
+        ObjectLabelVariantCompatibilityStrategy,
+    )
+    assert (
+        ObjectLabelVariantCompatibilityStrategy.for_variant(variant).matching_labels(
+            variant,
+            matching_labels,
+        )
+        is variant
+    )
+    assert (
+        ObjectLabelVariantCompatibilityStrategy.for_variant(variant).matching_labels(
+            variant,
+            selected_labels,
+        )
+        is None
+    )
+
+
+def test_singleton_object_label_stack_collapse_uses_nominal_registry() -> None:
+    labels = np.arange(4, dtype=np.int32).reshape(1, 2, 2)
+    payload = ObjectLabelPayload(
+        labels=labels,
+        unedited_labels=labels.copy(),
+        small_removed_labels=labels.copy(),
+        spatial_origin_yx=(1, 2),
+        source_spatial_shape_yx=(5, 6),
+    )
+
+    collapsed_array = collapse_singleton_object_label_stack(labels)
+    collapsed_payload = collapse_singleton_object_label_stack(payload)
+
+    assert isinstance(
+        SingletonObjectLabelStackCollapseStrategy.for_labels(labels),
+        SingletonObjectLabelStackCollapseStrategy,
+    )
+    np.testing.assert_array_equal(collapsed_array, labels[0])
+    assert isinstance(collapsed_payload, ObjectLabelPayload)
+    np.testing.assert_array_equal(collapsed_payload.labels, labels[0])
+    np.testing.assert_array_equal(collapsed_payload.unedited_labels, labels[0])
+    np.testing.assert_array_equal(collapsed_payload.small_removed_labels, labels[0])
+    assert collapsed_payload.spatial_origin_yx == (1, 2)
+    assert collapsed_payload.source_spatial_shape_yx == (5, 6)
+
+
+def test_dense_object_label_slice_stack_projects_payload_labels() -> None:
+    labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
+    payload = ObjectLabelPayload(labels=labels)
+
+    stack = DenseObjectLabelSliceStack.from_payload(
+        payload,
+        slice_count=3,
+        dtype=np.int32,
+    )
+
+    assert stack is not None
+    assert stack.labels.shape == (3, 2, 2)
+    assert stack.labels.dtype == np.int32
+    np.testing.assert_array_equal(stack.slice(2), labels)
 
 
 def test_normalize_artifact_value_builds_key_schema_and_storage_policy():
@@ -109,6 +309,42 @@ def test_spatial_grid_normalizes_to_mapping_runtime_value():
     assert value.data["x_location_of_lowest_x_spot"] == 27.0
     assert value.data["ordering"] == SpatialGridOrdering.BY_ROWS.value
     assert SpatialGrid.from_runtime_value(value) == grid
+
+
+def test_slice_aligned_spatial_grid_normalizes_to_validated_mapping_sequence():
+    output_plan = ArtifactOutputPlan(
+        name="Grid",
+        path="/memory/Grid.pkl",
+        kind=ArtifactKind.SPATIAL_GRID,
+    )
+    grids = RuntimeSliceAlignedValues(
+        slices=(
+            SpatialGrid(
+                name="Grid",
+                rows=2,
+                columns=2,
+                x_spacing=8.0,
+                y_spacing=8.0,
+                x_origin=1.0,
+                y_origin=4.0,
+            ),
+            SpatialGrid(
+                name="Grid",
+                rows=2,
+                columns=2,
+                x_spacing=8.0,
+                y_spacing=8.0,
+                x_origin=2.0,
+                y_origin=4.0,
+            ),
+        )
+    )
+
+    value = normalize_artifact_value(output_plan, grids, axis_id="A01")
+
+    assert value.kind is ArtifactKind.SPATIAL_GRID
+    assert value.schema.slice_aligned is True
+    assert [grid["x_origin"] for grid in value.data] == [1.0, 2.0]
 
 
 def test_spatial_grid_preserves_column_ordering():
@@ -226,6 +462,28 @@ def test_image_metadata_payload_exposes_array_methods() -> None:
     np.testing.assert_array_equal(copied, image)
     assert copied is not image
     np.testing.assert_array_equal(payload.astype(np.float64), image.astype(np.float64))
+
+
+def test_image_metadata_payload_supports_nominal_array_comparison() -> None:
+    image = np.arange(6, dtype=np.float32).reshape(2, 3)
+    payload = ImageMetadataPayload(
+        data=image,
+        metadata=ImagePayloadMetadata(source_dtype="float32"),
+    )
+
+    np.testing.assert_array_equal(payload > 2, image > 2)
+
+
+def test_image_metadata_payload_ufunc_preserves_context_for_numeric_results() -> None:
+    image = np.arange(6, dtype=np.float32).reshape(2, 3)
+    metadata = ImagePayloadMetadata(source_dtype="float32")
+    payload = ImageMetadataPayload(data=image, metadata=metadata)
+
+    result = np.add(payload, 1.0)
+
+    assert isinstance(result, ImageMetadataPayload)
+    assert result.metadata == metadata
+    np.testing.assert_array_equal(result.data, image + 1.0)
 
 
 def test_compose_image_payload_metadata_tracks_per_channel_sources() -> None:

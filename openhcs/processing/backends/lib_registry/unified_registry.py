@@ -30,21 +30,24 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, is_dataclass, replace
 from enum import Enum
 from functools import wraps
-from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Tuple, Type, get_type_hints
+from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple, Type, get_type_hints
 
 
 import numpy as np
 from openhcs.core.xdg_paths import get_cache_file_path
 from openhcs.core.memory import unstack_slices, stack_slices
+from openhcs.core.runtime_semantics import ObjectLabelDomainScope
 from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     MaskedImagePayload,
+    NativeRuntimeValue,
     ObjectLabelPayload,
     compose_image_payload_metadata,
     image_payload_data,
     image_payload_mask,
     image_payload_with_context,
 )
+from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
 from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStepWellFilterConfig
 
@@ -91,28 +94,148 @@ def _aggregate_pure_2d_auxiliary_output(
     memory_type: str,
 ) -> Any:
     """Aggregate one auxiliary PURE_2D output across slices."""
-    if not values:
-        return []
-    runtime_payload = _aggregate_runtime_array_payload_slices(values, memory_type)
-    if runtime_payload is not None:
-        return runtime_payload
-    if all(_is_2d_array_like(value) for value in values):
-        return stack_slices(values, memory_type, 0)
-    if all(_is_flat_sequence(value) for value in values):
-        flattened: list[Any] = []
-        for value in values:
-            flattened.extend(value)
-        return flattened
-    if len(values) == 1:
-        return values[0]
-    return list(values)
+    return Pure2DAuxiliaryOutputAggregator.aggregate(values, memory_type)
 
 
-def _aggregate_runtime_array_payload_slices(
-    values: list[Any],
-    memory_type: str,
-) -> Any | None:
-    if all(isinstance(value, (MaskedImagePayload, ImageMetadataPayload)) for value in values):
+class Pure2DAuxiliaryOutputAggregator(ABC, metaclass=AutoRegisterMeta):
+    """Aggregate one auxiliary PURE_2D output position across slices."""
+
+    __registry_key__ = "value_type"
+    __registry__: ClassVar[dict[Any, type["Pure2DAuxiliaryOutputAggregator"]]] = {}
+    value_type: ClassVar[type[Any] | None] = None
+    can_aggregate_family: ClassVar[bool] = True
+
+    @classmethod
+    def aggregate(cls, values: list[Any], memory_type: str) -> Any:
+        if not values:
+            return []
+        candidates: list[Pure2DAuxiliaryOutputAggregator] = []
+        for aggregator_type in cls.registered_aggregator_families():
+            aggregator = aggregator_type()
+            if aggregator.supports(values):
+                candidates.append(aggregator)
+        if candidates:
+            aggregator = min(
+                candidates,
+                key=lambda candidate: candidate.type_distance(values),
+            )
+            return aggregator.aggregate_values(values, memory_type)
+        if len(values) == 1:
+            return values[0]
+        return list(values)
+
+    @classmethod
+    def registered_aggregator_families(
+        cls,
+    ) -> tuple[type["Pure2DAuxiliaryOutputAggregator"], ...]:
+        """Return registered aggregator classes plus their typed family bases."""
+        family_types: list[type[Pure2DAuxiliaryOutputAggregator]] = []
+        for aggregator_type in cls.__registry__.values():
+            for candidate_type in aggregator_type.mro():
+                if (
+                    candidate_type is cls
+                    or not isinstance(candidate_type, type)
+                    or not issubclass(candidate_type, cls)
+                    or not candidate_type.can_aggregate_family
+                    or candidate_type in family_types
+                ):
+                    continue
+                family_types.append(candidate_type)
+        return tuple(family_types)
+
+    def supports(self, values: list[Any]) -> bool:
+        accepted_types = self.accepted_value_types()
+        return bool(accepted_types) and all(
+            isinstance(value, accepted_types) for value in values
+        )
+
+    def owns_mixed_values(self, values: list[Any]) -> bool:
+        return False
+
+    @classmethod
+    def accepted_value_types(cls) -> tuple[type[Any], ...]:
+        """Return nominal value types owned by this registered aggregator family."""
+        return tuple(
+            aggregator_type.value_type
+            for aggregator_type in Pure2DAuxiliaryOutputAggregator.__registry__.values()
+            if (
+                aggregator_type.value_type is not None
+                and issubclass(aggregator_type, cls)
+            )
+        )
+
+    def type_distance(self, values: list[Any]) -> int:
+        declared_types = self.accepted_value_types()
+        if not declared_types:
+            return len(object.__mro__)
+        return max(
+            min(
+                type(value).mro().index(declared_type)
+                for declared_type in declared_types
+                if isinstance(value, declared_type)
+            )
+            for value in values
+        )
+
+    @abstractmethod
+    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
+        """Aggregate compatible per-slice auxiliary values."""
+
+
+class RuntimeValuePure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Preserve non-array runtime values as slice-aligned payloads."""
+
+    value_type = NativeRuntimeValue
+
+    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
+        del memory_type
+        return RuntimeSliceAlignedValues(slices=tuple(values))
+
+
+class RuntimeArrayPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Stack nominal runtime array payloads through their concrete array data."""
+
+    value_type = None
+    can_aggregate_family = False
+
+    def supports(self, values: list[Any]) -> bool:
+        return super().supports(values) or self.owns_mixed_values(values)
+
+    def owns_mixed_values(self, values: list[Any]) -> bool:
+        accepted_types = self.accepted_value_types()
+        return bool(accepted_types) and any(
+            isinstance(value, accepted_types) for value in values
+        ) and all(self._accepts_mixed_value(value) for value in values)
+
+    def type_distance(self, values: list[Any]) -> int:
+        if self.owns_mixed_values(values):
+            return 0
+        return super().type_distance(values)
+
+    def _accepts_mixed_value(self, value: Any) -> bool:
+        return isinstance(value, np.ndarray)
+
+    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
+        del values, memory_type
+        raise NotImplementedError(
+            "Concrete runtime-array aggregators must implement aggregate_values."
+        )
+
+
+class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOutputAggregator):
+    """Stack image payload slices and reattach composed runtime image context."""
+
+    value_type = None
+    can_aggregate_family = True
+
+    def _accepts_mixed_value(self, value: Any) -> bool:
+        accepted_types = self.accepted_value_types()
+        return (
+            bool(accepted_types)
+            and isinstance(value, accepted_types)
+        ) or super()._accepts_mixed_value(value)
+
+    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
         data = stack_slices([image_payload_data(value) for value in values], memory_type, 0)
         masks = [image_payload_mask(value) for value in values]
         present_masks = [mask for mask in masks if mask is not None]
@@ -131,8 +254,36 @@ def _aggregate_runtime_array_payload_slices(
             metadata=compose_image_payload_metadata(tuple(values)),
         )
 
-    if not all(isinstance(value, ObjectLabelPayload) for value in values):
-        return None
+
+class MaskedImagePayloadPure2DAuxiliaryOutputAggregator(ImagePayloadPure2DAuxiliaryOutputAggregator):
+    """Register masked image payloads for PURE_2D auxiliary aggregation."""
+
+    value_type = MaskedImagePayload
+
+
+class ImageMetadataPayloadPure2DAuxiliaryOutputAggregator(ImagePayloadPure2DAuxiliaryOutputAggregator):
+    """Register image metadata payloads for PURE_2D auxiliary aggregation."""
+
+    value_type = ImageMetadataPayload
+
+
+class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOutputAggregator):
+    """Stack object-label payload slices and preserve object-domain metadata."""
+
+    value_type = ObjectLabelPayload
+    can_aggregate_family = True
+
+    def _accepts_mixed_value(self, value: Any) -> bool:
+        return isinstance(value, self.value_type)
+
+    def aggregate_values(self, values: list[Any], memory_type: str) -> ObjectLabelPayload:
+        return _aggregate_object_label_payload_slices(values, memory_type)
+
+
+def _aggregate_object_label_payload_slices(
+    values: list[ObjectLabelPayload],
+    memory_type: str,
+) -> ObjectLabelPayload:
     labels = _stack_runtime_array_slices(
         [value.labels for value in values],
         memory_type,
@@ -155,6 +306,7 @@ def _aggregate_runtime_array_payload_slices(
     )
     declared_counts = {value.declared_object_count for value in values}
     declared_ids = {value.declared_object_ids for value in values}
+    domain_scopes = {value.domain_scope for value in values}
     return ObjectLabelPayload(
         labels=labels,
         unedited_labels=unedited_labels,
@@ -163,25 +315,75 @@ def _aggregate_runtime_array_payload_slices(
             declared_counts.pop() if len(declared_counts) == 1 else None
         ),
         declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
+        domain_scope=ObjectLabelDomainScope.common(domain_scopes),
     )
+
+
+class RegisteredImageLayoutPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Stack arrays that are accepted by the registered OpenHCS image layout."""
+
+    value_type = np.ndarray
+
+    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
+        stack_payload = _stack_registered_image_layout_slices(values, memory_type)
+        if stack_payload is not None:
+            return stack_payload
+        return stack_slices(values, memory_type, 0)
+
+
+class FlatSequencePure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregator):
+    """Concatenate flat tuple/list auxiliary outputs."""
+
+    value_type = None
+
+    def supports(self, values: list[Any]) -> bool:
+        return super().supports(values) and not any(
+            isinstance(item, np.ndarray)
+            for value in values
+            for item in value
+        )
+
+    def aggregate_values(self, values: list[Any], memory_type: str) -> Any:
+        del memory_type
+        flattened: list[Any] = []
+        for value in values:
+            flattened.extend(value)
+        return flattened
+
+
+class ListPure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggregator):
+    """Register list auxiliary outputs for PURE_2D sequence aggregation."""
+
+    value_type = list
+
+
+class TuplePure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggregator):
+    """Register tuple auxiliary outputs for PURE_2D sequence aggregation."""
+
+    value_type = tuple
 
 
 def _stack_runtime_array_slices(values: list[Any], memory_type: str) -> Any:
-    if all(_is_2d_array_like(value) for value in values):
-        return stack_slices(values, memory_type, 0)
+    stack_payload = _stack_registered_image_layout_slices(values, memory_type)
+    if stack_payload is not None:
+        return stack_payload
     return np.stack(tuple(np.asarray(value) for value in values), axis=0)
 
 
-def _is_2d_array_like(value: Any) -> bool:
-    return hasattr(value, "ndim") and getattr(value, "ndim") == 2
+def _stack_registered_image_layout_slices(
+    values: list[Any],
+    memory_type: str,
+) -> Any | None:
+    try:
+        from openhcs.core.image_stack_layout import ImageStackLayout
 
-
-def _is_flat_sequence(value: Any) -> bool:
-    return (
-        isinstance(value, (list, tuple))
-        and not hasattr(value, "ndim")
-        and not isinstance(value, (str, bytes))
-    )
+        return ImageStackLayout.for_slices(values).stack(
+            slices=values,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
+    except ValueError:
+        return None
 
 
 def _rewrite_slice_index(value: Any, slice_index: int) -> Any:
@@ -196,7 +398,7 @@ def _rewrite_slice_index(value: Any, slice_index: int) -> Any:
         if "slice_index" in value:
             return {**value, "slice_index": slice_index}
         if _is_flat_mapping_row(value):
-            return value
+            return {**value, "slice_index": slice_index}
         return {
             key: _rewrite_slice_index(item, slice_index)
             for key, item in value.items()

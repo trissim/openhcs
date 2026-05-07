@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from openhcs.core.equivalence.cells import RuntimeCellSignature, runtime_cell_signature
 from openhcs.core.equivalence.keys import (
@@ -46,7 +46,18 @@ def spatial_grid_measurement_facts(
     policy: RuntimeEquivalencePolicy,
 ) -> RuntimeMeasurementFacts:
     """Project a typed spatial-grid artifact to CellProfiler-style image facts."""
-    grid = SpatialGrid.from_runtime_value(value)
+    return tuple(
+        fact
+        for grid in _spatial_grids_from_runtime_value(value)
+        for fact in _single_spatial_grid_measurement_facts(value, grid, policy)
+    )
+
+
+def _single_spatial_grid_measurement_facts(
+    value: RuntimeValue,
+    grid: SpatialGrid,
+    policy: RuntimeEquivalencePolicy,
+) -> RuntimeMeasurementFacts:
     grid_name = normalize_runtime_identifier(value.name or grid.name)
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
     fields = (
@@ -67,3 +78,18 @@ def spatial_grid_measurement_facts(
         )
         for field_name, field_value in fields
     )
+
+
+def _spatial_grids_from_runtime_value(value: RuntimeValue) -> tuple[SpatialGrid, ...]:
+    if value.schema.slice_aligned:
+        if not isinstance(value.data, tuple | list):
+            raise TypeError(
+                f"Slice-aligned spatial grid '{value.name}' payload must be a "
+                f"sequence of mappings, got {type(value.data).__name__}."
+            )
+        return tuple(
+            SpatialGrid.from_mapping(value.name, item)
+            for item in value.data
+            if isinstance(item, Mapping)
+        )
+    return (SpatialGrid.from_runtime_value(value),)

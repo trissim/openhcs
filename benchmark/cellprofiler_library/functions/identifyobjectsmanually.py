@@ -14,6 +14,7 @@ import numpy as np
 from typing import Tuple
 from dataclasses import dataclass
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -81,7 +82,7 @@ def identify_objects_manually(
     # Use provided labels or create empty labels
     if labels_input is not None:
         # Ensure labels are integer type and properly formatted
-        labels = np.asarray(labels_input, dtype=np.int32)
+        labels = object_label_dense_array(labels_input, dtype=np.int32)
         if labels.shape != (h, w):
             # Resize if needed
             labels = np.zeros((h, w), dtype=np.int32)

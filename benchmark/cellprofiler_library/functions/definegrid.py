@@ -8,11 +8,12 @@ defines the location of a grid that can be used by modules downstream.
 import numpy as np
 from typing import Tuple
 from enum import Enum
+from numba import njit
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.core.runtime_semantics import SpatialGridOrdering
-from openhcs.core.runtime_values import SpatialGrid
+from openhcs.core.runtime_values import SpatialGrid, object_label_dense_array
 from openhcs.processing.materialization import csv_materializer
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
@@ -169,37 +170,15 @@ def define_grid_automatic(
     Returns:
         Tuple of (image, GridInfo)
     """
-    from scipy.ndimage import center_of_mass, find_objects
-
-    del center_of_mass, find_objects
     origin = _coerce_function_enum(GridOrigin, origin)
     ordering = _coerce_function_enum(GridOrdering, ordering)
-    
-    # Find centroids of all labeled objects
-    unique_labels = np.unique(labels)
-    unique_labels = unique_labels[unique_labels > 0]  # Exclude background
-    
-    if len(unique_labels) < 2:
+
+    object_count, first_y, first_x, second_y, second_x = _label_centroid_extremes(
+        object_label_dense_array(labels, dtype=np.int32)
+    )
+    if object_count < 2:
         raise ValueError("Need at least 2 objects to define grid automatically")
-    
-    # Calculate centroids
-    centroids = []
-    for label_id in unique_labels:
-        mask = labels == label_id
-        y_coords, x_coords = np.where(mask)
-        if len(y_coords) > 0:
-            cy = np.mean(y_coords)
-            cx = np.mean(x_coords)
-            centroids.append((cy, cx))
-    
-    centroids = np.array(centroids)
-    
-    # Find extremes
-    first_x = np.min(centroids[:, 1])
-    first_y = np.min(centroids[:, 0])
-    second_x = np.max(centroids[:, 1])
-    second_y = np.max(centroids[:, 0])
-    
+
     # Determine row/column assignments based on origin
     if origin in (GridOrigin.BOTTOM_LEFT, GridOrigin.BOTTOM_RIGHT):
         first_row, second_row = grid_rows, 1
@@ -260,6 +239,66 @@ def define_grid_automatic(
     )
     
     return image, grid_info
+
+
+def _label_centroid_extremes(labels: np.ndarray) -> tuple[int, float, float, float, float]:
+    label_array = np.ascontiguousarray(labels, dtype=np.int32)
+    if label_array.ndim != 2:
+        raise ValueError(f"Automatic grid labels must be 2D, got {label_array.ndim}D.")
+    return _label_centroid_extremes_numba(label_array)
+
+
+@njit(cache=True)
+def _label_centroid_extremes_numba(
+    labels: np.ndarray,
+) -> tuple[int, float, float, float, float]:
+    max_label = 0
+    height, width = labels.shape
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+
+    if max_label <= 0:
+        return 0, 0.0, 0.0, 0.0, 0.0
+
+    counts = np.zeros(max_label + 1, dtype=np.int64)
+    y_sums = np.zeros(max_label + 1, dtype=np.float64)
+    x_sums = np.zeros(max_label + 1, dtype=np.float64)
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            counts[label] += 1
+            y_sums[label] += float(y)
+            x_sums[label] += float(x)
+
+    object_count = 0
+    first_y = np.inf
+    first_x = np.inf
+    second_y = -np.inf
+    second_x = -np.inf
+    for label in range(1, max_label + 1):
+        count = counts[label]
+        if count == 0:
+            continue
+        object_count += 1
+        centroid_y = y_sums[label] / count
+        centroid_x = x_sums[label] / count
+        if centroid_y < first_y:
+            first_y = centroid_y
+        if centroid_y > second_y:
+            second_y = centroid_y
+        if centroid_x < first_x:
+            first_x = centroid_x
+        if centroid_x > second_x:
+            second_x = centroid_x
+
+    if object_count == 0:
+        return 0, 0.0, 0.0, 0.0, 0.0
+    return object_count, first_y, first_x, second_y, second_x
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

@@ -16,6 +16,7 @@ from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer
@@ -86,6 +87,7 @@ def display_histogram(
         Tuple of (original image, histogram results)
     """
     from skimage.measure import regionprops
+    labels = object_label_dense_array(labels, dtype=np.int32)
     
     # Handle empty labels
     if labels.max() == 0:
@@ -103,7 +105,7 @@ def display_histogram(
         )
     
     # Extract measurements from labeled objects
-    props = regionprops(labels.astype(np.int32), intensity_image=image)
+    props = regionprops(labels, intensity_image=image)
     
     if len(props) == 0:
         return image, HistogramResult(

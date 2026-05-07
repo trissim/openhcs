@@ -6,6 +6,7 @@ Original: fillobjects
 import numpy as np
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
@@ -47,14 +48,15 @@ def fill_objects(
     from openhcs.processing.backends.cellprofiler.morphology import (
         MorphologyBackendStrategy,
     )
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     
-    if labels.max() == 0:
+    if label_array.max() == 0:
         # No objects, return as-is
-        return image, labels.copy()
+        return image, label_array.copy()
     
-    filled_labels = np.zeros_like(labels)
+    filled_labels = np.zeros_like(label_array)
     region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-        labels.astype(np.int32, copy=False)
+        label_array
     )
     
     if mode == FillMode.HOLES:
@@ -63,7 +65,7 @@ def fill_objects(
         max_hole_area = np.pi * (diameter / 2.0) ** 2
         
         for label_id in region_props.label:
-            obj_mask = labels == int(label_id)
+            obj_mask = label_array == int(label_id)
             
             # Fill small holes in this object
             filled_mask = remove_small_holes(
@@ -83,7 +85,7 @@ def fill_objects(
         # Replace each object with its convex hull
         for index, label_id in enumerate(region_props.label):
             label_int = int(label_id)
-            obj_mask = labels == label_int
+            obj_mask = label_array == label_int
             
             # Get bounding box for efficiency
             minr = int(region_props.bbox_min_y[index])
@@ -108,4 +110,4 @@ def fill_objects(
             f"Available modes are: 'holes' and 'convex_hull'."
         )
     
-    return image, filled_labels.astype(labels.dtype)
+    return image, filled_labels.astype(label_array.dtype)

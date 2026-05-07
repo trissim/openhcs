@@ -7,6 +7,7 @@ import numpy as np
 from PIL import Image
 
 from openhcs.constants import AllComponents
+from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
     ImageAssignment,
@@ -16,12 +17,14 @@ from openhcs.core.pipeline_image_schema import (
     ImportedMetadataTable,
     PipelineImageSchema,
     SOURCE_IMAGE_TYPE_METADATA_FIELD,
+    SourceArtifactAssignment,
 )
 from openhcs.core.source_bindings import (
     ComponentSelector,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
+    NamedSourceBinding,
     SourceBindingMatchDimension,
     SourceBindingMatchField,
     SourceBindingMatchMethod,
@@ -34,8 +37,10 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.source_schema_workspace import (
     SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR,
+    expand_source_schema_workspace_wells,
     materialize_source_schema_workspace,
 )
+from openhcs.core.steps.function_execution import _source_compatible_anchor_patterns
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
@@ -53,6 +58,104 @@ def test_source_schema_filename_parser_handles_artifact_suffixes() -> None:
         "z_index": 1,
         "timepoint": 1,
         "extension": ".csv",
+    }
+
+
+def test_source_bound_anchor_filter_uses_declared_source_selectors() -> None:
+    patterns = [
+        "source_s001_w1_z001_t001.png",
+        "source_s001_w1_z001_t001.tiff",
+        "source_s002_w1_z001_t001.png",
+    ]
+    binding = NamedSourceBinding(
+        alias="phase",
+        artifact_kind=ArtifactKind.IMAGE,
+        selector=SourceSelector(
+            components=(ComponentSelector(AllComponents.SITE, "1"),),
+            filters=(
+                SourceFilterClause(
+                    subject=SourceFilterSubject.EXTENSION,
+                    match_type=SourceFilterMatchType.EQUALS,
+                    value=".png",
+                ),
+            ),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+
+    filtered = _source_compatible_anchor_patterns(
+        patterns,
+        bindings=(binding,),
+        parser=SourceSchemaFilenameParser(),
+    )
+
+    assert filtered == ["source_s001_w1_z001_t001.png"]
+
+
+def test_expand_source_schema_workspace_wells_preserves_disambiguating_suffixes(
+    tmp_path: Path,
+) -> None:
+    metadata_path = tmp_path / "openhcs_metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    ".": {
+                        "workspace_mapping": {
+                            "source_s001_w1_z001_t001.tif": "Sequence1/image.tif",
+                            "source_s001_w1_z001_t001_002.tif": "Sequence2/image.tif",
+                        },
+                        "source_metadata": {
+                            "source_s001_w1_z001_t001.tif": {"sequence": "1"},
+                            "source_s001_w1_z001_t001_002.tif": {"sequence": "2"},
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    expand_source_schema_workspace_wells(metadata_path, ("W001", "W002"))
+
+    metadata = json.loads(metadata_path.read_text())
+    mapping = metadata["subdirectories"]["."]["workspace_mapping"]
+    assert mapping == {
+        "W001_s001_w1_z001_t001.tif": "Sequence1/image.tif",
+        "W001_s001_w1_z001_t001_002.tif": "Sequence2/image.tif",
+        "W002_s001_w1_z001_t001.tif": "Sequence1/image.tif",
+        "W002_s001_w1_z001_t001_002.tif": "Sequence2/image.tif",
+    }
+
+
+def test_expand_source_schema_workspace_wells_preserves_original_well_dimension(
+    tmp_path: Path,
+) -> None:
+    metadata_path = tmp_path / "openhcs_metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    ".": {
+                        "workspace_mapping": {
+                            "Sequence1_s001_w1_z001_t001.tif": "Sequence1/frame0.tif",
+                            "Sequence2_s001_w1_z001_t001.tif": "Sequence2/frame0.tif",
+                        },
+                        "source_metadata": {},
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    expand_source_schema_workspace_wells(metadata_path, ("W001",))
+
+    metadata = json.loads(metadata_path.read_text())
+    mapping = metadata["subdirectories"]["."]["workspace_mapping"]
+    assert mapping == {
+        "W001_s001_w1_z001_t001.tif": "Sequence1/frame0.tif",
+        "W001_s002_w1_z001_t001.tif": "Sequence2/frame0.tif",
     }
 
 
@@ -189,6 +292,64 @@ def test_materialize_source_schema_workspace_uses_single_default_well_for_ordere
             primary["source_metadata"][path][SOURCE_IMAGE_TYPE_METADATA_FIELD]
             == "Grayscale image"
         )
+
+
+def test_materialize_source_schema_workspace_broadcasts_ordered_singleton_alias(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "field-001.png", value=1)
+    _write_image(source_root / "field-002.png", value=2)
+    _write_image(source_root / "shared-probabilities.tiff", value=3)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "phase": ImageAssignment(
+                    alias="phase",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.EXTENSION,
+                                SourceFilterMatchType.EQUALS,
+                                ".png",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "probability": ImageAssignment(
+                    alias="probability",
+                    image_type="Color image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.EXTENSION,
+                                SourceFilterMatchType.EQUALS,
+                                ".tiff",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    mapping = metadata["subdirectories"]["."]["workspace_mapping"]
+
+    assert mapping["source_s001_w2_z001_t001.tiff"].endswith(
+        "source/shared-probabilities.tiff"
+    )
+    assert mapping["source_s002_w2_z001_t001.tiff"].endswith(
+        "source/shared-probabilities.tiff"
+    )
 
 
 def test_materialize_source_schema_workspace_projects_ordered_channel_site_sets(
@@ -345,6 +506,116 @@ def test_materialize_source_schema_workspace_matches_numeric_component_values(
     )
 
 
+def test_materialize_source_schema_workspace_keeps_default_input_folder_files(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Sample_D.TIF", value=1)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            images_rule=ImagesRule(
+                filters=(
+                    SourceFilterClause(
+                        subject=SourceFilterSubject.DIRECTORY,
+                        match_type=SourceFilterMatchType.DOES_NOT_START_WITH,
+                        value=".",
+                    ),
+                ),
+            ),
+            assignments_by_alias={
+                "OrigBlue": ImageAssignment(
+                    alias="OrigBlue",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                subject=SourceFilterSubject.FILE,
+                                match_type=SourceFilterMatchType.CONTAINS,
+                                value="D.TIF",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+    assert set(primary["workspace_mapping"]) == {"source_s001_w1_z001_t001.TIF"}
+
+
+def test_materialize_source_schema_workspace_uses_filemanager_for_vfs_operations(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Sample_ch00.tif", value=1)
+    workspace_root = tmp_path / "workspace"
+
+    class RecordingFileManager:
+        def __init__(self) -> None:
+            self.listed: list[tuple[str, str]] = []
+            self.saved: list[tuple[str, str]] = []
+            self.saved_payloads: list[object] = []
+
+        def list_files(self, directory: str, backend: str, **kwargs: object) -> list[str]:
+            self.listed.append((directory, backend))
+            assert kwargs["recursive"] is True
+            return [str(source_root / "Sample_ch00.tif")]
+
+        def exists(self, path: str, backend: str) -> bool:
+            return Path(path).exists()
+
+        def is_dir(self, path: str, backend: str) -> bool:
+            return Path(path).is_dir()
+
+        def ensure_directory(self, directory: str, backend: str) -> str:
+            Path(directory).mkdir(parents=True, exist_ok=True)
+            return directory
+
+        def save(self, data: object, output_path: str, backend: str) -> None:
+            self.saved.append((output_path, backend))
+            self.saved_payloads.append(data)
+            Path(output_path).write_text(json.dumps(data), encoding="utf-8")
+
+    filemanager = RecordingFileManager()
+    result = materialize_source_schema_workspace(
+        source_root,
+        workspace_root,
+        PipelineImageSchema(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=r"^Sample_ch(?P<ChannelNumber>[0-9]+)",
+                ),
+            ),
+            assignments_by_alias={
+                "typeI": ImageAssignment(
+                    alias="typeI",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        components=(ComponentSelector(AllComponents.CHANNEL, "00"),),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+        filemanager=filemanager,
+    )
+
+    assert filemanager.listed == [(str(source_root), "disk")]
+    assert filemanager.saved == [(str(result.metadata_path), "disk")]
+    assert isinstance(filemanager.saved_payloads[0], dict)
+
+
 def test_materialize_source_schema_workspace_applies_source_filters_relative_to_root(
     tmp_path: Path,
 ) -> None:
@@ -466,6 +737,68 @@ def test_materialize_source_schema_workspace_includes_embedded_image_planes(
     )
 
 
+def test_materialize_source_schema_workspace_resolves_embedded_urls_to_local_sources(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "url_D.TIF", value=1)
+    _write_image(source_root / "url_F.TIF", value=2)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            image_plane_sources=(
+                ImagePlaneSource(uri="https://example.invalid/data/url_D.TIF"),
+                ImagePlaneSource(uri="https://example.invalid/data/url_F.TIF"),
+            ),
+            assignments_by_alias={
+                "OrigBlue": ImageAssignment(
+                    alias="OrigBlue",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "D.TIF",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+                "OrigGreen": ImageAssignment(
+                    alias="OrigGreen",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "F.TIF",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "source_s001_w1_z001_t001.TIF",
+        "source_s001_w2_z001_t001.TIF",
+    }
+    assert primary["workspace_mapping"]["source_s001_w1_z001_t001.TIF"].endswith(
+        "source/url_D.TIF"
+    )
+
+
 def test_materialize_source_schema_workspace_projects_groups_to_well_axis(
     tmp_path: Path,
 ) -> None:
@@ -497,6 +830,10 @@ def test_materialize_source_schema_workspace_projects_groups_to_well_axis(
     assert (
         primary["source_metadata"]["Sequence1_s001_w1_z001_t001.tif"]["FrameNumber"]
         == "0000"
+    )
+    assert (
+        primary["source_metadata"]["Sequence1_s001_w1_z001_t001.tif"]["Run"]
+        == "Sequence1"
     )
 
 
@@ -530,6 +867,232 @@ def test_materialize_source_schema_workspace_joins_imported_metadata(
         "DMSO"
     )
     assert result.source_metadata["A01_s001_w2_z001_t001.tif"]["Compound"] == "DMSO"
+
+
+def test_materialize_source_schema_workspace_resolves_stale_imported_metadata_location(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source" / "images"
+    source_root.mkdir(parents=True)
+    _write_image(source_root / "Channel1-A-01.tif", value=1)
+    _write_image(source_root / "Channel2-A-01.tif", value=2)
+    (source_root.parent / "metadata.csv").write_text(
+        "Row,Compound\nA,DMSO\n",
+        encoding="utf-8",
+    )
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        _imported_metadata_source_schema_with_location(
+            "/old/default/input/folder/metadata.csv"
+        ),
+    )
+
+    assert result.source_metadata["A01_s001_w1_z001_t001.tif"]["Compound"] == "DMSO"
+
+
+def test_materialize_source_schema_workspace_skips_imported_metadata_partial_join(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Channel1-A-01.tif", value=1)
+    np.save(source_root / "IllumChannel1.npy", np.ones((2, 2), dtype=np.uint8))
+    (source_root / "metadata.csv").write_text(
+        "WellRow,Plate,Compound\nA,Illum,DMSO\n",
+        encoding="utf-8",
+    )
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=r"^(?P<Plate>Illum).*",
+                ),
+            ),
+            imported_metadata_tables=(
+                ImportedMetadataTable(
+                    location="metadata.csv",
+                    joins=(
+                        ImportedMetadataJoin("WellRow", "WellRow"),
+                        ImportedMetadataJoin("Plate", "Plate"),
+                    ),
+                ),
+            ),
+            assignments_by_alias={
+                "raw": ImageAssignment(
+                    alias="raw",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "Channel1",
+                            ),
+                        ),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            source_artifacts_by_alias={
+                    "Illum": SourceArtifactAssignment(
+                        alias="Illum",
+                        kind=ArtifactKind.IMAGE,
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "IllumChannel1",
+                            ),
+                        ),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+        ),
+    )
+
+    metadata = result.source_metadata[
+        f"{SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR}/Illum/001_IllumChannel1.npy"
+    ]
+    assert metadata["Plate"] == "Illum"
+    assert "Compound" not in metadata
+
+
+def test_materialize_source_schema_workspace_merges_duplicate_imported_metadata_consensus(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "Channel1-A-01.tif", value=1)
+    _write_image(source_root / "Channel2-A-01.tif", value=2)
+    (source_root / "metadata.csv").write_text(
+        "Row,Compound,Replicate\nA,DMSO,1\nA,DMSO,2\n",
+        encoding="utf-8",
+    )
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        _imported_metadata_source_schema(),
+    )
+
+    metadata = result.source_metadata["A01_s001_w1_z001_t001.tif"]
+    assert metadata["Compound"] == "DMSO"
+    assert "Replicate" not in metadata
+
+
+def test_materialize_source_schema_workspace_supports_source_artifact_only_schema(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "A.png", value=1)
+    _write_image(source_root / "B.png", value=2)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            source_artifacts_by_alias={
+                "A": SourceArtifactAssignment(
+                    alias="A",
+                    kind=ArtifactKind.OBJECT_LABELS,
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "A",
+                            ),
+                        ),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                    payload_type="Objects",
+                ),
+                "B": SourceArtifactAssignment(
+                    alias="B",
+                    kind=ArtifactKind.OBJECT_LABELS,
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "B",
+                            ),
+                        ),
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                    payload_type="Objects",
+                ),
+            },
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+    auxiliary = metadata["subdirectories"][SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR]
+    assert primary["workspace_mapping"] == {
+        "source_s001_w1_z001_t001.png": "../source/A.png"
+    }
+    assert primary["wells"] == {"source": None}
+    assert primary["channels"] == {"1": "A"}
+    assert set(auxiliary["workspace_mapping"]) == {
+        f"{SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR}/A/001_A.png",
+        f"{SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR}/B/001_B.png",
+    }
+    assert result.source_metadata[
+        f"{SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR}/A/001_A.png"
+    ][SOURCE_IMAGE_TYPE_METADATA_FIELD] == "Objects"
+
+
+def test_materialize_source_schema_workspace_keeps_extracted_metadata_on_import_conflict(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "plate_file-A-01.tif", value=1)
+    (source_root / "metadata.csv").write_text(
+        "Row,Plate,Compound\nA,plate_csv,DMSO\n",
+        encoding="utf-8",
+    )
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            metadata_rules=(
+                MetadataExtractionRule(
+                    source=MetadataSource.FILE_NAME,
+                    pattern=r"^(?P<Plate>plate_file)-(?P<WellRow>[A-Z])-(?P<WellColumn>[0-9]{2})",
+                ),
+            ),
+            imported_metadata_tables=(
+                ImportedMetadataTable(
+                    location="metadata.csv",
+                    joins=(ImportedMetadataJoin("WellRow", "Row"),),
+                ),
+            ),
+            assignments_by_alias={
+                "raw": ImageAssignment(
+                    alias="raw",
+                    image_type="Grayscale image",
+                    selector=SourceSelector(),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+        ),
+    )
+
+    metadata = result.source_metadata["A01_s001_w1_z001_t001.tif"]
+    assert metadata["Plate"] == "plate_file"
+    assert metadata["Compound"] == "DMSO"
 
 
 def _example_sbs_source_schema() -> PipelineImageSchema:
@@ -648,6 +1211,12 @@ def _filtered_source_schema() -> PipelineImageSchema:
 
 
 def _imported_metadata_source_schema() -> PipelineImageSchema:
+    return _imported_metadata_source_schema_with_location("metadata.csv")
+
+
+def _imported_metadata_source_schema_with_location(
+    location: str,
+) -> PipelineImageSchema:
     return PipelineImageSchema(
         metadata_rules=(
             MetadataExtractionRule(
@@ -657,7 +1226,7 @@ def _imported_metadata_source_schema() -> PipelineImageSchema:
         ),
         imported_metadata_tables=(
             ImportedMetadataTable(
-                location="metadata.csv",
+                location=location,
                 joins=(
                     ImportedMetadataJoin(
                         image_metadata_field="WellRow",

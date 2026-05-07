@@ -1,215 +1,84 @@
-# Figures Plan
+# Figure Plan
 
-**Target**: 6-8 figures for Nature Methods
+**Target:** 8 main figures for a Nature Methods-style platform manuscript.
 
----
+Editable drafts are in `paper/figures/diagrams/*.dot`; rendered SVG/PNG drafts are in `paper/figures/rendered/`. Rebuild all diagrams and the contact sheet with `python paper/figures/render_diagrams.py`.
 
-## Figure 1: Conceptual Overview & Problem Statement
+## Figure 1. Fragmented Tool Stack To Semantic Workflow
 
-**Type**: Schematic diagram
+**Source:** `paper/figures/diagrams/fig01_field_integration_gap.dot`
+**Rendered:** `paper/figures/rendered/fig01_field_integration_gap.svg`
 
-**Panels**:
-- **a)** HCS dimensional complexity visualization
-  - Show data cube with multiple axes (X, Y, Z, T, C, Well, Condition)
-  - Illustrate explosion of combinations
-  - Example: 96-well × 4 channels × 10 timepoints × 3 Z-planes = 11,520 images
+Field tools solve separate parts of HCS: CellProfiler, Fiji/ImageJ, napari, OMERO/OME-Zarr, GPU libraries, and workflow systems. OpenHCS replaces manual handoffs with source schemas, typed state, memory contracts, runtime artifacts, and storage/viewer backends.
 
-- **b)** Common failure modes with existing tools
-  - Dimensional mismatch errors
-  - Lost metadata
-  - Broken pipelines when design changes
+**Main message:** OpenHCS replaces manual file handoffs with typed HCS contracts.
 
-- **c)** OpenHCS solution overview
-  - Declarative config → Dimensional compiler → Type-safe execution
-  - Automatic dimensional bookkeeping
-  - Provenance tracking
+## Figure 2. Compiler And Runtime Architecture
 
-**Message**: Dimensional complexity is the fundamental challenge; OpenHCS solves it through dimensional reasoning.
+**Source:** `paper/figures/diagrams/fig02_compiler_runtime_architecture.dot`
+**Rendered:** `paper/figures/rendered/fig02_compiler_runtime_architecture.svg`
 
----
+Source schema, typed state, function registry, and CellProfiler dialect inputs enter the OpenHCS compiler. The compiler produces FunctionSteps, runtime artifacts, storage plans, memory conversion, workers, viewer streams, and benchmark outputs.
 
-## Figure 2: Architecture & Dimensional Dataflow Compiler
+**Main message:** OpenHCS is a compile-then-execute semantic runtime, not a script wrapper.
 
-**Type**: Technical diagram
+## Figure 3. CellProfiler Import Path
 
-**Panels**:
-- **a)** System architecture
-  - Config layer (declarative YAML/Python)
-  - Compiler layer (dimensional reasoning, type checking)
-  - Execution layer (GPU-accelerated processing)
-  - Provenance layer (tracking and visualization)
+**Source:** `paper/figures/diagrams/fig03_cellprofiler_import_path.dot`
+**Rendered:** `paper/figures/rendered/fig03_cellprofiler_import_path.svg`
 
-- **b)** Dimensional dataflow example
-  - Show how dimensions flow through pipeline steps
-  - Type annotations at each stage
-  - Automatic validation and error detection
+The `.cppipe` file is parsed into module blocks and settings. Infrastructure modules become source schema and binding; processing modules become FunctionSteps; output modules become materialization plans; runtime artifacts are compared against native CellProfiler outputs.
 
-- **c)** Config system hierarchy
-  - Global pipeline config
-  - Step-specific configs
-  - Dual-axis resolution (saved vs live)
+**Main message:** CellProfiler import is a compiler dialect that produces normal OpenHCS workflows.
 
-**Message**: Novel compiler architecture enables correctness by construction.
+## Figure 4. Benchmark Validation Structure
 
----
+**Source:** `paper/figures/diagrams/fig04_benchmark_validation_structure.dot`
+**Rendered:** `paper/figures/rendered/fig04_benchmark_validation_structure.svg`
 
-## Figure 3: Declarative Composition & Usability
+The benchmark manifest feeds native CellProfiler and OpenHCS runs. Native CellProfiler defines reference outputs. OpenHCS imports and runs the same `.cppipe` files. Semantic parity, phase timing, throughput, RAM, and category summaries remain separate report layers.
 
-**Type**: Code comparison + workflow diagram
+**Main message:** The benchmark separates correctness, execution speed, cold-run overhead, and throughput.
 
-**Panels**:
-- **a)** Side-by-side comparison
-  - OpenHCS declarative config (20-30 lines)
-  - Equivalent CellProfiler pipeline (screenshot)
-  - Equivalent ImageJ macro (50-100 lines)
+## Figure 5. Throughput Amortization
 
-- **b)** Composability demonstration
-  - Show how steps compose
-  - Reusable components
-  - Type-safe connections
+**Source:** `paper/figures/diagrams/fig05_throughput_amortization.dot`
+**Rendered:** `paper/figures/rendered/fig05_throughput_amortization.svg`
 
-- **c)** Complexity reduction metrics
-  - Lines of code comparison
-  - Configuration complexity
-  - Time to implement
+Fixed worker costs are divided by samples per worker; execution and output costs remain per-sample. RAM determines feasible worker count. The capacity curve reports samples per hour, RAM per worker, and speedup versus native CellProfiler.
 
-**Message**: Declarative approach dramatically reduces complexity while improving correctness.
+**Main message:** One-sample timing is conservative; many-well HCS amortizes fixed costs.
 
----
+## Figure 6. Backend Extensibility
 
-## Figure 4: Interactive Provenance & GUI
+**Source:** `paper/figures/diagrams/fig06_backend_extensibility.dot`
+**Rendered:** `paper/figures/rendered/fig06_backend_extensibility.svg`
 
-**Type**: GUI screenshots + interaction diagram
+Workflow semantics remain stable while function memory contracts and ArrayBridge route compatible functions to NumPy/Numba, CuPy/CuCIM, pyclesperanto, JAX, PyTorch, or TensorFlow variants. Backend variants remain subject to the same parity policy.
 
-**Panels**:
-- **a)** Main GUI overview
-  - Config editor
-  - Pipeline visualization
-  - Napari integration
+**Main message:** GPU acceleration is an architectural extension selected by contracts.
 
-- **b)** Click-to-provenance workflow
-  - User clicks on result in napari
-  - System traces back through pipeline
-  - Shows all intermediate steps and parameters
+## Figure 7. Typed State And Bidirectional Editing
 
-- **c)** Debugging scenario
-  - Identify unexpected result
-  - Trace provenance
-  - Find root cause
+**Source:** `paper/figures/diagrams/fig07_typed_state_bidirectional_editing.dot`
+**Rendered:** `paper/figures/rendered/fig07_typed_state_bidirectional_editing.svg`
 
-**Message**: First-class provenance enables interactive exploration and debugging.
+GUI editing, generated Python, and LLM-assisted construction all target ObjectState. ObjectState resolves inherited/defaulted/local values into compiled runtime contexts and exposes provenance back to GUI and code.
 
----
+**Main message:** GUI, code, runtime, and assistant workflows converge on one typed state model.
 
-## Figure 5: Performance Benchmarks
+## Figure 8. Benchmark Corpus Categories
 
-**Type**: Quantitative plots
+**Source:** `paper/figures/diagrams/fig08_benchmark_corpus_categories.dot`
+**Rendered:** `paper/figures/rendered/fig08_benchmark_corpus_categories.svg`
 
-**Panels**:
-- **a)** Processing speed comparison
-  - OpenHCS vs CellProfiler vs ImageJ
-  - Various dataset sizes
-  - Show GPU acceleration benefit
+Benchmark workflows are grouped by declared manifest fields: source category, assay family, semantic pressure, and output pressure. Figure grouping comes from manifest semantics rather than filename heuristics.
 
-- **b)** Memory efficiency
-  - Peak memory usage
-  - Scalability to large datasets
+**Main message:** Category-level claims are backed by declared benchmark metadata.
 
-- **c)** Caching benefits
-  - Time saved on re-runs
-  - Interactive iteration speed
+## Next Iteration
 
-- **d)** Scalability demonstration
-  - Performance vs dataset size
-  - Linear scaling with parallelization
-
-**Message**: Real performance improvements enable new scales of analysis.
-
----
-
-## Figure 6: Biological Validation - iPSC Microfluidic Analysis
-
-**Type**: Biological results + analysis workflow
-
-**Panels**:
-- **a)** Experimental design
-  - iPSC microfluidic device schematic
-  - Imaging strategy
-  - Dimensional structure of dataset
-
-- **b)** Analysis pipeline
-  - OpenHCS workflow diagram
-  - Key processing steps
-  - Dimensional transformations
-
-- **c)** Biological results
-  - Quantitative phenotypes extracted
-  - Statistical analysis
-  - Biological insights
-
-- **d)** Comparison to existing tools
-  - What's possible with OpenHCS vs CellProfiler
-  - Analysis that would be impractical otherwise
-
-**Message**: OpenHCS enables biological discoveries through complex multi-dimensional analysis.
-
----
-
-## Figure 7: Extensibility & Integration
-
-**Type**: Code examples + ecosystem diagram
-
-**Panels**:
-- **a)** Custom step implementation
-  - Show how easy it is to add new step
-  - Minimal boilerplate
-  - Automatic integration with compiler
-
-- **b)** Ecosystem integration
-  - pyclesperanto for GPU processing
-  - napari for visualization
-  - Standard file formats (OME-ZARR, etc.)
-
-- **c)** Community extensions
-  - Example custom steps from users
-  - Plugin architecture
-
-**Message**: Platform designed for community-driven extension.
-
----
-
-## Figure 8: Use Cases Across Domains (Optional)
-
-**Type**: Gallery of applications
-
-**Panels**:
-- Multiple brief examples showing versatility
-- Different biological systems
-- Different imaging modalities
-- Different analysis goals
-
-**Message**: General platform applicable across HCS domains.
-
----
-
-## Supplementary Figures (Ideas)
-
-- **S1**: Detailed architecture diagrams
-- **S2**: Complete benchmark suite
-- **S3**: Additional biological validation examples
-- **S4**: Config schema documentation
-- **S5**: Performance profiling details
-- **S6**: Comparison matrix: OpenHCS vs all major tools
-
----
-
-## Figure Creation TODO
-
-- [ ] Create schematic diagrams (Inkscape/Illustrator)
-- [ ] Generate architecture diagrams (from code or manual)
-- [ ] Run benchmarks and create plots
-- [ ] Capture GUI screenshots
-- [ ] Analyze iPSC data and create result figures
-- [ ] Code comparison examples
-- [ ] Ensure all figures follow Nature Methods style guide
-
+- Replace broad labels with final terminology from the manuscript after the benchmark corpus settles.
+- Add figure-panel letters if these diagrams become multi-panel composites.
+- Re-render SVGs after any DOT edit.
+- Convert final SVGs to publication layout in Illustrator/Inkscape only after the argument structure is stable.

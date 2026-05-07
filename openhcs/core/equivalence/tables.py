@@ -200,6 +200,47 @@ def aggregate_measurement_table_key(
     )
 
 
+def exact_measurement_table_key(
+    table: MeasurementTable,
+) -> tuple[object, ...]:
+    """Return an exact semantic key for duplicate runtime measurement tables."""
+    row_payloads: list[tuple[tuple[str, object], ...]] = []
+    normalized_field_cache: dict[str, str] = {}
+
+    def normalized_field(field_name: str) -> str:
+        cached = normalized_field_cache.get(field_name)
+        if cached is None:
+            cached = normalize_runtime_identifier(field_name)
+            normalized_field_cache[field_name] = cached
+        return cached
+
+    for row in measurement_rows((table,)):
+        row_mapping = measurement_row_mapping(row)
+        row_payloads.append(
+            tuple(
+                (
+                    normalized_field(str(field_name)),
+                    measurement_table_cell_payload(value),
+                )
+                for field_name, value in row_mapping.items()
+            )
+        )
+
+    field_payloads = tuple(
+        (field.name, field.dtype, field.required)
+        for field in table.fields
+    )
+    return (
+        table.name,
+        repr(table.subject),
+        table.object_name,
+        table.object_id_field,
+        table.source_image_name,
+        field_payloads,
+        tuple(row_payloads),
+    )
+
+
 def measurement_table_cell_payload(value: object) -> object:
     """Return a hashable exact payload for measurement-table dedupe."""
     value = canonical_scalar(value)

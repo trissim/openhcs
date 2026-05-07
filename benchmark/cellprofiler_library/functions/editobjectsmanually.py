@@ -13,6 +13,7 @@ from typing import Tuple
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -69,7 +70,7 @@ def edit_objects_manually(
     from skimage.measure import regionprops, label as relabel_connected
     
     # Make a copy of labels to edit
-    edited_labels = labels.copy().astype(np.int32)
+    edited_labels = object_label_dense_array(labels, dtype=np.int32).copy()
     
     # Get original object count
     original_objects = np.unique(edited_labels)

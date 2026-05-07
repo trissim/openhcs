@@ -6,8 +6,6 @@ from abc import ABC, abstractmethod
 import logging
 import os
 import time
-from typing import NamedTuple
-
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
@@ -89,7 +87,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
-    is_default_backend = True
+    is_default_backend = False
 
     def smooth_background_plane(
         self,
@@ -164,19 +162,6 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             radius=radius,
             value_count=int(values.size),
         )
-        if _rank_median_skimage_rank_backend_is_preferred(
-            RankMedianWorkload(radius=radius, value_count=int(values.size)),
-        ):
-            phase_started_at = time.perf_counter()
-            result = _rank_median_native_reference(scaled, footprint)
-            _log_profile(
-                "rank_median_native_reference",
-                time.perf_counter() - phase_started_at,
-                radius=radius,
-                value_count=int(values.size),
-            )
-            return result
-
         phase_started_at = time.perf_counter()
         code_image = inverse.reshape(image.shape).astype(np.int32, copy=False)
         result_codes = _rank_median_codes_2d_sliding_histogram_numba(
@@ -198,7 +183,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
 class NativeNumpyRankMedianSmoothingBackendStrategy(
     RankMedianSmoothingBackendStrategy,
 ):
-    """Explicit skimage rank-median reference backend for NumPy planes."""
+    """Compact-domain skimage rank-median backend for NumPy planes."""
 
     backend_key = cellprofiler_backend_key(
         MemoryType.NUMPY,
@@ -206,7 +191,7 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NATIVE
-    is_default_backend = False
+    is_default_backend = True
 
     def smooth_background_plane(
         self,
@@ -216,18 +201,60 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
         radius: int,
         morphology: object,
     ) -> np.ndarray:
-        del mask
+        image = np.asarray(pixel_data, dtype=np.float32)
+        mask_array = None if mask is None else np.asarray(mask, dtype=np.bool_)
+        if mask_array is not None and mask_array.shape != image.shape:
+            raise ValueError(
+                "Rank-median illumination mask must match the image shape; got "
+                f"mask {mask_array.shape!r} for image {image.shape!r}."
+            )
+        footprint = np.asarray(morphology.disk_footprint(radius), dtype=np.bool_)
+        row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+        scaled = (image * 65535.0).astype(np.uint16)
+        effective_scaled = scaled if mask_array is None else scaled.copy()
+        if mask_array is not None:
+            effective_scaled[~mask_array] = np.uint16(0)
+        minimum_value = np.min(effective_scaled)
+        if not np.all(effective_scaled == minimum_value) and (
+            _rank_median_global_minimum_is_majority_everywhere_numba(
+                np.ascontiguousarray(effective_scaled),
+                row_offsets_y,
+                row_radii_x,
+                minimum_value,
+            )
+        ):
+            return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
+        return self._smooth_compact_rank_median(
+            effective_scaled,
+            footprint,
+        )
+
+    @staticmethod
+    def _smooth_compact_rank_median(
+        scaled: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
         import skimage.filters
 
-        image = np.asarray(pixel_data, dtype=np.float32)
-        footprint = np.asarray(morphology.disk_footprint(radius), dtype=bool)
-        scaled = (image * 65535.0).astype(np.uint16)
-        result = skimage.filters.median(
-            scaled,
+        effective_scaled = np.asarray(scaled, dtype=np.uint16)
+        values, inverse = np.unique(effective_scaled, return_inverse=True)
+        if values.size == 1:
+            result = skimage.filters.median(
+                effective_scaled,
+                footprint,
+                behavior="rank",
+            )
+            return result.astype(np.float32) / 65535.0
+        code_dtype = (
+            np.uint8 if values.size <= np.iinfo(np.uint8).max + 1 else np.uint16
+        )
+        code_image = inverse.reshape(effective_scaled.shape).astype(code_dtype)
+        result_codes = skimage.filters.median(
+            code_image,
             footprint,
             behavior="rank",
         )
-        return result.astype(np.float32) / 65535.0
+        return values[result_codes].astype(np.float32) / 65535.0
 
 
 class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
@@ -892,19 +919,6 @@ def _rank_median_disk_rows(
         np.asarray(rows, dtype=np.int64),
         np.asarray(radii, dtype=np.int64),
     )
-
-
-class RankMedianWorkload(NamedTuple):
-    """Small immutable workload descriptor for exact rank-median dispatch."""
-
-    radius: int
-    value_count: int
-
-
-def _rank_median_skimage_rank_backend_is_preferred(
-    workload: RankMedianWorkload,
-) -> bool:
-    return workload.radius >= 32 and workload.value_count <= 1024
 
 
 def _rank_median_native_reference(

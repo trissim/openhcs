@@ -11,10 +11,17 @@ from benchmark.cellprofiler_library.functions.untangleworms import (
 )
 
 from .parser import ModuleBlock
-from .setting_names import optional_setting_value, required_setting_value
+from .setting_names import (
+    SettingNameFamily,
+    optional_setting_value,
+    required_setting_value,
+)
 
 
-UNTANGLE_WORMS_INPUT_IMAGE_SETTING = "Select the input binary image"
+UNTANGLE_WORMS_INPUT_IMAGE_SETTING = SettingNameFamily(
+    "Select the input binary image",
+    aliases=("Select the input image",),
+)
 UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING = (
     "Name the output overlapping worm objects"
 )

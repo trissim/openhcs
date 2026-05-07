@@ -119,6 +119,7 @@ class ArtifactSpec:
     kind: ArtifactKind = ArtifactKind.SPECIAL
     materialization: Any = None
     required: bool = True
+    sidecar_role: ArtifactSidecarRole | None = None
 
 
 @dataclass(frozen=True)

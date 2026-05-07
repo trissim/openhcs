@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.analysis.region_properties import (
     binary_area_and_perimeter_2d,
     label_area_and_rounded_perimeter_2d,
@@ -282,24 +283,26 @@ def _measure_object_labels(
     slice_index: int = 0,
     source_image_name: str | None = None,
 ) -> tuple[np.ndarray, AreaOccupiedMeasurement]:
-    area_occupied, perimeter_value = _label_area_and_perimeter(labels)
+    label_array = object_label_dense_array(labels)
+    area_occupied, perimeter_value = _label_area_and_perimeter(label_array)
     measurement = _area_occupied_measurement(
         area_occupied,
         perimeter_value,
-        float(np.prod(labels.shape)),
+        float(np.prod(label_array.shape)),
         slice_index=slice_index,
         source_image_name=source_image_name,
     )
-    object_region_mask = (labels > 0).astype(getattr(image, "dtype", labels.dtype))
+    object_region_mask = (label_array > 0).astype(getattr(image, "dtype", label_array.dtype))
     return object_region_mask, measurement
 
 
 def _label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
-    if not hasattr(labels, "ndim") or labels.ndim <= 2:
-        return _label_plane_area_and_perimeter(labels)
+    label_array = object_label_dense_array(labels)
+    if label_array.ndim <= 2:
+        return _label_plane_area_and_perimeter(label_array)
     plane_measurements = tuple(
-        _label_plane_area_and_perimeter(labels[index])
-        for index in range(labels.shape[0])
+        _label_plane_area_and_perimeter(label_array[index])
+        for index in range(label_array.shape[0])
     )
     return (
         float(sum(area for area, _perimeter in plane_measurements)),
@@ -308,16 +311,15 @@ def _label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
 
 
 def _label_plane_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
-    labels_array = labels.astype(np.int32, copy=False)
+    labels_array = object_label_dense_array(labels, dtype=np.int32)
     return label_area_and_rounded_perimeter_2d(labels_array)
 
 
 def _reference_image_for_labels(image: np.ndarray, labels: np.ndarray) -> np.ndarray:
-    if not hasattr(image, "ndim") or not hasattr(labels, "ndim"):
+    label_array = object_label_dense_array(labels)
+    if image.ndim == label_array.ndim:
         return image
-    if image.ndim == labels.ndim:
-        return image
-    if image.ndim == labels.ndim + 1 and image.shape[0] >= 1:
+    if image.ndim == label_array.ndim + 1 and image.shape[0] >= 1:
         return image[0]
     return image
 
@@ -458,7 +460,7 @@ def measure_image_volume_occupied_objects(
     Returns:
         Tuple of (original image, VolumeOccupiedMeasurement)
     """
-    labels_array = labels.astype(np.int32, copy=False)
+    labels_array = object_label_dense_array(labels, dtype=np.int32)
     volume_occupied = float(np.count_nonzero(labels_array))
     
     # Calculate surface area
@@ -470,7 +472,7 @@ def measure_image_volume_occupied_objects(
         surface_area_value = 0.0
     
     # Total volume is the total number of voxels
-    total_volume = float(np.prod(labels.shape))
+    total_volume = float(np.prod(labels_array.shape))
     
     measurement = _volume_occupied_measurement(
         volume_occupied,

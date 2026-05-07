@@ -15,6 +15,7 @@ class ModuleArtifactContract:
     inputs: tuple[ArtifactSpec, ...] = ()
     runtime_artifact_inputs: tuple[ArtifactSpec, ...] = ()
     outputs: tuple[ArtifactSpec, ...] = ()
+    declared_outputs: tuple[ArtifactSpec, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.module_name:
@@ -26,7 +27,17 @@ class ModuleArtifactContract:
             tuple(self.runtime_artifact_inputs),
         )
         object.__setattr__(self, "outputs", tuple(self.outputs))
-        for field_name in ("inputs", "runtime_artifact_inputs", "outputs"):
+        object.__setattr__(
+            self,
+            "declared_outputs",
+            tuple(self.declared_outputs or self.outputs),
+        )
+        for field_name in (
+            "inputs",
+            "runtime_artifact_inputs",
+            "outputs",
+            "declared_outputs",
+        ):
             for spec in getattr(self, field_name):
                 if not isinstance(spec, ArtifactSpec):
                     raise TypeError(

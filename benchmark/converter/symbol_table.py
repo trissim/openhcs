@@ -29,6 +29,7 @@ from openhcs.core.artifacts import (
     CROP_MASK_ARTIFACT_SIDECAR,
     ArtifactKind,
     ArtifactSpec,
+    ArtifactSidecarRole,
 )
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
@@ -160,6 +161,7 @@ class CellProfilerSymbol:
     kind: CellProfilerSymbolKind
     producer_module_num: int | None = None
     source_bound: bool = False
+    sidecar_role: ArtifactSidecarRole | None = None
 
     def __post_init__(self) -> None:
         normalized_name = _normalize_symbol_name(self.name)
@@ -173,7 +175,11 @@ class CellProfilerSymbol:
         return CellProfilerSymbolKey(self.name, self.kind)
 
     def artifact_spec(self) -> ArtifactSpec:
-        return ArtifactSpec(self.name, self.kind.artifact_kind)
+        return ArtifactSpec(
+            self.name,
+            self.kind.artifact_kind,
+            sidecar_role=self.sidecar_role,
+        )
 
     @property
     def is_external_source(self) -> bool:
@@ -189,6 +195,7 @@ class ModuleArtifactContracts:
     module_num: int
     input_symbols: tuple[CellProfilerSymbol, ...] = ()
     output_symbols: tuple[CellProfilerSymbol, ...] = ()
+    declared_output_symbols: tuple[CellProfilerSymbol, ...] = ()
     source_bindings: StepSourceBindingsConfig = EMPTY_SOURCE_BINDINGS
 
     def __post_init__(self) -> None:
@@ -212,6 +219,12 @@ class ModuleArtifactContracts:
     def outputs(self) -> tuple[ArtifactSpec, ...]:
         """All named values produced by the module as artifact specs."""
         return tuple(symbol.artifact_spec() for symbol in self.output_symbols)
+
+    @property
+    def declared_outputs(self) -> tuple[ArtifactSpec, ...]:
+        """All CellProfiler outputs before runtime dead-artifact pruning."""
+        symbols = self.declared_output_symbols or self.output_symbols
+        return tuple(symbol.artifact_spec() for symbol in symbols)
 
     @property
     def runtime_artifact_inputs(self) -> tuple[ArtifactSpec, ...]:
@@ -246,6 +259,7 @@ class ModuleArtifactContracts:
             inputs=self.inputs,
             runtime_artifact_inputs=self.runtime_artifact_inputs,
             outputs=self.outputs,
+            declared_outputs=self.declared_outputs,
         )
 
 
@@ -304,7 +318,7 @@ INPUT_IMAGE_SETTING = SettingNameFamily(
 )
 INPUT_OBJECTS_SETTING = SettingNameFamily(
     "Select the input objects",
-    aliases=("Select input objects",),
+    aliases=("Select input objects", "Objects"),
 )
 OUTPUT_IMAGE_SETTING = SettingNameFamily(
     "Name the output image",
@@ -435,13 +449,41 @@ class _SymbolTableBuilder:
         normalized_name = _normalize_symbol_name(name)
         return self._symbols.get(CellProfilerSymbolKey(normalized_name, kind))
 
+    def measurement_output_for_module_num(
+        self,
+        module_num: int | None,
+    ) -> CellProfilerSymbol | None:
+        """Return the unique measurement output produced by a prior module."""
+        if module_num is None:
+            return None
+        measurement_outputs = tuple(
+            symbol
+            for contract in self._contracts
+            if contract.module_num == module_num
+            for symbol in contract.output_symbols
+            if symbol.kind is CellProfilerSymbolKind.MEASUREMENTS
+        )
+        if len(measurement_outputs) > 1:
+            raise ValueError(
+                f"Module {module_num} produced multiple measurement outputs: "
+                f"{[symbol.name for symbol in measurement_outputs]!r}."
+            )
+        return measurement_outputs[0] if measurement_outputs else None
+
     def declare(
         self,
         name: str,
         kind: CellProfilerSymbolKind,
         module: ModuleBlock,
+        *,
+        sidecar_role: ArtifactSidecarRole | None = None,
     ) -> CellProfilerSymbol:
-        return self._declare(name, kind, module.module_num)
+        return self._declare(
+            name,
+            kind,
+            module.module_num,
+            sidecar_role=sidecar_role,
+        )
 
     def _declare(
         self,
@@ -450,6 +492,7 @@ class _SymbolTableBuilder:
         producer_module_num: int | None,
         *,
         source_bound: bool = False,
+        sidecar_role: ArtifactSidecarRole | None = None,
     ) -> CellProfilerSymbol:
         normalized_name = _normalize_symbol_name(name)
         symbol = CellProfilerSymbol(
@@ -457,6 +500,7 @@ class _SymbolTableBuilder:
             kind=kind,
             producer_module_num=producer_module_num,
             source_bound=source_bound,
+            sidecar_role=sidecar_role,
         )
         existing = self._symbols.get(symbol.key)
         if existing is not None:
@@ -541,8 +585,21 @@ def module_contract_literal(
         f"inputs=({input_specs}), "
         f"runtime_artifact_inputs=({runtime_input_specs}), "
         f"outputs=({output_specs})"
+        f"{_declared_outputs_literal(contract)}"
         ")"
     )
+
+
+def _declared_outputs_literal(contract: ModuleArtifactContracts) -> str:
+    """Render declared outputs only when pruning made them differ from outputs."""
+    if contract.declared_outputs == contract.outputs:
+        return ""
+    declared_output_specs = ", ".join(
+        _artifact_spec_literal(spec) for spec in contract.declared_outputs
+    )
+    if len(contract.declared_outputs) == 1:
+        declared_output_specs += ","
+    return f", declared_outputs=({declared_output_specs})"
 
 
 def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
@@ -712,20 +769,20 @@ def _artifact_spec_literal(
     preserve_default_materialization: bool = False,
     materialization_literal: str | None = None,
 ) -> str:
+    keyword_args: list[str] = []
     if materialization_literal is not None:
-        return (
-            f"ArtifactSpec({spec.name!r}, ArtifactKind.{spec.kind.name}, "
-            f"materialization={materialization_literal})"
-        )
-    if (
+        keyword_args.append(f"materialization={materialization_literal}")
+    elif (
         preserve_default_materialization
         and spec.kind not in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
     ):
-        return (
-            f"ArtifactSpec({spec.name!r}, ArtifactKind.{spec.kind.name}, "
-            "materialization=NO_ARTIFACT_MATERIALIZATION)"
+        keyword_args.append("materialization=NO_ARTIFACT_MATERIALIZATION")
+    if spec.sidecar_role is not None:
+        keyword_args.append(
+            f"sidecar_role=ArtifactSidecarRole.{spec.sidecar_role.name}"
         )
-    return f"ArtifactSpec({spec.name!r}, ArtifactKind.{spec.kind.name})"
+    args = [repr(spec.name), f"ArtifactKind.{spec.kind.name}", *keyword_args]
+    return f"ArtifactSpec({', '.join(args)})"
 
 
 def _identify_primary_objects(
@@ -849,6 +906,7 @@ def _crop(
         CROP_MASK_ARTIFACT_SIDECAR.name_for(output_name),
         CellProfilerSymbolKind.IMAGE,
         module,
+        sidecar_role=CROP_MASK_ARTIFACT_SIDECAR.role,
     )
     measurements = builder.declare(
         _measurement_name(module),
@@ -1588,6 +1646,28 @@ def _overlay_outline_symbol_kind(
     return CellProfilerSymbolKind.OBJECTS
 
 
+def _overlay_objects(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image = builder.require(
+        _setting(module, INPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    objects = builder.require(
+        _setting(module, INPUT_OBJECTS_SETTING),
+        CellProfilerSymbolKind.OBJECTS,
+        module,
+    )
+    output = builder.declare(
+        _setting(module, OUTPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    return _contracts(module, builder, inputs=[image, objects], outputs=[output])
+
+
 def _calculate_math(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1659,15 +1739,21 @@ def _straighten_worms(
         CellProfilerSymbolKind.OBJECTS,
         module,
     )
+    producer_measurements = builder.measurement_output_for_module_num(
+        input_objects.producer_module_num
+    )
     measurements = builder.declare(
         _measurement_name(module),
         CellProfilerSymbolKind.MEASUREMENTS,
         module,
     )
+    side_inputs = [input_objects]
+    if producer_measurements is not None:
+        side_inputs.append(producer_measurements)
     return _contracts(
         module,
         builder,
-        inputs=[input_objects, *image_inputs],
+        inputs=[*side_inputs, *image_inputs],
         outputs=[*image_outputs, output_objects, measurements],
     )
 
@@ -1949,6 +2035,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("GrayToColor",), _gray_to_color),
     (("UnmixColors",), _unmix_colors),
     (("OverlayOutlines",), _overlay_outlines),
+    (("OverlayObjects",), _overlay_objects),
     (("MeasureObjectSizeShape",), _measure_object_size_shape),
     (
         (
@@ -2160,6 +2247,7 @@ def _contracts(
         module_num=module.module_num,
         input_symbols=input_symbols,
         output_symbols=_unique_symbols(outputs),
+        declared_output_symbols=_unique_symbols(outputs),
         source_bindings=builder.source_bindings_for(
             symbol for symbol in input_symbols if symbol.is_external_source
         ),

@@ -35,6 +35,7 @@ from openhcs.core.runtime_stores import (
     replace_runtime_artifact_payload,
 )
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
@@ -93,6 +94,7 @@ class FunctionExecutionRequest:
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
     runtime_adapter: RuntimeAdapterSpec | None = None
+    invocation_options: RuntimeInvocationOptions | None = None
     source_binding_plan: CompiledSourceBindingPlan = CompiledSourceBindingPlan.empty()
     source_binding_context: SourceBindingRuntimeContext = (
         SourceBindingRuntimeContext.empty()
@@ -446,6 +448,11 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
     parameter_names = _callable_parameter_names(func_callable)
     if "context" in parameter_names:
         final_kwargs["context"] = context
+    if (
+        request.invocation_options is not None
+        and "runtime_invocation_options" in parameter_names
+    ):
+        final_kwargs["runtime_invocation_options"] = request.invocation_options
 
     if request.runtime_adapter is not None:
         adapter_parameter = request.runtime_adapter.parameter_name
@@ -458,6 +465,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
         final_kwargs[adapter_parameter] = request.runtime_adapter.factory(
             RuntimeAdapterRequest(
                 context=context,
+                artifact_inputs=request.artifact_inputs,
                 artifact_outputs=artifact_outputs,
                 source_binding_plan=request.source_binding_plan,
                 source_binding_context=request.source_binding_context,
@@ -572,6 +580,7 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
                 artifact_inputs=invocation.select_inputs(request.artifact_inputs),
                 artifact_outputs=invocation.select_outputs(request.artifact_outputs),
                 runtime_adapter=invocation.contract.runtime_adapter,
+                invocation_options=invocation.invocation_options,
                 source_binding_plan=plan.source_binding_plan,
                 source_binding_context=request.source_binding_context,
                 group_key=invocation.key.group_key,

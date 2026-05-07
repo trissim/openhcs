@@ -19,10 +19,10 @@ from numba import njit, prange
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
-    ObjectLabelPayload,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
+    object_label_payload_from_source_image,
 )
 
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
@@ -673,15 +673,12 @@ def identify_primary_objects(
     return (
         image,
         stats,
-        ObjectLabelPayload(
-            labels=labeled_image.astype(np.int32, copy=False),
+        object_label_payload_from_source_image(
+            image,
+            labeled_image.astype(np.int32, copy=False),
             unedited_labels=unedited_labels.astype(np.int32, copy=False),
             small_removed_labels=small_removed_labels.astype(np.int32, copy=False),
             declared_object_count=object_count,
-            spatial_origin_yx=image_payload_metadata(image).spatial_origin_yx,
-            source_spatial_shape_yx=(
-                image_payload_metadata(image).source_spatial_shape_yx
-            ),
         ),
     )
 

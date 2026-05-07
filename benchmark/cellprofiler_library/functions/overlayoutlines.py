@@ -14,6 +14,7 @@ from skimage import img_as_float
 
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.image_shapes import is_color_image_slice
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
@@ -349,7 +350,10 @@ def _draw_object_labels(
     display_mode: OutlineDisplayMode,
     line_mode: LineMode,
 ) -> np.ndarray:
-    labels_2d = align_label_plane_to_shape(labels.astype(np.int32), output.shape[:2])
+    labels_2d = align_label_plane_to_shape(
+        object_label_dense_array(labels, dtype=np.int32),
+        output.shape[:2],
+    )
     outline_color: tuple[float, float, float] | float
     if display_mode is OutlineDisplayMode.COLOR:
         if output.ndim == 2:

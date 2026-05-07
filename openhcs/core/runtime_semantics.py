@@ -3,11 +3,221 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
+
+from metaclass_registry import AutoRegisterMeta
+import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    NominalTypeKeyedStrategyMixin,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSpatialDomain:
+    """Dense XY placement contract for a source-image coordinate domain."""
+
+    origin_yx: tuple[int, int] | None = None
+    source_shape_yx: tuple[int, int] | None = None
+    fill_value: Any = 0
+    value_name: str = "Dense array"
+
+    def materialize(self, value: Any) -> Any:
+        """Place an array-like value into this source spatial domain."""
+        return dense_array_in_source_spatial_domain(
+            value,
+            spatial_origin_yx=self.origin_yx,
+            source_spatial_shape_yx=self.source_shape_yx,
+            fill_value=self.fill_value,
+            value_name=self.value_name,
+        )
+
+    def materialize_for_slice(
+        self,
+        value: Any,
+        slice_index: int,
+        slice_count: int,
+    ) -> Any:
+        """Place an array-like value and return one aligned execution slice."""
+        import numpy as np
+
+        materialized = self.materialize(value)
+        array = np.asarray(materialized)
+        if array.ndim >= 3 and array.shape[0] == slice_count:
+            return array[slice_index]
+        return materialized
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSpatialPayloadDomain:
+    """Native payload placement identity inside an optional source XY domain."""
+
+    origin_yx: tuple[int, int]
+    spatial_shape_yx: tuple[int, int]
+    source_shape_yx: tuple[int, int] | None
+
+
+class SourceSpatialDomainAdapter(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Adapter for dense XY payloads that carry source-domain coordinates."""
+
+    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_value(
+        cls,
+        value: Any,
+        *,
+        source_shape_override_yx: tuple[int, int] | None = None,
+    ) -> "SourceSpatialDomainAdapter | None":
+        for adapter_type in cls.registered_strategy_types():
+            adapter = adapter_type.for_value(
+                value,
+                source_shape_override_yx=source_shape_override_yx,
+            )
+            if adapter is not None:
+                return adapter
+        return None
+
+    @property
+    @abstractmethod
+    def array(self) -> Any:
+        ...
+
+    @property
+    @abstractmethod
+    def domain(self) -> SourceSpatialDomain:
+        ...
+
+    @property
+    def spatial_shape_yx(self) -> tuple[int, int]:
+        """Return the payload's native XY shape before source-domain expansion."""
+        import numpy as np
+
+        array = np.asarray(self.array)
+        if array.ndim < 2:
+            raise ValueError(
+                "Source-spatial payloads require at least two dimensions, "
+                f"got {array.ndim}."
+            )
+        return tuple(int(axis) for axis in array.shape[-2:])
+
+    @property
+    def payload_domain(self) -> SourceSpatialPayloadDomain:
+        """Return this payload's native placement identity."""
+        return SourceSpatialPayloadDomain(
+            origin_yx=self.domain.origin_yx or (0, 0),
+            spatial_shape_yx=self.spatial_shape_yx,
+            source_shape_yx=self.domain.source_shape_yx,
+        )
+
+    @classmethod
+    def common_payload_domain(
+        cls,
+        adapters: tuple["SourceSpatialDomainAdapter", ...],
+    ) -> SourceSpatialPayloadDomain | None:
+        """Return the shared native payload domain, if every adapter agrees."""
+        domains = tuple(dict.fromkeys(adapter.payload_domain for adapter in adapters))
+        if len(domains) == 1:
+            return domains[0]
+        return None
+
+    @classmethod
+    def common_source_shape_yx(
+        cls,
+        adapters: tuple["SourceSpatialDomainAdapter", ...],
+    ) -> tuple[int, int] | None:
+        """Return the shared source XY shape, if every declared source agrees."""
+        source_shapes = tuple(
+            dict.fromkeys(
+                adapter.domain.source_shape_yx
+                for adapter in adapters
+                if adapter.domain.source_shape_yx is not None
+            )
+        )
+        if len(source_shapes) == 1:
+            return source_shapes[0]
+        return None
+
+    @classmethod
+    def requires_source_domain_alignment(
+        cls,
+        adapters: tuple["SourceSpatialDomainAdapter", ...],
+    ) -> bool:
+        """Return whether payloads must be expanded before joint execution."""
+        source_shape = cls.common_source_shape_yx(adapters)
+        if source_shape is None:
+            return False
+        common_payload_domain = cls.common_payload_domain(adapters)
+        if common_payload_domain is not None:
+            return False
+        return True
+
+    def materialize(self) -> Any:
+        """Return the payload array in source-image XY coordinates."""
+        return self.domain.materialize(self.array)
+
+    def materialize_for_slice(self, slice_index: int, slice_count: int) -> Any:
+        """Return one aligned execution slice from the materialized payload."""
+        return self.domain.materialize_for_slice(
+            self.array,
+            slice_index,
+            slice_count,
+        )
+
+    def extract_source_array(self, value: Any) -> Any:
+        """Project a source-domain dense array into this payload's native domain."""
+        import numpy as np
+
+        array = np.asarray(value)
+        payload_domain = self.payload_domain
+        source_shape_yx = payload_domain.source_shape_yx
+        if source_shape_yx is None:
+            return value
+        if array.ndim < 2 or tuple(array.shape[-2:]) != tuple(source_shape_yx):
+            return value
+        if tuple(array.shape[-2:]) == payload_domain.spatial_shape_yx:
+            return value
+        origin_y, origin_x = payload_domain.origin_yx
+        height, width = payload_domain.spatial_shape_yx
+        return array[..., origin_y : origin_y + height, origin_x : origin_x + width]
+
+
+@dataclass(frozen=True, slots=True)
+class DenseArraySourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
+    """Source-domain adapter for dense array-like payloads."""
+
+    value: Any
+    source_domain: SourceSpatialDomain = SourceSpatialDomain()
+
+    @classmethod
+    def for_value(
+        cls,
+        value: Any,
+        *,
+        source_shape_override_yx: tuple[int, int] | None = None,
+    ) -> "DenseArraySourceSpatialDomainAdapter | None":
+        return None
+
+    @property
+    def array(self) -> Any:
+        return self.value
+
+    @property
+    def domain(self) -> SourceSpatialDomain:
+        return self.source_domain
+
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,12 +258,28 @@ class ObjectLabelVariant(str, Enum):
     SMALL_REMOVED = "small_removed"
 
 
+class ObjectLabelDomainScope(str, Enum):
+    """How declared object-label IDs apply across dense label planes."""
+
+    PAYLOAD = "payload"
+    PLANE = "plane"
+
+    @classmethod
+    def common(cls, scopes: Any) -> "ObjectLabelDomainScope":
+        """Return the common scope for merged labels, defaulting to payload scope."""
+        unique_scopes = tuple(dict.fromkeys(coerce_enum(cls, scope, "ObjectLabelDomain.scope") for scope in scopes))
+        if len(unique_scopes) == 1:
+            return unique_scopes[0]
+        return cls.PAYLOAD
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectLabelDomain:
     """Declared object-label identity domain metadata."""
 
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
+    scope: ObjectLabelDomainScope = ObjectLabelDomainScope.PAYLOAD
 
 
 class ObjectLabelDomainMetadata(ABC):
@@ -62,6 +288,163 @@ class ObjectLabelDomainMetadata(ABC):
     @abstractmethod
     def object_label_domain(self) -> ObjectLabelDomain:
         """Return the declared object-label identity domain."""
+
+
+class ObjectLabelIdDomainStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered extractor for materially present positive object-label IDs."""
+
+    value_type: ClassVar[type[object] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_value(cls, labels: Any) -> "ObjectLabelIdDomainStrategy":
+        strategy = cls.for_nominal_value(labels)
+        return strategy if strategy is not None else RawObjectLabelIdDomainStrategy()
+
+    @abstractmethod
+    def present_ids(self, labels: Any) -> tuple[int, ...]:
+        """Return positive object IDs materially present in the label payload."""
+
+    def max_present_id(self, labels: Any) -> int:
+        """Return the largest materially present positive object ID."""
+        ids = self.present_ids(labels)
+        return max(ids) if ids else 0
+
+    @staticmethod
+    def positive_ids_from_array(labels: Any) -> tuple[int, ...]:
+        """Return positive IDs from one numeric dense object-label array."""
+        import numpy as np
+
+        label_array = np.asarray(labels)
+        if not label_array.size or not (
+            np.issubdtype(label_array.dtype, np.number)
+            or np.issubdtype(label_array.dtype, np.bool_)
+        ):
+            return ()
+        return tuple(
+            int(object_id)
+            for object_id in np.unique(label_array)
+            if object_id > 0
+        )
+
+
+class DenseArrayObjectLabelIdDomainStrategy(ObjectLabelIdDomainStrategy):
+    """Extract present object IDs from dense NumPy label arrays."""
+
+    value_type = np.ndarray
+
+    def present_ids(self, labels: Any) -> tuple[int, ...]:
+        return self.positive_ids_from_array(labels)
+
+
+class RawObjectLabelIdDomainStrategy(ObjectLabelIdDomainStrategy):
+    """Compatibility extractor for legacy array-like label payloads."""
+
+    def present_ids(self, labels: Any) -> tuple[int, ...]:
+        return self.positive_ids_from_array(labels)
+
+
+class ObjectLabelPlaneDomainStrategy(
+    EnumKeyedStrategyMixin[ObjectLabelDomainScope],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Projection strategy from object-label domain metadata to measurement planes."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "scope"
+    scope: ClassVar[ObjectLabelDomainScope]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def plane_domains(
+        self,
+        labels: Any,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...] | list[int] | None,
+    ) -> tuple[tuple[int, ...], ...]:
+        """Return the object-id domain attached to each dense measurement plane."""
+
+    def identity_domains(
+        self,
+        labels: Any,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...] | list[int] | None,
+    ) -> tuple[tuple[int, ...], ...]:
+        """Return object-id domains for identity rows represented by the payload."""
+        return self.plane_domains(
+            labels,
+            declared_object_count=declared_object_count,
+            declared_object_ids=declared_object_ids,
+        )
+
+
+class PayloadObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
+    """Payload-scope declarations apply equally to every dense label plane."""
+
+    scope = ObjectLabelDomainScope.PAYLOAD
+
+    def plane_domains(
+        self,
+        labels: Any,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...] | list[int] | None,
+    ) -> tuple[tuple[int, ...], ...]:
+        import numpy as np
+
+        label_array = np.asarray(labels)
+        plane_count = 1 if label_array.ndim <= 2 else label_array.shape[0]
+        domain = dense_object_label_id_domain(
+            labels,
+            declared_object_count=declared_object_count,
+            declared_object_ids=declared_object_ids,
+        )
+        return (domain,) * plane_count
+
+    def identity_domains(
+        self,
+        labels: Any,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...] | list[int] | None,
+    ) -> tuple[tuple[int, ...], ...]:
+        return (
+            dense_object_label_id_domain(
+                labels,
+                declared_object_count=declared_object_count,
+                declared_object_ids=declared_object_ids,
+            ),
+        )
+
+
+class PlaneObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
+    """Plane-scope declarations are re-derived from each dense label plane."""
+
+    scope = ObjectLabelDomainScope.PLANE
+
+    def plane_domains(
+        self,
+        labels: Any,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...] | list[int] | None,
+    ) -> tuple[tuple[int, ...], ...]:
+        import numpy as np
+
+        label_array = np.asarray(labels)
+        if label_array.ndim <= 2:
+            return (dense_object_label_id_domain(labels),)
+        return tuple(dense_object_label_id_domain(plane) for plane in label_array)
 
 
 class SpatialGridOrdering(str, Enum):
@@ -101,6 +484,32 @@ class PairMeasurementFeature(str, Enum):
     MANDERS = "manders"
     RANK_WEIGHTED_COLOCALIZATION = "rwc"
     OVERLAP_K = "k"
+
+
+class ObjectMeasurementFeatureRole(str, Enum):
+    """Nominal semantic roles for generic object measurement features."""
+
+    COUNT = "count"
+    IDENTIFIER = "identifier"
+    LOCATION = "location"
+
+
+class MeasurementStatistic(str, Enum):
+    """Canonical runtime measurement statistic labels."""
+
+    VALUE = "value"
+    COUNT = "count"
+    MEAN = "mean"
+
+
+class ObjectCoreMeasurementFeature(str, Enum):
+    """Canonical core object measurement features used by runtime equivalence."""
+
+    OBJECT_COUNT = "object_count"
+    OBJECT_NUMBER = "object_number"
+    CENTER_X = "center_x"
+    CENTER_Y = "center_y"
+    CENTER_Z = "center_z"
 
 
 class ObjectShapeMeasurementFeature(str, Enum):
@@ -367,6 +776,34 @@ def parent_child_relationship_artifact_name(parent_name: str, child_name: str) -
     return f"{parent_name}_{child_name}_{PARENT_CHILD_RELATIONSHIP_ARTIFACT_SUFFIX}"
 
 
+def parent_child_relationship_artifact_endpoints(
+    artifact_name: str,
+    *,
+    parent_candidates: tuple[str, ...],
+) -> tuple[str, str] | None:
+    """Return parent/child names encoded by a canonical relationship artifact.
+
+    Child object outputs can be pruned from a runtime contract while their
+    relationship artifact is retained. Reconstructing the child endpoint from
+    the same canonical naming schema keeps relationship recording typed without
+    depending on module-local string conventions.
+    """
+    _require_name(artifact_name, "artifact_name")
+    suffix = f"_{PARENT_CHILD_RELATIONSHIP_ARTIFACT_SUFFIX}"
+    if not artifact_name.endswith(suffix):
+        return None
+    body = artifact_name[: -len(suffix)]
+    for parent_name in parent_candidates:
+        _require_name(parent_name, "parent_candidate")
+        prefix = f"{parent_name}_"
+        if not body.startswith(prefix):
+            continue
+        child_name = body[len(prefix):]
+        if child_name:
+            return parent_name, child_name
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class ParentChildRelationshipPayload:
     """Generic parent-child id pairs emitted before endpoint names are bound."""
@@ -411,6 +848,250 @@ class ParentChildRelationshipPayload:
         object.__setattr__(self, "slice_count", slice_count)
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectInstanceKey:
+    """Typed identity for one object label inside an optional measurement plane."""
+
+    object_id: int
+    slice_index: int | None = None
+
+    def __post_init__(self) -> None:
+        object_id = int(self.object_id)
+        if object_id <= 0:
+            raise ValueError("ObjectInstanceKey.object_id must be positive.")
+        slice_index = None if self.slice_index is None else int(self.slice_index)
+        if slice_index is not None and slice_index < 0:
+            raise ValueError("ObjectInstanceKey.slice_index cannot be negative.")
+        object.__setattr__(self, "object_id", object_id)
+        object.__setattr__(self, "slice_index", slice_index)
+
+    @classmethod
+    def from_measurement_row(
+        cls,
+        row: Mapping[str, Any],
+        object_id: int,
+        *,
+        slice_index_field: MeasurementRowAxisField = MeasurementRowAxisField.SLICE_INDEX,
+    ) -> "ObjectInstanceKey":
+        """Build object identity from the row's nominal axis fields."""
+        raw_slice_index = row.get(slice_index_field.value)
+        if raw_slice_index is None or str(raw_slice_index).strip() == "":
+            return cls(object_id)
+        return cls(object_id, slice_index=int(raw_slice_index))
+
+    @classmethod
+    def domain(
+        cls,
+        object_ids: Iterable[int],
+        *,
+        slice_index: int | None = None,
+    ) -> tuple["ObjectInstanceKey", ...]:
+        """Return typed object identities for one optional measurement plane."""
+        return tuple(cls(object_id, slice_index=slice_index) for object_id in object_ids)
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectInstanceRelationship:
+    """Parent-child relationships keyed by typed object instance identity."""
+
+    source_keys: tuple[ObjectInstanceKey, ...]
+    target_keys: tuple[ObjectInstanceKey, ...]
+    slice_count: int | None = None
+
+    @classmethod
+    def from_id_columns(
+        cls,
+        source_ids: Iterable[int],
+        target_ids: Iterable[int],
+        *,
+        slice_indices: Iterable[int] = (),
+        slice_count: int | None = None,
+    ) -> "ObjectInstanceRelationship":
+        """Build typed relationship identity from id columns plus optional slices."""
+        source_id_tuple = tuple(int(value) for value in source_ids)
+        target_id_tuple = tuple(int(value) for value in target_ids)
+        if len(source_id_tuple) != len(target_id_tuple):
+            raise ValueError(
+                "ObjectInstanceRelationship source_ids and target_ids must have "
+                f"equal length, got {len(source_id_tuple)} and {len(target_id_tuple)}."
+            )
+        slice_index_tuple = tuple(int(value) for value in slice_indices)
+        if slice_index_tuple and len(slice_index_tuple) != len(source_id_tuple):
+            raise ValueError(
+                "ObjectInstanceRelationship slice_indices must be empty or match "
+                f"id columns, got {len(slice_index_tuple)} for {len(source_id_tuple)}."
+            )
+        resolved_slice_count = None if slice_count is None else int(slice_count)
+        if resolved_slice_count is not None and resolved_slice_count < 0:
+            raise ValueError("ObjectInstanceRelationship.slice_count cannot be negative.")
+        source_keys: list[ObjectInstanceKey] = []
+        target_keys: list[ObjectInstanceKey] = []
+        for index, (source_id, target_id) in enumerate(zip(source_id_tuple, target_id_tuple, strict=True)):
+            slice_index = slice_index_tuple[index] if slice_index_tuple else None
+            if source_id > 0 and target_id > 0:
+                source_keys.append(ObjectInstanceKey(source_id, slice_index))
+                target_keys.append(ObjectInstanceKey(target_id, slice_index))
+        return cls(
+            source_keys=tuple(source_keys),
+            target_keys=tuple(target_keys),
+            slice_count=resolved_slice_count,
+        )
+
+    def source_domain(
+        self,
+        object_count: int = 0,
+        *,
+        declared_keys: Iterable[ObjectInstanceKey] = (),
+    ) -> tuple[ObjectInstanceKey, ...]:
+        """Return all source identities represented by this relationship domain."""
+        return self._domain(
+            self.source_keys,
+            object_count=object_count,
+            slice_count=self.slice_count,
+            declared_keys=declared_keys,
+        )
+
+    def target_domain(
+        self,
+        object_count: int = 0,
+        *,
+        declared_keys: Iterable[ObjectInstanceKey] = (),
+    ) -> tuple[ObjectInstanceKey, ...]:
+        """Return all target identities represented by this relationship domain."""
+        return self._domain(
+            self.target_keys,
+            object_count=object_count,
+            slice_count=self.slice_count,
+            declared_keys=declared_keys,
+        )
+
+    def child_keys_by_parent(
+        self,
+        *,
+        source_object_count: int = 0,
+        declared_source_keys: Iterable[ObjectInstanceKey] = (),
+    ) -> dict[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
+        """Return target identities grouped by source identity."""
+        children: dict[ObjectInstanceKey, list[ObjectInstanceKey]] = {
+            source_key: []
+            for source_key in self.source_domain(
+                source_object_count,
+                declared_keys=declared_source_keys,
+            )
+        }
+        for source_key, target_key in zip(self.source_keys, self.target_keys, strict=True):
+            children.setdefault(source_key, []).append(target_key)
+        return {
+            source_key: tuple(sorted(child_keys, key=lambda key: (key.slice_index is None, key.slice_index or -1, key.object_id)))
+            for source_key, child_keys in sorted(
+                children.items(),
+                key=lambda item: (
+                    item[0].slice_index is None,
+                    item[0].slice_index or -1,
+                    item[0].object_id,
+                ),
+            )
+        }
+
+    def parent_key_by_child(self) -> dict[ObjectInstanceKey, ObjectInstanceKey]:
+        """Return source identity for each target identity."""
+        return dict(zip(self.target_keys, self.source_keys, strict=True))
+
+    @staticmethod
+    def _domain(
+        keys: tuple[ObjectInstanceKey, ...],
+        *,
+        object_count: int,
+        slice_count: int | None,
+        declared_keys: Iterable[ObjectInstanceKey],
+    ) -> tuple[ObjectInstanceKey, ...]:
+        declared_key_tuple = tuple(declared_keys)
+        if declared_key_tuple:
+            merged = {key: None for key in declared_key_tuple}
+            merged.update({key: None for key in keys})
+            return tuple(
+                sorted(
+                    merged,
+                    key=lambda key: (
+                        key.slice_index is None,
+                        key.slice_index or -1,
+                        key.object_id,
+                    ),
+                )
+            )
+        max_object_id = max((key.object_id for key in keys), default=0)
+        max_object_id = max(max_object_id, int(object_count))
+        if max_object_id <= 0:
+            return ()
+        slice_indexes = (
+            tuple(range(slice_count))
+            if slice_count is not None and slice_count > 1
+            else ()
+        ) or tuple(
+            dict.fromkeys(key.slice_index for key in keys if key.slice_index is not None)
+        )
+        if not slice_indexes:
+            return ObjectInstanceKey.domain(range(1, max_object_id + 1))
+        return tuple(
+            key
+            for slice_index in slice_indexes
+            for key in ObjectInstanceKey.domain(
+                range(1, max_object_id + 1),
+                slice_index=slice_index,
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelInstanceDomains:
+    """Typed object-instance domains keyed by object-label artifact name."""
+
+    domains_by_name: Mapping[str, tuple[ObjectInstanceKey, ...]]
+
+    @classmethod
+    def from_named_plane_domains(
+        cls,
+        named_plane_domains: Iterable[tuple[str, tuple[tuple[int, ...], ...]]],
+    ) -> "ObjectLabelInstanceDomains":
+        """Build domains from per-plane object-id domains."""
+        domains: dict[str, dict[ObjectInstanceKey, None]] = {}
+        for object_name, plane_domains in named_plane_domains:
+            slice_indexes = (
+                (None,)
+                if len(plane_domains) <= 1
+                else tuple(range(len(plane_domains)))
+            )
+            domain = domains.setdefault(str(object_name), {})
+            for slice_index, object_ids in zip(slice_indexes, plane_domains, strict=True):
+                for object_id in object_ids:
+                    domain[ObjectInstanceKey(object_id, slice_index=slice_index)] = None
+        return cls(
+            {
+                object_name: cls._ordered_keys(domain)
+                for object_name, domain in domains.items()
+            }
+        )
+
+    def for_name(self, object_name: str) -> tuple[ObjectInstanceKey, ...]:
+        """Return the typed object-instance domain for one object-label name."""
+        return self.domains_by_name.get(object_name, ())
+
+    @staticmethod
+    def _ordered_keys(
+        keys: Mapping[ObjectInstanceKey, None],
+    ) -> tuple[ObjectInstanceKey, ...]:
+        return tuple(
+            sorted(
+                keys,
+                key=lambda key: (
+                    key.slice_index is None,
+                    key.slice_index or -1,
+                    key.object_id,
+                ),
+            )
+        )
+
+
 def aligned_dense_object_label_arrays(
     first_labels: Any,
     second_labels: Any,
@@ -423,27 +1104,248 @@ def aligned_dense_object_label_arrays(
     shapes pass through, and stack-to-plane projection rejects conflicting
     positive labels at the same XY coordinate.
     """
-    import numpy as np
+    return DenseObjectLabelPairAligner(first_labels, second_labels).aligned()
 
-    first = _collapse_singleton_dense_label_stack(
-        np.asarray(first_labels).astype(np.int32, copy=False)
-    )
-    second = _collapse_singleton_dense_label_stack(
-        np.asarray(second_labels).astype(np.int32, copy=False)
-    )
-    if first.shape == second.shape:
-        return first, second
 
-    if first.ndim == 3 and second.ndim == 2 and first.shape[1:] == second.shape:
-        first = project_dense_object_label_stack(first)
-    if second.ndim == 3 and first.ndim == 2 and second.shape[1:] == first.shape:
-        second = project_dense_object_label_stack(second)
-    if first.shape != second.shape:
-        raise ValueError(
-            "Dense object-label payloads must share a common geometry after "
-            f"alignment; got {first.shape} and {second.shape}."
+def aligned_dense_object_label_stacks(
+    first_labels: Any,
+    second_labels: Any,
+    *,
+    slice_count: int,
+) -> tuple[Any, Any] | None:
+    """Align two dense object-label payloads and expose matching slice stacks."""
+    return DenseObjectLabelPairAligner(first_labels, second_labels).aligned_stacks(
+        slice_count
+    )
+
+
+def aligned_dense_object_label_stack_alignment(
+    first_labels: Any,
+    second_labels: Any,
+    *,
+    slice_count: int,
+) -> "DenseObjectLabelStackAlignment | None":
+    """Return aligned object-label stacks plus native-domain restoration hooks."""
+    return DenseObjectLabelPairAligner(first_labels, second_labels).aligned_stack_context(
+        slice_count
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSpatialDomainProjection:
+    """Projection from source-image dense coordinates back to native XY shape."""
+
+    domain: SourceSpatialDomain
+    shape_yx: tuple[int, int]
+
+    @classmethod
+    def from_adapter(
+        cls,
+        adapter: SourceSpatialDomainAdapter,
+    ) -> "SourceSpatialDomainProjection":
+        import numpy as np
+
+        array = np.asarray(adapter.array)
+        if array.ndim < 2:
+            raise ValueError(
+                "Source-spatial object-label projection requires at least two "
+                f"dimensions, got {array.ndim}."
+            )
+        return cls(adapter.domain, tuple(int(axis) for axis in array.shape[-2:]))
+
+    def restore(self, value: Any) -> Any:
+        import numpy as np
+
+        array = np.asarray(value)
+        if array.ndim < 2 or tuple(array.shape[-2:]) == self.shape_yx:
+            return value
+        if self.domain.origin_yx is None:
+            return value
+        source_shape_yx = self.domain.source_shape_yx
+        if source_shape_yx is None or tuple(array.shape[-2:]) != tuple(source_shape_yx):
+            raise ValueError(
+                "Cannot restore source-domain object labels with shape "
+                f"{array.shape[-2:]} to native shape {self.shape_yx}."
+            )
+        origin_y, origin_x = self.domain.origin_yx
+        height, width = self.shape_yx
+        return array[..., origin_y : origin_y + height, origin_x : origin_x + width]
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelPairAlignment:
+    """Aligned dense label arrays with source-to-native projection metadata."""
+
+    first: Any
+    second: Any
+    first_projection: SourceSpatialDomainProjection | None = None
+    second_projection: SourceSpatialDomainProjection | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelStackAlignment:
+    """Aligned dense label stacks with native-domain restoration hooks."""
+
+    first_stack: Any
+    second_stack: Any
+    first_projection: SourceSpatialDomainProjection | None = None
+    second_projection: SourceSpatialDomainProjection | None = None
+
+    def restore_first_stack(self, labels: Any) -> Any:
+        if self.first_projection is None:
+            return labels
+        return self.first_projection.restore(labels)
+
+    def restore_second_stack(self, labels: Any) -> Any:
+        if self.second_projection is None:
+            return labels
+        return self.second_projection.restore(labels)
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelPairAligner:
+    """Align two dense object-label payloads before pairwise semantics."""
+
+    first_labels: Any
+    second_labels: Any
+
+    def aligned(self) -> tuple[Any, Any]:
+        alignment = self.alignment()
+        return alignment.first, alignment.second
+
+    def alignment(self) -> DenseObjectLabelPairAlignment:
+        import numpy as np
+
+        alignment = self._source_domain_alignment()
+        first, second = alignment.first, alignment.second
+        first = _collapse_singleton_dense_label_stack(
+            np.asarray(first, dtype=np.int32)
         )
-    return first, second
+        second = _collapse_singleton_dense_label_stack(
+            np.asarray(second, dtype=np.int32)
+        )
+        if first.shape == second.shape:
+            return DenseObjectLabelPairAlignment(
+                first,
+                second,
+                alignment.first_projection,
+                alignment.second_projection,
+            )
+
+        if first.ndim == 3 and second.ndim == 2 and first.shape[1:] == second.shape:
+            first = project_dense_object_label_stack(first)
+        if second.ndim == 3 and first.ndim == 2 and second.shape[1:] == first.shape:
+            second = project_dense_object_label_stack(second)
+        if first.shape != second.shape:
+            raise ValueError(
+                "Dense object-label payloads must share a common geometry after "
+                f"alignment; got {first.shape} and {second.shape}."
+            )
+        return DenseObjectLabelPairAlignment(
+            first,
+            second,
+            alignment.first_projection,
+            alignment.second_projection,
+        )
+
+    def aligned_stacks(self, slice_count: int) -> tuple[Any, Any] | None:
+        alignment = self.aligned_stack_context(slice_count)
+        if alignment is None:
+            return None
+        return alignment.first_stack, alignment.second_stack
+
+    def aligned_stack_context(
+        self,
+        slice_count: int,
+    ) -> DenseObjectLabelStackAlignment | None:
+        alignment = self.alignment()
+        first_stack = self._stack_view(alignment.first, slice_count)
+        second_stack = self._stack_view(alignment.second, slice_count)
+        if first_stack is None or second_stack is None:
+            return None
+        if first_stack.shape != second_stack.shape:
+            raise ValueError(
+                "Dense object-label stacks must share a common geometry after "
+                f"alignment; got {first_stack.shape} and {second_stack.shape}."
+            )
+        return DenseObjectLabelStackAlignment(
+            first_stack,
+            second_stack,
+            alignment.first_projection,
+            alignment.second_projection,
+        )
+
+    def _source_domain_alignment(self) -> DenseObjectLabelPairAlignment:
+        import numpy as np
+
+        first_adapter = SourceSpatialDomainAdapter.for_value(self.first_labels)
+        second_adapter = SourceSpatialDomainAdapter.for_value(self.second_labels)
+
+        if first_adapter is None and second_adapter is None:
+            return DenseObjectLabelPairAlignment(
+                np.asarray(self.first_labels),
+                np.asarray(self.second_labels),
+            )
+        if first_adapter is not None and second_adapter is not None:
+            return DenseObjectLabelPairAlignment(
+                first_adapter.materialize(),
+                second_adapter.materialize(),
+                SourceSpatialDomainProjection.from_adapter(first_adapter),
+                SourceSpatialDomainProjection.from_adapter(second_adapter),
+            )
+        if first_adapter is not None:
+            second = np.asarray(self.second_labels)
+            first_projection = SourceSpatialDomainProjection.from_adapter(first_adapter)
+            if self._same_xy_shape(first_adapter.array, second):
+                return DenseObjectLabelPairAlignment(
+                    first_adapter.materialize(),
+                    first_adapter.domain.materialize(second),
+                    first_projection,
+                    SourceSpatialDomainProjection(first_adapter.domain, second.shape[-2:]),
+                )
+            return DenseObjectLabelPairAlignment(
+                first_adapter.materialize(),
+                second,
+                first_projection,
+            )
+
+        first = np.asarray(self.first_labels)
+        if second_adapter is None:
+            return DenseObjectLabelPairAlignment(first, np.asarray(self.second_labels))
+        second_projection = SourceSpatialDomainProjection.from_adapter(second_adapter)
+        if self._same_xy_shape(first, second_adapter.array):
+            return DenseObjectLabelPairAlignment(
+                second_adapter.domain.materialize(first),
+                second_adapter.materialize(),
+                SourceSpatialDomainProjection(second_adapter.domain, first.shape[-2:]),
+                second_projection,
+            )
+        return DenseObjectLabelPairAlignment(
+            first,
+            second_adapter.materialize(),
+            second_projection=second_projection,
+        )
+
+    @staticmethod
+    def _same_xy_shape(left: Any, right: Any) -> bool:
+        import numpy as np
+
+        left_array = np.asarray(left)
+        right_array = np.asarray(right)
+        if left_array.ndim < 2 or right_array.ndim < 2:
+            return False
+        return tuple(left_array.shape[-2:]) == tuple(right_array.shape[-2:])
+
+    @staticmethod
+    def _stack_view(value: Any, slice_count: int) -> Any | None:
+        import numpy as np
+
+        array = np.asarray(value, dtype=np.int32)
+        if array.ndim == 3 and array.shape[0] == slice_count:
+            return np.ascontiguousarray(array)
+        if array.ndim == 2:
+            return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
+        return None
 
 
 def dense_object_label_id_domain(
@@ -459,8 +1361,6 @@ def dense_object_label_id_domain(
     image. The returned domain preserves those declared IDs and otherwise uses
     the dense label convention up to the maximum positive label ID.
     """
-    import numpy as np
-
     payload_ids: tuple[int, ...] = ()
     payload_count: int | None = None
     if isinstance(labels, ObjectLabelDomainMetadata):
@@ -487,15 +1387,79 @@ def dense_object_label_id_domain(
     else:
         count = 0
 
-    label_array = np.asarray(labels)
-    if label_array.size and (
-        np.issubdtype(label_array.dtype, np.number)
-        or np.issubdtype(label_array.dtype, np.bool_)
-    ):
-        positive_labels = label_array[label_array > 0]
-        if positive_labels.size:
-            count = max(count, int(np.max(positive_labels)))
+    count = max(
+        count,
+        ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels),
+    )
     return tuple(range(1, count + 1))
+
+
+def dense_object_label_present_ids(labels: Any) -> tuple[int, ...]:
+    """Return positive object-label IDs that are materially present."""
+    return ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
+
+
+def dense_object_label_max_present_id(labels: Any) -> int:
+    """Return the largest positive object-label ID materially present."""
+    return ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
+
+
+def dense_object_label_plane_id_domains(
+    labels: Any,
+    *,
+    declared_object_count: int | None = None,
+    declared_object_ids: tuple[int, ...] | list[int] | None = None,
+    domain_scope: ObjectLabelDomainScope | None = None,
+) -> tuple[tuple[int, ...], ...]:
+    """Return object-id domains for each dense object-label measurement plane.
+
+    Whole-payload declared domains describe the object-label artifact as a
+    whole. For slice stacks, exported object tables are plane-local: each plane
+    contributes its own dense label domain rather than repeating the global
+    declaration for every slice.
+    """
+    payload_domain = (
+        labels.object_label_domain()
+        if isinstance(labels, ObjectLabelDomainMetadata)
+        else ObjectLabelDomain(
+            declared_object_count=declared_object_count,
+            declared_object_ids=tuple(declared_object_ids or ()),
+        )
+    )
+    resolved_scope = domain_scope or payload_domain.scope
+    return ObjectLabelPlaneDomainStrategy.for_enum_member(
+        resolved_scope,
+    ).plane_domains(
+        labels,
+        declared_object_count=declared_object_count,
+        declared_object_ids=declared_object_ids,
+    )
+
+
+def dense_object_label_identity_domains(
+    labels: Any,
+    *,
+    declared_object_count: int | None = None,
+    declared_object_ids: tuple[int, ...] | list[int] | None = None,
+    domain_scope: ObjectLabelDomainScope | None = None,
+) -> tuple[tuple[int, ...], ...]:
+    """Return object-id domains for object identity rows represented by labels."""
+    payload_domain = (
+        labels.object_label_domain()
+        if isinstance(labels, ObjectLabelDomainMetadata)
+        else ObjectLabelDomain(
+            declared_object_count=declared_object_count,
+            declared_object_ids=tuple(declared_object_ids or ()),
+        )
+    )
+    resolved_scope = domain_scope or payload_domain.scope
+    return ObjectLabelPlaneDomainStrategy.for_enum_member(
+        resolved_scope,
+    ).identity_domains(
+        labels,
+        declared_object_count=declared_object_count,
+        declared_object_ids=declared_object_ids,
+    )
 
 
 def project_dense_object_label_stack(labels: Any) -> Any:
@@ -529,6 +1493,73 @@ def _collapse_singleton_dense_label_stack(labels: Any) -> Any:
     if hasattr(labels, "ndim") and labels.ndim == 3 and labels.shape[0] == 1:
         return labels[0]
     return labels
+
+
+def _dense_label_array_in_source_domain(labels: Any) -> Any:
+    """Return dense labels placed in their declared source XY domain.
+
+    Object-label payloads can represent a cropped spatial window while retaining
+    source-image coordinates. Relationship semantics operate on parent/child
+    overlap, so cropped labels must be compared in the source coordinate system
+    instead of by array shape alone.
+    """
+    import numpy as np
+
+    adapter = SourceSpatialDomainAdapter.for_value(labels)
+    if adapter is not None:
+        return adapter.materialize()
+    return DenseArraySourceSpatialDomainAdapter(
+        labels,
+        SourceSpatialDomain(value_name="Object-label"),
+    ).materialize()
+
+
+def dense_array_in_source_spatial_domain(
+    value: Any,
+    *,
+    spatial_origin_yx: tuple[int, int] | None,
+    source_spatial_shape_yx: tuple[int, int] | None,
+    fill_value: Any = 0,
+    value_name: str = "Dense array",
+) -> Any:
+    """Place a dense XY array payload into its declared source XY domain."""
+    import numpy as np
+
+    label_array = np.asarray(value)
+    origin = spatial_origin_yx
+    source_shape = source_spatial_shape_yx
+    if origin is None or source_shape is None:
+        return label_array
+
+    source_y, source_x = (int(source_shape[0]), int(source_shape[1]))
+    origin_y, origin_x = (int(origin[0]), int(origin[1]))
+    if source_y < 0 or source_x < 0 or origin_y < 0 or origin_x < 0:
+        raise ValueError(
+            f"{value_name} spatial domains require non-negative source shape "
+            f"and origin; got source={source_shape!r}, origin={origin!r}."
+        )
+    if label_array.shape[-2:] == (source_y, source_x) and origin == (0, 0):
+        return label_array
+
+    if label_array.ndim < 2:
+        raise ValueError(
+            f"{value_name} spatial domains require at least 2D arrays; got "
+            f"shape {label_array.shape!r}."
+        )
+    if origin_y + label_array.shape[-2] > source_y or origin_x + label_array.shape[-1] > source_x:
+        raise ValueError(
+            f"{value_name} crop exceeds its declared source domain; got array "
+            f"{label_array.shape!r}, source={source_shape!r}, origin={origin!r}."
+        )
+
+    expanded_shape = (*label_array.shape[:-2], source_y, source_x)
+    expanded = np.full(expanded_shape, fill_value, dtype=label_array.dtype)
+    expanded[
+        ...,
+        origin_y : origin_y + label_array.shape[-2],
+        origin_x : origin_x + label_array.shape[-1],
+    ] = label_array
+    return expanded
 
 
 def object_label_parent_child_payload(

@@ -9,8 +9,8 @@ from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.materialization import csv_materializer
-from scipy.interpolate import interp1d
 import scipy.ndimage
 
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
@@ -47,6 +47,15 @@ class StraightenWormsSliceRequest:
     flip_mode: FlipMode
     measure_intensity: bool
     slice_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class StraightenedWormPlacement:
+    object_number: int
+    output_y: slice
+    output_x: slice
+    source_y: np.ndarray
+    source_x: np.ndarray
 
 
 @numpy
@@ -92,6 +101,7 @@ def straighten_worms(
 
     if image.ndim == 2:
         image = image[np.newaxis, :, :]
+    worm_labels = object_label_dense_array(worm_labels, dtype=np.int32)
     if worm_labels.ndim == 2:
         worm_labels = worm_labels[np.newaxis, :, :]
     
@@ -165,9 +175,9 @@ def _straighten_single_slice(
     max_length = max(lengths) if lengths else width
     shape = (max_length + width, nworms * width)
     
+    straightened_image = np.zeros(shape, dtype=image.dtype)
     straightened_labels = np.zeros(shape, dtype=np.int32)
-    ix = np.zeros(shape)
-    jx = np.zeros(shape)
+    placements: list[StraightenedWormPlacement] = []
     
     measurements = []
     
@@ -184,15 +194,10 @@ def _straighten_single_slice(
         
         length = lengths[i]
         
-        # Interpolate control points
         t_orig = np.linspace(0, length, request.num_control_points)
         t_new = np.arange(0, length + 1)
-        
-        si = interp1d(t_orig, ii, kind='linear', fill_value='extrapolate')
-        sj = interp1d(t_orig, jj, kind='linear', fill_value='extrapolate')
-        
-        ci = si(t_new)
-        cj = sj(t_new)
+        ci = np.interp(t_new, t_orig, ii)
+        cj = np.interp(t_new, t_orig, jj)
         
         # Calculate normals
         di = np.diff(ci, prepend=ci[0])
@@ -225,17 +230,14 @@ def _straighten_single_slice(
         islice = slice(0, len(ci_ext))
         jslice = slice(width * i, width * (i + 1))
         
-        ix[islice, jslice] = ci_ext[iii] + ni_ext[iii] * jjj
-        jx[islice, jslice] = cj_ext[iii] + nj_ext[iii] * jjj
+        source_y = ci_ext[iii] + ni_ext[iii] * jjj
+        source_x = cj_ext[iii] + nj_ext[iii] * jjj
         
         # Handle flipping
         if request.flip_mode != FlipMode.NONE:
-            ixs = ix[islice, jslice]
-            jxs = jx[islice, jslice]
-            
             # Sample image
-            simage = scipy.ndimage.map_coordinates(image, [ixs, jxs], order=1, mode='constant')
-            smask = scipy.ndimage.map_coordinates((labels == obj_num).astype(np.float32), [ixs, jxs], order=0)
+            simage = scipy.ndimage.map_coordinates(image, [source_y, source_x], order=1, mode='constant')
+            smask = scipy.ndimage.map_coordinates((labels == obj_num).astype(np.float32), [source_y, source_x], order=0)
             simage = simage * smask
             
             halfway = len(ci_ext) // 2
@@ -260,33 +262,65 @@ def _straighten_single_slice(
                 if should_flip:
                     iii_flip = len(ci_ext) - iii - 1
                     jjj_flip = -jjj
-                    ix[islice, jslice] = ci_ext[iii_flip] + ni_ext[iii_flip] * jjj_flip
-                    jx[islice, jslice] = cj_ext[iii_flip] + nj_ext[iii_flip] * jjj_flip
+                    source_y = ci_ext[iii_flip] + ni_ext[iii_flip] * jjj_flip
+                    source_x = cj_ext[iii_flip] + nj_ext[iii_flip] * jjj_flip
         
-        # Create mask for this worm
-        mask = scipy.ndimage.map_coordinates(
-            (labels == obj_num).astype(np.float32),
-            [ix[islice, jslice], jx[islice, jslice]],
-            order=0
-        ) > 0.5
-        straightened_labels[islice, jslice][mask] = int(obj_num)
-    
-    # Map image coordinates
-    straightened_image = scipy.ndimage.map_coordinates(image, [ix, jx], order=1, mode='constant')
+        placements.append(
+            StraightenedWormPlacement(
+                object_number=int(obj_num),
+                output_y=islice,
+                output_x=jslice,
+                source_y=np.ascontiguousarray(source_y, dtype=float),
+                source_x=np.ascontiguousarray(source_x, dtype=float),
+            )
+        )
+
+    if placements:
+        flat_source_y = np.concatenate([placement.source_y.ravel() for placement in placements])
+        flat_source_x = np.concatenate([placement.source_x.ravel() for placement in placements])
+        flat_image = scipy.ndimage.map_coordinates(
+            image,
+            [flat_source_y, flat_source_x],
+            order=1,
+            mode="constant",
+        )
+        flat_labels = scipy.ndimage.map_coordinates(
+            labels,
+            [flat_source_y, flat_source_x],
+            order=0,
+            mode="constant",
+            cval=0,
+        )
+
+        offset = 0
+        for placement in placements:
+            block_shape = placement.source_y.shape
+            block_size = placement.source_y.size
+            next_offset = offset + block_size
+            image_block = flat_image[offset:next_offset].reshape(block_shape)
+            label_block = flat_labels[offset:next_offset].reshape(block_shape)
+            straightened_image[placement.output_y, placement.output_x] = image_block
+            output_label_block = straightened_labels[placement.output_y, placement.output_x]
+            output_label_block[label_block == placement.object_number] = placement.object_number
+            offset = next_offset
     
     # Measure intensity if requested
     if request.measure_intensity:
-        for i, obj_num in enumerate(unique_labels):
-            mask = straightened_labels == obj_num
+        for placement in placements:
+            mask = (
+                straightened_labels[placement.output_y, placement.output_x]
+                == placement.object_number
+            )
             if np.sum(mask) > 0:
-                values = straightened_image[mask]
+                image_block = straightened_image[placement.output_y, placement.output_x]
+                values = image_block[mask]
                 center_y, center_x = scipy.ndimage.center_of_mass(mask.astype(float))
                 
                 measurements.append(WormMeasurement(
                     slice_index=request.slice_index,
-                    object_number=int(obj_num),
-                    center_x=float(center_x) if not np.isnan(center_x) else 0.0,
-                    center_y=float(center_y) if not np.isnan(center_y) else 0.0,
+                    object_number=placement.object_number,
+                    center_x=float(center_x) + float(placement.output_x.start) if not np.isnan(center_x) else 0.0,
+                    center_y=float(center_y) + float(placement.output_y.start) if not np.isnan(center_y) else 0.0,
                     mean_intensity=float(np.mean(values)),
                     std_intensity=float(np.std(values))
                 ))

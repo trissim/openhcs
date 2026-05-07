@@ -11,6 +11,7 @@ from typing import Tuple
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -69,10 +70,11 @@ def dilate_objects(
     """
     from scipy.ndimage import grey_dilation, maximum_filter
     from skimage.morphology import disk, square, diamond, octagon
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     
     # Measure original areas
     props_before = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-        labels.astype(np.int32, copy=False)
+        label_array
     )
     mean_area_before = (
         float(np.mean(props_before.area)) if props_before.label.size else 0.0
@@ -93,7 +95,7 @@ def dilate_objects(
     # Perform grey dilation on labels
     # Grey dilation with labels means higher label values will expand over lower ones
     # This matches CellProfiler's behavior where larger object numbers expand on top
-    dilated_labels = grey_dilation(labels.astype(np.int32), footprint=selem)
+    dilated_labels = grey_dilation(label_array, footprint=selem)
     
     # Measure dilated areas
     props_after = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
@@ -143,6 +145,7 @@ def dilate_objects_3d(
     from scipy.ndimage import grey_dilation
     from skimage.morphology import ball
     from skimage.measure import regionprops
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     
     @dataclass
     class DilationStats3D:
@@ -151,7 +154,7 @@ def dilate_objects_3d(
         mean_volume_after: float
     
     # Measure original volumes
-    props_before = regionprops(labels.astype(np.int32))
+    props_before = regionprops(label_array)
     volumes_before = [p.area for p in props_before]  # In 3D, 'area' is actually volume
     mean_volume_before = float(np.mean(volumes_before)) if volumes_before else 0.0
     
@@ -165,7 +168,7 @@ def dilate_objects_3d(
         selem = ball(structuring_element_size)
     
     # Perform grey dilation on 3D labels
-    dilated_labels = grey_dilation(labels.astype(np.int32), footprint=selem)
+    dilated_labels = grey_dilation(label_array, footprint=selem)
     
     # Measure dilated volumes
     props_after = regionprops(dilated_labels)

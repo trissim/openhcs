@@ -10,9 +10,16 @@ from pathlib import Path
 
 from benchmark.reports.cppipe_figures import DEFAULT_FORMATS
 from benchmark.reports.cppipe_figures import DEFAULT_WRAP_AFTER
+from benchmark.reports.cppipe_figures import AGGREGATE_LABEL
+from benchmark.reports.cppipe_figures import ASSAY_CATEGORY_FIELD
 from benchmark.reports.cppipe_figures import BenchmarkMetricRow
 from benchmark.reports.cppipe_figures import FigureMetricSpec
+from benchmark.reports.cppipe_figures import METHOD_FIELD
+from benchmark.reports.cppipe_figures import MODULE_CATEGORY_FIELD
+from benchmark.reports.cppipe_figures import PEAK_MEMORY_MB_FIELD
+from benchmark.reports.cppipe_figures import PIPELINE_NAME_FIELD
 from benchmark.reports.cppipe_figures import generate_grouped_benchmark_metric_figures
+from benchmark.datasets.cppipe_case_catalog import official_cp3_case_category
 
 
 CASE_NAME_FIELD = "case_name"
@@ -66,6 +73,15 @@ THROUGHPUT_SELF_SPEEDUP_METRIC = FigureMetricSpec(
     "cppipe_throughput_speedup_vs_openhcs_1job",
     "Throughput speedup versus OpenHCS 1-job execution",
     "Speedup (x)",
+    baseline_line=1.0,
+    minimum_ylim=0.0,
+    log_variant=True,
+)
+PROJECTED_CP_SPEEDUP_METRIC = FigureMetricSpec(
+    "speedup",
+    "cppipe_projected_8sample_speedup_vs_native_cp",
+    "Projected 8-sample throughput speedup versus native CellProfiler",
+    "Speedup vs native CP (x)",
     baseline_line=1.0,
     minimum_ylim=0.0,
     log_variant=True,
@@ -148,6 +164,52 @@ def generate_cppipe_scaling_figures(
     )
 
 
+def generate_projected_multisample_speedup_figures(
+    native_summary_csv: Path,
+    *,
+    output_dir: Path,
+    sample_count: int = 8,
+    core_counts: Sequence[int] = (1, 2, 3),
+    output_formats: Sequence[str] = DEFAULT_FORMATS,
+    include_average: bool = True,
+    wrap_after: int = DEFAULT_WRAP_AFTER,
+    group_width_inches: float = 0.41,
+) -> tuple[Path, ...]:
+    """Project independent-sample OpenHCS throughput from single-sample timings."""
+    if sample_count <= 0:
+        raise ValueError("sample_count must be positive.")
+    if any(core_count <= 0 for core_count in core_counts):
+        raise ValueError("core_counts must all be positive.")
+
+    source_rows = _load_native_summary_rows(native_summary_csv)
+    rows = tuple(
+        _projected_speedup_rows(
+            source_rows,
+            sample_count=sample_count,
+            core_counts=core_counts,
+            include_average=include_average,
+        )
+    )
+    methods = tuple(f"{core} core{'s' if core != 1 else ''}" for core in core_counts)
+    pipeline_names = tuple(dict.fromkeys(row.pipeline_name for row in rows))
+    output_dir.mkdir(parents=True, exist_ok=True)
+    long_csv_path = output_dir / "cppipe_projected_8sample_speedup_long.csv"
+    _write_projected_metric_rows(long_csv_path, rows)
+    return (
+        long_csv_path,
+        *generate_grouped_benchmark_metric_figures(
+            rows,
+            metrics=(PROJECTED_CP_SPEEDUP_METRIC,),
+            methods=methods,
+            pipeline_names=pipeline_names,
+            output_dir=output_dir,
+            output_formats=output_formats,
+            wrap_after=wrap_after,
+            group_width_inches=group_width_inches,
+        ),
+    )
+
+
 def _load_summary_rows(path: Path) -> tuple[dict[str, str], ...]:
     with path.open(encoding="utf-8", newline="") as handle:
         rows = tuple(csv.DictReader(handle))
@@ -167,6 +229,90 @@ def _load_summary_rows(path: Path) -> tuple[dict[str, str], ...]:
             f"Throughput summary CSV {path} missing columns: {sorted(missing)!r}"
         )
     return rows
+
+
+def _load_native_summary_rows(path: Path) -> tuple[dict[str, str], ...]:
+    with path.open(encoding="utf-8", newline="") as handle:
+        rows = tuple(csv.DictReader(handle))
+    if not rows:
+        raise ValueError(f"Native summary CSV is empty: {path}")
+    required = {
+        CASE_NAME_FIELD,
+        NATIVE_SECONDS_FIELD,
+        "median_openhcs_execution_seconds",
+    }
+    missing = required - set(rows[0])
+    if missing:
+        raise ValueError(
+            f"Native summary CSV {path} missing columns: {sorted(missing)!r}"
+        )
+    return rows
+
+
+def _projected_speedup_rows(
+    rows: Sequence[dict[str, str]],
+    *,
+    sample_count: int,
+    core_counts: Sequence[int],
+    include_average: bool,
+) -> Iterable[BenchmarkMetricRow]:
+    openhcs_seconds_field = "median_openhcs_execution_seconds"
+    for row in rows:
+        native_seconds = _optional_float(row, NATIVE_SECONDS_FIELD)
+        openhcs_seconds = _optional_float(row, openhcs_seconds_field)
+        if native_seconds is None or openhcs_seconds is None or openhcs_seconds <= 0.0:
+            continue
+        category = official_cp3_case_category(row[CASE_NAME_FIELD])
+        native_projected_seconds = native_seconds * sample_count
+        for core_count in core_counts:
+            openhcs_projected_seconds = openhcs_seconds * sample_count / core_count
+            yield BenchmarkMetricRow(
+                pipeline_name=row[CASE_NAME_FIELD],
+                method=f"{core_count} core{'s' if core_count != 1 else ''}",
+                assay_category=category.assay,
+                module_category=category.module,
+                accuracy_fraction=None,
+                raw_seconds=openhcs_projected_seconds,
+                speedup=native_projected_seconds / openhcs_projected_seconds,
+                peak_memory_mb=None,
+            )
+    if include_average:
+        yield from _average_rows(
+            _projected_speedup_rows(
+                rows,
+                sample_count=sample_count,
+                core_counts=core_counts,
+                include_average=False,
+            )
+        )
+
+
+def _write_projected_metric_rows(
+    path: Path,
+    rows: Sequence[BenchmarkMetricRow],
+) -> None:
+    fieldnames = (
+        PIPELINE_NAME_FIELD,
+        METHOD_FIELD,
+        ASSAY_CATEGORY_FIELD,
+        MODULE_CATEGORY_FIELD,
+        "projected_openhcs_wall_seconds",
+        "speedup_vs_native_cp",
+    )
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow(
+                {
+                    PIPELINE_NAME_FIELD: row.pipeline_name,
+                    METHOD_FIELD: row.method,
+                    ASSAY_CATEGORY_FIELD: row.assay_category,
+                    MODULE_CATEGORY_FIELD: row.module_category,
+                    "projected_openhcs_wall_seconds": row.raw_seconds,
+                    "speedup_vs_native_cp": row.speedup,
+                }
+            )
 
 
 def _filter_summary_rows(
@@ -200,9 +346,12 @@ def _throughput_metric_rows(
     include_average: bool,
 ) -> Iterable[BenchmarkMetricRow]:
     for row in rows:
+        category = official_cp3_case_category(row[CASE_NAME_FIELD])
         yield BenchmarkMetricRow(
             pipeline_name=row[CASE_NAME_FIELD],
             method=_worker_method(row),
+            assay_category=category.assay,
+            module_category=category.module,
             accuracy_fraction=_optional_float(row, EFFICIENCY_FIELD),
             raw_seconds=_optional_float(row, WALL_SECONDS_FIELD),
             speedup=_speedup(row, native_seconds_by_case, speedup_denominator),
@@ -227,6 +376,8 @@ def _average_rows(rows: Iterable[BenchmarkMetricRow]) -> Iterable[BenchmarkMetri
         yield BenchmarkMetricRow(
             pipeline_name="Average",
             method=method,
+            assay_category=AGGREGATE_LABEL,
+            module_category=AGGREGATE_LABEL,
             accuracy_fraction=_mean_present(
                 row.accuracy_fraction for row in method_rows
             ),
@@ -243,13 +394,15 @@ def _write_metric_rows(
     self_speedup_rows: Sequence[BenchmarkMetricRow],
 ) -> None:
     fieldnames = (
-        "pipeline_name",
-        "method",
+        PIPELINE_NAME_FIELD,
+        METHOD_FIELD,
+        ASSAY_CATEGORY_FIELD,
+        MODULE_CATEGORY_FIELD,
         "efficiency_fraction",
         "wall_seconds",
         "speedup_vs_native_cp",
         "speedup_vs_openhcs_1job",
-        "peak_memory_mb",
+        PEAK_MEMORY_MB_FIELD,
     )
     self_speedup_index = {
         (row.pipeline_name, row.method): row.speedup for row in self_speedup_rows
@@ -260,15 +413,17 @@ def _write_metric_rows(
         for row in native_speedup_rows:
             writer.writerow(
                 {
-                    "pipeline_name": row.pipeline_name,
-                    "method": row.method,
+                    PIPELINE_NAME_FIELD: row.pipeline_name,
+                    METHOD_FIELD: row.method,
+                    ASSAY_CATEGORY_FIELD: row.assay_category,
+                    MODULE_CATEGORY_FIELD: row.module_category,
                     "efficiency_fraction": row.accuracy_fraction,
                     "wall_seconds": row.raw_seconds,
                     "speedup_vs_native_cp": row.speedup,
                     "speedup_vs_openhcs_1job": self_speedup_index.get(
                         (row.pipeline_name, row.method)
                     ),
-                    "peak_memory_mb": row.peak_memory_mb,
+                    PEAK_MEMORY_MB_FIELD: row.peak_memory_mb,
                 }
             )
 

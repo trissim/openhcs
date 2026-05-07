@@ -16,6 +16,7 @@ from openhcs.core.runtime_values import (
 from benchmark.cellprofiler_library.image_geometry import (
     aligned_image_mask_planes,
     binary_mask_plane,
+    collapse_singleton_plane_stack,
     restore_image_mask_planes,
 )
 
@@ -76,10 +77,10 @@ def _masked_plane(
     existing_mask = image_payload_mask(image)
     if existing_mask is not None:
         binary_mask = np.asarray(binary_mask, dtype=bool) & np.asarray(
-            existing_mask,
+            collapse_singleton_plane_stack(existing_mask),
             dtype=bool,
         )
-    image_data = image_payload_data(image)
+    image_data = collapse_singleton_plane_stack(image_payload_data(image))
     masked = image_data.copy()
     masked[~binary_mask] = 0
     return masked, np.asarray(binary_mask, dtype=bool)

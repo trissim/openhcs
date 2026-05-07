@@ -16,6 +16,7 @@ from openhcs.core.image_shapes import (
     is_color_image_stack,
     is_grayscale_image_stack,
 )
+from openhcs.core.runtime_values import image_payload_data
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,17 +27,18 @@ class CellProfilerPlaneGeometry:
 
     @classmethod
     def from_image_plane(cls, image: np.ndarray) -> "CellProfilerPlaneGeometry":
-        if not hasattr(image, "ndim") or image.ndim not in {2, 3}:
+        image_array = collapse_singleton_plane_stack(np.asarray(image_payload_data(image)))
+        if not hasattr(image_array, "ndim") or image_array.ndim not in {2, 3}:
             raise ValueError(
                 "CellProfiler image planes must be 2D grayscale or HWC color; "
-                f"got shape {getattr(image, 'shape', None)!r}."
+                f"got shape {getattr(image_array, 'shape', None)!r}."
             )
-        if image.ndim == 3 and not is_color_image_slice(image):
+        if image_array.ndim == 3 and not is_color_image_slice(image_array):
             raise ValueError(
                 "CellProfiler 3D image planes must be HWC color; got shape "
-                f"{getattr(image, 'shape', None)!r}."
+                f"{getattr(image_array, 'shape', None)!r}."
             )
-        return cls(tuple(int(axis) for axis in image.shape[:2]))
+        return cls(tuple(int(axis) for axis in image_array.shape[:2]))
 
     def binary_mask(
         self,
@@ -103,6 +105,22 @@ def aligned_image_mask_planes(
             ),
         )
     if len(mask_planes) not in {1, len(image_planes)}:
+        projected_mask_planes = _project_volume_mask_planes(
+            image_planes,
+            mask_planes,
+            threshold=threshold,
+            labels=labels,
+        )
+        if projected_mask_planes is not None:
+            return projected_mask_planes
+        projected_mask_planes = _project_flat_mask_plane_groups(
+            image_planes,
+            mask_planes,
+            threshold=threshold,
+            labels=labels,
+        )
+        if projected_mask_planes is not None:
+            return projected_mask_planes
         raise ValueError(
             "CellProfiler mask payload must have one plane or match image plane "
             f"count; got image count {len(image_planes)} and mask count "
@@ -120,6 +138,143 @@ def aligned_image_mask_planes(
             ),
         )
         for plane_index, image_plane in enumerate(image_planes)
+    )
+
+
+def _project_volume_mask_planes(
+    image_planes: tuple[Any, ...],
+    mask_planes: tuple[Any, ...],
+    *,
+    threshold: float,
+    labels: bool,
+) -> tuple[CellProfilerImageMaskPlane, ...] | None:
+    """Project stacked volume masks onto each image plane when ranks permit."""
+    image_count = len(image_planes)
+    if image_count <= 1:
+        return None
+    mask_arrays = tuple(np.asarray(image_payload_data(mask)) for mask in mask_planes)
+    if not mask_arrays or any(mask.ndim < 3 for mask in mask_arrays):
+        return None
+    if any(mask.shape[0] != image_count for mask in mask_arrays):
+        return _project_all_volume_masks_to_image_planes(
+            image_planes,
+            mask_arrays,
+            threshold=threshold,
+            labels=labels,
+        )
+    return tuple(
+        CellProfilerImageMaskPlane(
+            image=image_plane,
+            mask=np.any(
+                np.stack(
+                    tuple(
+                        CellProfilerPlaneGeometry.from_image_plane(
+                            image_plane
+                        ).binary_mask(
+                            mask_array[plane_index],
+                            threshold=threshold,
+                            labels=labels,
+                        )
+                        for mask_array in mask_arrays
+                    )
+                ),
+                axis=0,
+            ),
+        )
+        for plane_index, image_plane in enumerate(image_planes)
+    )
+
+
+def _project_flat_mask_plane_groups(
+    image_planes: tuple[Any, ...],
+    mask_planes: tuple[Any, ...],
+    *,
+    threshold: float,
+    labels: bool,
+) -> tuple[CellProfilerImageMaskPlane, ...] | None:
+    """Project flattened grouped mask stacks onto matching image-plane indices."""
+    image_count = len(image_planes)
+    mask_count = len(mask_planes)
+    if image_count <= 1 or mask_count <= image_count:
+        return None
+    if mask_count % image_count != 0:
+        return None
+
+    group_count = mask_count // image_count
+    return tuple(
+        CellProfilerImageMaskPlane(
+            image=image_plane,
+            mask=np.any(
+                np.stack(
+                    tuple(
+                        CellProfilerPlaneGeometry.from_image_plane(
+                            image_plane
+                        ).binary_mask(
+                            mask_planes[group_index * image_count + plane_index],
+                            threshold=threshold,
+                            labels=labels,
+                        )
+                        for group_index in range(group_count)
+                    )
+                ),
+                axis=0,
+            ),
+        )
+        for plane_index, image_plane in enumerate(image_planes)
+    )
+
+
+def _project_all_volume_masks_to_image_planes(
+    image_planes: tuple[Any, ...],
+    mask_arrays: tuple[np.ndarray, ...],
+    *,
+    threshold: float,
+    labels: bool,
+) -> tuple[CellProfilerImageMaskPlane, ...]:
+    """Collapse all mask leading axes, then broadcast the XY mask to each image."""
+    return tuple(
+        CellProfilerImageMaskPlane(
+            image=image_plane,
+            mask=np.any(
+                np.stack(
+                    tuple(
+                        _project_mask_array_to_geometry(
+                            mask_array,
+                            CellProfilerPlaneGeometry.from_image_plane(image_plane),
+                            threshold=threshold,
+                            labels=labels,
+                        )
+                        for mask_array in mask_arrays
+                    )
+                ),
+                axis=0,
+            ),
+        )
+        for image_plane in image_planes
+    )
+
+
+def _project_mask_array_to_geometry(
+    mask_array: np.ndarray,
+    geometry: CellProfilerPlaneGeometry,
+    *,
+    threshold: float,
+    labels: bool,
+) -> np.ndarray:
+    """Project every leading-axis mask plane into one XY geometry."""
+    mask_planes = mask_array.reshape((-1, *mask_array.shape[-2:]))
+    return np.any(
+        np.stack(
+            tuple(
+                geometry.binary_mask(
+                    mask_plane,
+                    threshold=threshold,
+                    labels=labels,
+                )
+                for mask_plane in mask_planes
+            )
+        ),
+        axis=0,
     )
 
 

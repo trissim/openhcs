@@ -15,17 +15,425 @@ from openhcs.core.image_shapes import (
     is_color_image_slice,
     is_color_image_stack,
     is_grayscale_image_slice,
-    is_grayscale_image_stack,
+    is_grayscale_volume_slice,
+    is_image_stack,
 )
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import MEMORY_TYPE_NUMPY, convert_memory, detect_memory_type
+from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
+from openhcs.core.runtime_semantics import (
+    SourceSpatialDomain,
+    SourceSpatialDomainAdapter,
+)
 from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    ImageMetadataPayload,
+    MaskedImagePayload,
+    ObjectLabelPayload,
+    ObjectLabelSet,
     compose_image_payload_metadata,
     image_payload_metadata,
     image_payload_data,
     image_payload_mask,
     image_payload_with_context,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ImagePayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
+    """Source-domain adapter for image payload data and masks."""
+
+    value_type = (ImageMetadataPayload, MaskedImagePayload)
+    value: Any
+    source_domain: SourceSpatialDomain
+
+    @classmethod
+    def for_value(
+        cls,
+        value: Any,
+        *,
+        source_shape_override_yx: tuple[int, int] | None = None,
+    ) -> "ImagePayloadSourceSpatialDomainAdapter | None":
+        if not isinstance(value, (ImageMetadataPayload, MaskedImagePayload)):
+            return None
+        return cls(
+            image_payload_data(value),
+            cls.domain_from_metadata(
+                image_payload_metadata(value),
+                value_name="Image payload",
+            ),
+        )
+
+    @classmethod
+    def domain_from_metadata(
+        cls,
+        metadata: ImagePayloadMetadata,
+        *,
+        fill_value: Any = 0,
+        value_name: str,
+    ) -> SourceSpatialDomain:
+        return SourceSpatialDomain(
+            origin_yx=metadata.spatial_origin_yx or (0, 0),
+            source_shape_yx=metadata.source_spatial_shape_yx,
+            fill_value=fill_value,
+            value_name=value_name,
+        )
+
+    @property
+    def array(self) -> Any:
+        return self.value
+
+    @property
+    def domain(self) -> SourceSpatialDomain:
+        return self.source_domain
+
+    @property
+    def spatial_shape_yx(self) -> tuple[int, int]:
+        array = np.asarray(self.array)
+        if is_color_image_slice(self.array):
+            return tuple(int(value) for value in array.shape[:2])
+        if array.ndim < 2:
+            raise ValueError(
+                "Source-spatial image payloads require at least two dimensions, "
+                f"got {array.ndim}."
+            )
+        return tuple(int(value) for value in array.shape[-2:])
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelPayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
+    """Source-domain adapter for object-label payload values."""
+
+    value_type = (ObjectLabelPayload, ObjectLabelSet)
+    value: ObjectLabelPayload | ObjectLabelSet
+    source_shape_override_yx: tuple[int, int] | None = None
+
+    @classmethod
+    def for_value(
+        cls,
+        value: Any,
+        *,
+        source_shape_override_yx: tuple[int, int] | None = None,
+    ) -> "ObjectLabelPayloadSourceSpatialDomainAdapter | None":
+        if not isinstance(value, (ObjectLabelPayload, ObjectLabelSet)):
+            return None
+        return cls(value, source_shape_override_yx=source_shape_override_yx)
+
+    @property
+    def array(self) -> Any:
+        if isinstance(self.value, ObjectLabelSet):
+            payload = self.value.runtime_payload()
+            return payload.labels if isinstance(payload, ObjectLabelPayload) else payload
+        return self.value.labels
+
+    @property
+    def domain(self) -> SourceSpatialDomain:
+        return SourceSpatialDomain(
+            origin_yx=self.value.spatial_origin_yx,
+            source_shape_yx=(
+                self.value.source_spatial_shape_yx
+                or self.source_shape_override_yx
+            ),
+            value_name="Object-label",
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AlignedImageStackKwargResolver:
+    """Materialize one kwarg for a specific aligned image-stack slice."""
+
+    slice_index: int
+    slice_count: int
+    reference_payload: Any | None = None
+    enable_payload_alignment: bool = True
+
+    def resolve(self, value: Any) -> Any:
+        strategy = AlignedImageStackKwargResolutionStrategy.for_value(value, self)
+        return strategy.resolve(value, self)
+
+    def without_slice_context(self) -> "AlignedImageStackKwargResolver":
+        return type(self)(
+            slice_index=self.slice_index,
+            slice_count=self.slice_count,
+            reference_payload=self.reference_payload,
+            enable_payload_alignment=False,
+        )
+
+    def domain_adapter(self, value: Any) -> SourceSpatialDomainAdapter | None:
+        if self.reference_payload is None:
+            return None
+        metadata = image_payload_metadata(self.reference_payload)
+        if metadata.source_spatial_shape_yx is None:
+            return None
+        return SourceSpatialDomainAdapter.for_value(
+            value,
+            source_shape_override_yx=metadata.source_spatial_shape_yx,
+        )
+
+    def reference_domain(self) -> SourceSpatialDomainAdapter | None:
+        if self.reference_payload is None:
+            return None
+        return SourceSpatialDomainAdapter.for_value(self.reference_payload)
+
+
+class AlignedImageStackKwargResolutionStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal strategy for resolving one slice-aligned runtime kwarg."""
+
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+    value_type: ClassVar[type[Any] | None] = None
+    value_type_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_value(
+        cls,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> "AlignedImageStackKwargResolutionStrategy":
+        for value_type in type(value).__mro__:
+            for strategy_type in cls.registered_strategy_types():
+                if strategy_type.value_type is not value_type:
+                    continue
+                strategy = strategy_type()
+                if strategy.matches(value, resolver):
+                    return strategy
+        raise TypeError(
+            "No aligned image-stack kwarg resolution strategy accepted "
+            f"{type(value).__name__}."
+        )
+
+    @abstractmethod
+    def matches(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> bool:
+        """Return whether this strategy owns the supplied runtime value."""
+
+    @abstractmethod
+    def resolve(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> Any:
+        """Return the value in the current aligned slice context."""
+
+
+class TupleAlignedKwargResolutionStrategy(AlignedImageStackKwargResolutionStrategy):
+    """Resolve tuple-valued kwargs elementwise while preserving tuple structure."""
+
+    value_type = tuple
+
+    def matches(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> bool:
+        del resolver
+        return isinstance(value, tuple)
+
+    def resolve(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> Any:
+        return tuple(resolver.resolve(item) for item in value)
+
+
+class SourceSpatialAlignedKwargResolutionStrategy(
+    AlignedImageStackKwargResolutionStrategy
+):
+    """Materialize source-spatial payloads in the current aligned slice domain."""
+
+    def matches(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> bool:
+        return resolver.domain_adapter(value) is not None
+
+    def resolve(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> Any:
+        adapter = resolver.domain_adapter(value)
+        if adapter is None:
+            raise TypeError(
+                "Source-spatial kwarg strategy requires a source-domain adapter."
+            )
+        return adapter.materialize_for_slice(
+            resolver.slice_index,
+            resolver.slice_count,
+        )
+
+
+class ImageMetadataPayloadAlignedKwargResolutionStrategy(
+    SourceSpatialAlignedKwargResolutionStrategy
+):
+    """Resolve image payloads through their source-spatial metadata."""
+
+    value_type = ImageMetadataPayload
+
+
+class MaskedImagePayloadAlignedKwargResolutionStrategy(
+    SourceSpatialAlignedKwargResolutionStrategy
+):
+    """Resolve masked image payloads through their source-spatial metadata."""
+
+    value_type = MaskedImagePayload
+
+
+class ObjectLabelPayloadAlignedKwargResolutionStrategy(
+    SourceSpatialAlignedKwargResolutionStrategy
+):
+    """Resolve object-label payloads through source-spatial label metadata."""
+
+    value_type = ObjectLabelPayload
+
+
+class ObjectLabelSetAlignedKwargResolutionStrategy(
+    SourceSpatialAlignedKwargResolutionStrategy
+):
+    """Resolve object-label sets through source-spatial label metadata."""
+
+    value_type = ObjectLabelSet
+
+
+class PayloadSliceAlignedKwargResolutionStrategy(
+    AlignedImageStackKwargResolutionStrategy
+):
+    """Slice array-like payload kwargs when they share the aligned stack axis."""
+
+    value_type = np.ndarray
+
+    def matches(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> bool:
+        return (
+            resolver.enable_payload_alignment
+            and len(payload_slices_for_alignment(value)) in {1, resolver.slice_count}
+        )
+
+    def resolve(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> Any:
+        slices = payload_slices_for_alignment(value)
+        if len(slices) == resolver.slice_count:
+            return resolver.without_slice_context().resolve(
+                slices[resolver.slice_index]
+            )
+        return resolver.without_slice_context().resolve(slices[0])
+
+
+class PassThroughAlignedKwargResolutionStrategy(AlignedImageStackKwargResolutionStrategy):
+    """Leave non-slice-aligned kwargs in their native runtime domain."""
+
+    value_type = object
+
+    def matches(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> bool:
+        del value, resolver
+        return True
+
+    def resolve(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> Any:
+        del resolver
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class ImageBundleSourceDomainAligner:
+    """Align same-slice image bundle members into one source XY domain."""
+
+    image_payloads: tuple[Any, ...]
+
+    def align(self) -> tuple[Any, ...]:
+        adapters = self.payload_adapters()
+        source_shape = SourceSpatialDomainAdapter.common_source_shape_yx(adapters)
+        if (
+            source_shape is None
+            or not SourceSpatialDomainAdapter.requires_source_domain_alignment(adapters)
+        ):
+            return self.image_payloads
+        return tuple(
+            self.payload_in_source_domain(payload, source_shape)
+            for payload in self.image_payloads
+        )
+
+    def payload_adapters(self) -> tuple[SourceSpatialDomainAdapter, ...]:
+        adapters: list[SourceSpatialDomainAdapter] = []
+        for payload in self.image_payloads:
+            adapter = ImagePayloadSourceSpatialDomainAdapter.for_value(payload)
+            if adapter is None:
+                raise TypeError(
+                    "Image bundle alignment requires image payload adapters."
+                )
+            adapters.append(adapter)
+        return tuple(adapters)
+
+    def payload_in_source_domain(
+        self,
+        payload: Any,
+        source_shape_yx: tuple[int, int],
+    ) -> Any:
+        metadata = image_payload_metadata(payload)
+        source_shape = metadata.source_spatial_shape_yx or source_shape_yx
+        source_metadata = metadata.with_spatial_crop(
+            input_shape_yx=source_shape,
+            output_shape_yx=source_shape,
+            offset_yx=(
+                -metadata.spatial_origin_yx[0],
+                -metadata.spatial_origin_yx[1],
+            )
+            if metadata.spatial_origin_yx is not None
+            else (0, 0),
+            physical_border_edges_yx=(True, True, True, True),
+        )
+        data = ImagePayloadSourceSpatialDomainAdapter(
+            image_payload_data(payload),
+            ImagePayloadSourceSpatialDomainAdapter.domain_from_metadata(
+                metadata,
+                value_name="Image payload",
+            ),
+        ).materialize()
+        mask = self.mask_in_source_domain(payload, metadata)
+        return image_payload_with_context(
+            data=data,
+            mask=mask,
+            metadata=source_metadata,
+        )
+
+    def mask_in_source_domain(
+        self,
+        payload: Any,
+        metadata: ImagePayloadMetadata,
+    ) -> Any | None:
+        mask = image_payload_mask(payload)
+        if mask is None:
+            return None
+        return ImagePayloadSourceSpatialDomainAdapter(
+            mask,
+            ImagePayloadSourceSpatialDomainAdapter.domain_from_metadata(
+                metadata,
+                fill_value=False,
+                value_name="Image mask",
+            ),
+        ).materialize()
 
 
 class ImagePayloadExecutionMode(Enum):
@@ -54,6 +462,56 @@ class AlignedImageStack:
         object.__setattr__(self, "slices", tuple(self.slices))
         if not self.slices:
             raise ValueError("AlignedImageStack.slices cannot be empty.")
+
+    def slice_source_spatial_adapter(
+        self,
+        slice_index: int,
+    ) -> SourceSpatialDomainAdapter | None:
+        """Return the typed source-domain adapter for one execution slice."""
+        return SourceSpatialDomainAdapter.for_value(self.slices[slice_index])
+
+    def first_slice_source_spatial_adapter(self) -> SourceSpatialDomainAdapter | None:
+        """Return the typed source-domain adapter for the first execution slice."""
+        return self.slice_source_spatial_adapter(0)
+
+    def aligned_slice(self, slice_index: int, slice_count: int) -> Any:
+        """Return this aligned runtime value in an outer aligned slice context."""
+        if len(self.slices) == slice_count:
+            return self.slices[slice_index]
+        if len(self.slices) == 1:
+            return self.slices[0]
+        raise ValueError(
+            "Nested aligned image stack has incompatible slice count; "
+            f"got {len(self.slices)} for outer count {slice_count}."
+        )
+
+
+class NestedAlignedImageStackKwargResolutionStrategy(
+    AlignedImageStackKwargResolutionStrategy
+):
+    """Select matching slices from kwargs that are already aligned stacks."""
+
+    value_type = AlignedImageStack
+
+    def matches(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> bool:
+        del value, resolver
+        return True
+
+    def resolve(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> Any:
+        return resolver.without_slice_context().resolve(
+            value.aligned_slice(
+                resolver.slice_index,
+                resolver.slice_count,
+            )
+        )
 
 
 class ImageBundleLayout(ABC, metaclass=AutoRegisterMeta):
@@ -199,11 +657,18 @@ def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
     data = image_payload_data(payload)
     mask = image_payload_mask(payload)
     metadata = image_payload_metadata(payload)
+    if is_pairwise_slice_grid(data):
+        data = collapse_pairwise_slice_grid(data)
+        if mask is not None and _shares_pairwise_slice_grid_axes(mask, payload):
+            mask = collapse_pairwise_slice_grid(mask)
+        payload = image_payload_with_context(data=data, mask=mask, metadata=metadata)
     if hasattr(data, "ndim") and data.ndim == 2:
         return (payload,)
     if is_color_image_slice(data):
         return (payload,)
-    if is_grayscale_image_stack(data) or is_color_image_stack(data):
+    if _is_single_source_volume_payload(data, metadata):
+        return (payload,)
+    if is_image_stack(data):
         memory_type = detect_memory_type(data)
         return tuple(
             _payload_slice(data_slice, mask, metadata, index)
@@ -216,6 +681,45 @@ def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
             )
         )
     return (payload,)
+
+
+def _is_single_source_volume_payload(data: Any, metadata: Any) -> bool:
+    """Return True for one multi-plane source image, not an OpenHCS stack."""
+    return (
+        is_grayscale_volume_slice(data)
+        and metadata.source_path is not None
+        and not metadata.channel_source_paths
+    )
+
+
+def is_pairwise_slice_grid(value: Any) -> bool:
+    """Return True for square same-stack pair grids shaped ``(N, N, H, W)``."""
+    return (
+        hasattr(value, "ndim")
+        and hasattr(value, "shape")
+        and value.ndim == 4
+        and not is_color_image_stack(value)
+        and value.shape[0] == value.shape[1]
+    )
+
+
+def collapse_pairwise_slice_grid(value: Any) -> Any:
+    """Collapse a square pairwise slice grid to its per-cycle diagonal stack."""
+    array = np.asarray(value)
+    if not is_pairwise_slice_grid(array):
+        raise ValueError(
+            "Pairwise slice grid must be shaped (N, N, H, W); "
+            f"got {getattr(value, 'shape', None)!r}."
+        )
+    return np.stack(tuple(array[index, index] for index in range(array.shape[0])), axis=0)
+
+
+def _shares_pairwise_slice_grid_axes(mask: Any, payload: Any) -> bool:
+    return (
+        hasattr(mask, "shape")
+        and getattr(mask, "shape", None)[:2]
+        == getattr(image_payload_data(payload), "shape", ())[:2]
+    )
 
 
 def _payload_slice(
@@ -284,10 +788,16 @@ def aligned_image_stack_kwargs(
     kwargs: Mapping[str, Any],
     slice_index: int,
     slice_count: int,
+    reference_payload: Any | None = None,
 ) -> dict[str, Any]:
     """Slice runtime-array kwargs alongside an aligned image stack."""
+    resolver = AlignedImageStackKwargResolver(
+        slice_index=slice_index,
+        slice_count=slice_count,
+        reference_payload=reference_payload,
+    )
     return {
-        name: aligned_image_stack_kwarg(value, slice_index, slice_count)
+        name: resolver.resolve(value)
         for name, value in kwargs.items()
     }
 
@@ -296,27 +806,53 @@ def aligned_image_stack_kwarg(
     value: Any,
     slice_index: int,
     slice_count: int,
+    *,
+    reference_payload: Any | None = None,
 ) -> Any:
     """Slice one runtime-array kwarg when it shares the aligned stack length."""
-    if not hasattr(value, "ndim"):
-        return value
-    slices = payload_slices_for_alignment(value)
-    if len(slices) == slice_count:
-        return slices[slice_index]
-    if len(slices) == 1:
-        return slices[0]
-    return value
+    return AlignedImageStackKwargResolver(
+        slice_index=slice_index,
+        slice_count=slice_count,
+        reference_payload=reference_payload,
+    ).resolve(value)
 
 
 def compose_one_image_bundle(
     image_payloads: tuple[Any, ...],
 ) -> Any:
     """Stack same-slice image payloads into one multi-image bundle."""
+    image_payloads = tuple(
+        _normalize_bundle_image_payload(payload) for payload in image_payloads
+    )
+    image_payloads = ImageBundleSourceDomainAligner(image_payloads).align()
     unmasked_payloads = tuple(image_payload_data(payload) for payload in image_payloads)
     composed = _compose_unmasked_image_bundle(unmasked_payloads)
     mask = _combine_payload_masks(image_payloads)
     metadata = compose_image_payload_metadata(image_payloads)
     return image_payload_with_context(composed, mask=mask, metadata=metadata)
+
+
+def _normalize_bundle_image_payload(payload: Any) -> Any:
+    """Normalize one same-slice image payload before bundle composition."""
+    data = image_payload_data(payload)
+    mask = image_payload_mask(payload)
+    metadata = image_payload_metadata(payload)
+    data = _collapse_singleton_grayscale_plane_stack(data)
+    if mask is not None:
+        mask = _collapse_singleton_grayscale_plane_stack(mask)
+    return image_payload_with_context(data=data, mask=mask, metadata=metadata)
+
+
+def _collapse_singleton_grayscale_plane_stack(value: Any) -> Any:
+    if (
+        hasattr(value, "ndim")
+        and hasattr(value, "shape")
+        and value.ndim == 3
+        and value.shape[0] == 1
+        and not is_color_image_slice(value)
+    ):
+        return value[0]
+    return value
 
 
 def payload_slice_count(payload: Any) -> int:
@@ -333,6 +869,7 @@ def _is_homogeneous_image_bundle(slices: Sequence[Any]) -> bool:
     slices = tuple(image_payload_data(slice_data) for slice_data in slices)
     return (
         all(is_grayscale_image_slice(slice_data) for slice_data in slices)
+        or all(is_grayscale_volume_slice(slice_data) for slice_data in slices)
         or all(is_color_image_slice(slice_data) for slice_data in slices)
     )
 

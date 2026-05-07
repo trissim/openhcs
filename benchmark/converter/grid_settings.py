@@ -8,6 +8,10 @@ from typing import Any
 from .parser import ModuleBlock
 from .setting_names import optional_setting_value
 from .settings_binder import SettingsBinder
+from openhcs.interop.cellprofiler.runtime import (
+    CellProfilerGridCycleScope,
+    CellProfilerInvocationOptions,
+)
 
 
 class FunctionNameVariant(Enum):
@@ -140,6 +144,19 @@ def define_grid_bound_kwargs(
     return kwargs
 
 
+def define_grid_invocation_options(module: ModuleBlock) -> CellProfilerInvocationOptions:
+    """Return typed runtime controls for a DefineGrid invocation."""
+    return CellProfilerInvocationOptions(
+        grid_cycle_scope=_grid_cycle_scope(
+            _setting_value(
+                module,
+                "Define a grid for which cycle?",
+                default="Each cycle",
+            )
+        )
+    )
+
+
 def identify_objects_in_grid_bound_kwargs(
     module: ModuleBlock,
     binder: SettingsBinder,
@@ -219,6 +236,18 @@ def _grid_ordering(value: str) -> str:
             ("column",): "columns",
         },
     )
+
+
+def _grid_cycle_scope(value: str) -> str:
+    return CellProfilerGridCycleScope(
+        _literal_from_fragments(
+            value,
+            {
+                ("once",): "once",
+                ("each",): "each_cycle",
+            },
+        )
+    ).value
 
 
 def _shape_choice(value: str) -> str:

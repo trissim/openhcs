@@ -16,6 +16,7 @@ from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
     aligned_dense_object_label_arrays,
 )
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
@@ -82,6 +83,8 @@ def relate_objects(
         - child_labels with parent assignments encoded (H, W)
         - RelationshipMeasurements dataclass
     """
+    parent_labels = object_label_dense_array(parent_labels, dtype=np.int32)
+    child_labels = object_label_dense_array(child_labels, dtype=np.int32)
     parent_labels, child_labels = aligned_dense_object_label_arrays(
         parent_labels,
         child_labels,

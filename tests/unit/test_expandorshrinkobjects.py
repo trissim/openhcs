@@ -41,7 +41,8 @@ def test_expand_or_shrink_objects_expands_by_euclidean_distance():
     )
 
     yy, xx = np.indices(labels.shape)
-    expected = ((yy - 4) ** 2 + (xx - 4) ** 2 <= 9).astype(np.float32)
+    expected = ((yy - 4) ** 2 + (xx - 4) ** 2 <= 9).astype(np.int32)
+    assert result.labels.dtype == np.int32
     assert np.array_equal(result.labels, expected)
 
 
@@ -60,9 +61,10 @@ def test_expand_or_shrink_objects_expands_stacked_labels_planewise():
     )
 
     yy, xx = np.indices(labels.shape[-2:])
-    expected = np.zeros_like(labels, dtype=np.float32)
-    expected[0] = ((yy - 4) ** 2 + (xx - 4) ** 2 <= 4).astype(np.float32)
-    expected[1] = (((yy - 2) ** 2 + (xx - 6) ** 2 <= 4) * 2).astype(np.float32)
+    expected = np.zeros_like(labels, dtype=np.int32)
+    expected[0] = ((yy - 4) ** 2 + (xx - 4) ** 2 <= 4).astype(np.int32)
+    expected[1] = (((yy - 2) ** 2 + (xx - 6) ** 2 <= 4) * 2).astype(np.int32)
+    assert result.labels.dtype == np.int32
     np.testing.assert_array_equal(result.labels, expected)
 
 
@@ -80,8 +82,8 @@ def test_expand_or_shrink_objects_declares_output_label_extent():
         dtype_config=DtypeConfig(),
     )
 
-    assert result.declared_object_count is None
-    assert result.declared_object_ids == (1, 2, 3, 4)
+    assert result.declared_object_count == 9
+    assert result.declared_object_ids == tuple(range(1, 10))
 
 
 def test_expand_or_shrink_objects_shrinks_labels_like_per_object_erosion():
@@ -105,4 +107,5 @@ def test_expand_or_shrink_objects_shrinks_labels_like_per_object_erosion():
     for label_id in (1, 2, 3):
         eroded = binary_erosion(labels == label_id, structure=struct, iterations=2)
         expected[eroded] = label_id
-    assert np.array_equal(result.labels, expected.astype(np.float32))
+    assert result.labels.dtype == np.int32
+    assert np.array_equal(result.labels, expected)

@@ -9,22 +9,33 @@ associating all of a worm's pieces together.
 
 import numpy as np
 import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from heapq import heappop, heappush
+from typing import Any, ClassVar, Mapping
 
+from metaclass_registry import AutoRegisterMeta
 from scipy.ndimage import (
     binary_dilation,
     binary_erosion,
     binary_opening,
+    find_objects,
     label,
 )
-from skimage.morphology import disk
 
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_artifact_queries import (
+    MEASUREMENT_OBJECT_NAME_FIELD,
+    MEASUREMENT_OBJECT_NUMBER_FIELD,
+)
+from openhcs.core.runtime_semantics import ObjectLabelRepresentation
+from openhcs.core.runtime_values import ObjectLabelSet, SparseIJVLabelRows
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from benchmark.cellprofiler_library.functions.worm_geometry import (
     branchpoints,
     calculate_cumulative_lengths,
@@ -41,6 +52,171 @@ class OverlapStyle(str, Enum):
     WITH_OVERLAP = "with_overlap"
     WITHOUT_OVERLAP = "without_overlap"
     BOTH = "both"
+
+
+class WormControlPointAxis(str, Enum):
+    ROW = "y"
+    COLUMN = "x"
+
+
+@dataclass(frozen=True, slots=True)
+class WormControlPointMeasurementField:
+    axis: WormControlPointAxis
+    index: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "axis", WormControlPointAxis(self.axis))
+        if self.index <= 0:
+            raise ValueError("Worm control-point field indexes are 1-based.")
+
+    @property
+    def name(self) -> str:
+        return f"worm_control_point_{self.axis.value}_{self.index}"
+
+
+@dataclass(frozen=True, slots=True)
+class WormControlPointMeasurementSchema:
+    num_control_points: int
+
+    def __post_init__(self) -> None:
+        if self.num_control_points <= 0:
+            raise ValueError("num_control_points must be positive.")
+
+    def field(
+        self,
+        axis: WormControlPointAxis,
+        index: int,
+    ) -> WormControlPointMeasurementField:
+        if index > self.num_control_points:
+            raise ValueError(
+                f"Control-point field index {index} exceeds schema size "
+                f"{self.num_control_points}."
+            )
+        return WormControlPointMeasurementField(axis=axis, index=index)
+
+    def row_fields(
+        self,
+        control_coords: np.ndarray,
+    ) -> dict[str, float]:
+        return {
+            self.field(axis, index).name: float(value)
+            for index, (row_coord, column_coord) in enumerate(control_coords, start=1)
+            for axis, value in (
+                (WormControlPointAxis.COLUMN, column_coord),
+                (WormControlPointAxis.ROW, row_coord),
+            )
+        }
+
+    def control_points_from_rows(
+        self,
+        rows: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]],
+        *,
+        object_name: str | None = None,
+    ) -> np.ndarray | None:
+        if not rows:
+            return None
+        rows = self.rows_for_object(rows, object_name=object_name)
+        if not rows:
+            return None
+        control_points = np.zeros((len(rows), 2, self.num_control_points), dtype=float)
+        for row_index, row in enumerate(rows):
+            for control_point_index in range(self.num_control_points):
+                field_index = control_point_index + 1
+                row_field = self.field(WormControlPointAxis.ROW, field_index).name
+                column_field = self.field(WormControlPointAxis.COLUMN, field_index).name
+                try:
+                    row_value = row[row_field]
+                    column_value = row[column_field]
+                except KeyError as exc:
+                    raise ValueError(
+                        "UntangleWorms measurement rows are missing required "
+                        f"control-point field {exc.args[0]!r}."
+                    ) from exc
+                control_points[row_index, 0, control_point_index] = float(row_value)
+                control_points[row_index, 1, control_point_index] = float(column_value)
+        return control_points
+
+    def rows_for_object(
+        self,
+        rows: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]],
+        *,
+        object_name: str | None,
+    ) -> tuple[Mapping[str, Any], ...]:
+        filtered_rows = tuple(
+            row
+            for row in rows
+            if object_name is None
+            or row.get(MEASUREMENT_OBJECT_NAME_FIELD) == object_name
+        )
+        return tuple(
+            sorted(
+                filtered_rows,
+                key=lambda row: int(row.get(MEASUREMENT_OBJECT_NUMBER_FIELD, 0)),
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WormLabelOutputRequest:
+    sparse_overlapping: ObjectLabelSet
+    overlapping: np.ndarray
+    nonoverlapping: np.ndarray
+
+
+class WormLabelOutputStrategy(
+    EnumKeyedStrategyMixin[OverlapStyle],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Select UntangleWorms label outputs for one CellProfiler overlap style."""
+
+    __registry_key__ = "overlap_style_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "overlap_style"
+    __enum_label_attr__ = "overlap_style_label"
+    overlap_style_label: ClassVar[str | None] = None
+    overlap_style: ClassVar[OverlapStyle | None] = None
+
+    @classmethod
+    def for_overlap_style(cls, overlap_style: OverlapStyle) -> "WormLabelOutputStrategy":
+        return cls.for_enum_member(overlap_style)
+
+    @abstractmethod
+    def outputs(
+        self,
+        request: WormLabelOutputRequest,
+    ) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
+        """Return the public overlapping and nonoverlapping label payloads."""
+
+
+class WithOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.WITH_OVERLAP
+
+    def outputs(
+        self,
+        request: WormLabelOutputRequest,
+    ) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
+        return request.sparse_overlapping, request.overlapping.copy()
+
+
+class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.WITHOUT_OVERLAP
+
+    def outputs(
+        self,
+        request: WormLabelOutputRequest,
+    ) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
+        return request.nonoverlapping.copy(), request.nonoverlapping
+
+
+class BothOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
+    overlap_style = OverlapStyle.BOTH
+
+    def outputs(
+        self,
+        request: WormLabelOutputRequest,
+    ) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
+        return request.sparse_overlapping, request.nonoverlapping
 
 
 def coerce_overlap_style(value: str | OverlapStyle) -> OverlapStyle:
@@ -102,7 +278,12 @@ def untangle_worms(
     radii_from_training: tuple[float, ...] | None = None,
     overlapping_object_name: str = "OverlappingWorms",
     nonoverlapping_object_name: str = "NonOverlappingWorms",
-) -> tuple[np.ndarray, list[dict[str, float | int | str]], np.ndarray, np.ndarray]:
+) -> tuple[
+    np.ndarray,
+    list[dict[str, float | int | str]],
+    ObjectLabelSet | np.ndarray,
+    np.ndarray,
+]:
     """
     Untangle overlapping worms in a binary image.
     
@@ -153,35 +334,39 @@ def untangle_worms(
     eroded = binary_erosion(binary, structure=eight_connectivity())
     skeleton = skeletonize_worm_mask(skeleton & eroded)
     
-    # Process each connected component
     areas = np.bincount(labels.ravel())
+    component_slices = find_objects(labels)
     all_path_coords: list[np.ndarray] = []
     
-    for i in range(1, count + 1):
+    for i, object_slice in enumerate(component_slices, start=1):
+        if object_slice is None:
+            continue
         component_area = areas[i]
         
         # Skip if too small
         if component_area < min_worm_area:
             continue
         
-        mask = labels == i
-        component_skeleton = skeleton & mask
+        row_slice, column_slice = object_slice
+        local_labels = labels[object_slice]
+        mask = local_labels == i
+        component_skeleton = skeleton[object_slice] & mask
         
         if not np.any(component_skeleton):
             continue
         
         if component_area <= max_worm_area:
-            # Single worm - trace skeleton path
-            path_coords = trace_skeleton_path(component_skeleton)
+            path_coords = _longest_worm_graph_path_coords(
+                mask,
+                component_skeleton,
+                max_length=max_path_length,
+            )
             
             if len(path_coords) < 2:
                 continue
             
             cumul_lengths = calculate_cumulative_lengths(path_coords)
             total_length = cumul_lengths[-1]
-            
-            if total_length < min_path_length or total_length > max_path_length:
-                continue
             if not _worm_shape_cost_passes(
                 path_coords,
                 total_length=total_length,
@@ -192,7 +377,13 @@ def untangle_worms(
             ):
                 continue
             
-            all_path_coords.append(path_coords)
+            all_path_coords.append(
+                _offset_path_coords(
+                    path_coords,
+                    row_offset=row_slice.start,
+                    column_offset=column_slice.start,
+                )
+            )
         else:
             graph = _worm_graph_from_binary(
                 mask,
@@ -206,7 +397,12 @@ def untangle_worms(
                 max_length=max_path_length,
             )
             all_path_coords.extend(
-                _select_worm_cluster_paths(
+                _offset_path_coords(
+                    path_coords,
+                    row_offset=row_slice.start,
+                    column_offset=column_slice.start,
+                )
+                for path_coords in _select_worm_cluster_paths(
                     graph,
                     paths,
                     component_area=int(component_area),
@@ -227,6 +423,7 @@ def untangle_worms(
         image_shape=image.shape,
         radii_from_training=radii_array,
         overlap_style=overlap_style,
+        overlapping_object_name=overlapping_object_name,
     )
     
     measurements = _worm_descriptor_rows(
@@ -266,7 +463,7 @@ def _worm_graph_from_binary(
     """Build CP's branch-area/segment graph without centrosome calls."""
     branch_areas = branchpoints(skeleton)
     if max_radius is not None and max_radius > 0:
-        far = binary_erosion(binary_image, structure=disk(int(np.ceil(max_radius))))
+        far = binary_erosion(binary_image, structure=_cellprofiler_strel_disk(max_radius))
         far = binary_opening(far, structure=eight_connectivity())
         far_labels, _count = label(far, structure=eight_connectivity())
         if far_labels.size:
@@ -303,10 +500,10 @@ def _insert_long_segment_breakpoints(
             max_order[label_id] = int(np.max(label_orders))
     big_segment = max_order >= max_skel_length
     segment_count_per_label = np.maximum(
-        (max_order + max_skel_length - 1) // max_skel_length,
+        ((max_order + max_skel_length - 1) / max_skel_length).astype(int),
         1,
     )
-    segment_length = np.maximum((max_order + 1) // segment_count_per_label, 1)
+    segment_length = np.maximum(((max_order + 1) / segment_count_per_label).astype(int), 1)
     new_breakpoints = (
         (order % segment_length[labels] == segment_length[labels] - 1)
         & (order != max_order[labels])
@@ -396,41 +593,145 @@ def _worm_graph_from_branching_areas(
     )
 
 
+def _cellprofiler_strel_disk(radius: float) -> np.ndarray:
+    """Return CellProfiler/centrosome's disk footprint semantics."""
+    integer_radius = int(radius)
+    rows, columns = np.mgrid[
+        -integer_radius : integer_radius + 1,
+        -integer_radius : integer_radius + 1,
+    ]
+    return (rows * rows + columns * columns) <= radius * radius
+
+
+def _offset_path_coords(
+    coords: np.ndarray,
+    *,
+    row_offset: int,
+    column_offset: int,
+) -> np.ndarray:
+    if len(coords) == 0:
+        return coords
+    offset = np.array((row_offset, column_offset), dtype=coords.dtype)
+    return coords + offset
+
+
+def _longest_worm_graph_path_coords(
+    binary_image: np.ndarray,
+    skeleton: np.ndarray,
+    *,
+    max_length: float,
+) -> np.ndarray:
+    graph = _worm_graph_from_binary(
+        binary_image,
+        skeleton,
+        max_radius=None,
+        max_skel_length=None,
+    )
+    longest_coords = np.zeros((0, 2), dtype=int)
+    longest_length = 0.0
+    for path in _all_worm_graph_paths(graph, min_length=0.0, max_length=max_length):
+        coords = _graph_path_to_pixel_coords(graph, path)
+        path_length = float(calculate_cumulative_lengths(coords)[-1])
+        if path_length >= longest_length:
+            longest_coords = coords
+            longest_length = path_length
+    return longest_coords
+
+
 def _trace_segments(
     segments: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
-    segment_labels, segment_count = label(segments, structure=eight_connectivity())
+    foreground = np.argwhere(segments)
+    if len(foreground) == 0:
+        empty_i = np.zeros(0, dtype=int)
+        empty_distance = np.zeros(0, dtype=float)
+        return empty_i, empty_i, empty_i, empty_i, empty_distance, 0
+
+    row_min, column_min = foreground.min(axis=0)
+    row_max, column_max = foreground.max(axis=0) + 1
+    local_segments = segments[row_min:row_max, column_min:column_max]
+    segment_labels, segment_count = label(local_segments, structure=eight_connectivity())
     if segment_count == 0:
         empty_i = np.zeros(0, dtype=int)
         empty_distance = np.zeros(0, dtype=float)
         return empty_i, empty_i, empty_i, empty_i, empty_distance, 0
-    endpoint_mask = endpoints(segments)
-    traced: list[tuple[int, int, int, int, float]] = []
-    for label_id in range(1, segment_count + 1):
-        segment_mask = segment_labels == label_id
-        endpoint_coords = np.argwhere(endpoint_mask & segment_mask)
+    endpoint_mask = endpoints(local_segments)
+    traced: list[tuple[int, int, int, float]] = []
+    object_slices = find_objects(segment_labels)
+    for label_id, object_slice in enumerate(object_slices, start=1):
+        if object_slice is None:
+            continue
+        row_slice, column_slice = object_slice
+        local_labels = segment_labels[object_slice]
+        segment_mask = local_labels == label_id
+        endpoint_coords = np.argwhere(endpoint_mask[object_slice] & segment_mask)
         if len(endpoint_coords):
-            start = endpoint_coords[np.lexsort((endpoint_coords[:, 1], endpoint_coords[:, 0]))][0]
+            start = endpoint_coords[
+                np.lexsort((endpoint_coords[:, 1], endpoint_coords[:, 0]))
+            ][0]
         else:
             coords = np.argwhere(segment_mask)
             start = coords[np.lexsort((coords[:, 1], coords[:, 0]))][0]
-        path_coords = _trace_segment_from_start(segment_mask, tuple(start))
-        if len(path_coords) == 0:
-            path_coords = np.argwhere(segment_mask)
-        distances = calculate_cumulative_lengths(path_coords)
-        for order_index, ((row, column), distance) in enumerate(zip(path_coords, distances, strict=True)):
-            traced.append((int(row), int(column), label_id, order_index, float(distance)))
+        distances = _segment_geodesic_distances(segment_mask, tuple(start))
+        coords = np.argwhere(segment_mask)
+        for row, column in coords:
+            traced.append(
+                (
+                    int(row + row_slice.start + row_min),
+                    int(column + column_slice.start + column_min),
+                    label_id,
+                    float(distances[row, column]),
+                )
+            )
     traced_array = np.array(traced, dtype=float)
-    sort_order = np.lexsort((traced_array[:, 4], traced_array[:, 2]))
+    sort_order = np.lexsort((traced_array[:, 3], traced_array[:, 2]))
     traced_array = traced_array[sort_order]
+    labels = traced_array[:, 2].astype(int)
+    segment_order = np.arange(len(labels), dtype=int)
+    areas = np.bincount(labels)
+    indexes = np.cumsum(areas) - areas
+    segment_order -= indexes[labels]
     return (
         traced_array[:, 0].astype(int),
         traced_array[:, 1].astype(int),
-        traced_array[:, 2].astype(int),
-        traced_array[:, 3].astype(int),
-        traced_array[:, 4],
+        labels,
+        segment_order,
+        traced_array[:, 3],
         segment_count,
     )
+
+
+def _segment_geodesic_distances(
+    segment_mask: np.ndarray,
+    start: tuple[int, int],
+) -> np.ndarray:
+    distances = np.full(segment_mask.shape, np.inf, dtype=float)
+    distances[start] = 0.0
+    queue: list[tuple[float, int, int]] = [(0.0, int(start[0]), int(start[1]))]
+    while queue:
+        distance, row, column = heappop(queue)
+        if distance != distances[row, column]:
+            continue
+        for row_delta in (-1, 0, 1):
+            for column_delta in (-1, 0, 1):
+                if row_delta == 0 and column_delta == 0:
+                    continue
+                next_row = row + row_delta
+                next_column = column + column_delta
+                if (
+                    next_row < 0
+                    or next_column < 0
+                    or next_row >= segment_mask.shape[0]
+                    or next_column >= segment_mask.shape[1]
+                    or not segment_mask[next_row, next_column]
+                ):
+                    continue
+                step = float(np.hypot(row_delta, column_delta))
+                next_distance = distance + step
+                if next_distance < distances[next_row, next_column]:
+                    distances[next_row, next_column] = next_distance
+                    heappush(queue, (next_distance, next_row, next_column))
+    return distances
 
 
 def _trace_segment_from_start(segment_mask: np.ndarray, start: tuple[int, int]) -> np.ndarray:
@@ -473,18 +774,21 @@ def _incidence_matrix(
     incidence = np.zeros((branch_count, segment_count), dtype=bool)
     if branch_count == 0 or segment_count == 0:
         return incidence
-    dilated_endpoints = binary_dilation(endpoint_labels > 0, structure=eight_connectivity())
-    for branch_id in range(1, branch_count + 1):
-        neighborhood = dilated_endpoints & (branch_labels == branch_id)
-        if not np.any(neighborhood):
-            continue
-        expanded_branch = binary_dilation(
-            branch_labels == branch_id,
-            structure=eight_connectivity(),
-        )
-        segment_ids = np.unique(endpoint_labels[expanded_branch])
-        segment_ids = segment_ids[segment_ids > 0]
-        incidence[branch_id - 1, segment_ids.astype(int) - 1] = True
+    rows, columns = np.nonzero(branch_labels)
+    height, width = branch_labels.shape
+    for row, column in zip(rows, columns, strict=True):
+        branch_id = int(branch_labels[row, column])
+        for row_delta in (-1, 0, 1):
+            neighbor_row = row + row_delta
+            if neighbor_row < 0 or neighbor_row >= height:
+                continue
+            for column_delta in (-1, 0, 1):
+                neighbor_column = column + column_delta
+                if neighbor_column < 0 or neighbor_column >= width:
+                    continue
+                segment_id = int(endpoint_labels[neighbor_row, neighbor_column])
+                if segment_id > 0:
+                    incidence[branch_id - 1, segment_id - 1] = True
     return incidence
 
 
@@ -754,7 +1058,9 @@ def _worm_label_outputs(
     image_shape: tuple[int, int],
     radii_from_training: np.ndarray,
     overlap_style: OverlapStyle,
-) -> tuple[np.ndarray, np.ndarray]:
+    overlapping_object_name: str,
+) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
+    ijv_parts: list[np.ndarray] = []
     overlap_hits = np.zeros(image_shape, dtype=np.int16)
     overlapping = np.zeros(image_shape, dtype=np.int32)
     for object_number, path_coords in enumerate(all_path_coords, start=1):
@@ -765,15 +1071,36 @@ def _worm_label_outputs(
         )
         if len(rows) == 0:
             continue
+        ijv_parts.append(
+            np.column_stack(
+                (
+                    rows.astype(np.int32, copy=False),
+                    cols.astype(np.int32, copy=False),
+                    np.full(len(rows), object_number, dtype=np.int32),
+                )
+            )
+        )
         overlap_hits[rows, cols] += 1
         overlapping[rows, cols] = object_number
     nonoverlapping = overlapping.copy()
     nonoverlapping[overlap_hits != 1] = 0
-    if overlap_style is OverlapStyle.WITH_OVERLAP:
-        return overlapping, overlapping.copy()
-    if overlap_style is OverlapStyle.WITHOUT_OVERLAP:
-        return nonoverlapping.copy(), nonoverlapping
-    return overlapping, nonoverlapping
+    ijv = (
+        np.vstack(ijv_parts).astype(np.int32, copy=False)
+        if ijv_parts
+        else np.zeros((0, 3), dtype=np.int32)
+    )
+    sparse_overlapping = ObjectLabelSet(
+        name=overlapping_object_name,
+        labels=SparseIJVLabelRows(ijv),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+    return WormLabelOutputStrategy.for_overlap_style(overlap_style).outputs(
+        WormLabelOutputRequest(
+            sparse_overlapping=sparse_overlapping,
+            overlapping=overlapping,
+            nonoverlapping=nonoverlapping,
+        )
+    )
 
 
 def _reconstructed_worm_pixels(
@@ -935,7 +1262,21 @@ def _worm_descriptor_row(
     }
     for index, angle in enumerate(angles, start=1):
         row[f"worm_angle_{index}"] = float(angle)
-    for index, (row_coord, column_coord) in enumerate(control_coords, start=1):
-        row[f"worm_control_point_x_{index}"] = float(column_coord)
-        row[f"worm_control_point_y_{index}"] = float(row_coord)
+    row.update(
+        WormControlPointMeasurementSchema(
+            num_control_points=num_control_points,
+        ).row_fields(control_coords)
+    )
     return row
+
+
+def control_points_from_worm_measurement_rows(
+    rows: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]],
+    *,
+    num_control_points: int,
+    object_name: str | None = None,
+) -> np.ndarray | None:
+    """Return StraightenWorms control points from UntangleWorms measurement rows."""
+    return WormControlPointMeasurementSchema(
+        num_control_points=num_control_points,
+    ).control_points_from_rows(rows, object_name=object_name)

@@ -33,13 +33,21 @@ from openhcs.core.runtime_execution_validation import (
 from openhcs.core.runtime_exports import (
     RuntimeImageExportBitDepth,
     RuntimeImageExportSpec,
+    RuntimeExportObservation,
 )
 from openhcs.core.runtime_semantics import (
+    MeasurementStatistic,
     MeasurementScope,
     MeasurementSubject,
+    ObjectCoreMeasurementFeature,
+    ObjectLabelDomainScope,
     RelationshipSemantics,
 )
-from openhcs.core.runtime_stores import RuntimeValueStore
+from openhcs.core.runtime_stores import (
+    RuntimeArtifactLocation,
+    RuntimeValueStore,
+    StoredRuntimeValue,
+)
 from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectLabelPayload,
@@ -451,6 +459,171 @@ def test_runtime_reference_artifact_equivalence_projects_spatial_grid_measuremen
     )
     store = RuntimeValueStore()
     store.record(value, path="/memory/Grid.pkl", backend="memory")
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_projects_slice_aligned_spatial_grid_measurements(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "reference"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,DefinedGrid_Grid_Columns,DefinedGrid_Grid_Rows,"
+        "DefinedGrid_Grid_XLocationOfLowestXSpot,DefinedGrid_Grid_XSpacing,"
+        "DefinedGrid_Grid_YLocationOfLowestYSpot,DefinedGrid_Grid_YSpacing\n"
+        "1,12,8,71,102.5,57,103.25\n"
+        "2,12,8,72,102.5,57,103.25\n",
+        encoding="utf-8",
+    )
+    grids = (
+        SpatialGrid(
+            name="Grid",
+            rows=8,
+            columns=12,
+            x_spacing=102.5,
+            y_spacing=103.25,
+            x_origin=71,
+            y_origin=57,
+        ),
+        SpatialGrid(
+            name="Grid",
+            rows=8,
+            columns=12,
+            x_spacing=102.5,
+            y_spacing=103.25,
+            x_origin=72,
+            y_origin=57,
+        ),
+    )
+    value = RuntimeValue(
+        key=ArtifactKey(
+            name="Grid",
+            kind=ArtifactKind.SPATIAL_GRID,
+            scope=ArtifactScope(axis_id="A01"),
+        ),
+        data=tuple(grid.runtime_payload() for grid in grids),
+        schema=RuntimeValueSchema(
+            kind=ArtifactKind.SPATIAL_GRID,
+            slice_aligned=True,
+        ),
+    )
+    store = RuntimeValueStore()
+    store.record(value, path="/memory/Grid.pkl", backend="memory")
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_projects_object_numbers_per_plane(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "reference"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber\n"
+        "1,1\n"
+        "1,2\n"
+        "2,1\n"
+        "2,2\n",
+        encoding="utf-8",
+    )
+    labels = np.asarray(
+        (
+            ((1, 1), (2, 2)),
+            ((1, 1), (2, 2)),
+        ),
+        dtype=np.int32,
+    )
+    label_set = ObjectLabelSet(
+        name="Cells",
+        labels=labels,
+        declared_object_count=2,
+        domain_scope=ObjectLabelDomainScope.PAYLOAD,
+    )
+    payload = label_set.runtime_payload()
+    value = RuntimeValue(
+        key=ArtifactKey(
+            name="Cells",
+            kind=ArtifactKind.OBJECT_LABELS,
+            scope=ArtifactScope(axis_id="A01"),
+        ),
+        data=payload,
+        schema=label_set.runtime_schema(payload),
+    )
+    store = RuntimeValueStore()
+    store.record(value, path="/memory/Cells.pkl", backend="memory")
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_projects_payload_object_numbers_once(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "reference"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "StraightenedWorms.csv").write_text(
+        "ImageNumber,ObjectNumber\n"
+        "1,1\n"
+        "1,2\n",
+        encoding="utf-8",
+    )
+    labels = np.asarray(
+        (
+            ((1, 1), (2, 2)),
+            ((1, 1), (2, 2)),
+        ),
+        dtype=np.int32,
+    )
+    label_set = ObjectLabelSet(
+        name="StraightenedWorms",
+        labels=labels,
+        domain_scope=ObjectLabelDomainScope.PAYLOAD,
+    )
+    payload = label_set.runtime_payload()
+    value = RuntimeValue(
+        key=ArtifactKey(
+            name="StraightenedWorms",
+            kind=ArtifactKind.OBJECT_LABELS,
+            scope=ArtifactScope(axis_id="A01"),
+        ),
+        data=payload,
+        schema=label_set.runtime_schema(payload),
+    )
+    store = RuntimeValueStore()
+    store.record(value, path="/memory/StraightenedWorms.pkl", backend="memory")
     observation = RuntimeArtifactExecutionObservation.from_contexts(
         {"A01": SimpleNamespace(runtime_value_store=store)},
         candidate_root,
@@ -2209,6 +2382,67 @@ def test_runtime_reference_artifact_equivalence_allows_sparse_object_boundary_ji
     assert boundary_policy_report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_allows_boundary_jitter_without_count(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    reference_rows = "\n".join(
+        f"1,{object_number},10"
+        for object_number in range(1, 11)
+    )
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,AreaShape_Area\n"
+        f"{reference_rows}\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    object_table = MeasurementTable(
+        name="MeasureObjectSizeShape",
+        rows=tuple(
+            {
+                "object_label": object_number,
+                "object_name": "Cells",
+                "area": 13 if object_number == 4 else 10,
+            }
+            for object_number in range(1, 11)
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=object_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=object_table.rows,
+            schema=object_table.runtime_schema(object_table.rows),
+        ),
+        path=f"/memory/{object_table.name}.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+        policy=RuntimeEquivalencePolicy(
+            allow_sparse_object_boundary_jitter=True,
+            object_boundary_jitter_abs_tolerance=5,
+            object_boundary_jitter_max_unstable_values=1,
+            object_boundary_jitter_max_unstable_fraction=0,
+        ),
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_matches_qualified_features(
     tmp_path: Path,
 ) -> None:
@@ -2624,6 +2858,88 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_means
         source_ids=(1, 1, 2),
         target_ids=(1, 2, 3),
         relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Cells_Nuclei_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_keys_relationship_child_means_by_slice(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nuclei_Intensity_IntegratedIntensity_Green\n"
+        "1,1,10.0\n"
+        "2,1,100.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    child_table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=(
+            {
+                "slice_index": 0,
+                "object_name": "Nuclei",
+                "object_label": 1,
+                "integrated_intensity": 10.0,
+            },
+            {
+                "slice_index": 1,
+                "object_name": "Nuclei",
+                "object_label": 1,
+                "integrated_intensity": 100.0,
+            },
+        ),
+        source_image_name="Green",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/MeasureObjectIntensity.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    relationship = ObjectRelationship(
+        name="Cells_Nuclei_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1),
+        target_ids=(1, 1),
+        relationship_type=semantics.relationship_type,
+        slice_indices=(0, 1),
+        slice_count=2,
     )
     store.record(
         RuntimeValue(
@@ -3777,6 +4093,43 @@ def test_runtime_reference_artifact_equivalence_derives_reversed_regression_slop
     assert report.is_equivalent
 
 
+def test_cellprofiler_policy_tolerates_regression_slope_roundoff() -> None:
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
+    feature = RuntimeMeasurementFeatureKey(subject, "slope", "value")
+    reference = RuntimeMeasurementSnapshot(
+        {
+            feature: Counter(
+                {
+                    RuntimeCellSignature(
+                        RuntimeCellValueKind.NUMBER,
+                        "0.3683298538",
+                    ): 1
+                }
+            )
+        }
+    )
+    candidate = RuntimeMeasurementSnapshot(
+        {
+            feature: Counter(
+                {
+                    RuntimeCellSignature(
+                        RuntimeCellValueKind.NUMBER,
+                        "0.3683313118",
+                    ): 1
+                }
+            )
+        }
+    )
+
+    report = runtime_measurement_equivalence(
+        reference,
+        candidate,
+        policy=cellprofiler_runtime_equivalence_policy(),
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_allows_threshold_sensitive_pair_drift(
     tmp_path: Path,
 ) -> None:
@@ -4592,6 +4945,80 @@ def test_runtime_reference_artifact_equivalence_uses_declared_label_count(
     assert report.is_equivalent
 
 
+def test_runtime_measurement_snapshot_counts_primary_object_rows_before_dense_label_domain(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells_measurements",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=[
+                {"image_number": 1, "object_label": 1, "Center_X": 0.0},
+                {"image_number": 1, "object_label": 2, "Center_X": 1.0},
+                {"image_number": 1, "object_label": 4, "Center_X": 2.0},
+            ],
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.MEASUREMENTS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells_measurements.pkl",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=np.array(
+                    [
+                        [1, 1, 0],
+                        [0, 0, 0],
+                        [4, 4, 0],
+                    ],
+                    dtype=np.uint16,
+                ),
+                declared_object_count=4,
+            ),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
+    object_count_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
+        MeasurementStatistic.COUNT.value,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[object_count_key].items()
+    } == {("number", "3.0", 1)}
+
+
 def test_runtime_reference_artifact_equivalence_does_not_duplicate_explicit_centers(
     tmp_path: Path,
 ) -> None:
@@ -4640,6 +5067,89 @@ def test_runtime_reference_artifact_equivalence_does_not_duplicate_explicit_cent
                 scope=ArtifactScope(axis_id="A01"),
             ),
             data=np.array([[0, 1, 1]], dtype=np.uint16),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_derives_label_center_means_with_explicit_centers(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Mean_Cells_Location_Center_X,"
+        "Mean_Cells_Location_Center_Y,Mean_Cells_Location_Center_Z\n"
+        "1,1.0,1.0,0.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    explicit_table = MeasurementTable(
+        name="MeasureObjectSizeShape",
+        rows=(
+            {
+                "object_label": 1,
+                "Center_X": 0.5,
+                "Center_Y": 0.0,
+                "Center_Z": 0.0,
+                "object_name": "Cells",
+            },
+            {
+                "object_label": 2,
+                "Center_X": 1.5,
+                "Center_Y": 2.0,
+                "Center_Z": 0.0,
+                "object_name": "Cells",
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="MeasureObjectSizeShape",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=explicit_table.rows,
+            schema=explicit_table.runtime_schema(explicit_table.rows),
+        ),
+        path="/memory/MeasureObjectSizeShape.pkl",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=np.array(
+                [
+                    [1, 1, 0],
+                    [0, 0, 0],
+                    [0, 2, 2],
+                ],
+                dtype=np.uint16,
+            ),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -4751,6 +5261,217 @@ def test_runtime_reference_artifact_equivalence_prefers_primary_same_row_alias(
     observation = RuntimeArtifactExecutionObservation.from_contexts(
         {"A01": SimpleNamespace(runtime_value_store=store)},
         candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_merges_object_location_alias_rows(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,AreaShape_Center_X,Location_Center_X\n"
+        "1,1,7.5,8.5\n"
+        "1,2,nan,9.5\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    size_shape_table = MeasurementTable(
+        name="MeasureObjectSizeShape",
+        rows=(
+            {
+                "image_number": 1,
+                "object_label": 1,
+                "Center_X": 7.5,
+                "object_name": "Cells",
+            },
+            {
+                "image_number": 1,
+                "object_label": 2,
+                "Center_X": np.nan,
+                "object_name": "Cells",
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    location_table = MeasurementTable(
+        name="IdentifyObjects",
+        rows=(
+            {
+                "image_number": 1,
+                "object_label": 1,
+                "feature_name": "Location_Center_X",
+                "result_value": 8.5,
+                "object_name": "Cells",
+            },
+            {
+                "image_number": 1,
+                "object_label": 2,
+                "feature_name": "Location_Center_X",
+                "result_value": 9.5,
+                "object_name": "Cells",
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    for table in (location_table, size_shape_table):
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=table.name,
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01"),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            path=f"/memory/{table.name}.pkl",
+            backend="memory",
+        )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_ignores_duplicate_measurement_artifacts(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Texture_Entropy_DNA_3_00_256\n"
+        "1,1,0.25\n",
+        encoding="utf-8",
+    )
+    table = MeasurementTable(
+        name="MeasureTexture",
+        rows=(
+            {
+                "image_number": 1,
+                "object_label": 1,
+                "scale": 3,
+                "direction": 0,
+                "gray_levels": 256,
+                "entropy": 0.25,
+                "source_image_name": "DNA",
+                "object_name": "Cells",
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "DNA"),
+    )
+    records = tuple(
+        StoredRuntimeValue(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name="MeasureTexture",
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01"),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            RuntimeArtifactLocation(
+                path=f"/memory/MeasureTexture_{index}.pkl",
+                backend="memory",
+            ),
+        )
+        for index in (1, 2)
+    )
+    observation = RuntimeArtifactExecutionObservation(
+        {"A01": records},
+        RuntimeExportObservation.from_output_root(candidate_root),
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_ignores_duplicate_object_rows(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Texture_Entropy_DNA_3_00_256\n"
+        "1,1,0.25\n",
+        encoding="utf-8",
+    )
+    table_rows = (
+        {
+            "image_number": 1,
+            "scale": 3,
+            "direction": 0,
+            "gray_levels": 256,
+            "entropy": 0.75,
+            "source_image_name": "DNA",
+        },
+        {
+            "image_number": 1,
+            "object_label": 1,
+            "scale": 3,
+            "direction": 0,
+            "gray_levels": 256,
+            "entropy": 0.25,
+            "source_image_name": "DNA",
+            "object_name": "Cells",
+        },
+    )
+    records = []
+    for index, image_entropy in ((1, 0.75), (2, 0.80)):
+        rows = (
+            {**table_rows[0], "entropy": image_entropy},
+            table_rows[1],
+        )
+        table = MeasurementTable(
+            name="MeasureTexture",
+            rows=rows,
+            subject=MeasurementSubject(MeasurementScope.IMAGE, "DNA"),
+        )
+        records.append(
+            StoredRuntimeValue(
+                RuntimeValue(
+                    key=ArtifactKey(
+                        name="MeasureTexture",
+                        kind=ArtifactKind.MEASUREMENTS,
+                        scope=ArtifactScope(axis_id="A01"),
+                    ),
+                    data=table.rows,
+                    schema=table.runtime_schema(table.rows),
+                ),
+                RuntimeArtifactLocation(
+                    path=f"/memory/MeasureTexture_{index}.pkl",
+                    backend="memory",
+                ),
+            )
+        )
+    observation = RuntimeArtifactExecutionObservation(
+        {"A01": tuple(records)},
+        RuntimeExportObservation.from_output_root(candidate_root),
     )
 
     report = runtime_reference_artifact_equivalence(

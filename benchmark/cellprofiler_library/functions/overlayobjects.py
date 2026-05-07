@@ -8,6 +8,8 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs
 
+from benchmark.cellprofiler_library.image_geometry import CellProfilerPlaneGeometry
+
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
@@ -46,8 +48,11 @@ def overlay_objects(
     if img_gray.max() > 1.0:
         img_gray = img_gray / img_gray.max()
     
-    # Ensure labels are integer type
-    labels_int = labels.astype(np.int32)
+    # Align object labels to the background image plane geometry before handing
+    # off to skimage, matching the shared CellProfiler mask/label semantics.
+    labels_int = CellProfilerPlaneGeometry.from_image_plane(img_gray).label_plane(
+        labels
+    )
     
     # Determine max label for color normalization
     if max_label is None:

@@ -1,0 +1,111 @@
+digraph G {
+  graph [
+    rankdir=LR,
+    bgcolor="white",
+    margin=0.12,
+    pad=0.18,
+    nodesep=0.55,
+    ranksep=0.78,
+    color="transparent",
+    pencolor="transparent",
+    penwidth=0,
+    fontname="Helvetica"
+  ];
+  node [
+    shape=rect,
+    style="rounded,filled",
+    fontname="Helvetica",
+    fontsize=15,
+    color="#263238",
+    penwidth=1.35,
+    fillcolor="#FAFAFA"
+  ];
+  edge [
+    color="#546E7A",
+    penwidth=1.65,
+    arrowsize=0.75,
+    fontname="Helvetica",
+    fontsize=12
+  ];
+
+  label=<
+    <B>Figure 1. OpenHCS turns a fragmented HCS tool stack into one semantic workflow</B>
+  >;
+  labelloc=t;
+  fontsize=20;
+
+  assays [label=<
+    <B>Assay data</B><BR ALIGN="LEFT"/>
+    wells, sites, channels<BR ALIGN="LEFT"/>
+    time and z planes<BR ALIGN="LEFT"/>
+    metadata and measurements
+  >, fillcolor="#E3F2FD", color="#1565C0", penwidth=2.0];
+
+  analysis [label=<
+    <B>Analysis tools</B><BR ALIGN="LEFT"/>
+    CellProfiler .cppipe<BR ALIGN="LEFT"/>
+    Fiji / ImageJ plugins<BR ALIGN="LEFT"/>
+    custom Python functions
+  >, fillcolor="#FFF3E0", color="#E65100"];
+
+  interaction [label=<
+    <B>Interactive systems</B><BR ALIGN="LEFT"/>
+    napari inspection<BR ALIGN="LEFT"/>
+    OMERO / OME-Zarr storage<BR ALIGN="LEFT"/>
+    lab-facing visual review
+  >, fillcolor="#F0F5FF", color="#3949AB"];
+
+  compute [label=<
+    <B>Compute backends</B><BR ALIGN="LEFT"/>
+    multiprocessing workers<BR ALIGN="LEFT"/>
+    NumPy / Numba CPU<BR ALIGN="LEFT"/>
+    GPU array libraries
+  >, fillcolor="#F3E5F5", color="#6A1B9A"];
+
+  manual [label=<
+    <B>Usual integration pattern</B><BR ALIGN="LEFT"/>
+    copied files<BR ALIGN="LEFT"/>
+    repeated parameters<BR ALIGN="LEFT"/>
+    tool-specific metadata<BR ALIGN="LEFT"/>
+    hard-to-replay state
+  >, fillcolor="#FFEDEE", color="#B71C1C", penwidth=2.0];
+
+  contracts [label=<
+    <B>OpenHCS contracts</B><BR ALIGN="LEFT"/>
+    source schema<BR ALIGN="LEFT"/>
+    typed state<BR ALIGN="LEFT"/>
+    memory contracts<BR ALIGN="LEFT"/>
+    runtime artifacts<BR ALIGN="LEFT"/>
+    storage and viewer backends
+  >, fillcolor="#E0F2F1", color="#00796B", penwidth=2.4];
+
+  workflow [label=<
+    <B>One executable HCS workflow</B><BR ALIGN="LEFT"/>
+    preserved CellProfiler meaning<BR ALIGN="LEFT"/>
+    viewer-inspectable artifacts<BR ALIGN="LEFT"/>
+    reusable Python representation<BR ALIGN="LEFT"/>
+    worker and backend selection<BR ALIGN="LEFT"/>
+    benchmarkable parity and speed
+  >, fillcolor="#E8F5E9", color="#2E7D32", penwidth=2.2];
+
+  assays -> manual [label="raw paths"];
+  analysis -> manual [label="exports"];
+  interaction -> manual [label="viewer state"];
+  compute -> manual [label="runtime glue"];
+
+  assays -> contracts [label="source schema", color="#00796B"];
+  analysis -> contracts [label="dialects / callables", color="#00796B"];
+  interaction -> contracts [label="artifact backends", color="#00796B"];
+  compute -> contracts [label="memory contract", color="#00796B"];
+
+  manual -> workflow [
+    label="works, but outside a shared semantic model",
+    color="#B71C1C",
+    style=dashed
+  ];
+  contracts -> workflow [
+    label="compiled semantic dataflow",
+    color="#2E7D32",
+    penwidth=2.5
+  ];
+}

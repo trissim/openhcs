@@ -38,6 +38,19 @@ _PUBLIC_EXPORTS: dict[str, tuple[str, str]] = {
     "get_pipeline_spec": ("benchmark.pipelines.registry", "get_pipeline_spec"),
     "TimeMetric": ("benchmark.metrics.time", "TimeMetric"),
     "MemoryMetric": ("benchmark.metrics.memory", "MemoryMetric"),
+    "OpenHCSAxisSelection": ("benchmark.adapters.openhcs", "OpenHCSAxisSelection"),
+    "BenchmarkCaseProgress": ("benchmark.progress", "BenchmarkCaseProgress"),
+    "BenchmarkProgressEvent": ("benchmark.progress", "BenchmarkProgressEvent"),
+    "BenchmarkProgressEventKind": (
+        "benchmark.progress",
+        "BenchmarkProgressEventKind",
+    ),
+    "BenchmarkProgressSnapshot": (
+        "benchmark.progress",
+        "BenchmarkProgressSnapshot",
+    ),
+    "iter_progress_events": ("benchmark.progress", "iter_progress_events"),
+    "summarize_progress": ("benchmark.progress", "summarize_progress"),
     "CellProfilerAdapter": (
         "benchmark.adapters.cellprofiler",
         "CellProfilerAdapter",

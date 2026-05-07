@@ -17,6 +17,18 @@ from .settings_binder import (
     parse_cellprofiler_float,
     parse_cellprofiler_int,
 )
+from .setting_names import SettingNameFamily
+
+
+RESIZE_METHOD_SETTING = SettingNameFamily("Resizing method")
+RESIZE_FACTOR_SETTING = SettingNameFamily("Resizing factor")
+RESIZE_FACTOR_X_SETTING = SettingNameFamily("X Resizing factor")
+RESIZE_FACTOR_Y_SETTING = SettingNameFamily("Y Resizing factor")
+RESIZE_FACTOR_Z_SETTING = SettingNameFamily("Z Resizing factor")
+RESIZE_WIDTH_SETTING = SettingNameFamily("Width of the final image", aliases=("Width (x) of the final image",))
+RESIZE_HEIGHT_SETTING = SettingNameFamily("Height of the final image", aliases=("Height (y) of the final image",))
+RESIZE_PLANES_SETTING = SettingNameFamily("# of planes (z) in the final image")
+RESIZE_INTERPOLATION_SETTING = SettingNameFamily("Interpolation method")
 
 
 def resize_bound_kwargs(
@@ -26,25 +38,41 @@ def resize_bound_kwargs(
     """Return absorbed-function kwargs for CellProfiler Resize."""
     del binder
     kwargs: dict[str, Any] = {}
-    resizing_method = optional_setting_value(module, "Resizing method")
+    resizing_method = optional_setting_value(module, RESIZE_METHOD_SETTING)
     if resizing_method is not None:
         kwargs["resize_method"] = _resize_method(resizing_method).value
 
-    resizing_factor = optional_setting_value(module, "Resizing factor")
+    resizing_factor = optional_setting_value(module, RESIZE_FACTOR_SETTING)
     if resizing_factor is not None:
         factor = parse_cellprofiler_float(resizing_factor)
         kwargs["resizing_factor_x"] = factor
         kwargs["resizing_factor_y"] = factor
 
-    width = optional_setting_value(module, "Width of the final image")
+    factor_x = optional_setting_value(module, RESIZE_FACTOR_X_SETTING)
+    if factor_x is not None:
+        kwargs["resizing_factor_x"] = parse_cellprofiler_float(factor_x)
+
+    factor_y = optional_setting_value(module, RESIZE_FACTOR_Y_SETTING)
+    if factor_y is not None:
+        kwargs["resizing_factor_y"] = parse_cellprofiler_float(factor_y)
+
+    factor_z = optional_setting_value(module, RESIZE_FACTOR_Z_SETTING)
+    if factor_z is not None:
+        kwargs["resizing_factor_z"] = parse_cellprofiler_float(factor_z)
+
+    width = optional_setting_value(module, RESIZE_WIDTH_SETTING)
     if width is not None:
         kwargs["specific_width"] = parse_cellprofiler_int(width)
 
-    height = optional_setting_value(module, "Height of the final image")
+    height = optional_setting_value(module, RESIZE_HEIGHT_SETTING)
     if height is not None:
         kwargs["specific_height"] = parse_cellprofiler_int(height)
 
-    interpolation = optional_setting_value(module, "Interpolation method")
+    planes = optional_setting_value(module, RESIZE_PLANES_SETTING)
+    if planes is not None:
+        kwargs["specific_planes"] = parse_cellprofiler_int(planes)
+
+    interpolation = optional_setting_value(module, RESIZE_INTERPOLATION_SETTING)
     if interpolation is not None:
         kwargs["interpolation"] = _coerce_function_enum(
             InterpolationMethod,

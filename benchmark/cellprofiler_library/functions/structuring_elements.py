@@ -9,22 +9,31 @@ from typing import ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+
 
 class StructuringElement(str, Enum):
-    """CellProfiler 2D structuring-element shapes."""
+    """CellProfiler morphology structuring-element shapes."""
 
     DISK = "disk"
     SQUARE = "square"
     DIAMOND = "diamond"
     OCTAGON = "octagon"
     STAR = "star"
+    BALL = "ball"
 
 
-class StructuringElementFactory(ABC, metaclass=AutoRegisterMeta):
+class StructuringElementFactory(
+    EnumKeyedStrategyMixin[StructuringElement],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Create one skimage structuring element for a closed enum case."""
 
     __registry_key__ = "structuring_element_label"
     __skip_if_no_key__ = True
+    __enum_member_attr__ = "structuring_element"
+    __enum_label_attr__ = "structuring_element_label"
     structuring_element_label: ClassVar[str | None] = None
     structuring_element: ClassVar[StructuringElement | None] = None
 
@@ -33,7 +42,7 @@ class StructuringElementFactory(ABC, metaclass=AutoRegisterMeta):
         cls,
         structuring_element: StructuringElement,
     ) -> "StructuringElementFactory":
-        return cls.__registry__[structuring_element.value]()
+        return cls.for_enum_member(structuring_element)
 
     @abstractmethod
     def build(self, size: int) -> np.ndarray:
@@ -42,7 +51,6 @@ class StructuringElementFactory(ABC, metaclass=AutoRegisterMeta):
 
 class DiskStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.DISK
-    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import disk
@@ -52,7 +60,6 @@ class DiskStructuringElementFactory(StructuringElementFactory):
 
 class SquareStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.SQUARE
-    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import square
@@ -62,7 +69,6 @@ class SquareStructuringElementFactory(StructuringElementFactory):
 
 class DiamondStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.DIAMOND
-    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import diamond
@@ -72,7 +78,6 @@ class DiamondStructuringElementFactory(StructuringElementFactory):
 
 class OctagonStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.OCTAGON
-    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import octagon
@@ -82,12 +87,20 @@ class OctagonStructuringElementFactory(StructuringElementFactory):
 
 class StarStructuringElementFactory(StructuringElementFactory):
     structuring_element = StructuringElement.STAR
-    structuring_element_label = structuring_element.value
 
     def build(self, size: int) -> np.ndarray:
         from skimage.morphology import star
 
         return star(size)
+
+
+class BallStructuringElementFactory(StructuringElementFactory):
+    structuring_element = StructuringElement.BALL
+
+    def build(self, size: int) -> np.ndarray:
+        from skimage.morphology import ball
+
+        return ball(size)
 
 
 def coerce_structuring_element(
@@ -112,3 +125,28 @@ def build_structuring_element(
     return StructuringElementFactory.for_structuring_element(
         resolved_structuring_element
     ).build(size)
+
+
+def adapt_structuring_element_rank(
+    footprint: np.ndarray,
+    spatial_rank: int,
+) -> np.ndarray:
+    """Return a footprint compatible with the target spatial rank.
+
+    CellProfiler image modules can execute plane-wise even when a pipeline
+    setting names a volumetric structuring element. A centered section preserves
+    the requested morphology for lower-rank planes without inventing per-module
+    shape conventions. Lower-rank footprints expand with singleton leading axes
+    so they do not erode across spatial axes the setting did not define.
+    """
+    if spatial_rank <= 0:
+        raise ValueError("spatial_rank must be positive.")
+    if footprint.ndim == spatial_rank:
+        return footprint
+    if footprint.ndim > spatial_rank:
+        reduced = footprint
+        while reduced.ndim > spatial_rank:
+            reduced = reduced[reduced.shape[0] // 2]
+        return np.asarray(reduced)
+    leading_axes = (1,) * (spatial_rank - footprint.ndim)
+    return footprint.reshape((*leading_axes, *footprint.shape))

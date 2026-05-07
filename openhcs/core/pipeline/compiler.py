@@ -376,8 +376,8 @@ def _refresh_function_object(func_value):
     if callable(func_value):
         return _get_function_reference(func_value)
 
-    elif isinstance(func_value, tuple) and len(func_value) == 2:
-        func, params = func_value
+    elif isinstance(func_value, tuple) and len(func_value) in {2, 3}:
+        func, params, *invocation_options = func_value
 
         if isinstance(params, dict) and params.get("enabled", True) is False:
             return None
@@ -390,9 +390,9 @@ def _refresh_function_object(func_value):
 
         if callable(func):
             func_ref = _refresh_function_object(func)
-            return (func_ref, params)
+            return (func_ref, params, *invocation_options)
         else:
-            return (func, params)
+            return (func, params, *invocation_options)
 
     elif isinstance(func_value, list):
         refreshed = [_refresh_function_object(item) for item in func_value]

@@ -794,6 +794,28 @@ def test_cellprofiler_backend_selection_does_not_silently_fallback() -> None:
         )
 
 
+def test_object_intensity_inner_edges_match_cellprofiler_boundary_semantics() -> None:
+    from skimage.segmentation import find_boundaries
+
+    from openhcs.processing.backends.cellprofiler.intensity import (
+        object_intensity_backend,
+    )
+
+    image = np.arange(25, dtype=np.float64).reshape(5, 5)
+    labels = np.zeros((5, 5), dtype=np.int32)
+    labels[:3, :3] = 1
+
+    arrays = object_intensity_backend().measure(image, labels)
+    edge_mask = find_boundaries(labels, mode="inner") & (labels == 1)
+
+    assert arrays.integrated_intensity_edge[0] == pytest.approx(
+        float(np.sum(image[edge_mask]))
+    )
+    assert arrays.mean_intensity_edge[0] == pytest.approx(
+        float(np.mean(image[edge_mask]))
+    )
+
+
 def test_numba_declumping_smoothing_matches_native_provider() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,

@@ -19,7 +19,7 @@ from openhcs.core.runtime_semantics import SpatialGridOrdering
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     SpatialGrid,
-    image_payload_metadata,
+    object_label_payload_from_source_image,
 )
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
@@ -194,9 +194,9 @@ def _grid_spot_table(
 ) -> np.ndarray:
     """Return object IDs arranged by the grid's declared numbering order."""
     object_ids = np.arange(1, rows * columns + 1)
-    if ordering is SpatialGridOrdering.BY_ROWS:
-        return object_ids.reshape(columns, rows).T
-    return object_ids.reshape(rows, columns)
+    if ordering is SpatialGridOrdering.BY_COLUMNS:
+        return object_ids.reshape(rows, columns)
+    return object_ids.reshape(columns, rows).T
 
 
 def _centers_of_labels(labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -382,6 +382,8 @@ def _filter_labels_by_grid_numba(
                 remove = center_grid_id == 0
             if not remove and row < grid_height and col < grid_width:
                 remove = center_grid_id != int(grid_labels[row, col])
+            elif not remove:
+                remove = True
             if remove:
                 filtered[row, col] = 0
     return filtered
@@ -493,6 +495,34 @@ def _natural_grid_labels_from_guides(
     return sparse_labels
 
 
+def _natural_grid_labels_from_filtered_guides(
+    filtered_guides: np.ndarray,
+    grid: GridDefinition,
+) -> np.ndarray:
+    """Return CP natural-shape grid labels masked by accepted guide pixels."""
+    labels = _grid_labels_for_shape(grid, filtered_guides.shape)
+    return _mask_grid_labels_by_filtered_guides_numba(
+        np.asarray(labels, dtype=np.int32),
+        np.asarray(filtered_guides, dtype=np.int32),
+    )
+
+
+@njit(cache=True)
+def _mask_grid_labels_by_filtered_guides_numba(
+    grid_labels: np.ndarray,
+    filtered_guides: np.ndarray,
+) -> np.ndarray:
+    """Apply CP run_natural semantics: grid label survives where guide survives."""
+    labels = grid_labels.copy()
+    height, width = labels.shape
+    guide_height, guide_width = filtered_guides.shape
+    for row in range(height):
+        for col in range(width):
+            if row >= guide_height or col >= guide_width or filtered_guides[row, col] == 0:
+                labels[row, col] = 0
+    return labels
+
+
 @njit(cache=True)
 def _natural_grid_labels_from_guides_numba(
     guide_labels: np.ndarray,
@@ -595,8 +625,8 @@ class NaturalGridShapeStrategy(GridShapeStrategy):
     requires_guides = True
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
-        return _natural_grid_labels_from_guides(
-            _require_guiding_labels(request),
+        return _natural_grid_labels_from_filtered_guides(
+            _require_filtered_guides(request),
             request.grid,
         )
 
@@ -713,11 +743,10 @@ def identify_objects_in_grid(
         shape_type=shape_choice.value
     )
     
-    return image, stats, ObjectLabelPayload(
-        labels=labels.astype(np.int32, copy=False),
+    return image, stats, object_label_payload_from_source_image(
+        image,
+        labels.astype(np.int32, copy=False),
         declared_object_count=object_count,
-        spatial_origin_yx=image_payload_metadata(image).spatial_origin_yx,
-        source_spatial_shape_yx=image_payload_metadata(image).source_spatial_shape_yx,
     )
 
 
@@ -803,11 +832,10 @@ def identify_objects_in_grid_with_guides(
         shape_type=shape_choice.value
     )
     
-    return image, stats, ObjectLabelPayload(
-        labels=labels.astype(np.int32, copy=False),
+    return image, stats, object_label_payload_from_source_image(
+        image,
+        labels.astype(np.int32, copy=False),
         declared_object_count=object_count,
-        spatial_origin_yx=image_payload_metadata(image).spatial_origin_yx,
-        source_spatial_shape_yx=image_payload_metadata(image).source_spatial_shape_yx,
     )
 
 

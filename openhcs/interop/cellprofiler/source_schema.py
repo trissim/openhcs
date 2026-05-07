@@ -6,6 +6,7 @@ import ast
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from types import MappingProxyType
 from typing import ClassVar, Mapping
 
@@ -56,7 +57,7 @@ _METADATA_MATCH_PATTERN = re.compile(
 _FILTER_CLAUSE_PATTERN = re.compile(
     r"\((?P<subject>file|directory|extension) "
     r"does\s*(?P<negation>not)?\s*"
-    r"(?P<operator>containregexp|contain|startwith|endwith|isimage|istif|eq)"
+    r"(?P<operator>containregexp|contain|startwith|endwith|is[a-z0-9]+|eq)"
     r"(?: \"(?P<value>[^\"]*)\")?\)"
 )
 _SOURCE_FILTER_SUBJECT_PATTERN = re.compile(
@@ -498,7 +499,12 @@ def _criteria_is_multi_clause_disjunction(
     criteria: str,
     filters: Sequence[SourceFilterClause],
 ) -> bool:
-    return criteria.strip().lower().startswith("or ") and len(filters) > 1
+    stripped = criteria.strip().lower()
+    return (
+        (stripped.startswith("or ") and stripped.count("(") > 1)
+        or "(or " in stripped
+        or stripped.count("(") > len(filters)
+    )
 
 
 def _declare_load_images_grouping(
@@ -681,12 +687,27 @@ def _is_imported_metadata_method(value: str) -> bool:
 
 
 def _imported_metadata_table(block: Sequence[ModuleSetting]) -> ImportedMetadataTable:
+    location = _imported_metadata_location(
+        block_setting_value(block, "Metadata file location", default="")
+    )
+    file_name = decode_cellprofiler_setting_literal(
+        block_setting_value(block, "Metadata file name", default="")
+    ).strip()
     return ImportedMetadataTable(
-        location=_imported_metadata_location(
-            block_setting_value(block, "Metadata file location", default="")
-        ),
+        location=_imported_metadata_table_path(location, file_name),
         joins=_imported_metadata_joins(block),
     )
+
+
+def _imported_metadata_table_path(
+    location: str | None,
+    file_name: str,
+) -> str | None:
+    if not file_name:
+        return location
+    if location is None:
+        return file_name
+    return str(Path(location) / file_name)
 
 
 def _imported_metadata_location(value: str) -> str | None:
@@ -809,15 +830,37 @@ def _filter_clauses_from_criteria(
             f"{criteria!r}."
         )
     return tuple(
-        SourceFilterClause(
-            subject=_filter_subject(match.group("subject")),
-            match_type=_filter_match_type(
-                operator=match.group("operator"),
-                negated=bool(match.group("negation")),
-            ),
-            value=match.group("value"),
-        )
+        clause
         for match in matches
+        if (clause := _filter_clause_from_match(match)) is not None
+    )
+
+
+def _filter_clause_from_match(match: re.Match[str]) -> SourceFilterClause | None:
+    subject = _filter_subject(match.group("subject"))
+    operator = match.group("operator")
+    negated = bool(match.group("negation"))
+    value = match.group("value")
+    if value == "":
+        return None
+    if (
+        subject is SourceFilterSubject.EXTENSION
+        and not negated
+        and operator.startswith("is")
+        and operator not in {"isimage", "istif"}
+    ):
+        return SourceFilterClause(
+            subject=subject,
+            match_type=SourceFilterMatchType.EQUALS,
+            value=f".{operator.removeprefix('is')}",
+        )
+    return SourceFilterClause(
+        subject=subject,
+        match_type=_filter_match_type(
+            operator=operator,
+            negated=negated,
+        ),
+        value=value,
     )
 
 

@@ -617,7 +617,11 @@ def _function_spec_callables(func_spec: Any) -> tuple[Callable[..., Any], ...]:
     """Extract callables from FunctionStep func specifications."""
     if callable(func_spec):
         return (func_spec,)
-    if isinstance(func_spec, tuple) and len(func_spec) == 2 and callable(func_spec[0]):
+    if (
+        isinstance(func_spec, tuple)
+        and len(func_spec) in {2, 3}
+        and callable(func_spec[0])
+    ):
         return (func_spec[0],)
     if isinstance(func_spec, list):
         callables: list[Callable[..., Any]] = []

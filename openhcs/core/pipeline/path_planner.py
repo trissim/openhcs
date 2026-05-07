@@ -277,12 +277,9 @@ class PathPlanner:
         ):
             return declarations
 
-        future_inputs = self.future_artifact_inputs[snapshot.index]
         output_groups = {
-            output_key: (
-                (None,)
-                if output_key in future_inputs
-                else tuple(self._normalize_group_key(group) for group in execution_groups)
+            output_key: tuple(
+                self._normalize_group_key(group) for group in execution_groups
             )
             for output_key in declarations.output_names
         }
@@ -715,19 +712,8 @@ class PathPlanner:
                 producer_groups = list(producer.group_keys or (None,))
 
                 if producer_groups != [None] and normalized_consumers == [None]:
-                    producer_name = (
-                        producer.producer_step_name
-                        or producer.producer_step_index
-                        or "unknown"
-                    )
-                    consumer_name = step_name or sid
-                    raise ValueError(
-                        f"Ambiguous artifact input '{key}' in step '{consumer_name}': "
-                        f"producer step '{producer_name}' provides group-specific outputs {producer_groups}, "
-                        f"but the consumer is not grouped. Use a dict pattern or set group_by to match."
-                    )
-
-                if producer_groups != [None]:
+                    paths_by_group = dict(producer.paths_by_group or {})
+                elif producer_groups != [None]:
                     missing = [
                         group
                         for group in normalized_consumers

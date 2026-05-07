@@ -108,6 +108,19 @@ def test_runtime_equivalence_cell_signatures_have_package_owner() -> None:
     assert finite_signature_number(signature) == 1.0
 
 
+def test_runtime_equivalence_cell_signatures_canonicalize_negative_zero() -> None:
+    policy = RuntimeEquivalencePolicy(numeric_decimal_places=8)
+
+    assert runtime_cell_signature("-0.0", policy) == runtime_cell_signature(
+        "0.0",
+        policy,
+    )
+    assert runtime_cell_signature("-0.0000000001", policy) == runtime_cell_signature(
+        "0.0",
+        policy,
+    )
+
+
 def test_runtime_equivalence_cell_counter_comparison_has_package_owner() -> None:
     signature = RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "1.0")
 

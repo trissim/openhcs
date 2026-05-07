@@ -8,7 +8,10 @@ from dataclasses import dataclass, replace
 import logging
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Self, TypeVar
+from typing import Any, ClassVar, Self, TypeVar
+
+from metaclass_registry import AutoRegisterMeta
+import numpy as np
 
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import (
@@ -17,12 +20,18 @@ from openhcs.core.artifacts import (
     ArtifactOutputPlan,
     ArtifactPayloadShape,
 )
+from openhcs.core.image_shapes import (
+    is_color_image_slice,
+    is_color_image_stack,
+)
 from openhcs.core.runtime_semantics import (
     FieldSpec,
     MeasurementScope,
     MeasurementSubject,
     ObjectLabelDomain,
     ObjectLabelDomainMetadata,
+    ObjectLabelDomainScope,
+    ObjectLabelIdDomainStrategy,
     ObjectLabelRepresentation,
     ObjectLabelVariant,
     RelationshipEndpoint,
@@ -30,6 +39,11 @@ from openhcs.core.runtime_semantics import (
     SpatialGridOrdering,
     coerce_enum,
 )
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    NominalTypeKeyedStrategyMixin,
+)
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 
 
 _TPayload = TypeVar("_TPayload", bound=type[Any])
@@ -40,10 +54,63 @@ logger = logging.getLogger(__name__)
 class RuntimeArrayPayload(ABC):
     """Nominal ABC for array payload types accepted by runtime artifacts."""
 
+    __array_priority__ = 1000
+
     @property
     @abstractmethod
     def shape(self) -> Any:
         ...
+
+    @abstractmethod
+    def array_payload_data(self) -> Any:
+        ...
+
+    @abstractmethod
+    def with_data(self, data: Any) -> Self:
+        ...
+
+    def array_operand(self) -> Any:
+        return self.array_payload_data()
+
+    def array_ufunc_result(self, result: Any) -> Any:
+        if isinstance(result, tuple):
+            return tuple(self.array_ufunc_result(item) for item in result)
+        if isinstance(result, np.ndarray) and np.issubdtype(result.dtype, np.bool_):
+            return result
+        if isinstance(result, np.ndarray):
+            return self.with_data(result)
+        return result
+
+    def compare_array_payload(self, other: Any, ufunc: Any) -> Any:
+        return ufunc(np.asarray(self), runtime_array_operand(other))
+
+    def __lt__(self, other: Any) -> Any:
+        return self.compare_array_payload(other, np.less)
+
+    def __le__(self, other: Any) -> Any:
+        return self.compare_array_payload(other, np.less_equal)
+
+    def __gt__(self, other: Any) -> Any:
+        return self.compare_array_payload(other, np.greater)
+
+    def __ge__(self, other: Any) -> Any:
+        return self.compare_array_payload(other, np.greater_equal)
+
+    def __array_ufunc__(
+        self,
+        ufunc: Any,
+        method: str,
+        *inputs: Any,
+        **kwargs: Any,
+    ) -> Any:
+        converted_inputs = tuple(runtime_array_operand(value) for value in inputs)
+        if "out" in kwargs:
+            kwargs = {
+                **kwargs,
+                "out": tuple(runtime_array_operand(value) for value in kwargs["out"]),
+            }
+        result = getattr(ufunc, method)(*converted_inputs, **kwargs)
+        return self.array_ufunc_result(result)
 
 
 @dataclass(frozen=True, slots=True)
@@ -178,6 +245,16 @@ class ImagePayloadMetadata:
             channel_unit_interval_intensity_scales=(),
         )
 
+    def without_spatial_domain(self) -> "ImagePayloadMetadata":
+        """Return metadata with invalidated source-spatial placement removed."""
+        return replace(
+            self,
+            spatial_origin_yx=None,
+            source_spatial_shape_yx=None,
+            physical_border_edges_yx=None,
+            mask_defines_border=None,
+        )
+
     def physical_border_edges_for_shape(
         self,
         image_shape_yx: Sequence[int],
@@ -270,6 +347,9 @@ class ImageMetadataPayload(RuntimeArrayPayload):
 
         return np.asarray(self.data, dtype=dtype)
 
+    def array_payload_data(self) -> Any:
+        return self.data
+
     def __getitem__(self, key: Any) -> Any:
         return self.data[key]
 
@@ -338,6 +418,9 @@ class MaskedImagePayload(RuntimeArrayPayload):
 
         return np.asarray(self.data, dtype=dtype)
 
+    def array_payload_data(self) -> Any:
+        return self.data
+
     def __getitem__(self, key: Any) -> Any:
         return self.data[key]
 
@@ -356,6 +439,13 @@ class MaskedImagePayload(RuntimeArrayPayload):
             mask=self.mask if mask is None else mask,
             metadata=self.metadata,
         )
+
+
+def runtime_array_operand(value: Any) -> Any:
+    """Return the ndarray operand for nominal runtime array payloads."""
+    if isinstance(value, RuntimeArrayPayload):
+        return value.array_operand()
+    return value
 
 
 def image_payload_data(payload: Any) -> Any:
@@ -410,6 +500,47 @@ def with_image_payload_data(
         mask=resolved_mask,
         metadata=resolved_metadata,
     )
+
+
+def with_derived_image_payload_data(
+    payload: Any,
+    data: Any,
+) -> Any:
+    """Attach source image context valid for a derived image output.
+
+    Raw CellProfiler image outputs should remain nominal image payloads so the
+    runtime can preserve dtype/intensity metadata. Spatial-domain metadata is
+    only valid when the derived pixels still occupy the same XY extent as the
+    source payload; shape-changing transforms need an explicit crop/resize
+    adapter to carry a new spatial domain.
+    """
+    source_shape_yx = image_payload_spatial_shape_yx(payload)
+    output_shape_yx = image_payload_spatial_shape_yx(data)
+    same_spatial_domain = (
+        source_shape_yx is not None
+        and output_shape_yx is not None
+        and source_shape_yx == output_shape_yx
+    )
+    metadata = image_payload_metadata(payload)
+    if not same_spatial_domain:
+        metadata = metadata.without_spatial_domain()
+    return image_payload_with_context(
+        data,
+        mask=image_payload_mask(payload) if same_spatial_domain else None,
+        metadata=metadata,
+    )
+
+
+def image_payload_spatial_shape_yx(payload: Any) -> tuple[int, int] | None:
+    """Return the XY image shape for a nominal image payload."""
+    import numpy as np
+
+    array = np.asarray(image_payload_data(payload))
+    if array.ndim < 2:
+        return None
+    if is_color_image_slice(array) or is_color_image_stack(array):
+        return tuple(int(value) for value in array.shape[-3:-1])
+    return tuple(int(value) for value in array.shape[-2:])
 
 
 def compose_image_payload_metadata(
@@ -673,6 +804,7 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
     small_removed_labels: Any | None = None
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
+    domain_scope: ObjectLabelDomainScope = ObjectLabelDomainScope.PAYLOAD
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
 
@@ -686,6 +818,11 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
         if any(object_id <= 0 for object_id in ids):
             raise ValueError("ObjectLabelPayload.declared_object_ids must be positive.")
         object.__setattr__(self, "declared_object_ids", tuple(sorted(dict.fromkeys(ids))))
+        object.__setattr__(
+            self,
+            "domain_scope",
+            coerce_enum(ObjectLabelDomainScope, self.domain_scope, "ObjectLabelPayload.domain_scope"),
+        )
         if self.spatial_origin_yx is not None:
             object.__setattr__(
                 self,
@@ -719,10 +856,14 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
 
         return np.asarray(self.labels, dtype=dtype)
 
+    def array_payload_data(self) -> Any:
+        return self.labels
+
     def object_label_domain(self) -> ObjectLabelDomain:
         return ObjectLabelDomain(
             declared_object_count=self.declared_object_count,
             declared_object_ids=self.declared_object_ids,
+            scope=self.domain_scope,
         )
 
     def __getitem__(self, key: Any) -> Any:
@@ -760,6 +901,28 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
             variants.append(ObjectLabelVariant.SMALL_REMOVED)
         return tuple(variants)
 
+    def with_labels(
+        self,
+        labels: object,
+        *,
+        unedited_labels: object | None = None,
+        small_removed_labels: object | None = None,
+    ) -> "ObjectLabelPayload":
+        """Return this payload's domain metadata with replacement labels."""
+        return ObjectLabelPayload(
+            labels=labels,
+            unedited_labels=unedited_labels,
+            small_removed_labels=small_removed_labels,
+            declared_object_count=self.declared_object_count,
+            declared_object_ids=self.declared_object_ids,
+            domain_scope=self.domain_scope,
+            spatial_origin_yx=self.spatial_origin_yx,
+            source_spatial_shape_yx=self.source_spatial_shape_yx,
+        )
+
+    def with_data(self, data: Any) -> "ObjectLabelPayload":
+        return self.with_labels(data)
+
 
 class ColumnarRows(ABC):
     """Nominal ABC for table payloads exposing named columns."""
@@ -768,6 +931,134 @@ class ColumnarRows(ABC):
     @abstractmethod
     def columns(self) -> Any:
         ...
+
+
+@dataclass(frozen=True, slots=True)
+class SparseIJVLabelRows(ColumnarRows):
+    """Sparse object-label table with CellProfiler-compatible y/x/label columns."""
+
+    data: Any
+
+    def __post_init__(self) -> None:
+        array = self.as_array()
+        if array.ndim != 2 or array.shape[1] not in (3, 4):
+            raise ValueError(
+                "SparseIJVLabelRows.data must be an N x 3 y/x/label table "
+                "or an N x 4 slice/y/x/label table."
+            )
+
+    @property
+    def columns(self) -> Mapping[str, Any]:
+        array = self.as_array()
+        columns = {
+            "y": array[:, self.y_column],
+            "x": array[:, self.x_column],
+            "label": array[:, self.label_column],
+        }
+        if self.has_slice_index:
+            columns = {"slice_index": array[:, self.slice_column], **columns}
+        return MappingProxyType(columns)
+
+    @property
+    def has_slice_index(self) -> bool:
+        return int(self.as_array().shape[1]) == 4
+
+    @property
+    def slice_column(self) -> int:
+        if not self.has_slice_index:
+            raise ValueError("SparseIJVLabelRows has no slice_index column.")
+        return 0
+
+    @property
+    def y_column(self) -> int:
+        return 1 if self.has_slice_index else 0
+
+    @property
+    def x_column(self) -> int:
+        return 2 if self.has_slice_index else 1
+
+    @property
+    def label_column(self) -> int:
+        return 3 if self.has_slice_index else 2
+
+    @classmethod
+    def from_yx_label(cls, data: Any) -> "SparseIJVLabelRows":
+        return cls(data)
+
+    @classmethod
+    def from_slices(cls, values: Sequence["SparseIJVLabelRows"]) -> "SparseIJVLabelRows":
+        import numpy as _np
+
+        arrays = []
+        for slice_index, value in enumerate(values):
+            array = value.as_yx_label_array()
+            if not array.size:
+                continue
+            arrays.append(
+                _np.column_stack(
+                    (
+                        _np.full(array.shape[0], slice_index, dtype=_np.int32),
+                        array,
+                    )
+                )
+            )
+        return cls(
+            _np.vstack(arrays).astype(_np.int32, copy=False)
+            if arrays
+            else _np.zeros((0, 4), dtype=_np.int32)
+        )
+
+    def as_yx_label_array(self) -> Any:
+        array = self.as_array()
+        if not self.has_slice_index:
+            return array
+        return array[:, (self.y_column, self.x_column, self.label_column)]
+
+    def slice_indices(self) -> tuple[int, ...]:
+        if not self.has_slice_index:
+            return (0,)
+        import numpy as _np
+
+        return tuple(int(index) for index in _np.unique(self.as_array()[:, self.slice_column]))
+
+    def slice(self, slice_index: int) -> "SparseIJVLabelRows":
+        if not self.has_slice_index:
+            if slice_index != 0:
+                import numpy as _np
+
+                return type(self)(_np.zeros((0, 3), dtype=_np.int32))
+            return self
+        array = self.as_array()
+        rows = array[array[:, self.slice_column] == int(slice_index)]
+        return type(self)(rows[:, (self.y_column, self.x_column, self.label_column)])
+
+    def as_array(self) -> Any:
+        _ensure_runtime_payload_integrations_registered()
+        if hasattr(self.data, "ndim") and hasattr(self.data, "shape"):
+            return self.data
+        try:
+            import numpy as _np
+        except Exception as exc:  # pragma: no cover - numpy is a core runtime dep.
+            raise TypeError("SparseIJVLabelRows requires an array-like payload.") from exc
+        return _np.asarray(self.data)
+
+
+class SparseIJVLabelRowsIdDomainStrategy(ObjectLabelIdDomainStrategy):
+    """Extract present object IDs from sparse IJV label rows without densifying."""
+
+    value_type = SparseIJVLabelRows
+
+    def present_ids(self, labels: Any) -> tuple[int, ...]:
+        if not isinstance(labels, SparseIJVLabelRows):
+            raise TypeError(
+                "SparseIJVLabelRowsIdDomainStrategy requires SparseIJVLabelRows, "
+                f"got {type(labels).__name__}."
+            )
+        array = labels.as_array()
+        if array.size == 0:
+            return ()
+        label_column = array[:, labels.label_column]
+        return self.positive_ids_from_array(label_column)
 
 
 def register_array_payload_type(payload_type: _TPayload) -> _TPayload:
@@ -808,6 +1099,7 @@ class RuntimeValueSchema(SourceImageContext):
     """Semantic schema attached to a runtime artifact value."""
 
     kind: ArtifactKind
+    slice_aligned: bool = False
     fields: tuple[FieldSpec, ...] = ()
     label_representation: ObjectLabelRepresentation | None = None
     measurement_subject: MeasurementSubject | None = None
@@ -1007,7 +1299,7 @@ class NamedImage(SourceImageRuntimeValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ObjectLabelSet(SourceImageRuntimeValue):
+class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
     """Native OpenHCS object-label value."""
 
     labels: Any
@@ -1016,6 +1308,7 @@ class ObjectLabelSet(SourceImageRuntimeValue):
     representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
+    domain_scope: ObjectLabelDomainScope = ObjectLabelDomainScope.PAYLOAD
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
 
@@ -1037,6 +1330,7 @@ class ObjectLabelSet(SourceImageRuntimeValue):
                 small_removed_labels=payload.small_removed_labels,
                 declared_object_count=payload.declared_object_count,
                 declared_object_ids=payload.declared_object_ids,
+                domain_scope=payload.domain_scope,
                 spatial_origin_yx=payload.spatial_origin_yx,
                 source_spatial_shape_yx=payload.source_spatial_shape_yx,
                 dimensions=schema.dimensions,
@@ -1086,6 +1380,7 @@ class ObjectLabelSet(SourceImageRuntimeValue):
                     "declared_object_ids",
                     payload.declared_object_ids,
                 )
+            object.__setattr__(self, "domain_scope", payload.domain_scope)
             if self.spatial_origin_yx is None:
                 object.__setattr__(
                     self,
@@ -1107,6 +1402,11 @@ class ObjectLabelSet(SourceImageRuntimeValue):
         if any(object_id <= 0 for object_id in ids):
             raise ValueError("ObjectLabelSet.declared_object_ids must be positive.")
         object.__setattr__(self, "declared_object_ids", tuple(sorted(dict.fromkeys(ids))))
+        object.__setattr__(
+            self,
+            "domain_scope",
+            coerce_enum(ObjectLabelDomainScope, self.domain_scope, "ObjectLabelSet.domain_scope"),
+        )
         if self.spatial_origin_yx is not None:
             object.__setattr__(
                 self,
@@ -1150,6 +1450,7 @@ class ObjectLabelSet(SourceImageRuntimeValue):
             or self.small_removed_labels is not None
             or self.declared_object_count is not None
             or self.declared_object_ids
+            or self.domain_scope is not ObjectLabelDomainScope.PAYLOAD
             or self.spatial_origin_yx is not None
             or self.source_spatial_shape_yx is not None
         ):
@@ -1159,6 +1460,7 @@ class ObjectLabelSet(SourceImageRuntimeValue):
                 small_removed_labels=self.small_removed_labels,
                 declared_object_count=self.declared_object_count,
                 declared_object_ids=self.declared_object_ids,
+                domain_scope=self.domain_scope,
                 spatial_origin_yx=self.spatial_origin_yx,
                 source_spatial_shape_yx=self.source_spatial_shape_yx,
             )
@@ -1179,6 +1481,30 @@ class ObjectLabelSet(SourceImageRuntimeValue):
             source_image_name=self.source_image_name,
         )
 
+    def object_label_domain(self) -> ObjectLabelDomain:
+        return ObjectLabelDomain(
+            declared_object_count=self.declared_object_count,
+            declared_object_ids=self.declared_object_ids,
+            scope=self.domain_scope,
+        )
+
+    @property
+    def shape(self) -> Any:
+        return self.labels.shape
+
+    @property
+    def ndim(self) -> int:
+        return self.labels.ndim
+
+    @property
+    def dtype(self) -> Any:
+        return self.labels.dtype
+
+    def __array__(self, dtype: Any | None = None) -> Any:
+        import numpy as np
+
+        return np.asarray(self.labels, dtype=dtype)
+
     def labels_for_variant(
         self,
         variant: ObjectLabelVariant | str,
@@ -1189,6 +1515,685 @@ class ObjectLabelSet(SourceImageRuntimeValue):
             small_removed_labels=self.small_removed_labels,
         )
         return payload.labels_for_variant(variant)
+
+    def with_labels(
+        self,
+        labels: object,
+        *,
+        unedited_labels: object | None = None,
+        small_removed_labels: object | None = None,
+    ) -> "ObjectLabelSet":
+        """Return this runtime value's metadata with replacement labels."""
+        return ObjectLabelSet(
+            name=self.name,
+            labels=ObjectLabelSetReplacementStrategy.for_source(self).replacement_labels(
+                labels
+            ),
+            unedited_labels=unedited_labels,
+            small_removed_labels=small_removed_labels,
+            representation=self.representation,
+            declared_object_count=self.declared_object_count,
+            declared_object_ids=self.declared_object_ids,
+            domain_scope=self.domain_scope,
+            spatial_origin_yx=self.spatial_origin_yx,
+            source_spatial_shape_yx=self.source_spatial_shape_yx,
+            dimensions=self.dimensions,
+            source_image_name=self.source_image_name,
+        )
+
+
+class RuntimePayloadDataStrategy(ABC):
+    """Base contract for nominal payload-to-data extraction strategies."""
+
+    value_type: ClassVar[type[object] | None] = None
+
+    @abstractmethod
+    def data(self, payload: object) -> object:
+        """Return the concrete data represented by payload."""
+
+
+class ObjectLabelDenseDataStrategy(
+    NominalTypeKeyedStrategyMixin,
+    RuntimePayloadDataStrategy,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered dense-label extractor for one nominal object-label runtime type."""
+
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+    value_type_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_payload(cls, payload: object) -> "ObjectLabelDenseDataStrategy":
+        strategy = cls.for_nominal_value(payload)
+        return strategy if strategy is not None else RawObjectLabelDenseDataStrategy()
+
+    @abstractmethod
+    def data(self, payload: object) -> object:
+        """Return the dense label data represented by payload."""
+
+
+class ObjectLabelPayloadDenseDataStrategy(ObjectLabelDenseDataStrategy):
+    """Extract dense labels from serialized object-label payloads."""
+
+    value_type = ObjectLabelPayload
+
+    def data(self, payload: object) -> object:
+        if not isinstance(payload, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadDenseDataStrategy requires ObjectLabelPayload, "
+                f"got {type(payload).__name__}."
+            )
+        return payload.labels
+
+
+class ObjectLabelSetDenseDataStrategy(ObjectLabelDenseDataStrategy):
+    """Extract dense labels from native object-label runtime values."""
+
+    value_type = ObjectLabelSet
+
+    def data(self, payload: object) -> object:
+        if not isinstance(payload, ObjectLabelSet):
+            raise TypeError(
+                "ObjectLabelSetDenseDataStrategy requires ObjectLabelSet, "
+                f"got {type(payload).__name__}."
+            )
+        return payload.labels
+
+
+class RawObjectLabelDenseDataStrategy(ObjectLabelDenseDataStrategy):
+    """Pass through already-dense array payloads."""
+
+    def data(self, payload: object) -> object:
+        return payload
+
+
+class ObjectLabelPayloadIdDomainStrategy(ObjectLabelIdDomainStrategy):
+    """Extract present object IDs from serialized object-label payloads."""
+
+    value_type = ObjectLabelPayload
+
+    def present_ids(self, labels: Any) -> tuple[int, ...]:
+        if not isinstance(labels, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadIdDomainStrategy requires ObjectLabelPayload, "
+                f"got {type(labels).__name__}."
+            )
+        return ObjectLabelIdDomainStrategy.for_value(labels.labels).present_ids(labels.labels)
+
+
+class ObjectLabelSetIdDomainStrategy(ObjectLabelIdDomainStrategy):
+    """Extract present object IDs from native object-label runtime values."""
+
+    value_type = ObjectLabelSet
+
+    def present_ids(self, labels: Any) -> tuple[int, ...]:
+        if not isinstance(labels, ObjectLabelSet):
+            raise TypeError(
+                "ObjectLabelSetIdDomainStrategy requires ObjectLabelSet, "
+                f"got {type(labels).__name__}."
+            )
+        return ObjectLabelIdDomainStrategy.for_value(labels.labels).present_ids(labels.labels)
+
+
+def object_label_dense_data(payload: object) -> object:
+    """Return dense label data through the registered object-label strategy family."""
+    return ObjectLabelDenseDataStrategy.for_payload(payload).data(payload)
+
+
+def object_label_dense_array(
+    payload: object,
+    *,
+    dtype: object | None = None,
+    copy: bool | None = None,
+) -> np.ndarray:
+    """Materialize object-label dense data as a NumPy array via nominal extraction."""
+    dense_data = object_label_dense_data(payload)
+    if copy is None:
+        return np.asarray(dense_data, dtype=dtype)
+    return np.array(dense_data, dtype=dtype, copy=copy)
+
+
+class ObjectLabelPayloadBuilderStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered constructor for preserving object-label metadata across transforms."""
+
+    value_type: ClassVar[type[object] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_source(cls, source: object) -> "ObjectLabelPayloadBuilderStrategy":
+        strategy = cls.for_nominal_value(source)
+        return strategy if strategy is not None else RawObjectLabelPayloadBuilderStrategy()
+
+    @abstractmethod
+    def build(
+        self,
+        source: object,
+        labels: object,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...],
+        domain_scope: ObjectLabelDomainScope | None,
+    ) -> ObjectLabelPayload:
+        """Return transformed labels wrapped in the source object's semantic domain."""
+
+
+class ObjectLabelPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
+    """Preserve metadata from serialized object-label payloads."""
+
+    value_type = ObjectLabelPayload
+
+    def build(
+        self,
+        source: object,
+        labels: object,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...],
+        domain_scope: ObjectLabelDomainScope | None,
+    ) -> ObjectLabelPayload:
+        if not isinstance(source, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadBuilder requires ObjectLabelPayload, "
+                f"got {type(source).__name__}."
+            )
+        return ObjectLabelPayload(
+            labels=labels,
+            declared_object_count=(
+                declared_object_count
+                if declared_object_count is not None
+                else source.declared_object_count
+            ),
+            declared_object_ids=(
+                declared_object_ids
+                if declared_object_ids
+                else source.declared_object_ids
+            ),
+            domain_scope=domain_scope or source.domain_scope,
+            spatial_origin_yx=source.spatial_origin_yx,
+            source_spatial_shape_yx=source.source_spatial_shape_yx,
+        )
+
+
+class ObjectLabelSetPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
+    """Preserve metadata from native object-label runtime values."""
+
+    value_type = ObjectLabelSet
+
+    def build(
+        self,
+        source: object,
+        labels: object,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...],
+        domain_scope: ObjectLabelDomainScope | None,
+    ) -> ObjectLabelPayload:
+        if not isinstance(source, ObjectLabelSet):
+            raise TypeError(
+                "ObjectLabelSetPayloadBuilder requires ObjectLabelSet, "
+                f"got {type(source).__name__}."
+            )
+        return ObjectLabelPayload(
+            labels=labels,
+            declared_object_count=(
+                declared_object_count
+                if declared_object_count is not None
+                else source.declared_object_count
+            ),
+            declared_object_ids=(
+                declared_object_ids
+                if declared_object_ids
+                else source.declared_object_ids
+            ),
+            domain_scope=domain_scope or source.domain_scope,
+            spatial_origin_yx=source.spatial_origin_yx,
+            source_spatial_shape_yx=source.source_spatial_shape_yx,
+        )
+
+
+class RawObjectLabelPayloadBuilderStrategy(ObjectLabelPayloadBuilderStrategy):
+    """Build a semantic payload for already-dense object labels."""
+
+    def build(
+        self,
+        source: object,
+        labels: object,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...],
+        domain_scope: ObjectLabelDomainScope | None,
+    ) -> ObjectLabelPayload:
+        return ObjectLabelPayload(
+            labels=labels,
+            declared_object_count=declared_object_count,
+            declared_object_ids=declared_object_ids,
+            domain_scope=domain_scope or ObjectLabelDomainScope.PAYLOAD,
+        )
+
+
+def object_label_payload_with_dense_labels(
+    source: object,
+    labels: object,
+    *,
+    declared_object_count: int | None = None,
+    declared_object_ids: tuple[int, ...] = (),
+    domain_scope: ObjectLabelDomainScope | None = None,
+) -> ObjectLabelPayload:
+    """Build a dense-label payload while preserving nominal object-label metadata."""
+    return ObjectLabelPayloadBuilderStrategy.for_source(source).build(
+        source,
+        labels,
+        declared_object_count=declared_object_count,
+        declared_object_ids=declared_object_ids,
+        domain_scope=domain_scope,
+    )
+
+
+def object_label_payload_from_source_image(
+    image: object,
+    labels: object,
+    *,
+    declared_object_count: int | None = None,
+    declared_object_ids: tuple[int, ...] = (),
+    unedited_labels: object | None = None,
+    small_removed_labels: object | None = None,
+) -> ObjectLabelPayload:
+    """Build labels in the source spatial domain carried by an image payload."""
+    metadata = image_payload_metadata(image)
+    return ObjectLabelPayload(
+        labels=labels,
+        unedited_labels=unedited_labels,
+        small_removed_labels=small_removed_labels,
+        declared_object_count=declared_object_count,
+        declared_object_ids=declared_object_ids,
+        spatial_origin_yx=metadata.spatial_origin_yx,
+        source_spatial_shape_yx=metadata.source_spatial_shape_yx,
+    )
+
+
+class ObjectLabelSetReplacementStrategy(
+    EnumKeyedStrategyMixin[ObjectLabelRepresentation],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered replacement policy for ObjectLabelSet label representations."""
+
+    representation: ClassVar[ObjectLabelRepresentation | None] = None
+    representation_label: ClassVar[str | None] = None
+    __registry_key__ = "representation_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "representation"
+    __enum_label_attr__ = "representation_label"
+
+    @classmethod
+    def for_source(
+        cls,
+        source: "ObjectLabelSet",
+    ) -> "ObjectLabelSetReplacementStrategy":
+        return cls.for_enum_member(source.representation)
+
+    @abstractmethod
+    def replacement_labels(self, labels: object) -> object:
+        """Return labels compatible with this representation."""
+
+
+class DenseObjectLabelSetReplacementStrategy(ObjectLabelSetReplacementStrategy):
+    """Dense labels are already the concrete replacement payload."""
+
+    representation = ObjectLabelRepresentation.DENSE_LABELS
+
+    def replacement_labels(self, labels: object) -> object:
+        return labels
+
+
+class SparseIJVObjectLabelSetReplacementStrategy(ObjectLabelSetReplacementStrategy):
+    """Sparse-IJV replacements use the sparse rows carried by nominal label sets."""
+
+    representation = ObjectLabelRepresentation.SPARSE_IJV
+
+    def replacement_labels(self, labels: object) -> object:
+        return ObjectLabelDenseDataStrategy.for_payload(labels).data(labels)
+
+
+def object_label_set_with_replacement_labels(
+    source: ObjectLabelSet,
+    labels: object,
+    *,
+    unedited_labels: object | None = None,
+    small_removed_labels: object | None = None,
+) -> ObjectLabelSet:
+    """Return an ObjectLabelSet with representation-compatible replacement labels."""
+    return source.with_labels(
+        labels,
+        unedited_labels=unedited_labels,
+        small_removed_labels=small_removed_labels,
+    )
+
+
+def object_label_payload_with_replacement_labels(
+    source: ObjectLabelPayload,
+    labels: object,
+    *,
+    unedited_labels: object | None = None,
+    small_removed_labels: object | None = None,
+) -> ObjectLabelPayload:
+    """Return an object-label payload with replacement labels and preserved domain."""
+    return source.with_labels(
+        labels,
+        unedited_labels=unedited_labels,
+        small_removed_labels=small_removed_labels,
+    )
+
+
+class ObjectLabelVariantCompatibilityStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered policy for retaining label variants after label replacement."""
+
+    value_type: ClassVar[type[object] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_variant(
+        cls,
+        variant: object,
+    ) -> "ObjectLabelVariantCompatibilityStrategy":
+        strategy = cls.for_nominal_value(variant)
+        return strategy if strategy is not None else RawObjectLabelVariantCompatibilityStrategy()
+
+    @abstractmethod
+    def matching_labels(self, variant: object, labels: object) -> object | None:
+        """Return variant when it is compatible with replacement labels."""
+
+
+class RuntimeArrayObjectLabelVariantCompatibilityStrategy(
+    ObjectLabelVariantCompatibilityStrategy
+):
+    """Runtime-array variants must inhabit the same dense label shape."""
+
+    value_type = RuntimeArrayPayload
+
+    def matching_labels(self, variant: object, labels: object) -> object | None:
+        if not isinstance(variant, RuntimeArrayPayload):
+            raise TypeError(
+                "RuntimeArrayObjectLabelVariantCompatibilityStrategy requires "
+                f"RuntimeArrayPayload, got {type(variant).__name__}."
+            )
+        if not isinstance(labels, RuntimeArrayPayload):
+            return variant
+        if tuple(variant.shape) == tuple(labels.shape):
+            return variant
+        return None
+
+
+class NumpyObjectLabelVariantCompatibilityStrategy(
+    ObjectLabelVariantCompatibilityStrategy
+):
+    """NumPy variants must inhabit the same dense label shape."""
+
+    value_type = np.ndarray
+
+    def matching_labels(self, variant: object, labels: object) -> object | None:
+        if not isinstance(variant, np.ndarray):
+            raise TypeError(
+                "NumpyObjectLabelVariantCompatibilityStrategy requires ndarray, "
+                f"got {type(variant).__name__}."
+            )
+        if not isinstance(labels, np.ndarray):
+            return variant
+        if tuple(variant.shape) == tuple(labels.shape):
+            return variant
+        return None
+
+
+class RawObjectLabelVariantCompatibilityStrategy(
+    ObjectLabelVariantCompatibilityStrategy
+):
+    """Unknown variants are metadata-only and remain attached."""
+
+    def matching_labels(self, variant: object, labels: object) -> object | None:
+        return variant
+
+
+def object_label_variant_matching_labels(
+    variant: object | None,
+    labels: object,
+) -> object | None:
+    """Return a variant only when it is compatible with replacement labels."""
+    if variant is None:
+        return None
+    return ObjectLabelVariantCompatibilityStrategy.for_variant(
+        variant
+    ).matching_labels(variant, labels)
+
+
+class ObjectLabelMeasurementPayloadStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered policy for replacing labels used in measurement contexts."""
+
+    value_type: ClassVar[type[object] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_source(cls, source: object) -> "ObjectLabelMeasurementPayloadStrategy":
+        strategy = cls.for_nominal_value(source)
+        return strategy if strategy is not None else RawObjectLabelMeasurementPayloadStrategy()
+
+    @abstractmethod
+    def with_labels(self, source: object, labels: object) -> object:
+        """Return source metadata over labels selected for measurement."""
+
+
+class ObjectLabelSetMeasurementPayloadStrategy(ObjectLabelMeasurementPayloadStrategy):
+    """Replace labels for native object-label runtime values."""
+
+    value_type = ObjectLabelSet
+
+    def with_labels(self, source: object, labels: object) -> object:
+        if not isinstance(source, ObjectLabelSet):
+            raise TypeError(
+                "ObjectLabelSetMeasurementPayloadStrategy requires ObjectLabelSet, "
+                f"got {type(source).__name__}."
+            )
+        return object_label_set_with_replacement_labels(
+            source,
+            labels,
+            unedited_labels=object_label_variant_matching_labels(
+                source.unedited_labels,
+                labels,
+            ),
+            small_removed_labels=object_label_variant_matching_labels(
+                source.small_removed_labels,
+                labels,
+            ),
+        )
+
+
+class ObjectLabelPayloadMeasurementPayloadStrategy(
+    ObjectLabelMeasurementPayloadStrategy
+):
+    """Replace labels for serialized object-label payloads."""
+
+    value_type = ObjectLabelPayload
+
+    def with_labels(self, source: object, labels: object) -> object:
+        if not isinstance(source, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadMeasurementPayloadStrategy requires "
+                f"ObjectLabelPayload, got {type(source).__name__}."
+            )
+        return object_label_payload_with_replacement_labels(
+            source,
+            labels,
+            unedited_labels=object_label_variant_matching_labels(
+                source.unedited_labels,
+                labels,
+            ),
+            small_removed_labels=object_label_variant_matching_labels(
+                source.small_removed_labels,
+                labels,
+            ),
+        )
+
+
+class RawObjectLabelMeasurementPayloadStrategy(ObjectLabelMeasurementPayloadStrategy):
+    """Dense arrays have no nominal metadata to preserve."""
+
+    def with_labels(self, source: object, labels: object) -> object:
+        return labels
+
+
+def object_label_payload_with_measurement_labels(
+    source: object,
+    labels: object,
+) -> object:
+    """Return object-label metadata over labels selected for measurement."""
+    return ObjectLabelMeasurementPayloadStrategy.for_source(source).with_labels(
+        source,
+        labels,
+    )
+
+
+class SingletonObjectLabelStackCollapseStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered collapse policy for singleton object-label stacks."""
+
+    value_type: ClassVar[type[object] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_labels(cls, labels: object) -> "SingletonObjectLabelStackCollapseStrategy":
+        strategy = cls.for_nominal_value(labels)
+        return strategy if strategy is not None else RawSingletonObjectLabelStackCollapseStrategy()
+
+    @abstractmethod
+    def collapse(self, labels: object) -> object:
+        """Collapse singleton stacked labels when the strategy applies."""
+
+
+class ObjectLabelPayloadStackCollapseStrategy(
+    SingletonObjectLabelStackCollapseStrategy
+):
+    """Collapse singleton serialized object-label payload stacks."""
+
+    value_type = ObjectLabelPayload
+
+    def collapse(self, labels: object) -> object:
+        if not isinstance(labels, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadStackCollapseStrategy requires ObjectLabelPayload, "
+                f"got {type(labels).__name__}."
+            )
+        if labels.ndim != 3 or labels.shape[0] != 1:
+            return labels
+        return object_label_payload_with_replacement_labels(
+            labels,
+            labels.labels[0],
+            unedited_labels=(
+                None if labels.unedited_labels is None else labels.unedited_labels[0]
+            ),
+            small_removed_labels=(
+                None
+                if labels.small_removed_labels is None
+                else labels.small_removed_labels[0]
+            ),
+        )
+
+
+class RuntimeArrayStackCollapseStrategy(SingletonObjectLabelStackCollapseStrategy):
+    """Collapse singleton nominal array payload stacks."""
+
+    value_type = RuntimeArrayPayload
+
+    def collapse(self, labels: object) -> object:
+        if not isinstance(labels, RuntimeArrayPayload):
+            raise TypeError(
+                "RuntimeArrayStackCollapseStrategy requires RuntimeArrayPayload, "
+                f"got {type(labels).__name__}."
+            )
+        if labels.ndim == 3 and labels.shape[0] == 1:
+            return labels[0]
+        return labels
+
+
+class NumpyObjectLabelStackCollapseStrategy(SingletonObjectLabelStackCollapseStrategy):
+    """Collapse singleton NumPy label stacks."""
+
+    value_type = np.ndarray
+
+    def collapse(self, labels: object) -> object:
+        if not isinstance(labels, np.ndarray):
+            raise TypeError(
+                "NumpyObjectLabelStackCollapseStrategy requires ndarray, "
+                f"got {type(labels).__name__}."
+            )
+        if labels.ndim == 3 and labels.shape[0] == 1:
+            return labels[0]
+        return labels
+
+
+class RawSingletonObjectLabelStackCollapseStrategy(
+    SingletonObjectLabelStackCollapseStrategy
+):
+    """Unknown payloads are not singleton object-label stacks."""
+
+    def collapse(self, labels: object) -> object:
+        return labels
+
+
+def collapse_singleton_object_label_stack(labels: object) -> object:
+    """Normalize singleton object-label stacks to one label plane."""
+    return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(labels)
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelSliceStack:
+    """Dense object labels projected onto a fixed slice axis."""
+
+    labels: np.ndarray
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: object,
+        *,
+        slice_count: int,
+        dtype: object | None = None,
+    ) -> "DenseObjectLabelSliceStack | None":
+        label_array = object_label_dense_array(payload, dtype=dtype)
+        if label_array.ndim == 3 and label_array.shape[0] == slice_count:
+            return cls(np.ascontiguousarray(label_array))
+        if label_array.ndim == 2:
+            return cls(
+                np.ascontiguousarray(
+                    np.broadcast_to(label_array, (slice_count, *label_array.shape))
+                )
+            )
+        return None
+
+    def slice(self, slice_index: int) -> np.ndarray:
+        return self.labels[slice_index]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -1532,10 +2537,71 @@ def _normalize_native_value(
     *,
     axis_id: str,
 ) -> RuntimeValue | None:
+    if _is_runtime_slice_aligned_values(value):
+        return _normalize_slice_aligned_value(output_plan, value, axis_id=axis_id)
     if isinstance(value, NativeRuntimeValue):
         _validate_native_name(output_plan, value.name)
         return value.to_runtime_value(output_plan, axis_id=axis_id)
     return None
+
+
+def _normalize_slice_aligned_value(
+    output_plan: ArtifactOutputPlan,
+    value: Any,
+    *,
+    axis_id: str,
+) -> RuntimeValue:
+    slice_values: list[Any] = []
+    slice_schemas: list[RuntimeValueSchema] = []
+    for item in value.slices:
+        if isinstance(item, NativeRuntimeValue):
+            _validate_native_name(output_plan, item.name)
+            runtime_item = item.to_runtime_value(output_plan, axis_id=axis_id)
+            slice_values.append(runtime_item.data)
+            slice_schemas.append(runtime_item.schema)
+            continue
+        if isinstance(item, RuntimeValue):
+            slice_values.append(
+                validate_runtime_value(item, output_plan, axis_id=axis_id).data
+            )
+            slice_schemas.append(item.schema)
+            continue
+        slice_values.append(item)
+
+    schema = (
+        _merge_slice_aligned_schemas(output_plan, slice_schemas)
+        if slice_schemas
+        else RuntimeValueSchema(kind=output_plan.kind, slice_aligned=True)
+    )
+    return RuntimeValue.from_output_plan(
+        output_plan,
+        tuple(slice_values),
+        axis_id=axis_id,
+        schema=schema,
+    )
+
+
+def _is_runtime_slice_aligned_values(value: Any) -> bool:
+    return isinstance(value, RuntimeSliceAlignedValueSet)
+
+
+def _merge_slice_aligned_schemas(
+    output_plan: ArtifactOutputPlan,
+    schemas: Sequence[RuntimeValueSchema],
+) -> RuntimeValueSchema:
+    first = schemas[0]
+    for schema in schemas:
+        if schema.kind is not output_plan.kind:
+            raise ValueError(
+                f"Slice-aligned artifact '{output_plan.name}' expected "
+                f"{output_plan.kind.value}, got {schema.kind.value}."
+            )
+        if replace(schema, slice_aligned=False) != replace(first, slice_aligned=False):
+            raise ValueError(
+                f"Slice-aligned artifact '{output_plan.name}' has inconsistent "
+                "per-slice runtime schemas."
+            )
+    return replace(first, slice_aligned=True)
 
 
 def validate_runtime_value(
@@ -1580,6 +2646,13 @@ def _validate_payload_kind(
     validator = _PAYLOAD_VALIDATORS[payload_shape]
     if validator is None:
         return
+    if schema.slice_aligned:
+        if _is_slice_aligned_payload(data) and all(validator(item) for item in data):
+            return
+        raise TypeError(
+            f"Artifact '{name}' expected slice-aligned {kind.payload_description}, "
+            f"got {type(data).__name__}."
+        )
     if validator(data):
         return
     raise TypeError(
@@ -1622,6 +2695,13 @@ def _is_array_like(data: Any) -> bool:
 
 def _is_mapping_like(data: Any) -> bool:
     return isinstance(data, Mapping)
+
+
+def _is_slice_aligned_payload(data: Any) -> bool:
+    return isinstance(data, Sequence) and not isinstance(
+        data,
+        (str, bytes, bytearray),
+    )
 
 
 def _validate_object_label_variant(

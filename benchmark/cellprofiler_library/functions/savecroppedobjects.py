@@ -8,6 +8,7 @@ from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer
@@ -67,9 +68,10 @@ def save_cropped_objects(
         bounding box and area information for each object
     """
     from skimage.measure import regionprops
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     
     # Get region properties for all labeled objects
-    props = regionprops(labels.astype(np.int32), intensity_image=image)
+    props = regionprops(label_array, intensity_image=image)
     
     # Collect info for all objects (we return info for first object as example,
     # but the materialization system handles all objects)
@@ -130,8 +132,9 @@ def extract_object_crops(
         or original image if no objects found
     """
     from skimage.measure import regionprops
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     
-    props = regionprops(labels.astype(np.int32), intensity_image=image)
+    props = regionprops(label_array, intensity_image=image)
     
     if len(props) == 0:
         # Return empty crop placeholder
@@ -152,12 +155,14 @@ def extract_object_crops(
         
         if export_as == ExportType.MASKS:
             # Extract mask crop
-            crop = (labels[min_row:max_row, min_col:max_col] == prop.label).astype(np.float32)
+            crop = (
+                label_array[min_row:max_row, min_col:max_col] == prop.label
+            ).astype(np.float32)
         else:
             # Extract intensity crop
             crop = image[min_row:max_row, min_col:max_col].copy()
             # Optionally mask out other objects
-            mask = labels[min_row:max_row, min_col:max_col] == prop.label
+            mask = label_array[min_row:max_row, min_col:max_col] == prop.label
             crop = crop * mask
         
         crops.append(crop)

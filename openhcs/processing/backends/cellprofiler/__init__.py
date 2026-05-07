@@ -92,11 +92,6 @@ def _declared_processing_contract(
     module_name: str,
     absorbed_function: Callable[..., Any],
 ) -> ProcessingContract:
-    contract_payload = get_contract(module_name) or {}
-    declared_name = str(contract_payload.get("contract", "flexible"))
-    declared_contract = ProcessingContract.from_declared_name(declared_name)
-    if declared_contract is not None:
-        return declared_contract
     contract = CallableContract.from_callable(absorbed_function).processing_contract
     if isinstance(contract, ProcessingContract):
         return contract
@@ -104,6 +99,11 @@ def _declared_processing_contract(
         resolved_contract = ProcessingContract.from_declared_name(contract)
         if resolved_contract is not None:
             return resolved_contract
+    contract_payload = get_contract(module_name) or {}
+    declared_name = str(contract_payload.get("contract", "flexible"))
+    declared_contract = ProcessingContract.from_declared_name(declared_name)
+    if declared_contract is not None:
+        return declared_contract
     return ProcessingContract.FLEXIBLE
 
 

@@ -5,20 +5,21 @@ Original: erode_objects
 
 import numpy as np
 from typing import Tuple
-from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 from dataclasses import dataclass
 
-
-class StructuringElementShape(Enum):
-    DISK = "disk"
-    SQUARE = "square"
-    DIAMOND = "diamond"
-    OCTAGON = "octagon"
-    STAR = "star"
+from benchmark.cellprofiler_library.functions.spatial_axes import (
+    apply_over_trailing_spatial_axes,
+)
+from benchmark.cellprofiler_library.functions.structuring_elements import (
+    StructuringElement,
+    adapt_structuring_element_rank,
+    build_structuring_element,
+)
 
 
 @dataclass
@@ -27,24 +28,6 @@ class ErosionStats:
     input_object_count: int
     output_object_count: int
     objects_removed: int
-
-
-def _get_structuring_element_2d(shape: StructuringElementShape, size: int) -> np.ndarray:
-    """Generate a 2D structuring element."""
-    from skimage.morphology import disk, square, diamond, octagon, star
-    
-    if shape == StructuringElementShape.DISK:
-        return disk(size)
-    elif shape == StructuringElementShape.SQUARE:
-        return square(size * 2 + 1)
-    elif shape == StructuringElementShape.DIAMOND:
-        return diamond(size)
-    elif shape == StructuringElementShape.OCTAGON:
-        return octagon(size, size)
-    elif shape == StructuringElementShape.STAR:
-        return star(size)
-    else:
-        return disk(size)
 
 
 def _find_object_centers(labels: np.ndarray) -> dict:
@@ -83,8 +66,8 @@ def _find_object_centers(labels: np.ndarray) -> dict:
 def erode_objects(
     image: np.ndarray,
     labels: np.ndarray,
-    structuring_element_shape: StructuringElementShape = StructuringElementShape.DISK,
-    structuring_element_size: int = 1,
+    structuring_element: StructuringElement | str = StructuringElement.DISK,
+    size: int = 1,
     preserve_midpoints: bool = False,
     relabel_objects: bool = False,
 ) -> Tuple[np.ndarray, ErosionStats, np.ndarray]:
@@ -97,19 +80,22 @@ def erode_objects(
     Args:
         image: Input intensity image (passed through unchanged)
         labels: Input labeled objects array
-        structuring_element_shape: Shape of structuring element
-        structuring_element_size: Size/radius of structuring element
+        structuring_element: Shape of structuring element
+        size: Size/radius of structuring element
         preserve_midpoints: If True, central pixels for each object will not be eroded
         relabel_objects: If True, resulting objects will be relabeled sequentially
         
     Returns:
         Tuple of (image, erosion_stats, eroded_labels)
     """
-    from scipy.ndimage import binary_erosion
     from skimage.measure import label as relabel
+    labels = object_label_dense_array(labels, dtype=np.int32)
     
     # Get structuring element
-    selem = _get_structuring_element_2d(structuring_element_shape, structuring_element_size)
+    selem = adapt_structuring_element_rank(
+        build_structuring_element(structuring_element, size),
+        labels.ndim,
+    )
     
     # Count input objects
     input_labels = np.unique(labels)
@@ -125,7 +111,7 @@ def erode_objects(
     
     for label_id in input_labels:
         mask = labels == label_id
-        eroded_mask = binary_erosion(mask, structure=selem)
+        eroded_mask = _binary_erosion_over_spatial_axes(mask, selem)
         
         # Preserve midpoint if requested and object was eroded away
         if preserve_midpoints and not eroded_mask.any() and label_id in centers:
@@ -152,3 +138,17 @@ def erode_objects(
     )
     
     return image, stats, eroded
+
+
+def _binary_erosion_over_spatial_axes(
+    mask: np.ndarray,
+    structure: np.ndarray,
+) -> np.ndarray:
+    from scipy.ndimage import binary_erosion
+
+    return apply_over_trailing_spatial_axes(
+        mask,
+        structure.ndim,
+        lambda spatial_mask: binary_erosion(spatial_mask, structure=structure),
+        fill_value=False,
+    )

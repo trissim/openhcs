@@ -41,6 +41,10 @@ from benchmark.cellprofiler_library.functions.thresholding import (
 from benchmark.cellprofiler_library.functions.watershed import (
     cellprofiler_legacy_watershed,
 )
+from benchmark.cellprofiler_library.image_geometry import (
+    CellProfilerPlaneGeometry,
+    collapse_singleton_plane_stack,
+)
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.secondary import (
@@ -94,6 +98,9 @@ def _propagate_labels(
     max_distance: float | None = None,
 ) -> np.ndarray:
     """Propagate labels using the configured explicit backend provider."""
+    geometry = CellProfilerPlaneGeometry.from_image_plane(image)
+    labels = geometry.label_plane(labels)
+    mask = geometry.binary_mask(mask)
     return SecondaryPropagationBackendStrategy.for_memory_type(
         backend_provider=backend_provider,
     ).propagate(
@@ -147,7 +154,7 @@ class SecondaryThresholdRequest:
 
 
 def _parent_child_relationship(
-    parent_labels: np.ndarray,
+    parent_labels: np.ndarray | ObjectLabelPayload,
     child_labels: np.ndarray,
 ) -> ParentChildRelationshipPayload:
     return object_label_parent_child_payload(parent_labels, child_labels)
@@ -362,12 +369,16 @@ def _normalize_secondary_inputs(
     image: np.ndarray,
     primary_labels: np.ndarray | ObjectLabelPayload,
 ) -> SecondaryImageInputs:
+    image = collapse_singleton_plane_stack(np.asarray(image))
     if isinstance(primary_labels, ObjectLabelPayload):
-        final_labels = np.asarray(primary_labels.labels, dtype=np.int32)
+        final_labels = collapse_singleton_plane_stack(
+            np.asarray(primary_labels.labels, dtype=np.int32)
+        )
         unedited_labels = np.asarray(
             primary_labels.labels_for_variant("unedited"),
             dtype=np.int32,
         )
+        unedited_labels = collapse_singleton_plane_stack(unedited_labels)
         return SecondaryImageInputs(
             image=image,
             labels=final_labels,
@@ -380,7 +391,7 @@ def _normalize_secondary_inputs(
             labels=labels,
             unedited_labels=labels,
         )
-    labels = primary_labels.astype(np.int32)
+    labels = collapse_singleton_plane_stack(np.asarray(primary_labels, dtype=np.int32))
     return SecondaryImageInputs(
         image=image,
         labels=labels,
@@ -730,6 +741,8 @@ def identify_secondary_objects(
         backend_provider=morphology_backend_provider,
     )
     input_mask = image_payload_mask(image)
+    if input_mask is not None:
+        input_mask = collapse_singleton_plane_stack(np.asarray(input_mask, dtype=bool))
     raw_image_data = image_payload_data(image)
     diagnostics_unit_interval_scale = unit_interval_scale_for_threshold_diagnostics(
         np.asarray(raw_image_data),
@@ -789,7 +802,10 @@ def identify_secondary_objects(
         weighted_variance=threshold.weighted_variance,
         sum_of_entropies=threshold.sum_of_entropies,
     )
-    relationships = _parent_child_relationship(inputs.labels, labels_out)
+    relationships = _parent_child_relationship(
+        primary_labels if isinstance(primary_labels, ObjectLabelPayload) else inputs.labels,
+        labels_out,
+    )
     
     return img.astype(np.float32), stats, relationships, labels_out
 

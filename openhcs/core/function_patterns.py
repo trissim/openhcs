@@ -11,6 +11,7 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.formats.func_arg_prep import get_core_callable
 
 
@@ -66,6 +67,7 @@ class NormalizedFunctionItem:
     key: FunctionInvocationKey
     contract: CallableContract
     kwargs: tuple[tuple[str, Any], ...] = ()
+    invocation_options: RuntimeInvocationOptions | None = None
 
     @property
     def func(self) -> Any:
@@ -106,6 +108,7 @@ class CompiledFunctionInvocation:
     key: FunctionInvocationKey
     contract: CallableContract
     kwargs: tuple[tuple[str, Any], ...] = ()
+    invocation_options: RuntimeInvocationOptions | None = None
     artifact_input_keys: tuple[str, ...] = ()
     artifact_output_keys: tuple[str, ...] = ()
 
@@ -276,7 +279,11 @@ def compile_function_pattern(
 
 def strip_disabled_functions(pattern: Any) -> Any:
     """Remove disabled function items from any supported function-pattern shape."""
-    if isinstance(pattern, tuple) and len(pattern) == 2 and isinstance(pattern[1], dict):
+    if (
+        isinstance(pattern, tuple)
+        and len(pattern) in {2, 3}
+        and isinstance(pattern[1], dict)
+    ):
         if pattern[1].get("enabled", True) is False:
             return None
         return pattern
@@ -361,13 +368,13 @@ def _is_callable_pattern_item(pattern: Any) -> bool:
 
 
 def _merge_pattern_item_kwargs(pattern: Any, kwargs: Mapping[str, Any]) -> Any:
-    if isinstance(pattern, tuple) and len(pattern) == 2:
-        func, existing_kwargs = pattern
+    if isinstance(pattern, tuple) and len(pattern) in {2, 3}:
+        func, existing_kwargs, *invocation_options = pattern
         if not isinstance(existing_kwargs, Mapping):
             raise TypeError(
                 f"Function kwargs must be a mapping, got {type(existing_kwargs)}"
             )
-        return (func, {**kwargs, **existing_kwargs})
+        return (func, {**kwargs, **existing_kwargs}, *invocation_options)
 
     return (pattern, dict(kwargs))
 
@@ -382,7 +389,7 @@ def _normalize_function_group(
     for item in items:
         if _is_disabled_function_item(item):
             continue
-        func, kwargs = _split_function_item(item)
+        func, kwargs, invocation_options = _split_function_item(item)
         contract = CallableContract.from_callable(func)
         position = len(normalized_items)
         normalized_items.append(
@@ -394,6 +401,7 @@ def _normalize_function_group(
                 ),
                 contract=contract,
                 kwargs=_freeze_runtime_kwargs(kwargs),
+                invocation_options=invocation_options,
             )
         )
 
@@ -431,6 +439,7 @@ def _compile_invocation(
         key=item.key,
         contract=item.contract,
         kwargs=item.kwargs,
+        invocation_options=item.invocation_options,
         artifact_input_keys=item.contract.select_input_plan_keys(input_plans),
         artifact_output_keys=item.contract.select_output_plan_keys(output_plans),
     )
@@ -439,21 +448,34 @@ def _compile_invocation(
 def _is_disabled_function_item(func_item: Any) -> bool:
     return (
         isinstance(func_item, tuple)
-        and len(func_item) == 2
+        and len(func_item) in {2, 3}
         and isinstance(func_item[1], Mapping)
         and func_item[1].get("enabled", True) is False
     )
 
 
-def _split_function_item(func_item: Any) -> tuple[Any, Mapping[str, Any]]:
+def _split_function_item(
+    func_item: Any,
+) -> tuple[Any, Mapping[str, Any], RuntimeInvocationOptions | None]:
+    if isinstance(func_item, tuple) and len(func_item) == 3:
+        func, kwargs, invocation_options = func_item
+        if not isinstance(kwargs, Mapping):
+            raise TypeError(f"Function kwargs must be a mapping, got {type(kwargs)}")
+        if not isinstance(invocation_options, RuntimeInvocationOptions):
+            raise TypeError(
+                "Function invocation options must inherit RuntimeInvocationOptions, "
+                f"got {type(invocation_options).__name__}."
+            )
+        return func, kwargs, invocation_options
+
     if isinstance(func_item, tuple) and len(func_item) == 2:
         func, kwargs = func_item
         if not isinstance(kwargs, Mapping):
             raise TypeError(f"Function kwargs must be a mapping, got {type(kwargs)}")
-        return func, kwargs
+        return func, kwargs, None
 
     if get_core_callable(func_item) is not None:
-        return func_item, {}
+        return func_item, {}, None
 
     raise TypeError(f"Invalid function-pattern item: {func_item}")
 

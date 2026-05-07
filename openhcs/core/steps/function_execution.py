@@ -19,6 +19,13 @@ from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import CompiledFunctionGroup
 from openhcs.core.progress import ProgressPhase, ProgressStatus, emit
+from openhcs.core.source_bindings import NamedSourceBinding
+from openhcs.core.source_matching import (
+    source_component_metadata_values,
+    source_filters_match,
+    source_metadata_value,
+    source_metadata_values_equal,
+)
 from openhcs.core.steps.function_io import (
     bulk_preload_step_images,
     generate_materialized_paths,
@@ -75,6 +82,69 @@ def _filter_patterns_by_component(
         return filtered_by_group
 
     return filter_pattern_list(patterns)
+
+
+def _source_compatible_anchor_patterns(
+    pattern_list: Sequence[Any],
+    *,
+    bindings: Sequence[NamedSourceBinding],
+    parser: Any,
+) -> list[Any]:
+    """Return anchor patterns matching at least one required source selector."""
+
+    selector_bindings = tuple(
+        binding
+        for binding in bindings
+        if binding.required and binding.requires_selector_resolution
+    )
+    if not selector_bindings:
+        return list(pattern_list)
+
+    return [
+        pattern
+        for pattern in pattern_list
+        if any(
+            _pattern_matches_source_binding(pattern, binding=binding, parser=parser)
+            for binding in selector_bindings
+        )
+    ]
+
+
+def _pattern_matches_source_binding(
+    pattern: Any,
+    *,
+    binding: NamedSourceBinding,
+    parser: Any,
+) -> bool:
+    pattern_path = str(pattern)
+    selector = binding.selector
+    if not source_filters_match(pattern_path, selector.filters):
+        return False
+
+    if not selector.components and not selector.metadata:
+        return True
+
+    metadata = parser.parse_filename(pattern_path) or {}
+    for component_selector in selector.components:
+        values = source_component_metadata_values(
+            metadata,
+            component_selector.component,
+        )
+        if not any(
+            source_metadata_values_equal(value, str(component_selector.value))
+            for value in values
+        ):
+            return False
+
+    for metadata_selector in selector.metadata:
+        value = source_metadata_value(metadata, metadata_selector.field)
+        if value is None or not source_metadata_values_equal(
+            value,
+            metadata_selector.value,
+        ):
+            return False
+
+    return True
 
 
 class FunctionStepExecutor:
@@ -349,6 +419,7 @@ class FunctionStepExecutor:
                 default_component=plan.group_by_value,
             )
         )
+        grouped_patterns = self._filter_source_bound_anchor_patterns(grouped_patterns)
         grouped_patterns = self._collapse_artifact_driven_anchor_patterns(
             grouped_patterns,
         )
@@ -358,6 +429,49 @@ class FunctionStepExecutor:
                 f"({plan.step_name}) in well {plan.axis_id}"
             )
         return grouped_patterns
+
+    def _filter_source_bound_anchor_patterns(
+        self,
+        grouped_patterns: Mapping[Any, Sequence[Any]],
+    ) -> Mapping[Any, Sequence[Any]]:
+        """Restrict source-bound step anchors to compatible declared sources."""
+
+        if not self.plan.source_binding_plan.has_primary_content:
+            return grouped_patterns
+
+        filtered: dict[Any, Sequence[Any]] = {}
+        changed = False
+        for component_value, pattern_list in grouped_patterns.items():
+            compiled_group = self.plan.compiled_function_pattern.group_for_component(
+                component_value
+            )
+            if compiled_group is None:
+                filtered[component_value] = pattern_list
+                continue
+            bindings = self.plan.source_binding_plan.bindings_for_group(
+                compiled_group.group_key
+            )
+            compatible = _source_compatible_anchor_patterns(
+                pattern_list,
+                bindings=bindings,
+                parser=self.context.microscope_handler.parser,
+            )
+            if compatible:
+                filtered[component_value] = compatible
+                changed = changed or len(compatible) != len(pattern_list)
+            else:
+                filtered[component_value] = pattern_list
+
+        if changed:
+            _log_step_profile(
+                "step_filter_source_anchors",
+                0.0,
+                step=self.plan.step_index,
+                step_name=self.plan.step_name,
+                before=self._count_pattern_groups(grouped_patterns),
+                after=self._count_pattern_groups(filtered),
+            )
+        return filtered
 
     def _collapse_artifact_driven_anchor_patterns(
         self,

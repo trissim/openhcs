@@ -922,8 +922,12 @@ class FuncStepContractValidator:
             functions.append(func)
             return functions
 
-        # Case 3: Tuple of (callable/FunctionReference, kwargs)
-        if isinstance(func, tuple) and len(func) == 2 and isinstance(func[1], dict):
+        # Case 3: Tuple of (callable/FunctionReference, kwargs[, invocation_options])
+        if (
+            isinstance(func, tuple)
+            and len(func) in {2, 3}
+            and isinstance(func[1], dict)
+        ):
             first = func[0]
             if isinstance(first, FunctionReference):
                 # Don't resolve — FunctionReference proxies attrs via __getattr__

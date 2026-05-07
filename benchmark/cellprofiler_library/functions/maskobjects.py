@@ -16,6 +16,7 @@ from openhcs.core.runtime_semantics import (
     aligned_dense_object_label_arrays,
     project_dense_object_label_stack,
 )
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
@@ -93,18 +94,20 @@ def mask_objects(
 
     overlap_handling = _coerce_function_enum(OverlapHandling, overlap_handling)
     numbering = _coerce_function_enum(NumberingChoice, numbering)
+    label_array = object_label_dense_array(labels, dtype=np.int32)
     
     try:
-        labels = project_dense_object_label_stack(labels).astype(np.int32, copy=False)
+        label_image = project_dense_object_label_stack(
+            label_array,
+        ).astype(np.int32, copy=False)
     except ValueError as exc:
         raise ValueError(
             "MaskObjects could not project object labels; "
-            f"image shape={getattr(image, 'shape', None)!r}, "
-            f"labels shape={getattr(labels, 'shape', None)!r}, "
-            f"mask shape={getattr(mask, 'shape', None)!r}."
+            f"labels shape={label_array.shape!r}, "
+            f"mask shape={mask.shape!r}."
         ) from exc
-    _aligned_labels, mask = aligned_dense_object_label_arrays(labels, mask)
-    labels = _aligned_labels.astype(np.int32, copy=False)
+    _aligned_labels, mask = aligned_dense_object_label_arrays(label_image, mask)
+    label_image = _aligned_labels.astype(np.int32, copy=False)
 
     # Handle mask - convert label image to binary if needed
     if mask.max() > 1:
@@ -116,8 +119,8 @@ def mask_objects(
         binary_mask = ~binary_mask
     
     # Make a copy of labels to modify
-    masked_labels = labels.copy()
-    nobjects = int(np.max(labels))
+    masked_labels = label_image.copy()
+    nobjects = int(np.max(label_image))
     
     if nobjects == 0:
         # No objects to mask
@@ -132,7 +135,7 @@ def mask_objects(
     
     # CellProfiler size_similarly semantics: masks smaller than labels create
     # manufactured false pixels; larger masks are cropped to label geometry.
-    binary_mask = _size_binary_mask_like_labels(labels, binary_mask)
+    binary_mask = _size_binary_mask_like_labels(label_image, binary_mask)
     
     # Apply mask according to overlap choice
     if overlap_handling == OverlapHandling.MASK:
@@ -144,7 +147,7 @@ def mask_objects(
         
         pixel_counts = ndi.sum(
             binary_mask.astype(np.float64),
-            labels,
+            label_image,
             object_indices
         )
         pixel_counts = np.atleast_1d(pixel_counts)
@@ -155,8 +158,8 @@ def mask_objects(
         else:
             # Calculate total pixels per object
             total_pixels = ndi.sum(
-                np.ones(labels.shape, dtype=np.float64),
-                labels,
+                np.ones(label_image.shape, dtype=np.float64),
+                label_image,
                 object_indices
             )
             total_pixels = np.atleast_1d(total_pixels)
@@ -176,7 +179,7 @@ def mask_objects(
         keep_lookup = np.concatenate([[False], keep])
         
         # Remove objects that don't meet criteria
-        masked_labels[~keep_lookup[labels]] = 0
+        masked_labels[~keep_lookup[label_image]] = 0
     
     # Renumber if requested
     if numbering == NumberingChoice.RENUMBER:
@@ -201,7 +204,7 @@ def mask_objects(
         backend_provider=relationship_backend_provider,
     )
     relationships = relationship_backend.parent_child_payload_from_labels(
-        labels,
+        label_image,
         masked_labels,
     )
 

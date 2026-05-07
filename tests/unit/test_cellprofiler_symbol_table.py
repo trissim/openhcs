@@ -10,7 +10,7 @@ from benchmark.converter.symbol_table import (
     CellProfilerSymbolKind,
     CellProfilerSymbolTable,
 )
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 
@@ -242,6 +242,68 @@ def test_cellprofiler_symbol_table_accepts_declared_source_object_inputs():
     )
     assert [spec.name for spec in contract.inputs] == ["LoadedNuclei"]
     assert [spec.kind for spec in contract.inputs] == [ArtifactKind.OBJECT_LABELS]
+
+
+def test_cellprofiler_symbol_table_infers_bare_objects_subscriber_input():
+    modules = [
+        _identify_primary(),
+        _module(
+            2,
+            "OverlayObjects",
+            {
+                "Input": "OrigBlue",
+                "Objects": "Nuclei",
+                "Name the output image": "NucleiOverlay",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[2]
+
+    assert [spec.name for spec in contract.inputs] == ["OrigBlue", "Nuclei"]
+    assert [spec.kind for spec in contract.inputs] == [
+        ArtifactKind.IMAGE,
+        ArtifactKind.OBJECT_LABELS,
+    ]
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == ["Nuclei"]
+    assert [spec.kind for spec in contract.runtime_artifact_inputs] == [
+        ArtifactKind.OBJECT_LABELS,
+    ]
+    assert [spec.name for spec in contract.outputs] == ["NucleiOverlay"]
+
+
+def test_cellprofiler_symbol_table_ignores_object_method_choice_values():
+    modules = [
+        _identify_primary(),
+        _identify_secondary(),
+        _module(
+            3,
+            "CombineObjects",
+            {
+                "Select initial object set": "Nuclei",
+                "Select object set to combine": "Cells",
+                "Select how to handle overlapping objects": "Merge",
+                "Name the combined object set": "CombinedObjects",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[3]
+
+    assert [spec.name for spec in contract.runtime_artifact_inputs] == [
+        "Nuclei",
+        "Cells",
+    ]
+    assert [spec.name for spec in contract.outputs] == [
+        "CombineObjects_3_measurements",
+        "CombinedObjects",
+    ]
+    assert "Merge" not in {
+        spec.name
+        for spec in (*contract.inputs, *contract.runtime_artifact_inputs)
+    }
 
 
 def test_cellprofiler_symbol_table_compiles_filterobjects_relabel_rows():
@@ -918,6 +980,34 @@ def test_align_compiles_two_image_contract():
     assert "'crop_mode': 'Keep size'" in generated.code
 
 
+def test_crop_contract_marks_mask_sidecar_with_typed_role():
+    module = _module(
+        1,
+        "Crop",
+        {
+            "Select the input image": "OrigBlue",
+            "Name the output image": "CropBlue",
+            "Select the cropping shape": "Rectangle",
+            "Crop mode": "Edges",
+            "Left and right rectangle positions": "1,10",
+            "Top and bottom rectangle positions": "2,20",
+        },
+    )
+
+    table = CellProfilerSymbolTable.compile([module])
+    contract = table.contracts_by_module_num[1]
+    generated = PipelineGenerator().generate_from_registry(
+        pipeline_name="crop",
+        source_cppipe=Path("source.pipeline"),
+        modules=[module],
+    )
+    crop_mask_spec = contract.outputs[1]
+
+    assert crop_mask_spec.name == "CropBlue__crop_mask"
+    assert crop_mask_spec.sidecar_role is ArtifactSidecarRole.CROP_MASK
+    assert "ArtifactSidecarRole.CROP_MASK" in generated.code
+
+
 def test_align_compiles_additional_similar_image_contract():
     module = _module_with_records(
         1,
@@ -1130,6 +1220,8 @@ def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
     assert "'smoothing_method': 'convex_hull'" in generated.code
     assert "'filter_size_method': 'manually'" in generated.code
     assert "'manual_filter_size': 10" in generated.code
+    assert "variable_components=[VariableComponents.SITE]" in generated.code
+    assert "group_by=GroupBy.CHANNEL" in generated.code
     assert "'method': 'subtract'" in generated.code
     assert "'truncate_low': False" in generated.code
     assert "'truncate_high': True" in generated.code
@@ -1822,6 +1914,9 @@ def test_grid_variants_do_not_treat_shape_choices_as_object_symbols():
         'define_grid_automatic_2 = require_cellprofiler_function('
         '"DefineGrid", function_name="define_grid_automatic")'
     ) in generated.code
+    assert "CellProfilerInvocationOptions(" in generated.code
+    assert "grid_cycle_scope=CellProfilerGridCycleScope.EACH_CYCLE" in generated.code
+    assert "_cellprofiler_grid_cycle_scope" not in generated.code
     assert (
         'identify_objects_in_grid_with_guides_3 = require_cellprofiler_function('
         '"IdentifyObjectsInGrid", '
