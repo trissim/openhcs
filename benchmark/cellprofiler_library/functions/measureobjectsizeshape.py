@@ -11,12 +11,18 @@ import time
 from typing import Any
 from numba import njit
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelMeasurementExecution,
+    object_label_measurement_execution,
+    special_outputs,
+)
 
 from openhcs.core.runtime_semantics import (
+    dense_object_label_extent_id_domain,
     ObjectLabelRepresentation,
     ObjectShapeMeasurementFeature,
     indexed_measurement_feature_name,
+    object_shape_measurement_all_field_names,
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
@@ -52,10 +58,11 @@ def _log_profile(label: str, seconds: float, **fields: object) -> None:
 
 
 @numpy
+@object_label_measurement_execution(ObjectLabelMeasurementExecution.FULL_STACK)
 @special_outputs(
     (
         "measurements",
-        csv_materializer(fields=list(object_shape_measurement_field_names())),
+        csv_materializer(fields=list(object_shape_measurement_all_field_names())),
     )
 )
 def measure_object_size_shape(
@@ -118,7 +125,11 @@ def measure_object_size_shape(
         objects=len(measured_labels),
     )
     phase_started_at = time.perf_counter()
-    rows = _object_size_shape_rows(feature_values, measured_labels)
+    rows = _object_size_shape_rows(
+        feature_values,
+        measured_labels,
+        object_domain=dense_object_label_extent_id_domain(labels),
+    )
     _log_profile(
         "moss_rows",
         time.perf_counter() - phase_started_at,
@@ -154,6 +165,7 @@ def _measure_object_size_shape_features(
         return _measure_object_size_shape_features_3d(
             labels,
             calculate_advanced=calculate_advanced,
+            shape_backend_provider=shape_backend_provider,
         )
     raise ValueError(f"Object labels must be 2D or 3D, got {labels.ndim}D.")
 
@@ -426,6 +438,7 @@ def _object_size_shape_sparse_ijv_2d_rows(
         row = _object_size_shape_rows(
             feature_values,
             np.asarray([int(object_id)], dtype=np.int32),
+            object_domain=(int(object_id),),
         )[0]
         row["object_label"] = int(object_id)
         rows.append(row)
@@ -479,12 +492,27 @@ def _measure_object_size_shape_features_3d(
     labels: np.ndarray,
     *,
     calculate_advanced: bool,
+    shape_backend_provider: CellProfilerBackendProvider | None,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    shape_backend = ShapeMeasurementBackendStrategy.for_memory_type(
+        backend_provider=shape_backend_provider,
+    )
     props = skimage.measure.regionprops_table(
         labels,
         properties=_desired_region_properties(3, calculate_advanced),
     )
     measured_labels = np.asarray(props["label"])
+    inertia_tensor_eigvals = np.stack(
+        (
+            props["inertia_tensor_eigvals-0"],
+            props["inertia_tensor_eigvals-1"],
+            props["inertia_tensor_eigvals-2"],
+        ),
+        axis=1,
+    )
+    major_axis_length, minor_axis_length = (
+        shape_backend.axis_lengths_3d_from_inertia_eigvals(inertia_tensor_eigvals)
+    )
     surface_areas = np.zeros(len(measured_labels), dtype=float)
     for index, label in enumerate(measured_labels):
         volume = labels[
@@ -506,12 +534,8 @@ def _measure_object_size_shape_features_3d(
     features = {
         _shape_feature(ObjectShapeMeasurementFeature.VOLUME): props["area"],
         _shape_feature(ObjectShapeMeasurementFeature.SURFACE_AREA): surface_areas,
-        _shape_feature(ObjectShapeMeasurementFeature.MAJOR_AXIS_LENGTH): props[
-            "major_axis_length"
-        ],
-        _shape_feature(ObjectShapeMeasurementFeature.MINOR_AXIS_LENGTH): props[
-            "minor_axis_length"
-        ],
+        _shape_feature(ObjectShapeMeasurementFeature.MAJOR_AXIS_LENGTH): major_axis_length,
+        _shape_feature(ObjectShapeMeasurementFeature.MINOR_AXIS_LENGTH): minor_axis_length,
         _shape_feature(ObjectShapeMeasurementFeature.CENTER_X): props["centroid-2"],
         _shape_feature(ObjectShapeMeasurementFeature.CENTER_Y): props["centroid-1"],
         _shape_feature(ObjectShapeMeasurementFeature.CENTER_Z): props["centroid-0"],
@@ -618,8 +642,7 @@ def _desired_region_properties(
         "centroid",
         "bbox",
         "bbox_area",
-        "major_axis_length",
-        "minor_axis_length",
+        "inertia_tensor_eigvals",
         "extent",
         "equivalent_diameter",
         "euler_number",
@@ -632,9 +655,13 @@ def _desired_region_properties(
 def _object_size_shape_rows(
     feature_values: dict[str, np.ndarray],
     measured_labels: np.ndarray,
+    *,
+    object_domain: tuple[int, ...],
 ) -> list[dict[str, float | int]]:
     rows: list[dict[str, float | int]] = []
     measured_label_ids = tuple(int(label) for label in np.asarray(measured_labels))
+    measured_label_count = len(measured_label_ids)
+    measured_label_max = max(measured_label_ids, default=0)
     measured_label_index = {
         object_id: index for index, object_id in enumerate(measured_label_ids)
     }
@@ -647,17 +674,7 @@ def _object_size_shape_rows(
         )
         for feature_name, values in feature_values.items()
     )
-    domain_count = max(
-        max(measured_label_ids, default=0),
-        *(
-            values.shape[0]
-            for _feature_name, values, _python_values, _missing_value in feature_items
-            if values.ndim > 0
-        ),
-        0,
-    )
-    for index in range(domain_count):
-        object_label = index + 1
+    for object_label in object_domain:
         row: dict[str, float | int] = {
             "slice_index": 0,
             "object_label": object_label,
@@ -668,7 +685,8 @@ def _object_size_shape_rows(
                 value_index = _feature_value_index(
                     object_label,
                     values=values,
-                    domain_count=domain_count,
+                    measured_label_count=measured_label_count,
+                    measured_label_max=measured_label_max,
                     measured_label_index=measured_label_index,
                 )
                 if value_index is None:
@@ -686,12 +704,15 @@ def _feature_value_index(
     object_label: int,
     *,
     values: np.ndarray,
-    domain_count: int,
+    measured_label_count: int,
+    measured_label_max: int,
     measured_label_index: dict[int, int],
 ) -> int | None:
-    if values.shape[0] == domain_count:
+    if values.shape[0] == measured_label_count:
+        return measured_label_index.get(object_label)
+    if values.shape[0] >= measured_label_max:
         value_index = object_label - 1
-        return value_index if value_index < values.shape[0] else None
+        return value_index if 0 <= value_index < values.shape[0] else None
     value_index = measured_label_index.get(object_label)
     if value_index is None or value_index >= values.shape[0]:
         return None

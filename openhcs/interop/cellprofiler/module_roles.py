@@ -6,6 +6,11 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from types import MappingProxyType
 
+from .module_semantics import (
+    CELLPROFILER_MODULE_SEMANTICS,
+    CellProfilerModuleCategory,
+    cellprofiler_module_semantics,
+)
 
 class CellProfilerModuleRole(Enum):
     """Semantic role for one parsed CellProfiler module."""
@@ -16,15 +21,12 @@ class CellProfilerModuleRole(Enum):
 
 
 INFRASTRUCTURE_MODULE_NAMES = frozenset(
-    {
-        "LoadData",
-        "LoadImages",
-        "Images",
-        "Metadata",
-        "NamesAndTypes",
-        "Groups",
-        "SaveImages",
-        "ExportToSpreadsheet",
+    semantics.module_name
+    for semantics in CELLPROFILER_MODULE_SEMANTICS.values()
+    if semantics.category
+    in {
+        CellProfilerModuleCategory.INPUT,
+        CellProfilerModuleCategory.FILE_PROCESSING,
     }
 )
 INFRASTRUCTURE_MODULE_NAMES_BY_KEY = MappingProxyType(
@@ -49,9 +51,10 @@ def cellprofiler_module_role(module_name: str) -> CellProfilerModuleRoleSpec:
     normalized_name = module_name.strip()
     if not normalized_name:
         raise ValueError("CellProfiler module name cannot be empty.")
-    canonical_infrastructure_name = INFRASTRUCTURE_MODULE_NAMES_BY_KEY.get(
-        normalized_name.casefold()
-    )
+    semantics = cellprofiler_module_semantics(normalized_name)
+    canonical_infrastructure_name = None
+    if semantics is not None and semantics.is_infrastructure:
+        canonical_infrastructure_name = semantics.module_name
     role = (
         CellProfilerModuleRole.INFRASTRUCTURE
         if canonical_infrastructure_name is not None

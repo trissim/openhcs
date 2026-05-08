@@ -4,15 +4,18 @@ Original: medianfilter
 """
 
 import numpy as np
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy(contract=ProcessingContract.PURE_2D)
 def medianfilter(
     image: np.ndarray,
     window_size: int = 3,
-    mode: str = "reflect",
+    mode: str = "constant",
 ) -> np.ndarray:
     """
     Apply median filter to image for noise reduction.
@@ -32,7 +35,7 @@ def medianfilter(
               - 'nearest': Extend with nearest value (a a a a | a b c d | d d d d)
               - 'mirror': Mirror values at boundary (d c b | a b c d | c b a)
               - 'wrap': Wrap around (a b c d | a b c d | a b c d)
-              Default: 'reflect'
+              Default: 'constant', matching CellProfiler's MedianFilter module
     
     Returns:
         Median filtered image with same shape (H, W)
@@ -75,7 +78,7 @@ def _medianfilter_batch(
         window_size += 1
     if window_size <= 1:
         return list(slices_2d)
-    if kwargs.get("mode", "reflect") == "reflect":
+    if kwargs.get("mode", "constant") == "reflect":
         try:
             import cv2
 

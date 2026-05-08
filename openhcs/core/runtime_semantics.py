@@ -273,13 +273,287 @@ class ObjectLabelDomainScope(str, Enum):
         return cls.PAYLOAD
 
 
+class RuntimePlaneAxis(str, Enum):
+    """Semantic meaning of the leading plane axis on runtime array stacks."""
+
+    RUNTIME_SLICE = "runtime_slice"
+    SOURCE_BINDING = "source_binding"
+
+    @classmethod
+    def common(cls, axes: Any) -> "RuntimePlaneAxis":
+        """Return the common plane axis for merged labels."""
+        unique_axes = tuple(
+            dict.fromkeys(
+                coerce_enum(cls, axis, "RuntimePlaneAxis") for axis in axes
+            )
+        )
+        if len(unique_axes) != 1:
+            raise ValueError(
+                "Cannot merge object-label stacks with different plane-axis semantics: "
+                f"{unique_axes!r}."
+            )
+        return unique_axes[0]
+
+
+class RuntimePlaneProjectionScope(str, Enum):
+    """Execution scope that determines whether a runtime slice is selectable."""
+
+    STACK = "stack"
+    GROUP = "group"
+
+
+class RuntimePlaneProjection(ABC):
+    """Nominal runtime-plane selection for one callable invocation."""
+
+    scope: ClassVar[RuntimePlaneProjectionScope]
+
+    @classmethod
+    def stack(cls) -> "RuntimePlaneProjection":
+        """Preserve runtime-slice stacks for stack-scoped execution."""
+        return StackRuntimePlaneProjection()
+
+    @classmethod
+    def group(cls, plane_index: int) -> "RuntimePlaneProjection":
+        """Select one runtime-slice plane for grouped execution."""
+        return GroupRuntimePlaneProjection(plane_index)
+
+    @classmethod
+    def for_group_key(
+        cls,
+        group_key: Any,
+        *,
+        plane_index: int | None,
+    ) -> "RuntimePlaneProjection":
+        """Derive validated projection semantics from compiled group identity."""
+        if group_key is None:
+            if plane_index is not None:
+                raise ValueError(
+                    "Ungrouped runtime execution cannot carry a plane index."
+                )
+            return cls.stack()
+        if plane_index is None:
+            raise ValueError(
+                "Grouped runtime execution requires the OpenHCS component plane "
+                "index."
+            )
+        return cls.group(plane_index)
+
+    @abstractmethod
+    def runtime_slice_plane_index(self) -> int | None:
+        """Return selected runtime-slice plane, or None when stacks are preserved."""
+
+
+@dataclass(frozen=True, slots=True)
+class StackRuntimePlaneProjection(RuntimePlaneProjection):
+    """Stack-scoped execution preserves runtime-slice stacks."""
+
+    scope: ClassVar[RuntimePlaneProjectionScope] = RuntimePlaneProjectionScope.STACK
+
+    def runtime_slice_plane_index(self) -> None:
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class GroupRuntimePlaneProjection(RuntimePlaneProjection):
+    """Grouped execution selects one runtime-slice plane by OpenHCS group order."""
+
+    plane_index: int
+    scope: ClassVar[RuntimePlaneProjectionScope] = RuntimePlaneProjectionScope.GROUP
+
+    def __post_init__(self) -> None:
+        plane_index = int(self.plane_index)
+        if plane_index < 0:
+            raise ValueError(
+                "GroupRuntimePlaneProjection.plane_index cannot be negative."
+            )
+        object.__setattr__(self, "plane_index", plane_index)
+
+    def runtime_slice_plane_index(self) -> int:
+        return self.plane_index
+
+
+class RuntimePlaneAxisProjector(ABC):
+    """Nominal provider for execution-local runtime plane selection."""
+
+    def runtime_plane_index(
+        self,
+        axis: RuntimePlaneAxis,
+        *,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        """Return the active plane index for the requested plane axis."""
+        return RuntimePlaneAxisProjectionStrategy.for_enum_member(axis).plane_index(
+            self,
+            source_aliases=source_aliases,
+        )
+
+    @abstractmethod
+    def runtime_slice_plane_index(self) -> int | None:
+        """Return the execution-local runtime-slice plane index."""
+
+    @abstractmethod
+    def source_binding_axis_plane_index(
+        self,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        """Return the execution-local source-binding plane index."""
+
+
+class RuntimePlaneAxisProjectionStrategy(
+    EnumKeyedStrategyMixin[RuntimePlaneAxis],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Polymorphic projection policy for runtime plane axes."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "axis"
+    axis: ClassVar[RuntimePlaneAxis]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def plane_index(
+        self,
+        projector: RuntimePlaneAxisProjector,
+        *,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        """Return the current execution plane for this axis."""
+
+
+class RuntimeSlicePlaneAxisProjectionStrategy(RuntimePlaneAxisProjectionStrategy):
+    """Runtime-slice planes are selected by the current execution axis."""
+
+    axis = RuntimePlaneAxis.RUNTIME_SLICE
+
+    def plane_index(
+        self,
+        projector: RuntimePlaneAxisProjector,
+        *,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        return projector.runtime_slice_plane_index()
+
+
+class SourceBindingPlaneAxisProjectionStrategy(RuntimePlaneAxisProjectionStrategy):
+    """Source-binding planes are selected by source alias bindings."""
+
+    axis = RuntimePlaneAxis.SOURCE_BINDING
+
+    def plane_index(
+        self,
+        projector: RuntimePlaneAxisProjector,
+        *,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        return projector.source_binding_axis_plane_index(source_aliases)
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectLabelDomain:
     """Declared object-label identity domain metadata."""
 
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
+    declared_object_id_domains: tuple[tuple[int, ...], ...] = ()
     scope: ObjectLabelDomainScope = ObjectLabelDomainScope.PAYLOAD
+
+    def __post_init__(self) -> None:
+        if self.declared_object_count is not None:
+            count = int(self.declared_object_count)
+            if count < 0:
+                raise ValueError("ObjectLabelDomain.declared_object_count cannot be negative.")
+            object.__setattr__(self, "declared_object_count", count)
+        object.__setattr__(
+            self,
+            "declared_object_ids",
+            self._normalize_ids(self.declared_object_ids, "declared_object_ids"),
+        )
+        object.__setattr__(
+            self,
+            "declared_object_id_domains",
+            tuple(
+                self._normalize_ids(domain, "declared_object_id_domains")
+                for domain in self.declared_object_id_domains
+            ),
+        )
+        object.__setattr__(
+            self,
+            "scope",
+            coerce_enum(ObjectLabelDomainScope, self.scope, "ObjectLabelDomain.scope"),
+        )
+
+    @staticmethod
+    def _normalize_ids(ids: tuple[int, ...] | list[int], field_name: str) -> tuple[int, ...]:
+        normalized = tuple(int(object_id) for object_id in ids)
+        if any(object_id <= 0 for object_id in normalized):
+            raise ValueError(f"ObjectLabelDomain.{field_name} IDs must be positive.")
+        return tuple(sorted(dict.fromkeys(normalized)))
+
+    def explicit_id_domain(self) -> tuple[int, ...] | None:
+        """Return this declaration as IDs, or ``None`` if it is undeclared."""
+        if self.declared_object_ids:
+            return self.declared_object_ids
+        if self.declared_object_count is not None:
+            return tuple(range(1, self.declared_object_count + 1))
+        return None
+
+    @classmethod
+    def explicit_plane_id_domains(
+        cls,
+        domains: Iterable["ObjectLabelDomain"],
+    ) -> tuple[tuple[int, ...], ...]:
+        """Return per-plane declared IDs, preserving undeclared domains as absent."""
+        plane_domains: list[tuple[int, ...]] = []
+        saw_declared = False
+        for domain in domains:
+            if domain.declared_object_id_domains:
+                saw_declared = True
+                plane_domains.extend(domain.declared_object_id_domains)
+                continue
+            id_domain = domain.explicit_id_domain()
+            if id_domain is None:
+                if saw_declared:
+                    raise ValueError(
+                        "Cannot combine declared and undeclared object-label "
+                        "plane domains."
+                    )
+                plane_domains.append(())
+                continue
+            saw_declared = True
+            plane_domains.append(id_domain)
+        if not saw_declared:
+            return ()
+        if any(not domain for domain in plane_domains):
+            raise ValueError(
+                "Cannot combine declared and undeclared object-label plane domains."
+            )
+        return tuple(plane_domains)
+
+    def project_slice(self, slice_index: int, slice_count: int) -> "ObjectLabelDomain":
+        """Return the object-label domain carried by one PURE_2D slice."""
+        normalized_index = int(slice_index)
+        normalized_count = int(slice_count)
+        if normalized_count <= 0:
+            raise ValueError("Object-label slice_count must be positive.")
+        if normalized_index < 0 or normalized_index >= normalized_count:
+            raise ValueError(
+                f"Object-label slice_index {normalized_index} is outside "
+                f"slice_count {normalized_count}."
+            )
+        if not self.declared_object_id_domains:
+            return self
+        if len(self.declared_object_id_domains) != normalized_count:
+            raise ValueError(
+                "Plane-scoped object-label domains must match PURE_2D slice "
+                f"count: {len(self.declared_object_id_domains)} domains for "
+                f"{normalized_count} slices."
+            )
+        return ObjectLabelDomain(
+            declared_object_ids=self.declared_object_id_domains[normalized_index],
+            scope=ObjectLabelDomainScope.PLANE,
+        )
 
 
 class ObjectLabelDomainMetadata(ABC):
@@ -288,6 +562,143 @@ class ObjectLabelDomainMetadata(ABC):
     @abstractmethod
     def object_label_domain(self) -> ObjectLabelDomain:
         """Return the declared object-label identity domain."""
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelMeasurementValues:
+    """Numeric measurements bound to explicit object-label identities."""
+
+    object_ids: tuple[int, ...]
+    values: np.ndarray
+
+    def __post_init__(self) -> None:
+        object_ids = ObjectLabelDomain._normalize_ids(
+            self.object_ids,
+            "ObjectLabelMeasurementValues.object_ids",
+        )
+        values = np.asarray(self.values, dtype=np.float64).reshape(-1)
+        if len(object_ids) != values.size:
+            raise ValueError(
+                "ObjectLabelMeasurementValues requires one value per object ID, "
+                f"got {len(object_ids)} IDs and {values.size} values."
+            )
+        object.__setattr__(self, "object_ids", object_ids)
+        object.__setattr__(self, "values", values)
+
+    @classmethod
+    def from_label_indexed_values(
+        cls,
+        object_ids: Iterable[int],
+        values: Any,
+    ) -> "ObjectLabelMeasurementValues":
+        """Bind dense label-indexed values where index ``label_id - 1``."""
+        normalized_ids = ObjectLabelDomain._normalize_ids(
+            tuple(object_ids),
+            "ObjectLabelMeasurementValues.object_ids",
+        )
+        source_values = np.asarray(values, dtype=np.float64).reshape(-1)
+        bound_values = np.array(
+            [
+                source_values[object_id - 1]
+                if object_id - 1 < source_values.size
+                else np.nan
+                for object_id in normalized_ids
+            ],
+            dtype=np.float64,
+        )
+        return cls(normalized_ids, bound_values)
+
+    @classmethod
+    def from_positional_values(
+        cls,
+        object_ids: Iterable[int],
+        values: Any,
+    ) -> "ObjectLabelMeasurementValues":
+        """Bind values that are already ordered like ``object_ids``."""
+        normalized_ids = ObjectLabelDomain._normalize_ids(
+            tuple(object_ids),
+            "ObjectLabelMeasurementValues.object_ids",
+        )
+        source_values = np.asarray(values, dtype=np.float64).reshape(-1)
+        bound_values = np.full(len(normalized_ids), np.nan, dtype=np.float64)
+        copied = min(source_values.size, bound_values.size)
+        if copied:
+            bound_values[:copied] = source_values[:copied]
+        return cls(normalized_ids, bound_values)
+
+    @classmethod
+    def from_value_mapping(
+        cls,
+        object_ids: Iterable[int],
+        values_by_object_id: Mapping[int, float],
+    ) -> "ObjectLabelMeasurementValues":
+        """Bind sparse object-id keyed values to an explicit object domain."""
+        normalized_ids = ObjectLabelDomain._normalize_ids(
+            tuple(object_ids),
+            "ObjectLabelMeasurementValues.object_ids",
+        )
+        return cls(
+            normalized_ids,
+            np.array(
+                [
+                    float(values_by_object_id.get(object_id, np.nan))
+                    for object_id in normalized_ids
+                ],
+                dtype=np.float64,
+            ),
+        )
+
+    def __len__(self) -> int:
+        return len(self.object_ids)
+
+    def ids_within_limits(
+        self,
+        *,
+        min_value: float | None,
+        max_value: float | None,
+        use_minimum: bool,
+        use_maximum: bool,
+    ) -> tuple[int, ...]:
+        """Return object IDs whose finite values satisfy configured bounds."""
+        if not self.object_ids:
+            return ()
+        hits = np.isfinite(self.values)
+        if use_minimum and min_value is not None:
+            hits[self.values < min_value] = False
+        if use_maximum and max_value is not None:
+            hits[self.values > max_value] = False
+        return tuple(
+            object_id
+            for object_id, hit in zip(self.object_ids, hits, strict=True)
+            if bool(hit)
+        )
+
+    def extremum_id(self, *, keep_max: bool) -> int | None:
+        """Return the object ID with the finite minimum or maximum value."""
+        if not self.object_ids:
+            return None
+        finite_indexes = np.flatnonzero(np.isfinite(self.values))
+        if finite_indexes.size == 0:
+            return None
+        finite_values = self.values[finite_indexes]
+        selected_index = finite_indexes[
+            int(np.argmax(finite_values) if keep_max else np.argmin(finite_values))
+        ]
+        return self.object_ids[int(selected_index)]
+
+    def dense_label_indexed(
+        self,
+        *,
+        max_label: int | None = None,
+        fill_value: float = np.nan,
+    ) -> np.ndarray:
+        """Return values as a dense ``label_id - 1`` indexed vector."""
+        largest_id = max(self.object_ids, default=0)
+        output_size = max(largest_id, int(max_label or 0))
+        output = np.full(output_size, fill_value, dtype=np.float64)
+        for object_id, value in zip(self.object_ids, self.values, strict=True):
+            output[object_id - 1] = value
+        return output
 
 
 class ObjectLabelIdDomainStrategy(
@@ -370,6 +781,7 @@ class ObjectLabelPlaneDomainStrategy(
         *,
         declared_object_count: int | None,
         declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         """Return the object-id domain attached to each dense measurement plane."""
 
@@ -379,12 +791,14 @@ class ObjectLabelPlaneDomainStrategy(
         *,
         declared_object_count: int | None,
         declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         """Return object-id domains for identity rows represented by the payload."""
         return self.plane_domains(
             labels,
             declared_object_count=declared_object_count,
             declared_object_ids=declared_object_ids,
+            declared_object_id_domains=declared_object_id_domains,
         )
 
 
@@ -399,9 +813,12 @@ class PayloadObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
         *,
         declared_object_count: int | None,
         declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         import numpy as np
 
+        if declared_object_id_domains:
+            return declared_object_id_domains
         label_array = np.asarray(labels)
         plane_count = 1 if label_array.ndim <= 2 else label_array.shape[0]
         domain = dense_object_label_id_domain(
@@ -417,7 +834,10 @@ class PayloadObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
         *,
         declared_object_count: int | None,
         declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
+        if declared_object_id_domains:
+            return declared_object_id_domains
         return (
             dense_object_label_id_domain(
                 labels,
@@ -428,7 +848,7 @@ class PayloadObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
 
 
 class PlaneObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
-    """Plane-scope declarations are re-derived from each dense label plane."""
+    """Plane-scope declarations apply to one 2D plane or are re-derived per stack plane."""
 
     scope = ObjectLabelDomainScope.PLANE
 
@@ -438,10 +858,28 @@ class PlaneObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
         *,
         declared_object_count: int | None,
         declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         import numpy as np
 
         label_array = np.asarray(labels)
+        if declared_object_id_domains:
+            plane_count = 1 if label_array.ndim <= 2 else label_array.shape[0]
+            if len(declared_object_id_domains) != plane_count:
+                raise ValueError(
+                    "Plane-scoped object-label domains must match dense label "
+                    f"plane count: {len(declared_object_id_domains)} domains for "
+                    f"{plane_count} planes."
+                )
+            return declared_object_id_domains
+        if declared_object_count is not None or declared_object_ids:
+            plane_count = 1 if label_array.ndim <= 2 else label_array.shape[0]
+            domain = dense_object_label_id_domain(
+                labels,
+                declared_object_count=declared_object_count,
+                declared_object_ids=declared_object_ids,
+            )
+            return (domain,) * plane_count
         if label_array.ndim <= 2:
             return (dense_object_label_id_domain(labels),)
         return tuple(dense_object_label_id_domain(plane) for plane in label_array)
@@ -452,6 +890,15 @@ class SpatialGridOrdering(str, Enum):
 
     BY_ROWS = "rows"
     BY_COLUMNS = "columns"
+
+
+class SpatialGridOrigin(str, Enum):
+    """Corner used as the numbering origin for a spatial grid."""
+
+    TOP_LEFT = "top_left"
+    BOTTOM_LEFT = "bottom_left"
+    TOP_RIGHT = "top_right"
+    BOTTOM_RIGHT = "bottom_right"
 
 
 class MeasurementScope(str, Enum):
@@ -493,6 +940,7 @@ class ObjectMeasurementFeatureRole(str, Enum):
     IDENTIFIER = "identifier"
     LOCATION = "location"
     SHAPE_DESCRIPTOR = "shape_descriptor"
+    ZERNIKE_DESCRIPTOR = "zernike_descriptor"
 
 
 class MeasurementStatistic(str, Enum):
@@ -561,6 +1009,14 @@ class ObjectShapeMeasurementFeature(str, Enum):
     ZERNIKE = "Zernike"
 
 
+class ObjectZernikeDescriptorFeature(str, Enum):
+    """Canonical object Zernike descriptor families."""
+
+    SHAPE = "zernike"
+    INTENSITY_MAGNITUDE = "zernike_magnitude"
+    INTENSITY_PHASE = "zernike_phase"
+
+
 class MeasurementRowAxisField(str, Enum):
     """Canonical row-axis fields for long/tall measurement tables."""
 
@@ -606,6 +1062,47 @@ def indexed_measurement_feature_name(
     return "_".join((feature.value, *(str(int(index)) for index in indices)))
 
 
+@dataclass(frozen=True, slots=True)
+class IndexedObjectZernikeDescriptor:
+    """Parsed identity for an indexed object Zernike descriptor feature."""
+
+    family: ObjectZernikeDescriptorFeature
+    degree: int
+    repetition: int
+
+    @classmethod
+    def from_feature_name(
+        cls,
+        feature_name: str,
+    ) -> "IndexedObjectZernikeDescriptor | None":
+        normalized_parts = tuple(
+            part
+            for part in str(feature_name).strip().lower().replace("-", "_").split("_")
+            if part
+        )
+        for family in ObjectZernikeDescriptorFeature:
+            family_parts = tuple(
+                part
+                for part in family.value.split("_")
+                if part
+            )
+            family_prefixes = (family_parts, ("".join(family_parts),))
+            for family_prefix in family_prefixes:
+                if len(normalized_parts) != len(family_prefix) + 2:
+                    continue
+                if normalized_parts[: len(family_prefix)] != family_prefix:
+                    continue
+                degree_text, repetition_text = normalized_parts[-2:]
+                if not degree_text.isdecimal() or not repetition_text.isdecimal():
+                    continue
+                return cls(
+                    family=family,
+                    degree=int(degree_text),
+                    repetition=int(repetition_text),
+                )
+        return None
+
+
 def object_shape_measurement_field_names(
     *,
     dimensions: int = 2,
@@ -631,6 +1128,37 @@ def object_shape_measurement_field_names(
         if calculate_advanced:
             fields.append(ObjectShapeMeasurementFeature.SOLIDITY.value)
     return tuple(dict.fromkeys(fields))
+
+
+def object_shape_measurement_all_field_names(
+    *,
+    calculate_advanced: bool = True,
+    calculate_zernikes: bool = True,
+    object_id_field: str = "object_label",
+    slice_index_field: str = "slice_index",
+) -> tuple[str, ...]:
+    """Return the union schema for object-shape tables that may emit 2D or 3D rows."""
+
+    return tuple(
+        dict.fromkeys(
+            (
+                *object_shape_measurement_field_names(
+                    dimensions=2,
+                    calculate_advanced=calculate_advanced,
+                    calculate_zernikes=calculate_zernikes,
+                    object_id_field=object_id_field,
+                    slice_index_field=slice_index_field,
+                ),
+                *object_shape_measurement_field_names(
+                    dimensions=3,
+                    calculate_advanced=calculate_advanced,
+                    calculate_zernikes=calculate_zernikes,
+                    object_id_field=object_id_field,
+                    slice_index_field=slice_index_field,
+                ),
+            )
+        )
+    )
 
 
 _OBJECT_SHAPE_STANDARD_2D_FIELDS = (
@@ -847,6 +1375,66 @@ class ParentChildRelationshipPayload:
         object.__setattr__(self, "child_ids", child_ids)
         object.__setattr__(self, "slice_indices", slice_indices)
         object.__setattr__(self, "slice_count", slice_count)
+
+
+class ObjectLabelLineageGeometry(str, Enum):
+    """Geometry relation used to derive parent-child label lineage."""
+
+    SHARED_GEOMETRY = "shared_geometry"
+    IDENTITY_DOMAIN = "identity_domain"
+
+
+class ObjectLabelLineageStrategy(
+    EnumKeyedStrategyMixin[ObjectLabelLineageGeometry],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Derive parent-child object lineage from two dense label artifacts."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    strategy_key: ClassVar[ObjectLabelLineageGeometry | None] = None
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def payload(
+        self,
+        parent_labels: Any,
+        child_labels: Any,
+    ) -> ParentChildRelationshipPayload:
+        """Return parent-child ids for the strategy's geometry contract."""
+
+
+class SharedGeometryObjectLabelLineageStrategy(ObjectLabelLineageStrategy):
+    """Use spatial overlap when parent and child labels share a geometry."""
+
+    strategy_key = ObjectLabelLineageGeometry.SHARED_GEOMETRY
+
+    def payload(
+        self,
+        parent_labels: Any,
+        child_labels: Any,
+    ) -> ParentChildRelationshipPayload:
+        return object_label_parent_child_payload(parent_labels, child_labels)
+
+
+class IdentityDomainObjectLabelLineageStrategy(ObjectLabelLineageStrategy):
+    """Use preserved label ids when a transform changes label geometry."""
+
+    strategy_key = ObjectLabelLineageGeometry.IDENTITY_DOMAIN
+
+    def payload(
+        self,
+        parent_labels: Any,
+        child_labels: Any,
+    ) -> ParentChildRelationshipPayload:
+        parent_ids = set(dense_object_label_id_domain(parent_labels))
+        child_ids = tuple(dense_object_label_id_domain(child_labels))
+        related_ids = tuple(object_id for object_id in child_ids if object_id in parent_ids)
+        return ParentChildRelationshipPayload(
+            parent_ids=related_ids,
+            child_ids=related_ids,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1631,6 +2219,18 @@ def dense_object_label_present_ids(labels: Any) -> tuple[int, ...]:
     return ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
 
 
+def dense_object_label_extent_id_domain(labels: Any) -> tuple[int, ...]:
+    """Return the dense positive ID extent materially represented by labels.
+
+    Declared domains describe semantic object identity. Dense measurement
+    producers that need CellProfiler-style missing rows should instead use the
+    material label extent so gaps inside ``1..max(label)`` become explicit
+    missing measurements without fabricating rows for an external grid domain.
+    """
+    max_present_id = ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
+    return tuple(range(1, max_present_id + 1))
+
+
 def dense_object_label_max_present_id(labels: Any) -> int:
     """Return the largest positive object-label ID materially present."""
     return ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
@@ -1641,6 +2241,7 @@ def dense_object_label_plane_id_domains(
     *,
     declared_object_count: int | None = None,
     declared_object_ids: tuple[int, ...] | list[int] | None = None,
+    declared_object_id_domains: tuple[tuple[int, ...], ...] = (),
     domain_scope: ObjectLabelDomainScope | None = None,
 ) -> tuple[tuple[int, ...], ...]:
     """Return object-id domains for each dense object-label measurement plane.
@@ -1656,6 +2257,7 @@ def dense_object_label_plane_id_domains(
         else ObjectLabelDomain(
             declared_object_count=declared_object_count,
             declared_object_ids=tuple(declared_object_ids or ()),
+            declared_object_id_domains=declared_object_id_domains,
         )
     )
     resolved_scope = domain_scope or payload_domain.scope
@@ -1663,8 +2265,17 @@ def dense_object_label_plane_id_domains(
         resolved_scope,
     ).plane_domains(
         labels,
-        declared_object_count=declared_object_count,
-        declared_object_ids=declared_object_ids,
+        declared_object_count=(
+            declared_object_count
+            if declared_object_count is not None
+            else payload_domain.declared_object_count
+        ),
+        declared_object_ids=(
+            declared_object_ids
+            if declared_object_ids is not None
+            else payload_domain.declared_object_ids
+        ),
+        declared_object_id_domains=payload_domain.declared_object_id_domains,
     )
 
 
@@ -1673,6 +2284,7 @@ def dense_object_label_identity_domains(
     *,
     declared_object_count: int | None = None,
     declared_object_ids: tuple[int, ...] | list[int] | None = None,
+    declared_object_id_domains: tuple[tuple[int, ...], ...] = (),
     domain_scope: ObjectLabelDomainScope | None = None,
 ) -> tuple[tuple[int, ...], ...]:
     """Return object-id domains for object identity rows represented by labels."""
@@ -1682,6 +2294,7 @@ def dense_object_label_identity_domains(
         else ObjectLabelDomain(
             declared_object_count=declared_object_count,
             declared_object_ids=tuple(declared_object_ids or ()),
+            declared_object_id_domains=declared_object_id_domains,
         )
     )
     resolved_scope = domain_scope or payload_domain.scope
@@ -1689,8 +2302,17 @@ def dense_object_label_identity_domains(
         resolved_scope,
     ).identity_domains(
         labels,
-        declared_object_count=declared_object_count,
-        declared_object_ids=declared_object_ids,
+        declared_object_count=(
+            declared_object_count
+            if declared_object_count is not None
+            else payload_domain.declared_object_count
+        ),
+        declared_object_ids=(
+            declared_object_ids
+            if declared_object_ids is not None
+            else payload_domain.declared_object_ids
+        ),
+        declared_object_id_domains=payload_domain.declared_object_id_domains,
     )
 
 
@@ -1804,6 +2426,35 @@ def object_label_parent_child_payload(
         parent_ids=tuple(int(parent_id) for parent_id in parent_ids_array),
         child_ids=tuple(int(child_id) for child_id in child_ids_array),
     )
+
+
+def object_label_lineage_payload(
+    parent_labels: Any,
+    child_labels: Any,
+) -> ParentChildRelationshipPayload:
+    """Derive typed parent-child lineage for object-label transforms.
+
+    Shared-geometry transforms use spatial dominance. Geometry-changing
+    transforms use preserved object ids, which is the only nominal identity that
+    survives nearest-neighbor label resizing without inventing spatial overlap.
+    """
+    geometry = object_label_lineage_geometry(parent_labels, child_labels)
+    return ObjectLabelLineageStrategy.for_enum_member(geometry).payload(
+        parent_labels,
+        child_labels,
+    )
+
+
+def object_label_lineage_geometry(
+    parent_labels: Any,
+    child_labels: Any,
+) -> ObjectLabelLineageGeometry:
+    """Classify the geometry contract for object-label lineage derivation."""
+    try:
+        aligned_dense_object_label_arrays(parent_labels, child_labels)
+    except ValueError:
+        return ObjectLabelLineageGeometry.IDENTITY_DOMAIN
+    return ObjectLabelLineageGeometry.SHARED_GEOMETRY
 
 
 @dataclass(frozen=True, slots=True)

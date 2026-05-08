@@ -9,6 +9,7 @@ from openhcs.interop.cellprofiler.measurement_dialect import (
     BENCHMARK_CACHE_DOMAINS,
     CELLPROFILER_FEATURE_NUMERIC_TOLERANCES,
     CELLPROFILER_MEASUREMENT_DIALECT,
+    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
     cellprofiler_runtime_equivalence_policy,
 )
 from openhcs.interop.cellprofiler.import_records import (
@@ -31,6 +32,14 @@ from openhcs.interop.cellprofiler.module_roles import (
     CellProfilerModuleRole,
     CellProfilerModuleRoleSpec,
     cellprofiler_module_role,
+)
+from openhcs.interop.cellprofiler.module_semantics import (
+    CELLPROFILER_MODULE_SEMANTICS,
+    CELLPROFILER_MODULE_SEMANTICS_BY_KEY,
+    CellProfilerModuleCategory,
+    CellProfilerModuleDimensionality,
+    CellProfilerModuleSemantics,
+    cellprofiler_module_semantics,
 )
 from openhcs.interop.cellprofiler.parser import (
     CPPipeParser,
@@ -75,10 +84,15 @@ __all__ = (
     "CELLPROFILER_FEATURE_NUMERIC_TOLERANCES",
     "CELLPROFILER_MEASUREMENT_DIALECT",
     "CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG",
+    "CELLPROFILER_MODULE_SEMANTICS",
+    "CELLPROFILER_MODULE_SEMANTICS_BY_KEY",
     "CPPipeParser",
+    "CellProfilerModuleCategory",
+    "CellProfilerModuleDimensionality",
     "CellProfilerModuleReference",
     "CellProfilerModuleRole",
     "CellProfilerModuleRoleSpec",
+    "CellProfilerModuleSemantics",
     "CellProfilerImageExecutionContext",
     "CellProfilerImageRequest",
     "CellProfilerInvocationRequest",
@@ -102,6 +116,7 @@ __all__ = (
     "SetupModuleCompiler",
     "cellprofiler_runtime_equivalence_policy",
     "cellprofiler_module_role",
+    "cellprofiler_module_semantics",
     "clear_cellprofiler_dialect_compiler",
     "compile_image_schema",
     "coerce_cellprofiler_measurement_target_scope",

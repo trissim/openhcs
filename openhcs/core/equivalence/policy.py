@@ -351,6 +351,10 @@ class RuntimeEquivalencePolicy:
     object_boundary_jitter_max_unstable_fraction: NonNegativeFloat = 0.01
     object_boundary_jitter_aggregate_abs_tolerance: NonNegativeFloat = 0.05
     object_boundary_jitter_aggregate_rel_tolerance: NonNegativeFloat = 0.0
+    allow_unstable_zernike_descriptors: bool = False
+    zernike_descriptor_magnitude_abs_tolerance: NonNegativeFloat = 1e-6
+    zernike_descriptor_phase_abs_tolerance: NonNegativeFloat = 0.35
+    zernike_descriptor_rel_tolerance: NonNegativeFloat = 0.0
     compare_table_values: bool = True
     compare_image_pixels: bool = True
     image_abs_tolerance: NonNegativeFloat = 0.0

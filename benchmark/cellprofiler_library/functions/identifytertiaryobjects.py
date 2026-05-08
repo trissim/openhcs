@@ -14,7 +14,13 @@ from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
     aligned_dense_object_label_arrays,
     aligned_dense_object_label_stack_alignment,
+    dense_object_label_id_domain,
     object_label_parent_child_payload,
+)
+from openhcs.core.runtime_values import (
+    ObjectLabelPayload,
+    object_label_dense_array,
+    object_label_payload_with_dense_labels,
 )
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.outlines import ObjectOutlineBackendStrategy
@@ -57,7 +63,7 @@ def _positive_label_mean_area(labels: np.ndarray) -> tuple[int, float]:
 
 
 def _parent_child_relationship(
-    parent_labels: np.ndarray,
+    parent_labels: np.ndarray | ObjectLabelPayload,
     child_labels: np.ndarray,
     *,
     parent_context_labels: np.ndarray | None = None,
@@ -213,8 +219,8 @@ def _tertiary_stack_numba(
 @numpy
 def identify_tertiary_objects(
     image: np.ndarray,
-    primary_labels: np.ndarray,
-    secondary_labels: np.ndarray,
+    primary_labels: np.ndarray | ObjectLabelPayload,
+    secondary_labels: np.ndarray | ObjectLabelPayload,
     shrink_primary: bool = True,
     outline_backend_provider: CellProfilerBackendProvider | None = None,
 ) -> Tuple[
@@ -260,64 +266,51 @@ def identify_tertiary_objects(
         ref_image = image
     
     # Ensure labels are 2D
-    if primary_labels.ndim == 3:
-        primary_labels = primary_labels[0]
-    if secondary_labels.ndim == 3:
-        secondary_labels = secondary_labels[0]
-    primary_labels, secondary_labels = aligned_dense_object_label_arrays(
-        primary_labels,
-        secondary_labels,
+    primary_payload = primary_labels
+    secondary_payload = secondary_labels
+    primary_array = object_label_dense_array(primary_labels, dtype=np.int32)
+    secondary_array = object_label_dense_array(secondary_labels, dtype=np.int32)
+    if primary_array.ndim == 3:
+        primary_array = primary_array[0]
+    if secondary_array.ndim == 3:
+        secondary_array = secondary_array[0]
+    primary_array, secondary_array = aligned_dense_object_label_arrays(
+        primary_array,
+        secondary_array,
     )
     
     # Ensure shapes match
-    if primary_labels.shape != secondary_labels.shape:
+    if primary_array.shape != secondary_array.shape:
         raise ValueError(
             f"Primary and secondary label shapes must match. "
-            f"Got {primary_labels.shape} vs {secondary_labels.shape}"
+            f"Got {primary_array.shape} vs {secondary_array.shape}"
         )
     
     # Find outlines of primary objects
     primary_outline = _outline(
-        primary_labels,
+        primary_array,
         outline_backend_provider=outline_backend_provider,
     )
     
     # Create tertiary labels by subtracting primary from secondary
-    tertiary_labels = secondary_labels.copy()
+    tertiary_labels = secondary_array.copy()
     
     if shrink_primary:
         # Keep pixels that are either background OR on the outline of primary
         # This shrinks primary objects by 1 pixel
-        primary_mask = np.logical_or(primary_labels == 0, primary_outline > 0)
+        primary_mask = np.logical_or(primary_array == 0, primary_outline > 0)
     else:
         # Only keep pixels where primary is background
-        primary_mask = primary_labels == 0
+        primary_mask = primary_array == 0
     
     # Remove primary object pixels from tertiary
     tertiary_labels[~primary_mask] = 0
     
-    # Check for labels that were completely removed and restore a single pixel
-    secondary_unique_labels, secondary_unique_indices = np.unique(
-        secondary_labels, return_index=True
-    )
-    tertiary_unique_labels = np.unique(tertiary_labels)
-    missing_labels = np.setdiff1d(secondary_unique_labels, tertiary_unique_labels)
-    
-    for missing_label in missing_labels:
-        if missing_label == 0:
-            continue
-        # Add a single pixel to preserve the object
-        idx = np.where(secondary_unique_labels == missing_label)[0][0]
-        first_row, first_col = np.unravel_index(
-            secondary_unique_indices[idx], secondary_labels.shape
-        )
-        tertiary_labels[first_row, first_col] = missing_label
-    
     object_count, mean_area = _positive_label_mean_area(tertiary_labels)
     
     # Count unique parent objects
-    primary_parent_count = _positive_label_count(primary_labels)
-    secondary_parent_count = _positive_label_count(secondary_labels)
+    primary_parent_count = _positive_label_count(primary_array)
+    secondary_parent_count = _positive_label_count(secondary_array)
     
     stats = TertiaryObjectStats(
         slice_index=0,
@@ -335,14 +328,18 @@ def identify_tertiary_objects(
     
     return (
         image,
-        _parent_child_relationship(secondary_labels, tertiary_labels),
+        _parent_child_relationship(secondary_payload, tertiary_labels),
         _parent_child_relationship(
-            primary_labels,
+            primary_payload,
             tertiary_labels,
-            parent_context_labels=secondary_labels,
+            parent_context_labels=secondary_array,
         ),
         stats,
-        tertiary_labels_out,
+        object_label_payload_with_dense_labels(
+            secondary_payload,
+            tertiary_labels_out,
+            declared_object_ids=dense_object_label_id_domain(secondary_payload),
+        ),
     )
 
 

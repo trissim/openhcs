@@ -8,6 +8,9 @@ Rescales the intensity range of an image using various methods.
 import numpy as np
 from typing import Tuple, Optional
 from enum import Enum
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -31,6 +34,7 @@ class AutomaticHigh(Enum):
     EACH_IMAGE = "each_image"
 
 
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
 @numpy(contract=ProcessingContract.PURE_2D)
 def rescale_intensity(
     image: np.ndarray,
@@ -61,6 +65,10 @@ def rescale_intensity(
         Rescaled image array (H, W)
     """
     from skimage.exposure import rescale_intensity as skimage_rescale
+
+    rescale_method = _coerce_function_enum(RescaleMethod, rescale_method)
+    automatic_low = _coerce_function_enum(AutomaticLow, automatic_low)
+    automatic_high = _coerce_function_enum(AutomaticHigh, automatic_high)
     
     data = image.astype(np.float64)
     

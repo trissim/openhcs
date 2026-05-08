@@ -15,6 +15,7 @@ from openhcs.core.equivalence.keys import (
 from openhcs.core.equivalence.policy import normalize_runtime_identifier
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import (
+    IndexedObjectZernikeDescriptor,
     MeasurementStatistic,
     MeasurementScope,
     ObjectCoreMeasurementFeature,
@@ -164,6 +165,20 @@ class ObjectShapeDescriptorFeatureRoleStrategy(ObjectMeasurementFeatureRoleStrat
                     for prefix in self.indexed_feature_prefixes
                 )
             )
+        )
+
+
+class ObjectZernikeDescriptorFeatureRoleStrategy(ObjectMeasurementFeatureRoleStrategy):
+    """Boundary-sensitive object Zernike descriptor features."""
+
+    role = ObjectMeasurementFeatureRole.ZERNIKE_DESCRIPTOR
+
+    def matches(self, key: RuntimeMeasurementFeatureKey) -> bool:
+        return (
+            key.subject.scope is MeasurementScope.OBJECT
+            and key.statistic == MeasurementStatistic.VALUE.value
+            and IndexedObjectZernikeDescriptor.from_feature_name(key.feature_name)
+            is not None
         )
 
 

@@ -7,32 +7,14 @@ defines the location of a grid that can be used by modules downstream.
 
 import numpy as np
 from typing import Tuple
-from enum import Enum
 from numba import njit
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
-from openhcs.core.runtime_semantics import SpatialGridOrdering
+from openhcs.core.runtime_semantics import SpatialGridOrdering, SpatialGridOrigin
 from openhcs.core.runtime_values import SpatialGrid, object_label_dense_array
 from openhcs.processing.materialization import csv_materializer
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
-
-
-class GridOrigin(Enum):
-    TOP_LEFT = "top_left"
-    BOTTOM_LEFT = "bottom_left"
-    TOP_RIGHT = "top_right"
-    BOTTOM_RIGHT = "bottom_right"
-
-
-class GridOrdering(Enum):
-    BY_ROWS = "rows"
-    BY_COLUMNS = "columns"
-
-
-class GridMode(Enum):
-    AUTOMATIC = "automatic"
-    MANUAL = "manual"
 
 
 GridInfo = SpatialGrid
@@ -59,8 +41,8 @@ def define_grid_manual(
     second_spot_y: int = 200,
     second_spot_row: int = 8,
     second_spot_col: int = 12,
-    origin: GridOrigin = GridOrigin.TOP_LEFT,
-    ordering: GridOrdering = GridOrdering.BY_ROWS,
+    origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT,
+    ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
 ) -> Tuple[np.ndarray, SpatialGrid]:
     """Define a grid manually based on two cell coordinates.
     
@@ -82,16 +64,16 @@ def define_grid_manual(
     Returns:
         Tuple of (image, GridInfo)
     """
-    origin = _coerce_function_enum(GridOrigin, origin)
-    ordering = _coerce_function_enum(GridOrdering, ordering)
+    origin = _coerce_function_enum(SpatialGridOrigin, origin)
+    ordering = _coerce_function_enum(SpatialGridOrdering, ordering)
 
     # Convert to canonical row/column (0-indexed from top-left)
     def canonical_row_col(row, col):
-        if origin in (GridOrigin.BOTTOM_LEFT, GridOrigin.BOTTOM_RIGHT):
+        if origin in (SpatialGridOrigin.BOTTOM_LEFT, SpatialGridOrigin.BOTTOM_RIGHT):
             row = grid_rows - row
         else:
             row = row - 1
-        if origin in (GridOrigin.TOP_RIGHT, GridOrigin.BOTTOM_RIGHT):
+        if origin in (SpatialGridOrigin.TOP_RIGHT, SpatialGridOrigin.BOTTOM_RIGHT):
             col = grid_columns - col
         else:
             col = col - 1
@@ -112,28 +94,37 @@ def define_grid_manual(
         y_spacing = float(first_spot_y - second_spot_y) / float(first_row_c - second_row_c)
     
     # Calculate origin location
-    x_location_of_lowest_x_spot = first_spot_x - first_col_c * x_spacing
-    y_location_of_lowest_y_spot = first_spot_y - first_row_c * y_spacing
+    x_location_of_lowest_x_spot = int(first_spot_x - first_col_c * x_spacing)
+    y_location_of_lowest_y_spot = int(first_spot_y - first_row_c * y_spacing)
     
     # Calculate total dimensions
-    total_width = abs(x_spacing) * grid_columns
-    total_height = abs(y_spacing) * grid_rows
-    
-    grid_info = SpatialGrid(
+    total_width = int(abs(x_spacing) * grid_columns)
+    total_height = int(abs(y_spacing) * grid_rows)
+    x_spacing = abs(x_spacing)
+    y_spacing = abs(y_spacing)
+    grid_topology = SpatialGrid(
         name="grid_info",
-        slice_index=0,
         rows=grid_rows,
         columns=grid_columns,
-        x_spacing=abs(x_spacing),
-        y_spacing=abs(y_spacing),
+        x_spacing=x_spacing,
+        y_spacing=y_spacing,
         x_origin=x_location_of_lowest_x_spot,
         y_origin=y_location_of_lowest_y_spot,
         total_width=total_width,
         total_height=total_height,
-        ordering=SpatialGridOrdering(ordering.value),
+        origin=origin,
+        ordering=ordering,
+        x_locations=tuple(
+            float(int(x_location_of_lowest_x_spot + index * x_spacing))
+            for index in range(grid_columns)
+        ),
+        y_locations=tuple(
+            float(int(y_location_of_lowest_y_spot + index * y_spacing))
+            for index in range(grid_rows)
+        ),
+        source_spatial_shape_yx=tuple(int(value) for value in image.shape[-2:]),
     )
-    
-    return image, grid_info
+    return image, grid_topology
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -151,8 +142,8 @@ def define_grid_automatic(
     labels: np.ndarray,
     grid_rows: int = 8,
     grid_columns: int = 12,
-    origin: GridOrigin = GridOrigin.TOP_LEFT,
-    ordering: GridOrdering = GridOrdering.BY_ROWS,
+    origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT,
+    ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
 ) -> Tuple[np.ndarray, SpatialGrid]:
     """Define a grid automatically based on previously identified objects.
     
@@ -170,8 +161,8 @@ def define_grid_automatic(
     Returns:
         Tuple of (image, GridInfo)
     """
-    origin = _coerce_function_enum(GridOrigin, origin)
-    ordering = _coerce_function_enum(GridOrdering, ordering)
+    origin = _coerce_function_enum(SpatialGridOrigin, origin)
+    ordering = _coerce_function_enum(SpatialGridOrdering, ordering)
 
     object_count, first_y, first_x, second_y, second_x = _label_centroid_extremes(
         object_label_dense_array(labels, dtype=np.int32)
@@ -180,23 +171,23 @@ def define_grid_automatic(
         raise ValueError("Need at least 2 objects to define grid automatically")
 
     # Determine row/column assignments based on origin
-    if origin in (GridOrigin.BOTTOM_LEFT, GridOrigin.BOTTOM_RIGHT):
+    if origin in (SpatialGridOrigin.BOTTOM_LEFT, SpatialGridOrigin.BOTTOM_RIGHT):
         first_row, second_row = grid_rows, 1
     else:
         first_row, second_row = 1, grid_rows
     
-    if origin in (GridOrigin.TOP_RIGHT, GridOrigin.BOTTOM_RIGHT):
+    if origin in (SpatialGridOrigin.TOP_RIGHT, SpatialGridOrigin.BOTTOM_RIGHT):
         first_col, second_col = grid_columns, 1
     else:
         first_col, second_col = 1, grid_columns
     
     # Convert to canonical coordinates
     def canonical_row_col(row, col):
-        if origin in (GridOrigin.BOTTOM_LEFT, GridOrigin.BOTTOM_RIGHT):
+        if origin in (SpatialGridOrigin.BOTTOM_LEFT, SpatialGridOrigin.BOTTOM_RIGHT):
             row = grid_rows - row
         else:
             row = row - 1
-        if origin in (GridOrigin.TOP_RIGHT, GridOrigin.BOTTOM_RIGHT):
+        if origin in (SpatialGridOrigin.TOP_RIGHT, SpatialGridOrigin.BOTTOM_RIGHT):
             col = grid_columns - col
         else:
             col = col - 1
@@ -217,28 +208,37 @@ def define_grid_automatic(
         y_spacing = (second_y - first_y) / max(grid_rows - 1, 1)
     
     # Calculate origin location
-    x_location_of_lowest_x_spot = np.floor(first_x - first_col_c * x_spacing)
-    y_location_of_lowest_y_spot = np.floor(first_y - first_row_c * y_spacing)
+    x_location_of_lowest_x_spot = int(np.floor(first_x - first_col_c * x_spacing))
+    y_location_of_lowest_y_spot = int(np.floor(first_y - first_row_c * y_spacing))
     
     # Calculate total dimensions
-    total_width = abs(x_spacing) * grid_columns
-    total_height = abs(y_spacing) * grid_rows
-    
-    grid_info = SpatialGrid(
+    total_width = int(abs(x_spacing) * grid_columns)
+    total_height = int(abs(y_spacing) * grid_rows)
+    x_spacing = abs(x_spacing)
+    y_spacing = abs(y_spacing)
+    grid_topology = SpatialGrid(
         name="grid_info",
-        slice_index=0,
         rows=grid_rows,
         columns=grid_columns,
-        x_spacing=abs(x_spacing),
-        y_spacing=abs(y_spacing),
+        x_spacing=x_spacing,
+        y_spacing=y_spacing,
         x_origin=x_location_of_lowest_x_spot,
         y_origin=y_location_of_lowest_y_spot,
         total_width=total_width,
         total_height=total_height,
-        ordering=SpatialGridOrdering(ordering.value),
+        origin=origin,
+        ordering=ordering,
+        x_locations=tuple(
+            float(int(x_location_of_lowest_x_spot + index * x_spacing))
+            for index in range(grid_columns)
+        ),
+        y_locations=tuple(
+            float(int(y_location_of_lowest_y_spot + index * y_spacing))
+            for index in range(grid_rows)
+        ),
+        source_spatial_shape_yx=tuple(int(value) for value in image.shape[-2:]),
     )
-    
-    return image, grid_info
+    return image, grid_topology
 
 
 def _label_centroid_extremes(labels: np.ndarray) -> tuple[int, float, float, float, float]:

@@ -11,7 +11,9 @@ import ast
 import importlib
 import inspect
 import logging
+import os
 from dataclasses import dataclass
+from functools import lru_cache
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping, Optional, Set, Tuple
 
@@ -294,31 +296,51 @@ def extract_import_statements(func: Callable) -> Set[str]:
         return set()
 
     try:
-        # Get the module's source file
         module = importlib.import_module(module_name)
         module_file = module.__file__
         if module_file is None:
             return set()
-
-        # Read the source code
-        with open(module_file, 'r', encoding='utf-8') as f:
-            source = f.read()
+        stat = os.stat(module_file)
     except Exception:
         # Can't get source code
         return set()
+
+    return set(
+        _extract_import_statements_from_module_file(
+            module_name,
+            module_file,
+            stat.st_mtime_ns,
+            stat.st_size,
+        )
+    )
+
+
+@lru_cache(maxsize=512)
+def _extract_import_statements_from_module_file(
+    module_name: str,
+    module_file: str,
+    mtime_ns: int,
+    size_bytes: int,
+) -> frozenset[str]:
+    del mtime_ns, size_bytes
+    try:
+        with open(module_file, 'r', encoding='utf-8') as f:
+            source = f.read()
+    except Exception:
+        return frozenset()
 
     try:
         # Parse the source code into an AST
         tree = ast.parse(source)
     except SyntaxError:
         # Can't parse the source
-        return set()
+        return frozenset()
 
     # Extract import statements using the AST visitor
     extractor = ImportStatementExtractor(module_name)
     extractor.visit(tree)
 
-    return extractor.modules
+    return frozenset(extractor.modules)
 
 class FuncStepContractValidator:
     """

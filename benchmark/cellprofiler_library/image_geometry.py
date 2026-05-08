@@ -15,6 +15,7 @@ from openhcs.core.image_shapes import (
     is_color_image_slice,
     is_color_image_stack,
     is_grayscale_image_stack,
+    is_grayscale_volume_slice,
 )
 from openhcs.core.runtime_values import image_payload_data
 
@@ -24,14 +25,21 @@ class CellProfilerPlaneGeometry:
     """One CellProfiler XY plane coordinate system."""
 
     shape: tuple[int, int]
+    spatial_rank: int = 2
 
     @classmethod
     def from_image_plane(cls, image: np.ndarray) -> "CellProfilerPlaneGeometry":
         image_array = collapse_singleton_plane_stack(np.asarray(image_payload_data(image)))
         if not hasattr(image_array, "ndim") or image_array.ndim not in {2, 3}:
             raise ValueError(
-                "CellProfiler image planes must be 2D grayscale or HWC color; "
+                "CellProfiler image planes must be 2D grayscale, ZYX grayscale, "
+                "or HWC color; "
                 f"got shape {getattr(image_array, 'shape', None)!r}."
+            )
+        if is_grayscale_volume_slice(image_array):
+            return cls(
+                tuple(int(axis) for axis in image_array.shape[-2:]),
+                spatial_rank=3,
             )
         if image_array.ndim == 3 and not is_color_image_slice(image_array):
             raise ValueError(
@@ -40,6 +48,14 @@ class CellProfilerPlaneGeometry:
             )
         return cls(tuple(int(axis) for axis in image_array.shape[:2]))
 
+    @property
+    def spatial_shape(self) -> tuple[int, ...]:
+        if self.spatial_rank == 2:
+            return self.shape
+        if self.spatial_rank == 3:
+            return self.shape
+        raise ValueError(f"Unsupported CellProfiler spatial rank {self.spatial_rank}.")
+
     def binary_mask(
         self,
         mask: np.ndarray,
@@ -47,10 +63,12 @@ class CellProfilerPlaneGeometry:
         threshold: float = 0.5,
         labels: bool = False,
     ) -> np.ndarray:
-        return align_binary_mask_to_shape(
-            binary_mask_plane(mask, threshold=threshold, labels=labels),
-            self.shape,
-        )
+        mask_array = binary_mask_plane(mask, threshold=threshold, labels=labels)
+        if self.spatial_rank == 3 and mask_array.ndim == 3:
+            return align_volume_mask_to_shape(mask_array, self.shape)
+        if self.spatial_rank == 3 and mask_array.ndim == 2:
+            return align_binary_mask_to_shape(mask_array, self.shape)
+        return align_binary_mask_to_shape(mask_array, self.shape)
 
     def label_plane(self, labels: np.ndarray) -> np.ndarray:
         return align_label_plane_to_shape(labels.astype(np.int32), self.shape)
@@ -64,11 +82,16 @@ class CellProfilerImageMaskPlane:
     mask: np.ndarray
 
     def __post_init__(self) -> None:
-        image_shape = CellProfilerPlaneGeometry.from_image_plane(self.image).shape
-        if self.mask.shape != image_shape:
+        geometry = CellProfilerPlaneGeometry.from_image_plane(self.image)
+        if tuple(self.mask.shape[-2:]) != geometry.shape:
             raise ValueError(
-                "CellProfilerImageMaskPlane mask shape must match image XY shape; "
-                f"got mask {self.mask.shape!r} for image {image_shape!r}."
+                "CellProfilerImageMaskPlane mask shape must match image spatial "
+                f"shape; got mask {self.mask.shape!r} for image {geometry.shape!r}."
+            )
+        if geometry.spatial_rank == 2 and self.mask.ndim != 2:
+            raise ValueError(
+                "CellProfilerImageMaskPlane 2D images require 2D masks; "
+                f"got mask {self.mask.shape!r}."
             )
 
 
@@ -85,6 +108,24 @@ def aligned_image_mask_planes(
     if len(image_planes) == 1 and len(mask_planes) > 1:
         image_plane = image_planes[0]
         geometry = CellProfilerPlaneGeometry.from_image_plane(image_plane)
+        if geometry.spatial_rank == 3:
+            projected_volume_mask = np.stack(
+                tuple(
+                    geometry.binary_mask(
+                        mask_plane,
+                        threshold=threshold,
+                        labels=labels,
+                    )
+                    for mask_plane in mask_planes
+                ),
+                axis=0,
+            )
+            return (
+                CellProfilerImageMaskPlane(
+                    image=image_plane,
+                    mask=projected_volume_mask,
+                ),
+            )
         projected_mask = np.any(
             np.stack(
                 tuple(
@@ -318,6 +359,19 @@ def align_binary_mask_to_shape(
     if mask.shape == shape:
         return mask.astype(bool, copy=False)
     return resize_nearest(mask.astype(np.uint8), shape).astype(bool)
+
+
+def align_volume_mask_to_shape(
+    mask: np.ndarray,
+    shape_yx: tuple[int, int],
+) -> np.ndarray:
+    """Nearest-neighbor align every Z plane of a ZYX boolean mask."""
+    if mask.shape[-2:] == shape_yx:
+        return mask.astype(bool, copy=False)
+    return np.stack(
+        tuple(align_binary_mask_to_shape(plane, shape_yx) for plane in mask),
+        axis=0,
+    )
 
 
 def align_label_plane_to_shape(

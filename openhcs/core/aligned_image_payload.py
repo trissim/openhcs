@@ -14,8 +14,11 @@ import numpy as np
 from openhcs.core.image_shapes import (
     is_color_image_slice,
     is_color_image_stack,
+    is_color_volume_stack,
     is_grayscale_image_slice,
+    is_grayscale_image_stack,
     is_grayscale_volume_slice,
+    is_grayscale_volume_stack,
     is_image_stack,
 )
 from openhcs.core.image_stack_layout import ImageStackLayout
@@ -202,6 +205,126 @@ class AlignedImageStackKwargResolver:
         if self.reference_payload is None:
             return None
         return SourceSpatialDomainAdapter.for_value(self.reference_payload)
+
+
+@dataclass(frozen=True, slots=True)
+class ImagePayloadSliceProjector:
+    """Project payload context from a parent image into one child image slice."""
+
+    mask: Any | None
+    metadata: ImagePayloadMetadata
+
+    def payload_for_slice(self, data_slice: Any, index: int) -> Any:
+        """Return a slice payload with mask and metadata in the slice domain."""
+        return image_payload_with_context(
+            data=data_slice,
+            mask=self.mask_for_slice(data_slice, index),
+            metadata=self.metadata.for_channel(index),
+        )
+
+    def mask_for_slice(self, data_slice: Any, index: int) -> Any | None:
+        """Return the parent mask projected into ``data_slice``'s domain."""
+        if self.mask is None:
+            return None
+        mask_array = np.asarray(self.mask)
+        data_array = np.asarray(data_slice)
+        data_shape = tuple(data_array.shape)
+        spatial_shape = _payload_spatial_shape(data_slice)
+        for candidate in self._mask_candidates(mask_array, index):
+            candidate_shape = tuple(candidate.shape)
+            if candidate_shape == data_shape or candidate_shape == spatial_shape:
+                return candidate
+        raise ValueError(
+            "Image payload mask cannot be projected into slice domain; "
+            f"got mask {mask_array.shape!r} for slice {data_shape!r}."
+        )
+
+    @staticmethod
+    def _mask_candidates(mask: np.ndarray, index: int) -> tuple[np.ndarray, ...]:
+        candidates: list[np.ndarray] = [mask]
+        if mask.ndim >= 3 and mask.shape[0] > index:
+            candidates.append(mask[index])
+        if mask.ndim >= 3 and mask.shape[0] == 1:
+            child = mask[0]
+            candidates.append(child)
+            if child.ndim >= 3 and child.shape[0] > index:
+                candidates.append(child[index])
+        return tuple(candidates)
+
+
+class SingletonStackImageDomainStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Project singleton OpenHCS image stacks into their contained image domain."""
+
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def project(cls, value: Any) -> Any:
+        strategy = cls.for_nominal_value(value)
+        if strategy is None:
+            return value
+        return strategy.project_value(value)
+
+    @abstractmethod
+    def project_value(self, value: Any) -> Any:
+        """Return ``value`` with a leading singleton stack axis removed when present."""
+
+
+class ArraySingletonStackImageDomainStrategy(SingletonStackImageDomainStrategy):
+    value_type = np.ndarray
+
+    def project_value(self, value: Any) -> Any:
+        if not isinstance(value, np.ndarray):
+            raise TypeError("Array singleton-stack projector requires ndarray.")
+        if _is_singleton_image_stack_array(value):
+            return value[0]
+        return value
+
+
+class ContextualSingletonStackImageDomainStrategy(SingletonStackImageDomainStrategy):
+    value_type = ImageMetadataPayload
+
+    def project_value(self, value: Any) -> Any:
+        if not isinstance(value, ImageMetadataPayload):
+            raise TypeError(
+                "Contextual singleton-stack projector requires ImageMetadataPayload."
+            )
+        projected_data = SingletonStackImageDomainStrategy.project(value.data)
+        if projected_data is value.data:
+            return value
+        return image_payload_with_context(
+            data=projected_data,
+            metadata=value.metadata.for_channel(0),
+        )
+
+
+class MaskedSingletonStackImageDomainStrategy(
+    ContextualSingletonStackImageDomainStrategy
+):
+    value_type = MaskedImagePayload
+
+    def project_value(self, value: Any) -> Any:
+        if not isinstance(value, MaskedImagePayload):
+            raise TypeError(
+                "Masked singleton-stack projector requires MaskedImagePayload."
+            )
+        projected_data = SingletonStackImageDomainStrategy.project(value.data)
+        if projected_data is value.data:
+            return value
+        return image_payload_with_context(
+            data=projected_data,
+            mask=SingletonStackImageDomainStrategy.project(value.mask),
+            metadata=value.metadata.for_channel(0),
+        )
+
+
+def project_singleton_stack_image_domain(value: Any) -> Any:
+    """Remove one leading singleton OpenHCS image-stack axis when present."""
+    return SingletonStackImageDomainStrategy.project(value)
 
 
 class AlignedImageStackKwargResolutionStrategy(
@@ -481,6 +604,79 @@ class ImagePayloadComposition:
 
 
 @dataclass(frozen=True, slots=True)
+class ImagePayloadBundleContext:
+    """Compose same-slice image bundle data, masks, and metadata together."""
+
+    image_payloads: tuple[Any, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "image_payloads", tuple(self.image_payloads))
+        if not self.image_payloads:
+            raise ValueError("ImagePayloadBundleContext.image_payloads cannot be empty.")
+
+    @classmethod
+    def from_payloads(
+        cls,
+        image_payloads: tuple[Any, ...],
+    ) -> "ImagePayloadBundleContext":
+        normalized = tuple(
+            _normalize_bundle_image_payload(payload) for payload in image_payloads
+        )
+        return cls(ImageBundleSourceDomainAligner(normalized).align())
+
+    def compose(self) -> Any:
+        composed = _compose_unmasked_image_bundle(
+            tuple(image_payload_data(payload) for payload in self.image_payloads)
+        )
+        return image_payload_with_context(
+            composed,
+            mask=self.compose_mask(composed),
+            metadata=compose_image_payload_metadata(self.image_payloads),
+        )
+
+    def compose_mask(self, composed: Any) -> Any | None:
+        combined = self.combined_mask()
+        if combined is None:
+            return None
+        if self.mask_matches_composed_payload(combined, composed):
+            return combined
+        complete_masks = self.complete_masks()
+        if complete_masks is None:
+            return combined
+        return _compose_unmasked_image_bundle(complete_masks).astype(bool, copy=False)
+
+    def combined_mask(self) -> Any | None:
+        masks = tuple(
+            mask
+            for mask in (
+                image_payload_mask(payload)
+                for payload in self.image_payloads
+            )
+            if mask is not None
+        )
+        if not masks:
+            return None
+        combined = np.asarray(masks[0], dtype=bool)
+        for mask in masks[1:]:
+            combined = np.logical_and(combined, np.asarray(mask, dtype=bool))
+        return combined
+
+    def complete_masks(self) -> tuple[Any, ...] | None:
+        masks = tuple(image_payload_mask(payload) for payload in self.image_payloads)
+        if any(mask is None for mask in masks):
+            return None
+        if len(masks) != len(self.image_payloads):
+            return None
+        return tuple(np.asarray(mask, dtype=bool) for mask in masks)
+
+    @staticmethod
+    def mask_matches_composed_payload(mask: Any, composed: Any) -> bool:
+        mask_shape = tuple(np.asarray(mask).shape)
+        composed_shape = tuple(np.asarray(composed).shape)
+        return mask_shape == composed_shape or mask_shape == composed_shape[-2:]
+
+
+@dataclass(frozen=True, slots=True)
 class AlignedImageStack:
     """Per-slice multi-image bundles aligned to one OpenHCS stack."""
 
@@ -756,33 +952,23 @@ def _payload_slice(
     metadata: Any,
     index: int,
 ) -> Any:
-    return image_payload_with_context(
-        data=data_slice,
-        mask=None if mask is None else _mask_slice_for_payload(mask, index),
-        metadata=metadata.for_channel(index),
+    return ImagePayloadSliceProjector(mask=mask, metadata=metadata).payload_for_slice(
+        data_slice,
+        index,
     )
 
 
-def _mask_slice_for_payload(mask: Any, index: int) -> Any:
-    if not hasattr(mask, "ndim"):
-        return mask
-    if mask.ndim == 3:
-        return mask[index]
-    return mask
+def _payload_spatial_shape(payload: Any) -> tuple[int, ...]:
+    array = np.asarray(payload)
+    if is_color_image_slice(payload):
+        return tuple(int(axis) for axis in array.shape[:2])
+    if array.ndim < 2:
+        raise ValueError(
+            "Image payload slices require at least two spatial dimensions; "
+            f"got {array.shape!r}."
+        )
+    return tuple(int(axis) for axis in array.shape[-2:])
 
-
-def _combine_payload_masks(image_payloads: tuple[Any, ...]) -> Any | None:
-    masks = tuple(
-        image_payload_mask(payload)
-        for payload in image_payloads
-        if image_payload_mask(payload) is not None
-    )
-    if not masks:
-        return None
-    combined = np.asarray(masks[0], dtype=bool)
-    for mask in masks[1:]:
-        combined = np.logical_and(combined, np.asarray(mask, dtype=bool))
-    return combined
 
 
 def _compose_unmasked_image_bundle(
@@ -849,15 +1035,7 @@ def compose_one_image_bundle(
     image_payloads: tuple[Any, ...],
 ) -> Any:
     """Stack same-slice image payloads into one multi-image bundle."""
-    image_payloads = tuple(
-        _normalize_bundle_image_payload(payload) for payload in image_payloads
-    )
-    image_payloads = ImageBundleSourceDomainAligner(image_payloads).align()
-    unmasked_payloads = tuple(image_payload_data(payload) for payload in image_payloads)
-    composed = _compose_unmasked_image_bundle(unmasked_payloads)
-    mask = _combine_payload_masks(image_payloads)
-    metadata = compose_image_payload_metadata(image_payloads)
-    return image_payload_with_context(composed, mask=mask, metadata=metadata)
+    return ImagePayloadBundleContext.from_payloads(image_payloads).compose()
 
 
 def _normalize_bundle_image_payload(payload: Any) -> Any:
@@ -881,6 +1059,19 @@ def _collapse_singleton_grayscale_plane_stack(value: Any) -> Any:
     ):
         return value[0]
     return value
+
+
+def _is_singleton_image_stack_array(value: np.ndarray) -> bool:
+    return (
+        value.ndim > 0
+        and value.shape[0] == 1
+        and (
+            is_grayscale_image_stack(value)
+            or is_color_image_stack(value)
+            or is_grayscale_volume_stack(value)
+            or is_color_volume_stack(value)
+        )
+    )
 
 
 def payload_slice_count(payload: Any) -> int:

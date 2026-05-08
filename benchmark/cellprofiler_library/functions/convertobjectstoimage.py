@@ -107,7 +107,7 @@ class Uint16ImageModeRenderer(ImageModeRenderer):
         colormap_value: str,
     ) -> np.ndarray:
         del colormap_value
-        return labels.astype(np.float32)
+        return labels.astype(np.int32, copy=False)
 
 
 def _get_colormap(colormap_name: str, num_labels: int) -> np.ndarray:

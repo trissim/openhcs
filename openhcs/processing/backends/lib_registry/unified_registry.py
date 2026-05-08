@@ -28,8 +28,8 @@ import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field, fields, is_dataclass, replace
-from enum import Enum
-from functools import wraps
+from enum import Enum, auto
+from functools import lru_cache, wraps
 from typing import Any, Callable, ClassVar, Dict, Iterable, List, Mapping, Optional, Tuple, Type, get_type_hints
 
 
@@ -40,6 +40,7 @@ from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     ObjectLabelDomainScope,
+    RuntimePlaneAxis,
 )
 from openhcs.core.runtime_values import (
     ImageMetadataPayload,
@@ -58,6 +59,107 @@ from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
 from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStepWellFilterConfig
 
 logger = logging.getLogger(__name__)
+
+
+class RuntimeCallableView(Enum):
+    """Nominal callable view used by contract execution."""
+
+    DECORATED = auto()
+    RAW = auto()
+
+    def resolve(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        if self is RuntimeCallableView.DECORATED:
+            return func
+        if self is RuntimeCallableView.RAW:
+            return inspect.unwrap(func)
+        raise ValueError(f"Unsupported runtime callable view: {self!r}")
+
+
+class RuntimeInvocationKwargPolicy(Enum):
+    """Nominal kwarg policy used by runtime callable invocation."""
+
+    PASS_THROUGH = auto()
+    SIGNATURE_FILTERED = auto()
+
+    def accepted_kwargs(
+        self,
+        func: Callable[..., Any],
+        kwargs: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        if self is RuntimeInvocationKwargPolicy.PASS_THROUGH:
+            return dict(kwargs)
+        if self is RuntimeInvocationKwargPolicy.SIGNATURE_FILTERED:
+            parameters = _runtime_callable_parameters(func)
+            if any(
+                parameter.kind is inspect.Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            ):
+                return dict(kwargs)
+            return {
+                name: value
+                for name, value in kwargs.items()
+                if name in parameters
+            }
+        raise ValueError(f"Unsupported runtime kwarg policy: {self!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCallableInvocation:
+    """Typed runtime invocation boundary for processing-contract callables."""
+
+    func: Callable[..., Any]
+    args: tuple[Any, ...] = ()
+    kwargs: Mapping[str, Any] = field(default_factory=dict)
+    callable_view: RuntimeCallableView = RuntimeCallableView.DECORATED
+    kwarg_policy: RuntimeInvocationKwargPolicy = (
+        RuntimeInvocationKwargPolicy.PASS_THROUGH
+    )
+
+    def call(self) -> Any:
+        target = self.callable_view.resolve(self.func)
+        return target(
+            *self.args,
+            **self.kwarg_policy.accepted_kwargs(target, self.kwargs),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeCallablePolicy:
+    """Reusable runtime callable invocation semantics."""
+
+    callable_view: RuntimeCallableView = RuntimeCallableView.DECORATED
+    kwarg_policy: RuntimeInvocationKwargPolicy = (
+        RuntimeInvocationKwargPolicy.PASS_THROUGH
+    )
+
+    def invocation(
+        self,
+        func: Callable[..., Any],
+        args: tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> RuntimeCallableInvocation:
+        return RuntimeCallableInvocation(
+            func=func,
+            args=args,
+            kwargs=kwargs,
+            callable_view=self.callable_view,
+            kwarg_policy=self.kwarg_policy,
+        )
+
+    def call(
+        self,
+        func: Callable[..., Any],
+        args: tuple[Any, ...],
+        kwargs: Mapping[str, Any],
+    ) -> Any:
+        return self.invocation(func, args, kwargs).call()
+
+
+@lru_cache(maxsize=256)
+def _runtime_callable_parameters(
+    func: Callable[..., Any],
+) -> Mapping[str, inspect.Parameter]:
+    return inspect.signature(func).parameters
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,21 +202,75 @@ class Pure2DSliceResultBatch:
         return cls(main_outputs=main_outputs, auxiliary_groups=tuple(auxiliary_groups))
 
 
-class Pure2DInputSlicer(ABC, metaclass=AutoRegisterMeta):
+class Pure2DRegisteredStrategyFamily(ABC):
+    """Shared cached registry-family mechanics for PURE_2D strategy ABCs."""
+
+    __registry__: ClassVar[Mapping[Any, type["Pure2DRegisteredStrategyFamily"]]]
+    value_type: ClassVar[type[Any] | None] = None
+    include_in_family: ClassVar[bool] = True
+
+    @classmethod
+    @abstractmethod
+    def family_root(cls) -> type["Pure2DRegisteredStrategyFamily"]:
+        """Return the concrete AutoRegisterMeta root for this strategy family."""
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def registered_families(cls) -> tuple[type["Pure2DRegisteredStrategyFamily"], ...]:
+        root_type = cls.family_root()
+        family_types: list[type[Pure2DRegisteredStrategyFamily]] = []
+        for strategy_type in root_type.__registry__.values():
+            for candidate_type in strategy_type.mro():
+                if (
+                    candidate_type is root_type
+                    or not isinstance(candidate_type, type)
+                    or not issubclass(candidate_type, root_type)
+                    or not candidate_type.include_in_family
+                    or candidate_type in family_types
+                ):
+                    continue
+                family_types.append(candidate_type)
+        return tuple(family_types)
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def registered_strategies(cls) -> tuple["Pure2DRegisteredStrategyFamily", ...]:
+        """Return cached nominal strategy instances."""
+        return tuple(strategy_type() for strategy_type in cls.registered_families())
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def accepted_value_types(cls) -> tuple[type[Any], ...]:
+        """Return nominal value types owned by this registered family."""
+        root_type = cls.family_root()
+        return tuple(
+            strategy_type.value_type
+            for strategy_type in root_type.__registry__.values()
+            if (
+                strategy_type.value_type is not None
+                and issubclass(strategy_type, cls)
+            )
+        )
+
+
+class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMeta):
     """Unstack a PURE_2D main-flow input into nominal per-slice values."""
 
     __registry_key__ = "value_type"
     __registry__: ClassVar[dict[Any, type["Pure2DInputSlicer"]]] = {}
-    value_type: ClassVar[type[Any] | None] = None
-    can_slice_family: ClassVar[bool] = True
+
+    @classmethod
+    def family_root(cls) -> type["Pure2DInputSlicer"]:
+        return Pure2DInputSlicer
 
     @classmethod
     def slice(cls, value: Any, memory_type: str) -> tuple[Any, ...]:
         candidates: list[Pure2DInputSlicer] = []
-        for slicer_type in cls.registered_slicer_families():
-            slicer = slicer_type()
-            if slicer.supports(value):
-                candidates.append(slicer)
+        for strategy in cls.registered_strategies():
+            if not isinstance(strategy, Pure2DInputSlicer):
+                continue
+            if strategy.supports(value):
+                candidates.append(strategy)
         if not candidates:
             raise TypeError(
                 "PURE_2D execution requires a registered input slicer for "
@@ -125,34 +281,6 @@ class Pure2DInputSlicer(ABC, metaclass=AutoRegisterMeta):
             key=lambda candidate: candidate.type_distance(value),
         )
         return slicer.slice_value(value, memory_type)
-
-    @classmethod
-    def registered_slicer_families(cls) -> tuple[type["Pure2DInputSlicer"], ...]:
-        family_types: list[type[Pure2DInputSlicer]] = []
-        for slicer_type in cls.__registry__.values():
-            for candidate_type in slicer_type.mro():
-                if (
-                    candidate_type is cls
-                    or not isinstance(candidate_type, type)
-                    or not issubclass(candidate_type, cls)
-                    or not candidate_type.can_slice_family
-                    or candidate_type in family_types
-                ):
-                    continue
-                family_types.append(candidate_type)
-        return tuple(family_types)
-
-    @classmethod
-    def accepted_value_types(cls) -> tuple[type[Any], ...]:
-        """Return nominal value types owned by this registered slicer family."""
-        return tuple(
-            slicer_type.value_type
-            for slicer_type in Pure2DInputSlicer.__registry__.values()
-            if (
-                slicer_type.value_type is not None
-                and issubclass(slicer_type, cls)
-            )
-        )
 
     def supports(self, value: Any) -> bool:
         accepted_types = self.accepted_value_types()
@@ -192,7 +320,6 @@ class ImagePayloadPure2DInputSlicer(Pure2DInputSlicer):
     """Slice image payloads while preserving per-slice image context."""
 
     value_type = None
-    can_slice_family = True
 
     def slice_value(self, value: Any, memory_type: str) -> tuple[Any, ...]:
         data = image_payload_data(value)
@@ -219,23 +346,29 @@ class ImageMetadataPayloadPure2DInputSlicer(ImagePayloadPure2DInputSlicer):
     value_type = ImageMetadataPayload
 
 
-class Pure2DAuxiliaryOutputAggregator(ABC, metaclass=AutoRegisterMeta):
+class Pure2DAuxiliaryOutputAggregator(
+    Pure2DRegisteredStrategyFamily,
+    metaclass=AutoRegisterMeta,
+):
     """Aggregate one auxiliary PURE_2D output position across slices."""
 
     __registry_key__ = "value_type"
     __registry__: ClassVar[dict[Any, type["Pure2DAuxiliaryOutputAggregator"]]] = {}
-    value_type: ClassVar[type[Any] | None] = None
-    can_aggregate_family: ClassVar[bool] = True
+
+    @classmethod
+    def family_root(cls) -> type["Pure2DAuxiliaryOutputAggregator"]:
+        return Pure2DAuxiliaryOutputAggregator
 
     @classmethod
     def aggregate(cls, values: list[Any], memory_type: str) -> Any:
         if not values:
             return []
         candidates: list[Pure2DAuxiliaryOutputAggregator] = []
-        for aggregator_type in cls.registered_aggregator_families():
-            aggregator = aggregator_type()
-            if aggregator.supports(values):
-                candidates.append(aggregator)
+        for strategy in cls.registered_strategies():
+            if not isinstance(strategy, Pure2DAuxiliaryOutputAggregator):
+                continue
+            if strategy.supports(values):
+                candidates.append(strategy)
         if candidates:
             aggregator = min(
                 candidates,
@@ -246,25 +379,6 @@ class Pure2DAuxiliaryOutputAggregator(ABC, metaclass=AutoRegisterMeta):
             return values[0]
         return list(values)
 
-    @classmethod
-    def registered_aggregator_families(
-        cls,
-    ) -> tuple[type["Pure2DAuxiliaryOutputAggregator"], ...]:
-        """Return registered aggregator classes plus their typed family bases."""
-        family_types: list[type[Pure2DAuxiliaryOutputAggregator]] = []
-        for aggregator_type in cls.__registry__.values():
-            for candidate_type in aggregator_type.mro():
-                if (
-                    candidate_type is cls
-                    or not isinstance(candidate_type, type)
-                    or not issubclass(candidate_type, cls)
-                    or not candidate_type.can_aggregate_family
-                    or candidate_type in family_types
-                ):
-                    continue
-                family_types.append(candidate_type)
-        return tuple(family_types)
-
     def supports(self, values: list[Any]) -> bool:
         accepted_types = self.accepted_value_types()
         return bool(accepted_types) and all(
@@ -273,18 +387,6 @@ class Pure2DAuxiliaryOutputAggregator(ABC, metaclass=AutoRegisterMeta):
 
     def owns_mixed_values(self, values: list[Any]) -> bool:
         return False
-
-    @classmethod
-    def accepted_value_types(cls) -> tuple[type[Any], ...]:
-        """Return nominal value types owned by this registered aggregator family."""
-        return tuple(
-            aggregator_type.value_type
-            for aggregator_type in Pure2DAuxiliaryOutputAggregator.__registry__.values()
-            if (
-                aggregator_type.value_type is not None
-                and issubclass(aggregator_type, cls)
-            )
-        )
 
     def type_distance(self, values: list[Any]) -> int:
         declared_types = self.accepted_value_types()
@@ -318,7 +420,7 @@ class RuntimeArrayPure2DAuxiliaryOutputAggregator(Pure2DAuxiliaryOutputAggregato
     """Stack nominal runtime array payloads through their concrete array data."""
 
     value_type = None
-    can_aggregate_family = False
+    include_in_family = False
 
     def supports(self, values: list[Any]) -> bool:
         return super().supports(values) or self.owns_mixed_values(values)
@@ -359,7 +461,7 @@ class ImagePayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxiliaryOut
     """Stack image payload slices and reattach composed runtime image context."""
 
     value_type = None
-    can_aggregate_family = True
+    include_in_family = True
 
     def _accepts_mixed_value(self, value: Any) -> bool:
         accepted_types = self.accepted_value_types()
@@ -413,7 +515,7 @@ class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxili
     """Stack object-label payload slices and preserve object-domain metadata."""
 
     value_type = ObjectLabelPayload
-    can_aggregate_family = True
+    include_in_family = True
 
     def _accepts_mixed_value(self, value: Any) -> bool:
         return isinstance(value, self.value_type)
@@ -438,7 +540,11 @@ class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxili
         )
         declared_counts = {value.declared_object_count for value in values}
         declared_ids = {value.declared_object_ids for value in values}
-        domain_scopes = {value.domain_scope for value in values}
+        domain_scope = (
+            ObjectLabelDomainScope.PLANE
+            if len(values) > 1
+            else ObjectLabelDomainScope.common(value.domain_scope for value in values)
+        )
         return ObjectLabelPayload(
             labels=labels,
             unedited_labels=unedited_labels,
@@ -447,7 +553,8 @@ class ObjectLabelPayloadPure2DAuxiliaryOutputAggregator(RuntimeArrayPure2DAuxili
                 declared_counts.pop() if len(declared_counts) == 1 else None
             ),
             declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
-            domain_scope=ObjectLabelDomainScope.common(domain_scopes),
+            domain_scope=domain_scope,
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
         )
 
 
@@ -496,50 +603,24 @@ class TuplePure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggr
     value_type = tuple
 
 
-class Pure2DSliceIndexProjector(ABC, metaclass=AutoRegisterMeta):
+class Pure2DSliceIndexProjector(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMeta):
     """Project execution slice identity into nominal PURE_2D outputs."""
 
     __registry_key__ = "value_type"
     __registry__: ClassVar[dict[Any, type["Pure2DSliceIndexProjector"]]] = {}
-    value_type: ClassVar[type[Any] | None] = None
-    can_project_family: ClassVar[bool] = True
+
+    @classmethod
+    def family_root(cls) -> type["Pure2DSliceIndexProjector"]:
+        return Pure2DSliceIndexProjector
 
     @classmethod
     def project(cls, value: Any, slice_index: int) -> Any:
-        for projector_type in cls.registered_projector_families():
-            projector = projector_type()
-            if projector.supports(value):
-                return projector.project_value(value, slice_index)
+        for strategy in cls.registered_strategies():
+            if not isinstance(strategy, Pure2DSliceIndexProjector):
+                continue
+            if strategy.supports(value):
+                return strategy.project_value(value, slice_index)
         return value
-
-    @classmethod
-    def registered_projector_families(
-        cls,
-    ) -> tuple[type["Pure2DSliceIndexProjector"], ...]:
-        family_types: list[type[Pure2DSliceIndexProjector]] = []
-        for projector_type in cls.__registry__.values():
-            for candidate_type in projector_type.mro():
-                if (
-                    candidate_type is cls
-                    or not isinstance(candidate_type, type)
-                    or not issubclass(candidate_type, cls)
-                    or not candidate_type.can_project_family
-                    or candidate_type in family_types
-                ):
-                    continue
-                family_types.append(candidate_type)
-        return tuple(family_types)
-
-    @classmethod
-    def accepted_value_types(cls) -> tuple[type[Any], ...]:
-        return tuple(
-            projector_type.value_type
-            for projector_type in Pure2DSliceIndexProjector.__registry__.values()
-            if (
-                projector_type.value_type is not None
-                and issubclass(projector_type, cls)
-            )
-        )
 
     def supports(self, value: Any) -> bool:
         accepted_types = self.accepted_value_types()
@@ -588,10 +669,18 @@ class DataclassSliceIndexProjector(Pure2DSliceIndexProjector):
         return MeasurementRowAxisField.SLICE_INDEX
 
     def field_names(self, value: Any) -> frozenset[MeasurementRowAxisField]:
+        return self.field_names_for_type(type(value))
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def field_names_for_type(
+        cls,
+        value_type: type[Any],
+    ) -> frozenset[MeasurementRowAxisField]:
         return frozenset(
             axis_field
             for axis_field in MeasurementRowAxisField
-            if any(field.name == axis_field.value for field in fields(value))
+            if any(field.name == axis_field.value for field in fields(value_type))
         )
 
 
@@ -634,7 +723,7 @@ class SequenceSliceIndexProjector(Pure2DSliceIndexProjector):
     """Project slice identity recursively through nested output sequences."""
 
     value_type = None
-    can_project_family = False
+    include_in_family = False
 
     def project_value(self, value: Any, slice_index: int) -> Any:
         del value, slice_index
@@ -658,7 +747,7 @@ class ListSliceIndexProjector(SequenceSliceIndexProjector):
     """Register list outputs for recursive slice-index projection."""
 
     value_type = list
-    can_project_family = True
+    include_in_family = True
 
     def project_value(self, value: list[Any], slice_index: int) -> list[Any]:
         if self.is_slice_axis_free_flat_sequence(value):
@@ -677,7 +766,7 @@ class TupleSliceIndexProjector(SequenceSliceIndexProjector):
     """Register tuple outputs for recursive slice-index projection."""
 
     value_type = tuple
-    can_project_family = True
+    include_in_family = True
 
     def project_value(self, value: tuple[Any, ...], slice_index: int) -> tuple[Any, ...]:
         if self.is_slice_axis_free_flat_sequence(value):
@@ -1065,13 +1154,14 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             from openhcs.core.memory import detect_memory_type
             mem = detect_memory_type(image)
             slices = unstack_slices(image, mem, 0)
-            results = [func(sl, *args, **kwargs) for sl in slices]
+            policy = RuntimeCallablePolicy()
+            results = [policy.call(func, (sl, *args), kwargs) for sl in slices]
             return stack_slices(results, mem, 0)
-        return func(image, *args, **kwargs)
+        return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
 
     def _execute_pure_3d(self, func, image, *args, **kwargs):
         """Execute 3D→3D function directly (no change)."""
-        return func(image, *args, **kwargs)
+        return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
 
     def _execute_pure_2d(self, func, image, *args, **kwargs):
         """Execute 2D→2D function with unstack/restack wrapper."""
@@ -1080,7 +1170,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         slices = Pure2DInputSlicer.slice(image, memory_type)
         slice_results = [
             Pure2DSliceIndexProjector.project(
-                func(slice_2d, *args, **kwargs),
+                RuntimeCallablePolicy().call(func, (slice_2d, *args), kwargs),
                 slice_index,
             )
             for slice_index, slice_2d in enumerate(slices)
@@ -1113,7 +1203,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Execute 3D→2D function returning slice 3D array."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
-        result_2d = func(image, *args, **kwargs)
+        result_2d = RuntimeCallablePolicy().call(func, (image, *args), kwargs)
         return stack_slices([result_2d], memory_type, 0)
 
     # ===== LIBRARY WARM-UP HOOK =====

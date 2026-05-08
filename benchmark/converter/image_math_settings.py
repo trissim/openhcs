@@ -9,6 +9,8 @@ from typing import Any
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+
 from .parser import ModuleBlock
 from .setting_names import optional_setting_value
 from .settings_binder import (
@@ -88,26 +90,39 @@ class ImageMathOperandFactorSetting:
         return parse_cellprofiler_float(value)
 
 
-class ImageMathOperandFactorSettingResolver(ABC, metaclass=AutoRegisterMeta):
+class ImageMathOperandFactorSettingResolver(
+    EnumKeyedStrategyMixin[ImageMathOperandOrdinal],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Registered resolver for ImageMath operand-factor settings."""
 
-    __registry_key__ = "ordinal"
+    __registry_key__ = "ordinal_label"
     __skip_if_no_key__ = True
-    ordinal: ImageMathOperandOrdinal
+    __enum_member_attr__ = "ordinal"
+    __enum_label_attr__ = "ordinal_label"
+    ordinal: ImageMathOperandOrdinal | None = None
+    ordinal_label: str | None = None
     setting_name: str
 
     @classmethod
     def registered_settings(cls) -> tuple[ImageMathOperandFactorSetting, ...]:
         return tuple(
             ImageMathOperandFactorSetting(
-                resolver_type.ordinal,
+                resolver_type._ordinal(),
                 resolver_type.setting_name,
             )
             for resolver_type in sorted(
-                cls.__registry__.values(),
-                key=lambda registered_type: registered_type.ordinal.value,
+                cls.registered_strategy_types(),
+                key=lambda registered_type: registered_type._ordinal().value,
             )
         )
+
+    @classmethod
+    def _ordinal(cls) -> ImageMathOperandOrdinal:
+        if not isinstance(cls.ordinal, ImageMathOperandOrdinal):
+            raise TypeError(f"{cls.__name__} must declare an ImageMath operand ordinal.")
+        return cls.ordinal
 
 
 class FirstImageMathOperandFactorSetting(ImageMathOperandFactorSettingResolver):

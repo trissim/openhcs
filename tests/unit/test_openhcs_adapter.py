@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 from pathlib import Path
+from types import SimpleNamespace
 
 from benchmark.adapters.openhcs import (
     OPENHCS_AXIS_FILTER_PARAM,
@@ -9,7 +10,9 @@ from benchmark.adapters.openhcs import (
     OpenHCSAxisSelection,
     OpenHCSRunRequest,
     RuntimeExecutionCacheWritePolicy,
+    _cacheable_runtime_records,
 )
+from openhcs.core.artifacts import ArtifactKind
 
 
 def test_openhcs_axis_selection_limits_discovered_axes_in_order() -> None:
@@ -86,3 +89,26 @@ def test_runtime_execution_cache_policy_uses_snapshots_for_value_only_runs() -> 
     assert not policy.write_manifest
     assert not policy.include_image_records
     assert not policy.include_non_image_records
+
+
+def test_non_image_runtime_cache_excludes_array_payload_kinds() -> None:
+    image_record = SimpleNamespace(key=SimpleNamespace(kind=ArtifactKind.IMAGE))
+    object_label_record = SimpleNamespace(
+        key=SimpleNamespace(kind=ArtifactKind.OBJECT_LABELS)
+    )
+    measurement_record = SimpleNamespace(
+        key=SimpleNamespace(kind=ArtifactKind.MEASUREMENTS)
+    )
+    relationship_record = SimpleNamespace(
+        key=SimpleNamespace(kind=ArtifactKind.RELATIONSHIPS)
+    )
+
+    assert _cacheable_runtime_records(
+        (
+            image_record,
+            object_label_record,
+            measurement_record,
+            relationship_record,
+        ),
+        include_image_records=False,
+    ) == (measurement_record, relationship_record)

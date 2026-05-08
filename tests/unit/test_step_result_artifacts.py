@@ -14,7 +14,9 @@ from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.steps.function_runtime import (
     FunctionExecutionRequest,
     _execute_function_core,
+    _unstack_payload_context,
 )
+from openhcs.core.runtime_values import image_payload_with_context, image_payload_mask
 
 
 class MemoryBackend:
@@ -60,6 +62,16 @@ def test_crop_mask_sidecar_names_derive_from_core_artifact_role():
     assert CROP_MASK_ARTIFACT_SIDECAR.name_for("CroppedImage") == (
         "CroppedImage__crop_mask"
     )
+
+
+def test_unstack_payload_context_slices_volume_stack_mask_with_volume_data():
+    data = np.ones((1, 3, 4, 5), dtype=np.float32)
+    mask = np.ones((1, 3, 4, 5), dtype=bool)
+    payload = image_payload_with_context(data, mask=mask)
+
+    [slice_payload] = _unstack_payload_context(payload, [data[0]])
+
+    assert image_payload_mask(slice_payload).shape == data[0].shape
 
 
 def test_execute_function_core_saves_named_step_result_artifacts():

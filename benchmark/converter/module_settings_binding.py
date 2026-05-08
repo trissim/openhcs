@@ -5,7 +5,8 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, ClassVar
+from enum import Enum
+from typing import Any, ClassVar, final
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -14,11 +15,26 @@ from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from benchmark.cellprofiler_library.functions.correctilluminationapply import (
     IlluminationCorrectionMethod,
 )
+from benchmark.cellprofiler_library.functions.convertobjectstoimage import ImageMode
 from benchmark.cellprofiler_library.functions.relateobjects import DistanceMethod
+from benchmark.cellprofiler_library.functions.rescaleintensity import (
+    AutomaticHigh,
+    AutomaticLow,
+    RescaleMethod,
+)
+from benchmark.cellprofiler_library.functions.maskimage import MaskSource
 from benchmark.cellprofiler_library.functions.measureobjectintensitydistribution import (
     CenterChoice,
     ZernikeMode,
 )
+from benchmark.cellprofiler_library.functions.measureimagequality import (
+    ThresholdMethod as ImageQualityThresholdMethod,
+)
+from benchmark.cellprofiler_library.functions.watershed import (
+    WatershedDeclumpMethod,
+    WatershedMethod,
+)
+from benchmark.converter.artifact_semantics import artifact_setting_symbols
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
 )
@@ -57,17 +73,26 @@ from .illumination_settings import (
 from .image_math_settings import image_math_bound_kwargs
 from .mask_objects_settings import MASK_OBJECTS_SETTINGS
 from .module_function_resolution import measurement_target_scope
+from .module_runtime_semantics import ModuleRuntimeSemanticsBinding
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
 from .resize_objects_settings import resize_objects_bound_kwargs
 from .resize_settings import resize_bound_kwargs
 from .settings_binder import (
+    cellprofiler_enum_setting_parser,
+    cellprofiler_enum_value_setting_parser,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
     parse_cellprofiler_int,
     SettingToKeywordBinding,
     SettingsBinder,
     normalize_cellprofiler_setting_name,
+)
+from .symbol_table import (
+    INPUT_IMAGE_SETTING,
+    INPUT_OBJECTS_SETTING,
+    OUTPUT_IMAGE_SETTING,
+    OUTPUT_OBJECTS_SETTING,
 )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
@@ -78,8 +103,29 @@ from openhcs.interop.cellprofiler.setting_names import (
 from .smooth_settings import SMOOTH_SETTINGS
 from .straighten_worms_settings import straighten_worms_bound_kwargs
 from .structuring_element_settings import structuring_element_bound_kwargs
+from .structuring_element_settings import StructuringElementSettingBinding
 from .untangle_worms_settings import untangle_worms_bound_kwargs
 from .unmix_colors_settings import unmix_colors_bound_kwargs
+from .watershed_settings import (
+    WATERSHED_BORDER_EXCLUSION_SETTING,
+    WATERSHED_COMPACTNESS_SETTING,
+    WATERSHED_CONNECTIVITY_SETTING,
+    WATERSHED_DECLUMP_METHOD_SETTING,
+    WATERSHED_DOWNSAMPLE_SETTING,
+    WATERSHED_FOOTPRINT_SETTING,
+    WATERSHED_INTENSITY_IMAGE_SETTING,
+    WATERSHED_LABEL_SEPARATION_SETTING,
+    WATERSHED_MAX_SEEDS_SETTING,
+    WATERSHED_MARKERS_SETTING,
+    WATERSHED_METHOD_SETTING,
+    WATERSHED_MINIMUM_INTERNAL_DISTANCE_SETTING,
+    WATERSHED_MINIMUM_SEED_DISTANCE_SETTING,
+    WATERSHED_MASK_SETTING,
+    WATERSHED_SMOOTHING_FACTOR_SETTING,
+    WATERSHED_STRUCTURING_ELEMENT_SETTING,
+    WATERSHED_USE_ADVANCED_SETTINGS_SETTING,
+    parse_watershed_border_exclusion,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +149,241 @@ class BoundModuleSettings:
             )
 
 
+@dataclass(frozen=True, slots=True)
+class UnmappedModuleSetting:
+    """A CellProfiler setting that no registered binding strategy consumed."""
+
+    module_name: str
+    module_num: int
+    setting_name: str
+    value: Any
+
+
+class UnmappedModuleSettingsError(ValueError):
+    """Raised when enabled module settings are not mapped or explicitly ignored."""
+
+    def __init__(self, settings: tuple[UnmappedModuleSetting, ...]) -> None:
+        self.settings = settings
+        rendered = "; ".join(
+            f"{setting.module_name}({setting.module_num})."
+            f"{setting.setting_name}={setting.value!r}"
+            for setting in settings
+        )
+        super().__init__(
+            "Enabled CellProfiler modules have unmapped settings. "
+            "Add a ModuleSettingsBindingStrategy hook or an explicit typed ignore: "
+            f"{rendered}"
+        )
+
+
+class ModuleUnmappedSettingIgnore(ABC, metaclass=AutoRegisterMeta):
+    """Auto-registered typed ignore list for semantically dead CP settings."""
+
+    __registry_key__ = "module_name"
+    __skip_if_no_key__ = True
+
+    module_name: ClassVar[str | None] = None
+    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
+
+    @classmethod
+    def ignored_setting_names_for(cls, module_name: str) -> frozenset[str]:
+        ignore_type = cls.__registry__.get(canonical_module_name(module_name))
+        if ignore_type is None:
+            return frozenset()
+        return frozenset(
+            normalize_cellprofiler_setting_name(concrete_name)
+            for setting_name in ignore_type.ignored_settings
+            for concrete_name in setting_names(setting_name)
+        )
+
+
+class CorrectIlluminationCalculateUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """CP UI output toggles ignored when averaged/dilated images are disabled."""
+
+    module_name = "CorrectIlluminationCalculate"
+    ignored_settings = (
+        "Retain the averaged image?",
+        "Name the averaged image",
+        "Retain the dilated image?",
+        "Name the dilated image",
+    )
+
+
+class IdentifyPrimaryObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Display-only maxima visualization settings are not runtime semantics."""
+
+    module_name = "IdentifyPrimaryObjects"
+    ignored_settings = (
+        "Display accepted local maxima?",
+        "Select maxima color",
+    )
+
+
+class MeasureObjectIntensityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Legacy hidden group-count setting is parser metadata, not runtime input."""
+
+    module_name = "MeasureObjectIntensity"
+    ignored_settings = ("Hidden",)
+
+
+class MeasureImageIntensityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Empty object-set selector is consumed by symbol-table scope selection."""
+
+    module_name = "MeasureImageIntensity"
+    ignored_settings = (
+        "Select input object sets",
+        "Measure the intensity only from areas enclosed by objects?",
+    )
+
+
+class MeasureColocalizationUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Empty object selector is consumed by colocalization scope binding."""
+
+    module_name = "MeasureColocalization"
+    ignored_settings = ("Select objects to measure",)
+
+
+class MeasureGranularityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Granularity object mask routing is consumed by measurement scope binding."""
+
+    module_name = "MeasureGranularity"
+    ignored_settings = ("Measure within objects?",)
+
+
+class RelateObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Object routing and disabled relationship outputs are contract semantics."""
+
+    module_name = "RelateObjects"
+    ignored_settings = (
+        "Parent objects",
+        "Child objects",
+        "Calculate per-parent means for all child measurements?",
+        "Calculate distances to other parents?",
+        "Parent name",
+        "Do you want to save the children with parents as a new object set?",
+        "Name the output object",
+    )
+
+
+class MaskObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """MaskObjects object/image routing is consumed by the symbol table."""
+
+    module_name = "MaskObjects"
+    ignored_settings = (
+        "Mask using a region defined by other objects or by binary image",
+        "Select the masking image",
+    )
+
+
+class MeasureTextureUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Legacy hidden group-count setting is parser metadata, not runtime input."""
+
+    module_name = "MeasureTexture"
+    ignored_settings = ("Hidden",)
+
+
+class EnhanceOrSuppressFeaturesUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Output display scaling does not affect absorbed numeric feature output."""
+
+    module_name = "EnhanceOrSuppressFeatures"
+    ignored_settings = ("Rescale result image",)
+
+
+class TrackObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Unsupported LAP/display knobs are intentionally outside overlap tracking."""
+
+    module_name = "TrackObjects"
+    ignored_settings = (
+        "Average cell diameter in pixels",
+        "Cost of cell to empty matching",
+        "Filter objects by lifetime?",
+        "Filter using a maximum lifetime?",
+        "Filter using a minimum lifetime?",
+        "Gap closing cost",
+        "Maximum gap displacement in pixel units",
+        "Maximum lifetime",
+        "Maximum merge score",
+        "Maximum mitosis distance in pixel units",
+        "Maximum split score",
+        "Maximum temporal gap in frames",
+        "Merge alternative cost",
+        "Minimum lifetime",
+        "Mitosis alternative cost",
+        "Number of standard deviations for search radius",
+        "Run the second phase of the LAP algorithm?",
+        "Save color-coded image?",
+        "Search radius limit, in pixel units",
+        "Select display option",
+        "Select object measurement to use for tracking",
+        "Select the movement model",
+        "Split alternative cost",
+        "Use advanced configuration parameters",
+        "Weight of area difference in function matching cost",
+    )
+
+
+class RepeatedSettingValuePolicy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal resolver for CellProfiler settings that reuse the same label."""
+
+    __registry_key__ = "policy_key"
+    __skip_if_no_key__ = True
+    setting_name: ClassVar[str | None] = None
+    policy_key: ClassVar[str | None] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.__dict__.get("policy_key") is not None:
+            return
+        setting_name = cls.__dict__.get("setting_name")
+        if isinstance(setting_name, str):
+            cls.policy_key = normalize_cellprofiler_setting_name(setting_name)
+
+    @classmethod
+    def for_setting(
+        cls,
+        setting_name: str,
+    ) -> "RepeatedSettingValuePolicy":
+        strategy_type = cls.__registry__.get(
+            normalize_cellprofiler_setting_name(setting_name),
+            LastRepeatedSettingValuePolicy,
+        )
+        return strategy_type()
+
+    @final
+    def value(
+        self,
+        module: ModuleBlock,
+        setting_name: str | SettingNameFamily,
+    ) -> str | None:
+        values = setting_values(module, setting_name)
+        if not values:
+            return None
+        if len(values) == 1:
+            return values[0]
+        return self._resolve_repeated_value(module, setting_name, tuple(values))
+
+    @abstractmethod
+    def _resolve_repeated_value(
+        self,
+        module: ModuleBlock,
+        setting_name: str | SettingNameFamily,
+        values: tuple[str, ...],
+    ) -> str:
+        """Return the semantically active value for a repeated setting label."""
+
+
+class LastRepeatedSettingValuePolicy(RepeatedSettingValuePolicy):
+    """Default CellProfiler scalar behavior: the later row is authoritative."""
+
+    def _resolve_repeated_value(
+        self,
+        module: ModuleBlock,
+        setting_name: str | SettingNameFamily,
+        values: tuple[str, ...],
+    ) -> str:
+        return values[-1]
+
+
 class ModuleSettingsBindingStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for converting one module's settings into function kwargs."""
 
@@ -118,8 +399,43 @@ class ModuleSettingsBindingStrategy(ABC, metaclass=AutoRegisterMeta):
         )
         return strategy_type()
 
-    @abstractmethod
+    @final
     def bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+        ignored_unmapped_settings: frozenset[str] = frozenset(),
+    ) -> BoundModuleSettings:
+        """Bind and require complete setting coverage for a live module."""
+        bound = self._bind(module, binder=binder, param_mapping=param_mapping)
+        runtime_semantics = ModuleRuntimeSemanticsBinding.for_module(module.name)
+        if runtime_semantics is not None:
+            bound = BoundModuleSettings(
+                {**bound.kwargs, **runtime_semantics.kwargs(module)},
+                bound.unmapped_kwargs,
+                bound.invocation_options,
+            )
+        unmapped_kwargs = {
+            setting_name: value
+            for setting_name, value in bound.unmapped_kwargs.items()
+            if setting_name not in ignored_unmapped_settings
+            and setting_name not in self._artifact_setting_names(module)
+            and setting_name
+            not in ModuleUnmappedSettingIgnore.ignored_setting_names_for(module.name)
+        }
+        self._validate_mapped_module_settings(module, unmapped_kwargs)
+        if len(unmapped_kwargs) != len(bound.unmapped_kwargs):
+            return BoundModuleSettings(
+                bound.kwargs,
+                unmapped_kwargs,
+                bound.invocation_options,
+            )
+        return bound
+
+    @abstractmethod
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -128,11 +444,39 @@ class ModuleSettingsBindingStrategy(ABC, metaclass=AutoRegisterMeta):
     ) -> BoundModuleSettings:
         """Bind one parsed module into generated function kwargs."""
 
+    @classmethod
+    def _validate_mapped_module_settings(
+        cls,
+        module: ModuleBlock,
+        unmapped_kwargs: Mapping[str, Any],
+    ) -> None:
+        if not unmapped_kwargs:
+            return
+        raise UnmappedModuleSettingsError(
+            tuple(
+                UnmappedModuleSetting(
+                    module_name=module.name,
+                    module_num=module.module_num,
+                    setting_name=setting_name,
+                    value=value,
+                )
+                for setting_name, value in sorted(unmapped_kwargs.items())
+            )
+        )
+
+    @classmethod
+    def _artifact_setting_names(cls, module: ModuleBlock) -> frozenset[str]:
+        """Return settings consumed by the symbol-table artifact boundary."""
+        return frozenset(
+            normalize_cellprofiler_setting_name(symbol.setting_name)
+            for symbol in artifact_setting_symbols(module)
+        )
+
 
 class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Default docstring-mapped module-setting binder."""
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -171,7 +515,37 @@ _CELLPROFILER_THRESHOLD_SETTING_VERSION = "Threshold setting version"
 _CELLPROFILER_THRESHOLD_METHOD_SETTING = "Thresholding method"
 _CELLPROFILER_OTSU_METHOD = "otsu"
 _CELLPROFILER_THREE_CLASS_OTSU = "three classes"
-_CELLPROFILER_TWO_CLASS_OTSU = "two classes"
+
+
+class CellProfilerThresholdScope(Enum):
+    """Serialized threshold strategy names used to select active method rows."""
+
+    GLOBAL = "global"
+    ADAPTIVE = "adaptive"
+
+
+class ThresholdMethodRepeatedSettingValuePolicy(RepeatedSettingValuePolicy):
+    """Resolve CP's global/local threshold method rows from threshold scope."""
+
+    setting_name = _CELLPROFILER_THRESHOLD_METHOD_SETTING
+
+    def _resolve_repeated_value(
+        self,
+        module: ModuleBlock,
+        setting_name: str | SettingNameFamily,
+        values: tuple[str, ...],
+    ) -> str:
+        scope = _threshold_scope(module)
+        if scope is CellProfilerThresholdScope.GLOBAL:
+            return values[0]
+        if scope is CellProfilerThresholdScope.ADAPTIVE:
+            return values[-1]
+        raise ValueError(
+            f"{module.name}({module.module_num}) has repeated "
+            f"{setting_name!r} rows but no supported threshold strategy."
+        )
+
+
 _LEGACY_CELLPROFILER_THRESHOLD_METHOD_NAMES: Mapping[str, str] = {
     "robustbackground": "Robust Background",
     "minimum cross entropy": "Minimum Cross-Entropy",
@@ -218,9 +592,26 @@ def _last_optional_setting_value(
     setting_name: str | SettingNameFamily,
 ) -> str | None:
     """Return the last ordered value for legacy scalar settings."""
-    values = setting_values(module, setting_name)
-    if values:
-        return values[-1]
+    return LastRepeatedSettingValuePolicy().value(module, setting_name)
+
+
+def _active_setting_value(
+    module: ModuleBlock,
+    setting_name: str,
+) -> str | None:
+    """Return the active ordered value through registered repeated-row policy."""
+    return RepeatedSettingValuePolicy.for_setting(setting_name).value(
+        module,
+        setting_name,
+    )
+
+
+def _threshold_scope(module: ModuleBlock) -> CellProfilerThresholdScope | None:
+    value = _last_optional_setting_value(module, "Threshold strategy")
+    token = _cellprofiler_threshold_setting_token(value or "")
+    for scope in CellProfilerThresholdScope:
+        if token == scope.value:
+            return scope
     return None
 
 
@@ -235,23 +626,12 @@ def _active_threshold_setting_value(
     the threshold strategy: global uses the first method row, adaptive uses the
     last method row.
     """
-    values = setting_values(module, setting_name)
-    if not values:
-        return None
-    if setting_name == _CELLPROFILER_THRESHOLD_METHOD_SETTING and len(values) > 1:
-        threshold_scope = _cellprofiler_threshold_setting_token(
-            _last_optional_setting_value(module, "Threshold strategy") or ""
-        )
-        if threshold_scope == "global":
-            return values[0]
-        if threshold_scope == "adaptive":
-            return values[-1]
-    return values[-1]
+    return _active_setting_value(module, setting_name)
 
 
 def _cellprofiler_threshold_setting_token(value: Any) -> str:
     """Return a stable comparison token for parsed CellProfiler settings."""
-    if hasattr(value, "value") and isinstance(value.value, str):
+    if isinstance(value, Enum) and isinstance(value.value, str):
         value = value.value
     return " ".join(str(value).strip().lower().replace("-", " ").split())
 
@@ -343,7 +723,7 @@ def _bind_cellprofiler_threshold_settings(
                 binder,
                 setting_name,
                 value,
-        )
+            )
         unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
 
     _upgrade_legacy_cellprofiler_threshold_kwargs(module, kwargs)
@@ -376,14 +756,14 @@ class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
 
     module_name = "IdentifyPrimaryObjects"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
         _bind_cellprofiler_threshold_settings(
@@ -394,6 +774,195 @@ class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
             include_advanced_setting=True,
         )
 
+        return BoundModuleSettings(kwargs, unmapped_kwargs)
+
+
+class ThresholdModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrategy):
+    """Bind standalone Threshold settings through shared threshold semantics."""
+
+    module_name = "Threshold"
+    parameter_aliases: ClassVar[Mapping[str, str]] = {
+        "threshold_smoothing_scale": "smoothing",
+        "adaptive_window_size": "window_size",
+    }
+    ignored_settings: ClassVar[tuple[str, ...]] = (
+        "Select the input image",
+        "Name the output image",
+    )
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        _bind_cellprofiler_threshold_settings(
+            module=module,
+            binder=binder,
+            kwargs=kwargs,
+            unmapped_kwargs=unmapped_kwargs,
+            include_advanced_setting=False,
+        )
+        for source_name, target_name in type(self).parameter_aliases.items():
+            if source_name in kwargs:
+                kwargs[target_name] = kwargs.pop(source_name)
+        manual_threshold = kwargs.pop("manual_threshold", None)
+        if (
+            manual_threshold is not None
+            and _cellprofiler_threshold_setting_token(kwargs.get("threshold_method", ""))
+            == "manual"
+        ):
+            kwargs["predefined_threshold"] = manual_threshold
+        for setting_name in type(self).ignored_settings:
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+        return BoundModuleSettings(kwargs, unmapped_kwargs)
+
+
+class RescaleIntensityModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrategy):
+    """Bind RescaleIntensity settings to the absorbed function's nominal enums."""
+
+    module_name = "RescaleIntensity"
+    ignored_settings: ClassVar[tuple[str, ...]] = (
+        "Select the input image",
+        "Name the output image",
+        "Select image to match in maximum intensity",
+        "Divisor measurement",
+    )
+    explicit_settings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        SettingToKeywordBinding(
+            "Rescaling method",
+            "rescale_method",
+            cellprofiler_enum_setting_parser(RescaleMethod),
+        ),
+        SettingToKeywordBinding(
+            "Method to calculate the minimum intensity",
+            "automatic_low",
+            cellprofiler_enum_setting_parser(AutomaticLow),
+        ),
+        SettingToKeywordBinding(
+            "Method to calculate the maximum intensity",
+            "automatic_high",
+            cellprofiler_enum_setting_parser(AutomaticHigh),
+        ),
+        SettingToKeywordBinding(
+            "Lower intensity limit for the input image",
+            "source_low",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Upper intensity limit for the input image",
+            "source_high",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Divisor value",
+            "divisor_value",
+            parse_cellprofiler_float,
+        ),
+    )
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        kwargs.update(binder.bind_declared(module, type(self).explicit_settings))
+        input_range = optional_setting_value(module, "Intensity range for the input image")
+        if input_range is not None:
+            parsed_input_range = binder.parse_value(
+                "Intensity range for the input image",
+                input_range,
+            )
+            if not isinstance(parsed_input_range, tuple) or len(parsed_input_range) != 2:
+                raise ValueError(
+                    f"{module.name} input intensity range must contain two values, "
+                    f"got {input_range!r}."
+                )
+            kwargs["source_low"], kwargs["source_high"] = parsed_input_range
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(
+                    "Intensity range for the input image"
+                ),
+                None,
+            )
+        output_range = optional_setting_value(module, "Intensity range for the output image")
+        if output_range is not None:
+            parsed_output_range = binder.parse_value(
+                "Intensity range for the output image",
+                output_range,
+            )
+            if not isinstance(parsed_output_range, tuple) or len(parsed_output_range) != 2:
+                raise ValueError(
+                    f"{module.name} output intensity range must contain two values, "
+                    f"got {output_range!r}."
+                )
+            kwargs["dest_low"], kwargs["dest_high"] = parsed_output_range
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(
+                    "Intensity range for the output image"
+                ),
+                None,
+            )
+        for binding in type(self).explicit_settings:
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(binding.setting_name),
+                None,
+            )
+        for setting_name in type(self).ignored_settings:
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+        return BoundModuleSettings(kwargs, unmapped_kwargs)
+
+
+class MaskImageModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrategy):
+    """Bind MaskImage routing settings to mask semantics."""
+
+    module_name = "MaskImage"
+    ignored_settings: ClassVar[tuple[str, ...]] = (
+        "Select the input image",
+        "Name the output image",
+        "Select object for mask",
+        "Select image for mask",
+    )
+    explicit_settings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        SettingToKeywordBinding(
+            "Use objects or an image as a mask?",
+            "mask_source",
+            cellprofiler_enum_setting_parser(MaskSource),
+        ),
+        SettingToKeywordBinding(
+            "Invert the mask?",
+            "invert_mask",
+            parse_cellprofiler_bool,
+        ),
+    )
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        kwargs.update(binder.bind_declared(module, type(self).explicit_settings))
+        for binding in type(self).explicit_settings:
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(binding.setting_name),
+                None,
+            )
+        for setting_name in type(self).ignored_settings:
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
 
@@ -417,14 +986,14 @@ class EnhanceOrSuppressFeaturesModuleSettingsBindingStrategy(
         "Name the output image",
     )
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
 
@@ -493,14 +1062,14 @@ class IdentifySecondaryObjectsModuleSettingsBindingStrategy(
         "Name the new primary objects",
     )
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
 
@@ -532,14 +1101,14 @@ class ScopedMeasurementModuleSettingsBindingStrategy(
     scope_setting_name: ClassVar[SettingNameFamily | None] = None
     default_scope_value: ClassVar[str | None] = None
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
         kwargs[CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG] = (
@@ -574,14 +1143,14 @@ class MeasureTextureModuleSettingsBindingStrategy(
     )
     default_scope_value = "Images"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
 
@@ -623,19 +1192,21 @@ class MeasureObjectSizeShapeModuleSettingsBindingStrategy(
     module_name = "MeasureObjectSizeShape"
     explicit_settings: ClassVar[Mapping[str, str]] = {
         "Calculate the Zernike features?": "calculate_zernikes",
+        "Calculate the advanced features?": "calculate_advanced",
     }
     ignored_settings: ClassVar[tuple[str, ...]] = (
         "Select objects to measure",
+        "Select object sets to measure",
     )
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
 
@@ -651,12 +1222,41 @@ class MeasureObjectSizeShapeModuleSettingsBindingStrategy(
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
 
+class MeasureObjectIntensityModuleSettingsBindingStrategy(
+    GenericModuleSettingsBindingStrategy
+):
+    """Bind MeasureObjectIntensity routing settings consumed by contracts."""
+
+    module_name = "MeasureObjectIntensity"
+    ignored_settings: ClassVar[tuple[str, ...]] = (
+        "Select images to measure",
+        "Select objects to measure",
+    )
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting_name in type(self).ignored_settings:
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+        return BoundModuleSettings(bound.kwargs, unmapped_kwargs)
+
+
 class MeasureObjectIntensityDistributionModuleSettingsBindingStrategy(
     GenericModuleSettingsBindingStrategy
 ):
     """Bind radial-distribution settings not named like function parameters."""
 
     module_name = "MeasureObjectIntensityDistribution"
+    ignored_settings: ClassVar[tuple[str, ...]] = (
+        "Hidden",
+        "Select objects to use as centers",
+    )
     zernike_setting_name: ClassVar[str] = "Calculate intensity Zernikes?"
     zernike_degree_setting_name: ClassVar[str | SettingNameFamily] = SettingNameFamily(
         "Maximum Zernike moment",
@@ -668,14 +1268,14 @@ class MeasureObjectIntensityDistributionModuleSettingsBindingStrategy(
         "Maximum radius": ("maximum_radius", parse_cellprofiler_int),
     }
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
 
@@ -714,6 +1314,66 @@ class MeasureObjectIntensityDistributionModuleSettingsBindingStrategy(
                 normalize_cellprofiler_setting_name("Object to use as center?"),
                 None,
             )
+
+        for setting_name in type(self).ignored_settings:
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+
+        return BoundModuleSettings(kwargs, unmapped_kwargs)
+
+
+class MeasureImageQualityModuleSettingsBindingStrategy(
+    GenericModuleSettingsBindingStrategy
+):
+    """Bind MeasureImageQuality settings to absorbed image-quality parameters."""
+
+    module_name = "MeasureImageQuality"
+    scalar_settings: ClassVar[Mapping[str, tuple[str, Any]]] = {
+        "Calculate blur metrics?": ("calculate_blur", parse_cellprofiler_bool),
+        "Calculate saturation metrics?": (
+            "calculate_saturation",
+            parse_cellprofiler_bool,
+        ),
+        "Calculate intensity metrics?": ("calculate_intensity", parse_cellprofiler_bool),
+        "Calculate thresholds?": ("calculate_threshold", parse_cellprofiler_bool),
+        "Spatial scale for blur measurements": ("blur_scale", parse_cellprofiler_int),
+        "Select a thresholding method": (
+            "threshold_method",
+            cellprofiler_enum_setting_parser(ImageQualityThresholdMethod),
+        ),
+    }
+    unsupported_settings: ClassVar[tuple[str, ...]] = (
+        "Image count",
+        "Calculate metrics for which images?",
+        "Include the image rescaling value?",
+        "Threshold count",
+        "Two-class or three-class thresholding?",
+        "Assign pixels in the middle intensity class to the foreground or the background?",
+        "Minimize the weighted variance or the entropy?",
+        "Typical fraction of the image covered by objects",
+        "Use all thresholding methods?",
+        "Scale count",
+    )
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+
+        for setting_name, (parameter_name, parse) in type(self).scalar_settings.items():
+            value = optional_setting_value(module, setting_name)
+            if value is None:
+                continue
+            kwargs[parameter_name] = parse(value)
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+
+        for setting_name in type(self).unsupported_settings:
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
 
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
@@ -763,14 +1423,14 @@ class MeasureGranularityModuleSettingsBindingStrategy(
         ),
     }
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
 
@@ -820,14 +1480,14 @@ class MeasureColocalizationModuleSettingsBindingStrategy(
         "do_costes",
     )
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
 
@@ -863,8 +1523,9 @@ class DeclarativeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind modules described by explicit setting-to-kwarg declarations."""
 
     setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = ()
+    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -872,9 +1533,143 @@ class DeclarativeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
         del param_mapping
-        return BoundModuleSettings(
-            binder.bind_declared(module, type(self).setting_bindings)
+        bound_details = binder.bind_with_details(module.settings)
+        kwargs = binder.bind_declared(module, type(self).setting_bindings)
+        mapped_settings = {
+            normalize_cellprofiler_setting_name(setting_name)
+            for binding in type(self).setting_bindings
+            for setting_name in setting_names(binding.setting_name)
+        }
+        mapped_settings.update(
+            normalize_cellprofiler_setting_name(concrete_setting_name)
+            for setting_name in type(self).ignored_settings
+            for concrete_setting_name in setting_names(setting_name)
         )
+        unmapped_kwargs = {
+            detail.name: detail.original_value
+            for detail in bound_details
+            if detail.name not in mapped_settings
+        }
+        return BoundModuleSettings(
+            kwargs,
+            unmapped_kwargs,
+        )
+
+
+class ConvertObjectsToImageModuleSettingsBindingStrategy(
+    DeclarativeModuleSettingsBindingStrategy
+):
+    """Bind object-label rendering mode into the absorbed image renderer."""
+
+    module_name = "ConvertObjectsToImage"
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Select the color format",
+            "image_mode",
+            cellprofiler_enum_value_setting_parser(ImageMode),
+        ),
+        SettingToKeywordBinding("Select the colormap", "colormap_value"),
+    )
+
+
+class WatershedModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
+    """Bind Watershed settings that control object-domain semantics."""
+
+    module_name = "Watershed"
+    structuring_element_binding = StructuringElementSettingBinding(
+        setting_name=WATERSHED_STRUCTURING_ELEMENT_SETTING,
+        default_value="Disk,1",
+        shape_keyword="structuring_element",
+        size_keyword="structuring_element_size",
+    )
+    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = (
+        INPUT_IMAGE_SETTING,
+        OUTPUT_OBJECTS_SETTING,
+        WATERSHED_MARKERS_SETTING,
+        WATERSHED_MASK_SETTING,
+        WATERSHED_INTENSITY_IMAGE_SETTING,
+        "Display watershed seeds?",
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            WATERSHED_USE_ADVANCED_SETTINGS_SETTING,
+            "use_advanced_settings",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_METHOD_SETTING,
+            "watershed_method",
+            cellprofiler_enum_value_setting_parser(WatershedMethod),
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_DECLUMP_METHOD_SETTING,
+            "declump_method",
+            cellprofiler_enum_value_setting_parser(WatershedDeclumpMethod),
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_CONNECTIVITY_SETTING, "connectivity", parse_cellprofiler_int
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_COMPACTNESS_SETTING, "compactness", parse_cellprofiler_float
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_FOOTPRINT_SETTING, "footprint", parse_cellprofiler_int
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_DOWNSAMPLE_SETTING, "downsample", parse_cellprofiler_int
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_LABEL_SEPARATION_SETTING,
+            "watershed_line",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_BORDER_EXCLUSION_SETTING,
+            "exclude_border",
+            parse_watershed_border_exclusion,
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_MINIMUM_SEED_DISTANCE_SETTING,
+            "min_distance",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_MINIMUM_INTERNAL_DISTANCE_SETTING,
+            "min_intensity",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_SMOOTHING_FACTOR_SETTING,
+            "gaussian_sigma",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            WATERSHED_MAX_SEEDS_SETTING,
+            "max_seeds",
+            parse_cellprofiler_int,
+        ),
+    )
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        kwargs.update(
+            structuring_element_bound_kwargs(
+                module,
+                binder,
+                type(self).structuring_element_binding,
+            )
+        )
+        for setting_name in type(self).structuring_element_binding.normalized_setting_names:
+            unmapped_kwargs.pop(setting_name, None)
+        return BoundModuleSettings(kwargs, unmapped_kwargs)
 
 
 class GrayToColorModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
@@ -882,7 +1677,7 @@ class GrayToColorModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "GrayToColor"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -904,7 +1699,7 @@ class UnmixColorsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "UnmixColors"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -920,7 +1715,7 @@ class ColorToGrayModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "ColorToGray"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -938,7 +1733,7 @@ class MeasureImageAreaOccupiedModuleSettingsBindingStrategy(
 
     module_name = "MeasureImageAreaOccupiedBinary"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -954,7 +1749,7 @@ class AlignModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "Align"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -970,7 +1765,7 @@ class OverlayOutlinesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy
 
     module_name = "OverlayOutlines"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -981,12 +1776,47 @@ class OverlayOutlinesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy
         return BoundModuleSettings(overlay_outlines_bound_kwargs(module))
 
 
+class OverlayObjectsModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrategy):
+    """Bind OverlayObjects visual settings; artifact routing lives in contracts."""
+
+    module_name = "OverlayObjects"
+    explicit_settings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        SettingToKeywordBinding("Opacity", "opacity", parse_cellprofiler_float),
+    )
+    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = (
+        INPUT_IMAGE_SETTING,
+        INPUT_OBJECTS_SETTING,
+        OUTPUT_IMAGE_SETTING,
+    )
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        kwargs.update(binder.bind_declared(module, type(self).explicit_settings))
+        for binding in type(self).explicit_settings:
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(binding.setting_name),
+                None,
+            )
+        for setting_name in type(self).ignored_settings:
+            for name in setting_names(setting_name):
+                unmapped_kwargs.pop(normalize_cellprofiler_setting_name(name), None)
+        return BoundModuleSettings(kwargs, unmapped_kwargs)
+
+
 class TileModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind legacy Tile assembly modes into explicit montage geometry."""
 
     module_name = "Tile"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1022,14 +1852,14 @@ class TrackObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "TrackObjects"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        generic = GenericModuleSettingsBindingStrategy().bind(
+        generic = GenericModuleSettingsBindingStrategy()._bind(
             module,
             binder=binder,
             param_mapping=param_mapping,
@@ -1047,6 +1877,13 @@ class TrackObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         pixel_radius = parse_cellprofiler_int(
             module.get_setting("Maximum pixel distance to consider matches", "50")
         )
+        unmapped_kwargs = dict(generic.unmapped_kwargs)
+        for setting_name in (
+            "Choose a tracking method",
+            "Select the objects to track",
+            "Maximum pixel distance to consider matches",
+        ):
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
         return BoundModuleSettings(
             {
                 **dict(generic.kwargs),
@@ -1054,7 +1891,7 @@ class TrackObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
                 "tracking_method": normalized_method,
                 "pixel_radius": pixel_radius,
             },
-            generic.unmapped_kwargs,
+            unmapped_kwargs,
         )
 
 
@@ -1063,7 +1900,7 @@ class ImageMathModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "ImageMath"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1079,7 +1916,7 @@ class ResizeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "Resize"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1095,7 +1932,7 @@ class ResizeObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "ResizeObjects"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1106,6 +1943,56 @@ class ResizeObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(resize_objects_bound_kwargs(module, binder))
 
 
+class MedianFilterModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind MedianFilter's spatial window setting."""
+
+    module_name = "Medianfilter"
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(
+            binder.bind_declared(
+                module,
+                (
+                    SettingToKeywordBinding("Window", "window_size", parse_cellprofiler_int),
+                ),
+            )
+        )
+
+
+class RemoveHolesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+    """Bind RemoveHoles' diameter setting."""
+
+    module_name = "RemoveHoles"
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(
+            binder.bind_declared(
+                module,
+                (
+                    SettingToKeywordBinding(
+                        "Size of holes to fill",
+                        "diameter",
+                        parse_cellprofiler_float,
+                    ),
+                ),
+            )
+        )
+
+
 class MeasureObjectNeighborsModuleSettingsBindingStrategy(
     ModuleSettingsBindingStrategy
 ):
@@ -1113,14 +2000,14 @@ class MeasureObjectNeighborsModuleSettingsBindingStrategy(
 
     module_name = "MeasureObjectNeighbors"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = GenericModuleSettingsBindingStrategy().bind(
+        bound = GenericModuleSettingsBindingStrategy()._bind(
             module,
             binder=binder,
             param_mapping=param_mapping,
@@ -1168,7 +2055,7 @@ class FilterObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "FilterObjects"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1185,14 +2072,14 @@ class RelateObjectsModuleSettingsBindingStrategy(GenericModuleSettingsBindingStr
     module_name = "RelateObjects"
     distance_setting_name: ClassVar[str] = "Calculate child-parent distances?"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super().bind(module, binder=binder, param_mapping=param_mapping)
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
         value = optional_setting_value(module, type(self).distance_setting_name)
@@ -1213,7 +2100,7 @@ class DisplayDataOnImageModuleSettingsBindingStrategy(ModuleSettingsBindingStrat
 
     module_name = "DisplayDataOnImage"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1229,7 +2116,7 @@ class CalculateMathModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "CalculateMath"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1245,7 +2132,7 @@ class ClassifyObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy
 
     module_name = "ClassifyObjectsSingleMeasurement"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1261,7 +2148,7 @@ class CropModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "Crop"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1289,7 +2176,7 @@ class CorrectIlluminationApplyModuleSettingsBindingStrategy(
     module_name = "CorrectIlluminationApply"
     setting_bindings = CORRECT_ILLUMINATION_APPLY_SETTINGS
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1362,7 +2249,7 @@ class ExpandOrShrinkObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingSt
 
     module_name = "ExpandOrShrinkObjects"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1385,7 +2272,7 @@ class MaskObjectsModuleSettingsBindingStrategy(
 class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind shared morphology structuring-element settings."""
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1396,42 +2283,57 @@ class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrat
         return BoundModuleSettings(structuring_element_bound_kwargs(module, binder))
 
 
-STRUCTURING_ELEMENT_MODULE_NAMES = (
-    "Opening",
-    "Closing",
-    "ErodeImage",
-    "DilateImage",
-    "ErodeObjects",
-)
+class OpeningModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
+    """Bind Opening's CellProfiler structuring-element setting."""
+
+    module_name = "Opening"
 
 
-def _declare_module_settings_binding_strategy(
-    module_name: str,
-    base: type[ModuleSettingsBindingStrategy],
-) -> type[ModuleSettingsBindingStrategy]:
-    class_name = f"{module_name}ModuleSettingsBindingStrategy"
-    return type(base)(
-        class_name,
-        (base,),
-        {
-            "__module__": __name__,
-            "__qualname__": class_name,
-            "module_name": module_name,
-        },
+class ClosingModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
+    """Bind Closing's CellProfiler structuring-element setting."""
+
+    module_name = "Closing"
+
+
+class ErodeImageModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
+    """Bind ErodeImage's CellProfiler structuring-element setting."""
+
+    module_name = "ErodeImage"
+
+
+class DilateImageModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
+    """Bind DilateImage's CellProfiler structuring-element setting."""
+
+    module_name = "DilateImage"
+
+
+class ErodeObjectsModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
+    """Bind ErodeObjects structuring-element and object-preservation semantics."""
+
+    module_name = "ErodeObjects"
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Prevent object removal",
+            "preserve_midpoints",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Relabel resulting objects",
+            "relabel_objects",
+            parse_cellprofiler_bool,
+        ),
     )
 
-
-globals().update(
-    {
-        f"{module_name}ModuleSettingsBindingStrategy": (
-            _declare_module_settings_binding_strategy(
-                module_name,
-                StructuringElementModuleSettingsBindingStrategy,
-            )
-        )
-        for module_name in STRUCTURING_ELEMENT_MODULE_NAMES
-    }
-)
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        declarative_bound = binder.bind_declared(module, type(self).setting_bindings)
+        return BoundModuleSettings({**bound.kwargs, **declarative_bound})
 
 
 class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
@@ -1439,7 +2341,7 @@ class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "DefineGridManual"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1460,7 +2362,7 @@ class IdentifyObjectsInGridModuleSettingsBindingStrategy(
 
     module_name = "IdentifyObjectsInGrid"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1478,7 +2380,7 @@ class UntangleWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
     module_name = "UntangleWorms"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,
@@ -1494,7 +2396,7 @@ class StraightenWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy
 
     module_name = "StraightenWorms"
 
-    def bind(
+    def _bind(
         self,
         module: ModuleBlock,
         *,

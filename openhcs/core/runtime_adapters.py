@@ -12,6 +12,7 @@ from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     SourceBindingRuntimeContext,
 )
+from openhcs.core.runtime_semantics import RuntimePlaneProjection
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -32,6 +33,9 @@ class RuntimeAdapterRequest:
         SourceBindingRuntimeContext.empty()
     )
     group_key: str | None = None
+    plane_projection: RuntimePlaneProjection = field(
+        default_factory=RuntimePlaneProjection.stack
+    )
 
 
 @dataclass(frozen=True, slots=True)

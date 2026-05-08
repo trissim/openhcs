@@ -10,6 +10,7 @@ from openhcs.interop.cellprofiler import import_records
 from openhcs.interop.cellprofiler import measurement_dialect
 from openhcs.interop.cellprofiler import measurement_scope
 from openhcs.interop.cellprofiler import module_roles
+from openhcs.interop.cellprofiler import module_semantics
 from openhcs.interop.cellprofiler import parser as product_parser
 from openhcs.interop.cellprofiler import runtime as product_runtime
 from openhcs.interop.cellprofiler import settings_binder as product_settings_binder
@@ -72,6 +73,22 @@ def test_cellprofiler_module_roles_have_product_namespace_owner():
     assert (
         cellprofiler.INFRASTRUCTURE_MODULE_NAMES
         is module_roles.INFRASTRUCTURE_MODULE_NAMES
+    )
+
+
+def test_cellprofiler_module_semantics_have_product_namespace_owner():
+    """Product namespace owns CellProfiler manual module semantics."""
+    assert (
+        cellprofiler.CellProfilerModuleSemantics
+        is module_semantics.CellProfilerModuleSemantics
+    )
+    assert (
+        cellprofiler.CellProfilerModuleDimensionality
+        is module_semantics.CellProfilerModuleDimensionality
+    )
+    assert (
+        cellprofiler.cellprofiler_module_semantics
+        is module_semantics.cellprofiler_module_semantics
     )
 
 

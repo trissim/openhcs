@@ -7,7 +7,10 @@ from functools import lru_cache
 from typing import ClassVar, TypeVar
 
 from openhcs.constants.constants import MemoryType
-from openhcs.core.callable_contract import CallableContract
+from openhcs.core.callable_contract import (
+    CallableContract,
+    CompilerPreparedAutoRegisterFamily,
+)
 
 
 class CellProfilerBackendProvider(str, Enum):
@@ -67,7 +70,7 @@ def cellprofiler_backend_key(
     )
 
 
-class CellProfilerBackendStrategyMixin:
+class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
     """Mixin for backend strategies keyed by OpenHCS memory type and provider.
 
     Concrete strategy families keep their own AutoRegisterMeta registry; this
@@ -81,6 +84,16 @@ class CellProfilerBackendStrategyMixin:
         DEFAULT_CELLPROFILER_BACKEND_PROVIDER
     )
     is_default_backend: ClassVar[bool] = False
+
+    @classmethod
+    def prepare_registered_family(cls) -> None:
+        """Prepare every registered backend implementation for compiler warmup."""
+        registry: dict[str, type[BackendStrategyT]] = getattr(cls, "__registry__", {})
+        _prepare_cellprofiler_backend_family_cached(cls, tuple(sorted(registry)))
+
+    def prepare_backend(self) -> None:
+        """Prepare this concrete backend implementation."""
+        return
 
     @classmethod
     def for_memory_type(
@@ -191,6 +204,20 @@ def _resolve_backend_class_cached(
         f"registered for memory type {resolved.value!r}: "
         f"{tuple(strategy.__name__ for strategy in matches)!r}."
     )
+
+
+@lru_cache(maxsize=None)
+def _prepare_cellprofiler_backend_family_cached(
+    strategy_family: type[BackendStrategyT],
+    _registry_keys: tuple[str, ...],
+) -> None:
+    registry: dict[str, type[BackendStrategyT]] = getattr(
+        strategy_family,
+        "__registry__",
+        {},
+    )
+    for strategy_cls in registry.values():
+        strategy_cls().prepare_backend()
 
 
 __all__ = [

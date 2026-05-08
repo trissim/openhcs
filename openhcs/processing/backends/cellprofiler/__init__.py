@@ -127,7 +127,11 @@ def _make_processing_wrapper(
     setattr(wrapper, PROCESSING_CONTRACT_ATTR, contract)
     setattr(wrapper, DECLARED_PROCESSING_CONTRACT_ATTR, contract.name)
     setattr(wrapper, CELLPROFILER_MODULE_ATTR, module_name)
-    attach_callable_contract_metadata(wrapper, raw_processing_function=func)
+    attach_callable_contract_metadata(
+        wrapper,
+        raw_processing_function=func,
+        runtime_image_execution_mode=callable_contract.runtime_image_execution_mode,
+    )
     return wrapper
 
 

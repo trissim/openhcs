@@ -20,6 +20,7 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
+    object_label_payload_from_source_image,
 )
 from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
@@ -179,6 +180,52 @@ class SecondarySegmentationRequest:
     @property
     def object_mask(self) -> np.ndarray:
         return self.thresholded | (self.unedited_labels > 0)
+
+
+@dataclass(frozen=True)
+class SecondaryObjectLabels:
+    """CellProfiler object-container label variants for secondary objects."""
+
+    segmented: np.ndarray
+    unedited_segmented: np.ndarray
+    small_removed_segmented: np.ndarray
+
+    @classmethod
+    def from_raw_labels(
+        cls,
+        labels: np.ndarray,
+        *,
+        fill_holes: bool,
+        discard_edge_objects: bool,
+        primary_labels: np.ndarray,
+        morphology: MorphologyBackendStrategy,
+    ) -> "SecondaryObjectLabels":
+        small_removed = labels
+        if fill_holes and small_removed.max() > 0:
+            small_removed = morphology.fill_labeled_holes(small_removed)
+        segmented = _filter_labels(small_removed, primary_labels)
+        if discard_edge_objects and segmented.max() > 0:
+            segmented = _discard_edge_objects(segmented, morphology)
+        segmented = segmented.astype(np.int32, copy=False)
+        small_removed = small_removed.astype(np.int32, copy=False)
+        return cls(
+            segmented=segmented,
+            unedited_segmented=small_removed,
+            small_removed_segmented=small_removed,
+        )
+
+    @property
+    def object_count(self) -> int:
+        return int(np.max(self.segmented)) if self.segmented.size else 0
+
+    def payload_for_image(self, image: object) -> ObjectLabelPayload:
+        return object_label_payload_from_source_image(
+            image,
+            self.segmented,
+            unedited_labels=self.unedited_segmented,
+            small_removed_labels=self.small_removed_segmented,
+            declared_object_count=self.object_count,
+        )
 
 
 class ThresholdCalculator(ABC, metaclass=AutoRegisterMeta):
@@ -554,23 +601,6 @@ def _coerce_threshold_method(
     }[threshold_method]
 
 
-def _postprocess_secondary_labels(
-    labels: np.ndarray,
-    *,
-    fill_holes: bool,
-    discard_edge_objects: bool,
-    primary_labels: np.ndarray,
-    morphology: MorphologyBackendStrategy,
-) -> np.ndarray:
-    labels_out = labels
-    if fill_holes and labels_out.max() > 0:
-        labels_out = morphology.fill_labeled_holes(labels_out)
-    labels_out = _filter_labels(labels_out, primary_labels)
-    if discard_edge_objects and labels_out.max() > 0:
-        labels_out = _discard_edge_objects(labels_out, morphology)
-    return labels_out.astype(np.int32)
-
-
 def _filter_labels(labels_out: np.ndarray, primary_labels: np.ndarray) -> np.ndarray:
     """Keep secondary labels associated with accepted primary labels."""
     max_out = int(np.max(labels_out))
@@ -777,7 +807,7 @@ def identify_secondary_objects(
             diagnostics_unit_interval_scale=diagnostics_unit_interval_scale,
         )
     )
-    labels_out = SecondarySegmentationStrategy.for_method(method).segment(
+    raw_labels = SecondarySegmentationStrategy.for_method(method).segment(
         SecondarySegmentationRequest(
             image=img,
             labels=inputs.labels,
@@ -790,15 +820,15 @@ def identify_secondary_objects(
             propagation_backend_provider=propagation_backend_provider,
         )
     )
-    labels_out = _postprocess_secondary_labels(
-        labels_out,
+    object_labels = SecondaryObjectLabels.from_raw_labels(
+        raw_labels,
         fill_holes=fill_holes,
         discard_edge_objects=discard_edge_objects,
         primary_labels=inputs.labels,
         morphology=morphology,
     )
     stats = _secondary_object_stats(
-        labels_out,
+        object_labels.segmented,
         image_shape=img.shape,
         threshold_value=threshold.value,
         original_threshold=threshold.original_value,
@@ -807,10 +837,10 @@ def identify_secondary_objects(
     )
     relationships = _parent_child_relationship(
         primary_labels if isinstance(primary_labels, ObjectLabelPayload) else inputs.labels,
-        labels_out,
+        object_labels.segmented,
     )
     
-    return img.astype(np.float32), stats, relationships, labels_out
+    return img.astype(np.float32), stats, relationships, object_labels.payload_for_image(image)
 
 
 @processing_prepare(identify_secondary_objects)

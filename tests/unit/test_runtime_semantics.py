@@ -10,12 +10,17 @@ from openhcs.core.aligned_image_payload import (
     compose_one_image_bundle,
 )
 from openhcs.core.runtime_semantics import (
+    ObjectLabelDomain,
     ObjectLabelDomainScope,
     ObjectLabelRepresentation,
+    GroupRuntimePlaneProjection,
+    RuntimePlaneProjection,
     SourceSpatialDomainAdapter,
+    StackRuntimePlaneProjection,
     aligned_dense_object_label_arrays,
     aligned_dense_object_label_stack_alignment,
     aligned_dense_object_label_stacks,
+    dense_object_label_extent_id_domain,
     dense_object_label_id_domain,
     dense_object_label_identity_domains,
     dense_object_label_max_present_id,
@@ -33,6 +38,23 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     image_payload_with_context,
 )
+
+
+def test_runtime_plane_projection_is_nominal_and_validated() -> None:
+    stack_projection = RuntimePlaneProjection.for_group_key(None, plane_index=None)
+    group_projection = RuntimePlaneProjection.for_group_key("2", plane_index=1)
+
+    assert isinstance(stack_projection, StackRuntimePlaneProjection)
+    assert stack_projection.runtime_slice_plane_index() is None
+    assert isinstance(group_projection, GroupRuntimePlaneProjection)
+    assert group_projection.runtime_slice_plane_index() == 1
+
+    with pytest.raises(ValueError, match="Ungrouped runtime execution"):
+        RuntimePlaneProjection.for_group_key(None, plane_index=0)
+    with pytest.raises(ValueError, match="Grouped runtime execution requires"):
+        RuntimePlaneProjection.for_group_key("2", plane_index=None)
+    with pytest.raises(ValueError, match="cannot be negative"):
+        RuntimePlaneProjection.group(-1)
 
 
 def test_aligned_dense_object_label_arrays_projects_unambiguous_stack() -> None:
@@ -59,6 +81,29 @@ def test_aligned_dense_object_label_arrays_projects_unambiguous_stack() -> None:
 
     np.testing.assert_array_equal(aligned_stack, first_plane)
     np.testing.assert_array_equal(aligned_reference, reference)
+
+
+def test_object_label_domain_project_slice_selects_declared_plane_domain() -> None:
+    domain = ObjectLabelDomain(
+        declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
+        scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    projected = domain.project_slice(slice_index=1, slice_count=2)
+
+    assert projected.declared_object_ids == (1, 2, 3, 4)
+    assert projected.declared_object_id_domains == ()
+    assert projected.scope is ObjectLabelDomainScope.PLANE
+
+
+def test_object_label_domain_project_slice_rejects_mismatched_plane_domains() -> None:
+    domain = ObjectLabelDomain(
+        declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
+        scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    with pytest.raises(ValueError, match="must match PURE_2D slice count"):
+        domain.project_slice(slice_index=0, slice_count=1)
 
 
 def test_compose_one_image_bundle_preserves_shared_crop_domain() -> None:
@@ -270,12 +315,14 @@ def test_dense_object_label_id_domain_uses_declared_count_for_empty_labels() -> 
     )
 
     assert dense_object_label_id_domain(payload) == (1, 2, 3, 4)
+    assert dense_object_label_extent_id_domain(payload) == ()
 
 
 def test_dense_object_label_id_domain_uses_present_dense_ids_without_declaration() -> None:
     labels = np.array([[1, 0, 3]], dtype=np.int32)
 
     assert dense_object_label_id_domain(labels) == (1, 3)
+    assert dense_object_label_extent_id_domain(labels) == (1, 2, 3)
 
 
 def test_object_label_id_domain_uses_sparse_ijv_labels_without_densifying() -> None:
@@ -313,7 +360,7 @@ def test_object_label_id_domain_delegates_through_sparse_payload_wrappers() -> N
     assert dense_object_label_present_ids(label_set) == (1, 3)
 
 
-def test_dense_object_label_plane_id_domains_do_not_repeat_stack_declaration() -> None:
+def test_dense_object_label_plane_id_domains_repeat_plane_scoped_stack_declaration() -> None:
     labels = ObjectLabelPayload(
         labels=np.array(
             [
@@ -326,7 +373,27 @@ def test_dense_object_label_plane_id_domains_do_not_repeat_stack_declaration() -
         domain_scope=ObjectLabelDomainScope.PLANE,
     )
 
-    assert dense_object_label_plane_id_domains(labels) == ((1, 3), (2,))
+    assert dense_object_label_plane_id_domains(labels) == (
+        (1, 2, 3, 4),
+        (1, 2, 3, 4),
+    )
+
+
+def test_dense_object_label_plane_id_domains_preserve_single_plane_declaration() -> None:
+    labels = ObjectLabelPayload(
+        labels=np.array(
+            [
+                [1, 0],
+                [0, 3],
+            ],
+            dtype=np.int32,
+        ),
+        declared_object_count=4,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    assert dense_object_label_plane_id_domains(labels) == ((1, 2, 3, 4),)
+    assert dense_object_label_identity_domains(labels) == ((1, 2, 3, 4),)
 
 
 def test_relabel_dense_object_labels_consecutive_uses_single_semantic_remap() -> None:

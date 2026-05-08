@@ -6,15 +6,16 @@ Original: erode_objects
 import numpy as np
 from typing import Tuple
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_semantics import (
+    ParentChildRelationshipPayload,
+    object_label_lineage_payload,
+)
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 from dataclasses import dataclass
 
-from benchmark.cellprofiler_library.functions.spatial_axes import (
-    apply_over_trailing_spatial_axes,
-)
 from benchmark.cellprofiler_library.functions.structuring_elements import (
     StructuringElement,
     adapt_structuring_element_rank,
@@ -30,30 +31,6 @@ class ErosionStats:
     objects_removed: int
 
 
-def _find_object_centers(labels: np.ndarray) -> dict:
-    """Find the center pixel for each labeled object."""
-    from scipy.ndimage import center_of_mass
-    
-    unique_labels = np.unique(labels)
-    unique_labels = unique_labels[unique_labels != 0]
-    
-    centers = {}
-    for label_id in unique_labels:
-        mask = labels == label_id
-        coords = np.argwhere(mask)
-        if len(coords) > 0:
-            # Use centroid, rounded to nearest pixel
-            center = coords.mean(axis=0).astype(int)
-            # Ensure center is within the object
-            if not mask[tuple(center)]:
-                # Find closest pixel in object to centroid
-                distances = np.sum((coords - center) ** 2, axis=1)
-                center = coords[np.argmin(distances)]
-            centers[label_id] = tuple(center)
-    
-    return centers
-
-
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
 @special_outputs(
@@ -61,6 +38,7 @@ def _find_object_centers(labels: np.ndarray) -> dict:
         fields=["slice_index", "input_object_count", "output_object_count", "objects_removed"],
         analysis_type="erosion"
     )),
+    "parent_child_relationship",
     ("eroded_labels", segmentation_mask_rois())
 )
 def erode_objects(
@@ -68,9 +46,9 @@ def erode_objects(
     labels: np.ndarray,
     structuring_element: StructuringElement | str = StructuringElement.DISK,
     size: int = 1,
-    preserve_midpoints: bool = False,
+    preserve_midpoints: bool = True,
     relabel_objects: bool = False,
-) -> Tuple[np.ndarray, ErosionStats, np.ndarray]:
+) -> Tuple[np.ndarray, ErosionStats, ParentChildRelationshipPayload, np.ndarray]:
     """Erode objects based on the structuring element provided.
     
     This function erodes labeled objects using morphological erosion.
@@ -90,46 +68,35 @@ def erode_objects(
     """
     from skimage.measure import label as relabel
     labels = object_label_dense_array(labels, dtype=np.int32)
-    
-    # Get structuring element
-    selem = adapt_structuring_element_rank(
+
+    footprint = adapt_structuring_element_rank(
         build_structuring_element(structuring_element, size),
         labels.ndim,
     )
-    
-    # Count input objects
+
     input_labels = np.unique(labels)
     input_labels = input_labels[input_labels != 0]
     input_count = len(input_labels)
-    
-    # Store centers if preserving midpoints
+
+    contours = _morphological_gradient(labels, footprint)
+    eroded = labels * (contours == 0)
+
     if preserve_midpoints:
-        centers = _find_object_centers(labels)
-    
-    # Erode each object individually to maintain label identity
-    eroded = np.zeros_like(labels)
-    
-    for label_id in input_labels:
-        mask = labels == label_id
-        eroded_mask = _binary_erosion_over_spatial_axes(mask, selem)
-        
-        # Preserve midpoint if requested and object was eroded away
-        if preserve_midpoints and not eroded_mask.any() and label_id in centers:
-            center = centers[label_id]
-            eroded_mask = np.zeros_like(mask)
-            eroded_mask[center] = True
-        
-        eroded[eroded_mask] = label_id
-    
-    # Relabel if requested
+        missing_labels = np.setxor1d(labels, eroded)
+        preservation = MidpointPreservationPolicy.for_footprint(footprint)
+        eroded = preservation.preserve_missing_labels(
+            labels,
+            eroded,
+            missing_labels,
+        )
+
     if relabel_objects:
         eroded = relabel(eroded > 0).astype(labels.dtype)
-    
-    # Count output objects
+
     output_labels = np.unique(eroded)
     output_labels = output_labels[output_labels != 0]
     output_count = len(output_labels)
-    
+
     stats = ErosionStats(
         slice_index=0,
         input_object_count=input_count,
@@ -137,18 +104,72 @@ def erode_objects(
         objects_removed=input_count - output_count
     )
     
-    return image, stats, eroded
+    relationship = object_label_lineage_payload(labels, eroded)
+    return image, stats, relationship, eroded
 
 
-def _binary_erosion_over_spatial_axes(
-    mask: np.ndarray,
-    structure: np.ndarray,
-) -> np.ndarray:
-    from scipy.ndimage import binary_erosion
+def _morphological_gradient(labels: np.ndarray, footprint: np.ndarray) -> np.ndarray:
+    import scipy.ndimage
 
-    return apply_over_trailing_spatial_axes(
-        mask,
-        structure.ndim,
-        lambda spatial_mask: binary_erosion(spatial_mask, structure=structure),
-        fill_value=False,
-    )
+    if footprint.ndim == 2 and labels.ndim > 2:
+        output = np.zeros_like(labels)
+        for index, plane in enumerate(labels):
+            output[index] = scipy.ndimage.morphological_gradient(
+                plane,
+                footprint=footprint,
+            )
+        return output
+    if footprint.ndim > 2 and labels.ndim == 2:
+        raise NotImplementedError(
+            "A 3D structuring element cannot be applied to a 2D object set."
+        )
+    return scipy.ndimage.morphological_gradient(labels, footprint=footprint)
+
+
+class MidpointPreservationPolicy:
+    """CellProfiler midpoint preservation for labels lost during erosion."""
+
+    def preserve_missing_labels(
+        self,
+        labels: np.ndarray,
+        eroded: np.ndarray,
+        missing_labels: np.ndarray,
+    ) -> np.ndarray:
+        for label_id in missing_labels:
+            binary = labels == label_id
+            midpoint = self.midpoint_distance(binary)
+            eroded[midpoint == np.max(midpoint)] = label_id
+        return eroded
+
+    def midpoint_distance(self, binary: np.ndarray) -> np.ndarray:
+        import scipy.ndimage
+
+        return scipy.ndimage.distance_transform_edt(binary)
+
+    @classmethod
+    def for_footprint(cls, footprint: np.ndarray) -> "MidpointPreservationPolicy":
+        if SimpleDiskMidpointPreservationPolicy.matches(footprint):
+            return SimpleDiskMidpointPreservationPolicy()
+        return cls()
+
+
+class SimpleDiskMidpointPreservationPolicy(MidpointPreservationPolicy):
+    """CellProfiler's optimized disk-1 behavior restores entire missing labels."""
+
+    @classmethod
+    def matches(cls, footprint: np.ndarray) -> bool:
+        import skimage.morphology
+
+        return (
+            footprint.ndim == 2
+            and footprint.shape == (3, 3)
+            and np.array_equal(footprint, skimage.morphology.disk(1))
+        )
+
+    def preserve_missing_labels(
+        self,
+        labels: np.ndarray,
+        eroded: np.ndarray,
+        missing_labels: np.ndarray,
+    ) -> np.ndarray:
+        return eroded + labels * np.isin(labels, missing_labels)

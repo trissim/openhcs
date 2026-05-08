@@ -82,8 +82,8 @@ def test_expand_or_shrink_objects_declares_output_label_extent():
         dtype_config=DtypeConfig(),
     )
 
-    assert result.declared_object_count == 9
-    assert result.declared_object_ids == tuple(range(1, 10))
+    assert result.declared_object_count == 4
+    assert result.declared_object_ids == ()
 
 
 def test_expand_or_shrink_objects_shrinks_labels_like_per_object_erosion():

@@ -142,7 +142,10 @@ def measurement_row_qualifiers_from_values(
 def measurement_row_qualifiers_from_indexed_values_cached(
     row_values: tuple[object, ...],
     qualifiers: tuple[tuple[RuntimeMeasurementRowQualifier, tuple[int | None, ...]], ...],
-    cache: dict[tuple[RuntimeMeasurementRowQualifier, tuple[str | None, ...]], str | None],
+    cache: dict[
+        tuple[RuntimeMeasurementRowQualifier, tuple[object | None, ...]],
+        str | None,
+    ],
 ) -> tuple[str, ...]:
     rendered_values: list[str] = []
     for qualifier, indexes in qualifiers:
@@ -152,7 +155,10 @@ def measurement_row_qualifiers_from_indexed_values_cached(
         )
         cache_key = (
             qualifier,
-            tuple(None if value is None else str(value) for value in values),
+            tuple(
+                None if value is None else measurement_table_cell_payload(value)
+                for value in values
+            ),
         )
         rendered = cache.get(cache_key)
         if cache_key not in cache:
@@ -310,4 +316,3 @@ def _first_row_value(
         if field is not None:
             return row[field]
     return None
-

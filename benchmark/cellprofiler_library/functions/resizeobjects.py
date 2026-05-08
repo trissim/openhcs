@@ -11,6 +11,10 @@ from typing import Tuple
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_semantics import (
+    ParentChildRelationshipPayload,
+    object_label_lineage_payload,
+)
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
@@ -44,6 +48,7 @@ class ResizeObjectsStats:
         fields=["slice_index", "original_height", "original_width", "new_height", "new_width", "object_count"],
         analysis_type="resize_objects"
     )),
+    "parent_child_relationship",
     ("resized_labels", segmentation_mask_rois())
 )
 def resize_objects(
@@ -56,7 +61,7 @@ def resize_objects(
     width: int = 100,
     height: int = 100,
     planes: int = 10,
-) -> Tuple[np.ndarray, ResizeObjectsStats, np.ndarray]:
+) -> Tuple[np.ndarray, ResizeObjectsStats, ParentChildRelationshipPayload, np.ndarray]:
     """
     Resize object label matrices by a factor or to specific dimensions.
     
@@ -116,7 +121,8 @@ def resize_objects(
         object_count=object_count
     )
     
-    return image, stats, resized_labels
+    relationship = object_label_lineage_payload(labels, resized_labels)
+    return image, stats, relationship, resized_labels
 
 
 def _coerce_resize_method(value: ResizeMethod | str) -> ResizeMethod:
@@ -164,6 +170,7 @@ def _resize_objects_zoom_factors(
                 "new_depth", "new_height", "new_width", "object_count"],
         analysis_type="resize_objects_3d"
     )),
+    "parent_child_relationship",
     ("resized_labels", segmentation_mask_rois())
 )
 def resize_objects_3d(
@@ -176,7 +183,7 @@ def resize_objects_3d(
     width: int = 100,
     height: int = 100,
     planes: int = 10,
-) -> Tuple[np.ndarray, dict, np.ndarray]:
+) -> Tuple[np.ndarray, dict, ParentChildRelationshipPayload, np.ndarray]:
     """
     Resize 3D object label matrices by a factor or to specific dimensions.
     
@@ -228,4 +235,5 @@ def resize_objects_3d(
         "object_count": object_count
     }
     
-    return image, stats, resized_labels
+    relationship = object_label_lineage_payload(labels, resized_labels)
+    return image, stats, relationship, resized_labels

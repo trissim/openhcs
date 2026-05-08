@@ -45,6 +45,8 @@ from openhcs.core.source_matching import (
     source_metadata_component,
     source_metadata_values_equal,
     source_metadata_value,
+    source_path_identity_key,
+    source_paths_equal,
 )
 from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
@@ -69,8 +71,11 @@ from openhcs.core.runtime_artifact_queries import (
 )
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
+    ObjectLabelDomain,
     ObjectLabelDomainScope,
     RelationshipSemantics,
+    RuntimePlaneProjection,
+    RuntimePlaneAxisProjector,
     dense_object_label_id_domain,
 )
 from openhcs.core.runtime_values import (
@@ -91,6 +96,9 @@ from openhcs.core.runtime_values import (
     image_payload_metadata_from_source,
     image_payload_with_context,
     normalize_artifact_value,
+)
+from openhcs.interop.cellprofiler.measurement_dialect import (
+    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
@@ -155,7 +163,7 @@ class ObjectLabelSourceImageDomain:
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerRuntimeAdapter:
+class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     """CellProfiler-like API backed by typed OpenHCS runtime state.
 
     The adapter deliberately has no object/image/measurement dictionaries of its
@@ -178,6 +186,9 @@ class CellProfilerRuntimeAdapter:
     processing_context: Any | None = None
     filemanager: Any | None = None
     backend: str = Backend.MEMORY.value
+    plane_projection: RuntimePlaneProjection = field(
+        default_factory=RuntimePlaneProjection.stack
+    )
     _source_candidate_cache: dict[
         tuple[str, ...],
         tuple["ParsedSourceCandidate", ...],
@@ -210,6 +221,12 @@ class CellProfilerRuntimeAdapter:
         repr=False,
         compare=False,
     )
+    _source_order_cache: dict[tuple[Hashable, ...], Any] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_value_store, RuntimeValueStore):
@@ -217,6 +234,7 @@ class CellProfilerRuntimeAdapter:
                 "CellProfilerRuntimeAdapter.runtime_value_store must be "
                 f"RuntimeValueStore, got {type(self.runtime_value_store).__name__}."
             )
+
         if not self.axis_id:
             raise ValueError("CellProfilerRuntimeAdapter.axis_id cannot be empty.")
         if not self.backend:
@@ -232,6 +250,12 @@ class CellProfilerRuntimeAdapter:
                 "CellProfilerRuntimeAdapter.source_binding_context must be "
                 "SourceBindingRuntimeContext, got "
                 f"{type(self.source_binding_context).__name__}."
+            )
+        if not isinstance(self.plane_projection, RuntimePlaneProjection):
+            raise TypeError(
+                "CellProfilerRuntimeAdapter.plane_projection must be "
+                "RuntimePlaneProjection, got "
+                f"{type(self.plane_projection).__name__}."
             )
 
         outputs = dict(self.artifact_outputs)
@@ -249,6 +273,67 @@ class CellProfilerRuntimeAdapter:
         object.__setattr__(self, "artifact_outputs", MappingProxyType(outputs))
         if self.group_key is not None:
             object.__setattr__(self, "group_key", str(self.group_key))
+
+    def cellprofiler_source_order_path(self, path: str) -> str:
+        """Return the source path identity used for CellProfiler image ordering."""
+        source_paths = self.source_binding_context.step_input_source_paths
+        mapped = source_paths.get(path) or path
+        return source_path_identity_key(mapped)
+
+    def cellprofiler_ordered_pipeline_image_paths(self) -> tuple[str, ...]:
+        """Return loadable pipeline input paths in CellProfiler image order."""
+        cache_key = ("ordered_pipeline_image_paths",)
+        cached = self._source_order_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        ordered = tuple(
+            dict.fromkeys(
+                self.cellprofiler_source_order_path(path)
+                for path in sorted(self.source_binding_context.pipeline_input_files)
+                if is_image_path(path)
+            )
+        )
+        self._source_order_cache[cache_key] = ordered
+        return ordered
+
+    def cellprofiler_axis_image_number_start(self) -> int:
+        """Return CP's 1-based image number for this runtime axis."""
+        cache_key = ("axis_image_number_start", str(self.axis_id))
+        cached = self._source_order_cache.get(cache_key)
+        if cached is not None:
+            return int(cached)
+
+        axis_id = str(self.axis_id)
+        metadata_by_path = self.source_binding_context.source_metadata_by_path
+        pipeline_paths = tuple(
+            path
+            for path in self.source_binding_context.pipeline_input_files
+            if is_image_path(path)
+        )
+        for index, path in enumerate(sorted(pipeline_paths), start=1):
+            metadata = (
+                metadata_by_path.get(path)
+                or metadata_by_path.get(str(Path(path).resolve()))
+                or metadata_by_path.get(self.cellprofiler_source_order_path(path))
+            )
+            if metadata and any(str(value) == axis_id for value in metadata.values()):
+                self._source_order_cache[cache_key] = index
+                return index
+
+        parser = getattr(
+            getattr(self.processing_context, "microscope_handler", None),
+            "parser",
+            None,
+        )
+        if parser is not None:
+            for index, path in enumerate(sorted(pipeline_paths), start=1):
+                parsed = parser.parse_filename(Path(path).name) or {}
+                if any(str(value) == axis_id for value in parsed.values()):
+                    self._source_order_cache[cache_key] = index
+                    return index
+
+        self._source_order_cache[cache_key] = 1
+        return 1
 
     def resolve_source_image(
         self,
@@ -311,6 +396,31 @@ class CellProfilerRuntimeAdapter:
                 f"for axis {self.axis_id!r}: {matched_indexes!r}."
             )
         return matched_indexes[0]
+
+    def runtime_slice_plane_index(self) -> int | None:
+        """Return the current axis-local runtime-slice plane index."""
+        return self.plane_projection.runtime_slice_plane_index()
+
+    def source_binding_axis_plane_index(
+        self,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        """Return the current axis-local source-binding plane index."""
+        indexes = tuple(
+            index
+            for alias in source_aliases
+            for index in (self.source_binding_plane_index(alias),)
+            if index is not None
+        )
+        unique_indexes = tuple(dict.fromkeys(indexes))
+        if not unique_indexes:
+            return None
+        if len(unique_indexes) != 1:
+            raise RuntimeError(
+                "Source-binding plane resolution produced conflicting indexes: "
+                f"{unique_indexes!r}."
+            )
+        return unique_indexes[0]
 
     def resolve_source_objects(
         self,
@@ -444,10 +554,6 @@ class CellProfilerRuntimeAdapter:
     ) -> StoredRuntimeValue:
         construct_started_at = time.perf_counter()
         if isinstance(labels, ObjectLabelSet):
-            source_domain = ObjectLabelSourceImageDomain.for_adapter_source_image(
-                self,
-                source_image_name or labels.source_image_name,
-            )
             normalized_labels = _normalize_dense_object_label_payload(labels.labels)
             object_labels = ObjectLabelSet(
                 name=name,
@@ -460,20 +566,15 @@ class CellProfilerRuntimeAdapter:
                 ),
                 declared_object_count=labels.declared_object_count,
                 declared_object_ids=labels.declared_object_ids,
+                declared_object_id_domains=labels.declared_object_id_domains,
                 domain_scope=labels.domain_scope,
-                spatial_origin_yx=source_domain.origin_or(labels.spatial_origin_yx),
-                source_spatial_shape_yx=source_domain.source_shape_or(
-                    labels.source_spatial_shape_yx
-                ),
+                spatial_origin_yx=labels.spatial_origin_yx,
+                source_spatial_shape_yx=labels.source_spatial_shape_yx,
                 source_image_name=source_image_name or labels.source_image_name,
                 dimensions=dimensions or labels.dimensions,
                 representation=labels.representation,
             )
         elif isinstance(labels, ObjectLabelPayload):
-            source_domain = ObjectLabelSourceImageDomain.for_adapter_source_image(
-                self,
-                source_image_name,
-            )
             normalized_labels = _normalize_dense_object_label_payload(labels.labels)
             object_labels = ObjectLabelSet(
                 name=name,
@@ -486,11 +587,10 @@ class CellProfilerRuntimeAdapter:
                 ),
                 declared_object_count=labels.declared_object_count,
                 declared_object_ids=labels.declared_object_ids,
+                declared_object_id_domains=labels.declared_object_id_domains,
                 domain_scope=labels.domain_scope,
-                spatial_origin_yx=source_domain.origin_or(labels.spatial_origin_yx),
-                source_spatial_shape_yx=source_domain.source_shape_or(
-                    labels.source_spatial_shape_yx
-                ),
+                spatial_origin_yx=labels.spatial_origin_yx,
+                source_spatial_shape_yx=labels.source_spatial_shape_yx,
                 source_image_name=source_image_name,
                 dimensions=dimensions,
                 representation=representation,
@@ -651,15 +751,17 @@ class CellProfilerRuntimeAdapter:
         cached = self._measurement_cache.get(cache_key)
         if cached is not None:
             return cached
+        tables = self._measurement_tables_for_multiplane_labels(
+            object_name,
+            labels,
+            group_key=group_key,
+        )
         values = measurement_values_for_label_slices(
-            self._measurement_tables_for_multiplane_labels(
-                object_name,
-                labels,
-                group_key=group_key,
-            ),
+            tables,
             feature_name,
             labels,
             object_name=object_name,
+            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
         )
         self._measurement_cache[cache_key] = values
         return values
@@ -784,6 +886,7 @@ class CellProfilerRuntimeAdapter:
                 self.measurement_tables_for_object(object_name, group_key=group_key),
                 feature_name,
                 object_name=object_name,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
             )
             self._measurement_cache[cache_key] = value_index
         values_by_label, positional_values = value_index
@@ -1169,13 +1272,15 @@ class CellProfilerRuntimeAdapter:
         for the path tuple, source-binding context, metadata rules and filename
         parser, so the cache key carries those semantic inputs explicitly.
         """
-        cache_key = _source_candidate_cache_key(file_paths, self)
         candidates = self._source_candidate_cache.get(file_paths)
-        if candidates is None:
-            candidates = _SOURCE_CANDIDATE_PROCESS_CACHE.get(cache_key)
-            if candidates is not None:
-                _SOURCE_CANDIDATE_PROCESS_CACHE.move_to_end(cache_key)
-                self._source_candidate_cache[file_paths] = candidates
+        if candidates is not None:
+            return candidates
+        cache_key = _source_candidate_cache_key(file_paths, self)
+        candidates = None
+        candidates = _SOURCE_CANDIDATE_PROCESS_CACHE.get(cache_key)
+        if candidates is not None:
+            _SOURCE_CANDIDATE_PROCESS_CACHE.move_to_end(cache_key)
+            self._source_candidate_cache[file_paths] = candidates
         if candidates is None:
             started_at = time.perf_counter()
             candidates = _parse_source_candidates(file_paths, self)
@@ -1588,12 +1693,19 @@ def _stack_object_label_records(
     values = tuple(ObjectLabelSet.from_runtime_value(record.value) for record in records)
     first = values[0]
     representations = {value.representation for value in values}
-    domain_scopes = {value.domain_scope for value in values}
     if len(representations) != 1:
         raise ValueError("Cannot stack grouped object labels with mixed representations.")
     representation = first.representation
     declared_counts = {value.declared_object_count for value in values}
     declared_ids = {value.declared_object_ids for value in values}
+    declared_id_domains = ObjectLabelDomain.explicit_plane_id_domains(
+        value.object_label_domain() for value in values
+    )
+    domain_scope = (
+        ObjectLabelDomainScope.PLANE
+        if len(values) > 1
+        else ObjectLabelDomainScope.common(value.domain_scope for value in values)
+    )
     if representation is ObjectLabelRepresentation.SPARSE_IJV:
         labels = SparseIJVLabelRows.from_slices(
             tuple(
@@ -1612,7 +1724,8 @@ def _stack_object_label_records(
                 declared_counts.pop() if len(declared_counts) == 1 else None
             ),
             declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
-            domain_scope=ObjectLabelDomainScope.common(domain_scopes),
+            declared_object_id_domains=declared_id_domains,
+            domain_scope=domain_scope,
             source_image_name=_single_or_none(value.source_image_name for value in values),
         )
 
@@ -1645,7 +1758,8 @@ def _stack_object_label_records(
             declared_counts.pop() if len(declared_counts) == 1 else None
         ),
         declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
-        domain_scope=ObjectLabelDomainScope.common(domain_scopes),
+        declared_object_id_domains=declared_id_domains,
+        domain_scope=domain_scope,
         representation=representation,
         dimensions=first.dimensions,
         source_image_name=_single_or_none(value.source_image_name for value in values),
@@ -1963,10 +2077,15 @@ class NumpyArraySourceFileLoader(PipelineStartSourceFileLoader):
     ) -> Any:
         payload = source_schema_auxiliary_payload(path)
         if payload is None:
-            payload = _require_processing_context(request.adapter).filemanager.load(
-                path,
-                request.backend,
-            )
+            if request.backend == Backend.DISK.value:
+                payload = np.load(path)
+            else:
+                payload = _require_processing_context(
+                    request.adapter
+                ).filemanager.load_batch(
+                    [path],
+                    request.backend,
+                )[0]
         if not _is_numeric_array_payload(payload):
             raise RuntimeError(
                 f"NumPy source file {path!r} does not contain a numeric image array."
@@ -2105,22 +2224,13 @@ def _source_candidate_cache_key(
         tuple(file_paths),
         context.step_input_dir,
         tuple(sorted(context.step_input_source_paths.items())),
-        _frozen_metadata_by_path(context.source_metadata_by_path),
+        context.source_metadata_identity,
         context.pipeline_input_backend,
         tuple(context.pipeline_input_files),
         adapter.source_binding_plan.metadata_rules,
         type(parser).__module__,
         type(parser).__qualname__,
         repr(parser),
-    )
-
-
-def _frozen_metadata_by_path(
-    metadata_by_path: Mapping[str, Mapping[str, str]],
-) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
-    return tuple(
-        (path, tuple(sorted(metadata.items())))
-        for path, metadata in sorted(metadata_by_path.items())
     )
 
 
@@ -2151,7 +2261,7 @@ def _candidate_metadata(
             parser,
             strict=False,
         )
-        if Path(file_path) != Path(resolved_path):
+        if not source_paths_equal(file_path, resolved_path):
             _merge_candidate_path_metadata(
                 metadata,
                 file_path,
@@ -2176,7 +2286,7 @@ def _candidate_metadata(
         parser,
         strict=True,
     )
-    if Path(file_path) != Path(resolved_path):
+    if not source_paths_equal(file_path, resolved_path):
         _merge_candidate_path_metadata(
             metadata,
             file_path,
@@ -2279,8 +2389,9 @@ def _virtual_workspace_path_for_source(
     resolved_path: str,
     context: SourceBindingRuntimeContext,
 ) -> str | None:
+    resolved_key = source_path_identity_key(resolved_path)
     for virtual_path, source_path in context.step_input_source_paths.items():
-        if Path(source_path) == Path(resolved_path):
+        if source_path_identity_key(source_path) == resolved_key:
             return virtual_path
     return None
 
@@ -2324,6 +2435,11 @@ def _match_candidates(
         if binding.selector.inherit_current_scope
         else component_selectors
     )
+    inherited_component_items = tuple(
+        (name, value)
+        for name, value in effective_components.items()
+        if name not in component_selectors
+    )
 
     return tuple(
         candidate
@@ -2331,11 +2447,7 @@ def _match_candidates(
         if _candidate_matches_explicit_components(candidate, component_selectors)
         and _candidate_matches_inherited_scope(
             candidate,
-            {
-                name: value
-                for name, value in effective_components.items()
-                if name not in component_selectors
-            },
+            inherited_component_items,
         )
         and _candidate_matches_metadata(candidate, binding.selector.metadata)
         and source_filters_match(candidate.resolved_path, binding.selector.filters)
@@ -2375,13 +2487,13 @@ def _candidate_matches_explicit_component(
 
 def _candidate_matches_inherited_scope(
     candidate: ParsedSourceCandidate,
-    inherited_scope: Mapping[str, str],
+    inherited_scope: tuple[tuple[str, str], ...],
 ) -> bool:
     return all(
         (metadata_value := _semantic_metadata_value(candidate.metadata, field_name))
         is None
         or source_metadata_values_equal(metadata_value, value)
-        for field_name, value in inherited_scope.items()
+        for field_name, value in inherited_scope
     )
 
 
@@ -2486,13 +2598,6 @@ def _load_pipeline_start_stack(
 ) -> Any:
     if not selected_paths:
         raise RuntimeError("Pipeline-start source selection cannot load zero paths.")
-    current_step_payload = _select_current_step_source_stack(
-        adapter=adapter,
-        selected_paths=selected_paths,
-        current_image=current_image,
-    )
-    if current_step_payload is not None:
-        return current_step_payload
     backend = adapter.source_binding_context.pipeline_input_backend
     if backend is None:
         raise RuntimeError(
@@ -2528,60 +2633,6 @@ def _load_pipeline_start_stack(
     return _restack_like_payload(loaded_payloads, current_image)
 
 
-def _select_current_step_source_stack(
-    *,
-    adapter: CellProfilerRuntimeAdapter,
-    selected_paths: tuple[str, ...],
-    current_image: Any,
-) -> Any | None:
-    """Return a current-stack slice when selected pipeline-start files are already loaded."""
-    context = adapter.source_binding_context
-    if not context.step_input_files or not context.step_input_source_paths:
-        return None
-    selected_indexes = _current_step_source_indexes(
-        step_input_files=context.step_input_files,
-        step_input_source_paths=context.step_input_source_paths,
-        selected_paths=selected_paths,
-    )
-    if selected_indexes is None:
-        return None
-    if len(context.step_input_files) == 1:
-        return apply_source_image_loading_semantics(
-            _natural_step_input_payload(current_image),
-            source_metadata=_context_source_metadata(selected_paths[0], context),
-            source_path=selected_paths[0],
-        )
-    slices = _unstack_payload(current_image)
-    selected_slices = [
-        apply_source_image_loading_semantics(
-            slices[index],
-            source_metadata=_context_source_metadata(selected_path, context),
-            source_path=selected_path,
-        )
-        for index, selected_path in zip(selected_indexes, selected_paths)
-    ]
-    return _restack_like_payload(selected_slices, current_image)
-
-
-def _current_step_source_indexes(
-    *,
-    step_input_files: tuple[str, ...],
-    step_input_source_paths: Mapping[str, str],
-    selected_paths: tuple[str, ...],
-) -> tuple[int, ...] | None:
-    indexed_sources: dict[str, int] = {}
-    for index, step_path in enumerate(step_input_files):
-        source_path = step_input_source_paths.get(step_path, step_path)
-        indexed_sources[str(source_path)] = index
-    selected_indexes: list[int] = []
-    for selected_path in selected_paths:
-        index = indexed_sources.get(str(selected_path))
-        if index is None:
-            return None
-        selected_indexes.append(index)
-    return tuple(selected_indexes)
-
-
 def _pipeline_start_payload_cache_key(
     adapter: CellProfilerRuntimeAdapter,
     backend: str,
@@ -2590,21 +2641,9 @@ def _pipeline_start_payload_cache_key(
     context = adapter.source_binding_context
     return (
         backend,
+        id(_require_processing_context(adapter).filemanager),
         selected_paths,
-        _frozen_selected_metadata_by_path(
-            context.source_metadata_by_path,
-            selected_paths,
-        ),
-    )
-
-
-def _frozen_selected_metadata_by_path(
-    metadata_by_path: Mapping[str, Mapping[str, str]],
-    selected_paths: tuple[str, ...],
-) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
-    return tuple(
-        (path, tuple(sorted(metadata_by_path.get(path, {}).items())))
-        for path in selected_paths
+        context.metadata_identity_for_paths(selected_paths),
     )
 
 
@@ -2827,10 +2866,11 @@ def _axis_scoped_source_candidates(
     )
     if not axis_scope:
         return candidates
+    axis_scope_items = tuple(axis_scope.items())
     return tuple(
         candidate
         for candidate in candidates
-        if _candidate_matches_inherited_scope(candidate, axis_scope)
+        if _candidate_matches_inherited_scope(candidate, axis_scope_items)
     )
 
 
@@ -2864,10 +2904,11 @@ def _target_candidates_in_current_scope(
     current_scope = _inherited_scope_components(step_input_candidates)
     if not current_scope:
         return ()
+    current_scope_items = tuple(current_scope.items())
     return tuple(
         candidate
         for candidate in target_candidates
-        if _candidate_matches_inherited_scope(candidate, current_scope)
+        if _candidate_matches_inherited_scope(candidate, current_scope_items)
     )
 
 

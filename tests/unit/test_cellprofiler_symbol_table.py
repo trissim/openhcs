@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from benchmark.converter.parser import CPPipeParser, ModuleBlock, ModuleSetting
-from benchmark.converter.pipeline_generator import PipelineGenerator
+from benchmark.converter.pipeline_generator import PipelineGenerator, python_literal
 from benchmark.converter.runtime_pipeline import partition_cppipe_modules
 from benchmark.converter.overlay_outlines_settings import overlay_outlines_bound_kwargs
 from benchmark.converter.symbol_table import (
@@ -13,6 +13,7 @@ from benchmark.converter.symbol_table import (
 from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+from benchmark.cellprofiler_library.functions.rescaleintensity import RescaleMethod
 
 
 def _module(
@@ -35,6 +36,10 @@ def _module_with_records(
         settings={setting.name: setting.value for setting in records},
         setting_records=records,
     )
+
+
+def test_generated_kwarg_literal_serializes_enum_values():
+    assert python_literal(RescaleMethod.STRETCH) == "'stretch'"
 
 
 def _identify_primary(module_num: int = 1) -> ModuleBlock:
@@ -158,6 +163,106 @@ def test_cellprofiler_symbol_table_compiles_object_measurement_graph():
         "Cytoplasm",
     ]
     assert measure_contract.outputs[0].kind is ArtifactKind.MEASUREMENTS
+
+
+def test_watershed_contract_preserves_marker_image_dependency():
+    modules = [
+        _identify_primary(),
+        _module(
+            2,
+            "ConvertObjectsToImage",
+            {
+                "Select the input objects": "Nuclei",
+                "Name the output image": "cellSeeds",
+                "Select the color format": "Binary",
+            },
+        ),
+        _module(
+            3,
+            "Watershed",
+            {
+                "Select the input image": "MembFinal",
+                "Generate from": "Markers",
+                "Markers": "cellSeeds",
+                "Mask": "MembFinal",
+                "Name the output object": "Cells",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    convert_contract = table.contracts_by_module_num[2]
+    watershed_contract = table.contracts_by_module_num[3]
+
+    assert [spec.name for spec in convert_contract.inputs] == ["Nuclei"]
+    assert [spec.name for spec in convert_contract.outputs] == ["cellSeeds"]
+    assert [spec.name for spec in watershed_contract.inputs] == [
+        "MembFinal",
+        "cellSeeds",
+        "MembFinal",
+    ]
+    assert [spec.name for spec in watershed_contract.runtime_artifact_inputs] == [
+        "cellSeeds",
+    ]
+    assert [spec.name for spec in watershed_contract.outputs] == [
+        "Watershed_3_measurements",
+        "Cells",
+    ]
+
+
+def test_watershed_contract_preserves_same_runtime_image_as_mask_role():
+    modules = [
+        _module(
+            1,
+            "Threshold",
+            {
+                "Select the input image": "OrigMembrane",
+                "Name the output image": "MembFinal",
+            },
+        ),
+        _module(
+            2,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigDNA",
+                "Name the primary objects to be identified": "Nuclei",
+            },
+        ),
+        _module(
+            3,
+            "ConvertObjectsToImage",
+            {
+                "Select the input objects": "Nuclei",
+                "Name the output image": "cellSeeds",
+                "Select the color format": "uint16",
+            },
+        ),
+        _module(
+            4,
+            "Watershed",
+            {
+                "Select the input image": "MembFinal",
+                "Generate from": "Markers",
+                "Markers": "cellSeeds",
+                "Mask": "MembFinal",
+                "Name the output object": "Cells",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    watershed_contract = table.contracts_by_module_num[4]
+
+    assert [spec.name for spec in watershed_contract.inputs] == [
+        "MembFinal",
+        "cellSeeds",
+        "MembFinal",
+    ]
+    assert [spec.name for spec in watershed_contract.runtime_artifact_inputs] == [
+        "MembFinal",
+        "cellSeeds",
+        "MembFinal",
+    ]
 
 
 def test_cellprofiler_symbol_table_fails_for_unknown_object_input():

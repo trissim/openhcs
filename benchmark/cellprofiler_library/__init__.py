@@ -29,6 +29,7 @@ class AbsorbedFunctionMetadata:
     module_name: str
     aliases: tuple[str, ...]
     function_name: str
+    function_variants: tuple[str, ...]
     contract: str
     category: str
     confidence: float
@@ -45,6 +46,11 @@ class AbsorbedFunctionMetadata:
             module_name=module_name,
             aliases=_string_tuple(payload, "aliases", module_name),
             function_name=function_name,
+            function_variants=_function_variant_tuple(
+                payload,
+                module_name=module_name,
+                primary_function_name=function_name,
+            ),
             contract=str(payload.get("contract", "pure_2d")),
             category=str(payload.get("category", "image_operation")),
             confidence=float(payload.get("confidence", 0.5)),
@@ -62,7 +68,14 @@ class AbsorbedFunctionMetadata:
         }
         if self.aliases:
             payload["aliases"] = list(self.aliases)
+        if self.function_variants:
+            payload["function_variants"] = list(self.function_variants)
         return payload
+
+    @property
+    def declared_function_names(self) -> tuple[str, ...]:
+        """Return all public functions owned by this module contract."""
+        return (self.function_name, *self.function_variants)
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,7 +209,7 @@ def coerce_absorbed_processing_contract(
         return None
     canonical_name = canonical_module_name(module_name)
     metadata = _contracts.get(canonical_name)
-    if metadata is None or metadata.function_name != function_name:
+    if metadata is None or function_name not in metadata.declared_function_names:
         return None
 
     setattr(function, PROCESSING_CONTRACT_ATTR, declared_contract)
@@ -249,14 +262,15 @@ def _load_default_function_contracts(
         contract = ProcessingContract.from_declared_name(metadata.contract)
         if contract is None:
             continue
-        existing = declared_contracts.get(metadata.function_name)
-        if existing is not None and existing is not contract:
-            raise ValueError(
-                f"Absorbed CellProfiler function {metadata.function_name!r} "
-                f"has conflicting declared contracts {existing.name!r} and "
-                f"{contract.name!r}."
-            )
-        declared_contracts[metadata.function_name] = contract
+        for function_name in metadata.declared_function_names:
+            existing = declared_contracts.get(function_name)
+            if existing is not None and existing is not contract:
+                raise ValueError(
+                    f"Absorbed CellProfiler function {function_name!r} "
+                    f"has conflicting declared contracts {existing.name!r} and "
+                    f"{contract.name!r}."
+                )
+            declared_contracts[function_name] = contract
     return MappingProxyType(declared_contracts)
 
 
@@ -339,6 +353,26 @@ def _string_tuple(
             f"Absorbed CellProfiler module {module_name!r} declares an empty {key}."
         )
     return values
+
+
+def _function_variant_tuple(
+    payload: Mapping[str, Any],
+    *,
+    module_name: str,
+    primary_function_name: str,
+) -> tuple[str, ...]:
+    variants = _string_tuple(payload, "function_variants", module_name)
+    if primary_function_name in variants:
+        raise ValueError(
+            f"Absorbed CellProfiler module {module_name!r} declares primary "
+            f"function {primary_function_name!r} as a variant."
+        )
+    if len(set(variants)) != len(variants):
+        raise ValueError(
+            f"Absorbed CellProfiler module {module_name!r} declares duplicate "
+            "function variants."
+        )
+    return variants
 
 
 def _module_lookup_key(module_name: str) -> str:

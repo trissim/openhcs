@@ -6,8 +6,10 @@ import logging
 import os
 import time
 import traceback
-from typing import Any, Mapping, Sequence
+from abc import ABC, abstractmethod
+from typing import Any, ClassVar, Mapping, Sequence
 
+from metaclass_registry import AutoRegisterMeta
 import psutil
 
 from openhcs.constants import MULTIPROCESSING_AXIS
@@ -19,7 +21,12 @@ from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.function_patterns import CompiledFunctionGroup
 from openhcs.core.progress import ProgressPhase, ProgressStatus, emit
-from openhcs.core.source_bindings import NamedSourceBinding
+from openhcs.core.source_bindings import (
+    CompiledSourceBindingPlan,
+    NamedSourceBinding,
+    SourceBindingMatchMethod,
+    SourceBindingMatchPlan,
+)
 from openhcs.core.source_matching import (
     source_component_metadata_values,
     source_filters_match,
@@ -84,67 +91,284 @@ def _filter_patterns_by_component(
     return filter_pattern_list(patterns)
 
 
-def _source_compatible_anchor_patterns(
-    pattern_list: Sequence[Any],
-    *,
-    bindings: Sequence[NamedSourceBinding],
-    parser: Any,
-) -> list[Any]:
-    """Return anchor patterns matching at least one required source selector."""
+class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal policy for choosing execution anchors from source-bound inputs."""
 
-    selector_bindings = tuple(
-        binding
-        for binding in bindings
-        if binding.required and binding.requires_selector_resolution
-    )
-    if not selector_bindings:
-        return list(pattern_list)
+    __registry_key__ = "policy_key"
+    __skip_if_no_key__ = True
+    policy_key: ClassVar[str | None] = None
 
-    return [
-        pattern
-        for pattern in pattern_list
-        if any(
-            _pattern_matches_source_binding(pattern, binding=binding, parser=parser)
-            for binding in selector_bindings
+    def __init__(self, match_plan: SourceBindingMatchPlan | None = None) -> None:
+        self._match_plan = match_plan
+
+    @classmethod
+    def for_plan(
+        cls,
+        plan: CompiledSourceBindingPlan,
+    ) -> "SourceBoundAnchorPatternPolicy":
+        if plan.match_plan is None:
+            return DefaultSourceBoundAnchorPatternPolicy()
+        policy_type = cls.__registry__.get(
+            plan.match_plan.method.value,
+            DefaultSourceBoundAnchorPatternPolicy,
         )
-    ]
+        return policy_type(plan.match_plan)
 
+    @abstractmethod
+    def select(
+        self,
+        pattern_list: Sequence[Any],
+        *,
+        bindings: Sequence[NamedSourceBinding],
+        parser: Any,
+    ) -> list[Any]:
+        """Return source-compatible anchor patterns for one execution group."""
 
-def _pattern_matches_source_binding(
-    pattern: Any,
-    *,
-    binding: NamedSourceBinding,
-    parser: Any,
-) -> bool:
-    pattern_path = str(pattern)
-    selector = binding.selector
-    if not source_filters_match(pattern_path, selector.filters):
-        return False
+    def _source_compatible_anchor_patterns(
+        self,
+        pattern_list: Sequence[Any],
+        *,
+        bindings: Sequence[NamedSourceBinding],
+        parser: Any,
+    ) -> list[Any]:
+        selector_bindings = self._selector_bindings(bindings)
+        if not selector_bindings:
+            return list(pattern_list)
 
-    if not selector.components and not selector.metadata:
+        return [
+            pattern
+            for pattern in pattern_list
+            if any(
+                self._pattern_matches_source_binding(
+                    pattern,
+                    binding=binding,
+                    parser=parser,
+                )
+                for binding in selector_bindings
+            )
+        ]
+
+    @staticmethod
+    def _selector_bindings(
+        bindings: Sequence[NamedSourceBinding],
+    ) -> tuple[NamedSourceBinding, ...]:
+        return tuple(
+            binding
+            for binding in bindings
+            if binding.required and binding.requires_selector_resolution
+        )
+
+    @staticmethod
+    def _pattern_matches_source_binding(
+        pattern: Any,
+        *,
+        binding: NamedSourceBinding,
+        parser: Any,
+    ) -> bool:
+        pattern_path = str(pattern)
+        selector = binding.selector
+        if not source_filters_match(pattern_path, selector.filters):
+            return False
+
+        if not selector.components and not selector.metadata:
+            return True
+
+        metadata = parser.parse_filename(pattern_path) or {}
+        for component_selector in selector.components:
+            values = source_component_metadata_values(
+                metadata,
+                component_selector.component,
+            )
+            if not any(
+                source_metadata_values_equal(value, str(component_selector.value))
+                for value in values
+            ):
+                return False
+
+        for metadata_selector in selector.metadata:
+            value = source_metadata_value(metadata, metadata_selector.field)
+            if value is None or not source_metadata_values_equal(
+                value,
+                metadata_selector.value,
+            ):
+                return False
+
         return True
 
-    metadata = parser.parse_filename(pattern_path) or {}
-    for component_selector in selector.components:
-        values = source_component_metadata_values(
-            metadata,
-            component_selector.component,
+
+class DefaultSourceBoundAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
+    """Keep every selector-compatible source anchor."""
+
+    def select(
+        self,
+        pattern_list: Sequence[Any],
+        *,
+        bindings: Sequence[NamedSourceBinding],
+        parser: Any,
+    ) -> list[Any]:
+        return self._source_compatible_anchor_patterns(
+            pattern_list,
+            bindings=bindings,
+            parser=parser,
         )
-        if not any(
-            source_metadata_values_equal(value, str(component_selector.value))
-            for value in values
-        ):
-            return False
 
-    for metadata_selector in selector.metadata:
-        value = source_metadata_value(metadata, metadata_selector.field)
-        if value is None or not source_metadata_values_equal(
-            value,
-            metadata_selector.value,
-        ):
-            return False
 
-    return True
+class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
+    """Collapse multi-alias source anchors to one representative per image set."""
+
+    policy_key = None
+
+    def select(
+        self,
+        pattern_list: Sequence[Any],
+        *,
+        bindings: Sequence[NamedSourceBinding],
+        parser: Any,
+    ) -> list[Any]:
+        compatible = self._source_compatible_anchor_patterns(
+            pattern_list,
+            bindings=bindings,
+            parser=parser,
+        )
+        selector_bindings = self._selector_bindings(bindings)
+        if len(selector_bindings) < 2:
+            return compatible
+
+        return self._deduplicate_matched_image_sets(
+            compatible,
+            selector_bindings=selector_bindings,
+            parser=parser,
+        )
+
+    @abstractmethod
+    def _deduplicate_matched_image_sets(
+        self,
+        compatible: Sequence[Any],
+        *,
+        selector_bindings: Sequence[NamedSourceBinding],
+        parser: Any,
+    ) -> list[Any]:
+        """Return one execution anchor per matched image set."""
+
+
+class OrderMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPolicy):
+    """Source aliases are paired by order within one logical image set."""
+
+    policy_key = SourceBindingMatchMethod.ORDER.value
+
+    def _deduplicate_matched_image_sets(
+        self,
+        compatible: Sequence[Any],
+        *,
+        selector_bindings: Sequence[NamedSourceBinding],
+        parser: Any,
+    ) -> list[Any]:
+        alias_count = len(selector_bindings)
+        if len(compatible) % alias_count:
+            raise ValueError(
+                "ORDER source binding produced an incomplete image set: "
+                f"{len(compatible)} source anchors for {alias_count} aliases."
+            )
+        return [
+            pattern
+            for index, pattern in enumerate(compatible)
+            if index % alias_count == 0
+        ]
+
+
+class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPolicy):
+    """Source aliases are paired by declared metadata dimensions."""
+
+    policy_key = SourceBindingMatchMethod.METADATA.value
+
+    def _deduplicate_matched_image_sets(
+        self,
+        compatible: Sequence[Any],
+        *,
+        selector_bindings: Sequence[NamedSourceBinding],
+        parser: Any,
+    ) -> list[Any]:
+        if self._match_plan is None or not self._match_plan.dimensions:
+            raise ValueError(
+                "METADATA source binding requires explicit match dimensions "
+                "to collapse source-bound execution anchors."
+            )
+
+        bindings_by_alias = {binding.alias: binding for binding in selector_bindings}
+        deduplicated: list[Any] = []
+        seen: set[tuple[str, ...]] = set()
+        for pattern in compatible:
+            metadata = parser.parse_filename(str(pattern)) or {}
+            binding = self._matching_binding(
+                pattern,
+                selector_bindings=selector_bindings,
+                parser=parser,
+            )
+            key = self._metadata_image_set_key(
+                metadata,
+                binding=binding,
+                bindings_by_alias=bindings_by_alias,
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            deduplicated.append(pattern)
+        return deduplicated
+
+    def _matching_binding(
+        self,
+        pattern: Any,
+        *,
+        selector_bindings: Sequence[NamedSourceBinding],
+        parser: Any,
+    ) -> NamedSourceBinding:
+        matches = tuple(
+            binding
+            for binding in selector_bindings
+            if self._pattern_matches_source_binding(
+                pattern,
+                binding=binding,
+                parser=parser,
+            )
+        )
+        if len(matches) != 1:
+            raise ValueError(
+                "METADATA source binding expected exactly one alias match for "
+                f"{pattern!s}, got {len(matches)}."
+            )
+        return matches[0]
+
+    def _metadata_image_set_key(
+        self,
+        metadata: Mapping[str, Any],
+        *,
+        binding: NamedSourceBinding,
+        bindings_by_alias: Mapping[str, NamedSourceBinding],
+    ) -> tuple[str, ...]:
+        assert self._match_plan is not None
+        values: list[str] = []
+        for dimension in self._match_plan.dimensions:
+            field = dimension.field_for_alias(binding.alias)
+            if field is None:
+                raise ValueError(
+                    "METADATA source binding dimension is missing alias "
+                    f"{binding.alias!r}."
+                )
+            for dimension_field in dimension.fields:
+                if dimension_field.alias not in bindings_by_alias:
+                    raise ValueError(
+                        "METADATA source binding dimension references unknown alias "
+                        f"{dimension_field.alias!r}."
+                    )
+            value = source_metadata_value(metadata, field)
+            if value is None:
+                raise ValueError(
+                    "METADATA source binding could not read match field "
+                    f"{field!r} for alias {binding.alias!r}."
+                )
+            values.append(value)
+        return tuple(values)
+
 
 
 class FunctionStepExecutor:
@@ -451,7 +675,9 @@ class FunctionStepExecutor:
             bindings = self.plan.source_binding_plan.bindings_for_group(
                 compiled_group.group_key
             )
-            compatible = _source_compatible_anchor_patterns(
+            compatible = SourceBoundAnchorPatternPolicy.for_plan(
+                self.plan.source_binding_plan
+            ).select(
                 pattern_list,
                 bindings=bindings,
                 parser=self.context.microscope_handler.parser,
@@ -634,7 +860,9 @@ class FunctionStepExecutor:
         total_groups: int,
     ) -> None:
         completed_groups = 0
-        for component_value, current_pattern_list in grouped_patterns.items():
+        for component_index, (component_value, current_pattern_list) in enumerate(
+            grouped_patterns.items()
+        ):
             compiled_group = self.plan.compiled_function_pattern.group_for_component(
                 component_value
             )
@@ -651,6 +879,7 @@ class FunctionStepExecutor:
                         pattern_group_info=pattern_item,
                         compiled_group=compiled_group,
                         component_value=component_value,
+                        component_index=component_index,
                     )
                 )
                 completed_groups += 1

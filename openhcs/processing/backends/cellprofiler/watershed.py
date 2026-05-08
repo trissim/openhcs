@@ -197,7 +197,7 @@ def _is_planewise_watershed(
     if image.ndim <= 2:
         return False
     if np.isscalar(connectivity):
-        return True
+        return False
     return np.asarray(connectivity).ndim == 2
 
 

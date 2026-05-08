@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from openhcs.constants import AllComponents
@@ -21,6 +22,7 @@ from openhcs.core.pipeline_image_schema import (
 )
 from openhcs.core.source_bindings import (
     ComponentSelector,
+    CompiledSourceBindingPlan,
     MetadataExtractionRule,
     MetadataSource,
     MetadataSelector,
@@ -40,7 +42,7 @@ from openhcs.core.source_schema_workspace import (
     expand_source_schema_workspace_wells,
     materialize_source_schema_workspace,
 )
-from openhcs.core.steps.function_execution import _source_compatible_anchor_patterns
+from openhcs.core.steps.function_execution import SourceBoundAnchorPatternPolicy
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
@@ -83,13 +85,96 @@ def test_source_bound_anchor_filter_uses_declared_source_selectors() -> None:
         origin=SourceBindingOrigin.PIPELINE_START,
     )
 
-    filtered = _source_compatible_anchor_patterns(
+    plan = CompiledSourceBindingPlan(
+        bindings_by_group={None: (binding,)},
+        match_plan=None,
+    )
+    filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
         patterns,
-        bindings=(binding,),
+        bindings=plan.bindings_for_group(None),
         parser=SourceSchemaFilenameParser(),
     )
 
     assert filtered == ["source_s001_w1_z001_t001.png"]
+
+
+def test_order_matched_source_bound_anchor_filter_uses_one_anchor_per_image_set() -> None:
+    patterns = [
+        "source_s001_w1_z001_t001.tif",
+        "source_s001_w2_z001_t001.tif",
+        "source_s001_w3_z001_t001.tif",
+        "source_s002_w1_z001_t001.tif",
+        "source_s002_w2_z001_t001.tif",
+        "source_s002_w3_z001_t001.tif",
+    ]
+    bindings = (
+        NamedSourceBinding(
+            alias="origDNA",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "1"),)
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        ),
+        NamedSourceBinding(
+            alias="origMemb",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "2"),)
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        ),
+        NamedSourceBinding(
+            alias="origMito",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "3"),)
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        ),
+    )
+    plan = CompiledSourceBindingPlan(
+        bindings_by_group={None: bindings},
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+
+    filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
+        patterns,
+        bindings=plan.bindings_for_group(None),
+        parser=SourceSchemaFilenameParser(),
+    )
+
+    assert filtered == [
+        "source_s001_w1_z001_t001.tif",
+        "source_s002_w1_z001_t001.tif",
+    ]
+
+
+def test_order_matched_source_bound_anchor_filter_rejects_incomplete_image_sets() -> None:
+    bindings = (
+        NamedSourceBinding(
+            alias="origDNA",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "1"),)
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        ),
+        NamedSourceBinding(
+            alias="origMemb",
+            selector=SourceSelector(
+                components=(ComponentSelector(AllComponents.CHANNEL, "2"),)
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        ),
+    )
+    plan = CompiledSourceBindingPlan(
+        bindings_by_group={None: bindings},
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+
+    with pytest.raises(ValueError, match="incomplete image set"):
+        SourceBoundAnchorPatternPolicy.for_plan(plan).select(
+            ["source_s001_w1_z001_t001.tif"],
+            bindings=plan.bindings_for_group(None),
+            parser=SourceSchemaFilenameParser(),
+        )
 
 
 def test_expand_source_schema_workspace_wells_preserves_disambiguating_suffixes(

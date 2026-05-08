@@ -10,8 +10,15 @@ from typing import Any
 from weakref import WeakKeyDictionary
 
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.measurement_lookup_dialect import (
+    CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT,
+    RuntimeMeasurementLookupDialect,
+    RuntimeMeasurementLookupDialectLike,
+    resolve_runtime_measurement_lookup_dialect,
+)
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
+    ObjectLabelMeasurementValues,
     dense_object_label_id_domain,
 )
 from openhcs.core.runtime_stores import (
@@ -117,9 +124,17 @@ class RuntimeArtifactQueryContext:
         if len(records) > 1:
             raise RuntimeError(
                 f"Ambiguous {purpose} '{name}' ({kind.value}) on axis "
-                f"'{self.axis_id}': {records!r}."
+                f"'{self.axis_id}': {runtime_record_locations(records)}."
             )
         return records[0]
+
+
+def runtime_record_locations(records: Sequence[StoredRuntimeValue]) -> tuple[str, ...]:
+    """Return compact runtime-record identities without formatting payload data."""
+    return tuple(
+        f"{record.key.scope.group_key or '<none>'}@{record.backend}:{record.path}"
+        for record in records
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +184,9 @@ class MeasurementFeatureQuery:
 
     feature_name: str
     object_name: str | None = None
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    )
 
     def __post_init__(self) -> None:
         if not self.feature_name:
@@ -178,7 +196,10 @@ class MeasurementFeatureQuery:
 
     @property
     def candidates(self) -> tuple[str, ...]:
-        return ordered_measurement_feature_candidates(self.feature_name)
+        return ordered_measurement_feature_candidates(
+            self.feature_name,
+            dialect=self.dialect,
+        )
 
     def row_value(self, row: object) -> object | None:
         """Return the row value matching this feature query, if present."""
@@ -202,6 +223,18 @@ class MeasurementFeatureQuery:
         measurement_tables: tuple[MeasurementTable, ...],
     ) -> tuple[dict[int, float], list[float]]:
         """Return object-id and positional values for this feature."""
+        value_index = self.optional_value_index(measurement_tables)
+        if value_index is None:
+            raise ValueError(
+                f"Could not resolve measurement feature {self.feature_name!r}."
+            )
+        return value_index
+
+    def optional_value_index(
+        self,
+        measurement_tables: tuple[MeasurementTable, ...],
+    ) -> tuple[dict[int, float], list[float]] | None:
+        """Return feature values when present, otherwise ``None``."""
         values_by_label: dict[int, float] = {}
         positional_values: list[float] = []
         for table in measurement_tables:
@@ -232,9 +265,7 @@ class MeasurementFeatureQuery:
                     continue
                 values_by_label[object_label] = float(value)
         if not values_by_label and not positional_values:
-            raise ValueError(
-                f"Could not resolve measurement feature {self.feature_name!r}."
-            )
+            return None
         return values_by_label, positional_values
 
     def scalar_value(self, measurement_tables: tuple[MeasurementTable, ...]) -> float:
@@ -393,7 +424,7 @@ def _columnar_measurement_value_index(
             return None
 
     columns = tuple(str(column) for column in rows.columns)
-    feature_column = _matching_columnar_feature_column(columns, query.feature_name)
+    feature_column = _matching_columnar_feature_column(columns, query)
     if feature_column is None:
         return None
 
@@ -426,7 +457,7 @@ def _row_sequence_measurement_value_index(
         if table_object not in (None, query.object_name):
             return None
 
-    field_names = _row_sequence_field_names(rows, query.feature_name)
+    field_names = _row_sequence_field_names(rows, query)
     table_source_image_name = (
         None
         if _measurement_table_declares_object_identity(table, field_names)
@@ -434,7 +465,7 @@ def _row_sequence_measurement_value_index(
     )
     feature_field = _matching_row_value_field(
         field_names,
-        query.feature_name,
+        query,
         table_source_image_name=table_source_image_name,
     )
     if feature_field is None:
@@ -476,7 +507,7 @@ def _row_sequence_measurement_value_index(
 
 def _row_sequence_field_names(
     rows: Sequence[object],
-    feature_name: str,
+    query: MeasurementFeatureQuery,
 ) -> tuple[str, ...]:
     """Return field names for homogeneous or heterogeneous row sequences."""
     first_row = measurement_row_mapping(rows[0])
@@ -487,7 +518,10 @@ def _row_sequence_field_names(
     field_names: list[str] = []
     seen: set[str] = set(first_row_names)
     field_names.extend(first_row_names)
-    candidates = measurement_feature_candidates(feature_name)
+    candidates = measurement_feature_candidates(
+        query.feature_name,
+        dialect=query.dialect,
+    )
     found_feature = any(
         normalize_measurement_token(field_name) in candidates
         for field_name in first_row_names
@@ -522,11 +556,11 @@ def _is_wide_row_sequence_measurement_table(table: MeasurementTable) -> bool:
 
 def _matching_row_value_field(
     field_names: tuple[str, ...],
-    feature_name: str,
+    query: MeasurementFeatureQuery,
     *,
     table_source_image_name: str | None,
 ) -> str | None:
-    candidates = ordered_measurement_feature_candidates(feature_name)
+    candidates = query.candidates
     if table_source_image_name is not None:
         normalized_source = normalize_measurement_token(table_source_image_name)
         if (
@@ -570,14 +604,17 @@ def _measurement_table_declares_object_identity(
 
 def _matching_columnar_feature_column(
     columns: tuple[str, ...],
-    feature_name: str,
+    query: MeasurementFeatureQuery,
 ) -> str | None:
     """Return the best column match for a feature query."""
-    normalized_feature = normalize_measurement_token(feature_name)
+    normalized_feature = normalize_measurement_token(query.feature_name)
     for column in columns:
         if normalize_measurement_token(column) == normalized_feature:
             return column
-    candidates = measurement_feature_candidates(feature_name)
+    candidates = measurement_feature_candidates(
+        query.feature_name,
+        dialect=query.dialect,
+    )
     for column in columns:
         if normalize_measurement_token(column) in candidates:
             return column
@@ -643,12 +680,26 @@ def _normalize_measurement_text(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")
 
 
-def measurement_feature_candidates(feature_name: str) -> frozenset[str]:
+def measurement_feature_candidates(
+    feature_name: str,
+    *,
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    ),
+) -> frozenset[str]:
     """Return normalized feature aliases accepted for row/field lookup."""
-    return frozenset(ordered_measurement_feature_candidates(feature_name))
+    return frozenset(
+        ordered_measurement_feature_candidates(feature_name, dialect=dialect)
+    )
 
 
-def ordered_measurement_feature_candidates(feature_name: str) -> tuple[str, ...]:
+def ordered_measurement_feature_candidates(
+    feature_name: str,
+    *,
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    ),
+) -> tuple[str, ...]:
     """Return feature aliases from most specific to least specific."""
     normalized = normalize_measurement_token(feature_name)
     parts = tuple(part for part in normalized.split("_") if part)
@@ -660,6 +711,12 @@ def ordered_measurement_feature_candidates(feature_name: str) -> tuple[str, ...]
 
     add(normalized)
     add(normalized.replace("_", ""))
+    resolved_dialect = resolve_runtime_measurement_lookup_dialect(dialect)
+    dialect_parts = _measurement_dialect_feature_parts(parts, resolved_dialect)
+    if dialect_parts != parts:
+        dialect_name = "_".join(dialect_parts)
+        add(dialect_name)
+        add(dialect_name.replace("_", ""))
     if len(parts) >= 2:
         add("_".join(parts[1:]))
         add("".join(parts[1:]))
@@ -677,6 +734,19 @@ def ordered_measurement_feature_candidates(feature_name: str) -> tuple[str, ...]
     for part in parts:
         add(part)
     return tuple(candidates)
+
+
+def _measurement_dialect_feature_parts(
+    parts: tuple[str, ...],
+    dialect: RuntimeMeasurementLookupDialect,
+) -> tuple[str, ...]:
+    """Return dialect-normalized feature parts for runtime artifact lookup."""
+    resolved_parts = parts
+    for prefix in dialect.category_prefixes:
+        if len(resolved_parts) > len(prefix) and resolved_parts[: len(prefix)] == prefix:
+            resolved_parts = resolved_parts[len(prefix) :]
+            break
+    return dialect.feature_part_aliases.get(resolved_parts, resolved_parts)
 
 
 def matching_measurement_field(
@@ -772,12 +842,33 @@ def measurement_value_index(
     feature_name: str,
     *,
     object_name: str | None = None,
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    ),
 ) -> tuple[dict[int, float], list[float]]:
     """Return object-id and positional values for one feature."""
     return MeasurementFeatureQuery(
         feature_name,
         object_name=object_name,
+        dialect=dialect,
     ).value_index(measurement_tables)
+
+
+def optional_measurement_value_index(
+    measurement_tables: tuple[MeasurementTable, ...],
+    feature_name: str,
+    *,
+    object_name: str | None = None,
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    ),
+) -> tuple[dict[int, float], list[float]] | None:
+    """Return object-id and positional values for one feature when present."""
+    return MeasurementFeatureQuery(
+        feature_name,
+        object_name=object_name,
+        dialect=dialect,
+    ).optional_value_index(measurement_tables)
 
 
 def measurement_scalar_value_for_feature(
@@ -785,11 +876,15 @@ def measurement_scalar_value_for_feature(
     feature_name: str,
     *,
     object_name: str | None = None,
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    ),
 ) -> float:
     """Return exactly one scalar measurement value for one feature."""
     return MeasurementFeatureQuery(
         feature_name,
         object_name=object_name,
+        dialect=dialect,
     ).scalar_value(measurement_tables)
 
 
@@ -798,22 +893,34 @@ def measurement_values_for_feature(
     feature_name: str,
     *,
     object_count: int,
+    object_ids: Sequence[int] | None = None,
     object_name: str | None = None,
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    ),
 ) -> Any:
     """Return object-indexed measurement values for one feature."""
-    import numpy as np
-
     values_by_label, positional_values = measurement_value_index(
         measurement_tables,
         feature_name,
         object_name=object_name,
+        dialect=dialect,
+    )
+    resolved_object_ids = (
+        tuple(range(1, object_count + 1))
+        if object_ids is None
+        else tuple(int(object_id) for object_id in object_ids)
     )
     if values_by_label:
-        return np.array(
-            [values_by_label.get(index, np.nan) for index in range(1, object_count + 1)]
-        )
+        return ObjectLabelMeasurementValues.from_value_mapping(
+            resolved_object_ids,
+            values_by_label,
+        ).values
     if positional_values:
-        return np.array(positional_values[:object_count])
+        return ObjectLabelMeasurementValues.from_positional_values(
+            resolved_object_ids,
+            positional_values,
+        ).values
     raise ValueError(f"Could not resolve measurement feature {feature_name!r}.")
 
 
@@ -867,6 +974,9 @@ def measurement_values_for_label_slices(
     labels: object,
     *,
     object_name: str | None = None,
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    ),
 ) -> tuple[Any, ...]:
     """Return measurement values aligned to positive label IDs in each label plane."""
     import numpy as np
@@ -882,6 +992,7 @@ def measurement_values_for_label_slices(
             measurement_tables,
             feature_name,
             object_name=object_name,
+            dialect=dialect,
         )
         if values_by_slice is not None:
             return tuple(
@@ -903,6 +1014,7 @@ def measurement_values_for_label_slices(
             feature_name,
             label_plane,
             object_name=object_name,
+            dialect=dialect,
         )
         for slice_index, label_plane in enumerate(label_planes)
     )
@@ -930,9 +1042,14 @@ def _measurement_value_indexes_by_slice(
     feature_name: str,
     *,
     object_name: str | None,
+    dialect: RuntimeMeasurementLookupDialectLike,
 ) -> dict[int, tuple[dict[int, float], list[float]]] | None:
     """Return per-slice feature indexes without re-scanning tables per plane."""
-    query = MeasurementFeatureQuery(feature_name, object_name=object_name)
+    query = MeasurementFeatureQuery(
+        feature_name,
+        object_name=object_name,
+        dialect=dialect,
+    )
     defaults: tuple[dict[int, float], list[float]] = ({}, [])
     by_slice: dict[int, tuple[dict[int, float], list[float]]] = {}
 
@@ -960,7 +1077,7 @@ def _measurement_value_indexes_by_slice(
                 continue
             return None
 
-        field_names = _row_sequence_field_names(rows, feature_name)
+        field_names = _row_sequence_field_names(rows, query)
         table_source_image_name = (
             None
             if _measurement_table_declares_object_identity(table, field_names)
@@ -968,7 +1085,7 @@ def _measurement_value_indexes_by_slice(
         )
         feature_field = _matching_row_value_field(
             field_names,
-            feature_name,
+            query,
             table_source_image_name=table_source_image_name,
         )
         if feature_field is None:
@@ -1118,6 +1235,7 @@ def _measurement_values_for_label_slice(
     label_plane: Any,
     *,
     object_name: str | None,
+    dialect: RuntimeMeasurementLookupDialectLike,
 ) -> Any:
     import numpy as np
 
@@ -1125,6 +1243,7 @@ def _measurement_values_for_label_slice(
         measurement_tables,
         feature_name,
         object_name=object_name,
+        dialect=dialect,
     )
     return _measurement_values_for_label_plane(
         label_plane,

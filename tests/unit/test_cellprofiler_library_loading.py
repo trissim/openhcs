@@ -57,6 +57,7 @@ from benchmark.cellprofiler_library.functions.relateobjects import (
     DistanceMethod,
     relate_objects,
 )
+from benchmark.cellprofiler_library.functions.resize import resize, resize_volumetric
 from benchmark.cellprofiler_library.functions.enhanceedges import enhance_edges
 from benchmark.cellprofiler_library.functions.smooth import smooth
 from benchmark.cellprofiler_library.functions.thresholding import (
@@ -76,6 +77,9 @@ from benchmark.cellprofiler_library.functions.thresholding import (
 )
 from benchmark.cellprofiler_library.functions.threshold import threshold
 from benchmark.cellprofiler_library.functions.unmixcolors import unmix_colors
+from benchmark.cellprofiler_library.semantic_defaults import (
+    CellProfilerSemanticDefaultContract,
+)
 from benchmark.cellprofiler_semantics.crop import CropShape, RemovalMethod
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_values import (
@@ -113,6 +117,17 @@ def test_active_absorbed_cellprofiler_functions_import_cleanly():
     assert all(func is not None for func in loaded_functions.values())
 
 
+def test_absorbed_semantic_defaults_match_vendored_cellprofiler_source() -> None:
+    contracts = CellProfilerSemanticDefaultContract.registered_contracts()
+
+    assert {contract.module_name for contract in contracts} >= {
+        "MedianFilter",
+        "Watershed",
+    }
+    for contract in contracts:
+        contract.validate()
+
+
 def test_absorbed_watershed_accepts_grayscale_volumes() -> None:
     from benchmark.cellprofiler_library.functions.watershed import watershed
 
@@ -131,6 +146,30 @@ def test_absorbed_watershed_accepts_grayscale_volumes() -> None:
     assert stats.object_count >= 1
 
 
+def test_watershed_marker_mode_preserves_marker_label_identity() -> None:
+    from benchmark.cellprofiler_library.functions.watershed import watershed
+
+    image = np.zeros((12, 12), dtype=np.float32)
+    image[1:5, 1:5] = 1.0
+    image[7:11, 7:11] = 1.0
+    markers = np.zeros_like(image, dtype=np.int32)
+    markers[2, 2] = 3
+    markers[8, 8] = 9
+    raw_watershed = watershed
+    while hasattr(raw_watershed, "__wrapped__"):
+        raw_watershed = raw_watershed.__wrapped__
+
+    _output, _stats, labels = raw_watershed(
+        image,
+        markers=markers,
+        watershed_method="markers",
+        declump_method="shape",
+        use_advanced_settings=False,
+    )
+
+    assert set(np.unique(labels)) == {0, 1, 2}
+
+
 def test_resize_objects_preserves_leading_axes_for_volume_stacks() -> None:
     from benchmark.cellprofiler_library.functions.resizeobjects import resize_objects
 
@@ -141,7 +180,7 @@ def test_resize_objects_preserves_leading_axes_for_volume_stacks() -> None:
     while hasattr(raw_resize_objects, "__wrapped__"):
         raw_resize_objects = raw_resize_objects.__wrapped__
 
-    _output, stats, resized = raw_resize_objects(
+    _output, stats, relationship, resized = raw_resize_objects(
         image,
         labels,
         method="factor",
@@ -151,10 +190,60 @@ def test_resize_objects_preserves_leading_axes_for_volume_stacks() -> None:
     )
 
     assert resized.shape == (2, 3, 8, 10)
+    assert relationship.parent_ids == (1,)
+    assert relationship.child_ids == (1,)
     assert stats.original_height == 4
     assert stats.original_width == 5
     assert stats.new_height == 8
     assert stats.new_width == 10
+
+
+def test_resize_preserves_resized_image_mask() -> None:
+    image = np.arange(16, dtype=np.float32).reshape(4, 4)
+    mask = np.array(
+        [
+            [True, True, False, False],
+            [True, True, False, False],
+            [False, False, True, True],
+            [False, False, True, True],
+        ],
+        dtype=bool,
+    )
+
+    raw_resize = resize
+    while hasattr(raw_resize, "__wrapped__"):
+        raw_resize = raw_resize.__wrapped__
+
+    resized = raw_resize(
+        MaskedImagePayload(data=image, mask=mask),
+        resizing_factor_x=0.5,
+        resizing_factor_y=0.5,
+    )
+
+    assert isinstance(resized, MaskedImagePayload)
+    assert resized.data.shape == (2, 2)
+    np.testing.assert_array_equal(resized.mask, np.array([[True, False], [False, True]]))
+
+
+def test_resize_volumetric_preserves_resized_image_mask() -> None:
+    image = np.arange(2 * 4 * 4, dtype=np.float32).reshape(2, 4, 4)
+    mask = np.zeros_like(image, dtype=bool)
+    mask[:, :2, :2] = True
+
+    raw_resize = resize_volumetric
+    while hasattr(raw_resize, "__wrapped__"):
+        raw_resize = raw_resize.__wrapped__
+
+    resized = raw_resize(
+        MaskedImagePayload(data=image, mask=mask),
+        resizing_factor_x=0.5,
+        resizing_factor_y=0.5,
+        resizing_factor_z=1.0,
+    )
+
+    assert isinstance(resized, MaskedImagePayload)
+    assert resized.data.shape == (2, 2, 2)
+    np.testing.assert_array_equal(resized.mask, mask[:, ::2, ::2])
 
 
 def test_erode_objects_preserves_leading_axes_for_volume_stacks() -> None:
@@ -167,7 +256,7 @@ def test_erode_objects_preserves_leading_axes_for_volume_stacks() -> None:
     while hasattr(raw_erode_objects, "__wrapped__"):
         raw_erode_objects = raw_erode_objects.__wrapped__
 
-    _output, stats, eroded = raw_erode_objects(
+    _output, stats, relationship, eroded = raw_erode_objects(
         image,
         labels,
         structuring_element="ball",
@@ -175,6 +264,8 @@ def test_erode_objects_preserves_leading_axes_for_volume_stacks() -> None:
     )
 
     assert eroded.shape == labels.shape
+    assert relationship.parent_ids == (1,)
+    assert relationship.child_ids == (1,)
     assert stats.input_object_count == 1
     assert stats.output_object_count == 1
 
@@ -219,6 +310,26 @@ def test_convert_objects_to_image_accepts_volume_label_stacks() -> None:
     assert converted.dtype == np.float32
     assert np.all(converted[labels == 0] == 0.0)
     assert np.all(converted[labels == 1] > 0.0)
+
+
+def test_convert_objects_to_image_uint16_preserves_integer_object_ids() -> None:
+    from benchmark.cellprofiler_library.functions.convertobjectstoimage import (
+        convert_objects_to_image,
+    )
+
+    labels = np.array([[0, 1, 3]], dtype=np.int32)
+    raw_convert_objects_to_image = convert_objects_to_image
+    while hasattr(raw_convert_objects_to_image, "__wrapped__"):
+        raw_convert_objects_to_image = raw_convert_objects_to_image.__wrapped__
+
+    converted = raw_convert_objects_to_image(
+        np.zeros_like(labels, dtype=np.float32),
+        labels,
+        image_mode="uint16",
+    )
+
+    assert converted.dtype == np.int32
+    np.testing.assert_array_equal(converted, labels)
 
 
 def test_overlay_objects_aligns_labels_to_image_geometry() -> None:
@@ -280,6 +391,45 @@ def test_threshold_unwraps_image_metadata_payload() -> None:
         binary,
         np.array([[False, True], [False, True]], dtype=np.float32),
     )
+    assert measurements.final_threshold == 0.5
+
+
+def test_threshold_uses_and_preserves_input_image_mask() -> None:
+    payload = MaskedImagePayload(
+        data=np.array(
+            [
+                [0.0, 1.0, 1.0],
+                [0.25, 0.75, 1.0],
+            ],
+            dtype=np.float32,
+        ),
+        mask=np.array(
+            [
+                [True, True, False],
+                [True, True, False],
+            ],
+            dtype=bool,
+        ),
+        metadata=ImagePayloadMetadata(source_dtype="float32"),
+    )
+
+    binary, measurements = threshold(
+        payload,
+        predefined_threshold=0.5,
+        dtype_config=DtypeConfig(),
+    )
+
+    np.testing.assert_array_equal(
+        image_payload_data(binary),
+        np.array(
+            [
+                [False, True, False],
+                [False, True, False],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    np.testing.assert_array_equal(image_payload_mask(binary), payload.mask)
     assert measurements.final_threshold == 0.5
 
 
@@ -1484,6 +1634,27 @@ def test_cellprofiler_legacy_watershed_keeps_descending_pixel_priority():
     np.testing.assert_array_equal(labels, np.array([[1, 1, 2]], dtype=np.int32))
 
 
+def test_cellprofiler4_marker_watershed_uses_legacy_priority_semantics():
+    import inspect
+
+    from benchmark.cellprofiler_library.functions.watershed import watershed
+
+    image = np.array([[0.0, 1.0, 0.0]], dtype=np.float64)
+    markers = np.array([[1, 0, 2]], dtype=np.int32)
+    raw_watershed = inspect.unwrap(watershed)
+    _image, _stats, labels = raw_watershed(
+        image,
+        markers=markers,
+        mask=np.ones_like(image, dtype=bool),
+        watershed_method="markers",
+        declump_method="shape",
+        use_advanced_settings=False,
+        runtime_family="cellprofiler4",
+    )
+
+    np.testing.assert_array_equal(labels, np.array([[1, 1, 2]], dtype=np.int32))
+
+
 def test_cellprofiler_fast_legacy_watershed_matches_reference_path():
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -1557,6 +1728,30 @@ def test_cellprofiler_legacy_watershed_handles_stacked_planes_planewise():
         )
     )
     np.testing.assert_array_equal(labels, expected)
+
+
+def test_cellprofiler_legacy_watershed_scalar_connectivity_is_volumetric():
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+    from openhcs.processing.backends.cellprofiler.watershed import (
+        cellprofiler_legacy_watershed,
+    )
+
+    image = np.zeros((2, 3, 3), dtype=np.float64)
+    markers = np.zeros_like(image, dtype=np.int32)
+    markers[0, 1, 1] = 1
+    mask = np.ones_like(image, dtype=bool)
+
+    labels = cellprofiler_legacy_watershed(
+        image,
+        markers=markers,
+        mask=mask,
+        connectivity=1,
+        backend_provider=CellProfilerBackendProvider.NUMBA,
+    )
+
+    np.testing.assert_array_equal(labels, np.ones_like(markers))
 
 
 def test_cellprofiler_fast_legacy_watershed_uses_required_numba_backend():
@@ -1779,6 +1974,27 @@ def test_measure_object_intensity_accepts_replicated_rgb_grayscale_like_cellprof
     by_label = {measurement.object_label: measurement for measurement in measurements}
     assert by_label[1].integrated_intensity == 3.0
     assert by_label[2].integrated_intensity == 4.0
+
+
+def test_measure_object_intensity_measures_3d_objects_as_single_volume_domain():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    image = np.ones((3, 4, 5), dtype=np.float32)
+    labels = np.zeros((3, 4, 5), dtype=np.int32)
+    labels[:, 1:3, 2:4] = 1
+
+    _, measurements = measure_object_intensity(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert len(measurements) == 1
+    assert measurements[0].integrated_intensity == 12.0
+    assert measurements[0].center_mass_intensity_z == 1.0
+    assert measurements[0].max_intensity_z == 2.0
 
 
 def test_measure_object_intensity_rejects_true_color_images_like_cellprofiler():
@@ -2085,7 +2301,26 @@ def test_measure_object_neighbors_returns_retained_count_image():
     assert [measurement.number_of_neighbors for measurement in measurements] == [1, 1]
 
 
-def test_medianfilter_matches_scipy_reflect_default():
+def test_medianfilter_matches_cellprofiler_constant_default():
+    from scipy.ndimage import median_filter as scipy_median_filter
+
+    from benchmark.cellprofiler_library.functions.medianfilter import medianfilter
+
+    image = np.arange(35, dtype=np.float32).reshape(5, 7)
+    image[1, 2] = 100.0
+    image[3, 5] = -20.0
+
+    observed = medianfilter(
+        image,
+        window_size=3,
+        dtype_config=DtypeConfig(),
+    )
+    expected = scipy_median_filter(image, size=3, mode="constant").astype(image.dtype)
+
+    np.testing.assert_array_equal(observed, expected)
+
+
+def test_medianfilter_honors_explicit_reflect_mode():
     from scipy.ndimage import median_filter as scipy_median_filter
 
     from benchmark.cellprofiler_library.functions.medianfilter import medianfilter
@@ -2131,6 +2366,40 @@ def test_image_math_preserves_or_ignores_masked_image_payload():
     np.testing.assert_allclose(preserved.data[0], (1 - image) * mask)
     assert isinstance(ignored, np.ndarray)
     np.testing.assert_allclose(ignored[0], 1 - image)
+
+
+def test_image_math_combines_operand_masks_without_reexpanding_single_output():
+    image = np.stack(
+        (
+            np.full((2, 3, 4), 0.1, dtype=np.float32),
+            np.full((2, 3, 4), 0.2, dtype=np.float32),
+            np.full((2, 3, 4), 0.3, dtype=np.float32),
+        )
+    )
+    mask = np.stack(
+        (
+            np.ones((2, 3, 4), dtype=bool),
+            np.ones((2, 3, 4), dtype=bool),
+            np.ones((2, 3, 4), dtype=bool),
+        )
+    )
+    mask[0, 0, 0, 0] = False
+    mask[1, 0, 0, 1] = False
+    mask[2, 0, 0, 2] = False
+    payload = MaskedImagePayload(data=image, mask=mask)
+
+    result = image_math(
+        payload,
+        operation="Add",
+        factors=(1.0, 1.0, 1.0),
+        dtype_config=DtypeConfig(),
+    )
+
+    assert isinstance(result, MaskedImagePayload)
+    expected_mask = mask[0] & mask[1] & mask[2]
+    assert result.data.shape == image.shape[1:]
+    np.testing.assert_array_equal(result.mask, expected_mask)
+    np.testing.assert_allclose(result.data, image.sum(axis=0) * expected_mask)
 
 
 def test_correct_illumination_apply_preserves_source_image_metadata() -> None:

@@ -20,6 +20,8 @@ CELLPROFILER_TUTORIALS_REPO = "https://github.com/CellProfiler/tutorials.git"
 CP4_BENCHMARK_SUPPLEMENT_REPO = (
     "https://github.com/carpenterlab/2021_Stirling_BMCBioInformatics.git"
 )
+CELL_ORIENTATION_REPO = "https://github.com/rgomez-AI/CellOrientation.git"
+CHROMTRANS_REPO = "https://github.com/rgomez-AI/3DChromTrans.git"
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,24 @@ def _git_sparse(
         git_url=git_url,
         git_ref=git_ref,
         sparse_paths=tuple(sparse_paths),
+    )
+
+
+def _git_sparse_with_archives(
+    git_url: str,
+    urls: tuple[str, ...],
+    *sparse_paths: str,
+    git_ref: str = "HEAD",
+    tls_verify: bool = True,
+) -> DatasetSourceSpec:
+    """Declare a sparse git acquisition source with companion data archives."""
+    return DatasetSourceSpec(
+        kind=DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES,
+        urls=urls,
+        git_url=git_url,
+        git_ref=git_ref,
+        sparse_paths=tuple(sparse_paths),
+        tls_verify=tls_verify,
     )
 
 
@@ -202,6 +222,34 @@ DATASET_CATALOG: tuple[DatasetCatalogRow, ...] = (
         microscope_type=PUBLISHED_PIPELINE,
     ),
     DatasetCatalogRow(
+        id="CellOrientation_wound_healing",
+        size_bytes=201_274_355,
+        microscope_type=PUBLISHED_PIPELINE,
+        source=_git_sparse_with_archives(
+            CELL_ORIENTATION_REPO,
+            (
+                "https://public-docs.crg.es/almu/rgomez/"
+                "Jennifer_Jungfleisch/Dataset.zip",
+            ),
+            "workflow",
+            tls_verify=False,
+        ),
+    ),
+    DatasetCatalogRow(
+        id="ChromTrans_3d_fish",
+        size_bytes=98_822_670,
+        microscope_type=PUBLISHED_PIPELINE,
+        source=_git_sparse_with_archives(
+            CHROMTRANS_REPO,
+            (
+                "https://public-docs.crg.es/almu/rgomez/"
+                "Anna_Oncins/Dataset.zip",
+            ),
+            "workflow",
+            tls_verify=False,
+        ),
+    ),
+    DatasetCatalogRow(
         id="CellProfiler_tutorials",
         size_bytes=650_000_000,
         microscope_type="cellprofiler_tutorials",
@@ -305,6 +353,8 @@ SINGH_2014_ILLUMINATION_CORRECTION = DATASET_REGISTRY[
 SANZ_2019_HISTOLOGY = DATASET_REGISTRY["Sanz_2019_histology"]
 TIAN_2019_NEURONS = DATASET_REGISTRY["Tian_2019_neurons"]
 SOKOLOV_2023_NEURONS = DATASET_REGISTRY["Sokolov_2023_neurons"]
+CELL_ORIENTATION_WOUND_HEALING = DATASET_REGISTRY["CellOrientation_wound_healing"]
+CHROMTRANS_3D_FISH = DATASET_REGISTRY["ChromTrans_3d_fish"]
 CELLPROFILER_TUTORIALS = DATASET_REGISTRY["CellProfiler_tutorials"]
 CELLPROFILER4_BENCHMARK_SUPPLEMENT = DATASET_REGISTRY[
     "CellProfiler4_benchmark_supplement"

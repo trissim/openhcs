@@ -4,15 +4,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from functools import lru_cache
 import math
+from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
 from openhcs.constants.constants import MemoryType
-from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     CellProfilerBackendProvider,
@@ -219,6 +220,114 @@ class NumpyThresholdDiagnosticsBackendStrategy(ThresholdDiagnosticsBackendStrate
         return _numpy_threshold_sum_of_entropies(image, mask, binary_image)
 
 
+class ThresholdDiagnosticDomain(Enum):
+    """Nominal image domains for CellProfiler threshold diagnostics."""
+
+    PLANAR_IMAGE = "planar_image"
+    ND_IMAGE = "nd_image"
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdDiagnosticRequest:
+    """Typed inputs for one CellProfiler threshold diagnostic measurement."""
+
+    backend: "NumbaNumpyThresholdDiagnosticsBackendStrategy"
+    domain: ThresholdDiagnosticDomain
+    image: np.ndarray
+    mask: np.ndarray | None
+    binary_image: np.ndarray
+    proven_unit_interval_scale: int | None
+
+    @classmethod
+    def from_inputs(
+        cls,
+        *,
+        backend: "NumbaNumpyThresholdDiagnosticsBackendStrategy",
+        image: np.ndarray,
+        mask: np.ndarray | None,
+        binary_image: np.ndarray,
+        proven_unit_interval_scale: int | None,
+    ) -> "ThresholdDiagnosticRequest":
+        image_array = np.asarray(image, dtype=np.float64)
+        binary_array = np.asarray(binary_image, dtype=np.bool_)
+        if binary_array.shape != image_array.shape:
+            raise ValueError(
+                "Threshold diagnostics binary image must match the image shape; got "
+                f"binary {binary_array.shape!r} for image {image_array.shape!r}."
+            )
+        mask_array = None if mask is None else np.asarray(mask, dtype=np.bool_)
+        if mask_array is not None and mask_array.shape != image_array.shape:
+            raise ValueError(
+                "Threshold diagnostics mask must match the image shape; got "
+                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
+            )
+        return cls(
+            backend=backend,
+            domain=(
+                ThresholdDiagnosticDomain.PLANAR_IMAGE
+                if image_array.ndim == 2
+                else ThresholdDiagnosticDomain.ND_IMAGE
+            ),
+            image=image_array,
+            mask=mask_array,
+            binary_image=binary_array,
+            proven_unit_interval_scale=proven_unit_interval_scale,
+        )
+
+    def full_mask(self) -> np.ndarray:
+        """Return an explicit mask in the same domain as the diagnostic image."""
+        if self.mask is None:
+            return np.ones(self.image.shape, dtype=np.bool_)
+        return self.mask
+
+
+class ThresholdDiagnosticDomainStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Apply CellProfiler threshold diagnostics in the correct image domain."""
+
+    __registry_key__ = "domain"
+    __skip_if_no_key__ = True
+    domain: ClassVar[ThresholdDiagnosticDomain | None] = None
+
+    @classmethod
+    def evaluate(cls, request: ThresholdDiagnosticRequest) -> tuple[float, float]:
+        strategy_type = cls.__registry__[request.domain]
+        return strategy_type().diagnostics(request)
+
+    @abstractmethod
+    def diagnostics(self, request: ThresholdDiagnosticRequest) -> tuple[float, float]:
+        """Return weighted variance and sum of entropies for ``request``."""
+
+
+class PlanarThresholdDiagnosticDomainStrategy(ThresholdDiagnosticDomainStrategy):
+    """Use the optimized 2-D backend path for planar CellProfiler images."""
+
+    domain = ThresholdDiagnosticDomain.PLANAR_IMAGE
+
+    def diagnostics(self, request: ThresholdDiagnosticRequest) -> tuple[float, float]:
+        return request.backend.diagnostics_planar(request)
+
+
+class WholeImageThresholdDiagnosticDomainStrategy(ThresholdDiagnosticDomainStrategy):
+    """Measure ND images as one CellProfiler image domain, not per-plane averages."""
+
+    domain = ThresholdDiagnosticDomain.ND_IMAGE
+
+    def diagnostics(self, request: ThresholdDiagnosticRequest) -> tuple[float, float]:
+        mask = request.full_mask()
+        return (
+            _numpy_threshold_weighted_variance(
+                request.image,
+                mask,
+                request.binary_image,
+            ),
+            _numpy_threshold_sum_of_entropies(
+                request.image,
+                mask,
+                request.binary_image,
+            ),
+        )
+
+
 class NumbaNumpyThresholdDiagnosticsBackendStrategy(
     ThresholdDiagnosticsBackendStrategy
 ):
@@ -240,31 +349,28 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         *,
         proven_unit_interval_scale: int | None = None,
     ) -> tuple[float, float]:
-        image_array = np.asarray(image, dtype=np.float64)
-        binary_array = np.asarray(binary_image, dtype=np.bool_)
-        plane_inputs = _threshold_diagnostic_planes(image_array, mask, binary_array)
-        if plane_inputs is not None:
-            weighted_variances = np.empty(len(plane_inputs), dtype=np.float64)
-            sums_of_entropies = np.empty(len(plane_inputs), dtype=np.float64)
-            for plane_index, (
-                image_plane,
-                mask_plane,
-                binary_plane,
-            ) in enumerate(plane_inputs):
-                weighted_variance, sum_of_entropies = self.diagnostics(
-                    image_plane,
-                    mask_plane,
-                    binary_plane,
-                    proven_unit_interval_scale=proven_unit_interval_scale,
-                )
-                weighted_variances[plane_index] = float(weighted_variance)
-                sums_of_entropies[plane_index] = float(sum_of_entropies)
-            return weighted_variances, sums_of_entropies
-        if mask is None:
+        return ThresholdDiagnosticDomainStrategy.evaluate(
+            ThresholdDiagnosticRequest.from_inputs(
+                backend=self,
+                image=image,
+                mask=mask,
+                binary_image=binary_image,
+                proven_unit_interval_scale=proven_unit_interval_scale,
+            )
+        )
+
+    def diagnostics_planar(
+        self,
+        request: ThresholdDiagnosticRequest,
+    ) -> tuple[float, float]:
+        image_array = request.image
+        binary_array = request.binary_image
+        proven_unit_interval_scale = request.proven_unit_interval_scale
+        if request.mask is None:
             self._validate_unmasked_inputs(image_array, binary_array)
             full_mask = True
         else:
-            mask_array = np.asarray(mask, dtype=np.bool_)
+            mask_array = request.mask
             self._validate_inputs(image_array, mask_array, binary_array)
             full_mask = bool(np.all(mask_array))
             if not full_mask:
@@ -320,7 +426,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                 )
             )
             return float(weighted_variance), float(sum_of_entropies)
-        if mask is None:
+        if request.mask is None:
             mask_array = np.ones(image_array.shape, dtype=np.bool_)
             weighted_variance, sum_of_entropies = (
                 _threshold_diagnostics_numba(
@@ -413,63 +519,6 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                 "Threshold diagnostics binary image must match the image shape; got "
                 f"binary {binary_array.shape!r} for image {image_array.shape!r}."
             )
-
-
-def _threshold_diagnostic_planes(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-    binary_image: np.ndarray,
-) -> tuple[tuple[np.ndarray, np.ndarray | None, np.ndarray], ...] | None:
-    if image.ndim == 2:
-        return None
-    image_planes = _threshold_diagnostic_plane_view(image, "image")
-    binary_planes = _threshold_diagnostic_plane_view(binary_image, "binary image")
-    if image_planes.shape != binary_planes.shape:
-        raise ValueError(
-            "Threshold diagnostics binary image must match image planes; got "
-            f"binary {binary_image.shape!r} for image {image.shape!r}."
-        )
-    if mask is None:
-        return tuple(
-            (image_planes[index], None, binary_planes[index])
-            for index in range(image_planes.shape[0])
-        )
-    mask_array = np.asarray(mask, dtype=np.bool_)
-    if mask_array.ndim == 2:
-        mask_planes = np.broadcast_to(
-            mask_array,
-            (image_planes.shape[0], *mask_array.shape),
-        )
-    else:
-        mask_planes = _threshold_diagnostic_plane_view(mask_array, "mask")
-    if mask_planes.shape != image_planes.shape:
-        raise ValueError(
-            "Threshold diagnostics mask must match image planes; got "
-            f"mask {mask_array.shape!r} for image {image.shape!r}."
-        )
-    return tuple(
-        (image_planes[index], mask_planes[index], binary_planes[index])
-        for index in range(image_planes.shape[0])
-    )
-
-
-def _threshold_diagnostic_plane_view(
-    array: np.ndarray,
-    name: str,
-) -> np.ndarray:
-    if array.ndim == 2:
-        return array.reshape((1, *array.shape))
-    if is_color_image_slice(array):
-        return np.moveaxis(array, -1, 0)
-    if is_color_image_stack(array):
-        color_planes = np.moveaxis(array, -1, 1)
-        return color_planes.reshape((-1, *array.shape[-3:-1]))
-    if array.ndim >= 3:
-        return array.reshape((-1, *array.shape[-2:]))
-    raise ValueError(
-        f"Threshold diagnostics {name} requires at least two dimensions, "
-        f"got shape {array.shape!r}."
-    )
 
 
 class ThresholdPrimitiveBackendStrategy(

@@ -7,10 +7,20 @@ import numpy as np
 from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
+from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
-from openhcs.core.runtime_values import image_payload_data
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    image_payload_with_context,
+)
+from benchmark.cellprofiler_library.functions.thresholding import (
+    cellprofiler_threshold,
+    cellprofiler_threshold_diagnostics,
+)
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
 from openhcs.processing.materialization import csv_materializer
 
@@ -22,6 +32,7 @@ class ThresholdScope(Enum):
 
 class ThresholdMethod(Enum):
     OTSU = "otsu"
+    MANUAL = "manual"
     MINIMUM_CROSS_ENTROPY = "minimum_cross_entropy"
     LI = "li"
     TRIANGLE = "triangle"
@@ -52,6 +63,8 @@ class ThresholdResult:
     original_threshold: float
     guide_threshold: float
     sigma: float
+    weighted_variance: float = 0.0
+    sum_of_entropies: float = 0.0
 
 
 def _get_global_threshold(
@@ -217,9 +230,9 @@ def _apply_threshold(
 def threshold(
     image: np.ndarray,
     mask: Optional[np.ndarray] = None,
-    threshold_scope: ThresholdScope = ThresholdScope.GLOBAL,
-    threshold_method: ThresholdMethod = ThresholdMethod.OTSU,
-    assign_middle_to_foreground: Assignment = Assignment.FOREGROUND,
+    threshold_scope: ThresholdScope | str = ThresholdScope.GLOBAL,
+    threshold_method: ThresholdMethod | str = ThresholdMethod.OTSU,
+    assign_middle_to_foreground: Assignment | str = Assignment.FOREGROUND,
     log_transform: bool = False,
     threshold_correction_factor: float = 1.0,
     threshold_min: float = 0.0,
@@ -228,11 +241,13 @@ def threshold(
     smoothing: float = 0.0,
     lower_outlier_fraction: float = 0.05,
     upper_outlier_fraction: float = 0.05,
-    averaging_method: AveragingMethod = AveragingMethod.MEAN,
-    variance_method: VarianceMethod = VarianceMethod.STANDARD_DEVIATION,
+    averaging_method: AveragingMethod | str = AveragingMethod.MEAN,
+    variance_method: VarianceMethod | str = VarianceMethod.STANDARD_DEVIATION,
     number_of_deviations: float = 2.0,
     predefined_threshold: Optional[float] = None,
     automatic: bool = False,
+    otsu_class_count: str = "Two classes",
+    use_advanced_settings: bool = True,
 ) -> Tuple[np.ndarray, ThresholdResult]:
     """
     Apply threshold to image and return binary mask with threshold metrics.
@@ -272,76 +287,79 @@ def threshold(
     Returns:
         Tuple of (binary_mask, ThresholdResult)
     """
-    image = np.asarray(image_payload_data(image), dtype=np.float32)
+    source_payload = image
+    image = np.asarray(image_payload_data(source_payload), dtype=np.float32)
     if mask is not None:
         mask = np.asarray(image_payload_data(mask))
+    else:
+        mask = image_payload_mask(source_payload)
+    if mask is not None:
+        mask = np.asarray(mask, dtype=bool)
+    threshold_scope = _coerce_function_enum(ThresholdScope, threshold_scope)
+    threshold_method = _coerce_function_enum(ThresholdMethod, threshold_method)
+    assign_middle_to_foreground = _coerce_function_enum(
+        Assignment,
+        assign_middle_to_foreground,
+    )
+    averaging_method = _coerce_function_enum(AveragingMethod, averaging_method)
+    variance_method = _coerce_function_enum(VarianceMethod, variance_method)
 
     guide_threshold = 0.0
-    
-    # Handle predefined threshold
-    if predefined_threshold is not None:
-        final_threshold = predefined_threshold * threshold_correction_factor
-        final_threshold = min(max(final_threshold, threshold_min), threshold_max)
-        orig_threshold = predefined_threshold
-        binary_image, sigma = _apply_threshold(image, final_threshold, mask, smoothing)
-        return binary_image, ThresholdResult(
-            slice_index=0,
-            final_threshold=final_threshold,
-            original_threshold=orig_threshold,
-            guide_threshold=guide_threshold,
-            sigma=sigma
-        )
-    
-    # Handle automatic mode
+
     if automatic:
         smoothing = 1.0
         log_transform = False
         threshold_scope = ThresholdScope.GLOBAL
         threshold_method = ThresholdMethod.MINIMUM_CROSS_ENTROPY
     
-    if threshold_scope == ThresholdScope.ADAPTIVE:
-        # Adaptive thresholding
-        adaptive_thresh = _get_adaptive_threshold(
-            image, mask, threshold_method, window_size, log_transform,
-            lower_outlier_fraction, upper_outlier_fraction,
-            averaging_method, variance_method, number_of_deviations
-        )
-        
-        # Apply correction and bounds
-        final_threshold_map = adaptive_thresh * threshold_correction_factor
-        final_threshold_map = np.clip(final_threshold_map, threshold_min, threshold_max)
-        
-        # Get guide threshold (global)
-        guide_threshold = _get_global_threshold(
-            image, mask, threshold_method, log_transform,
-            lower_outlier_fraction, upper_outlier_fraction,
-            averaging_method, variance_method, number_of_deviations
-        )
-        guide_threshold = guide_threshold * threshold_correction_factor
-        guide_threshold = min(max(guide_threshold, threshold_min), threshold_max)
-        
-        # Original threshold (uncorrected adaptive mean)
-        orig_threshold = float(np.mean(adaptive_thresh))
-        final_threshold = float(np.mean(final_threshold_map))
-        
-        binary_image, sigma = _apply_threshold(image, final_threshold_map, mask, smoothing)
-        
-    else:  # GLOBAL
-        orig_threshold = _get_global_threshold(
-            image, mask, threshold_method, log_transform,
-            lower_outlier_fraction, upper_outlier_fraction,
-            averaging_method, variance_method, number_of_deviations
-        )
-        
-        final_threshold = orig_threshold * threshold_correction_factor
-        final_threshold = min(max(final_threshold, threshold_min), threshold_max)
-        
-        binary_image, sigma = _apply_threshold(image, final_threshold, mask, smoothing)
-    
-    return binary_image, ThresholdResult(
-        slice_index=0,
+    if threshold_method is ThresholdMethod.MANUAL and predefined_threshold is None:
+        predefined_threshold = 0.0
+    if predefined_threshold is not None:
+        threshold_method = ThresholdMethod.MANUAL
+
+    binary_image, final_threshold, original_threshold = cellprofiler_threshold(
+        image,
+        use_advanced_settings=use_advanced_settings,
+        threshold_scope=threshold_scope.value,
+        threshold_method=threshold_method.value,
+        otsu_class_count=otsu_class_count,
+        assign_middle_to_foreground=assign_middle_to_foreground.value,
+        log_transform=log_transform,
+        threshold_correction_factor=threshold_correction_factor,
+        threshold_min=threshold_min,
+        threshold_max=threshold_max,
+        threshold_smoothing_scale=smoothing,
+        adaptive_window_size=window_size,
+        lower_outlier_fraction=lower_outlier_fraction,
+        upper_outlier_fraction=upper_outlier_fraction,
+        averaging_method=averaging_method.value,
+        variance_method=variance_method.value,
+        number_of_deviations=number_of_deviations,
+        manual_threshold=(
+            float(predefined_threshold)
+            if predefined_threshold is not None
+            else 0.0
+        ),
+        mask=mask,
+    )
+    diagnostics = cellprofiler_threshold_diagnostics(
+        image,
+        binary_image,
         final_threshold=final_threshold,
-        original_threshold=orig_threshold,
+        original_threshold=original_threshold,
+        mask=mask,
+    )
+    output_image = image_payload_with_context(
+        binary_image.astype(np.float32),
+        mask=mask,
+        metadata=image_payload_metadata(source_payload).without_unit_interval_intensity_scale(),
+    )
+    return output_image, ThresholdResult(
+        slice_index=0,
+        final_threshold=float(final_threshold),
+        original_threshold=float(original_threshold),
         guide_threshold=guide_threshold,
-        sigma=sigma
+        sigma=float(smoothing),
+        weighted_variance=diagnostics.weighted_variance,
+        sum_of_entropies=diagnostics.sum_of_entropies,
     )

@@ -72,23 +72,30 @@ class RuntimeMeasurementRowFingerprintBuilder:
     digest_size: int = 32
     _hash: Any = field(init=False, repr=False)
     _row_count: int = field(init=False, repr=False)
+    _normalized_field_cache: dict[str, str] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self._hash = hashlib.blake2b(digest_size=self.digest_size)
         self._row_count = 0
+        self._normalized_field_cache = {}
 
     def add_row_mapping(self, row_mapping: Mapping[str, object]) -> None:
-        row_payload = tuple(
-            (
-                normalize_runtime_identifier(str(field_name)),
-                measurement_table_cell_payload(value),
+        self._hash.update(b"row:")
+        for field_name, value in row_mapping.items():
+            field_payload = ("field", self._normalized_field(str(field_name)))
+            self._hash.update(
+                pickle.dumps(field_payload, protocol=pickle.HIGHEST_PROTOCOL)
             )
-            for field_name, value in row_mapping.items()
-        )
-        self._hash.update(
-            pickle.dumps(row_payload, protocol=pickle.HIGHEST_PROTOCOL)
-        )
+            update_measurement_table_cell_hash(self._hash, value)
+        self._hash.update(b":row")
         self._row_count += 1
+
+    def _normalized_field(self, field_name: str) -> str:
+        cached = self._normalized_field_cache.get(field_name)
+        if cached is None:
+            cached = normalize_runtime_identifier(field_name)
+            self._normalized_field_cache[field_name] = cached
+        return cached
 
     def finish(self) -> RuntimeMeasurementRowFingerprint:
         return RuntimeMeasurementRowFingerprint(
@@ -221,12 +228,13 @@ class RuntimeTableSnapshot:
 def aggregate_measurement_table_key(
     table: MeasurementTable,
 ) -> RuntimeMeasurementTableIdentity | None:
-    """Return a semantic key for duplicate full-axis measurement tables.
+    """Return a nominal key for duplicate full-axis measurement tables.
 
     Grouped execution can materialize an already-aggregated measurement table
     once per group key. Row-local image identity fields carry the actual
-    measurement scope, so exact duplicate full-axis tables should only
-    contribute once. Group-local tables remain count-preserving.
+    measurement scope, so repeated materializations of the same runtime table
+    payload should only contribute once. Group-local tables remain
+    count-preserving because distinct payload objects are not collapsed.
     """
     normalized_field_cache: dict[str, str] = {}
 
@@ -238,10 +246,10 @@ def aggregate_measurement_table_key(
         return cached
 
     row_identity_values: set[tuple[str, object]] = set()
-    row_fingerprint = RuntimeMeasurementRowFingerprintBuilder()
+    row_count = 0
     for row in iter_measurement_rows((table,)):
+        row_count += 1
         row_mapping = measurement_row_mapping(row)
-        row_fingerprint.add_row_mapping(row_mapping)
         for field_name, value in row_mapping.items():
             normalized_field_name = normalized_field(str(field_name))
             if normalized_field_name in RUNTIME_AGGREGATE_TABLE_IDENTITY_FIELDS:
@@ -251,15 +259,17 @@ def aggregate_measurement_table_key(
                         measurement_table_cell_payload(value),
                     )
                 )
-    fingerprint = row_fingerprint.finish()
-    if fingerprint.row_count == 0:
+    if row_count == 0:
         return None
 
     if len(row_identity_values) <= 1:
         return None
     return RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
         table,
-        fingerprint,
+        RuntimeMeasurementRowFingerprint(
+            row_count=row_count,
+            digest=f"runtime-payload:{id(table.rows)}".encode("ascii"),
+        ),
     )
 
 
@@ -276,9 +286,6 @@ def exact_measurement_table_key(
 def measurement_table_cell_payload(value: object) -> object:
     """Return a hashable exact payload for measurement-table dedupe."""
     value = canonical_scalar(value)
-    array_payload = semantic_array_payload(value)
-    if array_payload is not None:
-        return array_payload
     if value is None:
         return None
     if isinstance(value, str):
@@ -307,7 +314,69 @@ def measurement_table_cell_payload(value: object) -> object:
             type(value).__name__,
             tuple(measurement_table_cell_payload(item) for item in value),
         )
+    array_payload = semantic_array_payload(value)
+    if array_payload is not None:
+        return array_payload
     return (type(value).__name__, repr(value))
+
+
+def update_measurement_table_cell_hash(digest: Any, value: object) -> None:
+    """Update an exact cell digest without materializing nested payload trees."""
+    value = canonical_scalar(value)
+    if value is None:
+        digest.update(pickle.dumps(("none",), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, str):
+        digest.update(pickle.dumps(("str", value), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, bool):
+        digest.update(pickle.dumps(("bool", value), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, int):
+        digest.update(pickle.dumps(("int", value), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, float) and math.isnan(value):
+        digest.update(pickle.dumps(("float", "nan"), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, float):
+        digest.update(
+            pickle.dumps(("float", repr(value)), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        return
+    array_payload = semantic_array_payload(value)
+    if array_payload is not None:
+        digest.update(pickle.dumps(array_payload, protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, Mapping):
+        digest.update(
+            pickle.dumps(("mapping", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        for key, nested_value in value.items():
+            update_measurement_table_cell_hash(digest, key)
+            update_measurement_table_cell_hash(digest, nested_value)
+        digest.update(
+            pickle.dumps(("mapping_end",), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        return
+    if isinstance(value, tuple):
+        digest.update(
+            pickle.dumps(("tuple", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        for item in value:
+            update_measurement_table_cell_hash(digest, item)
+        digest.update(pickle.dumps(("tuple_end",), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    if isinstance(value, list):
+        digest.update(
+            pickle.dumps(("list", len(value)), protocol=pickle.HIGHEST_PROTOCOL)
+        )
+        for item in value:
+            update_measurement_table_cell_hash(digest, item)
+        digest.update(pickle.dumps(("list_end",), protocol=pickle.HIGHEST_PROTOCOL))
+        return
+    digest.update(
+        pickle.dumps((type(value).__name__, repr(value)), protocol=pickle.HIGHEST_PROTOCOL)
+    )
 
 
 def is_static_wide_measurement_table(

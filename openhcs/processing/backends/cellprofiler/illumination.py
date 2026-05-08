@@ -16,6 +16,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.core.runtime_values import project_image_mask_to_data_domain
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
@@ -103,6 +104,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
                 "Rank-median illumination smoothing currently supports 2-D "
                 f"NumPy planes, got shape {image.shape!r}."
             )
+        mask = project_image_mask_to_data_domain(mask, image)
         if mask is not None and np.asarray(mask).shape != image.shape:
             raise ValueError(
                 "Rank-median illumination mask must match the image shape; got "
@@ -202,7 +204,10 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
         morphology: object,
     ) -> np.ndarray:
         image = np.asarray(pixel_data, dtype=np.float32)
-        mask_array = None if mask is None else np.asarray(mask, dtype=np.bool_)
+        projected_mask = project_image_mask_to_data_domain(mask, image)
+        mask_array = (
+            None if projected_mask is None else np.asarray(projected_mask, dtype=np.bool_)
+        )
         if mask_array is not None and mask_array.shape != image.shape:
             raise ValueError(
                 "Rank-median illumination mask must match the image shape; got "

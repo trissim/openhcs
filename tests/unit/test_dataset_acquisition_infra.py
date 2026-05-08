@@ -12,6 +12,7 @@ from benchmark.contracts.dataset import (
     DatasetValidationRule,
 )
 from benchmark.datasets.acquire import (
+    DatasetSourceHandler,
     DatasetValidationContext,
     DatasetValidationStrategy,
     _materialize_nested_archives,
@@ -19,8 +20,10 @@ from benchmark.datasets.acquire import (
 from benchmark.datasets.manifest import comparison_manifest_payload
 from benchmark.datasets.cppipe_case_catalog import official_cp3_case_category
 from benchmark.datasets.registry import (
+    CELL_ORIENTATION_WOUND_HEALING,
     CELLPROFILER4_BENCHMARK_SUPPLEMENT,
     CELLPROFILER_TUTORIALS,
+    CHROMTRANS_3D_FISH,
 )
 
 
@@ -28,6 +31,15 @@ def test_validation_rules_are_registered_by_enum() -> None:
     assert DatasetValidationStrategy.for_rule(
         DatasetValidationRule.NON_EMPTY
     ).validation_rule == DatasetValidationRule.NON_EMPTY.value
+
+
+def test_source_handlers_are_registered_by_enum() -> None:
+    source = DatasetSourceSpec(kind=DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES)
+
+    assert (
+        DatasetSourceHandler.for_source(source).source_kind
+        == DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES.value
+    )
 
 
 def test_non_empty_validation_counts_registered_image_extensions(tmp_path: Path) -> None:
@@ -141,6 +153,17 @@ def test_public_git_dataset_specs_expose_benchmark_cases() -> None:
         is DatasetSourceKind.GIT_SPARSE
     )
     assert len(CELLPROFILER4_BENCHMARK_SUPPLEMENT.benchmark_cases) == 1
+
+
+def test_public_git_archive_dataset_specs_expose_sources() -> None:
+    for spec in (CELL_ORIENTATION_WOUND_HEALING, CHROMTRANS_3D_FISH):
+        source = spec.acquisition_source()
+
+        assert source.kind is DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES
+        assert source.git_url
+        assert source.urls
+        assert "workflow" in source.sparse_paths
+        assert source.tls_verify is False
 
 
 def test_official_cp3_case_categories_are_declaration_backed() -> None:

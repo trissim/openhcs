@@ -1,13 +1,29 @@
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import (
     CallableContract,
+    CompilerPreparedAutoRegisterFamily,
     PROCESSING_CONTRACT_ATTR,
     RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
     attach_callable_contract_metadata,
+    prepare_processing_callable,
     runtime_image_execution_mode,
 )
 from openhcs.core.pipeline.compiler import FunctionReference
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+
+_PREPARED_TEST_FAMILY_CALLS = 0
+
+
+class _TestCompilerPreparedFamily(CompilerPreparedAutoRegisterFamily):
+    @classmethod
+    def prepare_registered_family(cls) -> None:
+        global _PREPARED_TEST_FAMILY_CALLS
+        _PREPARED_TEST_FAMILY_CALLS += 1
+
+
+def _function_with_imported_prepared_family(image):
+    return image
 
 
 def test_callable_contract_reads_runtime_image_execution_mode() -> None:
@@ -52,3 +68,9 @@ def test_callable_contract_metadata_preserves_explicit_nominal_processing_contra
     assert getattr(process, PROCESSING_CONTRACT_ATTR) is ProcessingContract.FLEXIBLE
     assert contract.processing_contract is ProcessingContract.FLEXIBLE
     assert contract.declared_processing_contract == ProcessingContract.PURE_2D.name
+
+
+def test_prepare_processing_callable_warms_imported_registered_families() -> None:
+    prepare_processing_callable(_function_with_imported_prepared_family)
+
+    assert _PREPARED_TEST_FAMILY_CALLS == 1

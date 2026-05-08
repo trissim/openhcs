@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import pytest
+
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
@@ -155,16 +157,43 @@ def test_runtime_relationship_query_reconstructs_typed_relationship() -> None:
     assert relationship.relationship_type == "parent_child"
 
 
+def test_runtime_artifact_ambiguity_reports_locations_without_payload_repr() -> None:
+    class ReprMustNotRun:
+        def __repr__(self) -> str:
+            raise AssertionError("runtime artifact payload repr was evaluated")
+
+    store = RuntimeValueStore()
+    for group_key in ("first", "second"):
+        _record_native(
+            store,
+            MeasurementTable(
+                name="SharedMeasurements",
+                rows=({"payload": ReprMustNotRun()},),
+            ),
+            ArtifactKind.MEASUREMENTS,
+            group_key=group_key,
+        )
+
+    with pytest.raises(RuntimeError, match="Ambiguous runtime artifact"):
+        RuntimeArtifactQueryContext(store, AXIS_ID).resolve(
+            name="SharedMeasurements",
+            kind=ArtifactKind.MEASUREMENTS,
+        )
+
+
 def _record_native(
     store: RuntimeValueStore,
     native_value: MeasurementTable | ObjectRelationship,
     kind: ArtifactKind,
+    *,
+    group_key: str | None = None,
 ) -> None:
     value = normalize_artifact_value(
         ArtifactOutputPlan(
             name=native_value.name,
             path=f"/memory/{native_value.name}.pkl",
             kind=kind,
+            group_keys=(group_key,) if group_key is not None else (),
         ),
         native_value,
         axis_id=AXIS_ID,

@@ -1,12 +1,23 @@
 """Function-level artifact contract decorators for the pipeline compiler."""
 
 from collections import OrderedDict
+from enum import Enum
 from typing import Callable, TypeVar
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
 from openhcs.processing.materialization import MaterializationSpec
 
 F = TypeVar("F", bound=Callable)
+
+
+class ObjectLabelMeasurementExecution(str, Enum):
+    """How object-measurement functions consume label domains."""
+
+    SLICE_ALIGNED = "slice_aligned"
+    FULL_STACK = "full_stack"
+
+
+_OBJECT_LABEL_MEASUREMENT_EXECUTION_ATTR = "__object_label_measurement_execution__"
 
 
 def _artifact_spec_from_output_declaration(
@@ -143,6 +154,43 @@ def special_outputs(*output_specs: object) -> Callable[[F], F]:
         return func
 
     return decorator
+
+
+def object_label_measurement_execution(
+    mode: ObjectLabelMeasurementExecution,
+) -> Callable[[F], F]:
+    """Declare whether object-measurement labels are slice-aligned or full-stack."""
+
+    if not isinstance(mode, ObjectLabelMeasurementExecution):
+        raise TypeError(
+            "object_label_measurement_execution mode must be "
+            "ObjectLabelMeasurementExecution."
+        )
+
+    def decorator(func: F) -> F:
+        setattr(func, _OBJECT_LABEL_MEASUREMENT_EXECUTION_ATTR, mode)
+        return func
+
+    return decorator
+
+
+def object_label_measurement_execution_from_callable(
+    func: Callable,
+) -> ObjectLabelMeasurementExecution:
+    """Return the declared object-label measurement execution mode."""
+
+    try:
+        declared = vars(func).get(_OBJECT_LABEL_MEASUREMENT_EXECUTION_ATTR)
+    except TypeError:
+        declared = None
+    if declared is None:
+        return ObjectLabelMeasurementExecution.SLICE_ALIGNED
+    if not isinstance(declared, ObjectLabelMeasurementExecution):
+        raise TypeError(
+            f"{func} object-label measurement execution must be "
+            "ObjectLabelMeasurementExecution."
+        )
+    return declared
 
 
 def special_input_names_from_callable(func: Callable) -> tuple[str, ...]:

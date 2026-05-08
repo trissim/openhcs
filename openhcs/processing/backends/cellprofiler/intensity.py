@@ -8,6 +8,8 @@ from dataclasses import dataclass
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
+import scipy.ndimage
+import skimage.segmentation
 
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -40,8 +42,10 @@ class ObjectIntensityArrays:
     upper_quartile_intensity: np.ndarray
     center_mass_intensity_x: np.ndarray
     center_mass_intensity_y: np.ndarray
+    center_mass_intensity_z: np.ndarray
     max_intensity_x: np.ndarray
     max_intensity_y: np.ndarray
+    max_intensity_z: np.ndarray
 
 
 class ObjectIntensityBackendStrategy(
@@ -81,9 +85,11 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
     ) -> ObjectIntensityArrays:
         image_array = np.ascontiguousarray(image, dtype=np.float64)
         label_array = np.ascontiguousarray(labels, dtype=np.int64)
+        if image_array.ndim == 3 and label_array.ndim == 3:
+            return _object_intensity_nd_scipy(image_array, label_array)
         if image_array.ndim != 2 or label_array.ndim != 2:
             raise NotImplementedError(
-                "Numba object-intensity backend currently supports 2-D arrays."
+                "NumPy object-intensity backend supports 2-D and 3-D arrays."
             )
         if image_array.shape != label_array.shape:
             raise ValueError("image and labels must have matching shapes.")
@@ -129,9 +135,19 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
             upper_quartile_intensity=upper,
             center_mass_intensity_x=arrays[12],
             center_mass_intensity_y=arrays[13],
+            center_mass_intensity_z=np.zeros(object_count, dtype=np.float64),
             max_intensity_x=arrays[14],
             max_intensity_y=arrays[15],
+            max_intensity_z=np.zeros(object_count, dtype=np.float64),
         )
+
+    def prepare_backend(self) -> None:
+        """Compile object-intensity kernels outside measured execution."""
+        image = np.linspace(0.0, 1.0, 32 * 32, dtype=np.float32).reshape((32, 32))
+        labels = np.zeros(image.shape, dtype=np.int32)
+        labels[4:16, 4:16] = 1
+        labels[16:28, 16:28] = 2
+        self.measure(image, labels)
 
 
 def object_intensity_backend(
@@ -166,9 +182,230 @@ def _empty_intensity_arrays(object_labels: np.ndarray) -> ObjectIntensityArrays:
         upper_quartile_intensity=empty,
         center_mass_intensity_x=empty,
         center_mass_intensity_y=empty,
+        center_mass_intensity_z=empty,
         max_intensity_x=empty,
         max_intensity_y=empty,
+        max_intensity_z=empty,
     )
+
+
+def _object_intensity_nd_scipy(
+    image: np.ndarray,
+    labels: np.ndarray,
+) -> ObjectIntensityArrays:
+    """Measure CellProfiler-compatible object intensities for one 3-D domain."""
+    if image.shape != labels.shape:
+        raise ValueError("image and labels must have matching shapes.")
+    max_label = int(labels.max()) if labels.size else 0
+    object_labels = np.arange(1, max_label + 1, dtype=np.int32)
+    if object_labels.size == 0:
+        return _empty_intensity_arrays(object_labels)
+
+    finite_mask = np.isfinite(image)
+    masked_labels = labels.copy()
+    masked_labels[~finite_mask] = 0
+    object_mask = masked_labels > 0
+    if not np.any(object_mask):
+        return _empty_intensity_arrays(object_labels)
+
+    masked_image = image.copy()
+    masked_image[~finite_mask] = 0.0
+    outlines = skimage.segmentation.find_boundaries(masked_labels, mode="inner")
+    masked_outlines = outlines & object_mask
+    mesh_z, mesh_y, mesh_x = np.mgrid[
+        0 : image.shape[0],
+        0 : image.shape[1],
+        0 : image.shape[2],
+    ]
+
+    counts = _fixup_scipy_result(
+        scipy.ndimage.sum(np.ones(int(object_mask.sum())), masked_labels[object_mask], object_labels)
+    )
+    integrated = _fixup_scipy_result(
+        scipy.ndimage.sum(masked_image[object_mask], masked_labels[object_mask], object_labels)
+    )
+    means = np.divide(
+        integrated,
+        counts,
+        out=np.zeros_like(integrated, dtype=np.float64),
+        where=counts != 0,
+    )
+    stds = np.sqrt(
+        _fixup_scipy_result(
+            scipy.ndimage.mean(
+                (masked_image[object_mask] - means[masked_labels[object_mask] - 1]) ** 2,
+                masked_labels[object_mask],
+                object_labels,
+            )
+        )
+    )
+    min_values = _fixup_scipy_result(
+        scipy.ndimage.minimum(masked_image[object_mask], masked_labels[object_mask], object_labels)
+    )
+    max_values = _fixup_scipy_result(
+        scipy.ndimage.maximum(masked_image[object_mask], masked_labels[object_mask], object_labels)
+    )
+
+    max_position = np.asarray(
+        _fixup_scipy_result(
+            scipy.ndimage.maximum_position(
+                masked_image[object_mask],
+                masked_labels[object_mask],
+                object_labels,
+            )
+        ),
+        dtype=int,
+    ).reshape((object_labels.size,))
+    label_values = masked_labels[object_mask]
+    max_x = mesh_x[object_mask][max_position].astype(np.float64, copy=False)
+    max_y = mesh_y[object_mask][max_position].astype(np.float64, copy=False)
+    max_z = mesh_z[object_mask][max_position].astype(np.float64, copy=False)
+
+    cm_x = _fixup_scipy_result(
+        scipy.ndimage.mean(mesh_x[object_mask], label_values, object_labels)
+    )
+    cm_y = _fixup_scipy_result(
+        scipy.ndimage.mean(mesh_y[object_mask], label_values, object_labels)
+    )
+    cm_z = _fixup_scipy_result(
+        scipy.ndimage.mean(mesh_z[object_mask], label_values, object_labels)
+    )
+    weighted_x = _fixup_scipy_result(
+        scipy.ndimage.sum(mesh_x[object_mask] * masked_image[object_mask], label_values, object_labels)
+    )
+    weighted_y = _fixup_scipy_result(
+        scipy.ndimage.sum(mesh_y[object_mask] * masked_image[object_mask], label_values, object_labels)
+    )
+    weighted_z = _fixup_scipy_result(
+        scipy.ndimage.sum(mesh_z[object_mask] * masked_image[object_mask], label_values, object_labels)
+    )
+    cmi_x = np.divide(weighted_x, integrated, out=np.zeros_like(weighted_x), where=integrated != 0)
+    cmi_y = np.divide(weighted_y, integrated, out=np.zeros_like(weighted_y), where=integrated != 0)
+    cmi_z = np.divide(weighted_z, integrated, out=np.zeros_like(weighted_z), where=integrated != 0)
+    mass_displacement = np.sqrt(
+        (cm_x - cmi_x) * (cm_x - cmi_x)
+        + (cm_y - cmi_y) * (cm_y - cmi_y)
+        + (cm_z - cmi_z) * (cm_z - cmi_z)
+    )
+
+    lower, median, upper, mad = _object_intensity_quantiles_nd(
+        masked_image[object_mask],
+        label_values,
+        object_labels,
+        mad_fraction=1.0 / float(image.ndim),
+    )
+    edge_sums, edge_means, edge_stds, edge_min, edge_max = _edge_intensity_arrays(
+        masked_image,
+        masked_labels,
+        masked_outlines,
+        object_labels,
+    )
+    return ObjectIntensityArrays(
+        object_labels=object_labels,
+        integrated_intensity=integrated,
+        mean_intensity=means,
+        std_intensity=stds,
+        min_intensity=min_values,
+        max_intensity=max_values,
+        integrated_intensity_edge=edge_sums,
+        mean_intensity_edge=edge_means,
+        std_intensity_edge=edge_stds,
+        min_intensity_edge=edge_min,
+        max_intensity_edge=edge_max,
+        mass_displacement=mass_displacement,
+        lower_quartile_intensity=lower,
+        median_intensity=median,
+        mad_intensity=mad,
+        upper_quartile_intensity=upper,
+        center_mass_intensity_x=cmi_x,
+        center_mass_intensity_y=cmi_y,
+        center_mass_intensity_z=cmi_z,
+        max_intensity_x=max_x,
+        max_intensity_y=max_y,
+        max_intensity_z=max_z,
+    )
+
+
+def _fixup_scipy_result(result: object) -> np.ndarray:
+    if np.isscalar(result):
+        return np.asarray([result], dtype=np.float64)
+    return np.asarray(result, dtype=np.float64)
+
+
+def _object_intensity_quantiles_nd(
+    values: np.ndarray,
+    labels: np.ndarray,
+    object_labels: np.ndarray,
+    *,
+    mad_fraction: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    lower = np.zeros(object_labels.size, dtype=np.float64)
+    median = np.zeros(object_labels.size, dtype=np.float64)
+    upper = np.zeros(object_labels.size, dtype=np.float64)
+    mad = np.zeros(object_labels.size, dtype=np.float64)
+    for index, label in enumerate(object_labels):
+        group = values[labels == label]
+        if group.size == 0:
+            continue
+        ordered = np.sort(group)
+        lower[index] = _quantile_from_sorted_values(ordered, 0.25)
+        median[index] = _quantile_from_sorted_values(ordered, 0.5)
+        upper[index] = _quantile_from_sorted_values(ordered, 0.75)
+        mad[index] = _quantile_from_sorted_values(
+            np.sort(np.abs(group - median[index])),
+            mad_fraction,
+        )
+    return lower, median, upper, mad
+
+
+def _quantile_from_sorted_values(values: np.ndarray, fraction: float) -> float:
+    qindex = values.size * fraction
+    low = int(qindex)
+    qfraction = qindex - low
+    last = values.size - 1
+    if low < last:
+        return float(values[low] * (1.0 - qfraction) + values[low + 1] * qfraction)
+    return float(values[last])
+
+
+def _edge_intensity_arrays(
+    image: np.ndarray,
+    labels: np.ndarray,
+    edge_mask: np.ndarray,
+    object_labels: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    edge_labels = labels[edge_mask]
+    edge_values = image[edge_mask]
+    edge_sums = _fixup_scipy_result(
+        scipy.ndimage.sum(edge_values, edge_labels, object_labels)
+    )
+    edge_counts = _fixup_scipy_result(
+        scipy.ndimage.sum(np.ones(edge_values.size), edge_labels, object_labels)
+    )
+    edge_means = np.divide(
+        edge_sums,
+        edge_counts,
+        out=np.zeros_like(edge_sums),
+        where=edge_counts != 0,
+    )
+    edge_stds = np.sqrt(
+        _fixup_scipy_result(
+            scipy.ndimage.mean(
+                (edge_values - edge_means[edge_labels - 1]) ** 2,
+                edge_labels,
+                object_labels,
+            )
+        )
+    )
+    edge_min = _fixup_scipy_result(
+        scipy.ndimage.minimum(edge_values, edge_labels, object_labels)
+    )
+    edge_max = _fixup_scipy_result(
+        scipy.ndimage.maximum(edge_values, edge_labels, object_labels)
+    )
+    edge_min[edge_counts == 0] = 0.0
+    edge_max[edge_counts == 0] = 0.0
+    return edge_sums, edge_means, edge_stds, edge_min, edge_max
 
 
 def _object_intensity_quantiles(

@@ -7,6 +7,7 @@ import logging
 import pickle
 import hashlib
 import importlib.util
+import copy
 import os
 import signal
 import threading
@@ -46,10 +47,13 @@ from benchmark.contracts.tool_adapter import (
 from benchmark.contracts.metric import MetricCollector
 from openhcs.constants import MULTIPROCESSING_AXIS
 from openhcs.constants.constants import Microscope
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
 from openhcs.core.equivalence import RuntimeEquivalencePolicy
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.runtime_equivalence import (
+    RuntimeEquivalenceReport,
     RuntimeMeasurementSnapshot,
+    RuntimeMeasurementSnapshotAccumulator,
     RuntimeOutputSnapshot,
     image_paths,
     runtime_artifact_measurement_source_names,
@@ -93,6 +97,12 @@ _MICROSCOPES_BY_NORMALIZED_LITERAL = {
 }
 OPENHCS_AXIS_FILTER_PARAM = "openhcs_axis_filter"
 OPENHCS_MAX_AXIS_COUNT_PARAM = "openhcs_max_axis_count"
+
+
+class MeasurementSnapshotCacheKind(Enum):
+    """Nominal cache identity families for semantic measurement snapshots."""
+
+    STREAMING_ARTIFACT_EXECUTION = "streaming_artifact_execution_measurements"
 
 
 @dataclass(frozen=True, slots=True)
@@ -240,8 +250,6 @@ class RuntimeExecutionCacheWritePolicy:
             return cls.disabled()
         if not request.cache_candidate_measurement_snapshot:
             return cls.disabled()
-        if not request.compare_image_outputs:
-            return cls.disabled()
         return cls(
             write_manifest=True,
             include_image_records=request.compare_image_outputs,
@@ -254,6 +262,97 @@ class RuntimeExecutionCacheWritePolicy:
             write_manifest=False,
             include_image_records=False,
             include_non_image_records=False,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeRecordCacheIdentity:
+    """Stable cache identity for one persisted runtime artifact record."""
+
+    name: str
+    kind: ArtifactKind
+    axis_id: str
+    group_key: str | None
+    site: str | None
+    channel: str | None
+    z_index: str | None
+    timepoint: str | None
+    path: str
+    backend: str
+
+    @classmethod
+    def from_record(cls, record: Any) -> "RuntimeRecordCacheIdentity":
+        key = record.key
+        scope = key.scope
+        return cls(
+            name=key.name,
+            kind=key.kind,
+            axis_id=scope.axis_id,
+            group_key=scope.group_key,
+            site=scope.site,
+            channel=scope.channel,
+            z_index=scope.z_index,
+            timepoint=scope.timepoint,
+            path=record.location.path,
+            backend=record.location.backend,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHCSTableOnlyStreamingEquivalence:
+    """Semantic parity result accumulated without retaining per-axis contexts."""
+
+    report: RuntimeEquivalenceReport
+    output_roots: tuple[Path, ...]
+    execution_output_root: Path
+    axis_count: int
+    executed_axes: tuple[str, ...]
+    table_output_count: int
+    image_output_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class StreamingCandidateMeasurementSnapshotCacheKey:
+    """Cache identity for semantic measurements accumulated axis-by-axis."""
+
+    schema_version: int
+    kind: MeasurementSnapshotCacheKind
+    runtime_execution_cache_key: object
+    selected_axes: tuple[str, ...]
+    semantic_measurement_projection: object
+    required_measurement_keys: tuple[object, ...]
+    known_source_names: tuple[str, ...]
+    policy: RuntimeEquivalencePolicy
+
+    @classmethod
+    def from_request(
+        cls,
+        request: "OpenHCSRunRequest",
+        *,
+        policy: RuntimeEquivalencePolicy,
+        known_source_names: tuple[str, ...],
+        required_measurement_keys: frozenset[object],
+        selected_axes: tuple[str, ...],
+    ) -> "StreamingCandidateMeasurementSnapshotCacheKey":
+        return cls(
+            schema_version=_RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION,
+            kind=MeasurementSnapshotCacheKind.STREAMING_ARTIFACT_EXECUTION,
+            runtime_execution_cache_key=_runtime_execution_cache_key_for_snapshot(
+                request.runtime_execution_cache_key
+            ),
+            selected_axes=selected_axes,
+            semantic_measurement_projection=(
+                runtime_measurement_projection_cache_identity()
+            ),
+            required_measurement_keys=tuple(
+                key.to_cache_payload()
+                for key in sorted(
+                    required_measurement_keys,
+                    key=lambda measurement_key: measurement_key.sort_key,
+                )
+            ),
+            known_source_names=tuple(known_source_names),
+            policy=policy,
         )
 
 
@@ -406,6 +505,9 @@ class OpenHCSAdapter(ToolAdapter):
 
         with phase_timing.phase(BenchmarkPhase.READ_CACHE):
             cache_hit = self._load_runtime_execution_cache(request)
+        equivalence_report = None
+        equivalence_failure_message = None
+        streaming_equivalence: OpenHCSTableOnlyStreamingEquivalence | None = None
         if cache_hit is not None:
             phase_timing.record(BenchmarkPhase.COMPILE_OPENHCS, seconds=0.0, cached=True)
             phase_timing.record(BenchmarkPhase.EXECUTE_OPENHCS, seconds=0.0, cached=True)
@@ -419,6 +521,9 @@ class OpenHCSAdapter(ToolAdapter):
             execution_output_root = cache_hit.execution_output_root
             source_workspace_path = cache_hit.source_workspace_path
             axis_count = cache_hit.axis_count
+            executed_axes = tuple(validation.observation.records_by_axis)
+            csv_output_count = len(validation.observation.exports.table_outputs)
+            image_output_count = len(validation.observation.exports.image_outputs)
             reused_runtime_execution_cache = True
         else:
             execution_plate_path = request.dataset_path
@@ -435,6 +540,7 @@ class OpenHCSAdapter(ToolAdapter):
                             source_workspace_path,
                             prepared.source_schema,
                             filemanager=self._filemanager,
+                            max_image_set_count=request.axis_selection.max_axis_count,
                         )
                 except Exception as exc:
                     raise ToolExecutionError(
@@ -472,49 +578,76 @@ class OpenHCSAdapter(ToolAdapter):
             selected_axes = request.axis_selection.resolve(
                 tuple(orchestrator.get_component_keys(MULTIPROCESSING_AXIS))
             )
-
-            with ExitStack() as stack:
-                for metric in request.metrics:
-                    stack.enter_context(metric)
-                with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
-                    execution = execute_pipeline_direct(
-                        orchestrator,
-                        prepared.pipeline,
-                        well_filter=selected_axes,
-                        phase_timing=phase_timing,
-                    )
-            output_roots = runtime_output_roots(
-                execution.compiled_contexts,
-                output_plate_root,
-            )
-            execution_output_root = (
-                output_roots[0] if len(output_roots) == 1 else request.output_dir
-            )
-            try:
-                with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
-                    validation = validate_cppipe_execution(
-                        prepared,
-                        execution,
-                        execution_output_root,
-                        validate_table_exports=request.materialize_runtime_artifacts,
-                        validate_image_exports=request.compare_image_outputs,
-                    )
-            except CPPipeExecutionValidationError as exc:
-                raise ToolExecutionError(str(exc)) from exc
-            axis_count = len(execution.execution_results)
-            reused_runtime_execution_cache = False
-            with phase_timing.phase(BenchmarkPhase.WRITE_CACHE):
-                self._write_runtime_execution_cache(
-                    request,
-                    validation=validation,
-                    output_roots=output_roots,
-                    execution_output_root=execution_output_root,
-                    source_workspace_path=source_workspace_path,
-                    axis_count=axis_count,
+            equivalence_reference = request.equivalence_reference_output_dir
+            if (
+                equivalence_reference is not None
+                and (
+                    not request.compare_image_outputs
+                    or _reference_has_no_images(equivalence_reference)
                 )
+            ):
+                streaming_equivalence = self._run_table_only_streaming_equivalence(
+                    request,
+                    orchestrator=orchestrator,
+                    prepared=prepared,
+                    selected_axes=selected_axes,
+                    output_plate_root=output_plate_root,
+                    phase_timing=phase_timing,
+                    equivalence_reference=equivalence_reference,
+                )
+                equivalence_report = streaming_equivalence.report
+                output_roots = streaming_equivalence.output_roots
+                execution_output_root = streaming_equivalence.execution_output_root
+                axis_count = streaming_equivalence.axis_count
+                executed_axes = streaming_equivalence.executed_axes
+                csv_output_count = streaming_equivalence.table_output_count
+                image_output_count = streaming_equivalence.image_output_count
+                validation = None
+            else:
+                with ExitStack() as stack:
+                    for metric in request.metrics:
+                        stack.enter_context(metric)
+                    with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
+                        execution = execute_pipeline_direct(
+                            orchestrator,
+                            prepared.pipeline,
+                            well_filter=selected_axes,
+                            phase_timing=phase_timing,
+                        )
+                output_roots = runtime_output_roots(
+                    execution.compiled_contexts,
+                    output_plate_root,
+                )
+                execution_output_root = (
+                    output_roots[0] if len(output_roots) == 1 else request.output_dir
+                )
+                try:
+                    with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
+                        validation = validate_cppipe_execution(
+                            prepared,
+                            execution,
+                            execution_output_root,
+                            validate_table_exports=request.materialize_runtime_artifacts,
+                            validate_image_exports=request.compare_image_outputs,
+                        )
+                except CPPipeExecutionValidationError as exc:
+                    raise ToolExecutionError(str(exc)) from exc
+                axis_count = len(execution.execution_results)
+                executed_axes = tuple(validation.observation.records_by_axis)
+                csv_output_count = len(validation.observation.exports.table_outputs)
+                image_output_count = len(validation.observation.exports.image_outputs)
+                reused_runtime_execution_cache = False
+                with phase_timing.phase(BenchmarkPhase.WRITE_CACHE):
+                    self._write_runtime_execution_cache(
+                        request,
+                        validation=validation,
+                        output_roots=output_roots,
+                        execution_output_root=execution_output_root,
+                        source_workspace_path=source_workspace_path,
+                        axis_count=axis_count,
+                    )
+            reused_runtime_execution_cache = False
         equivalence_reference = request.equivalence_reference_output_dir
-        equivalence_report = None
-        equivalence_failure_message = None
         if equivalence_reference is not None:
             if not equivalence_reference.exists():
                 raise ToolExecutionError(
@@ -530,7 +663,9 @@ class OpenHCSAdapter(ToolAdapter):
                 threshold_sensitive_pair_abs_tolerance=0.025,
                 image_max_different_fraction=0.02,
             )
-            if (
+            if equivalence_report is not None:
+                pass
+            elif (
                 not request.compare_image_outputs
                 or _reference_has_no_images(equivalence_reference)
             ):
@@ -544,6 +679,11 @@ class OpenHCSAdapter(ToolAdapter):
                         )
                     )
             else:
+                if validation is None:
+                    raise ToolExecutionError(
+                        "Image-output equivalence requires retained runtime "
+                        "execution validation."
+                    )
                 with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
                     equivalence_report = runtime_reference_artifact_equivalence(
                         RuntimeOutputSnapshot.from_output_root(equivalence_reference),
@@ -582,15 +722,15 @@ class OpenHCSAdapter(ToolAdapter):
             "cppipe_path": str(cppipe_path),
             "generated_pipeline_module": prepared.module_name,
             "axis_count": axis_count,
-            "csv_output_count": len(validation.observation.exports.table_outputs),
-            "image_output_count": len(validation.observation.exports.image_outputs),
+            "csv_output_count": csv_output_count,
+            "image_output_count": image_output_count,
             "compiled_output_roots": tuple(str(root) for root in output_roots),
             "reused_runtime_execution_cache": reused_runtime_execution_cache,
             "phase_timing_records": phase_timing.payloads(),
             "axis_selection": {
                 "axis_filter": request.axis_selection.axis_filter,
                 "max_axis_count": request.axis_selection.max_axis_count,
-                "executed_axes": tuple(validation.observation.records_by_axis),
+                "executed_axes": executed_axes,
             },
         }
         if request.runtime_execution_cache_manifest is not None:
@@ -616,6 +756,150 @@ class OpenHCSAdapter(ToolAdapter):
             success=equivalence_failure_message is None,
             error_message=equivalence_failure_message,
             provenance=provenance,
+        )
+
+    def _run_table_only_streaming_equivalence(
+        self,
+        request: OpenHCSRunRequest,
+        *,
+        orchestrator: Any,
+        prepared: Any,
+        selected_axes: tuple[str, ...],
+        output_plate_root: Path,
+        phase_timing: PhaseTimingTrace,
+        equivalence_reference: Path,
+    ) -> OpenHCSTableOnlyStreamingEquivalence:
+        """Execute table-only parity one axis at a time and retain only facts."""
+
+        equivalence_policy = cellprofiler_runtime_equivalence_policy(
+            numeric_abs_tolerance=1e-6,
+            numeric_rel_tolerance=1e-6,
+            allow_tie_sensitive_location_mismatches=True,
+            allow_unstable_shape_descriptors=True,
+            threshold_entropy_abs_tolerance=0.5,
+            threshold_sensitive_pair_abs_tolerance=0.025,
+            image_max_different_fraction=0.02,
+        )
+        if not isinstance(prepared.source_schema, PipelineImageSchema):
+            raise TypeError(
+                "OpenHCS streaming equivalence requires PipelineImageSchema, got "
+                f"{type(prepared.source_schema).__name__}."
+            )
+        known_source_names = prepared.source_schema.measurement_source_names
+        cache_root = _measurement_snapshot_cache_root(request)
+        reference_key = _reference_measurement_snapshot_cache_key(
+            equivalence_reference,
+            policy=equivalence_policy,
+            known_source_names=known_source_names,
+        )
+        with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
+            reference_measurements = _load_or_create_measurement_snapshot(
+                cache_root,
+                prefix=_RUNTIME_REFERENCE_MEASUREMENT_SNAPSHOT_PREFIX,
+                cache_key=reference_key,
+                create=lambda: RuntimeMeasurementSnapshot.from_output_snapshot(
+                    RuntimeOutputSnapshot.from_output_root(equivalence_reference),
+                    policy=equivalence_policy,
+                    known_source_names=known_source_names,
+                ),
+            )
+        required_measurement_keys = frozenset(reference_measurements.values_by_feature)
+        candidate_measurements = RuntimeMeasurementSnapshotAccumulator()
+        output_roots: list[Path] = []
+        table_output_count = 0
+        image_output_count = 0
+
+        import gc
+
+        with ExitStack() as stack:
+            for metric in request.metrics:
+                stack.enter_context(metric)
+            for axis in selected_axes:
+                with _openhcs_execution_watchdog(request.openhcs_timeout_seconds):
+                    execution = execute_pipeline_direct(
+                        orchestrator,
+                        copy.deepcopy(prepared.pipeline),
+                        well_filter=(axis,),
+                        phase_timing=phase_timing,
+                    )
+                axis_output_roots = runtime_output_roots(
+                    execution.compiled_contexts,
+                    output_plate_root,
+                )
+                output_roots.extend(axis_output_roots)
+                execution_output_root = (
+                    axis_output_roots[0]
+                    if len(axis_output_roots) == 1
+                    else request.output_dir
+                )
+                try:
+                    with phase_timing.phase(BenchmarkPhase.VALIDATE_RUNTIME):
+                        validation = validate_cppipe_execution(
+                            prepared,
+                            execution,
+                            execution_output_root,
+                            validate_table_exports=request.materialize_runtime_artifacts,
+                            validate_image_exports=False,
+                        )
+                except CPPipeExecutionValidationError as exc:
+                    raise ToolExecutionError(str(exc)) from exc
+
+                table_output_count += len(validation.observation.exports.table_outputs)
+                image_output_count += len(validation.observation.exports.image_outputs)
+                with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
+                    axis_measurements = (
+                        RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+                            validation.observation,
+                            policy=equivalence_policy,
+                            known_source_names=known_source_names,
+                            required_measurement_keys=required_measurement_keys,
+                        )
+                    )
+                candidate_measurements.add(axis_measurements)
+
+                execution.compiled_contexts.clear()
+                del validation
+                del execution
+                gc.collect()
+
+        with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
+            candidate_snapshot = candidate_measurements.snapshot()
+            if request.cache_candidate_measurement_snapshot:
+                candidate_key = StreamingCandidateMeasurementSnapshotCacheKey.from_request(
+                    request=request,
+                    policy=equivalence_policy,
+                    known_source_names=known_source_names,
+                    required_measurement_keys=required_measurement_keys,
+                    selected_axes=selected_axes,
+                )
+                _write_measurement_snapshot_cache(
+                    _measurement_snapshot_cache_path(
+                        cache_root,
+                        _RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
+                        candidate_key,
+                    ),
+                    candidate_key,
+                    candidate_snapshot,
+                )
+            report = runtime_measurement_equivalence(
+                reference_measurements,
+                candidate_snapshot,
+                policy=equivalence_policy,
+            )
+        unique_output_roots = tuple(dict.fromkeys(output_roots))
+        execution_output_root = (
+            unique_output_roots[0]
+            if len(unique_output_roots) == 1
+            else request.output_dir
+        )
+        return OpenHCSTableOnlyStreamingEquivalence(
+            report=report,
+            output_roots=unique_output_roots,
+            execution_output_root=execution_output_root,
+            axis_count=len(selected_axes),
+            executed_axes=selected_axes,
+            table_output_count=table_output_count,
+            image_output_count=image_output_count,
         )
 
     def _load_runtime_execution_cache(
@@ -1023,7 +1307,11 @@ def _cacheable_runtime_records(
     """Return runtime records appropriate for the requested cache payload."""
     if include_image_records:
         return tuple(records)
-    return tuple(record for record in records if record.key.kind is not ArtifactKind.IMAGE)
+    return tuple(
+        record
+        for record in records
+        if record.key.kind.payload_shape is not ArtifactPayloadShape.ARRAY
+    )
 
 
 def _reference_has_no_images(reference_output_dir: Path | None) -> bool:
@@ -1267,7 +1555,29 @@ def _runtime_measurement_observation_fingerprint(
     validation: CPPipeExecutionValidation,
 ) -> str:
     """Fingerprint non-image runtime observations that feed measurement parity."""
-    payload = _validation_cache_payload(validation, include_image_records=False)
+    exports = validation.observation.exports
+    payload = {
+        "expectation": validation.expectation,
+        "records_by_axis": {
+            axis: tuple(
+                RuntimeRecordCacheIdentity.from_record(record)
+                for record in records
+                if record.key.kind.payload_shape is not ArtifactPayloadShape.ARRAY
+            )
+            for axis, records in validation.observation.records_by_axis.items()
+        },
+        "exports": {
+            "table_outputs": tuple(str(path) for path in exports.table_outputs),
+            "table_headers_by_path": {
+                str(path): tuple(headers)
+                for path, headers in exports.table_headers_by_path.items()
+            },
+            "table_row_counts_by_path": {
+                str(path): int(row_count)
+                for path, row_count in exports.table_row_counts_by_path.items()
+            },
+        },
+    }
     return hashlib.sha256(
         json.dumps(
             _cache_jsonable(payload),

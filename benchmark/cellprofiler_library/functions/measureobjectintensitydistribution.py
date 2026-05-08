@@ -5,11 +5,8 @@ import numpy as np
 import os
 import time
 from typing import Tuple, List, Optional, Any
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from collections import OrderedDict
-import hashlib
-from numba import njit, prange
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_values import object_label_dense_array
@@ -17,7 +14,6 @@ from openhcs.processing.backends.cellprofiler._backend import CellProfilerBacken
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     radial_distribution_backend,
 )
-from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
 from openhcs.processing.backends.cellprofiler.zernike import (
     intensity_zernike_moments,
 )
@@ -69,20 +65,6 @@ class ZernikeMeasurement:
     m: int
     magnitude: float
     phase: Optional[float] = None
-
-
-@dataclass(frozen=True)
-class _RadialLabelGeometry:
-    d_to_edge: np.ndarray
-    centers_i: np.ndarray
-    centers_j: np.ndarray
-
-
-_RADIAL_LABEL_GEOMETRY_CACHE: OrderedDict[
-    tuple[str, tuple[int, ...], bytes],
-    _RadialLabelGeometry,
-] = OrderedDict()
-_RADIAL_LABEL_GEOMETRY_CACHE_MAX_ENTRIES = 16
 
 
 @numpy
@@ -156,23 +138,11 @@ def measure_object_intensity_distribution(
         return image, measurements
     
     phase_started_at = time.perf_counter()
-    radial_geometry = _radial_label_geometry(labels_2d, nobjects)
-    _log_profile(
-        "idist_radial_geometry",
-        time.perf_counter() - phase_started_at,
-        function="measure_object_intensity_distribution",
-        nobjects=nobjects,
-    )
-
-    phase_started_at = time.perf_counter()
     radial_arrays = radial_distribution_backend(
         backend_provider=radial_distribution_backend_provider,
-    ).measure_from_centers(
+    ).measure_self_centered(
         img_2d,
         labels_2d,
-        radial_geometry.d_to_edge,
-        radial_geometry.centers_i,
-        radial_geometry.centers_j,
         bin_count=bin_count,
         wants_scaled=wants_scaled,
         maximum_radius=maximum_radius,
@@ -247,66 +217,6 @@ def measure_object_intensity_distribution(
         rows=len(measurements),
     )
     return image, measurements
-
-
-def _radial_label_geometry(
-    labels: np.ndarray,
-    nobjects: int,
-) -> _RadialLabelGeometry:
-    total_started_at = time.perf_counter()
-    labels_2d = np.asarray(labels, dtype=np.int32)
-    phase_started_at = time.perf_counter()
-    key = _label_content_key(labels_2d)
-    _log_profile(
-        "idist_geometry_key",
-        time.perf_counter() - phase_started_at,
-        function="measure_object_intensity_distribution",
-    )
-    entry = _RADIAL_LABEL_GEOMETRY_CACHE.get(key)
-    if entry is not None:
-        _RADIAL_LABEL_GEOMETRY_CACHE.move_to_end(key)
-        _log_profile(
-            "idist_geometry_cache_hit",
-            time.perf_counter() - total_started_at,
-            function="measure_object_intensity_distribution",
-        )
-        return entry
-
-    phase_started_at = time.perf_counter()
-    d_to_edge = _distance_to_edge(labels_2d)
-    _log_profile(
-        "idist_distance_to_edge",
-        time.perf_counter() - phase_started_at,
-        function="measure_object_intensity_distribution",
-    )
-    phase_started_at = time.perf_counter()
-    centers_i, centers_j = _find_object_centers(labels_2d, d_to_edge, nobjects)
-    _log_profile(
-        "idist_find_centers",
-        time.perf_counter() - phase_started_at,
-        function="measure_object_intensity_distribution",
-    )
-    geometry = _RadialLabelGeometry(
-        d_to_edge=d_to_edge,
-        centers_i=centers_i,
-        centers_j=centers_j,
-    )
-    _RADIAL_LABEL_GEOMETRY_CACHE[key] = geometry
-    _RADIAL_LABEL_GEOMETRY_CACHE.move_to_end(key)
-    while len(_RADIAL_LABEL_GEOMETRY_CACHE) > _RADIAL_LABEL_GEOMETRY_CACHE_MAX_ENTRIES:
-        _RADIAL_LABEL_GEOMETRY_CACHE.popitem(last=False)
-    _log_profile(
-        "idist_geometry_total",
-        time.perf_counter() - total_started_at,
-        function="measure_object_intensity_distribution",
-    )
-    return geometry
-
-
-def _label_content_key(labels: np.ndarray) -> tuple[str, tuple[int, ...], bytes]:
-    contiguous = np.ascontiguousarray(labels)
-    digest = hashlib.blake2b(contiguous.view(np.uint8), digest_size=16).digest()
-    return str(contiguous.dtype), tuple(int(value) for value in contiguous.shape), digest
 
 
 def _coerce_zernike_mode(value: ZernikeMode | str) -> ZernikeMode:
@@ -420,85 +330,6 @@ def _prepare_measure_object_intensity_distribution() -> None:
         wants_zernikes=ZernikeMode.MAGNITUDES_AND_PHASE,
         zernike_degree=9,
     )
-
-
-def _distance_to_edge(labels: np.ndarray) -> np.ndarray:
-    """Compute distance to edge for each labeled pixel."""
-    return shape_measurement_backend().distance_to_edge(labels)
-
-
-def _find_object_centers(labels: np.ndarray, d_to_edge: np.ndarray, nobjects: int):
-    """Find the center of each object (point farthest from edge)."""
-    if nobjects <= 0:
-        return np.zeros(0, dtype=np.float64), np.zeros(0, dtype=np.float64)
-    indexes = np.arange(1, nobjects + 1, dtype=np.int32)
-    centers_i, centers_j = shape_measurement_backend().maximum_position_of_labels(
-        d_to_edge,
-        object_label_dense_array(labels, dtype=np.int32),
-        indexes,
-    )
-    return centers_i.astype(np.float64), centers_j.astype(np.float64)
-
-
-def _compute_distance_from_centers(
-    labels: np.ndarray,
-    centers_i: np.ndarray,
-    centers_j: np.ndarray,
-    nobjects: int
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Compute distance from center for each pixel."""
-    labels_int = object_label_dense_array(labels, dtype=np.int32)
-    if nobjects <= 0:
-        return (
-            np.zeros(labels.shape, dtype=np.float64),
-            np.zeros(labels.shape, dtype=np.int32),
-        )
-
-    return _compute_distance_from_centers_numba(
-        np.ascontiguousarray(labels_int),
-        np.ascontiguousarray(centers_i, dtype=np.float64),
-        np.ascontiguousarray(centers_j, dtype=np.float64),
-        int(nobjects),
-    )
-
-
-@njit(cache=True, parallel=True)
-def _compute_distance_from_centers_numba(
-    labels: np.ndarray,
-    centers_i: np.ndarray,
-    centers_j: np.ndarray,
-    nobjects: int,
-) -> Tuple[np.ndarray, np.ndarray]:
-    height, width = labels.shape
-    d_from_center = np.zeros((height, width), dtype=np.float64)
-    center_labels = np.zeros((height, width), dtype=np.int32)
-    center_valid = np.zeros(nobjects + 1, dtype=np.bool_)
-
-    for label_id in range(1, nobjects + 1):
-        center_i = int(centers_i[label_id - 1])
-        center_j = int(centers_j[label_id - 1])
-        if (
-            center_i >= 0
-            and center_i < height
-            and center_j >= 0
-            and center_j < width
-            and labels[center_i, center_j] == label_id
-        ):
-            center_valid[label_id] = True
-
-    for y in prange(height):
-        for x in range(width):
-            label_id = labels[y, x]
-            if label_id <= 0 or label_id > nobjects or not center_valid[label_id]:
-                continue
-            center_i = centers_i[label_id - 1]
-            center_j = centers_j[label_id - 1]
-            dy = float(y) - center_i
-            dx = float(x) - center_j
-            d_from_center[y, x] = np.sqrt(dy * dy + dx * dx)
-            center_labels[y, x] = label_id
-
-    return d_from_center, center_labels
 
 
 measure_object_intensity_distribution.__openhcs_prepare__ = (

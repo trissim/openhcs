@@ -21,6 +21,7 @@ from openhcs.interop.cellprofiler.runtime import (
 )
 from benchmark.cellprofiler_compat.module_execution import (
     CellProfilerFunctionContractExecutor,
+    CellProfilerInvocationExecutionModePolicy,
     CellProfilerMeasurementRecordBuilder,
     CellProfilerMeasurementImageDomain,
     CellProfilerModuleExecutor,
@@ -47,6 +48,7 @@ from benchmark.cellprofiler_compat.module_execution import (
     _relationship_measurement_rows,
     _slice_pure_2d_value,
 )
+from benchmark.cellprofiler_library.functions.structuring_elements import StructuringElement
 from benchmark.cellprofiler_library.functions.colortogray import color_to_gray
 from benchmark.cellprofiler_library.functions.crop import crop
 from benchmark.cellprofiler_library.functions.correctilluminationapply import (
@@ -102,6 +104,7 @@ from benchmark.cellprofiler_library.functions.identifysecondaryobjects import (
     _secondary_seed_labels,
 )
 from benchmark.cellprofiler_library.functions.tile import tile
+from benchmark.cellprofiler_library.functions.watershed import watershed
 from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSpec
 from openhcs.core.callable_contract import attach_callable_contract_metadata
 from openhcs.core.config import DtypeConfig
@@ -110,9 +113,12 @@ from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
+    ObjectLabelDomainScope,
     ObjectLabelRepresentation,
     ParentChildRelationshipPayload,
     RelationshipSemantics,
+    RuntimePlaneAxis,
+    RuntimePlaneAxisProjector,
     SpatialGridOrdering,
     object_label_parent_child_payload,
     object_shape_measurement_field_names,
@@ -128,6 +134,7 @@ from openhcs.core.runtime_values import (
     SparseIJVLabelRows,
     SpatialGrid,
     image_payload_data,
+    image_payload_mask,
     image_payload_metadata,
     image_payload_with_context,
     object_label_dense_array,
@@ -235,6 +242,49 @@ class _FakeCellProfilerRuntime:
 
     def add_relationship(self, name: str, **kwargs: object) -> None:
         self.relationships.append((name, kwargs))
+
+
+def test_special_inputs_bind_from_declared_role_order_not_runtime_dedup_order() -> None:
+    memb_final = np.asarray([[1.0, 1.0], [1.0, 1.0]], dtype=np.float32)
+    cell_seeds = np.asarray([[0, 3], [0, 0]], dtype=np.int32)
+    intensity_metadata = ImagePayloadMetadata(
+        intensity_scale=255,
+        source_dtype="uint8",
+    )
+    adapter = _FakeCellProfilerRuntime(
+        {
+            "MembFinal": _FakeRuntimeImage(memb_final),
+            "cellSeeds": _FakeRuntimeImage(
+                ImageMetadataPayload(cell_seeds, intensity_metadata),
+            ),
+        }
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="Watershed",
+            inputs=(
+                ArtifactSpec("MembFinal", ArtifactKind.IMAGE),
+                ArtifactSpec("cellSeeds", ArtifactKind.IMAGE),
+                ArtifactSpec("MembFinal", ArtifactKind.IMAGE),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("MembFinal", ArtifactKind.IMAGE),
+                ArtifactSpec("cellSeeds", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),),
+        )
+    )
+
+    kwargs = executor._runtime_input_kwargs(
+        watershed,
+        adapter,
+        memb_final,
+        {"watershed_method": "markers"},
+    )
+
+    np.testing.assert_array_equal(kwargs["markers"], cell_seeds)
+    assert kwargs["markers"].dtype == np.int32
+    np.testing.assert_array_equal(kwargs["mask"], memb_final)
 
     def add_image(
         self,
@@ -820,7 +870,7 @@ def test_measure_object_size_shape_zernikes_preserve_dense_label_gaps() -> None:
 
     _image, rows = measure_object_size_shape(
         image,
-        labels,
+        ObjectLabelSet(name="Nuclei", labels=labels, declared_object_count=3),
         calculate_advanced=False,
         calculate_zernikes=True,
         dtype_config=DtypeConfig(),
@@ -833,9 +883,25 @@ def test_measure_object_size_shape_zernikes_preserve_dense_label_gaps() -> None:
     assert np.isnan(rows[1]["Center_Y"])
     assert np.isnan(rows[1]["Zernike_0_0"])
     assert rows[2]["Area"] == 16.0
-    assert rows[2]["Center_X"] == 7.5
-    assert rows[2]["Center_Y"] == 7.5
-    assert np.isfinite(rows[2]["Zernike_0_0"])
+
+
+def test_measure_object_size_shape_uses_present_domain_for_undeclared_dense_labels() -> None:
+    image = np.ones((12, 12), dtype=np.float32)
+    labels = np.zeros(image.shape, dtype=np.int32)
+    labels[1:4, 1:4] = 1
+    labels[6:10, 6:10] = 1000
+
+    _image, rows = measure_object_size_shape(
+        image,
+        labels,
+        calculate_advanced=False,
+        calculate_zernikes=False,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert [row["object_label"] for row in rows] == [1, 1000]
+    assert rows[1]["Center_X"] == 7.5
+    assert rows[1]["Center_Y"] == 7.5
 
 
 def test_filterobjects_uses_upstream_form_factor_table_when_available() -> None:
@@ -1024,6 +1090,19 @@ def test_aligned_payload_slices_masked_image_stacks() -> None:
     np.testing.assert_array_equal(slices[1].mask, mask[1])
 
 
+def test_aligned_payload_slices_masked_volume_channel_stacks() -> None:
+    stack = np.zeros((2, 3, 4, 5), dtype=np.float32)
+    mask = np.zeros_like(stack, dtype=bool)
+    mask[0] = True
+
+    slices = payload_slices_for_alignment(MaskedImagePayload(data=stack, mask=mask))
+
+    assert len(slices) == 2
+    assert all(isinstance(slice_payload, MaskedImagePayload) for slice_payload in slices)
+    np.testing.assert_array_equal(slices[0].mask, mask[0])
+    np.testing.assert_array_equal(slices[1].mask, mask[1])
+
+
 def test_aligned_payload_slices_preserve_image_metadata() -> None:
     stack = np.zeros((2, 4, 5), dtype=np.float32)
     payload = ImageMetadataPayload(
@@ -1041,6 +1120,25 @@ def test_aligned_payload_slices_preserve_image_metadata() -> None:
     assert slices[0].metadata.source_dtype == "uint16"
     assert slices[1].metadata.intensity_scale == 255.0
     assert slices[1].metadata.source_dtype == "uint8"
+
+
+def test_compose_one_image_bundle_stacks_per_image_masks_for_volume_bundle() -> None:
+    first = MaskedImagePayload(
+        data=np.zeros((3, 4, 5), dtype=np.float32),
+        mask=np.ones((3, 4, 5), dtype=bool),
+    )
+    second = MaskedImagePayload(
+        data=np.ones((3, 4, 5), dtype=np.float32),
+        mask=np.zeros((3, 4, 5), dtype=bool),
+    )
+
+    bundle = compose_one_image_bundle((first, second))
+
+    assert isinstance(bundle, MaskedImagePayload)
+    assert bundle.data.shape == (2, 3, 4, 5)
+    assert bundle.mask.shape == bundle.data.shape
+    np.testing.assert_array_equal(bundle.mask[0], first.mask)
+    np.testing.assert_array_equal(bundle.mask[1], second.mask)
 
 
 def test_cellprofiler_auxiliary_payload_stack_preserves_metadata() -> None:
@@ -1086,6 +1184,36 @@ def test_module_executor_rewraps_single_image_output_for_openhcs_main_flow() -> 
 
     assert result.shape == (1, 4, 5)
     assert runtime.images["OrigGray"].data.shape == (4, 5)
+
+
+def test_module_executor_replaces_main_flow_for_declared_image_fan_in_output() -> None:
+    def add_channels(image: np.ndarray) -> np.ndarray:
+        return image.sum(axis=0)
+
+    add_channels.__processing_contract__ = ProcessingContract.PURE_3D
+    channel_stack = np.stack(
+        (
+            np.full((2, 5, 6), 1.0, dtype=np.float32),
+            np.full((2, 5, 6), 2.0, dtype=np.float32),
+            np.full((2, 5, 6), 3.0, dtype=np.float32),
+        )
+    )
+    runtime = _FakeCellProfilerRuntime(
+        {"Orig": _FakeRuntimeImage(channel_stack, source_image_name="Orig")}
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="ImageMath",
+            inputs=(ArtifactSpec("Orig", ArtifactKind.IMAGE),),
+            outputs=(ArtifactSpec("Combined", ArtifactKind.IMAGE),),
+        )
+    )
+
+    result = executor.run(add_channels, channel_stack, cellprofiler_runtime=runtime)
+
+    assert result.shape == (1, *channel_stack.shape[1:])
+    np.testing.assert_allclose(result[0], 6.0)
+    assert runtime.images["Combined"].data.shape == channel_stack.shape[1:]
 
 
 def test_module_executor_preserves_duplicate_image_roles_for_illumination_apply():
@@ -1772,11 +1900,13 @@ def test_pure_2d_object_label_payload_aggregation_preserves_source_domain():
 def test_pure_2d_object_label_payload_aggregation_expands_varying_crop_domains():
     first = ObjectLabelPayload(
         labels=np.array([[1]], dtype=np.int32),
+        declared_object_count=3,
         spatial_origin_yx=(1, 2),
         source_spatial_shape_yx=(4, 5),
     )
     second = ObjectLabelPayload(
         labels=np.array([[2]], dtype=np.int32),
+        declared_object_count=5,
         spatial_origin_yx=(2, 3),
         source_spatial_shape_yx=(4, 5),
     )
@@ -1788,10 +1918,81 @@ def test_pure_2d_object_label_payload_aggregation_expands_varying_crop_domains()
 
     assert isinstance(aggregated, ObjectLabelPayload)
     assert aggregated.labels.shape == (2, 4, 5)
+    assert aggregated.declared_object_id_domains == (
+        (1, 2, 3),
+        (1, 2, 3, 4, 5),
+    )
+    assert aggregated.domain_scope is ObjectLabelDomainScope.PLANE
     assert aggregated.spatial_origin_yx is None
     assert aggregated.source_spatial_shape_yx == (4, 5)
     assert aggregated.labels[0, 1, 2] == 1
     assert aggregated.labels[1, 2, 3] == 2
+
+
+def test_pure_2d_object_label_payload_aggregation_derives_missing_plane_domains():
+    first = ObjectLabelPayload(
+        labels=np.array([[1, 0], [0, 0]], dtype=np.int32),
+        declared_object_ids=(1, 2),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+    second = ObjectLabelPayload(
+        labels=np.array([[3, 0], [0, 0]], dtype=np.int32),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    aggregated = CellProfilerPure2DOutputAggregator.aggregate(
+        [first, second],
+        MemoryType.NUMPY.value,
+    )
+
+    assert isinstance(aggregated, ObjectLabelPayload)
+    assert aggregated.declared_object_id_domains == ((1, 2), (3,))
+    assert aggregated.domain_scope is ObjectLabelDomainScope.PLANE
+
+
+def test_pure_2d_object_label_payload_slice_projects_plane_domain() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.array(
+            [
+                [[1, 0], [0, 2]],
+                [[1, 0], [3, 4]],
+            ],
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    sliced = _slice_pure_2d_value(payload, slice_index=1, slice_count=2)
+
+    assert isinstance(sliced, ObjectLabelPayload)
+    assert sliced.labels.shape == (2, 2)
+    assert sliced.declared_object_ids == (1, 2, 3, 4)
+    assert sliced.declared_object_id_domains == ()
+    assert sliced.domain_scope is ObjectLabelDomainScope.PLANE
+
+
+def test_pure_2d_object_label_set_slice_projects_plane_domain() -> None:
+    label_set = ObjectLabelSet(
+        name="Cells",
+        labels=np.array(
+            [
+                [[1, 0], [0, 2]],
+                [[1, 0], [3, 4]],
+            ],
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    sliced = _slice_pure_2d_value(label_set, slice_index=0, slice_count=2)
+
+    assert isinstance(sliced, ObjectLabelSet)
+    assert sliced.labels.shape == (2, 2)
+    assert sliced.declared_object_ids == (1, 2)
+    assert sliced.declared_object_id_domains == ()
+    assert sliced.domain_scope is ObjectLabelDomainScope.PLANE
 
 
 def test_identify_tertiary_batch_aligns_cropped_primary_labels_to_secondary_domain():
@@ -2637,8 +2838,8 @@ def test_expand_or_shrink_executor_declares_output_label_extent() -> None:
 
     _name, recorded_payload, _kwargs = runtime.objects[0]
     assert isinstance(recorded_payload, ObjectLabelPayload)
-    assert recorded_payload.declared_object_count is None
-    assert recorded_payload.declared_object_ids == (4,)
+    assert recorded_payload.declared_object_count == 4
+    assert recorded_payload.declared_object_ids == ()
     assert int(np.max(recorded_payload.labels)) == 4
 
 
@@ -4085,6 +4286,21 @@ def test_unstack_cellprofiler_image_slices_collapses_pairwise_slice_grid() -> No
     np.testing.assert_array_equal(image_payload_data(slices[1]), np.full((5, 6), 4.0))
 
 
+def test_unstack_cellprofiler_image_slices_projects_singleton_volume_stack_mask() -> None:
+    data = np.arange(1 * 3 * 4 * 5, dtype=np.float32).reshape(1, 3, 4, 5)
+    mask = np.ones((1, 3, 4, 5), dtype=bool)
+    mask[0, 1] = False
+    payload = image_payload_with_context(data, mask=mask)
+
+    slices = _unstack_cellprofiler_image_slices(payload, MemoryType.NUMPY.value)
+
+    assert len(slices) == 3
+    np.testing.assert_array_equal(image_payload_data(slices[1]), data[0, 1])
+    np.testing.assert_array_equal(image_payload_data(slices[2]), data[0, 2])
+    np.testing.assert_array_equal(image_payload_mask(slices[1]), mask[0, 1])
+    np.testing.assert_array_equal(image_payload_mask(slices[2]), mask[0, 2])
+
+
 def test_cellprofiler_contract_executor_rejects_uncoerced_unknown_absorbed_contract():
     def two_dimensional_only(image: np.ndarray, **kwargs) -> np.ndarray:
         if image.ndim != 2:
@@ -4184,6 +4400,8 @@ def test_measurement_labels_select_source_named_plane_from_composed_image() -> N
         name="Nuclei",
         labels=np.stack((dna_labels, gfp_labels)),
         source_image_name="rawDNA",
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
     )
     measurement_image = CellProfilerMeasurementImage(
         source_image_name="rawDNA__rawGFP",
@@ -4201,9 +4419,15 @@ def test_measurement_labels_select_source_named_plane_from_composed_image() -> N
 
 
 def test_measurement_labels_select_current_source_binding_plane() -> None:
-    class Adapter:
-        def source_binding_plane_index(self, alias: str) -> int | None:
-            return 2 if alias == "rawDNA" else None
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return None
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return {"rawDNA": 2}.get(source_aliases[0])
 
     image = np.ones((2, 4, 5), dtype=np.float32)
     label_planes = np.stack(
@@ -4217,6 +4441,8 @@ def test_measurement_labels_select_current_source_binding_plane() -> None:
         name="Nuclei",
         labels=label_planes,
         source_image_name="rawDNA",
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
     )
     measurement_image = CellProfilerMeasurementImage(
         source_image_name="rawDNA__rawGFP",
@@ -4235,9 +4461,15 @@ def test_measurement_labels_select_current_source_binding_plane() -> None:
 
 
 def test_measurement_labels_select_measurement_source_binding_over_label_origin() -> None:
-    class Adapter:
-        def source_binding_plane_index(self, alias: str) -> int | None:
-            return {"rawDNA": 0, "rawGFP": 1}.get(alias)
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return None
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return {"rawDNA": 0, "rawGFP": 1}.get(source_aliases[0])
 
     image = np.ones((2, 4, 5), dtype=np.float32)
     label_planes = np.stack(
@@ -4250,6 +4482,8 @@ def test_measurement_labels_select_measurement_source_binding_over_label_origin(
         name="ExpandedCells",
         labels=label_planes,
         source_image_name="rawDNA",
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
     )
     measurement_image = CellProfilerMeasurementImage(
         source_image_name="rawGFP",
@@ -4268,9 +4502,15 @@ def test_measurement_labels_select_measurement_source_binding_over_label_origin(
 
 
 def test_measurement_labels_do_not_slice_site_stack_for_single_source_binding() -> None:
-    class Adapter:
-        def source_binding_plane_index(self, alias: str) -> int | None:
-            return 0 if alias == "rawGFP" else None
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return None
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return {"rawGFP": 0}.get(source_aliases[0])
 
     image = np.ones((3, 4, 5), dtype=np.float32)
     labels = np.stack(
@@ -4294,6 +4534,209 @@ def test_measurement_labels_do_not_slice_site_stack_for_single_source_binding() 
 
     assert measurement_labels.shape == labels.shape
     np.testing.assert_array_equal(measurement_labels, labels)
+
+
+def test_measurement_labels_do_not_project_unowned_label_stack_by_source_alias() -> None:
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return None
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return {"rawGFP": 0}.get(source_aliases[0])
+
+    image = np.ones((3, 4, 5), dtype=np.float32)
+    label_planes = np.stack(
+        (
+            np.full((4, 5), 1, dtype=np.int32),
+            np.full((4, 5), 2, dtype=np.int32),
+            np.full((4, 5), 3, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Cells",
+        labels=label_planes,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="rawGFP",
+        source_image_names=("rawGFP",),
+        payload=image,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == label_planes.shape
+    np.testing.assert_array_equal(measurement_labels, label_planes)
+
+
+def test_measurement_labels_do_not_project_runtime_slice_label_stack_by_source_alias() -> None:
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return 1
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return {"BF_image": 1}.get(source_aliases[0])
+
+    image = np.ones((2, 4, 5), dtype=np.float32)
+    label_planes = np.stack(
+        (
+            np.full((4, 5), 10, dtype=np.int32),
+            np.full((4, 5), 20, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Cells",
+        labels=label_planes,
+        source_image_name="BF_image",
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="BF_image",
+        source_image_names=("BF_image",),
+        payload=image,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == label_planes.shape
+    np.testing.assert_array_equal(measurement_labels, label_planes)
+
+
+def test_measurement_labels_project_runtime_slice_stack_for_single_plane_source() -> None:
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return 1
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return {"BF_image": 1}.get(source_aliases[0])
+
+    image = np.ones((4, 5), dtype=np.float32)
+    label_planes = np.stack(
+        (
+            np.full((4, 5), 10, dtype=np.int32),
+            np.full((4, 5), 20, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Cells",
+        labels=label_planes,
+        source_image_name="BF_image",
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="BF_image",
+        source_image_names=("BF_image",),
+        payload=image,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == label_planes[1].shape
+    np.testing.assert_array_equal(measurement_labels, label_planes[1])
+
+
+def test_measurement_labels_preserve_runtime_slice_stack_for_object_domain() -> None:
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return 1
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return None
+
+    label_planes = np.stack(
+        (
+            np.full((4, 5), 10, dtype=np.int32),
+            np.full((4, 5), 20, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Cells",
+        labels=label_planes,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name=None,
+        source_image_names=(),
+        payload=np.ones((4, 5), dtype=np.float32),
+        reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == label_planes.shape
+    np.testing.assert_array_equal(measurement_labels, label_planes)
+
+
+def test_measurement_labels_preserve_payload_scoped_volume_for_source_binding() -> None:
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return None
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return {"rawDNA": 0}.get(source_aliases[0])
+
+    image = np.ones((3, 4, 5), dtype=np.float32)
+    label_volume = np.stack(
+        (
+            np.full((4, 5), 1, dtype=np.int32),
+            np.full((4, 5), 2, dtype=np.int32),
+            np.full((4, 5), 3, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Cells",
+        labels=label_volume,
+        source_image_name="MembFinal",
+        domain_scope=ObjectLabelDomainScope.PAYLOAD,
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="rawDNA",
+        source_image_names=("rawDNA",),
+        payload=image,
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == label_volume.shape
+    np.testing.assert_array_equal(measurement_labels, label_volume)
 
 
 def test_object_label_payload_preserves_source_metadata_for_measurements() -> None:
@@ -4432,6 +4875,40 @@ def test_filterobjects_uses_named_measurement_feature_rules() -> None:
     measurement_rows = [
         {"object_label": 1, "lower_quartile_intensity": 0.1},
         {"object_label": 2, "lower_quartile_intensity": 0.8},
+    ]
+
+    result = filter_objects(
+        image,
+        mode=FilterMode.MEASUREMENTS,
+        filter_method=FilterMethod.LIMITS,
+        object_labels=(primary,),
+        measurement_features=("Intensity_LowerQuartileIntensity_DNA",),
+        measurement_min_values=(0.2,),
+        measurement_max_values=(None,),
+        measurement_use_minimum=(True,),
+        measurement_use_maximum=(False,),
+        measurement_tables=(
+            MeasurementTable(name="NucleiMeasurements", rows=measurement_rows),
+        ),
+        dtype_config=DtypeConfig(),
+    )
+
+    _output_image, stats, filtered_primary = result[:3]
+
+    assert stats.objects_pre_filter == 2
+    assert stats.objects_post_filter == 1
+    assert filtered_primary[1, 1] == 0
+    assert filtered_primary[3, 3] == 1
+
+
+def test_filterobjects_binds_measurements_to_sparse_object_label_ids() -> None:
+    image = np.zeros((6, 6), dtype=np.float32)
+    primary = np.zeros((6, 6), dtype=np.int32)
+    primary[1:3, 1:3] = 3
+    primary[3:5, 3:5] = 5
+    measurement_rows = [
+        {"object_label": 3, "lower_quartile_intensity": 0.1},
+        {"object_label": 5, "lower_quartile_intensity": 0.8},
     ]
 
     result = filter_objects(
@@ -4762,3 +5239,56 @@ def test_filterobjects_aligns_enclosing_label_stack_to_child_plane() -> None:
     assert stats.objects_post_filter == 2
     assert filtered_children[0, 3] == 1
     assert filtered_children[3, 0] == 2
+
+
+def test_structuring_element_execution_policy_uses_full_stack_for_3d_footprint() -> None:
+    policy = CellProfilerInvocationExecutionModePolicy.for_module("Closing")
+    image = np.zeros((3, 5, 5), dtype=np.float32)
+
+    mode = policy.execution_mode(
+        default=ImagePayloadExecutionMode.NATURAL,
+        image=image,
+        kwargs={
+            "structuring_element": StructuringElement.BALL,
+            "size": 1,
+        },
+    )
+
+    assert mode is ImagePayloadExecutionMode.FULL_STACK
+
+
+def test_structuring_element_execution_policy_keeps_planewise_for_2d_footprint() -> None:
+    policy = CellProfilerInvocationExecutionModePolicy.for_module("Closing")
+    image = np.zeros((3, 5, 5), dtype=np.float32)
+
+    mode = policy.execution_mode(
+        default=ImagePayloadExecutionMode.NATURAL,
+        image=image,
+        kwargs={
+            "structuring_element": StructuringElement.DISK,
+            "size": 1,
+        },
+    )
+
+    assert mode is ImagePayloadExecutionMode.NATURAL
+
+
+def test_structuring_element_execution_policy_uses_object_label_kwargs_rank() -> None:
+    policy = CellProfilerInvocationExecutionModePolicy.for_module("ErodeObjects")
+    image = np.zeros((5, 5), dtype=np.float32)
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.zeros((3, 5, 5), dtype=np.int32),
+    )
+
+    mode = policy.execution_mode(
+        default=ImagePayloadExecutionMode.NATURAL,
+        image=image,
+        kwargs={
+            "labels": labels,
+            "structuring_element": StructuringElement.BALL,
+            "size": 1,
+        },
+    )
+
+    assert mode is ImagePayloadExecutionMode.FULL_STACK

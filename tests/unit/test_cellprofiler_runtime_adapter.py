@@ -26,6 +26,7 @@ from openhcs.core.config import DtypeConfig
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.pipeline_image_schema import SOURCE_IMAGE_TYPE_METADATA_FIELD
+from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
@@ -52,9 +53,11 @@ from openhcs.core.runtime_values import (
     FieldSpec,
     ImagePayloadMetadata,
     MeasurementTable,
+    ObjectLabelPayload,
     RuntimeArrayPayload,
     SpatialGrid,
     image_payload_metadata,
+    image_payload_mask,
     image_payload_with_context,
 )
 from openhcs.constants.constants import AllComponents
@@ -234,6 +237,38 @@ def test_cellprofiler_adapter_adds_and_reads_objects_through_runtime_store():
     assert objects.source_image_name == DNA_IMAGE
     assert objects.dimensions == ("y", "x")
     assert filemanager.saved[("memory", "/memory/Nuclei.pkl")] is labels
+
+
+def test_cellprofiler_adapter_trusts_nominal_object_label_domain_over_source_fallback():
+    adapter, _filemanager = _adapter(
+        {
+            DNA_IMAGE: _plan(DNA_IMAGE, ArtifactKind.IMAGE),
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            CELLS: _plan(CELLS, ArtifactKind.OBJECT_LABELS),
+        }
+    )
+    source_image = image_payload_with_context(
+        np.zeros((4, 4), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(3, 5),
+            source_spatial_shape_yx=(16, 16),
+        ),
+    )
+    adapter.add_image(DNA_IMAGE, source_image)
+
+    raw_labels = np.ones((2, 2), dtype=np.int32)
+    adapter.add_objects(NUCLEI, raw_labels, source_image_name=DNA_IMAGE)
+    raw_objects = adapter.get_objects(NUCLEI)
+    assert raw_objects.spatial_origin_yx == (3, 5)
+    assert raw_objects.source_spatial_shape_yx == (16, 16)
+
+    transformed_labels = ObjectLabelPayload(
+        labels=np.ones((1, 1), dtype=np.int32),
+    )
+    adapter.add_objects(CELLS, transformed_labels, source_image_name=DNA_IMAGE)
+    transformed_objects = adapter.get_objects(CELLS)
+    assert transformed_objects.spatial_origin_yx is None
+    assert transformed_objects.source_spatial_shape_yx is None
 
 
 def test_cellprofiler_adapter_records_dense_object_label_slice_lists_as_stacks():
@@ -2256,6 +2291,23 @@ def test_cellprofiler_adapter_converts_declared_grayscale_rgb_sources():
     assert metadata.intensity_scale is None
     assert metadata.source_dtype == "float64"
     assert metadata.source_path == expected_source
+
+
+def test_cellprofiler_source_image_semantics_materializes_full_validity_mask():
+    payload = np.arange(2 * 5 * 6, dtype=np.float32).reshape(2, 5, 6)
+
+    resolved = apply_source_image_loading_semantics(
+        payload,
+        source_metadata={SOURCE_IMAGE_TYPE_METADATA_FIELD: "Grayscale image"},
+        source_path="/workspace/source.tif",
+    )
+
+    np.testing.assert_array_equal(resolved, payload)
+    np.testing.assert_array_equal(
+        image_payload_mask(resolved),
+        np.ones(payload.shape, dtype=bool),
+    )
+    assert image_payload_metadata(resolved).source_path == "/workspace/source.tif"
 
 
 def test_cellprofiler_module_executor_records_object_output_through_adapter():

@@ -4,7 +4,11 @@ import numpy as np
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
-from .structuring_elements import StructuringElement, build_structuring_element
+from .structuring_elements import (
+    StructuringElement,
+    apply_structuring_element,
+    build_structuring_element,
+)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -28,5 +32,9 @@ def dilate_image(
     """
     from skimage.morphology import dilation
 
-    dilated = dilation(image, build_structuring_element(structuring_element, size))
+    dilated = apply_structuring_element(
+        image,
+        build_structuring_element(structuring_element, size),
+        lambda spatial_image, footprint: dilation(spatial_image, footprint),
+    )
     return dilated.astype(image.dtype)

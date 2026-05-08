@@ -36,6 +36,8 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelVariant,
     RelationshipEndpoint,
     RelationshipSemantics,
+    RuntimePlaneAxis,
+    SpatialGridOrigin,
     SpatialGridOrdering,
     coerce_enum,
 )
@@ -483,6 +485,64 @@ def image_payload_with_context(
     return data
 
 
+def project_image_mask_to_data_domain(mask: Any, data: Any) -> Any | None:
+    """Project a source mask into the concrete image data domain when possible."""
+    if mask is None:
+        return None
+    mask_array = np.asarray(mask, dtype=bool)
+    data_shape = tuple(np.asarray(data).shape)
+    mask_shape = tuple(mask_array.shape)
+    if mask_shape in _valid_image_mask_shapes(data_shape):
+        return mask_array
+    if (
+        mask_array.ndim >= 3
+        and tuple(mask_array.shape[1:]) in _valid_image_mask_shapes(data_shape)
+    ):
+        return np.all(mask_array, axis=0)
+    if (
+        len(mask_shape) == len(data_shape)
+        and mask_shape[0] == 1
+        and data_shape[0] != 1
+        and mask_shape[1:] == data_shape[1:]
+    ):
+        return np.broadcast_to(mask_array, data_shape)
+    return None
+
+
+@dataclass(frozen=True, slots=True)
+class DerivedImagePayloadContext:
+    """Project source image context onto a derived image payload."""
+
+    source_payload: Any
+    data: Any
+
+    def payload(self) -> Any:
+        same_spatial_domain = self.same_spatial_domain()
+        metadata = image_payload_metadata(self.source_payload)
+        if not same_spatial_domain:
+            metadata = metadata.without_spatial_domain()
+        return image_payload_with_context(
+            self.data,
+            mask=self.projected_mask() if same_spatial_domain else None,
+            metadata=metadata,
+        )
+
+    def same_spatial_domain(self) -> bool:
+        source_shape_yx = image_payload_spatial_shape_yx(self.source_payload)
+        output_shape_yx = image_payload_spatial_shape_yx(self.data)
+        return (
+            source_shape_yx is not None
+            and output_shape_yx is not None
+            and source_shape_yx == output_shape_yx
+        )
+
+    def projected_mask(self) -> Any | None:
+        return project_image_mask_to_data_domain(
+            image_payload_mask(self.source_payload),
+            self.data,
+        )
+
+
 def with_image_payload_data(
     payload: Any,
     data: Any,
@@ -514,21 +574,7 @@ def with_derived_image_payload_data(
     source payload; shape-changing transforms need an explicit crop/resize
     adapter to carry a new spatial domain.
     """
-    source_shape_yx = image_payload_spatial_shape_yx(payload)
-    output_shape_yx = image_payload_spatial_shape_yx(data)
-    same_spatial_domain = (
-        source_shape_yx is not None
-        and output_shape_yx is not None
-        and source_shape_yx == output_shape_yx
-    )
-    metadata = image_payload_metadata(payload)
-    if not same_spatial_domain:
-        metadata = metadata.without_spatial_domain()
-    return image_payload_with_context(
-        data,
-        mask=image_payload_mask(payload) if same_spatial_domain else None,
-        metadata=metadata,
-    )
+    return DerivedImagePayloadContext(payload, data).payload()
 
 
 def image_payload_slice_context(
@@ -787,6 +833,40 @@ def _spatial_shape_pair(value: Sequence[int], name: str) -> tuple[int, int]:
     return int(value[0]), int(value[1])
 
 
+@dataclass(frozen=True, slots=True)
+class SpatialShapeYX:
+    """Nominal two-dimensional spatial shape in row/column order."""
+
+    height: int
+    width: int
+
+    @classmethod
+    def from_sequence(
+        cls,
+        value: Sequence[int],
+        *,
+        field_name: str,
+    ) -> "SpatialShapeYX":
+        if len(value) < 2:
+            raise ValueError(
+                f"{field_name} must have at least two spatial dimensions."
+            )
+        return cls(height=int(value[0]), width=int(value[1]))
+
+    @classmethod
+    def optional_from_mapping(
+        cls,
+        data: Mapping[str, Any],
+        field_name: str,
+    ) -> "SpatialShapeYX | None":
+        if field_name not in data or data[field_name] is None:
+            return None
+        return cls.from_sequence(data[field_name], field_name=field_name)
+
+    def as_tuple(self) -> tuple[int, int]:
+        return self.height, self.width
+
+
 def _common_metadata_value(values: Any) -> Any | None:
     values_tuple = tuple(values)
     present = tuple(value for value in values_tuple if value is not None)
@@ -807,13 +887,26 @@ def _tuple_value(values: tuple[Any, ...], index: int) -> Any | None:
 def _valid_image_mask_shapes(data_shape: tuple[int, ...]) -> frozenset[tuple[int, ...]]:
     """Return accepted mask domains for common grayscale/color image layouts."""
     valid: set[tuple[int, ...]] = {data_shape}
-    if len(data_shape) >= 2:
-        valid.add(data_shape[:2])
+    if len(data_shape) == 2:
+        valid.add(data_shape)
     if len(data_shape) == 3:
-        valid.add(data_shape[1:])
-    if len(data_shape) >= 4:
-        valid.add(data_shape[:3])
-        valid.add(data_shape[1:3])
+        if data_shape[-1] in (3, 4):
+            valid.add(data_shape[:2])
+        else:
+            valid.add(data_shape[1:])
+    if len(data_shape) == 4:
+        if data_shape[-1] in (3, 4):
+            valid.add(data_shape[:3])
+            valid.add(data_shape[1:3])
+        else:
+            valid.add(data_shape[1:])
+            valid.add(data_shape[-2:])
+            valid.add((data_shape[0], *data_shape[-2:]))
+    if len(data_shape) == 5:
+        valid.add(data_shape[:4])
+        valid.add(data_shape[1:4])
+        valid.add((data_shape[0], *data_shape[-3:-1]))
+        valid.add(data_shape[-3:-1])
     return frozenset(valid)
 
 
@@ -826,7 +919,9 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
     small_removed_labels: Any | None = None
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
+    declared_object_id_domains: tuple[tuple[int, ...], ...] = ()
     domain_scope: ObjectLabelDomainScope = ObjectLabelDomainScope.PAYLOAD
+    plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
 
@@ -842,8 +937,21 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
         object.__setattr__(self, "declared_object_ids", tuple(sorted(dict.fromkeys(ids))))
         object.__setattr__(
             self,
+            "declared_object_id_domains",
+            tuple(
+                ObjectLabelDomain._normalize_ids(domain, "declared_object_id_domains")
+                for domain in self.declared_object_id_domains
+            ),
+        )
+        object.__setattr__(
+            self,
             "domain_scope",
             coerce_enum(ObjectLabelDomainScope, self.domain_scope, "ObjectLabelPayload.domain_scope"),
+        )
+        object.__setattr__(
+            self,
+            "plane_axis",
+            coerce_enum(RuntimePlaneAxis, self.plane_axis, "ObjectLabelPayload.plane_axis"),
         )
         if self.spatial_origin_yx is not None:
             object.__setattr__(
@@ -885,6 +993,7 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
         return ObjectLabelDomain(
             declared_object_count=self.declared_object_count,
             declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
             scope=self.domain_scope,
         )
 
@@ -937,7 +1046,9 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
             small_removed_labels=small_removed_labels,
             declared_object_count=self.declared_object_count,
             declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
             domain_scope=self.domain_scope,
+            plane_axis=self.plane_axis,
             spatial_origin_yx=self.spatial_origin_yx,
             source_spatial_shape_yx=self.source_spatial_shape_yx,
         )
@@ -1330,7 +1441,9 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
     representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS
     declared_object_count: int | None = None
     declared_object_ids: tuple[int, ...] = ()
+    declared_object_id_domains: tuple[tuple[int, ...], ...] = ()
     domain_scope: ObjectLabelDomainScope = ObjectLabelDomainScope.PAYLOAD
+    plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
 
@@ -1352,7 +1465,9 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
                 small_removed_labels=payload.small_removed_labels,
                 declared_object_count=payload.declared_object_count,
                 declared_object_ids=payload.declared_object_ids,
+                declared_object_id_domains=payload.declared_object_id_domains,
                 domain_scope=payload.domain_scope,
+                plane_axis=payload.plane_axis,
                 spatial_origin_yx=payload.spatial_origin_yx,
                 source_spatial_shape_yx=payload.source_spatial_shape_yx,
                 dimensions=schema.dimensions,
@@ -1402,7 +1517,14 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
                     "declared_object_ids",
                     payload.declared_object_ids,
                 )
+            if not self.declared_object_id_domains:
+                object.__setattr__(
+                    self,
+                    "declared_object_id_domains",
+                    payload.declared_object_id_domains,
+                )
             object.__setattr__(self, "domain_scope", payload.domain_scope)
+            object.__setattr__(self, "plane_axis", payload.plane_axis)
             if self.spatial_origin_yx is None:
                 object.__setattr__(
                     self,
@@ -1426,8 +1548,21 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
         object.__setattr__(self, "declared_object_ids", tuple(sorted(dict.fromkeys(ids))))
         object.__setattr__(
             self,
+            "declared_object_id_domains",
+            tuple(
+                ObjectLabelDomain._normalize_ids(domain, "declared_object_id_domains")
+                for domain in self.declared_object_id_domains
+            ),
+        )
+        object.__setattr__(
+            self,
             "domain_scope",
             coerce_enum(ObjectLabelDomainScope, self.domain_scope, "ObjectLabelSet.domain_scope"),
+        )
+        object.__setattr__(
+            self,
+            "plane_axis",
+            coerce_enum(RuntimePlaneAxis, self.plane_axis, "ObjectLabelSet.plane_axis"),
         )
         if self.spatial_origin_yx is not None:
             object.__setattr__(
@@ -1472,7 +1607,9 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
             or self.small_removed_labels is not None
             or self.declared_object_count is not None
             or self.declared_object_ids
+            or self.declared_object_id_domains
             or self.domain_scope is not ObjectLabelDomainScope.PAYLOAD
+            or self.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE
             or self.spatial_origin_yx is not None
             or self.source_spatial_shape_yx is not None
         ):
@@ -1482,7 +1619,9 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
                 small_removed_labels=self.small_removed_labels,
                 declared_object_count=self.declared_object_count,
                 declared_object_ids=self.declared_object_ids,
+                declared_object_id_domains=self.declared_object_id_domains,
                 domain_scope=self.domain_scope,
+                plane_axis=self.plane_axis,
                 spatial_origin_yx=self.spatial_origin_yx,
                 source_spatial_shape_yx=self.source_spatial_shape_yx,
             )
@@ -1507,6 +1646,7 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
         return ObjectLabelDomain(
             declared_object_count=self.declared_object_count,
             declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
             scope=self.domain_scope,
         )
 
@@ -1556,7 +1696,9 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
             representation=self.representation,
             declared_object_count=self.declared_object_count,
             declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
             domain_scope=self.domain_scope,
+            plane_axis=self.plane_axis,
             spatial_origin_yx=self.spatial_origin_yx,
             source_spatial_shape_yx=self.source_spatial_shape_yx,
             dimensions=self.dimensions,
@@ -1700,7 +1842,7 @@ class ObjectLabelPayloadBuilderStrategy(
         labels: object,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...],
+        declared_object_ids: tuple[int, ...] | None,
         domain_scope: ObjectLabelDomainScope | None,
     ) -> ObjectLabelPayload:
         """Return transformed labels wrapped in the source object's semantic domain."""
@@ -1717,7 +1859,7 @@ class ObjectLabelPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
         labels: object,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...],
+        declared_object_ids: tuple[int, ...] | None,
         domain_scope: ObjectLabelDomainScope | None,
     ) -> ObjectLabelPayload:
         if not isinstance(source, ObjectLabelPayload):
@@ -1730,14 +1872,16 @@ class ObjectLabelPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
             declared_object_count=(
                 declared_object_count
                 if declared_object_count is not None
-                else None if declared_object_ids else source.declared_object_count
+                else source.declared_object_count
             ),
             declared_object_ids=(
                 declared_object_ids
-                if declared_object_ids
+                if declared_object_ids is not None
                 else source.declared_object_ids
             ),
+            declared_object_id_domains=source.declared_object_id_domains,
             domain_scope=domain_scope or source.domain_scope,
+            plane_axis=source.plane_axis,
             spatial_origin_yx=source.spatial_origin_yx,
             source_spatial_shape_yx=source.source_spatial_shape_yx,
         )
@@ -1754,7 +1898,7 @@ class ObjectLabelSetPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
         labels: object,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...],
+        declared_object_ids: tuple[int, ...] | None,
         domain_scope: ObjectLabelDomainScope | None,
     ) -> ObjectLabelPayload:
         if not isinstance(source, ObjectLabelSet):
@@ -1767,14 +1911,16 @@ class ObjectLabelSetPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
             declared_object_count=(
                 declared_object_count
                 if declared_object_count is not None
-                else None if declared_object_ids else source.declared_object_count
+                else source.declared_object_count
             ),
             declared_object_ids=(
                 declared_object_ids
-                if declared_object_ids
+                if declared_object_ids is not None
                 else source.declared_object_ids
             ),
+            declared_object_id_domains=source.declared_object_id_domains,
             domain_scope=domain_scope or source.domain_scope,
+            plane_axis=source.plane_axis,
             spatial_origin_yx=source.spatial_origin_yx,
             source_spatial_shape_yx=source.source_spatial_shape_yx,
         )
@@ -1789,13 +1935,13 @@ class RawObjectLabelPayloadBuilderStrategy(ObjectLabelPayloadBuilderStrategy):
         labels: object,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...],
+        declared_object_ids: tuple[int, ...] | None,
         domain_scope: ObjectLabelDomainScope | None,
     ) -> ObjectLabelPayload:
         return ObjectLabelPayload(
             labels=labels,
             declared_object_count=declared_object_count,
-            declared_object_ids=declared_object_ids,
+            declared_object_ids=tuple(declared_object_ids or ()),
             domain_scope=domain_scope or ObjectLabelDomainScope.PAYLOAD,
         )
 
@@ -1805,7 +1951,7 @@ def object_label_payload_with_dense_labels(
     labels: object,
     *,
     declared_object_count: int | None = None,
-    declared_object_ids: tuple[int, ...] = (),
+    declared_object_ids: tuple[int, ...] | None = None,
     domain_scope: ObjectLabelDomainScope | None = None,
 ) -> ObjectLabelPayload:
     """Build a dense-label payload while preserving nominal object-label metadata."""
@@ -2218,6 +2364,110 @@ class DenseObjectLabelSliceStack:
         return self.labels[slice_index]
 
 
+class RuntimeSliceAlignedPayloadNormalizationStrategy(
+    EnumKeyedStrategyMixin[ArtifactKind],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Normalize nominal slice-aligned payloads before runtime storage."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "kind"
+
+    kind: ClassVar[ArtifactKind]
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_output_plan(
+        cls,
+        output_plan: ArtifactOutputPlan,
+    ) -> "RuntimeSliceAlignedPayloadNormalizationStrategy | None":
+        strategy_type = cls.__registry__.get(output_plan.kind.value)
+        return strategy_type() if strategy_type is not None else None
+
+    @abstractmethod
+    def normalize(
+        self,
+        value: RuntimeSliceAlignedValueSet[Any],
+    ) -> object | None:
+        """Return an aggregate payload, or ``None`` when slices are not owned."""
+
+
+class ObjectLabelSliceAlignedPayloadNormalizationStrategy(
+    RuntimeSliceAlignedPayloadNormalizationStrategy
+):
+    """Aggregate object-label slice payloads into one plane-scoped label domain."""
+
+    kind = ArtifactKind.OBJECT_LABELS
+
+    def normalize(
+        self,
+        value: RuntimeSliceAlignedValueSet[Any],
+    ) -> object | None:
+        slices = tuple(value.value_for_slice(index) for index in range(value.slice_count))
+        if not slices or not all(
+            isinstance(item, (ObjectLabelPayload, ObjectLabelSet))
+            for item in slices
+        ):
+            return None
+        label_sets = tuple(
+            item
+            if isinstance(item, ObjectLabelSet)
+            else ObjectLabelSet(name="slice", labels=item)
+            for item in slices
+        )
+        labels = np.stack(
+            [object_label_dense_array(label_set, dtype=np.int32) for label_set in label_sets],
+            axis=0,
+        )
+        unedited_labels = (
+            np.stack(
+                [
+                    object_label_dense_array(label_set.labels_for_variant("unedited"))
+                    for label_set in label_sets
+                ],
+                axis=0,
+            )
+            if any(label_set.unedited_labels is not None for label_set in label_sets)
+            else None
+        )
+        small_removed_labels = (
+            np.stack(
+                [
+                    object_label_dense_array(label_set.labels_for_variant("small_removed"))
+                    for label_set in label_sets
+                ],
+                axis=0,
+            )
+            if any(label_set.small_removed_labels is not None for label_set in label_sets)
+            else None
+        )
+        declared_counts = {label_set.declared_object_count for label_set in label_sets}
+        declared_ids = {label_set.declared_object_ids for label_set in label_sets}
+        declared_id_domains = ObjectLabelDomain.explicit_plane_id_domains(
+            label_set.object_label_domain() for label_set in label_sets
+        )
+        return ObjectLabelPayload(
+            labels=labels,
+            unedited_labels=unedited_labels,
+            small_removed_labels=small_removed_labels,
+            declared_object_count=(
+                declared_counts.pop() if len(declared_counts) == 1 else None
+            ),
+            declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
+            declared_object_id_domains=declared_id_domains,
+            domain_scope=(
+                ObjectLabelDomainScope.PLANE
+                if len(label_sets) > 1
+                else ObjectLabelDomainScope.common(
+                    label_set.domain_scope for label_set in label_sets
+                )
+            ),
+            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        )
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class MeasurementTable(NativeRuntimeValue):
     """Native OpenHCS measurement table value."""
@@ -2283,6 +2533,140 @@ class MeasurementTable(NativeRuntimeValue):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class SpatialGridTopology:
+    """Nominal object-number topology and centers for a spatial grid."""
+
+    rows: int
+    columns: int
+    origin: SpatialGridOrigin
+    ordering: SpatialGridOrdering
+    x_spacing: float
+    y_spacing: float
+    x_origin: float
+    y_origin: float
+    x_locations: tuple[float, ...] | None = None
+    y_locations: tuple[float, ...] | None = None
+    spot_table: tuple[tuple[int, ...], ...] | None = None
+
+    @classmethod
+    def from_mapping(
+        cls,
+        data: Mapping[str, Any],
+        *,
+        rows: int,
+        columns: int,
+        origin: SpatialGridOrigin,
+        ordering: SpatialGridOrdering,
+        x_spacing: float,
+        y_spacing: float,
+        x_origin: float,
+        y_origin: float,
+    ) -> "SpatialGridTopology":
+        x_locations_value = data.get("x_locations")
+        y_locations_value = data.get("y_locations")
+        spot_table_value = data.get("spot_table")
+        return cls(
+            rows=rows,
+            columns=columns,
+            origin=origin,
+            ordering=ordering,
+            x_spacing=x_spacing,
+            y_spacing=y_spacing,
+            x_origin=x_origin,
+            y_origin=y_origin,
+            x_locations=(
+                None
+                if x_locations_value is None
+                else tuple(float(item) for item in x_locations_value)
+            ),
+            y_locations=(
+                None
+                if y_locations_value is None
+                else tuple(float(item) for item in y_locations_value)
+            ),
+            spot_table=(
+                None
+                if spot_table_value is None
+                else tuple(
+                    tuple(int(item) for item in row)
+                    for row in spot_table_value
+                )
+            ),
+        )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "origin",
+            coerce_enum(SpatialGridOrigin, self.origin, "SpatialGridTopology.origin"),
+        )
+        object.__setattr__(
+            self,
+            "ordering",
+            coerce_enum(
+                SpatialGridOrdering,
+                self.ordering,
+                "SpatialGridTopology.ordering",
+            ),
+        )
+        if self.rows <= 0 or self.columns <= 0:
+            raise ValueError("SpatialGridTopology dimensions must be positive.")
+        if self.x_locations is None:
+            object.__setattr__(
+                self,
+                "x_locations",
+                tuple(self.x_origin + index * self.x_spacing for index in range(self.columns)),
+            )
+        elif len(self.x_locations) != self.columns:
+            raise ValueError("SpatialGridTopology.x_locations must match columns.")
+        else:
+            object.__setattr__(
+                self,
+                "x_locations",
+                tuple(float(value) for value in self.x_locations),
+            )
+        if self.y_locations is None:
+            object.__setattr__(
+                self,
+                "y_locations",
+                tuple(self.y_origin + index * self.y_spacing for index in range(self.rows)),
+            )
+        elif len(self.y_locations) != self.rows:
+            raise ValueError("SpatialGridTopology.y_locations must match rows.")
+        else:
+            object.__setattr__(
+                self,
+                "y_locations",
+                tuple(float(value) for value in self.y_locations),
+            )
+        if self.spot_table is None:
+            object.__setattr__(self, "spot_table", self.derived_spot_table())
+        elif len(self.spot_table) != self.rows or any(
+            len(row) != self.columns for row in self.spot_table
+        ):
+            raise ValueError("SpatialGridTopology.spot_table must match rows x columns.")
+        else:
+            object.__setattr__(
+                self,
+                "spot_table",
+                tuple(tuple(int(value) for value in row) for row in self.spot_table),
+            )
+
+    def derived_spot_table(self) -> tuple[tuple[int, ...], ...]:
+        """Return the CellProfiler-compatible object-number topology."""
+        object_ids = np.arange(1, self.rows * self.columns + 1, dtype=np.int32)
+        if self.ordering is SpatialGridOrdering.BY_COLUMNS:
+            table = object_ids.reshape(self.rows, self.columns)
+        else:
+            table = object_ids.reshape(self.columns, self.rows).T
+        if self.origin in (SpatialGridOrigin.BOTTOM_LEFT, SpatialGridOrigin.BOTTOM_RIGHT):
+            table = table[::-1, :]
+        if self.origin in (SpatialGridOrigin.TOP_RIGHT, SpatialGridOrigin.BOTTOM_RIGHT):
+            table = table[:, ::-1]
+        return tuple(tuple(int(value) for value in row) for row in table)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SpatialGrid(NativeRuntimeValue):
     """Native OpenHCS rectangular spatial grid definition."""
@@ -2296,7 +2680,12 @@ class SpatialGrid(NativeRuntimeValue):
     slice_index: int = 0
     total_width: float | None = None
     total_height: float | None = None
+    origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT
     ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS
+    x_locations: tuple[float, ...] | None = None
+    y_locations: tuple[float, ...] | None = None
+    spot_table: tuple[tuple[int, ...], ...] | None = None
+    source_spatial_shape_yx: tuple[int, int] | None = None
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -2316,26 +2705,64 @@ class SpatialGrid(NativeRuntimeValue):
     @classmethod
     def from_mapping(cls, name: str, data: Mapping[str, Any]) -> Self:
         """Build a spatial grid from canonical or legacy grid field names."""
+        rows = _required_int(data, "rows")
+        columns = _required_int(data, "columns")
+        x_spacing = _required_float(data, "x_spacing")
+        y_spacing = _required_float(data, "y_spacing")
+        x_origin = _required_float(
+            data,
+            "x_origin",
+            aliases=("x_location_of_lowest_x_spot",),
+        )
+        y_origin = _required_float(
+            data,
+            "y_origin",
+            aliases=("y_location_of_lowest_y_spot",),
+        )
+        origin = (
+            SpatialGridOrigin.TOP_LEFT
+            if data.get("origin") is None
+            else coerce_enum(SpatialGridOrigin, data["origin"], "SpatialGrid.origin")
+        )
+        ordering = _optional_grid_ordering(data, "ordering")
+        topology = SpatialGridTopology.from_mapping(
+            data,
+            rows=rows,
+            columns=columns,
+            origin=origin,
+            ordering=ordering,
+            x_spacing=x_spacing,
+            y_spacing=y_spacing,
+            x_origin=x_origin,
+            y_origin=y_origin,
+        )
         return cls(
             name=name,
-            rows=_required_int(data, "rows"),
-            columns=_required_int(data, "columns"),
-            x_spacing=_required_float(data, "x_spacing"),
-            y_spacing=_required_float(data, "y_spacing"),
-            x_origin=_required_float(
-                data,
-                "x_origin",
-                aliases=("x_location_of_lowest_x_spot",),
-            ),
-            y_origin=_required_float(
-                data,
-                "y_origin",
-                aliases=("y_location_of_lowest_y_spot",),
-            ),
+            rows=rows,
+            columns=columns,
+            x_spacing=x_spacing,
+            y_spacing=y_spacing,
+            x_origin=x_origin,
+            y_origin=y_origin,
             slice_index=_optional_int(data, "slice_index", default=0),
             total_width=_optional_float(data, "total_width"),
             total_height=_optional_float(data, "total_height"),
-            ordering=_optional_grid_ordering(data, "ordering"),
+            origin=origin,
+            ordering=ordering,
+            x_locations=topology.x_locations,
+            y_locations=topology.y_locations,
+            spot_table=topology.spot_table,
+            source_spatial_shape_yx=(
+                None
+                if (
+                    shape := SpatialShapeYX.optional_from_mapping(
+                        data,
+                        "source_spatial_shape_yx",
+                    )
+                )
+                is None
+                else shape.as_tuple()
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -2344,6 +2771,11 @@ class SpatialGrid(NativeRuntimeValue):
             self,
             "ordering",
             coerce_enum(SpatialGridOrdering, self.ordering, "SpatialGrid.ordering"),
+        )
+        object.__setattr__(
+            self,
+            "origin",
+            coerce_enum(SpatialGridOrigin, self.origin, "SpatialGrid.origin"),
         )
         if self.rows <= 0:
             raise ValueError("SpatialGrid.rows must be positive.")
@@ -2357,6 +2789,31 @@ class SpatialGrid(NativeRuntimeValue):
             object.__setattr__(self, "total_width", self.x_spacing * self.columns)
         if self.total_height is None:
             object.__setattr__(self, "total_height", self.y_spacing * self.rows)
+        topology = SpatialGridTopology(
+            rows=self.rows,
+            columns=self.columns,
+            origin=self.origin,
+            ordering=self.ordering,
+            x_spacing=self.x_spacing,
+            y_spacing=self.y_spacing,
+            x_origin=self.x_origin,
+            y_origin=self.y_origin,
+            x_locations=self.x_locations,
+            y_locations=self.y_locations,
+            spot_table=self.spot_table,
+        )
+        object.__setattr__(self, "x_locations", topology.x_locations)
+        object.__setattr__(self, "y_locations", topology.y_locations)
+        object.__setattr__(self, "spot_table", topology.spot_table)
+        if self.source_spatial_shape_yx is not None:
+            object.__setattr__(
+                self,
+                "source_spatial_shape_yx",
+                SpatialShapeYX.from_sequence(
+                    self.source_spatial_shape_yx,
+                    field_name="SpatialGrid.source_spatial_shape_yx",
+                ).as_tuple(),
+            )
 
     def with_name(self, name: str) -> Self:
         """Return the same grid under a different artifact name."""
@@ -2371,7 +2828,12 @@ class SpatialGrid(NativeRuntimeValue):
             slice_index=self.slice_index,
             total_width=self.total_width,
             total_height=self.total_height,
+            origin=self.origin,
             ordering=self.ordering,
+            x_locations=self.x_locations,
+            y_locations=self.y_locations,
+            spot_table=self.spot_table,
+            source_spatial_shape_yx=self.source_spatial_shape_yx,
         )
 
     @property
@@ -2396,7 +2858,12 @@ class SpatialGrid(NativeRuntimeValue):
             "y_location_of_lowest_y_spot": self.y_origin,
             "total_width": self.total_width,
             "total_height": self.total_height,
+            "origin": self.origin.value,
             "ordering": self.ordering.value,
+            "x_locations": self.x_locations,
+            "y_locations": self.y_locations,
+            "spot_table": self.spot_table,
+            "source_spatial_shape_yx": self.source_spatial_shape_yx,
         }
 
     def runtime_payload(self) -> Any:
@@ -2404,6 +2871,18 @@ class SpatialGrid(NativeRuntimeValue):
 
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
         return RuntimeValueSchema(kind=ArtifactKind.SPATIAL_GRID)
+
+    def spot_table_array(self) -> np.ndarray:
+        """Return the nominal grid object-number topology as a dense table."""
+        return np.asarray(self.spot_table, dtype=np.int32)
+
+    def x_locations_array(self) -> np.ndarray:
+        """Return x center coordinates for grid columns."""
+        return np.asarray(self.x_locations, dtype=np.float64)
+
+    def y_locations_array(self) -> np.ndarray:
+        """Return y center coordinates for grid rows."""
+        return np.asarray(self.y_locations, dtype=np.float64)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -2573,6 +3052,19 @@ def _normalize_slice_aligned_value(
     *,
     axis_id: str,
 ) -> RuntimeValue:
+    payload_strategy = RuntimeSliceAlignedPayloadNormalizationStrategy.for_output_plan(
+        output_plan
+    )
+    if payload_strategy is not None:
+        payload = payload_strategy.normalize(value)
+        if payload is not None:
+            return RuntimeValue.from_output_plan(
+                output_plan,
+                payload,
+                axis_id=axis_id,
+                schema=RuntimeValueSchema(kind=output_plan.kind),
+            )
+
     slice_values: list[Any] = []
     slice_schemas: list[RuntimeValueSchema] = []
     for item in value.slices:
@@ -2664,23 +3156,97 @@ def _validate_payload_kind(
     data: Any,
     schema: RuntimeValueSchema,
 ) -> None:
-    payload_shape = _payload_shape_for(kind, schema)
-    validator = _PAYLOAD_VALIDATORS[payload_shape]
-    if validator is None:
-        return
-    if schema.slice_aligned:
-        if _is_slice_aligned_payload(data) and all(validator(item) for item in data):
+    ArtifactPayloadValidationStrategy.for_kind(kind).validate(name, data, schema)
+
+
+class ArtifactPayloadValidationStrategy(
+    EnumKeyedStrategyMixin[ArtifactKind],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered validation contract for artifact runtime payloads."""
+
+    __registry_key__ = "kind_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "kind"
+    __enum_label_attr__ = "kind_label"
+
+    kind: ClassVar[ArtifactKind | None] = None
+    kind_label: ClassVar[str | None] = None
+
+    def __init__(self, kind: ArtifactKind | None = None) -> None:
+        self._kind = kind
+
+    @classmethod
+    def for_kind(cls, kind: ArtifactKind) -> "ArtifactPayloadValidationStrategy":
+        strategy_type = cls.__registry__.get(kind.value)
+        strategy = strategy_type() if strategy_type is not None else None
+        return (
+            strategy
+            if strategy is not None
+            else GenericArtifactPayloadValidationStrategy(kind)
+        )
+
+    @property
+    def artifact_kind(self) -> ArtifactKind:
+        kind = self._kind or self.kind
+        if kind is None:
+            raise TypeError(
+                f"{type(self).__name__} must declare an artifact kind or be "
+                "constructed with one."
+            )
+        return kind
+
+    def validate(
+        self,
+        name: str,
+        data: Any,
+        schema: RuntimeValueSchema,
+    ) -> None:
+        validator = self._validator(schema)
+        if validator is None:
+            return
+        if schema.slice_aligned:
+            if _is_slice_aligned_payload(data) and all(validator(item) for item in data):
+                return
+            raise TypeError(
+                f"Artifact '{name}' expected slice-aligned "
+                f"{self.artifact_kind.payload_description}, got {type(data).__name__}."
+            )
+        if validator(data):
             return
         raise TypeError(
-            f"Artifact '{name}' expected slice-aligned {kind.payload_description}, "
+            f"Artifact '{name}' expected {self.artifact_kind.payload_description}, "
             f"got {type(data).__name__}."
         )
-    if validator(data):
-        return
-    raise TypeError(
-        f"Artifact '{name}' expected {kind.payload_description}, "
-        f"got {type(data).__name__}."
-    )
+
+    def _validator(
+        self,
+        schema: RuntimeValueSchema,
+    ) -> Callable[[Any], bool] | None:
+        return _PAYLOAD_VALIDATORS[_payload_shape_for(self.artifact_kind, schema)]
+
+
+class GenericArtifactPayloadValidationStrategy(ArtifactPayloadValidationStrategy):
+    """Validate artifacts by their declared payload shape."""
+
+    kind = ArtifactKind.SPECIAL
+
+
+class ObjectLabelsArtifactPayloadValidationStrategy(ArtifactPayloadValidationStrategy):
+    """Validate object-label artifacts by nominal label payload semantics."""
+
+    kind = ArtifactKind.OBJECT_LABELS
+
+    def validate(
+        self,
+        name: str,
+        data: Any,
+        schema: RuntimeValueSchema,
+    ) -> None:
+        if isinstance(data, (ObjectLabelPayload, ObjectLabelSet)):
+            return
+        super().validate(name, data, schema)
 
 
 def _payload_shape_for(

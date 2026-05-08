@@ -24,6 +24,7 @@ from openhcs.core.runtime_values import (
     image_payload_mask,
     image_payload_metadata,
     image_payload_with_context,
+    project_image_mask_to_data_domain,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
@@ -656,7 +657,7 @@ def _apply_scaling(
     """Rescale the illumination function."""
     if rescale_option == RescaleOption.NO:
         return pixel_data
-    
+    mask = project_image_mask_to_data_domain(mask, pixel_data)
     if mask is not None:
         sorted_data = pixel_data[(pixel_data > 0) & mask]
     else:

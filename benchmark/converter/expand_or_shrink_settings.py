@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
-from enum import Enum
-from typing import Any
+from abc import ABC
+from typing import Any, ClassVar
+
+from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library.functions.expandorshrinkobjects import (
+    CellProfilerExpandShrinkOperation,
     ExpandShrinkMode,
+    ExpandShrinkOperationStrategy,
 )
 
 from .parser import ModuleBlock
@@ -19,48 +23,65 @@ from .settings_binder import (
 )
 
 
-class CellProfilerExpandShrinkOperation(str, Enum):
-    """Closed CellProfiler UI operation dialect for ExpandOrShrinkObjects."""
+class ExpandShrinkOperationModeBinding(ABC, metaclass=AutoRegisterMeta):
+    """Registered lowering from CP UI operation literals to runtime modes."""
 
-    SHRINK_TO_POINT = "Shrink objects to a point"
-    EXPAND_UNTIL_TOUCHING = "Expand objects until touching"
-    ADD_DIVIDING_LINES = "Add partial dividing lines between objects"
-    SHRINK_DEFINED_PIXELS = "Shrink objects by a specified number of pixels"
-    SHRINK_BY_MEASUREMENT = "Shrink objects by a previous measurement"
-    EXPAND_DEFINED_PIXELS = "Expand objects by a specified number of pixels"
-    EXPAND_BY_MEASUREMENT = "Expand objects by a previous measurement"
-    SKELETONIZE = "Skeletonize each object"
-    DESPUR = "Remove spurs"
+    __registry_key__ = "operation_key"
+    __skip_if_no_key__ = True
+
+    operation_key: ClassVar[str | None] = None
+    mode: ClassVar[ExpandShrinkMode | None] = None
+
+    @classmethod
+    def mode_for(
+        cls,
+        operation: CellProfilerExpandShrinkOperation,
+    ) -> ExpandShrinkMode:
+        binding_type = cls.__registry__.get(operation.value)
+        if binding_type is None or binding_type.mode is None:
+            raise ValueError(
+                "Unsupported ExpandOrShrinkObjects operation: "
+                f"{operation.value!r}."
+            )
+        return binding_type.mode
 
 
-_EXPAND_SHRINK_MODE_BY_OPERATION: dict[
-    CellProfilerExpandShrinkOperation,
-    ExpandShrinkMode,
-] = {
-    CellProfilerExpandShrinkOperation.SHRINK_TO_POINT: (
-        ExpandShrinkMode.SHRINK_TO_POINT
-    ),
-    CellProfilerExpandShrinkOperation.EXPAND_UNTIL_TOUCHING: (
-        ExpandShrinkMode.EXPAND_INFINITE
-    ),
-    CellProfilerExpandShrinkOperation.ADD_DIVIDING_LINES: (
-        ExpandShrinkMode.ADD_DIVIDING_LINES
-    ),
-    CellProfilerExpandShrinkOperation.SHRINK_DEFINED_PIXELS: (
-        ExpandShrinkMode.SHRINK_DEFINED_PIXELS
-    ),
-    CellProfilerExpandShrinkOperation.SHRINK_BY_MEASUREMENT: (
-        ExpandShrinkMode.SHRINK_DEFINED_PIXELS
-    ),
-    CellProfilerExpandShrinkOperation.EXPAND_DEFINED_PIXELS: (
-        ExpandShrinkMode.EXPAND_DEFINED_PIXELS
-    ),
-    CellProfilerExpandShrinkOperation.EXPAND_BY_MEASUREMENT: (
-        ExpandShrinkMode.EXPAND_DEFINED_PIXELS
-    ),
-    CellProfilerExpandShrinkOperation.SKELETONIZE: ExpandShrinkMode.SKELETONIZE,
-    CellProfilerExpandShrinkOperation.DESPUR: ExpandShrinkMode.DESPUR,
-}
+def _register_expand_shrink_operation_mode(
+    operation: CellProfilerExpandShrinkOperation,
+) -> None:
+    mode = _runtime_mode_for_cellprofiler_operation(operation)
+    class_name = f"{operation.name.title().replace('_', '')}ModeBinding"
+    globals()[class_name] = type(
+        class_name,
+        (ExpandShrinkOperationModeBinding,),
+        {
+            "__module__": __name__,
+            "operation_key": operation.value,
+            "mode": mode,
+        },
+    )
+
+
+def _runtime_mode_for_cellprofiler_operation(
+    operation: CellProfilerExpandShrinkOperation,
+) -> ExpandShrinkMode:
+    matches = tuple(
+        strategy_type.mode
+        for strategy_type in ExpandShrinkOperationStrategy.__registry__.values()
+        if operation in strategy_type.cellprofiler_operations
+    )
+    if len(matches) != 1 or matches[0] is None:
+        raise ValueError(
+            "Expected exactly one runtime ExpandOrShrinkObjects strategy for "
+            f"CellProfiler operation {operation.value!r}; found {len(matches)}."
+        )
+    return matches[0]
+
+
+for _operation in CellProfilerExpandShrinkOperation:
+    _register_expand_shrink_operation_mode(_operation)
+
+del _operation
 
 
 EXPAND_OR_SHRINK_OBJECTS_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
@@ -93,7 +114,7 @@ def expand_or_shrink_bound_kwargs(
 def expand_shrink_mode_for_operation(value: str) -> ExpandShrinkMode:
     """Map one CellProfiler operation literal to the local runtime mode."""
     operation = _coerce_cellprofiler_expand_shrink_operation(value)
-    return _EXPAND_SHRINK_MODE_BY_OPERATION[operation]
+    return ExpandShrinkOperationModeBinding.mode_for(operation)
 
 
 def _coerce_cellprofiler_expand_shrink_operation(

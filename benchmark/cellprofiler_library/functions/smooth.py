@@ -16,6 +16,7 @@ from numba import njit
 
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
@@ -57,22 +58,71 @@ class SmoothingRequest:
     clip_polynomial: bool
 
 
+class SmoothingBackendProviderPolicy(
+    EnumKeyedStrategyMixin[SmoothingMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal SSOT for CellProfiler Smooth default backend semantics."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+
+    method: ClassVar[SmoothingMethod]
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def resolve(
+        cls,
+        method: SmoothingMethod,
+        backend_provider: CellProfilerBackendProvider | None,
+    ) -> CellProfilerBackendProvider:
+        if backend_provider is not None:
+            return normalize_cellprofiler_backend_provider(backend_provider)
+        return cls.for_enum_member(method).default_provider()
+
+    @abstractmethod
+    def default_provider(self) -> CellProfilerBackendProvider:
+        """Return CP-compatible default provider for this Smooth method."""
+
+
+class NativeSmoothingBackendProviderPolicy(SmoothingBackendProviderPolicy):
+    """Smooth methods whose CP reference implementation is the native Python path."""
+
+    def default_provider(self) -> CellProfilerBackendProvider:
+        return CellProfilerBackendProvider.NATIVE
+
+
+class GaussianSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.GAUSSIAN_FILTER
+
+
+class MedianSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.MEDIAN_FILTER
+
+
+class EdgePreservingSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.SMOOTH_KEEPING_EDGES
+
+
+class PolynomialSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.FIT_POLYNOMIAL
+
+
+class CircularAverageSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.CIRCULAR_AVERAGE_FILTER
+
+
+class SmoothToAverageBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+    method = SmoothingMethod.SMOOTH_TO_AVERAGE
+
+
 def _smoothing_strategy_label(
     backend_provider: CellProfilerBackendProvider,
     method: SmoothingMethod,
 ) -> str:
     return f"{backend_provider.value}:{method.value}"
-
-
-def _default_smoothing_backend_provider(
-    method: SmoothingMethod,
-    backend_provider: CellProfilerBackendProvider | None,
-) -> CellProfilerBackendProvider:
-    if backend_provider is not None:
-        return normalize_cellprofiler_backend_provider(backend_provider)
-    if method is SmoothingMethod.GAUSSIAN_FILTER:
-        return CellProfilerBackendProvider.OPENCV
-    return CellProfilerBackendProvider.NATIVE
 
 
 class SmoothingStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -514,7 +564,7 @@ def smooth(
         Smoothed image (H, W)
     """
     smoothing_method = _coerce_function_enum(SmoothingMethod, smoothing_method)
-    backend_provider = _default_smoothing_backend_provider(
+    backend_provider = SmoothingBackendProviderPolicy.resolve(
         smoothing_method,
         smoothing_backend_provider,
     )
@@ -563,7 +613,7 @@ def _smooth_batch(
         SmoothingMethod,
         kwargs.get("smoothing_method", SmoothingMethod.GAUSSIAN_FILTER),
     )
-    backend_provider = _default_smoothing_backend_provider(
+    backend_provider = SmoothingBackendProviderPolicy.resolve(
         smoothing_method,
         kwargs.get("smoothing_backend_provider"),
     )

@@ -170,6 +170,16 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
             np.ascontiguousarray(second_pixels, dtype=np.float64),
         )
 
+    def prepare_backend(self) -> None:
+        """Compile numba Costes kernels outside measured execution."""
+        first = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32)
+        second = np.flipud(first.reshape((64, 64))).ravel().copy()
+        self.correlation_slopes(first, second)
+        self.linear_costes(first, second, 255, False)
+        quantized_codes = (np.arange(64 * 64, dtype=np.uint16) % 512) + 1024
+        quantized = quantized_codes.astype(np.float32) / np.float32(65535)
+        self.scaled_second_channel_costes(quantized, quantized.copy(), 255)
+
 
 def costes_backend(
     *,
@@ -583,15 +593,32 @@ def _integer_unit_interval_codes(
         else (65535, 255)
     )
     for scale in dict.fromkeys(int(candidate) for candidate in scales if candidate):
-        codes = np.rint(values_array * scale).astype(np.int64, copy=False)
-        if np.any(codes < 0) or np.any(codes > scale):
-            continue
-        reconstructed = (
-            codes.astype(np.float32, copy=False) / np.float32(scale)
-        ).astype(np.float64, copy=False)
-        if np.array_equal(values_array, reconstructed):
+        valid, codes = _integer_unit_interval_codes_for_scale_numba(
+            np.ascontiguousarray(values_array.ravel(), dtype=np.float64),
+            scale,
+        )
+        if valid:
             return codes, scale
     return None
+
+
+@njit(cache=True)
+def _integer_unit_interval_codes_for_scale_numba(
+    values: np.ndarray,
+    scale: int,
+) -> tuple[bool, np.ndarray]:
+    codes = np.empty(values.size, dtype=np.int64)
+    scale_float32 = np.float32(scale)
+    for index in range(values.size):
+        value = values[index]
+        code = int(np.rint(value * scale))
+        if code < 0 or code > scale:
+            return False, codes
+        reconstructed = np.float64(np.float32(code) / scale_float32)
+        if value != reconstructed:
+            return False, codes
+        codes[index] = code
+    return True, codes
 
 
 def _dense_codes_and_values(

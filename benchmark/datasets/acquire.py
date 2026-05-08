@@ -123,23 +123,14 @@ class ArchiveUrlSourceHandler(DatasetSourceHandler):
         if context.data_dir.exists():
             return True
 
-        if not source.urls:
-            raise DatasetAcquisitionError(
-                f"Dataset {context.spec.id!r} has no archive URLs to acquire."
-            )
-
-        for url in source.urls:
-            archive_path = context.archive_dir / Path(url).name
-            if not archive_path.exists():
-                _download_file(url, archive_path)
+        archive_paths, _ = _download_archives(context, source)
 
         tmp_extract = context.cache_root / ".extract_tmp"
         if tmp_extract.exists():
             shutil.rmtree(tmp_extract)
         tmp_extract.mkdir(parents=True, exist_ok=True)
 
-        for url in source.urls:
-            archive_path = context.archive_dir / Path(url).name
+        for archive_path in archive_paths:
             if context.spec.archive_format is ArchiveFormat.ZIP:
                 _extract_zip(archive_path, tmp_extract)
             else:
@@ -151,6 +142,27 @@ class ArchiveUrlSourceHandler(DatasetSourceHandler):
             shutil.rmtree(context.data_dir)
         tmp_extract.rename(context.data_dir)
         return False
+
+
+class GitSparseWithArchiveUrlsSourceHandler(DatasetSourceHandler):
+    """Acquire sparse repository files plus companion dataset archives."""
+
+    source_kind = DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES.value
+
+    def acquire(self, context: DatasetAcquisitionContext, source: DatasetSourceSpec) -> bool:
+        cached_repo = GitSparseSourceHandler().acquire(context, source)
+        archive_paths, cached_archives = _download_archives(context, source)
+
+        for archive_path in archive_paths:
+            if context.spec.archive_format is ArchiveFormat.ZIP:
+                _extract_zip_missing_members(archive_path, context.data_dir)
+            else:
+                raise DatasetAcquisitionError(
+                    f"Unsupported archive format: {context.spec.archive_format.name}"
+                )
+
+        _materialize_nested_archives(context.data_dir)
+        return cached_repo and cached_archives
 
 
 class GitSparseSourceHandler(DatasetSourceHandler):
@@ -212,12 +224,31 @@ class GitSparseSourceHandler(DatasetSourceHandler):
             raise DatasetAcquisitionError(f"git {' '.join(args)} failed: {detail}") from exc
 
 
-def _download_file(url: str, destination: Path) -> None:
+def _download_archives(
+    context: DatasetAcquisitionContext,
+    source: DatasetSourceSpec,
+) -> tuple[tuple[Path, ...], bool]:
+    """Download all archive URLs for a source and report whether all were cached."""
+    if not source.urls:
+        raise DatasetAcquisitionError(
+            f"Dataset {context.spec.id!r} has no archive URLs to acquire."
+        )
+
+    context.archive_dir.mkdir(parents=True, exist_ok=True)
+    archive_paths = tuple(context.archive_dir / Path(url).name for url in source.urls)
+    cached = all(path.exists() for path in archive_paths)
+    for url, archive_path in zip(source.urls, archive_paths, strict=True):
+        if not archive_path.exists():
+            _download_file(url, archive_path, tls_verify=source.tls_verify)
+    return archive_paths, cached
+
+
+def _download_file(url: str, destination: Path, *, tls_verify: bool = True) -> None:
     """Stream a URL to disk with progress display."""
     destination.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = destination.with_suffix(destination.suffix + ".part")
 
-    with requests.get(url, stream=True, timeout=60) as response:
+    with requests.get(url, stream=True, timeout=60, verify=tls_verify) as response:
         try:
             response.raise_for_status()
         except Exception as exc:  # pragma: no cover - network failure path
@@ -366,8 +397,9 @@ def acquire_dataset(
     )
     source = spec.acquisition_source()
 
-    # Fast path: existing extraction that still validates
-    if extract_dir.exists():
+    # Composite sources must still visit the source handler, because one side of
+    # the source can be present while the other still needs materialization.
+    if extract_dir.exists() and source.kind is not DatasetSourceKind.GIT_SPARSE_WITH_ARCHIVES:
         try:
             _materialize_nested_archives(extract_dir)
             image_count = _validate_dataset(spec, extract_dir)
@@ -391,6 +423,7 @@ def acquire_dataset(
         "source_urls": tuple(source.urls),
         "git_url": source.git_url,
         "git_ref": source.git_ref,
+        "tls_verify": source.tls_verify,
         "cached": cached,
         "size_bytes": spec.size_bytes,
     }

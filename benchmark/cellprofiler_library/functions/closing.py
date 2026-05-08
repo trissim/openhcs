@@ -10,7 +10,11 @@ from openhcs.core.runtime_values import (
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
-from .structuring_elements import StructuringElement, build_structuring_element
+from .structuring_elements import (
+    StructuringElement,
+    apply_structuring_element,
+    build_structuring_element,
+)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -46,9 +50,10 @@ def closing(
         closing,
         backend_provider=morphology_backend_provider,
     )
-    result = morphology.grayscale_closing(
+    result = apply_structuring_element(
         pixel_data,
         build_structuring_element(structuring_element, size),
+        morphology.grayscale_closing,
     )
     return with_image_payload_data(
         image,

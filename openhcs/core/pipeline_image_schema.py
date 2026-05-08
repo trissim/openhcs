@@ -23,6 +23,7 @@ from openhcs.core.source_bindings import (
 
 
 SOURCE_IMAGE_TYPE_METADATA_FIELD = "OpenHCSImageType"
+SOURCE_ALIAS_PART_SEPARATOR = "__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +157,7 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
     PARTICIPATES_IN_IMAGE_STACK: ClassVar[bool]
     ARTIFACT_KIND: ClassVar[ArtifactKind] = ArtifactKind.IMAGE
     LOAD_AS_MONOCHROME: ClassVar[bool] = False
+    MATERIALIZE_SOURCE_MASK: ClassVar[bool] = False
 
     @classmethod
     def for_image_type(cls, image_type: str) -> "ImageTypeSourceRole":
@@ -185,11 +187,18 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
 
         return type(self).LOAD_AS_MONOCHROME
 
+    @property
+    def materialize_source_mask(self) -> bool:
+        """Whether source pixels require an explicit per-pixel validity mask."""
+
+        return type(self).MATERIALIZE_SOURCE_MASK
+
 
 class ImageStackSourceRole(ImageTypeSourceRole):
     """Image type that projects into the OpenHCS channel stack."""
 
     PARTICIPATES_IN_IMAGE_STACK = True
+    MATERIALIZE_SOURCE_MASK = True
 
 
 class MonochromeImageStackSourceRole(ImageStackSourceRole):
@@ -285,6 +294,12 @@ def image_type_loads_as_monochrome(image_type: str) -> bool:
     """Return whether source loading should mirror CellProfiler MonochromeImage."""
 
     return ImageTypeSourceRole.for_image_type(image_type).load_as_monochrome
+
+
+def image_type_materializes_source_mask(image_type: str) -> bool:
+    """Return whether source loading should create an explicit validity mask."""
+
+    return ImageTypeSourceRole.for_image_type(image_type).materialize_source_mask
 
 
 def image_type_source_role_key(image_type: str) -> str:
@@ -464,6 +479,16 @@ class PipelineImageSchema:
             return SourceArtifactAssignment.from_image_assignment(image_assignment)
         return None
 
+    @property
+    def measurement_source_names(self) -> tuple[str, ...]:
+        """Return source names that may appear in measurement feature names."""
+        names: set[str] = set()
+        for alias in self.assignments_by_alias:
+            names.update(source_alias_measurement_names(alias))
+        for alias in self.source_artifacts_by_alias:
+            names.update(source_alias_measurement_names(alias))
+        return tuple(sorted(names, key=lambda value: value.lower()))
+
     def resolved_source_artifact_for_alias(
         self,
         alias: str,
@@ -556,6 +581,19 @@ class PipelineImageSchemaBuilder:
                 "match plan."
             )
         self.match_plan = match_plan
+
+
+def source_alias_measurement_names(alias: str) -> tuple[str, ...]:
+    """Return measurement source-name tokens represented by a schema alias."""
+    normalized_alias = alias.strip()
+    if not normalized_alias:
+        return ()
+    parts = tuple(
+        part
+        for part in normalized_alias.split(SOURCE_ALIAS_PART_SEPARATOR)
+        if part
+    )
+    return parts or (normalized_alias,)
 
 
 class LegacyImageAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):

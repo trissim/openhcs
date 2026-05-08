@@ -271,7 +271,6 @@ def _linear_costes(
         fast_mode,
     )
 
-
 def _linear_costes_numpy_reference(fi: np.ndarray, si: np.ndarray, scale_max: int = 255, fast_mode: bool = True) -> Tuple[float, float]:
     """Reference Python implementation used to validate backend semantics."""
     regression_line = _costes_regression_line(fi, si)
@@ -1549,45 +1548,3 @@ def _object_colocalization_row(
             float(costes_threshold_2) if np.isfinite(costes_threshold_2) else 0.0
         ),
     )
-
-
-def _prepare_measure_colocalization() -> None:
-    """Compile colocalization kernels outside measured execution."""
-    first = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
-    second = np.flipud(first).copy()
-    _colocalization_measurement(
-        first,
-        second,
-        options=ColocalizationMeasurementOptions(
-            threshold_percent=15.0,
-            do_correlation=True,
-            do_manders=True,
-            do_rwc=True,
-            do_overlap=True,
-            do_costes=True,
-            costes_method=CostesMethod.ACCURATE,
-            scale_max=255,
-        ),
-    )
-    quantized_codes = (np.arange(64 * 64, dtype=np.uint16) % 512) + 1024
-    quantized_first = (quantized_codes.astype(np.float32) / np.float32(65535)).reshape(
-        (64, 64)
-    )
-    quantized_second = np.flipud(quantized_first).copy()
-    _colocalization_measurement(
-        quantized_first,
-        quantized_second,
-        options=ColocalizationMeasurementOptions(
-            threshold_percent=15.0,
-            do_correlation=True,
-            do_manders=True,
-            do_rwc=True,
-            do_overlap=True,
-            do_costes=True,
-            costes_method=CostesMethod.ACCURATE,
-            scale_max=255,
-        ),
-    )
-
-
-measure_colocalization.__openhcs_prepare__ = _prepare_measure_colocalization

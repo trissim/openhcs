@@ -19,6 +19,7 @@ import logging
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, replace
+from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Mapping, Optional
 
@@ -660,24 +661,23 @@ from openhcs.constants.input_source import InputSource
 
             # Parse parameter mapping from function docstring
             param_mapping = self._parse_parameter_mapping(func_name)
+            dead_output_settings = self._dead_output_setting_names(
+                module=module,
+                artifact_contract=artifact_contract,
+            )
             bound_settings = ModuleSettingsBindingStrategy.for_module(
                 module.name
             ).bind(
                 module,
                 binder=self.settings_binder,
                 param_mapping=param_mapping,
+                ignored_unmapped_settings=dead_output_settings,
             )
             translated_kwargs = dict(bound_settings.kwargs)
-            unmapped_kwargs = dict(bound_settings.unmapped_kwargs)
             translated_kwargs = self._prune_dead_output_setting_kwargs(
                 module=module,
                 translated_kwargs=translated_kwargs,
                 param_mapping=param_mapping,
-                artifact_contract=artifact_contract,
-            )
-            unmapped_kwargs = self._prune_dead_output_setting_comments(
-                module=module,
-                unmapped_kwargs=unmapped_kwargs,
                 artifact_contract=artifact_contract,
             )
             invocation_options_literal = self._invocation_options_literal(
@@ -699,7 +699,9 @@ from openhcs.constants.input_source import InputSource
                 # Format kwargs dict
                 kwargs_lines = ["{"]
                 for k, v in translated_kwargs.items():
-                    kwargs_lines.append(f"            {repr(k)}: {repr(v)},")
+                    kwargs_lines.append(
+                        f"            {repr(k)}: {python_literal(v)},"
+                    )
                 kwargs_lines.append("        }")
                 kwargs_str = "\n".join(kwargs_lines)
 
@@ -738,12 +740,6 @@ from openhcs.constants.input_source import InputSource
             if input_source_literal is not None:
                 lines.append(f"            input_source={input_source_literal},")
             lines.append("        ),")
-
-            # Add unmapped settings as comments (for debugging)
-            if unmapped_kwargs:
-                lines.append("        # Unmapped settings:")
-                for k, v in list(unmapped_kwargs.items())[:3]:
-                    lines.append(f"        # {k}={repr(v)}")
 
             lines.append("    ),")
 
@@ -1167,3 +1163,21 @@ from openhcs.constants.input_source import InputSource
         except Exception as e:
             logger.warning(f"Could not parse parameter mapping for {func_name}: {e}")
             return {}
+
+
+def python_literal(value: Any) -> str:
+    """Render a deterministic generated-code literal for bound setting values."""
+    if isinstance(value, Enum):
+        return repr(value.value)
+    if isinstance(value, tuple):
+        return "(" + ", ".join(python_literal(item) for item in value) + (
+            "," if len(value) == 1 else ""
+        ) + ")"
+    if isinstance(value, list):
+        return "[" + ", ".join(python_literal(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ", ".join(
+            f"{python_literal(key)}: {python_literal(item)}"
+            for key, item in value.items()
+        ) + "}"
+    return repr(value)

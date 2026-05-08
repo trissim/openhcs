@@ -17,21 +17,21 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 from benchmark.cellprofiler_compat.measurement_lookup import child_count_feature_child_name
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_artifact_queries import (
-    MeasurementFeatureQuery,
     measurement_feature_candidates,
-    measurement_object_label,
-    measurement_row_mapping,
-    measurement_rows,
-    measurement_table_object_id_field,
+    ordered_measurement_feature_candidates,
+    optional_measurement_value_index,
     measurement_values_for_feature,
     normalize_measurement_token,
 )
 from openhcs.core.runtime_semantics import (
     ObjectShapeMeasurementFeature,
+    ObjectLabelMeasurementValues,
     ParentChildRelationshipPayload,
     aligned_dense_object_label_arrays,
+    dense_object_label_present_ids,
     project_dense_object_label_stack,
 )
 from openhcs.core.runtime_values import (
@@ -40,6 +40,9 @@ from openhcs.core.runtime_values import (
     ObjectRelationship,
     object_label_dense_array,
     object_label_payload_with_dense_labels,
+)
+from openhcs.interop.cellprofiler.measurement_dialect import (
+    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
@@ -99,9 +102,9 @@ class FilterObjectsSelectionRequest:
     """Inputs needed to choose retained primary object labels."""
 
     labels: np.ndarray
-    num_objects_pre: int
+    object_ids: tuple[int, ...]
     filter_method: FilterMethod
-    measurement_values: np.ndarray | None
+    measurement_values: ObjectLabelMeasurementValues | None
     measurement_features: tuple[str, ...]
     measurement_min_values: tuple[float | None, ...]
     measurement_max_values: tuple[float | None, ...]
@@ -120,6 +123,10 @@ class FilterObjectsSelectionRequest:
     use_minimum: bool
     use_maximum: bool
 
+    @property
+    def num_objects_pre(self) -> int:
+        return len(self.object_ids)
+
 
 @dataclass(frozen=True, slots=True)
 class FilterSelectionKey:
@@ -136,6 +143,63 @@ class FilterSelectionKey:
 
     def lookup_candidates(self) -> tuple["FilterSelectionKey", ...]:
         return (self, FilterSelectionKey(self.mode))
+
+
+class DerivedMeasurementValuesStrategy(
+    EnumKeyedStrategyMixin[ObjectShapeMeasurementFeature],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Derived object-measurement values available from dense labels."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "feature"
+    feature: ClassVar[ObjectShapeMeasurementFeature]
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_feature_name(cls, feature_name: str) -> "DerivedMeasurementValuesStrategy | None":
+        candidates = ordered_measurement_feature_candidates(
+            feature_name,
+            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+        )
+        strategies_by_feature_name = {
+            normalize_measurement_token(strategy_type.feature.value): strategy_type
+            for strategy_type in cls.registered_strategy_types()
+        }
+        for candidate in candidates:
+            strategy_type = strategies_by_feature_name.get(candidate)
+            if strategy_type is not None:
+                return strategy_type()
+        return None
+
+    @abstractmethod
+    def values(self, labels: np.ndarray) -> np.ndarray:
+        """Return one derived value per object label."""
+
+
+class AreaDerivedMeasurementValuesStrategy(DerivedMeasurementValuesStrategy):
+    """Area is directly measurable from the label geometry."""
+
+    feature = ObjectShapeMeasurementFeature.AREA
+
+    def values(self, labels: np.ndarray) -> np.ndarray:
+        return LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+            labels.astype(np.int32, copy=False)
+        ).area
+
+
+class FormFactorDerivedMeasurementValuesStrategy(DerivedMeasurementValuesStrategy):
+    """FormFactor can be derived from area/perimeter label geometry."""
+
+    feature = ObjectShapeMeasurementFeature.FORM_FACTOR
+
+    def values(self, labels: np.ndarray) -> np.ndarray:
+        label_ids = np.arange(1, int(labels.max()) + 1, dtype=np.int32)
+        if label_ids.size == 0:
+            return np.array([], dtype=float)
+        return form_factor_values(labels.astype(np.int32, copy=False), label_ids)
 
 
 class FilterSelectionStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -196,7 +260,7 @@ class LimitsFilterSelectionStrategy(FilterSelectionStrategy):
             return _keep_matching_measurement_rules(request)
         values = request.measurement_values
         if values is None:
-            values = _area_measurement_values(request.labels)
+            values = _area_measurement_values(request.labels, request.object_ids)
         return _keep_within_limits(
             values,
             request.min_value,
@@ -252,7 +316,9 @@ class PerObjectFilterSelectionStrategy(FilterSelectionStrategy):
         selection_key = type(self).selection_key
         if selection_key is None or selection_key.method is None:
             raise TypeError("PerObjectFilterSelectionStrategy must define method.")
-        values = _first_measurement_values(request)
+        values = _first_measurement_values(request).dense_label_indexed(
+            max_label=int(request.labels.max()) if request.labels.size else 0
+        )
         return PerObjectAssignmentStrategy.for_assignment(
             request.per_object_assignment,
         ).indexes_to_keep(
@@ -523,10 +589,16 @@ def filter_objects(
             *_outline_images(relabeled_objects, outline_object_indices),
         )
     
-    # Get all unique labels (excluding background)
-    unique_labels = np.unique(labels)
-    unique_labels = unique_labels[unique_labels > 0]
-    num_objects_pre = len(unique_labels)
+    object_ids = dense_object_label_present_ids(labels)
+    num_objects_pre = len(object_ids)
+    selection_measurement_values = (
+        None
+        if measurement_values is None
+        else ObjectLabelMeasurementValues.from_label_indexed_values(
+            object_ids,
+            measurement_values,
+        )
+    )
 
     indexes_to_keep = FilterSelectionStrategy.for_mode_and_method(
         mode,
@@ -534,9 +606,9 @@ def filter_objects(
     ).indexes_to_keep(
         FilterObjectsSelectionRequest(
             labels=labels,
-            num_objects_pre=num_objects_pre,
+            object_ids=object_ids,
             filter_method=filter_method,
-            measurement_values=measurement_values,
+            measurement_values=selection_measurement_values,
             measurement_features=measurement_features,
             measurement_min_values=measurement_min_values,
             measurement_max_values=measurement_max_values,
@@ -650,62 +722,30 @@ def _discard_border_objects(labels: np.ndarray) -> list[int]:
 
 
 def _keep_within_limits(
-    values: np.ndarray,
+    values: ObjectLabelMeasurementValues,
     min_value: Optional[float],
     max_value: Optional[float],
     use_minimum: bool,
     use_maximum: bool
 ) -> list[int]:
-    """
-    Keep objects whose measurements fall within specified limits.
-    
-    Args:
-        values: Measurement values per object (0-indexed)
-        min_value: Minimum threshold
-        max_value: Maximum threshold
-        use_minimum: Whether to apply minimum threshold
-        use_maximum: Whether to apply maximum threshold
-    
-    Returns:
-        List of label indices (1-indexed) to keep
-    """
-    if len(values) == 0:
-        return []
-    
-    hits = np.ones(len(values), dtype=bool)
-    hits[~np.isfinite(values)] = False
-    
-    if use_minimum and min_value is not None:
-        hits[values < min_value] = False
-    
-    if use_maximum and max_value is not None:
-        hits[values > max_value] = False
-    
-    # Convert to 1-indexed labels
-    indexes = np.argwhere(hits).flatten() + 1
-    return indexes.tolist()
+    """Keep objects whose measurements fall within specified limits."""
+    return list(
+        values.ids_within_limits(
+            min_value=min_value,
+            max_value=max_value,
+            use_minimum=use_minimum,
+            use_maximum=use_maximum,
+        )
+    )
 
 
-def _keep_one(values: np.ndarray, keep_max: bool = True) -> list[int]:
-    """
-    Keep only the object with the maximum or minimum measurement value.
-    
-    Args:
-        values: Measurement values per object (0-indexed)
-        keep_max: If True, keep maximum; if False, keep minimum
-    
-    Returns:
-        List containing single label index (1-indexed) to keep
-    """
-    if len(values) == 0:
-        return []
-    
-    if keep_max:
-        best_idx = np.argmax(values) + 1
-    else:
-        best_idx = np.argmin(values) + 1
-    
-    return [int(best_idx)]
+def _keep_one(
+    values: ObjectLabelMeasurementValues,
+    keep_max: bool = True,
+) -> list[int]:
+    """Keep only the object with the maximum or minimum finite measurement."""
+    selected_id = values.extremum_id(keep_max=keep_max)
+    return [] if selected_id is None else [selected_id]
 
 
 def _require_enclosing_labels(
@@ -1023,36 +1063,34 @@ def _keep_matching_measurement_rules(
     request: FilterObjectsSelectionRequest,
 ) -> list[int]:
     _validate_measurement_rule_lengths(request)
-    hits = np.ones(request.num_objects_pre, dtype=bool)
+    retained_ids = set(request.object_ids)
     for index, feature_name in enumerate(request.measurement_features):
         values = _selection_measurement_values(request, feature_name)
-        keep_indexes = _keep_within_limits(
+        keep_ids = _keep_within_limits(
             values,
             request.measurement_min_values[index],
             request.measurement_max_values[index],
             request.measurement_use_minimum[index],
             request.measurement_use_maximum[index],
         )
-        rule_hits = np.zeros(request.num_objects_pre, dtype=bool)
-        for keep_index in keep_indexes:
-            if 1 <= keep_index <= request.num_objects_pre:
-                rule_hits[keep_index - 1] = True
-        hits &= rule_hits
-    return (np.argwhere(hits).flatten() + 1).tolist()
+        retained_ids.intersection_update(keep_ids)
+    return sorted(retained_ids)
 
 
-def _first_measurement_values(request: FilterObjectsSelectionRequest) -> np.ndarray:
+def _first_measurement_values(
+    request: FilterObjectsSelectionRequest,
+) -> ObjectLabelMeasurementValues:
     if request.measurement_values is not None:
         return request.measurement_values
     if request.measurement_features:
         return _selection_measurement_values(request, request.measurement_features[0])
-    return _area_measurement_values(request.labels)
+    return _area_measurement_values(request.labels, request.object_ids)
 
 
 def _selection_measurement_values(
     request: FilterObjectsSelectionRequest,
     feature_name: str,
-) -> np.ndarray:
+) -> ObjectLabelMeasurementValues:
     relationship_values = _relationship_child_count_values_or_none(
         request,
         feature_name,
@@ -1062,14 +1100,21 @@ def _selection_measurement_values(
     table_values = _measurement_table_values_or_none(request, feature_name)
     if table_values is not None:
         return table_values
-    derived_values = _derived_measurement_values(feature_name, request.labels)
+    derived_values = _derived_measurement_values(
+        feature_name,
+        request.labels,
+        request.object_ids,
+    )
     if derived_values is not None:
         return derived_values
-    return measurement_values_for_feature(
+    values = measurement_values_for_feature(
         request.measurement_tables,
         feature_name,
         object_count=request.num_objects_pre,
+        object_ids=request.object_ids,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
     )
+    return ObjectLabelMeasurementValues(request.object_ids, values)
 
 
 def _relationship_tuple(
@@ -1095,7 +1140,7 @@ def _relationship_tuple(
 def _relationship_child_count_values_or_none(
     request: FilterObjectsSelectionRequest,
     feature_name: str,
-) -> np.ndarray | None:
+) -> ObjectLabelMeasurementValues | None:
     child_name = child_count_feature_child_name(feature_name)
     if child_name is None:
         return None
@@ -1103,11 +1148,16 @@ def _relationship_child_count_values_or_none(
         parent_ids = _relationship_parent_ids_for_child(relationship, child_name)
         if parent_ids is None:
             continue
-        counts = np.zeros(request.num_objects_pre, dtype=float)
+        counts_by_parent_id: dict[int, float] = {
+            object_id: 0.0 for object_id in request.object_ids
+        }
         for parent_id in parent_ids:
-            if 1 <= parent_id <= request.num_objects_pre:
-                counts[parent_id - 1] += 1.0
-        return counts
+            if parent_id in counts_by_parent_id:
+                counts_by_parent_id[parent_id] += 1.0
+        return ObjectLabelMeasurementValues.from_value_mapping(
+            request.object_ids,
+            counts_by_parent_id,
+        )
     return None
 
 
@@ -1125,57 +1175,55 @@ def _relationship_parent_ids_for_child(
 def _measurement_table_values_or_none(
     request: FilterObjectsSelectionRequest,
     feature_name: str,
-) -> np.ndarray | None:
+) -> ObjectLabelMeasurementValues | None:
     if not request.measurement_tables:
         return None
-    query = MeasurementFeatureQuery(feature_name)
-    values_by_label: dict[int, float] = {}
-    positional_values: list[float] = []
-    for table in request.measurement_tables:
-        for row in measurement_rows((table,)):
-            value = query.row_value(row)
-            if value is None:
-                continue
-            object_label = measurement_object_label(
-                measurement_row_mapping(row),
-                object_id_field=measurement_table_object_id_field(table),
-            )
-            if object_label is None:
-                positional_values.append(float(value))
-            else:
-                values_by_label[object_label] = float(value)
+    value_index = optional_measurement_value_index(
+        request.measurement_tables,
+        feature_name,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+    if value_index is None:
+        return None
+    values_by_label, positional_values = value_index
     if values_by_label:
-        return np.array(
-            [
-                values_by_label.get(index, np.nan)
-                for index in range(1, request.num_objects_pre + 1)
-            ]
+        return ObjectLabelMeasurementValues.from_value_mapping(
+            request.object_ids,
+            values_by_label,
         )
     if positional_values:
-        return np.array(positional_values[: request.num_objects_pre])
+        return ObjectLabelMeasurementValues.from_positional_values(
+            request.object_ids,
+            positional_values,
+        )
     return None
 
 
 def _derived_measurement_values(
     feature_name: str,
     labels: np.ndarray,
-) -> np.ndarray | None:
+    object_ids: tuple[int, ...],
+) -> ObjectLabelMeasurementValues | None:
     """Return derived values when an upstream measurement table is unavailable."""
-    form_factor_token = normalize_measurement_token(
-        ObjectShapeMeasurementFeature.FORM_FACTOR.value,
-    )
-    if form_factor_token not in measurement_feature_candidates(feature_name):
+    strategy = DerivedMeasurementValuesStrategy.for_feature_name(feature_name)
+    if strategy is None:
         return None
-    label_ids = np.arange(1, int(labels.max()) + 1, dtype=np.int32)
-    if label_ids.size == 0:
-        return np.array([], dtype=float)
-    return form_factor_values(labels.astype(np.int32, copy=False), label_ids)
+    return ObjectLabelMeasurementValues.from_label_indexed_values(
+        object_ids,
+        strategy.values(labels),
+    )
 
 
-def _area_measurement_values(labels: np.ndarray) -> np.ndarray:
-    return LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-        labels.astype(np.int32, copy=False)
-    ).area
+def _area_measurement_values(
+    labels: np.ndarray,
+    object_ids: tuple[int, ...],
+) -> ObjectLabelMeasurementValues:
+    return ObjectLabelMeasurementValues.from_label_indexed_values(
+        object_ids,
+        DerivedMeasurementValuesStrategy.for_enum_member(
+            ObjectShapeMeasurementFeature.AREA
+        ).values(labels),
+    )
 
 
 def _validate_measurement_rule_lengths(

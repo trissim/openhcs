@@ -1927,6 +1927,105 @@ def test_runtime_reference_artifact_equivalence_matches_sparse_zernike_after_sta
     assert report.is_equivalent
 
 
+def test_runtime_measurement_equivalence_tolerates_intensity_zernike_boundary_drift_only_with_stable_geometry() -> None:
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells")
+    magnitude_feature = RuntimeMeasurementFeatureKey(
+        subject=subject,
+        feature_name="ZernikeMagnitude_9_9",
+        source_name="df_image",
+    )
+    phase_feature = RuntimeMeasurementFeatureKey(
+        subject=subject,
+        feature_name="ZernikePhase_9_9",
+        source_name="df_image",
+    )
+    area_feature = RuntimeMeasurementFeatureKey(subject=subject, feature_name="area")
+    center_x_feature = RuntimeMeasurementFeatureKey(
+        subject=subject,
+        feature_name="center_x",
+    )
+    center_y_feature = RuntimeMeasurementFeatureKey(
+        subject=subject,
+        feature_name="center_y",
+    )
+    object_number_feature = RuntimeMeasurementFeatureKey(
+        subject=subject,
+        feature_name="number_object_number",
+    )
+    reference = RuntimeMeasurementSnapshot(
+        {
+            magnitude_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.00000031"): 1}
+            ),
+            phase_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "2.40"): 1}
+            ),
+            area_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "915"): 1}
+            ),
+            center_x_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "1180.5"): 1}
+            ),
+            center_y_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "356.16666667"): 1}
+            ),
+            object_number_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "637"): 1}
+            ),
+        }
+    )
+    candidate = RuntimeMeasurementSnapshot(
+        {
+            magnitude_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.00000079"): 1}
+            ),
+            phase_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "2.62"): 1}
+            ),
+            area_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "915"): 1}
+            ),
+            center_x_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "1180.5"): 1}
+            ),
+            center_y_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "356.16666667"): 1}
+            ),
+            object_number_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "637"): 1}
+            ),
+        }
+    )
+    unstable_geometry_candidate = RuntimeMeasurementSnapshot(
+        {
+            **candidate.values_by_feature,
+            center_y_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "357.16666667"): 1}
+            ),
+        }
+    )
+
+    strict_report = runtime_measurement_equivalence(
+        reference,
+        candidate,
+        policy=RuntimeEquivalencePolicy(),
+    )
+    zernike_policy_report = runtime_measurement_equivalence(
+        reference,
+        candidate,
+        policy=RuntimeEquivalencePolicy(allow_unstable_zernike_descriptors=True),
+    )
+    unstable_geometry_report = runtime_measurement_equivalence(
+        reference,
+        unstable_geometry_candidate,
+        policy=RuntimeEquivalencePolicy(allow_unstable_zernike_descriptors=True),
+    )
+
+    assert not strict_report.is_equivalent
+    assert zernike_policy_report.is_equivalent
+    assert not unstable_geometry_report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_rejects_zernike_drift_when_geometry_changes(
     tmp_path: Path,
 ) -> None:
@@ -4284,6 +4383,133 @@ def test_runtime_measurement_snapshot_derives_required_object_numbers_from_label
     }
 
 
+def test_runtime_measurement_snapshot_completes_repeated_declared_object_domains(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "GridObjects")
+    required_key = RuntimeMeasurementFeatureKey(
+        subject,
+        "number_object_number",
+    )
+    center_x_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+    )
+    for index in range(2):
+        store.replace(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name="GridObjects",
+                    kind=ArtifactKind.OBJECT_LABELS,
+                    scope=ArtifactScope(axis_id="A01"),
+                ),
+                data=ObjectLabelPayload(
+                    labels=np.array([[0, 1], [0, 3]], dtype=np.uint16),
+                    declared_object_count=4,
+                    domain_scope=ObjectLabelDomainScope.PLANE,
+                ),
+                schema=RuntimeValueSchema(
+                    kind=ArtifactKind.OBJECT_LABELS,
+                ),
+            ),
+            path=f"/memory/GridObjects_{index}.pkl",
+            backend="memory",
+        )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset({required_key, center_x_key}),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[required_key].items()
+    } == {
+        ("number", "1.0", 2),
+        ("number", "2.0", 2),
+        ("number", "3.0", 2),
+        ("number", "4.0", 2),
+    }
+
+
+def test_runtime_measurement_snapshot_uses_declared_plane_object_domains(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells")
+    required_key = RuntimeMeasurementFeatureKey(
+        subject,
+        "number_object_number",
+    )
+    center_x_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=np.array(
+                    [
+                        [[1, 0], [0, 2]],
+                        [[1, 0], [3, 4]],
+                    ],
+                    dtype=np.uint16,
+                ),
+                declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
+                domain_scope=ObjectLabelDomainScope.PLANE,
+            ),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset({required_key, center_x_key}),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[required_key].items()
+    } == {
+        ("number", "1.0", 2),
+        ("number", "2.0", 2),
+        ("number", "3.0", 1),
+        ("number", "4.0", 1),
+    }
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[center_x_key].items()
+    } == {
+        ("number", "0.0", 3),
+        ("number", "1.0", 2),
+    }
+
+
 def test_runtime_measurement_snapshot_projects_identity_only_object_exports(
     tmp_path: Path,
 ) -> None:
@@ -4888,17 +5114,17 @@ def test_runtime_reference_artifact_equivalence_derives_declared_label_centers(
                 kind=ArtifactKind.OBJECT_LABELS,
                 scope=ArtifactScope(axis_id="A01"),
             ),
-            data=ObjectLabelPayload(
-                labels=np.array(
-                    [
-                        [1, 1, 0],
-                        [0, 0, 0],
-                        [4, 4, 0],
-                    ],
-                    dtype=np.uint16,
+                data=ObjectLabelPayload(
+                    labels=np.array(
+                        [
+                            [1, 1, 0],
+                            [0, 0, 0],
+                            [4, 4, 0],
+                        ],
+                        dtype=np.uint16,
+                    ),
+                    declared_object_ids=(1, 2, 4),
                 ),
-                declared_object_count=4,
-            ),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
                 object_name="Cells",
@@ -4949,7 +5175,7 @@ def test_runtime_reference_artifact_equivalence_uses_declared_label_count(
                     ],
                     dtype=np.uint16,
                 ),
-                declared_object_count=4,
+                declared_object_ids=(1, 2, 4),
             ),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
@@ -5044,6 +5270,341 @@ def test_runtime_measurement_snapshot_counts_primary_object_rows_before_dense_la
         (signature.kind.value, signature.value, count)
         for signature, count in snapshot.values_by_feature[object_count_key].items()
     } == {("number", "3.0", 1)}
+
+
+def test_runtime_measurement_snapshot_completes_object_numbers_from_primary_rows(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells_measurements",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=[
+                {"image_number": 1, "object_label": 1, "Center_X": 0.0},
+                {"image_number": 1, "object_label": 2, "Center_X": 1.0},
+                {"image_number": 1, "object_label": 4, "Center_X": 2.0},
+            ],
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.MEASUREMENTS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells_measurements.pkl",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=np.array(
+                    [
+                        [1, 1, 0],
+                        [0, 0, 0],
+                        [4, 4, 0],
+                    ],
+                    dtype=np.uint16,
+                ),
+                declared_object_ids=(1, 2, 4),
+            ),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
+    object_number_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
+    )
+    center_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset((object_number_key, center_key)),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[object_number_key].items()
+    } == {
+        ("number", "1.0", 1),
+        ("number", "2.0", 1),
+        ("number", "4.0", 1),
+    }
+
+
+def test_runtime_measurement_snapshot_does_not_complete_explicit_object_numbers(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells_measurements",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=[
+                {
+                    "image_number": 1,
+                    "object_label": 1,
+                    "Number_Object_Number": 1,
+                    "Center_X": 0.0,
+                },
+                {
+                    "image_number": 1,
+                    "object_label": 2,
+                    "Number_Object_Number": 2,
+                    "Center_X": 1.0,
+                },
+            ],
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.MEASUREMENTS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells_measurements.pkl",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=np.array(
+                    [
+                        [1, 1, 0],
+                        [0, 2, 2],
+                    ],
+                    dtype=np.uint16,
+                ),
+                declared_object_count=2,
+            ),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
+    object_number_key = RuntimeMeasurementFeatureKey(
+        subject,
+        "number_object_number",
+    )
+    center_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset((object_number_key, center_key)),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[object_number_key].items()
+    } == {
+        ("number", "1.0", 1),
+        ("number", "2.0", 1),
+    }
+
+
+def test_runtime_measurement_snapshot_completes_partial_explicit_object_numbers(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells_measurements",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=[
+                {
+                    "image_number": 1,
+                    "object_label": 1,
+                    "Number_Object_Number": 1,
+                    "Center_X": 0.0,
+                },
+                {"image_number": 1, "object_label": 2, "Center_X": 1.0},
+            ],
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.MEASUREMENTS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells_measurements.pkl",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=np.array(
+                    [
+                        [1, 1, 0],
+                        [0, 2, 2],
+                    ],
+                    dtype=np.uint16,
+                ),
+                declared_object_count=2,
+            ),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
+    object_number_key = RuntimeMeasurementFeatureKey(
+        subject,
+        "number_object_number",
+    )
+    center_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset((object_number_key, center_key)),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[object_number_key].items()
+    } == {
+        ("number", "1.0", 1),
+        ("number", "2.0", 1),
+    }
+
+
+def test_runtime_measurement_snapshot_rejects_axis_only_rows_as_identifier_domain(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells_measurements",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=[
+                {"object_label": 1, "Center_X": 0.0},
+                {"object_label": 2, "Center_X": 1.0},
+                {"object_label": 3, "Center_X": 2.0},
+            ],
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.MEASUREMENTS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells_measurements.pkl",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=np.array(
+                    [
+                        [1, 1, 0],
+                        [0, 2, 2],
+                    ],
+                    dtype=np.uint16,
+                ),
+                declared_object_count=2,
+            ),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "cells")
+    object_number_key = RuntimeMeasurementFeatureKey(
+        subject,
+        "number_object_number",
+    )
+    center_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset((object_number_key, center_key)),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[object_number_key].items()
+    } == {
+        ("number", "1.0", 1),
+        ("number", "2.0", 1),
+    }
 
 
 def test_runtime_reference_artifact_equivalence_does_not_duplicate_explicit_centers(

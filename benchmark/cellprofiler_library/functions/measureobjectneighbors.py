@@ -18,6 +18,7 @@ from typing import ClassVar, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from metaclass_registry import AutoRegisterMeta
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
@@ -58,23 +59,14 @@ class DistanceMethod(Enum):
     WITHIN = "within"
 
 
-_CELLPROFILER_DISTANCE_METHODS = {
-    "adjacent": DistanceMethod.ADJACENT,
-    "expand": DistanceMethod.EXPAND,
-    "expand_until_adjacent": DistanceMethod.EXPAND,
-    "within": DistanceMethod.WITHIN,
-    "within_a_specified_distance": DistanceMethod.WITHIN,
-}
-
-
 def _coerce_distance_method(value: DistanceMethod | str) -> DistanceMethod:
     if isinstance(value, DistanceMethod):
         return value
-    normalized = "_".join(str(value).strip().lower().replace("-", " ").split())
-    try:
-        return _CELLPROFILER_DISTANCE_METHODS[normalized]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported neighbor distance method {value!r}.") from exc
+    return NeighborDistancePlanner.method_for_cellprofiler_literal(str(value))
+
+
+def _neighbor_distance_literal_token(value: str) -> str:
+    return "_".join(value.strip().lower().replace("-", " ").split())
 
 
 @dataclass
@@ -99,16 +91,40 @@ class NeighborDistancePlan:
     measurement_scale: int | str
 
 
-class NeighborDistancePlanner(ABC, metaclass=AutoRegisterMeta):
+class NeighborDistancePlanner(
+    EnumKeyedStrategyMixin[DistanceMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Prepare neighbor-distance state for one closed distance method."""
 
     __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+    __enum_label_attr__ = "method_label"
     method_label: ClassVar[str | None] = None
     method: ClassVar[DistanceMethod | None] = None
+    cellprofiler_literals: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
     def for_method(cls, method: DistanceMethod) -> "NeighborDistancePlanner":
-        return cls.__registry__[method.value]()
+        return cls.for_enum_member(method)
+
+    @classmethod
+    def method_for_cellprofiler_literal(cls, value: str) -> DistanceMethod:
+        normalized = _neighbor_distance_literal_token(value)
+        matches = tuple(
+            planner_type.method
+            for planner_type in cls.registered_strategy_types()
+            if normalized
+            in {
+                _neighbor_distance_literal_token(literal)
+                for literal in planner_type.cellprofiler_literals
+            }
+        )
+        if len(matches) != 1 or matches[0] is None:
+            raise ValueError(f"Unsupported neighbor distance method {value!r}.")
+        return matches[0]
 
     @abstractmethod
     def plan(
@@ -121,7 +137,7 @@ class NeighborDistancePlanner(ABC, metaclass=AutoRegisterMeta):
 
 class AdjacentNeighborDistancePlanner(NeighborDistancePlanner):
     method = DistanceMethod.ADJACENT
-    method_label = method.value
+    cellprofiler_literals = ("adjacent",)
 
     def plan(
         self,
@@ -134,7 +150,7 @@ class AdjacentNeighborDistancePlanner(NeighborDistancePlanner):
 
 class ExpandedNeighborDistancePlanner(NeighborDistancePlanner):
     method = DistanceMethod.EXPAND
-    method_label = method.value
+    cellprofiler_literals = ("expand", "expand_until_adjacent")
 
     def plan(
         self,
@@ -154,7 +170,7 @@ class ExpandedNeighborDistancePlanner(NeighborDistancePlanner):
 
 class WithinNeighborDistancePlanner(NeighborDistancePlanner):
     method = DistanceMethod.WITHIN
-    method_label = method.value
+    cellprofiler_literals = ("within", "within_a_specified_distance")
 
     def plan(
         self,

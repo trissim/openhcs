@@ -8,7 +8,7 @@ import inspect
 import logging
 import os
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -51,6 +51,7 @@ from openhcs.core.runtime_values import (
     normalize_artifact_value,
     with_image_payload_data,
 )
+from openhcs.core.runtime_semantics import RuntimePlaneProjection
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
 logger = logging.getLogger(__name__)
@@ -100,6 +101,9 @@ class FunctionExecutionRequest:
         SourceBindingRuntimeContext.empty()
     )
     group_key: str | None = None
+    plane_projection: RuntimePlaneProjection = field(
+        default_factory=RuntimePlaneProjection.stack
+    )
 
 
 @dataclass(frozen=True)
@@ -112,6 +116,7 @@ class FunctionChainExecutionRequest:
     execution_plan: FunctionStepExecutionPlan
     artifact_inputs: ArtifactInputPlans
     artifact_outputs: ArtifactOutputPlans
+    runtime_plane_index: int
     source_binding_context: SourceBindingRuntimeContext = (
         SourceBindingRuntimeContext.empty()
     )
@@ -134,6 +139,7 @@ class PatternGroupExecutionRequest:
     pattern_group_info: Any
     compiled_group: CompiledFunctionGroup
     component_value: Any
+    component_index: int
 
 
 @dataclass(frozen=True)
@@ -142,6 +148,7 @@ class PatternGroupData:
 
     matching_files: list[str]
     main_data_stack: Any
+    source_slice_shapes: tuple[tuple[int, ...], ...]
     source_binding_context: SourceBindingRuntimeContext
 
 
@@ -470,6 +477,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                 source_binding_plan=request.source_binding_plan,
                 source_binding_context=request.source_binding_context,
                 group_key=request.group_key,
+                plane_projection=request.plane_projection,
             )
         )
         _log_runtime_profile(
@@ -584,6 +592,14 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
                 source_binding_plan=plan.source_binding_plan,
                 source_binding_context=request.source_binding_context,
                 group_key=invocation.key.group_key,
+                plane_projection=RuntimePlaneProjection.for_group_key(
+                    invocation.key.group_key,
+                    plane_index=(
+                        request.runtime_plane_index
+                        if invocation.key.group_key is not None
+                        else None
+                    ),
+                ),
             )
         )
         _log_runtime_profile(
@@ -671,18 +687,21 @@ def _unstack_payload_context(payload: Any, slices: Sequence[Any]) -> list[Any]:
     return [
         image_payload_with_context(
             data=slice_data,
-            mask=None if mask is None else _payload_mask_slice(mask, index),
+            mask=(
+                None
+                if mask is None
+                else _payload_mask_slice(mask, index, slice_count=len(slices))
+            ),
             metadata=metadata.for_channel(index),
         )
         for index, slice_data in enumerate(slices)
     ]
 
 
-def _payload_mask_slice(mask: Any, index: int) -> Any:
-    if not hasattr(mask, "ndim"):
-        return mask
-    if mask.ndim == 3:
-        return mask[index]
+def _payload_mask_slice(mask: Any, index: int, *, slice_count: int) -> Any:
+    mask_array = np.asarray(mask)
+    if mask_array.ndim >= 3 and mask_array.shape[0] == slice_count:
+        return mask_array[index]
     return mask
 
 
@@ -727,7 +746,7 @@ class PatternGroupRuntime:
                 pattern=self.pattern_repr,
             )
             unstack_started_at = time.perf_counter()
-            output_slices = self._validate_and_unstack(processed_stack)
+            output_slices = self._validate_and_unstack(processed_stack, loaded)
             _log_runtime_profile(
                 "pattern_validate_unstack",
                 time.perf_counter() - unstack_started_at,
@@ -745,7 +764,7 @@ class PatternGroupRuntime:
                 pattern=self.pattern_repr,
             )
             cleanup_started_at = time.perf_counter()
-            self._cleanup_collapsed_inputs(output_slices, loaded.matching_files)
+            self._cleanup_collapsed_domains(output_slices, loaded.matching_files)
             _log_runtime_profile(
                 "pattern_cleanup",
                 time.perf_counter() - cleanup_started_at,
@@ -834,6 +853,10 @@ class PatternGroupRuntime:
         return PatternGroupData(
             matching_files=matching_files,
             main_data_stack=main_data_stack,
+            source_slice_shapes=tuple(
+                tuple(slice_data.shape)
+                for slice_data in raw_slice_data
+            ),
             source_binding_context=self._source_binding_context(matching_files),
         )
 
@@ -1153,13 +1176,23 @@ class PatternGroupRuntime:
                 artifact_inputs=component_artifacts.inputs,
                 artifact_outputs=component_artifacts.outputs,
                 source_binding_context=loaded.source_binding_context,
+                runtime_plane_index=request.component_index,
             )
         )
 
-    def _validate_and_unstack(self, processed_stack: Any) -> list[Any]:
+    def _validate_and_unstack(
+        self,
+        processed_stack: Any,
+        loaded: PatternGroupData,
+    ) -> list[Any]:
         processed_data = image_payload_data(processed_stack)
         try:
-            layout = ImageStackLayout.for_stack(processed_data)
+            output_slices = ImageStackLayout.unstack_result_for_source_slices(
+                processed_data,
+                source_slice_shapes=loaded.source_slice_shapes,
+                memory_type=self.plan.output_memory_type,
+                gpu_id=self.plan.device_id,
+            )
         except ValueError as exc:
             logger.error("Function output is not an OpenHCS image stack.")
             logger.error(f"Output type: {type(processed_stack)}")
@@ -1177,11 +1210,6 @@ class PatternGroupRuntime:
                 f"{getattr(processed_data, 'shape', 'unknown')}"
             ) from exc
 
-        output_slices = layout.unstack(
-            array=processed_data,
-            memory_type=self.plan.output_memory_type,
-            gpu_id=self.plan.device_id,
-        )
         return _unstack_payload_context(processed_stack, output_slices)
 
     def _save_outputs(self, output_slices: list[Any], matching_files: list[str]) -> None:
@@ -1229,7 +1257,7 @@ class PatternGroupRuntime:
             Backend.MEMORY.value,
         )
 
-    def _cleanup_collapsed_inputs(
+    def _cleanup_collapsed_domains(
         self,
         output_slices: list[Any],
         matching_files: list[str],
@@ -1238,22 +1266,25 @@ class PatternGroupRuntime:
         num_outputs = len(output_slices)
         num_inputs = len(matching_files)
 
-        if num_outputs < num_inputs:
-            for j in range(num_outputs, num_inputs):
-                unused_input_filename = matching_files[j]
-                unused_input_path = (
-                    self.plan.input_dir / unused_input_filename
-                )
+        if num_outputs >= num_inputs:
+            return
+
+        for j in range(num_outputs, num_inputs):
+            unused_filename = matching_files[j]
+            for cleanup_dir in (self.plan.input_dir, self.plan.output_dir):
+                unused_path = cleanup_dir / unused_filename
                 if context.filemanager.exists(
-                    str(unused_input_path),
+                    str(unused_path),
                     Backend.MEMORY.value,
                 ):
                     context.filemanager.delete(
-                        str(unused_input_path),
+                        str(unused_path),
                         Backend.MEMORY.value,
                     )
                     logger.debug(
-                        f"Deleted unused input file after collapsed output: {unused_input_filename}"
+                        "Deleted unused collapsed-domain file after reduced "
+                        "output cardinality: %s",
+                        unused_path,
                     )
 
 

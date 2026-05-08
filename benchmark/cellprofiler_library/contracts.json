@@ -408,6 +408,9 @@
       "MeasureCorrelation"
     ],
     "function_name": "measure_colocalization",
+    "function_variants": [
+      "measure_colocalization_objects"
+    ],
     "contract": "pure_2d",
     "category": "channel_operation",
     "confidence": 1.0,

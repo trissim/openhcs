@@ -9,9 +9,14 @@ from benchmark.cellprofiler_library.functions.structuring_elements import (
     StructuringElement,
     coerce_structuring_element,
 )
+from openhcs.interop.cellprofiler.setting_names import (
+    SettingNameFamily,
+    optional_setting_value,
+    setting_names,
+)
 
 from .parser import ModuleBlock
-from .settings_binder import SettingsBinder
+from .settings_binder import SettingsBinder, normalize_cellprofiler_setting_name
 
 
 STRUCTURING_ELEMENT_SETTING_NAME = "Structuring element"
@@ -36,27 +41,59 @@ class StructuringElementSetting:
             size=_positive_size(size),
         )
 
-    def bound_kwargs(self) -> dict[str, str | int]:
+    def bound_kwargs(
+        self,
+        *,
+        shape_keyword: str = "structuring_element",
+        size_keyword: str = "size",
+    ) -> dict[str, str | int]:
         """Return generated-code-safe absorbed-function kwargs."""
         return {
-            "structuring_element": self.structuring_element.value,
-            "size": self.size,
+            shape_keyword: self.structuring_element.value,
+            size_keyword: self.size,
         }
+
+
+@dataclass(frozen=True, slots=True)
+class StructuringElementSettingBinding:
+    """Bind one named CellProfiler structuring-element setting to kwargs."""
+
+    setting_name: str | SettingNameFamily = STRUCTURING_ELEMENT_SETTING_NAME
+    default_value: str = DEFAULT_STRUCTURING_ELEMENT_SETTING
+    shape_keyword: str = "structuring_element"
+    size_keyword: str = "size"
+
+    @property
+    def normalized_setting_names(self) -> frozenset[str]:
+        return frozenset(
+            normalize_cellprofiler_setting_name(setting_name)
+            for setting_name in setting_names(self.setting_name)
+        )
+
+    def bound_kwargs(
+        self,
+        module: ModuleBlock,
+        binder: SettingsBinder,
+    ) -> dict[str, str | int]:
+        raw_value = optional_setting_value(module, self.setting_name)
+        if raw_value is None:
+            raw_value = self.default_value
+        parsed_value = binder.parse_value(setting_names(self.setting_name)[0], raw_value)
+        return StructuringElementSetting.from_cellprofiler_value(
+            parsed_value
+        ).bound_kwargs(
+            shape_keyword=self.shape_keyword,
+            size_keyword=self.size_keyword,
+        )
 
 
 def structuring_element_bound_kwargs(
     module: ModuleBlock,
     binder: SettingsBinder,
+    binding: StructuringElementSettingBinding = StructuringElementSettingBinding(),
 ) -> dict[str, str | int]:
     """Lower the common CellProfiler morphology setting into function kwargs."""
-    raw_value = module.get_setting(
-        STRUCTURING_ELEMENT_SETTING_NAME,
-        DEFAULT_STRUCTURING_ELEMENT_SETTING,
-    )
-    parsed_value = binder.parse_value(STRUCTURING_ELEMENT_SETTING_NAME, raw_value)
-    return StructuringElementSetting.from_cellprofiler_value(
-        parsed_value
-    ).bound_kwargs()
+    return binding.bound_kwargs(module, binder)
 
 
 def _structuring_element_parts(value: Any) -> tuple[Any, Any]:

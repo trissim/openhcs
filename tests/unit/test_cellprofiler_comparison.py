@@ -146,6 +146,7 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
                         "value_only": True,
                         "equivalence_reference_output_dir": "native/human",
                         "cellprofiler_timeout_seconds": 120,
+                        "pipeline_params": {"openhcs_max_axis_count": 2},
                     }
                 ]
             }
@@ -167,6 +168,7 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
             value_only=True,
             equivalence_reference_output_dir=Path("native/human"),
             cellprofiler_timeout_seconds=120.0,
+            pipeline_params={"openhcs_max_axis_count": 2},
         ),
     )
 

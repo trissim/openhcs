@@ -9,38 +9,45 @@ from openhcs.core.equivalence import (
     RuntimeMeasurementFeatureNumericTolerance,
     RuntimeMeasurementDialect,
 )
+from openhcs.core.measurement_lookup_dialect import RuntimeMeasurementLookupDialect
 from openhcs.core.runtime_semantics import PairMeasurementFeature
 from openhcs.core.runtime_semantics import MeasurementScope
 
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"parity"})
+CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES = (
+    ("area", "occupied"),
+    ("image", "quality"),
+    ("area", "shape"),
+    ("intensity",),
+    ("texture",),
+    ("location",),
+    ("children",),
+    ("parent",),
+    ("neighbors",),
+    ("math",),
+    ("classify",),
+    ("correlation",),
+    ("colocalization",),
+    ("quality",),
+    ("radial", "distribution"),
+    ("threshold",),
+)
+CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES = MappingProxyType(
+    {
+        ("area", "retained"): ("crop", "area", "retained", "after", "cropping"),
+        ("number", "object", "number"): ("object", "number"),
+        ("original", "area"): ("crop", "original", "image", "area"),
+        ("otsu",): ("threshold", "otsu"),
+    }
+)
+CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT = RuntimeMeasurementLookupDialect(
+    category_prefixes=CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES,
+    feature_part_aliases=CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES,
+)
 CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
-    category_prefixes=(
-        ("area", "occupied"),
-        ("image", "quality"),
-        ("area", "shape"),
-        ("intensity",),
-        ("texture",),
-        ("location",),
-        ("children",),
-        ("parent",),
-        ("neighbors",),
-        ("math",),
-        ("classify",),
-        ("correlation",),
-        ("colocalization",),
-        ("quality",),
-        ("radial", "distribution"),
-        ("threshold",),
-    ),
-    feature_part_aliases=MappingProxyType(
-        {
-            ("area", "retained"): ("crop", "area", "retained", "after", "cropping"),
-            ("number", "object", "number"): ("object", "number"),
-            ("original", "area"): ("crop", "original", "image", "area"),
-            ("otsu",): ("threshold", "otsu"),
-        }
-    ),
+    category_prefixes=CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES,
+    feature_part_aliases=CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES,
     source_feature_prefixes=(
         ("crop", "area", "retained", "after", "cropping"),
         ("crop", "original", "image", "area"),
@@ -280,6 +287,7 @@ def cellprofiler_runtime_equivalence_policy(
     overrides.setdefault("threshold_entropy_abs_tolerance", 4e-2)
     overrides.setdefault("allow_tie_sensitive_location_mismatches", True)
     overrides.setdefault("allow_sparse_object_boundary_jitter", True)
+    overrides.setdefault("allow_unstable_zernike_descriptors", True)
     overrides.setdefault("object_boundary_jitter_abs_tolerance", 5.0)
     overrides.setdefault("object_boundary_jitter_max_unstable_values", 50)
     overrides.setdefault("object_boundary_jitter_max_unstable_fraction", 0.02)

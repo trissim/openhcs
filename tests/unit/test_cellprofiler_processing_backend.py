@@ -121,8 +121,9 @@ def test_cellprofiler_threshold_diagnostics_backend_resolves_numpy() -> None:
     assert sum_of_entropies <= 0.0
 
 
-def test_cellprofiler_threshold_diagnostics_handles_color_slices_planewise() -> None:
+def test_cellprofiler_threshold_diagnostics_handles_nd_images_as_one_domain() -> None:
     from openhcs.processing.backends.cellprofiler.thresholding import (
+        NumpyThresholdDiagnosticsBackendStrategy,
         ThresholdDiagnosticsBackendStrategy,
     )
 
@@ -137,9 +138,25 @@ def test_cellprofiler_threshold_diagnostics_handles_color_slices_planewise() -> 
     binary = image > 0.5
 
     weighted_variance, sum_of_entropies = strategy.diagnostics(image, None, binary)
+    reference_weighted_variance = (
+        NumpyThresholdDiagnosticsBackendStrategy().weighted_variance(
+            image,
+            np.ones(image.shape, dtype=bool),
+            binary,
+        )
+    )
+    reference_sum_of_entropies = (
+        NumpyThresholdDiagnosticsBackendStrategy().sum_of_entropies(
+            image,
+            np.ones(image.shape, dtype=bool),
+            binary,
+        )
+    )
 
-    assert weighted_variance.shape == (3,)
-    assert sum_of_entropies.shape == (3,)
+    assert isinstance(weighted_variance, float)
+    assert isinstance(sum_of_entropies, float)
+    np.testing.assert_allclose(weighted_variance, reference_weighted_variance)
+    np.testing.assert_allclose(sum_of_entropies, reference_sum_of_entropies)
 
 
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
@@ -158,6 +175,7 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
         ObjectIntensityBackendStrategy,
     )
     from openhcs.processing.backends.cellprofiler.intensity_distribution import (
+        NativeNumpyRadialDistributionBackendStrategy,
         NumbaNumpyRadialDistributionBackendStrategy,
         RadialDistributionBackendStrategy,
     )
@@ -273,8 +291,14 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
         )
     ) is NumbaNumpyObjectIntensityBackendStrategy
     assert type(RadialDistributionBackendStrategy.for_memory_type(MemoryType.NUMPY)) is (
-        NumbaNumpyRadialDistributionBackendStrategy
+        NativeNumpyRadialDistributionBackendStrategy
     )
+    assert type(
+        RadialDistributionBackendStrategy.for_memory_type(
+            MemoryType.NUMPY,
+            backend_provider=CellProfilerBackendProvider.NATIVE,
+        )
+    ) is NativeNumpyRadialDistributionBackendStrategy
     assert type(
         RadialDistributionBackendStrategy.for_memory_type(
             MemoryType.NUMPY,

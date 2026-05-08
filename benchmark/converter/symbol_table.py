@@ -117,6 +117,7 @@ from .unmix_colors_settings import (
     unmix_colors_input_name,
     unmix_colors_output_rows,
 )
+from .watershed_settings import WATERSHED_MARKERS_SETTING, WATERSHED_MASK_SETTING
 
 
 class CellProfilerSymbolKind(str, Enum):
@@ -232,15 +233,14 @@ class ModuleArtifactContracts:
 
         Source-bound artifacts are intentionally excluded: they are normal inputs
         from the source-binding layer, not side-channel artifact reads. Values
-        produced by prior modules remain artifact inputs.
+        produced by prior modules remain artifact inputs. ``input_symbols`` is
+        already deduplicated unless a nominal input-role policy preserved
+        repeated CellProfiler names, so this must not deduplicate again.
         """
         return tuple(
             symbol.artifact_spec()
-            for symbol in _unique_symbols(
-                symbol
-                for symbol in self.input_symbols
-                if not symbol.is_external_source
-            )
+            for symbol in self.input_symbols
+            if not symbol.is_external_source
         )
 
     @property
@@ -261,6 +261,51 @@ class ModuleArtifactContracts:
             outputs=self.outputs,
             declared_outputs=self.declared_outputs,
         )
+
+
+class ModuleInputRolePolicy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal policy for modules where repeated input names carry distinct roles."""
+
+    __registry_key__ = "module_name"
+    __skip_if_no_key__ = True
+    module_name: ClassVar[str | None] = None
+
+    @classmethod
+    def for_module(cls, module_name: str) -> "ModuleInputRolePolicy":
+        policy_type = cls.__registry__.get(
+            canonical_module_name(module_name),
+            DeduplicatingModuleInputRolePolicy,
+        )
+        return policy_type()
+
+    def preserve_duplicate_inputs(self, module: ModuleBlock) -> bool:
+        """Return whether input order and repeated names are semantic."""
+        del module
+        return False
+
+
+class DeduplicatingModuleInputRolePolicy(ModuleInputRolePolicy):
+    """Default CellProfiler workspace behavior: same name and kind is one artifact."""
+
+
+class RolePreservingModuleInputRolePolicy(ModuleInputRolePolicy):
+    """Base for modules whose positional input roles remain distinct after naming."""
+
+    def preserve_duplicate_inputs(self, module: ModuleBlock) -> bool:
+        del module
+        return True
+
+
+class WatershedInputRolePolicy(RolePreservingModuleInputRolePolicy):
+    """Preserve image/marker/mask roles even when the mask is the input image."""
+
+    module_name = "Watershed"
+
+
+class CorrectIlluminationApplyInputRolePolicy(RolePreservingModuleInputRolePolicy):
+    """Preserve repeated image/function pairs for paired illumination correction."""
+
+    module_name = "CorrectIlluminationApply"
 
 
 @dataclass(frozen=True, slots=True)
@@ -332,7 +377,7 @@ PERCENT_TOUCHING_IMAGE_SETTING = SettingNameFamily(
 )
 OUTPUT_OBJECTS_SETTING = SettingNameFamily(
     "Name the output objects",
-    aliases=("Name the objects to be identified", "Object"),
+    aliases=("Name the output object", "Name the objects to be identified", "Object"),
 )
 IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
     "Name the primary objects to be identified",
@@ -805,6 +850,55 @@ def _identify_primary_objects(
         module,
     )
     return _contracts(module, builder, inputs=[image], outputs=[measurements, objects])
+
+
+def _watershed(
+    builder: _SymbolTableBuilder,
+    module: ModuleBlock,
+) -> ModuleArtifactContracts:
+    image = builder.require(
+        _setting(module, INPUT_IMAGE_SETTING),
+        CellProfilerSymbolKind.IMAGE,
+        module,
+    )
+    inputs = [image]
+
+    marker_name = _normalized_setting_symbol(module, WATERSHED_MARKERS_SETTING)
+    if marker_name is not None:
+        inputs.append(
+            builder.require(
+                marker_name,
+                CellProfilerSymbolKind.IMAGE,
+                module,
+            )
+        )
+
+    mask_name = _normalized_setting_symbol(module, WATERSHED_MASK_SETTING)
+    if mask_name is not None:
+        inputs.append(
+            builder.require(
+                mask_name,
+                CellProfilerSymbolKind.IMAGE,
+                module,
+            )
+        )
+
+    measurements = builder.declare(
+        _measurement_name(module),
+        CellProfilerSymbolKind.MEASUREMENTS,
+        module,
+    )
+    objects = builder.declare(
+        _setting(module, OUTPUT_OBJECTS_SETTING),
+        CellProfilerSymbolKind.OBJECTS,
+        module,
+    )
+    return _contracts(
+        module,
+        builder,
+        inputs=inputs,
+        outputs=[measurements, objects],
+    )
 
 
 def _identify_secondary_objects(
@@ -1526,7 +1620,6 @@ def _correct_illumination_apply(
         builder,
         inputs=inputs,
         outputs=outputs,
-        preserve_duplicate_inputs=True,
     )
 
 
@@ -2025,6 +2118,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("Opening",), _opening),
     (("Crop",), _crop),
     (("IdentifyPrimaryObjects",), _identify_primary_objects),
+    (("Watershed",), _watershed),
     (("IdentifySecondaryObjects",), _identify_secondary_objects),
     (("IdentifyTertiaryObjects",), _identify_tertiary_objects),
     (("ConvertObjectsToImage",), _convert_objects_to_image),
@@ -2241,7 +2335,11 @@ def _contracts(
     outputs: Iterable[CellProfilerSymbol] = (),
     preserve_duplicate_inputs: bool = False,
 ) -> ModuleArtifactContracts:
-    input_symbols = tuple(inputs) if preserve_duplicate_inputs else _unique_symbols(inputs)
+    preserve_role_inputs = (
+        preserve_duplicate_inputs
+        or ModuleInputRolePolicy.for_module(module.name).preserve_duplicate_inputs(module)
+    )
+    input_symbols = tuple(inputs) if preserve_role_inputs else _unique_symbols(inputs)
     return ModuleArtifactContracts(
         module_name=module.name,
         module_num=module.module_num,
@@ -2308,7 +2406,13 @@ def _normalized_optional_symbol_value(value: str) -> str | None:
     if not value.strip():
         return None
     normalized = _normalize_symbol_name(value)
-    if normalized.lower() in {"leave this black", "none", "do not use"}:
+    if normalized.lower() in {
+        "leave blank",
+        "leave this black",
+        "leave this blank",
+        "none",
+        "do not use",
+    }:
         return None
     return normalized
 

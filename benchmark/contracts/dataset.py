@@ -26,19 +26,22 @@ class DatasetSourceKind(Enum):
 
     ARCHIVE_URLS = "archive_urls"
     GIT_SPARSE = "git_sparse"
+    GIT_SPARSE_WITH_ARCHIVES = "git_sparse_with_archives"
 
 
 DatasetSourceSpec = product_record(
     "DatasetSourceSpec",
     (
         "kind: DatasetSourceKind; urls: tuple[str, ...]; "
-        "git_url: str | None; git_ref: str; sparse_paths: tuple[str, ...]"
+        "git_url: str | None; git_ref: str; sparse_paths: tuple[str, ...]; "
+        "tls_verify: bool"
     ),
     defaults={
         "urls": (),
         "git_url": None,
         "git_ref": "HEAD",
         "sparse_paths": (),
+        "tls_verify": True,
     },
     doc="Nominal description of where a benchmark dataset comes from.",
     module_name=__name__,

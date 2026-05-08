@@ -15,7 +15,7 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
-    with_image_payload_data,
+    image_payload_with_context,
 )
 
 
@@ -112,6 +112,34 @@ def _apply_image_mask(pixel_data: np.ndarray, mask: Any | None) -> np.ndarray:
     return pixel_data * mask_array
 
 
+def _image_math_operand_masks(source_payload: Any, operand_count: int) -> list[Any | None]:
+    """Return one CellProfiler mask domain per ImageMath operand."""
+    source_mask = image_payload_mask(source_payload)
+    if source_mask is None:
+        return [None] * operand_count
+    mask_array = np.asarray(source_mask, dtype=bool)
+    if mask_array.ndim >= 3 and mask_array.shape[0] >= operand_count:
+        return [mask_array[index] for index in range(operand_count)]
+    return [mask_array] + [None] * max(operand_count - 1, 0)
+
+
+def _image_math_output_mask(
+    operand_masks: list[Any | None],
+    *,
+    ignore_masks: bool,
+) -> Any | None:
+    """Combine operand masks the same way CellProfiler ImageMath does."""
+    if ignore_masks:
+        return None
+    output_mask = operand_masks[0] if operand_masks else None
+    for mask in operand_masks[1:]:
+        if output_mask is None:
+            output_mask = mask
+        elif mask is not None:
+            output_mask = np.asarray(output_mask, dtype=bool) & np.asarray(mask, dtype=bool)
+    return output_mask
+
+
 @numpy
 def image_math(
     image: np.ndarray,
@@ -150,7 +178,6 @@ def image_math(
 
     operation = _coerce_math_operation(operation)
     source_payload = image
-    source_mask = None if ignore_masks else image_payload_mask(source_payload)
     image = image_payload_data(image)
     
     # Handle input dimensions
@@ -166,6 +193,7 @@ def image_math(
     # Apply factors to each image (except for binary output operations)
     pixel_data = []
     operand_count = 1 if operation in SINGLE_IMAGE_OPS else n_images
+    operand_masks = _image_math_operand_masks(source_payload, operand_count)
     for i in range(operand_count):
         pd = image[i].astype(np.float64)
         if operation not in BINARY_OUTPUT_OPS and factors[i] != 1.0:
@@ -288,15 +316,18 @@ def image_math(
     if output_pixel_data.ndim == 2:
         output_pixel_data = output_pixel_data[np.newaxis, :, :]
 
-    if not ignore_masks:
-        output_pixel_data = _apply_image_mask(output_pixel_data, source_mask)
+    output_mask = _image_math_output_mask(
+        operand_masks,
+        ignore_masks=ignore_masks,
+    )
+    if output_mask is not None:
+        output_pixel_data = _apply_image_mask(output_pixel_data, output_mask)
 
     output = output_pixel_data.astype(np.float32)
     if ignore_masks:
         return output
-    return with_image_payload_data(
-        source_payload,
+    return image_payload_with_context(
         output,
-        mask=source_mask,
+        mask=output_mask,
         metadata=image_payload_metadata(source_payload).without_unit_interval_intensity_scale(),
     )

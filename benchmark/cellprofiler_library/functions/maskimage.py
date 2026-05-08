@@ -19,6 +19,7 @@ from benchmark.cellprofiler_library.image_geometry import (
     collapse_singleton_plane_stack,
     restore_image_mask_planes,
 )
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class MaskSource(Enum):
@@ -37,7 +38,7 @@ def mask_image(
     binary_threshold: float = 0.5,
 ) -> np.ndarray:
     """Mask an image using object labels or a binary/grayscale mask image."""
-    mask_source = _coerce_mask_source(mask_source)
+    mask_source = coerce_cellprofiler_enum(MaskSource, mask_source)
     masked_plane_results = tuple(
         _masked_plane(
             plane.image,
@@ -84,16 +85,6 @@ def _masked_plane(
     masked = image_data.copy()
     masked[~binary_mask] = 0
     return masked, np.asarray(binary_mask, dtype=bool)
-
-
-def _coerce_mask_source(value: MaskSource | str) -> MaskSource:
-    if isinstance(value, MaskSource):
-        return value
-    normalized = str(value).strip().lower()
-    for source in MaskSource:
-        if normalized in {source.name.lower(), source.value.lower()}:
-            return source
-    raise ValueError(f"Unsupported MaskImage mask source: {value!r}.")
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

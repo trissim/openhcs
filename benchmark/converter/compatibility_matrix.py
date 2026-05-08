@@ -17,10 +17,16 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
 from openhcs.interop.cellprofiler.parser import CPPipeParser
+from openhcs.interop.cellprofiler.module_semantics import (
+    CellProfilerModuleSemantics,
+    cellprofiler_module_semantics,
+)
 
 from .cppipe_corpus import (
     CPPipeCorpusCase,
     CPPipeCorpusStatus,
+    comparison_manifest_cppipe_corpus,
+    comparison_manifests_cppipe_corpus,
     default_cppipe_corpus,
 )
 from .cppipe_module_roles import CPPipeModuleRole, cppipe_module_role
@@ -63,10 +69,23 @@ class SourceModuleCoverage(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class _CorpusModuleObservations:
+    """Observed module coverage from the registered .cppipe benchmark corpus."""
+
+    coverage: Mapping[str, ModuleCorpusCoverage]
+    case_names_by_module: Mapping[str, tuple[str, ...]]
+    cppipe_case_count: int
+    supported_cppipe_case_count: int
+    known_invalid_cppipe_case_count: int
+    module_instance_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class ModuleCompatibilityCoverage:
     """Compatibility coverage for one absorbed CellProfiler module."""
 
     module_name: str
+    semantics: CellProfilerModuleSemantics | None
     function_name: str
     importable: bool
     processing_contract: ProcessingContract | None
@@ -85,8 +104,10 @@ class CPPipeModuleCompatibilityCoverage:
     """Compatibility coverage for one module observed in accepted .cppipe corpus."""
 
     module_name: str
+    semantics: CellProfilerModuleSemantics | None
     corpus_coverage: ModuleCorpusCoverage
     absorption_coverage: CPPipeModuleAbsorptionCoverage
+    cppipe_case_names: tuple[str, ...] = ()
 
     @property
     def is_missing_processing_module(self) -> bool:
@@ -101,11 +122,48 @@ class SourceModuleCompatibilityCoverage:
     """Compatibility coverage for one checked-in CellProfiler source module."""
 
     module_name: str
+    semantics: CellProfilerModuleSemantics | None
     coverage: SourceModuleCoverage
 
     @property
     def is_missing(self) -> bool:
         return self.coverage is SourceModuleCoverage.MISSING
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerBenchmarkCoverageSummary:
+    """Benchmark corpus coverage for absorbed and observed CellProfiler modules."""
+
+    cppipe_case_count: int
+    supported_cppipe_case_count: int
+    known_invalid_cppipe_case_count: int
+    module_instance_count: int
+    unique_cppipe_module_count: int
+    supported_absorbed_processing_modules: tuple[str, ...]
+    known_invalid_absorbed_processing_modules: tuple[str, ...]
+    untested_absorbed_processing_modules: tuple[str, ...]
+    infrastructure_cppipe_modules: tuple[str, ...]
+    missing_processing_cppipe_modules: tuple[str, ...]
+
+    @property
+    def supported_absorbed_processing_module_count(self) -> int:
+        return len(self.supported_absorbed_processing_modules)
+
+    @property
+    def known_invalid_absorbed_processing_module_count(self) -> int:
+        return len(self.known_invalid_absorbed_processing_modules)
+
+    @property
+    def untested_absorbed_processing_module_count(self) -> int:
+        return len(self.untested_absorbed_processing_modules)
+
+    @property
+    def infrastructure_cppipe_module_count(self) -> int:
+        return len(self.infrastructure_cppipe_modules)
+
+    @property
+    def missing_processing_cppipe_module_count(self) -> int:
+        return len(self.missing_processing_cppipe_modules)
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +173,7 @@ class CellProfilerCompatibilityReport:
     modules: tuple[ModuleCompatibilityCoverage, ...]
     cppipe_modules: tuple[CPPipeModuleCompatibilityCoverage, ...]
     source_modules: tuple[SourceModuleCompatibilityCoverage, ...]
+    benchmark_coverage: CellProfilerBenchmarkCoverageSummary
 
     @property
     def unresolved_processing_contracts(
@@ -163,21 +222,25 @@ def build_cellprofiler_compatibility_report(
 ) -> CellProfilerCompatibilityReport:
     """Build the current CellProfiler compatibility coverage matrix."""
     absorbed_modules = frozenset(list_modules())
-    corpus_coverage = _module_corpus_coverage(
+    corpus_observations = _corpus_module_observations(
         parser or CPPipeParser(),
         corpus_cases or default_cppipe_corpus(),
     )
     modules = tuple(
-        _module_compatibility_coverage(module_name, corpus_coverage)
+        _module_compatibility_coverage(
+            module_name,
+            corpus_observations.coverage,
+        )
         for module_name in sorted(absorbed_modules)
     )
     cppipe_modules = tuple(
         _cppipe_module_compatibility_coverage(
             module_name,
             coverage,
+            corpus_observations.case_names_by_module.get(module_name, ()),
             absorbed_modules,
         )
-        for module_name, coverage in sorted(corpus_coverage.items())
+        for module_name, coverage in sorted(corpus_observations.coverage.items())
     )
     return CellProfilerCompatibilityReport(
         modules=modules,
@@ -190,6 +253,41 @@ def build_cellprofiler_compatibility_report(
                 source_modules_root,
             )
         ),
+        benchmark_coverage=_benchmark_coverage_summary(
+            corpus_observations,
+            modules,
+            cppipe_modules,
+        ),
+    )
+
+
+def build_cellprofiler_compatibility_report_for_manifest(
+    manifest_path: Path,
+    *,
+    parser: CPPipeParser | None = None,
+    source_modules_root: Path | None = None,
+) -> CellProfilerCompatibilityReport:
+    """Build compatibility coverage over a benchmark comparison manifest."""
+
+    return build_cellprofiler_compatibility_report(
+        parser=parser,
+        corpus_cases=comparison_manifest_cppipe_corpus(manifest_path),
+        source_modules_root=source_modules_root,
+    )
+
+
+def build_cellprofiler_compatibility_report_for_manifests(
+    manifest_paths: Sequence[Path],
+    *,
+    parser: CPPipeParser | None = None,
+    source_modules_root: Path | None = None,
+) -> CellProfilerCompatibilityReport:
+    """Build compatibility coverage over multiple benchmark comparison manifests."""
+
+    return build_cellprofiler_compatibility_report(
+        parser=parser,
+        corpus_cases=comparison_manifests_cppipe_corpus(manifest_paths),
+        source_modules_root=source_modules_root,
     )
 
 
@@ -221,6 +319,7 @@ def _module_compatibility_coverage(
 
     return ModuleCompatibilityCoverage(
         module_name=module_name,
+        semantics=cellprofiler_module_semantics(module_name),
         function_name=function_name,
         importable=importable,
         processing_contract=processing_contract,
@@ -237,15 +336,18 @@ def _module_compatibility_coverage(
 def _cppipe_module_compatibility_coverage(
     module_name: str,
     corpus_coverage: ModuleCorpusCoverage,
+    cppipe_case_names: tuple[str, ...],
     absorbed_modules: frozenset[str],
 ) -> CPPipeModuleCompatibilityCoverage:
     return CPPipeModuleCompatibilityCoverage(
         module_name=module_name,
+        semantics=cellprofiler_module_semantics(module_name),
         corpus_coverage=corpus_coverage,
         absorption_coverage=_cppipe_module_absorption_coverage(
             module_name,
             absorbed_modules,
         ),
+        cppipe_case_names=cppipe_case_names,
     )
 
 
@@ -253,24 +355,25 @@ def _cppipe_module_absorption_coverage(
     module_name: str,
     absorbed_modules: frozenset[str],
 ) -> CPPipeModuleAbsorptionCoverage:
-    if module_name in absorbed_modules:
-        return CPPipeModuleAbsorptionCoverage.ABSORBED_PROCESSING
     if cppipe_module_role(module_name).role is CPPipeModuleRole.INFRASTRUCTURE:
         return CPPipeModuleAbsorptionCoverage.INFRASTRUCTURE
+    if module_name in absorbed_modules:
+        return CPPipeModuleAbsorptionCoverage.ABSORBED_PROCESSING
     return CPPipeModuleAbsorptionCoverage.MISSING_PROCESSING
 
 
 def _source_module_compatibility_coverage(
     module_name: str,
 ) -> SourceModuleCompatibilityCoverage:
-    if get_contract(module_name) is not None:
-        coverage = SourceModuleCoverage.ABSORBED
-    elif cppipe_module_role(module_name).role is CPPipeModuleRole.INFRASTRUCTURE:
+    if cppipe_module_role(module_name).role is CPPipeModuleRole.INFRASTRUCTURE:
         coverage = SourceModuleCoverage.INFRASTRUCTURE
+    elif get_contract(module_name) is not None:
+        coverage = SourceModuleCoverage.ABSORBED
     else:
         coverage = SourceModuleCoverage.MISSING
     return SourceModuleCompatibilityCoverage(
         module_name=module_name,
+        semantics=cellprofiler_module_semantics(module_name),
         coverage=coverage,
     )
 
@@ -304,19 +407,89 @@ def _artifact_contract_coverage(module_name: str) -> ArtifactContractCoverage:
     return ArtifactContractCoverage.GENERIC_INFERENCE
 
 
-def _module_corpus_coverage(
+def _corpus_module_observations(
     parser: CPPipeParser,
     corpus_cases: Sequence[CPPipeCorpusCase],
-) -> Mapping[str, ModuleCorpusCoverage]:
+) -> _CorpusModuleObservations:
     coverage: dict[str, ModuleCorpusCoverage] = {}
+    case_names_by_module: dict[str, list[str]] = {}
+    supported_cppipe_case_count = 0
+    known_invalid_cppipe_case_count = 0
+    module_instance_count = 0
+
     for case in corpus_cases:
         case_coverage = _case_corpus_coverage(case.status)
-        for module_name in _cppipe_module_names(parser, case.cppipe_path):
+        if case_coverage is ModuleCorpusCoverage.SUPPORTED_CORPUS:
+            supported_cppipe_case_count += 1
+        else:
+            known_invalid_cppipe_case_count += 1
+
+        module_names = _cppipe_module_names(parser, case.cppipe_path)
+        module_instance_count += len(module_names)
+        for module_name in module_names:
             coverage[module_name] = _merged_corpus_coverage(
                 coverage.get(module_name),
                 case_coverage,
             )
-    return coverage
+            module_case_names = case_names_by_module.setdefault(module_name, [])
+            if case.name not in module_case_names:
+                module_case_names.append(case.name)
+
+    return _CorpusModuleObservations(
+        coverage=coverage,
+        case_names_by_module={
+            module_name: tuple(case_names)
+            for module_name, case_names in case_names_by_module.items()
+        },
+        cppipe_case_count=len(corpus_cases),
+        supported_cppipe_case_count=supported_cppipe_case_count,
+        known_invalid_cppipe_case_count=known_invalid_cppipe_case_count,
+        module_instance_count=module_instance_count,
+    )
+
+
+def _benchmark_coverage_summary(
+    corpus_observations: _CorpusModuleObservations,
+    modules: Sequence[ModuleCompatibilityCoverage],
+    cppipe_modules: Sequence[CPPipeModuleCompatibilityCoverage],
+) -> CellProfilerBenchmarkCoverageSummary:
+    return CellProfilerBenchmarkCoverageSummary(
+        cppipe_case_count=corpus_observations.cppipe_case_count,
+        supported_cppipe_case_count=corpus_observations.supported_cppipe_case_count,
+        known_invalid_cppipe_case_count=(
+            corpus_observations.known_invalid_cppipe_case_count
+        ),
+        module_instance_count=corpus_observations.module_instance_count,
+        unique_cppipe_module_count=len(corpus_observations.coverage),
+        supported_absorbed_processing_modules=tuple(
+            module.module_name
+            for module in modules
+            if module.corpus_coverage is ModuleCorpusCoverage.SUPPORTED_CORPUS
+        ),
+        known_invalid_absorbed_processing_modules=tuple(
+            module.module_name
+            for module in modules
+            if module.corpus_coverage is ModuleCorpusCoverage.KNOWN_INVALID_CORPUS
+        ),
+        untested_absorbed_processing_modules=tuple(
+            module.module_name
+            for module in modules
+            if module.corpus_coverage is ModuleCorpusCoverage.NOT_IN_CORPUS
+        ),
+        infrastructure_cppipe_modules=tuple(
+            module.module_name
+            for module in cppipe_modules
+            if (
+                module.absorption_coverage
+                is CPPipeModuleAbsorptionCoverage.INFRASTRUCTURE
+            )
+        ),
+        missing_processing_cppipe_modules=tuple(
+            module.module_name
+            for module in cppipe_modules
+            if module.is_missing_processing_module
+        ),
+    )
 
 
 def _case_corpus_coverage(status: CPPipeCorpusStatus) -> ModuleCorpusCoverage:

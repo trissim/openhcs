@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
 from threading import Lock
@@ -30,6 +31,15 @@ PROCESSING_PREPARE_ATTR = "__openhcs_prepare__"
 RUNTIME_IMAGE_EXECUTION_MODE_ATTR = "__openhcs_runtime_image_execution_mode__"
 _PREPARED_CALLABLE_KEYS: set[tuple[str, str, int]] = set()
 _PREPARED_CALLABLE_LOCK = Lock()
+
+
+class CompilerPreparedAutoRegisterFamily(ABC):
+    """AutoRegisterMeta family that can prepare runtime compiler substrates."""
+
+    @classmethod
+    @abstractmethod
+    def prepare_registered_family(cls) -> None:
+        """Prepare registered implementations before timed callable execution."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,13 +356,14 @@ def _prepare_processing_module(module_name: str) -> None:
 
 @lru_cache(maxsize=None)
 def _prepare_module_autoregister_families(module_name: str) -> None:
-    """Materialize AutoRegisterMeta registries declared by a callable module."""
+    """Prepare AutoRegisterMeta families imported by a callable module."""
     module = importlib.import_module(module_name)
     for _name, candidate in inspect.getmembers(module, inspect.isclass):
-        namespace = vars(candidate)
-        if "__registry__" not in namespace or "__registry_key__" not in namespace:
+        if not issubclass(candidate, CompilerPreparedAutoRegisterFamily):
             continue
-        tuple(candidate.__registry__.values())
+        if candidate is CompilerPreparedAutoRegisterFamily:
+            continue
+        candidate.prepare_registered_family()
 
 
 def _callable_name(func: Any) -> str:

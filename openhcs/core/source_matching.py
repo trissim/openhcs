@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping
 
@@ -303,6 +304,14 @@ def source_filters_match(
 ) -> bool:
     """Return whether one source path satisfies all source-filter clauses."""
 
+    return _source_filters_match_cached(str(file_path), tuple(filters))
+
+
+@lru_cache(maxsize=65536)
+def _source_filters_match_cached(
+    file_path: str,
+    filters: tuple[SourceFilterClause, ...],
+) -> bool:
     return all(filter_clause_matches(file_path, clause) for clause in filters)
 
 
@@ -312,7 +321,7 @@ def filter_clause_matches(
 ) -> bool:
     """Return whether one source path satisfies one source-filter clause."""
 
-    target = SourceFilterTargetResolver.for_subject(clause.subject).resolve_text(file_path)
+    target = _source_filter_target_text(file_path, clause.subject)
     return SourceFilterMatcher.for_match_type(clause.match_type).matches(
         SourceFilterMatchRequest(
             file_path=file_path,
@@ -320,6 +329,27 @@ def filter_clause_matches(
             target=target,
         )
     )
+
+
+@lru_cache(maxsize=65536)
+def _source_filter_target_text(
+    file_path: str,
+    subject: SourceFilterSubject,
+) -> str:
+    return SourceFilterTargetResolver.for_subject(subject).resolve_text(file_path)
+
+
+@lru_cache(maxsize=8192)
+def source_path_identity_key(path: str) -> str:
+    """Return the cached lexical identity used for source-binding path matches."""
+
+    return str(Path(path))
+
+
+def source_paths_equal(left: str, right: str) -> bool:
+    """Return whether two source paths identify the same source-binding path."""
+
+    return source_path_identity_key(left) == source_path_identity_key(right)
 
 
 def merge_source_metadata(
@@ -369,8 +399,8 @@ def source_metadata_value(
     """Return a metadata value by semantic key, ignoring spelling separators."""
 
     normalized_key = normalize_source_metadata_key(key)
-    for candidate_key, value in metadata.items():
-        if normalize_source_metadata_key(str(candidate_key)) == normalized_key:
+    for candidate_key, value in normalized_source_metadata_items(metadata):
+        if candidate_key == normalized_key:
             return str(value)
     return None
 
@@ -422,10 +452,21 @@ def source_metadata_values_equal(left: str, right: str) -> bool:
     return False
 
 
+@lru_cache(maxsize=4096)
 def normalize_source_metadata_key(key: str) -> str:
     """Normalize metadata keys across parser, regex, and setup-module spellings."""
 
     return "".join(character for character in key.lower() if character.isalnum())
+
+
+def normalized_source_metadata_items(
+    metadata: Mapping[str, Any],
+) -> tuple[tuple[str, Any], ...]:
+    """Return metadata items keyed by normalized semantic field names."""
+    return tuple(
+        (normalize_source_metadata_key(str(candidate_key)), value)
+        for candidate_key, value in metadata.items()
+    )
 
 
 def source_metadata_component(field: str) -> AllComponents | None:

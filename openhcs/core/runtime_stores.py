@@ -151,6 +151,7 @@ class RuntimeValueStore:
             tuple[ArtifactKey, RuntimeArtifactLocation],
             StoredRuntimeValue,
         ] = OrderedDict()
+        self._observation_records: list[StoredRuntimeValue] = []
         self._current_location_by_key: dict[ArtifactKey, RuntimeArtifactLocation] = {}
         self._revision = 0
         self._find_cache: dict[
@@ -186,6 +187,7 @@ class RuntimeValueStore:
         if existing is not None:
             _validate_overwrite(existing, record)
         self._records_by_location[(value.key, record.location)] = record
+        self._observation_records.append(record)
         self._current_location_by_key[value.key] = record.location
         self._mark_mutated()
         return record
@@ -208,6 +210,7 @@ class RuntimeValueStore:
             location=RuntimeArtifactLocation(path=path, backend=backend),
         )
         self._records_by_location[(value.key, record.location)] = record
+        self._observation_records.append(record)
         self._current_location_by_key[value.key] = record.location
         self._mark_mutated()
         return record
@@ -295,6 +298,10 @@ class RuntimeValueStore:
     def values(self) -> tuple[StoredRuntimeValue, ...]:
         """Return stored records in insertion order."""
         return tuple(self._records_by_location.values())
+
+    def observed_values(self) -> tuple[StoredRuntimeValue, ...]:
+        """Return every runtime artifact write in insertion order."""
+        return tuple(self._observation_records)
 
     def __len__(self) -> int:
         return len(self._records_by_location)

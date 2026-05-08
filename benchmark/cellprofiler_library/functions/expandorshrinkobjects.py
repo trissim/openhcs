@@ -14,8 +14,9 @@ from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import (
+    ObjectLabelDomain,
     ObjectLabelDomainScope,
-    dense_object_label_id_domain,
+    dense_object_label_max_present_id,
 )
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
@@ -40,6 +41,20 @@ class ExpandShrinkMode(Enum):
     SKELETONIZE = "skeletonize"
 
 
+class CellProfilerExpandShrinkOperation(str, Enum):
+    """Closed CellProfiler UI operation dialect for ExpandOrShrinkObjects."""
+
+    SHRINK_TO_POINT = "Shrink objects to a point"
+    EXPAND_UNTIL_TOUCHING = "Expand objects until touching"
+    ADD_DIVIDING_LINES = "Add partial dividing lines between objects"
+    SHRINK_DEFINED_PIXELS = "Shrink objects by a specified number of pixels"
+    SHRINK_BY_MEASUREMENT = "Shrink objects by a previous measurement"
+    EXPAND_DEFINED_PIXELS = "Expand objects by a specified number of pixels"
+    EXPAND_BY_MEASUREMENT = "Expand objects by a previous measurement"
+    SKELETONIZE = "Skeletonize each object"
+    DESPUR = "Remove spurs"
+
+
 class ExpandShrinkOperationStrategy(
     EnumKeyedStrategyMixin[ExpandShrinkMode],
     ABC,
@@ -52,6 +67,7 @@ class ExpandShrinkOperationStrategy(
     __enum_member_attr__ = "mode"
     mode: ClassVar[ExpandShrinkMode | None] = None
     strategy_label: ClassVar[str | None] = None
+    cellprofiler_operations: ClassVar[tuple[CellProfilerExpandShrinkOperation, ...]] = ()
 
     @classmethod
     def for_mode(
@@ -71,11 +87,22 @@ class ExpandShrinkOperationStrategy(
     ) -> np.ndarray:
         """Return transformed labels for this operation mode."""
 
+    def output_domain(self, labels: np.ndarray) -> ObjectLabelDomain:
+        """Return CP's semantic object domain for transformed labels."""
+        return ObjectLabelDomain(
+            declared_object_count=dense_object_label_max_present_id(labels),
+            scope=ObjectLabelDomainScope.PLANE,
+        )
+
 
 class ExpandDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
     """Expand labeled objects by a fixed pixel radius."""
 
     mode = ExpandShrinkMode.EXPAND_DEFINED_PIXELS
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.EXPAND_DEFINED_PIXELS,
+        CellProfilerExpandShrinkOperation.EXPAND_BY_MEASUREMENT,
+    )
 
     def apply(
         self,
@@ -91,6 +118,9 @@ class ExpandInfiniteStrategy(ExpandShrinkOperationStrategy):
     """Expand labeled objects until all background is assigned."""
 
     mode = ExpandShrinkMode.EXPAND_INFINITE
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.EXPAND_UNTIL_TOUCHING,
+    )
 
     def apply(
         self,
@@ -106,6 +136,10 @@ class ShrinkDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
     """Shrink labeled objects by a fixed pixel radius."""
 
     mode = ExpandShrinkMode.SHRINK_DEFINED_PIXELS
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.SHRINK_DEFINED_PIXELS,
+        CellProfilerExpandShrinkOperation.SHRINK_BY_MEASUREMENT,
+    )
 
     def apply(
         self,
@@ -121,6 +155,9 @@ class ShrinkToPointStrategy(ExpandShrinkOperationStrategy):
     """Shrink each object to its center point."""
 
     mode = ExpandShrinkMode.SHRINK_TO_POINT
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.SHRINK_TO_POINT,
+    )
 
     def apply(
         self,
@@ -136,6 +173,9 @@ class AddDividingLinesStrategy(ExpandShrinkOperationStrategy):
     """Remove touching object boundary pixels."""
 
     mode = ExpandShrinkMode.ADD_DIVIDING_LINES
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.ADD_DIVIDING_LINES,
+    )
 
     def apply(
         self,
@@ -151,6 +191,7 @@ class DespurStrategy(ExpandShrinkOperationStrategy):
     """Remove object spurs by repeated opening."""
 
     mode = ExpandShrinkMode.DESPUR
+    cellprofiler_operations = (CellProfilerExpandShrinkOperation.DESPUR,)
 
     def apply(
         self,
@@ -166,6 +207,7 @@ class SkeletonizeStrategy(ExpandShrinkOperationStrategy):
     """Reduce each object to a skeleton."""
 
     mode = ExpandShrinkMode.SKELETONIZE
+    cellprofiler_operations = (CellProfilerExpandShrinkOperation.SKELETONIZE,)
 
     def apply(
         self,
@@ -500,18 +542,20 @@ def expand_or_shrink_objects(
     """
     labels_int = object_label_dense_array(labels, dtype=np.int32)
 
-    result_labels = ExpandShrinkOperationStrategy.for_mode(mode).apply(
+    operation = ExpandShrinkOperationStrategy.for_mode(mode)
+    result_labels = operation.apply(
         labels_int,
         iterations=iterations,
         fill_holes=fill_holes,
     )
-    object_ids = dense_object_label_id_domain(result_labels)
+    output_domain = operation.output_domain(result_labels)
 
     return image, object_label_payload_with_dense_labels(
         labels,
         result_labels.astype(np.int32, copy=False),
-        declared_object_ids=object_ids,
-        domain_scope=ObjectLabelDomainScope.PLANE,
+        declared_object_count=output_domain.declared_object_count,
+        declared_object_ids=output_domain.declared_object_ids,
+        domain_scope=output_domain.scope,
     )
 
 

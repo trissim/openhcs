@@ -156,47 +156,40 @@ def _grid_definition(
     ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
 ) -> GridDefinition:
     """Build executable grid geometry from a runtime grid or direct kwargs."""
-    height, width = image_shape
-    if grid is not None:
-        grid_rows = grid.rows
-        grid_columns = grid.columns
-        x_spacing = grid.x_spacing
-        y_spacing = grid.y_spacing
-        x_origin = grid.x_origin
-        y_origin = grid.y_origin
-        ordering = grid.ordering
-    ordering = _coerce_function_enum(SpatialGridOrdering, ordering)
-
-    i_grid, j_grid = np.mgrid[0:grid_rows, 0:grid_columns]
-    y_locations = y_origin + i_grid * y_spacing
-    x_locations = x_origin + j_grid * x_spacing
-    spot_table = _grid_spot_table(grid_rows, grid_columns, ordering)
+    spatial_grid = (
+        grid
+        if grid is not None
+        else SpatialGrid(
+            name="grid",
+            rows=grid_rows,
+            columns=grid_columns,
+            x_spacing=x_spacing,
+            y_spacing=y_spacing,
+            x_origin=x_origin,
+            y_origin=y_origin,
+            ordering=_coerce_function_enum(SpatialGridOrdering, ordering),
+            source_spatial_shape_yx=tuple(int(value) for value in image_shape),
+        )
+    )
+    height, width = (
+        spatial_grid.source_spatial_shape_yx
+        if spatial_grid.source_spatial_shape_yx is not None
+        else image_shape
+    )
     return GridDefinition(
-        rows=grid_rows,
-        columns=grid_columns,
-        x_spacing=x_spacing,
-        y_spacing=y_spacing,
-        x_location_of_lowest_x_spot=x_origin,
-        y_location_of_lowest_y_spot=y_origin,
-        x_locations=x_locations,
-        y_locations=y_locations,
-        spot_table=spot_table,
+        rows=spatial_grid.rows,
+        columns=spatial_grid.columns,
+        x_spacing=spatial_grid.x_spacing,
+        y_spacing=spatial_grid.y_spacing,
+        x_location_of_lowest_x_spot=spatial_grid.x_origin,
+        y_location_of_lowest_y_spot=spatial_grid.y_origin,
+        x_locations=spatial_grid.x_locations_array(),
+        y_locations=spatial_grid.y_locations_array(),
+        spot_table=spatial_grid.spot_table_array(),
         image_height=height,
         image_width=width,
-        ordering=ordering,
+        ordering=spatial_grid.ordering,
     )
-
-
-def _grid_spot_table(
-    rows: int,
-    columns: int,
-    ordering: SpatialGridOrdering,
-) -> np.ndarray:
-    """Return object IDs arranged by the grid's declared numbering order."""
-    object_ids = np.arange(1, rows * columns + 1)
-    if ordering is SpatialGridOrdering.BY_COLUMNS:
-        return object_ids.reshape(rows, columns)
-    return object_ids.reshape(columns, rows).T
 
 
 def _centers_of_labels(labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -397,83 +390,40 @@ def _guide_label_center_grid_ids(
 ) -> np.ndarray:
     """Map each guide label ID to the grid object ID containing its center."""
     labels = _fill_grid(grid) if grid_labels is None else grid_labels
-    return _guide_label_center_grid_ids_numba(
-        np.asarray(guide_labels, dtype=np.int32),
-        np.asarray(labels, dtype=np.int32),
-        int(np.ceil(grid.y_spacing / 10)),
-        int(np.ceil(grid.x_spacing / 10)),
-    )
-
-
-@njit(cache=True)
-def _guide_label_center_grid_ids_numba(
-    guide_labels: np.ndarray,
-    grid_labels: np.ndarray,
-    y_border: int,
-    x_border: int,
-) -> np.ndarray:
-    """Map guide labels to center grid IDs, preserving CP-style border erasure."""
     max_guide = int(np.max(guide_labels))
     lcenters = np.zeros(max_guide + 1, dtype=np.int32)
     if max_guide == 0:
         return lcenters
 
-    centers_i, centers_j = _centers_of_labels_numba(guide_labels, max_guide)
-    height, width = grid_labels.shape
-    for guide_id in range(1, max_guide + 1):
-        center_i = centers_i[guide_id - 1]
-        center_j = centers_j[guide_id - 1]
-        if (
-            np.isnan(center_i)
-            or np.isnan(center_j)
-            or center_i >= height
-            or center_j >= width
-        ):
-            continue
-        row = int(np.round(center_i))
-        col = int(np.round(center_j))
-        if row < 0:
-            row = 0
-        if col < 0:
-            col = 0
-        if row >= height:
-            row = height - 1
-        if col >= width:
-            col = width - 1
-        lcenters[guide_id] = _grid_label_after_border_erase(
-            grid_labels,
-            row,
-            col,
-            y_border,
-            x_border,
-        )
-    return lcenters
-
-
-@njit(cache=True)
-def _grid_label_after_border_erase(
-    labels: np.ndarray,
-    row: int,
-    col: int,
-    y_border: int,
-    x_border: int,
-) -> int:
-    """Return label value after CP's grid-boundary dead-zone mask."""
-    label_id = int(labels[row, col])
-    if label_id == 0:
-        return 0
-    height, width = labels.shape
-    if y_border > 0 and height > y_border:
-        if row >= y_border and int(labels[row - y_border, col]) != label_id:
-            return 0
-        if row + y_border < height and int(labels[row + y_border, col]) != label_id:
-            return 0
-    if x_border > 0 and width > x_border:
-        if col >= x_border and int(labels[row, col - x_border]) != label_id:
-            return 0
-        if col + x_border < width and int(labels[row, col + x_border]) != label_id:
-            return 0
-    return label_id
+    centers = np.zeros((2, max_guide + 1), dtype=np.float64)
+    centers_i, centers_j = _centers_of_labels_numba(
+        np.asarray(guide_labels, dtype=np.int32),
+        max_guide,
+    )
+    centers[0, 1:] = centers_i
+    centers[1, 1:] = centers_j
+    bad_centers = (
+        (~np.isfinite(centers[0, :]))
+        | (~np.isfinite(centers[1, :]))
+        | (centers[0, :] >= labels.shape[0])
+        | (centers[1, :] >= labels.shape[1])
+    )
+    rounded_centers = np.round(centers).astype(int)
+    masked_labels = labels.copy()
+    y_border = int(np.ceil(grid.y_spacing / 10))
+    x_border = int(np.ceil(grid.x_spacing / 10))
+    if y_border > 0:
+        ymask = labels[y_border:, :] != labels[:-y_border, :]
+        masked_labels[y_border:, :][ymask] = 0
+        masked_labels[:-y_border, :][ymask] = 0
+    if x_border > 0:
+        xmask = labels[:, x_border:] != labels[:, :-x_border]
+        masked_labels[:, x_border:][xmask] = 0
+        masked_labels[:, :-x_border][xmask] = 0
+    rounded_centers[:, bad_centers] = 0
+    lcenters = masked_labels[rounded_centers[0, :], rounded_centers[1, :]]
+    lcenters[bad_centers] = 0
+    return np.asarray(lcenters, dtype=np.int32)
 
 
 def _natural_grid_labels_from_guides(

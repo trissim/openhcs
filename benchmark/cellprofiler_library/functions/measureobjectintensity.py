@@ -8,7 +8,12 @@ from typing import Any, Callable, List, Mapping, Tuple
 
 import numpy as np
 
+from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.memory import numpy
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelMeasurementExecution,
+    object_label_measurement_execution,
+)
 from openhcs.core.runtime_values import (
     DenseObjectLabelSliceStack,
     ObjectLabelPayload,
@@ -133,16 +138,17 @@ def _measurements_from_arrays(arrays: Any, slice_index: int) -> list[ObjectInten
             upper_quartile_intensity=float(arrays.upper_quartile_intensity[index]),
             center_mass_intensity_x=float(arrays.center_mass_intensity_x[index]),
             center_mass_intensity_y=float(arrays.center_mass_intensity_y[index]),
-            center_mass_intensity_z=0.0,
+            center_mass_intensity_z=float(arrays.center_mass_intensity_z[index]),
             max_intensity_x=float(arrays.max_intensity_x[index]),
             max_intensity_y=float(arrays.max_intensity_y[index]),
-            max_intensity_z=0.0,
+            max_intensity_z=float(arrays.max_intensity_z[index]),
         )
         for index, label in enumerate(arrays.object_labels)
     ]
 
 
 @numpy
+@object_label_measurement_execution(ObjectLabelMeasurementExecution.FULL_STACK)
 def measure_object_intensity(
     image: np.ndarray,
     labels: ObjectIntensityLabelInput,
@@ -183,17 +189,18 @@ def _measure_object_intensity_measurements(
     intensity_arrays = object_intensity_backend(
         backend_provider=backend_provider,
     ).measure(
-        _single_plane(np.asarray(image), "image"),
-        _single_plane(object_label_dense_array(labels, dtype=np.int32), "labels"),
+        _cellprofiler_grayscale_measurement_image(np.asarray(image)),
+        object_label_dense_array(labels, dtype=np.int32),
     )
     if intensity_arrays.object_labels.size == 0:
         return []
     return _measurements_from_arrays(intensity_arrays, slice_index)
 
 
-def _single_plane(array: np.ndarray, name: str) -> np.ndarray:
-    """Return CP's must_be_grayscale plane from OpenHCS payload conventions."""
-    return cellprofiler_grayscale_plane(array, name)
+def _cellprofiler_grayscale_measurement_image(image: np.ndarray) -> np.ndarray:
+    if image.ndim == 3 and not is_color_image_slice(image):
+        return image
+    return cellprofiler_grayscale_plane(image, "image")
 
 
 def _prepare_measure_object_intensity() -> None:

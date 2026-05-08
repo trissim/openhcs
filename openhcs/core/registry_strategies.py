@@ -36,6 +36,27 @@ class EnumKeyedStrategyMixin(Generic[_EnumT]):
         strategy_type = cls.__registry__[member.value]
         return cast(_StrategyT, strategy_type())
 
+    @classmethod
+    def registered_strategy_types(
+        cls: type[_StrategyT],
+    ) -> tuple[type[_StrategyT], ...]:
+        """Return one registered strategy class per declared enum member.
+
+        Registry cache backends may preserve JSON-safe string forms of non-string
+        enum keys alongside the original key. The enum member declared on the
+        strategy is the semantic identity, so collapse aliases there.
+        """
+        strategy_types: dict[tuple[type[Enum], _EnumT] | int, type[_StrategyT]] = {}
+        for strategy_type in cls.__registry__.values():
+            member = getattr(strategy_type, cls.__enum_member_attr__, None)
+            key: tuple[type[Enum], _EnumT] | int
+            if isinstance(member, Enum):
+                key = (type(member), member)
+            else:
+                key = id(strategy_type)
+            strategy_types.setdefault(key, cast(type[_StrategyT], strategy_type))
+        return tuple(strategy_types.values())
+
 
 class NominalTypeKeyedStrategyMixin:
     """Mixin for strategies selected by nominal runtime value types.

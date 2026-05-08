@@ -21,6 +21,7 @@ from benchmark.contracts.tool_adapter import BenchmarkResult, ToolAdapter
 from benchmark.datasets.acquire import acquire_dataset
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.pipelines.registry import get_pipeline_spec
+from openhcs.core.source_matching import source_path_identity_key
 
 
 _BENCHMARK_CACHE_SCHEMA_VERSION = 1
@@ -560,7 +561,9 @@ def _source_tree_fingerprint(
 def _source_file_is_path_excluded(path: Path, *, repo_root: Path) -> bool:
     """Return whether a source file is outside runtime cache authority."""
     try:
-        relative_path = path.resolve().relative_to(repo_root.resolve())
+        relative_path = Path(source_path_identity_key(str(path))).relative_to(
+            source_path_identity_key(str(repo_root))
+        )
     except ValueError:
         return False
     return any(

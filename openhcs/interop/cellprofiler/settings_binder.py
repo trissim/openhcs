@@ -6,6 +6,7 @@ from collections.abc import Callable
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
+from typing import TypeVar
 
 from .parser import ModuleBlock
 from openhcs.interop.cellprofiler.setting_names import (
@@ -15,6 +16,17 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 
 logger = logging.getLogger(__name__)
+
+_EnumT = TypeVar("_EnumT", bound=Enum)
+_NEGATED_ENUM_LITERALS = frozenset(("none", "no", "false", "disabled", "disable"))
+_ENUM_DOMAIN_SUFFIXES = (
+    "method",
+    "choice",
+    "option",
+    "mode",
+    "type",
+    "style",
+)
 
 CellProfilerSettingValue = (
     bool
@@ -26,6 +38,60 @@ CellProfilerSettingValue = (
     | Enum
 )
 SettingParser = Callable[[str], CellProfilerSettingValue]
+
+
+def coerce_cellprofiler_enum(
+    enum_type: type[_EnumT],
+    value: _EnumT | str,
+) -> _EnumT:
+    """Coerce a CellProfiler literal into a nominal enum member."""
+    if isinstance(value, enum_type):
+        return value
+    normalized_value = _normalized_enum_literal(str(value))
+    for member in enum_type:
+        if normalized_value in _member_literals(enum_type, member):
+            return member
+    prefix_matches = [
+        member
+        for member in enum_type
+        if any(
+            normalized_value.startswith(candidate)
+            or candidate.startswith(normalized_value)
+            for candidate in _member_literals(enum_type, member)
+        )
+    ]
+    if len(prefix_matches) == 1:
+        return prefix_matches[0]
+    raise ValueError(
+        f"{enum_type.__name__} cannot be coerced from {value!r}."
+    )
+
+
+def cellprofiler_enum_setting_parser(
+    enum_type: type[_EnumT],
+) -> Callable[[str], _EnumT]:
+    """Return a typed parser for a CellProfiler setting enum."""
+
+    def parse(value: str) -> _EnumT:
+        return coerce_cellprofiler_enum(enum_type, value)
+
+    return parse
+
+
+def cellprofiler_enum_value_setting_parser(
+    enum_type: type[_EnumT],
+) -> Callable[[str], str]:
+    """Return a typed parser that emits an enum member's serialized value."""
+
+    def parse(value: str) -> str:
+        member = coerce_cellprofiler_enum(enum_type, value)
+        if not isinstance(member.value, str):
+            raise TypeError(
+                f"{enum_type.__name__}.{member.name} must have a string value."
+            )
+        return member.value
+
+    return parse
 
 
 def parse_cellprofiler_bool(value: str) -> bool:
@@ -54,6 +120,34 @@ def normalize_cellprofiler_setting_name(name: str) -> str:
     without_questions = without_parentheses.replace("?", "")
     words = re.sub(r"[^\w\s]", " ", without_questions).lower().split()
     return "_".join(words)
+
+
+def _member_literals(enum_type: type[Enum], member: Enum) -> frozenset[str]:
+    literals = [member.name]
+    if isinstance(member.value, str):
+        literals.append(member.value)
+    normalized_literals = {
+        _normalized_enum_literal(literal)
+        for literal in literals
+    }
+    if normalized_literals & _NEGATED_ENUM_LITERALS:
+        domain = _enum_domain_literal(enum_type)
+        normalized_literals.add(f"no_{domain}")
+    return frozenset(normalized_literals)
+
+
+def _enum_domain_literal(enum_type: type[Enum]) -> str:
+    literal = _normalized_enum_literal(enum_type.__name__)
+    for suffix in _ENUM_DOMAIN_SUFFIXES:
+        suffix_literal = f"_{suffix}"
+        if literal.endswith(suffix_literal):
+            return literal.removesuffix(suffix_literal)
+    return literal
+
+
+def _normalized_enum_literal(value: str) -> str:
+    words = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", value.strip())
+    return re.sub(r"[^a-z0-9]+", "_", words.lower()).strip("_")
 
 
 @dataclass(frozen=True, slots=True)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from functools import wraps
 from typing import Any
 
 import numpy as np
@@ -8,13 +9,19 @@ from openhcs.core.memory import MEMORY_TYPE_NUMPY
 from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     ImagePayloadMetadata,
+    RuntimeArrayPayload,
     image_payload_data,
     image_payload_metadata,
+    image_payload_mask,
+    image_payload_with_context,
     with_image_payload_data,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
     LibraryRegistryBase,
     ProcessingContract,
+    RuntimeCallableInvocation,
+    RuntimeCallableView,
+    RuntimeInvocationKwargPolicy,
 )
 
 
@@ -74,3 +81,34 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
     np.testing.assert_array_equal(image_payload_data(result), stack + 1)
     assert seen_paths == ["z0.tif", "z1.tif"]
     assert image_payload_metadata(result).channel_source_paths == ("z0.tif", "z1.tif")
+
+
+def test_runtime_callable_invocation_can_call_raw_signature_filtered_callable() -> None:
+    source = image_payload_with_context(
+        np.ones((4, 5), dtype=np.float32),
+        mask=np.ones((4, 5), dtype=bool),
+    )
+
+    def raw(image: RuntimeArrayPayload, *, scale: int) -> RuntimeArrayPayload:
+        assert isinstance(image, RuntimeArrayPayload)
+        return image_payload_with_context(
+            image_payload_data(image) * scale,
+            mask=image_payload_mask(image),
+            metadata=image_payload_metadata(image),
+        )
+
+    @wraps(raw)
+    def decorated(image: Any, **kwargs: Any) -> np.ndarray:
+        return np.asarray(image_payload_data(raw(image, **kwargs)))
+
+    result = RuntimeCallableInvocation(
+        decorated,
+        args=(source,),
+        kwargs={"scale": 3, "adapter_control": object()},
+        callable_view=RuntimeCallableView.RAW,
+        kwarg_policy=RuntimeInvocationKwargPolicy.SIGNATURE_FILTERED,
+    ).call()
+
+    assert isinstance(result, RuntimeArrayPayload)
+    np.testing.assert_array_equal(image_payload_data(result), np.full((4, 5), 3.0))
+    np.testing.assert_array_equal(image_payload_mask(result), np.ones((4, 5), dtype=bool))

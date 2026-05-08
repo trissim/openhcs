@@ -575,6 +575,9 @@ class SourceBindingRuntimeContext:
     )
     pipeline_input_files: tuple[str, ...] = ()
     pipeline_input_backend: str | None = None
+    _source_metadata_identity: tuple[
+        tuple[str, tuple[tuple[str, str], ...]], ...
+    ] | None = field(default=None, init=False, repr=False, compare=False)
 
     @classmethod
     def empty(cls) -> "SourceBindingRuntimeContext":
@@ -584,25 +587,24 @@ class SourceBindingRuntimeContext:
         object.__setattr__(self, "step_input_files", tuple(self.step_input_files))
         if self.step_input_dir is not None:
             object.__setattr__(self, "step_input_dir", str(self.step_input_dir))
-        object.__setattr__(
-            self,
-            "step_input_source_paths",
-            MappingProxyType(
-                {str(path): str(source) for path, source in self.step_input_source_paths.items()}
-            ),
-        )
-        object.__setattr__(
-            self,
-            "source_metadata_by_path",
-            MappingProxyType(
+        step_input_source_paths = self.step_input_source_paths
+        if not isinstance(step_input_source_paths, MappingProxyType):
+            step_input_source_paths = MappingProxyType(
+                {str(path): str(source) for path, source in step_input_source_paths.items()}
+            )
+        object.__setattr__(self, "step_input_source_paths", step_input_source_paths)
+
+        source_metadata_by_path = self.source_metadata_by_path
+        if not isinstance(source_metadata_by_path, MappingProxyType):
+            source_metadata_by_path = MappingProxyType(
                 {
                     str(path): MappingProxyType(
                         {str(key): str(value) for key, value in metadata.items()}
                     )
-                    for path, metadata in self.source_metadata_by_path.items()
+                    for path, metadata in source_metadata_by_path.items()
                 }
-            ),
-        )
+            )
+        object.__setattr__(self, "source_metadata_by_path", source_metadata_by_path)
         object.__setattr__(
             self,
             "pipeline_input_files",
@@ -614,6 +616,32 @@ class SourceBindingRuntimeContext:
                 "pipeline_input_backend",
                 str(self.pipeline_input_backend),
             )
+
+    @property
+    def source_metadata_identity(
+        self,
+    ) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+        """Stable identity for the complete source-metadata universe."""
+
+        cached = self._source_metadata_identity
+        if cached is None:
+            cached = tuple(
+                (path, tuple(sorted(metadata.items())))
+                for path, metadata in sorted(self.source_metadata_by_path.items())
+            )
+            object.__setattr__(self, "_source_metadata_identity", cached)
+        return cached
+
+    def metadata_identity_for_paths(
+        self,
+        paths: tuple[str, ...],
+    ) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+        """Return the stable metadata identity for a selected source subset."""
+
+        return tuple(
+            (path, tuple(sorted(self.source_metadata_by_path.get(path, {}).items())))
+            for path in paths
+        )
 
     def __reduce__(
         self,

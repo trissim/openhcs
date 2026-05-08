@@ -62,10 +62,31 @@ def is_grayscale_volume_stack(value: Any) -> bool:
     )
 
 
+def is_color_volume_slice(value: Any) -> bool:
+    """Return True for one channel-last RGB/RGBA volume shaped (Z, H, W, C)."""
+    return (
+        hasattr(value, "ndim")
+        and hasattr(value, "shape")
+        and value.ndim == 4
+        and value.shape[-1] in COLOR_CHANNEL_COUNTS
+    )
+
+
+def is_color_volume_stack(value: Any) -> bool:
+    """Return True for OpenHCS color volume stacks shaped (N, Z, H, W, C)."""
+    return (
+        hasattr(value, "ndim")
+        and hasattr(value, "shape")
+        and value.ndim == 5
+        and value.shape[-1] in COLOR_CHANNEL_COUNTS
+    )
+
+
 def is_image_stack(value: Any) -> bool:
     """Return True for OpenHCS main-flow image stacks."""
     return (
         is_grayscale_image_stack(value)
         or is_color_image_stack(value)
         or is_grayscale_volume_stack(value)
+        or is_color_volume_stack(value)
     )

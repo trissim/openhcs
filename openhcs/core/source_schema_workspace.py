@@ -424,6 +424,11 @@ class ImportedMetadataRows:
 
     table: ImportedMetadataTable
     rows: tuple[Mapping[str, str], ...]
+    rows_by_join_key: Mapping[tuple[str, ...], tuple[Mapping[str, str], ...]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.table, ImportedMetadataTable):
@@ -438,6 +443,11 @@ class ImportedMetadataRows:
         )
         if not self.rows:
             raise ValueError("Imported metadata tables must contain at least one row.")
+        object.__setattr__(
+            self,
+            "rows_by_join_key",
+            _indexed_imported_metadata_rows(self.rows, self.table.joins),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -715,6 +725,7 @@ def materialize_source_schema_workspace(
     filemanager: FileManagerLike | None = None,
     source_backend: Backend | str = Backend.DISK,
     workspace_backend: Backend | str = Backend.DISK,
+    max_image_set_count: int | None = None,
 ) -> SourceSchemaWorkspaceMaterialization:
     """Create an OpenHCS virtual workspace from typed source-schema semantics."""
 
@@ -724,6 +735,8 @@ def materialize_source_schema_workspace(
         raise ValueError("Cannot materialize an empty source schema.")
     source_backend_name = _backend_name(source_backend)
     workspace_backend_name = _backend_name(workspace_backend)
+    if max_image_set_count is not None and max_image_set_count <= 0:
+        raise ValueError("max_image_set_count must be positive.")
     if not _vfs_is_dir(source_root, filemanager=filemanager, backend=source_backend_name):
         raise FileNotFoundError(f"Source root does not exist: {source_root}")
     _vfs_ensure_directory(
@@ -758,6 +771,8 @@ def materialize_source_schema_workspace(
             schema,
             stack_candidates,
         )
+        if max_image_set_count is not None:
+            image_sets = image_sets[:max_image_set_count]
         primary_mappings, primary_source_metadata, component_values = _primary_workspace_mappings(
             workspace_root,
             schema,
@@ -1155,6 +1170,34 @@ def _read_imported_metadata_rows(
     return rows
 
 
+def _indexed_imported_metadata_rows(
+    rows: tuple[Mapping[str, str], ...],
+    joins: tuple[ImportedMetadataJoin, ...],
+) -> Mapping[tuple[str, ...], tuple[Mapping[str, str], ...]]:
+    indexed: dict[tuple[str, ...], list[Mapping[str, str]]] = {}
+    for row in rows:
+        key = _imported_metadata_row_join_key(row, joins)
+        if key is None:
+            continue
+        indexed.setdefault(key, []).append(row)
+    return MappingProxyType(
+        {key: tuple(indexed_rows) for key, indexed_rows in indexed.items()}
+    )
+
+
+def _imported_metadata_row_join_key(
+    row: Mapping[str, str],
+    joins: tuple[ImportedMetadataJoin, ...],
+) -> tuple[str, ...] | None:
+    values: list[str] = []
+    for join in joins:
+        value = source_metadata_value(row, join.imported_metadata_field)
+        if value is None:
+            return None
+        values.append(value)
+    return tuple(values)
+
+
 def _imported_metadata_path(
     source_root: Path,
     table: ImportedMetadataTable,
@@ -1233,11 +1276,11 @@ def _matched_imported_metadata_row(
         return None
     if len(present_join_values) != len(joins):
         return None
-    matched_rows = tuple(
-        row
-        for row in imported_metadata.rows
-        if _imported_metadata_row_matches(row, image_metadata, joins)
+    join_key = tuple(
+        present_join_values[join.image_metadata_field]
+        for join in joins
     )
+    matched_rows = imported_metadata.rows_by_join_key.get(join_key, ())
     if not matched_rows:
         raise ValueError(
             f"Source candidate {path!r} matched {len(matched_rows)} imported "
@@ -1276,18 +1319,6 @@ def _merge_imported_metadata_row(
         if source_metadata_value(metadata, key) in (None, str(value))
     }
     merge_source_metadata(metadata, additions, path=path)
-
-
-def _imported_metadata_row_matches(
-    row: Mapping[str, str],
-    image_metadata: Mapping[str, str],
-    joins: tuple[ImportedMetadataJoin, ...],
-) -> bool:
-    return all(
-        source_metadata_value(row, join.imported_metadata_field)
-        == source_metadata_value(image_metadata, join.image_metadata_field)
-        for join in joins
-    )
 
 
 def _matched_candidates_by_alias(

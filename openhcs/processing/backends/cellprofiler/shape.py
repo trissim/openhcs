@@ -69,6 +69,23 @@ class ShapeMeasurementBackendStrategy(
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return object center coordinates and radii."""
 
+    def axis_lengths_3d_from_inertia_eigvals(
+        self,
+        inertia_tensor_eigvals: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return numerically stable 3-D major and minor axis lengths."""
+        eigvals = np.asarray(inertia_tensor_eigvals, dtype=np.float64)
+        if eigvals.ndim != 2 or eigvals.shape[1] != 3:
+            raise ValueError(
+                "3-D axis length calculation requires inertia eigenvalues with "
+                "shape (object_count, 3)."
+            )
+        major_argument = 10.0 * (eigvals[:, 0] + eigvals[:, 1] - eigvals[:, 2])
+        minor_argument = 10.0 * (-eigvals[:, 0] + eigvals[:, 1] + eigvals[:, 2])
+        return np.sqrt(np.maximum(major_argument, 0.0)), np.sqrt(
+            np.maximum(minor_argument, 0.0)
+        )
+
     @abstractmethod
     def distance_to_edge(self, labels: np.ndarray) -> np.ndarray:
         """Return per-pixel distance-to-edge for labeled objects."""

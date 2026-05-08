@@ -10,7 +10,19 @@ from benchmark.converter.settings_binder import (
 )
 from benchmark.converter.parser import ModuleBlock, ModuleSetting
 from benchmark.converter.module_settings_binding import ModuleSettingsBindingStrategy
+from benchmark.converter.module_settings_binding import UnmappedModuleSettingsError
 from benchmark.converter.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
+from benchmark.cellprofiler_library.functions.rescaleintensity import (
+    AutomaticHigh,
+    AutomaticLow,
+    RescaleMethod,
+)
+from benchmark.cellprofiler_library.functions.maskimage import MaskSource
+from benchmark.cellprofiler_library.functions.watershed import (
+    WatershedDeclumpMethod,
+    WatershedMethod,
+    WatershedRuntimeFamily,
+)
 from openhcs.interop.cellprofiler.setting_names import setting_names
 
 
@@ -94,6 +106,109 @@ def test_settings_binder_binds_declared_setting_to_keyword():
         "block_size": 40,
         "use_correction": True,
     }
+
+
+def test_watershed_settings_bind_nominal_method_enums():
+    module = ModuleBlock(
+        name="Watershed",
+        module_num=1,
+        settings={
+            "Use advanced settings?": "No",
+            "Generate from": "Markers",
+            "Declump method": "Intensity",
+            "Connectivity": "2",
+            "Compactness": "0.25",
+            "Maximum number of seeds": "15",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("Watershed").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["use_advanced_settings"] is False
+    assert bound.kwargs["watershed_method"] == WatershedMethod.MARKERS.value
+    assert bound.kwargs["declump_method"] == WatershedDeclumpMethod.INTENSITY.value
+    assert bound.kwargs["connectivity"] == 2
+    assert bound.kwargs["compactness"] == 0.25
+    assert bound.kwargs["max_seeds"] == 15
+    assert bound.kwargs["structuring_element"] == "disk"
+    assert bound.kwargs["structuring_element_size"] == 1
+
+
+def test_watershed_settings_bind_seed_dilation_structuring_element():
+    module = ModuleBlock(
+        name="Watershed",
+        module_num=1,
+        settings={
+            "Use advanced settings?": "Yes",
+            "Generate from": "Distance",
+            "Declump method": "Shape",
+            "Structuring element for seed dilation": "Ball,5",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("Watershed").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["structuring_element"] == "ball"
+    assert bound.kwargs["structuring_element_size"] == 5
+
+
+def test_watershed_runtime_family_follows_module_revision():
+    legacy_module = ModuleBlock(
+        name="Watershed",
+        module_num=1,
+        settings={"Use advanced settings?": "No"},
+        metadata={"variable_revision_number": "3"},
+    )
+    current_module = ModuleBlock(
+        name="Watershed",
+        module_num=1,
+        settings={"Use advanced settings?": "No"},
+        metadata={"variable_revision_number": "4"},
+    )
+
+    strategy = ModuleSettingsBindingStrategy.for_module("Watershed")
+
+    assert strategy.bind(
+        legacy_module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    ).kwargs["runtime_family"] == WatershedRuntimeFamily.CELLPROFILER4.value
+    assert strategy.bind(
+        current_module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    ).kwargs["runtime_family"] == WatershedRuntimeFamily.LIBRARY.value
+
+
+def test_erode_objects_binds_preservation_settings():
+    module = ModuleBlock(
+        name="ErodeObjects",
+        module_num=1,
+        settings={
+            "Structuring element": "Ball,5",
+            "Prevent object removal": "Yes",
+            "Relabel resulting objects": "No",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("ErodeObjects").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["structuring_element"] == "ball"
+    assert bound.kwargs["size"] == 5
+    assert bound.kwargs["preserve_midpoints"] is True
+    assert bound.kwargs["relabel_objects"] is False
 
 
 def test_gray_to_color_rescale_default_follows_cellprofiler_revision_upgrade():
@@ -194,6 +309,51 @@ def test_identify_primary_objects_binds_threshold_semantics():
     assert bound.kwargs["threshold_max"] == 1
     assert "threshold_setting_version" not in bound.unmapped_kwargs
     assert "lower_and_upper_bounds_on_threshold" not in bound.unmapped_kwargs
+
+
+def test_threshold_module_binds_shared_threshold_semantics():
+    module = ModuleBlock(
+        name="Threshold",
+        module_num=8,
+        settings={
+            "Select the input image": "MedianFiltDNA",
+            "Name the output image": "maskDNA",
+            "Threshold strategy": "Global",
+            "Thresholding method": "Minimum Cross-Entropy",
+            "Threshold smoothing scale": "1.25",
+            "Threshold correction factor": "0.9",
+            "Lower and upper bounds on threshold": "0.1,0.8",
+            "Manual threshold": "0.2",
+            "Select the measurement to threshold with": "None",
+            "Two-class or three-class thresholding?": "Two classes",
+            "Log transform before thresholding?": "No",
+            "Assign pixels in the middle intensity class to the foreground or the background?": "Foreground",
+            "Size of adaptive window": "25",
+            "Lower outlier fraction": "0.05",
+            "Upper outlier fraction": "0.05",
+            "Averaging method": "Mean",
+            "Variance method": "Standard deviation",
+            "# of deviations": "2.0",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("Threshold").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["threshold_scope"] == "Global"
+    assert bound.kwargs["threshold_method"] == "Minimum Cross-Entropy"
+    assert bound.kwargs["smoothing"] == 1.25
+    assert bound.kwargs["threshold_correction_factor"] == 0.9
+    assert bound.kwargs["threshold_min"] == 0.1
+    assert bound.kwargs["threshold_max"] == 0.8
+    assert bound.kwargs["window_size"] == 25
+    assert "manual_threshold" not in bound.kwargs
+    assert "threshold_smoothing_scale" not in bound.kwargs
+    assert "adaptive_window_size" not in bound.kwargs
+    assert not bound.unmapped_kwargs
 
 
 def test_identify_secondary_objects_binds_global_threshold_method_semantics():
@@ -697,6 +857,7 @@ def test_measure_object_size_shape_binds_zernike_toggle():
         settings={
             "Select objects to measure": "Embryos",
             "Calculate the Zernike features?": "No",
+            "Calculate the advanced features?": "No",
         },
     )
 
@@ -706,7 +867,10 @@ def test_measure_object_size_shape_binds_zernike_toggle():
         param_mapping={},
     )
 
-    assert bound.kwargs == {"calculate_zernikes": False}
+    assert bound.kwargs == {
+        "calculate_zernikes": False,
+        "calculate_advanced": False,
+    }
     assert bound.unmapped_kwargs == {}
 
 
@@ -1043,3 +1207,177 @@ def test_resize_objects_binds_volumetric_factor_settings():
         "height": 100,
         "planes": 10,
     }
+
+
+def test_median_filter_binds_window_size():
+    module = ModuleBlock(
+        name="MedianFilter",
+        module_num=7,
+        settings={"Window": "5"},
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("MedianFilter").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {"window_size": 5}
+
+
+def test_rescale_intensity_binds_source_range_and_nominal_modes():
+    module = ModuleBlock(
+        name="RescaleIntensity",
+        module_num=5,
+        settings={
+            "Select the input image": "origDNA",
+            "Name the output image": "RescaledDNA",
+            "Rescaling method": "Stretch each image to use the full intensity range",
+            "Method to calculate the minimum intensity": "Custom",
+            "Method to calculate the maximum intensity": "Custom",
+            "Lower intensity limit for the input image": "0.0",
+            "Upper intensity limit for the input image": "1.0",
+            "Intensity range for the input image": "0.0,1.0",
+            "Intensity range for the output image": "0.0,1.0",
+            "Select image to match in maximum intensity": "None",
+            "Divisor value": "1.0",
+            "Divisor measurement": "None",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("RescaleIntensity").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {
+        "rescale_method": RescaleMethod.STRETCH,
+        "automatic_low": AutomaticLow.CUSTOM,
+        "automatic_high": AutomaticHigh.CUSTOM,
+        "source_low": 0.0,
+        "source_high": 1.0,
+        "dest_low": 0.0,
+        "dest_high": 1.0,
+        "divisor_value": 1.0,
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_mask_image_binds_mask_source_and_inversion():
+    module = ModuleBlock(
+        name="MaskImage",
+        module_num=23,
+        settings={
+            "Select the input image": "MembInvertRemoveHoles",
+            "Name the output image": "MembMasked",
+            "Use objects or an image as a mask?": "Image",
+            "Select object for mask": "None",
+            "Select image for mask": "MonolayerMask",
+            "Invert the mask?": "No",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("MaskImage").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {
+        "mask_source": MaskSource.IMAGE,
+        "invert_mask": False,
+    }
+    assert not bound.unmapped_kwargs
+
+
+def test_overlay_objects_binds_opacity_and_ignores_contract_routing():
+    module = ModuleBlock(
+        name="OverlayObjects",
+        module_num=28,
+        settings={
+            "Input": "RescaledDNA",
+            "Name the output image": "NucleiOverlay",
+            "Objects": "Nuclei",
+            "Opacity": "0.2",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("OverlayObjects").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {"opacity": 0.2}
+    assert not bound.unmapped_kwargs
+
+
+def test_measure_object_intensity_declares_contract_routing_settings():
+    module = ModuleBlock(
+        name="MeasureObjectIntensity",
+        module_num=26,
+        settings={
+            "Select images to measure": "origDNA,origMemb",
+            "Select objects to measure": "Nuclei,Cells",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("MeasureObjectIntensity").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert not bound.kwargs
+    assert not bound.unmapped_kwargs
+
+
+def test_module_settings_binding_rejects_unmapped_settings():
+    module = ModuleBlock(
+        name="Generic",
+        module_num=3,
+        settings={"Unexpected setting": "42"},
+    )
+
+    with pytest.raises(UnmappedModuleSettingsError) as exc:
+        ModuleSettingsBindingStrategy.for_module("Generic").bind(
+            module,
+            binder=SettingsBinder(),
+            param_mapping={},
+        )
+
+    assert "Generic(3).unexpected_setting=42" in str(exc.value)
+
+
+def test_module_settings_binding_allows_derived_dead_output_setting_ignore():
+    module = ModuleBlock(
+        name="Generic",
+        module_num=3,
+        settings={"Name the output image": "DeadOutput"},
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("Generic").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+        ignored_unmapped_settings=frozenset({"name_the_output_image"}),
+    )
+
+    assert not bound.unmapped_kwargs
+
+
+def test_remove_holes_binds_hole_diameter():
+    module = ModuleBlock(
+        name="RemoveHoles",
+        module_num=9,
+        settings={"Size of holes to fill": "20.0"},
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("RemoveHoles").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {"diameter": 20.0}

@@ -102,6 +102,7 @@ class CellProfilerComparisonCase:
     value_only: bool = False
     equivalence_reference_output_dir: Path | None = None
     cellprofiler_timeout_seconds: float | None = None
+    pipeline_params: Mapping[str, object] = field(default_factory=dict)
 
     @property
     def resolved_dataset_id(self) -> str:
@@ -186,6 +187,11 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
     for raw_case in raw_cases:
         if not isinstance(raw_case, Mapping):
             raise ValueError(f"Benchmark case must be an object: {raw_case!r}")
+        raw_pipeline_params = raw_case.get("pipeline_params", {})
+        if not isinstance(raw_pipeline_params, Mapping):
+            raise ValueError(
+                f"Benchmark case pipeline_params must be an object: {raw_pipeline_params!r}"
+            )
         cases.append(
             CellProfilerComparisonCase(
                 name=str(raw_case["name"]),
@@ -222,6 +228,7 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
                     if raw_case.get("cellprofiler_timeout_seconds") is not None
                     else None
                 ),
+                pipeline_params=dict(raw_pipeline_params),
             )
         )
     return tuple(cases)
@@ -574,6 +581,7 @@ def _run_comparison_case(
 ) -> CellProfilerComparisonObservation:
     native_reference = _native_reference_location(case, native_reference_root)
     pipeline_params: dict[str, object] = {
+        **case.pipeline_params,
         "compare_image_outputs": not case.value_only,
         "raise_on_equivalence_failure": False,
         "cache_candidate_measurement_snapshot": not discard_openhcs_outputs,

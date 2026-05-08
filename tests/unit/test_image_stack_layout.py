@@ -4,6 +4,7 @@ from openhcs.core.aligned_image_payload import (
     ImagePayloadExecutionMode,
     compose_aligned_image_payload,
     payload_slices_for_alignment,
+    project_singleton_stack_image_domain,
 )
 from openhcs.core.image_shapes import (
     is_channel_last_image_slice,
@@ -30,6 +31,28 @@ def test_image_stack_layout_stacks_grayscale_volume_slices():
     )
 
     assert stacked.shape == (2, 3, 4, 5)
+    assert is_image_stack(stacked)
+    unstacked = ImageStackLayout.for_stack(stacked).unstack(
+        array=stacked,
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    )
+    np.testing.assert_array_equal(unstacked[0], first)
+    np.testing.assert_array_equal(unstacked[1], second)
+
+
+def test_image_stack_layout_stacks_color_volume_slices():
+    first = np.zeros((3, 4, 5, 3), dtype=np.uint8)
+    second = np.ones((3, 4, 5, 3), dtype=np.uint8)
+
+    layout = ImageStackLayout.for_slices((first, second))
+    stacked = layout.stack(
+        slices=(first, second),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    )
+
+    assert stacked.shape == (2, 3, 4, 5, 3)
     assert is_image_stack(stacked)
     unstacked = ImageStackLayout.for_stack(stacked).unstack(
         array=stacked,
@@ -105,6 +128,24 @@ def test_image_stack_layout_preserves_unambiguous_single_volume_stack():
     assert observed is stacked
 
 
+def test_singleton_stack_image_domain_projects_volume_payload_context():
+    volume_stack = np.ones((1, 3, 4, 5), dtype=np.float32)
+    mask_stack = np.ones((1, 3, 4, 5), dtype=bool)
+    payload = image_payload_with_context(
+        volume_stack,
+        mask=mask_stack,
+        metadata=ImagePayloadMetadata.for_array(
+            volume_stack,
+            source_path="/tmp/source.tif",
+        ),
+    )
+
+    projected = project_singleton_stack_image_domain(payload)
+
+    assert projected.data.shape == (3, 4, 5)
+    assert projected.mask.shape == (3, 4, 5)
+
+
 def test_image_stack_layout_stacks_single_ambiguous_volume_slice():
     volume = np.zeros((3, 4, 5), dtype=np.uint16)
 
@@ -115,3 +156,17 @@ def test_image_stack_layout_stacks_single_ambiguous_volume_slice():
     )
 
     assert observed.shape == (1, 3, 4, 5)
+
+
+def test_image_stack_layout_unstacks_result_matching_source_volume_as_single_slice():
+    volume = np.zeros((3, 4, 5), dtype=np.uint16)
+
+    observed = ImageStackLayout.unstack_result_for_source_slices(
+        volume,
+        source_slice_shapes=(tuple(volume.shape),),
+        memory_type=MEMORY_TYPE_NUMPY,
+        gpu_id=0,
+    )
+
+    assert len(observed) == 1
+    np.testing.assert_array_equal(observed[0], volume)

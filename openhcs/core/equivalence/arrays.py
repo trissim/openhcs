@@ -55,10 +55,11 @@ def semantic_array_payload(value: object) -> tuple[str, str, tuple[int, ...], st
     array = canonical_numpy_array(value)
     if array is None:
         return None
+    digest = hashlib.sha256()
+    digest.update(memoryview(array).cast("B"))
     return (
         "array",
         str(array.dtype),
         tuple(int(axis) for axis in array.shape),
-        hashlib.sha256(array.tobytes()).hexdigest(),
+        digest.hexdigest(),
     )
-

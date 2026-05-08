@@ -2,7 +2,7 @@ import pytest
 import numpy as np
 import pandas as pd
 
-from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
+from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactOutputPlan, ArtifactScope
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     FieldSpec,
@@ -16,6 +16,7 @@ from openhcs.core.runtime_values import (
     NamedImage,
     ObjectLabelPayload,
     ObjectLabelPayloadBuilderStrategy,
+    ObjectLabelDomainScope,
     ObjectLabelSet,
     ObjectLabelDenseDataStrategy,
     ObjectLabelMeasurementPayloadStrategy,
@@ -26,6 +27,8 @@ from openhcs.core.runtime_values import (
     ObjectRelationship,
     RuntimeArrayPayload,
     RuntimeStoragePolicy,
+    RuntimeValue,
+    RuntimeValueSchema,
     SparseIJVLabelRows,
     SpatialGrid,
     SingletonObjectLabelStackCollapseStrategy,
@@ -42,8 +45,13 @@ from openhcs.core.runtime_values import (
     object_label_payload_with_dense_labels,
     object_label_payload_with_measurement_labels,
     object_label_set_with_replacement_labels,
+    with_derived_image_payload_data,
 )
-from openhcs.core.runtime_semantics import ObjectLabelVariant, SpatialGridOrdering
+from openhcs.core.runtime_semantics import (
+    ObjectLabelVariant,
+    RuntimePlaneAxis,
+    SpatialGridOrdering,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import (
     Pure2DAuxiliaryOutputAggregator,
 )
@@ -77,6 +85,7 @@ def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
     payload = ObjectLabelPayload(
         labels=source_labels,
         declared_object_ids=(1, 2),
+        plane_axis=RuntimePlaneAxis.SOURCE_BINDING,
         spatial_origin_yx=(3, 5),
         source_spatial_shape_yx=(20, 30),
     )
@@ -95,6 +104,7 @@ def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
     assert rebuilt.labels is transformed_labels
     assert rebuilt.declared_object_count == 1
     assert rebuilt.declared_object_ids == (2,)
+    assert rebuilt.plane_axis is RuntimePlaneAxis.SOURCE_BINDING
     assert rebuilt.spatial_origin_yx == (3, 5)
     assert rebuilt.source_spatial_shape_yx == (20, 30)
 
@@ -269,6 +279,44 @@ def test_normalize_artifact_value_builds_key_schema_and_storage_policy():
     )
 
 
+def test_normalize_artifact_value_aggregates_slice_aligned_object_label_domains():
+    output_plan = ArtifactOutputPlan(
+        name="GridObjects",
+        path="/memory/GridObjects.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    first = ObjectLabelPayload(
+        labels=np.array([[0, 1], [0, 3]], dtype=np.int32),
+        declared_object_count=4,
+    )
+    second = ObjectLabelPayload(
+        labels=np.array([[0, 2], [4, 0]], dtype=np.int32),
+        declared_object_count=4,
+    )
+
+    value = normalize_artifact_value(
+        output_plan,
+        RuntimeSliceAlignedValues((first, second)),
+        axis_id="A01",
+    )
+    payload = value.data
+
+    assert isinstance(payload, ObjectLabelPayload)
+    assert value.schema.slice_aligned is False
+    assert payload.declared_object_count == 4
+    assert payload.domain_scope is ObjectLabelDomainScope.PLANE
+    np.testing.assert_array_equal(
+        payload.labels,
+        np.array(
+            [
+                [[0, 1], [0, 3]],
+                [[0, 2], [4, 0]],
+            ],
+            dtype=np.int32,
+        ),
+    )
+
+
 def test_normalize_artifact_value_rejects_metadata_payload_mismatch():
     output_plan = ArtifactOutputPlan(
         name="metadata",
@@ -289,6 +337,42 @@ def test_normalize_artifact_value_rejects_object_label_payload_mismatch():
 
     with pytest.raises(TypeError, match="expected object_labels payload"):
         normalize_artifact_value(output_plan, {"not": "labels"}, axis_id="A01")
+
+
+def test_object_label_payload_validator_accepts_nominal_slice_aggregate():
+    output_plan = ArtifactOutputPlan(
+        name="nuclei",
+        path="/memory/nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    payload = ObjectLabelPayload(
+        labels=np.array(
+            [
+                [[0, 1], [0, 2]],
+                [[3, 0], [4, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        declared_object_id_domains=((1, 2), (3, 4)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+    value = RuntimeValue(
+        key=ArtifactKey(
+            name="nuclei",
+            kind=ArtifactKind.OBJECT_LABELS,
+            scope=ArtifactScope(axis_id="A01"),
+        ),
+        data=payload,
+        schema=RuntimeValueSchema(
+            kind=ArtifactKind.OBJECT_LABELS,
+            slice_aligned=True,
+            object_name="nuclei",
+        ),
+    )
+
+    normalized = normalize_artifact_value(output_plan, value, axis_id="A01")
+
+    assert normalized.data is payload
 
 
 def test_spatial_grid_normalizes_to_mapping_runtime_value():
@@ -438,6 +522,42 @@ def test_masked_image_payload_behaves_like_array_with_mask() -> None:
     assert payload.dtype == image.dtype
     np.testing.assert_array_equal(np.asarray(payload), image)
     np.testing.assert_array_equal(payload.mask, mask)
+
+
+def test_derived_image_payload_context_projects_bundle_mask_to_single_output() -> None:
+    image = np.zeros((3, 4, 5), dtype=np.float32)
+    mask = np.ones((2, 3, 4, 5), dtype=bool)
+    mask[1, :, 0, 0] = False
+    source = MaskedImagePayload(data=np.stack((image, image)), mask=mask)
+
+    result = with_derived_image_payload_data(source, image)
+
+    assert isinstance(result, MaskedImagePayload)
+    np.testing.assert_array_equal(result.mask, np.all(mask, axis=0))
+
+
+def test_masked_image_payload_accepts_grayscale_volume_stack_mask_domains() -> None:
+    data = np.zeros((1, 3, 4, 5), dtype=np.float32)
+
+    for mask_shape in ((3, 4, 5), (1, 4, 5), (4, 5)):
+        payload = MaskedImagePayload(
+            data=data,
+            mask=np.ones(mask_shape, dtype=bool),
+        )
+
+        assert payload.mask.shape == mask_shape
+
+
+def test_masked_image_payload_accepts_color_stack_mask_domains() -> None:
+    data = np.zeros((2, 4, 5, 3), dtype=np.float32)
+
+    for mask_shape in ((2, 4, 5), (4, 5)):
+        payload = MaskedImagePayload(
+            data=data,
+            mask=np.ones(mask_shape, dtype=bool),
+        )
+
+        assert payload.mask.shape == mask_shape
 
 
 def test_image_metadata_payload_carries_source_intensity_scale() -> None:
