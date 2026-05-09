@@ -20,6 +20,7 @@ from openhcs.core.runtime_adapters import (
     RuntimeAdapterSpec,
     runtime_adapter_spec_from_callable,
 )
+from openhcs.core.runtime_batch_contracts import RuntimeBatchCallableFamily
 
 
 ArtifactSpecItems = tuple[tuple[str, ArtifactSpec], ...]
@@ -58,12 +59,14 @@ class CallableContract:
     declared_processing_contract: str | None = None
     raw_processing_function: Any | None = None
     runtime_image_execution_mode: ImagePayloadExecutionMode | None = None
+    runtime_batch_executors: Mapping[Any, Any] | None = None
 
     @classmethod
     def from_callable(cls, func: Any) -> "CallableContract":
         """Build a contract from callable attributes once at compiler boundary."""
         namespace = _callable_namespace(func)
         function_name = _callable_name(func)
+        raw_processing_function = namespace.get(RAW_PROCESSING_FUNCTION_ATTR)
         return cls(
             func=func,
             function_name=function_name,
@@ -95,12 +98,16 @@ class CallableContract:
                 function_name,
                 DECLARED_PROCESSING_CONTRACT_ATTR,
             ),
-            raw_processing_function=namespace.get(RAW_PROCESSING_FUNCTION_ATTR),
+            raw_processing_function=raw_processing_function,
             runtime_image_execution_mode=_optional_execution_mode(
                 namespace,
                 function_name,
                 RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
             ),
+            runtime_batch_executors=RuntimeBatchCallableFamily(
+                func=func,
+                raw_processing_function=raw_processing_function,
+            ).executors(),
         )
 
     @property
@@ -122,6 +129,15 @@ class CallableContract:
     def artifact_outputs_dict(self) -> dict[str, ArtifactSpec]:
         """Return declared artifact outputs as a runtime mapping."""
         return dict(self.artifact_outputs)
+
+    def runtime_batch_executor(
+        self,
+        domain: Any,
+    ) -> Any | None:
+        """Return the declared runtime batch executor for one domain."""
+        if self.runtime_batch_executors is None:
+            return None
+        return self.runtime_batch_executors.get(domain)
 
     def select_input_plan_keys(
         self,

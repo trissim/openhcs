@@ -117,6 +117,40 @@ class SourceSchemaAuxiliaryMaterializer(ABC, metaclass=AutoRegisterMeta):
         """Return the workspace-local source path used by virtual mappings."""
 
 
+@dataclass(frozen=True, slots=True)
+class SourceSchemaAuxiliaryTargetPathRequest:
+    """Inputs for assigning a materialized auxiliary source path."""
+
+    target_dir: Path
+    source_path: Path
+    index: int
+
+
+class SourceSchemaAuxiliaryTargetPathPolicy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal policy for preserving auxiliary source identity in workspaces."""
+
+    __registry_key__ = "policy_key"
+    __skip_if_no_key__ = True
+    policy_key: ClassVar[str | None] = None
+
+    @classmethod
+    def default_policy(cls) -> "SourceSchemaAuxiliaryTargetPathPolicy":
+        return cls.__registry__["source_basename"]()
+
+    @abstractmethod
+    def target_path(self, request: SourceSchemaAuxiliaryTargetPathRequest) -> Path:
+        """Return the workspace path for one auxiliary source."""
+
+
+class SourceBasenameAuxiliaryTargetPathPolicy(SourceSchemaAuxiliaryTargetPathPolicy):
+    """Keep the source basename as the load-bearing filter identity."""
+
+    policy_key = "source_basename"
+
+    def target_path(self, request: SourceSchemaAuxiliaryTargetPathRequest) -> Path:
+        return request.target_dir / request.source_path.name
+
+
 class NumpyAuxiliaryMaterializer(SourceSchemaAuxiliaryMaterializer):
     """Rewrite NumPy auxiliary files into current-format workspace files."""
 
@@ -142,10 +176,12 @@ class NumpyAuxiliaryMaterializer(SourceSchemaAuxiliaryMaterializer):
 
         target_dir = workspace_root / SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR / alias
         target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = _materialized_auxiliary_target_path(
-            target_dir,
-            source_path,
-            index=index,
+        target_path = SourceSchemaAuxiliaryTargetPathPolicy.default_policy().target_path(
+            SourceSchemaAuxiliaryTargetPathRequest(
+                target_dir=target_dir,
+                source_path=source_path,
+                index=index,
+            )
         )
         payload = np.load(source_path)
         source_memory_type = detect_memory_type(payload)
@@ -159,19 +195,6 @@ class NumpyAuxiliaryMaterializer(SourceSchemaAuxiliaryMaterializer):
         cache_source_schema_auxiliary_payload(source_path, payload)
         cache_source_schema_auxiliary_payload(target_path, payload)
         return target_path
-
-
-def _materialized_auxiliary_target_path(
-    target_dir: Path,
-    source_path: Path,
-    *,
-    index: int,
-) -> Path:
-    """Preserve source basenames for selector semantics, disambiguating if needed."""
-    target_path = target_dir / source_path.name
-    if not target_path.exists():
-        return target_path
-    return target_dir / f"{index:03d}_{source_path.name}"
 
 
 @dataclass(frozen=True, slots=True)

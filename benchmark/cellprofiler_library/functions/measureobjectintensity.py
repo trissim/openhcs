@@ -4,7 +4,7 @@ Measures intensity features for identified objects in grayscale images.
 """
 
 from dataclasses import dataclass
-from typing import Any, Callable, List, Mapping, Tuple
+from typing import Any, List, Tuple
 
 import numpy as np
 
@@ -12,7 +12,9 @@ from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import (
     ObjectLabelMeasurementExecution,
+    RuntimePure2DSliceBatchRequest,
     object_label_measurement_execution,
+    pure_2d_batch_executor,
 )
 from openhcs.core.runtime_values import (
     DenseObjectLabelSliceStack,
@@ -84,26 +86,23 @@ def _first_scalar_position(position) -> int:
 
 
 def _measure_object_intensity_batch(
-    func: Callable[..., Any],
-    slices_2d: tuple[Any, ...],
-    kwargs: Mapping[str, Any],
-    slice_count: int,
-    execute_slice: Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
+    request: RuntimePure2DSliceBatchRequest,
 ) -> list[Any]:
+    kwargs = request.kwargs
     label_stack = DenseObjectLabelSliceStack.from_payload(
         kwargs["labels"],
-        slice_count=slice_count,
+        slice_count=request.slice_count,
         dtype=np.int32,
     )
     if label_stack is None:
         return [
-            execute_slice(func, slice_2d, kwargs, slice_index, slice_count)
-            for slice_index, slice_2d in enumerate(slices_2d)
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
         ]
 
     backend_provider = kwargs.get("object_intensity_backend_provider")
     results: list[Any] = []
-    for slice_index, slice_2d in enumerate(slices_2d):
+    for slice_index, slice_2d in enumerate(request.slices_2d):
         measurements = _measure_object_intensity_measurements(
             image_payload_data(slice_2d),
             label_stack.slice(slice_index),
@@ -213,6 +212,4 @@ def _prepare_measure_object_intensity() -> None:
 
 
 measure_object_intensity.__openhcs_prepare__ = _prepare_measure_object_intensity
-measure_object_intensity.__openhcs_pure_2d_batch_executor__ = (
-    _measure_object_intensity_batch
-)
+pure_2d_batch_executor(_measure_object_intensity_batch)(measure_object_intensity)

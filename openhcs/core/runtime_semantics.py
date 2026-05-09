@@ -589,6 +589,62 @@ class ObjectLabelDomain:
         )
 
 
+class RuntimeObjectMeasurementQuery(ABC):
+    """Store-stable identity for object measurement queries."""
+
+    @staticmethod
+    def required_name(field_name: str, value: str) -> str:
+        """Normalize a required object-measurement query name."""
+        normalized = str(value).strip()
+        if not normalized:
+            raise ValueError(f"RuntimeObjectMeasurementQuery.{field_name} is required.")
+        return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeObjectFeatureMeasurementQuery(RuntimeObjectMeasurementQuery):
+    """Store-stable identity for object-domain feature vector queries."""
+
+    group_key: str | None
+    object_name: str
+    feature_name: str
+    object_domain: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "object_name", self.required_name("object_name", self.object_name))
+        object.__setattr__(self, "feature_name", self.required_name("feature_name", self.feature_name))
+        object.__setattr__(
+            self,
+            "object_domain",
+            ObjectLabelDomain._normalize_ids(tuple(self.object_domain), "object_domain"),
+        )
+        if self.group_key is not None:
+            object.__setattr__(self, "group_key", str(self.group_key))
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeObjectLabelMeasurementQuery(RuntimeObjectMeasurementQuery):
+    """Store-stable identity for label-aligned object measurement queries."""
+
+    axis_id: str
+    group_key: str | None
+    object_name: str
+    feature_name: str
+    label_domain: tuple[int, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "axis_id", str(self.axis_id))
+        object.__setattr__(self, "object_name", self.required_name("object_name", self.object_name))
+        object.__setattr__(self, "feature_name", self.required_name("feature_name", self.feature_name))
+        object.__setattr__(
+            self,
+            "label_domain",
+            ObjectLabelDomain._normalize_ids(tuple(self.label_domain), "label_domain"),
+        )
+        if self.group_key is not None:
+            object.__setattr__(self, "group_key", str(self.group_key))
+
+
 class ObjectLabelDomainMetadata(ABC):
     """Nominal provider for object-label ID domain metadata."""
 
@@ -1316,6 +1372,7 @@ class ObjectIntensityZernikePhaseFeatureNameStrategy(
         return "ZernikePhase"
 
 
+@lru_cache(maxsize=None)
 def indexed_object_intensity_distribution_feature_name(
     feature: ObjectIntensityDistributionMeasurementFeature | str,
     *,
@@ -1331,6 +1388,7 @@ def indexed_object_intensity_distribution_feature_name(
     return f"IntensityDistribution_{feature.value}_{int(bin_index)}of{int(bin_count)}"
 
 
+@lru_cache(maxsize=None)
 def indexed_object_intensity_zernike_feature_name(
     feature: ObjectZernikeDescriptorFeature | str,
     *,
@@ -1849,6 +1907,37 @@ def measurement_table_row_layout(rows: object) -> MeasurementTableRowLayout:
     return next(iter(observed_layouts))
 
 
+def measurement_table_row_layout_from_fields(
+    fields: Iterable[FieldSpec],
+) -> MeasurementTableRowLayout | None:
+    """Return row layout declared by table fields when fields are authoritative."""
+    return _measurement_table_row_layout_from_field_names(
+        tuple(field.name for field in fields)
+    )
+
+
+@lru_cache(maxsize=256)
+def _measurement_table_row_layout_from_field_names(
+    field_names_tuple: tuple[str, ...],
+) -> MeasurementTableRowLayout | None:
+    """Return row layout declared by field names."""
+    field_names = frozenset(field_names_tuple)
+    if not field_names:
+        return None
+    has_feature_field = bool(field_names & measurement_row_feature_field_names())
+    has_value_field = bool(field_names & measurement_row_value_field_names())
+    if has_feature_field and not has_value_field:
+        raise ValueError(
+            "Long-form measurement table fields must declare both a feature field "
+            f"and a value field, got fields {sorted(field_names)!r}."
+        )
+    return (
+        MeasurementTableRowLayout.LONG
+        if has_feature_field
+        else MeasurementTableRowLayout.WIDE
+    )
+
+
 def measurement_table_row_layouts(rows: object) -> frozenset[MeasurementTableRowLayout]:
     """Return every nominal row layout observed in a measurement payload."""
     if rows is None:
@@ -1863,8 +1952,15 @@ def measurement_table_row_layouts(rows: object) -> frozenset[MeasurementTableRow
     return frozenset(_measurement_row_layout(row) for row in row_sequence)
 
 
-def normalize_measurement_table_rows(rows: object) -> object:
+def normalize_measurement_table_rows(
+    rows: object,
+    *,
+    fields: Iterable[FieldSpec] = (),
+) -> object:
     """Return homogeneous measurement rows, canonicalizing mixed tables to long form."""
+    declared_layout = measurement_table_row_layout_from_fields(fields)
+    if declared_layout is not None:
+        return rows
     observed_layouts = measurement_table_row_layouts(rows)
     if len(observed_layouts) <= 1:
         return rows

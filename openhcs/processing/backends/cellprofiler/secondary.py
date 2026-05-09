@@ -517,7 +517,11 @@ def _propagate_labels_numba(
     for y in range(height):
         for x in range(width):
             label = int(seed_labels[y, x])
-            if label > 0 and mask[y, x]:
+            if (
+                label > 0
+                and mask[y, x]
+                and _propagation_seed_frontier_pixel(seed_labels, mask, y, x)
+            ):
                 heap_size = _propagation_heap_push(
                     heap_values,
                     heap_labels,
@@ -579,6 +583,29 @@ def _propagate_labels_numba(
             if seed_labels[y, x] > 0:
                 output[y, x] = seed_labels[y, x]
     return output
+
+
+@njit(cache=True)
+def _propagation_seed_frontier_pixel(
+    seed_labels: np.ndarray,
+    mask: np.ndarray,
+    y: int,
+    x: int,
+) -> bool:
+    height, width = seed_labels.shape
+    for dy in range(-1, 2):
+        yy = y + dy
+        if yy < 0 or yy >= height:
+            continue
+        for dx in range(-1, 2):
+            if dy == 0 and dx == 0:
+                continue
+            xx = x + dx
+            if xx < 0 or xx >= width:
+                continue
+            if mask[yy, xx] and seed_labels[yy, xx] == 0:
+                return True
+    return False
 
 
 __all__ = [

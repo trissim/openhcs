@@ -136,6 +136,7 @@ from openhcs.core.runtime_semantics import (
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
+    FieldSpec,
     ImagePayloadMetadata,
     ImageMetadataPayload,
     MaskedImagePayload,
@@ -2152,6 +2153,8 @@ def test_pure_2d_object_label_set_slice_projects_plane_domain() -> None:
 
 
 def test_identify_tertiary_batch_aligns_cropped_primary_labels_to_secondary_domain():
+    from openhcs.core.runtime_batch_contracts import RuntimePure2DSliceBatchRequest
+
     primary = ObjectLabelPayload(
         labels=np.array([[1, 0], [0, 0]], dtype=np.int32),
         spatial_origin_yx=(2, 3),
@@ -2162,15 +2165,21 @@ def test_identify_tertiary_batch_aligns_cropped_primary_labels_to_secondary_doma
     secondary[2, 4] = 5
 
     results = ito._identify_tertiary_objects_batch(
-        ito.identify_tertiary_objects,
-        (np.zeros((6, 7), dtype=np.float32),),
-        {
-            "primary_labels": primary,
-            "secondary_labels": secondary,
-            "shrink_primary": False,
-        },
-        1,
-        lambda func, image, kwargs, _slice_index, _slice_count: func(image, **kwargs),
+        RuntimePure2DSliceBatchRequest(
+            func=ito.identify_tertiary_objects,
+            slices_2d=(np.zeros((6, 7), dtype=np.float32),),
+            kwargs={
+                "primary_labels": primary,
+                "secondary_labels": secondary,
+                "shrink_primary": False,
+            },
+            execute_slice=(
+                lambda func, image, kwargs, _slice_index, _slice_count: func(
+                    image,
+                    **kwargs,
+                )
+            ),
+        )
     )
 
     tertiary = results[0][-1]
@@ -2740,13 +2749,19 @@ def test_module_executor_runs_image_measurements_per_declared_image() -> None:
     assert runtime.measurements == [
         (
             "ImageQuality",
-            [
-                {"mean": 1.0, "source_image_name": "OrigBlue"},
-                {"mean": 2.0, "source_image_name": "OrigGreen"},
-            ],
-            {"source_image_name": None},
-        )
-    ]
+                [
+                    {"mean": 1.0, "source_image_name": "OrigBlue"},
+                    {"mean": 2.0, "source_image_name": "OrigGreen"},
+                ],
+                {
+                    "source_image_name": None,
+                    "fields": (
+                        FieldSpec("mean"),
+                        FieldSpec("source_image_name"),
+                    ),
+                },
+            )
+        ]
 
 
 def test_module_executor_runs_object_distribution_measurements_per_declared_image() -> None:
@@ -2820,9 +2835,18 @@ def test_module_executor_runs_object_distribution_measurements_per_declared_imag
                     "source_image_name": "OrigGreen",
                 },
             ],
-            {"object_name": "Cells", "source_image_name": None},
-        )
-    ]
+                {
+                    "object_name": "Cells",
+                    "source_image_name": None,
+                    "fields": (
+                        FieldSpec("object_label"),
+                        FieldSpec("mean"),
+                        FieldSpec("object_name"),
+                        FieldSpec("source_image_name"),
+                    ),
+                },
+            )
+        ]
 
 
 def test_module_executor_preserves_composed_image_measurements() -> None:
@@ -2868,7 +2892,11 @@ def test_module_executor_preserves_composed_image_measurements() -> None:
             (
                 "Colocalization",
                 [{"delta": 2.0}],
-                {"object_name": None, "source_image_name": "OrigBlue__OrigGreen"},
+                {
+                    "object_name": None,
+                    "source_image_name": "OrigBlue__OrigGreen",
+                    "fields": (FieldSpec("delta"),),
+                },
             )
         ]
 
@@ -3404,9 +3432,13 @@ def test_module_executor_records_multiple_declared_object_outputs() -> None:
         (
             "UntangleWorms_3_measurements",
             [{"worm_count": 1.0}],
-            {"object_name": None, "source_image_name": "WormBinary"},
-        )
-    ]
+                {
+                    "object_name": None,
+                    "source_image_name": "WormBinary",
+                    "fields": (FieldSpec("worm_count"),),
+                },
+            )
+        ]
     assert [name for name, _labels, _kwargs in runtime.objects] == [
         "OverlappingWorms",
         "NonOverlappingWorms",
@@ -3462,9 +3494,17 @@ def test_default_measurement_builder_preserves_row_declared_object_scope() -> No
                     "worm_length": 10.0,
                 }
             ],
-            {"object_name": None, "source_image_name": None},
-        )
-    ]
+                {
+                    "object_name": None,
+                    "source_image_name": None,
+                    "fields": (
+                        FieldSpec("object_name"),
+                        FieldSpec("object_number"),
+                        FieldSpec("worm_length"),
+                    ),
+                },
+            )
+        ]
 
 
 def test_module_executor_routes_spatial_grid_artifacts() -> None:

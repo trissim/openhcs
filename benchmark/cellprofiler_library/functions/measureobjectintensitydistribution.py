@@ -4,10 +4,16 @@ import logging
 import numpy as np
 import os
 import time
+from collections.abc import Callable, Mapping, Sequence
 from typing import Tuple, List, Any
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import (
+    measurement_image_batch_executor,
+    special_inputs,
+    special_outputs,
+)
+from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_semantics import (
     ObjectIntensityDistributionMeasurementFeature,
     ObjectMeasurementValueRow,
@@ -16,7 +22,7 @@ from openhcs.core.runtime_semantics import (
     indexed_object_intensity_distribution_feature_name,
     indexed_object_intensity_zernike_feature_name,
 )
-from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.core.runtime_values import image_payload_data, object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     radial_distribution_backend,
@@ -97,31 +103,18 @@ def measure_object_intensity_distribution(
         Tuple of (original image, list of measurements)
     """
     total_started_at = time.perf_counter()
-    labels = object_label_dense_array(labels, dtype=np.int32)
-    # Handle dimensionality
-    if image.ndim == 3:
-        # Process first slice for now (2D module)
-        img_2d = image[0]
-        if labels.ndim == 3:
-            labels_2d = labels[0]
-        else:
-            labels_2d = labels
-    else:
-        img_2d = image
-        labels_2d = labels
+    img_2d, labels_2d = _intensity_distribution_2d_inputs(image, labels)
     
     wants_zernikes = _coerce_zernike_mode(wants_zernikes)
-    measurements: list[Any] = []
-    
     object_ids = dense_object_label_extent_id_domain(labels_2d)
     if not object_ids:
-        # Return empty measurements
-        return image, measurements
-    
+        return image, []
+
     phase_started_at = time.perf_counter()
-    radial_arrays = radial_distribution_backend(
+    radial_backend = radial_distribution_backend(
         backend_provider=radial_distribution_backend_provider,
-    ).measure_self_centered(
+    )
+    radial_arrays = radial_backend.measure_self_centered(
         img_2d,
         labels_2d,
         bin_count=bin_count,
@@ -135,12 +128,64 @@ def measure_object_intensity_distribution(
         nobjects=len(object_ids),
         bins=radial_arrays.n_bins,
     )
+    measurements = _intensity_distribution_measurement_rows(
+        radial_arrays,
+        object_ids=object_ids,
+        bin_count=bin_count,
+    )
 
-    def append_bin_measurements(bin_idx: int, radial_cv: np.ndarray) -> None:
-        # Missing label IDs inside the dense object domain carry no radial
-        # fraction; CP-style exports keep RadialCV at zero but mark
-        # FracAtD/MeanFrac as NaN.
+    if wants_zernikes != ZernikeMode.NONE:
+        phase_started_at = time.perf_counter()
+        measurements.extend(
+            _zernike_measurement_rows(
+                img_2d,
+                labels_2d,
+                wants_zernikes=wants_zernikes,
+                zernike_degree=zernike_degree,
+                backend_provider=zernike_backend_provider,
+            )
+        )
+        _log_profile(
+            "idist_zernike_rows",
+            time.perf_counter() - phase_started_at,
+            function="measure_object_intensity_distribution",
+            rows=len(measurements),
+        )
+
+    _log_profile(
+        "idist_total",
+        time.perf_counter() - total_started_at,
+        function="measure_object_intensity_distribution",
+        rows=len(measurements),
+    )
+    return image, measurements
+
+
+def _intensity_distribution_2d_inputs(
+    image: np.ndarray,
+    labels: Any,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return the 2D image/label plane consumed by this measurement contract."""
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    if image.ndim == 3:
+        image_2d = image[0]
+        labels_2d = label_array[0] if label_array.ndim == 3 else label_array
+        return image_2d, labels_2d
+    return image, label_array
+
+
+def _intensity_distribution_measurement_rows(
+    radial_arrays: Any,
+    *,
+    object_ids: Sequence[int],
+    bin_count: int,
+) -> list[ObjectMeasurementValueRow]:
+    """Return radial distribution rows for one measured image."""
+    phase_started_at = time.perf_counter()
+    measurements: list[ObjectMeasurementValueRow] = []
+    for bin_idx in range(radial_arrays.n_bins):
         bin_index = bin_idx + 1
+        radial_cv = radial_arrays.radial_cv_by_bin[bin_idx]
         for object_label in object_ids:
             obj_idx = object_label - 1
             frac_at_d = (
@@ -184,45 +229,83 @@ def measure_object_intensity_distribution(
                     ),
                 )
             )
-    
-    phase_started_at = time.perf_counter()
-    for bin_idx in range(radial_arrays.n_bins):
-        append_bin_measurements(
-            bin_idx,
-            radial_arrays.radial_cv_by_bin[bin_idx],
-        )
     _log_profile(
         "idist_radial_rows",
         time.perf_counter() - phase_started_at,
         function="measure_object_intensity_distribution",
         rows=len(measurements),
     )
+    return measurements
 
-    if wants_zernikes != ZernikeMode.NONE:
-        phase_started_at = time.perf_counter()
-        measurements.extend(
-            _zernike_measurement_rows(
-                img_2d,
-                labels_2d,
-                wants_zernikes=wants_zernikes,
-                zernike_degree=zernike_degree,
-                backend_provider=zernike_backend_provider,
-            )
-        )
-        _log_profile(
-            "idist_zernike_rows",
-            time.perf_counter() - phase_started_at,
-            function="measure_object_intensity_distribution",
-            rows=len(measurements),
-        )
 
-    _log_profile(
-        "idist_total",
-        time.perf_counter() - total_started_at,
-        function="measure_object_intensity_distribution",
-        rows=len(measurements),
+def _measure_object_intensity_distribution_batch(
+    func: Callable[..., Any],
+    requests: tuple[RuntimeBatchInvocationRequest, ...],
+    execute_request: Callable[[Callable[..., Any], RuntimeBatchInvocationRequest], Any],
+) -> list[Any]:
+    """Batch measurement-image invocations sharing one label geometry contract."""
+    if len(requests) <= 1:
+        return [execute_request(func, request) for request in requests]
+
+    labels_2d_by_request: list[np.ndarray] = []
+    images_2d_by_request: list[np.ndarray] = []
+    for request in requests:
+        labels = request.kwargs.get("labels")
+        if labels is None:
+            return [execute_request(func, item) for item in requests]
+        image_2d, labels_2d = _intensity_distribution_2d_inputs(
+            np.asarray(image_payload_data(request.image)),
+            labels,
+        )
+        images_2d_by_request.append(image_2d)
+        labels_2d_by_request.append(labels_2d)
+
+    first_labels = labels_2d_by_request[0]
+    if any(labels.shape != first_labels.shape or not np.array_equal(labels, first_labels) for labels in labels_2d_by_request[1:]):
+        return [execute_request(func, item) for item in requests]
+
+    first_kwargs = requests[0].kwargs
+    wants_zernikes = _coerce_zernike_mode(first_kwargs.get("wants_zernikes", ZernikeMode.NONE))
+    radial_backend = radial_distribution_backend(
+        backend_provider=first_kwargs.get("radial_distribution_backend_provider"),
     )
-    return image, measurements
+    geometry = radial_backend.label_geometry(first_labels)
+    object_ids = dense_object_label_extent_id_domain(first_labels)
+    if not object_ids:
+        return [(request.image, []) for request in requests]
+
+    outputs: list[Any] = []
+    for request, image_2d in zip(requests, images_2d_by_request, strict=True):
+        kwargs = request.kwargs
+        radial_arrays = radial_backend.measure(
+            image_2d,
+            first_labels,
+            geometry.d_to_edge,
+            geometry.center_fields.d_from_center,
+            geometry.center_fields.center_labels,
+            geometry.center_fields.centers_i,
+            geometry.center_fields.centers_j,
+            bin_count=int(kwargs.get("bin_count", 4)),
+            wants_scaled=bool(kwargs.get("wants_scaled", True)),
+            maximum_radius=int(kwargs.get("maximum_radius", 100)),
+        )
+        rows = _intensity_distribution_measurement_rows(
+            radial_arrays,
+            object_ids=object_ids,
+            bin_count=int(kwargs.get("bin_count", 4)),
+        )
+        if wants_zernikes != ZernikeMode.NONE:
+            rows.extend(
+                _zernike_measurement_rows(
+                    image_2d,
+                    first_labels,
+                    wants_zernikes=wants_zernikes,
+                    zernike_degree=int(kwargs.get("zernike_degree", 9)),
+                    backend_provider=kwargs.get("zernike_backend_provider"),
+                )
+            )
+        outputs.append((request.image, rows))
+    return outputs
 
 
 def _coerce_zernike_mode(value: ZernikeMode | str) -> ZernikeMode:
@@ -356,4 +439,7 @@ def _prepare_measure_object_intensity_distribution() -> None:
 
 measure_object_intensity_distribution.__openhcs_prepare__ = (
     _prepare_measure_object_intensity_distribution
+)
+measurement_image_batch_executor(_measure_object_intensity_distribution_batch)(
+    measure_object_intensity_distribution
 )

@@ -177,6 +177,43 @@ class CellProfilerComparisonObservation:
         return payload
 
 
+@dataclass(frozen=True, slots=True)
+class CachedNativeReferenceTimingPolicy:
+    """Timing contract for reused native references with timeout-backed evidence."""
+
+    case: CellProfilerComparisonCase
+    summary: ToolExecutionSummary
+
+    @property
+    def has_timeout_lower_bound(self) -> bool:
+        return (
+            self.summary.success
+            and self.summary.cached
+            and self.summary.execution_seconds is None
+            and self.case.cellprofiler_timeout_seconds is not None
+        )
+
+    def apply(self) -> ToolExecutionSummary:
+        if not self.has_timeout_lower_bound:
+            return self.summary
+        timeout_seconds = float(self.case.cellprofiler_timeout_seconds)
+        return ToolExecutionSummary(
+            tool=self.summary.tool,
+            success=self.summary.success,
+            output_path=self.summary.output_path,
+            execution_seconds=timeout_seconds,
+            total_metric_seconds=(
+                self.summary.total_metric_seconds
+                if self.summary.total_metric_seconds is not None
+                else timeout_seconds
+            ),
+            peak_memory_mb=self.summary.peak_memory_mb,
+            cached=self.summary.cached,
+            error_message=self.summary.error_message,
+            phase_seconds=self.summary.phase_seconds,
+        )
+
+
 def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
     """Load benchmark cases from a JSON manifest."""
     payload = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -704,6 +741,13 @@ def comparison_observation_from_result(
 ) -> CellProfilerComparisonObservation:
     """Convert adapter results into a stable observation payload."""
     openhcs_provenance = result.openhcs_converted.provenance or {}
+    native_summary = CachedNativeReferenceTimingPolicy(
+        case=case,
+        summary=_tool_execution_summary(
+            result.native_cellprofiler,
+            execution_phase="EXECUTE_NATIVE_CP",
+        ),
+    ).apply()
     return CellProfilerComparisonObservation(
         suite_id=suite_id,
         case_name=case.name,
@@ -716,10 +760,7 @@ def comparison_observation_from_result(
         difference_count=_difference_count(result),
         numeric_abs_tolerance=1e-6,
         numeric_rel_tolerance=1e-6,
-        native_cellprofiler=_tool_execution_summary(
-            result.native_cellprofiler,
-            execution_phase="EXECUTE_NATIVE_CP",
-        ),
+        native_cellprofiler=native_summary,
         openhcs=_tool_execution_summary(
             result.openhcs_converted,
             execution_phase="EXECUTE_OPENHCS",

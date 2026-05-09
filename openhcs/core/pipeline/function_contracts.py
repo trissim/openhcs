@@ -1,10 +1,23 @@
 """Function-level artifact contract decorators for the pipeline compiler."""
 
 from collections import OrderedDict
+from collections.abc import Mapping
 from enum import Enum
 from typing import Callable, TypeVar
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.runtime_batch_contracts import (
+    PURE_2D_BATCH_EXECUTOR_ATTR,
+    RUNTIME_BATCH_EXECUTORS_ATTR,
+    Pure2DSliceBatchExecutor,
+    RuntimeBatchExecutionDomain,
+    RuntimeBatchExecutor,
+    RuntimePure2DSliceBatchRequest,
+    measurement_image_batch_executor,
+    pure_2d_batch_executor,
+    runtime_batch_executor,
+    runtime_batch_executors_from_callable,
+)
 from openhcs.processing.materialization import MaterializationSpec
 
 F = TypeVar("F", bound=Callable)

@@ -3035,6 +3035,51 @@ def test_correct_illumination_strategy_registries_use_json_stable_keys():
     )
 
 
+def test_smooth_gaussian_default_provider_preserves_cellprofiler_semantics():
+    from benchmark.cellprofiler_library.functions.smooth import (
+        SmoothingBackendSelectionRequest,
+        SmoothingBackendProviderPolicy,
+        SmoothingMethod,
+    )
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+
+    assert (
+        SmoothingBackendProviderPolicy.resolve(
+            SmoothingMethod.GAUSSIAN_FILTER,
+            None,
+        )
+        is CellProfilerBackendProvider.NATIVE
+    )
+    assert (
+        SmoothingBackendProviderPolicy.resolve(
+            SmoothingMethod.GAUSSIAN_FILTER,
+            None,
+            SmoothingBackendSelectionRequest(
+                method=SmoothingMethod.GAUSSIAN_FILTER,
+                auto_object_size=False,
+                object_size=3.0,
+                image_shape=(64, 64),
+            ),
+        )
+        is CellProfilerBackendProvider.NATIVE
+    )
+    assert (
+        SmoothingBackendProviderPolicy.resolve(
+            SmoothingMethod.GAUSSIAN_FILTER,
+            None,
+            SmoothingBackendSelectionRequest(
+                method=SmoothingMethod.GAUSSIAN_FILTER,
+                auto_object_size=False,
+                object_size=20.0,
+                image_shape=(64, 64),
+            ),
+        )
+        is CellProfilerBackendProvider.OPENCV
+    )
+
+
 def test_pure_2d_contract_wrapper_aggregates_tuple_outputs_per_slice():
     registry = OpenHCSRegistry()
     wrapped = registry.apply_contract_wrapper(

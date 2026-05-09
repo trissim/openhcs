@@ -6,6 +6,10 @@ Identifies secondary objects (e.g., cells) using primary objects (e.g., nuclei)
 as seeds, expanding them based on intensity gradients or distance.
 """
 
+import logging
+import os
+import time
+
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import ClassVar, Tuple
@@ -53,6 +57,20 @@ from openhcs.processing.backends.cellprofiler.secondary import (
     SecondaryPropagationBackendStrategy,
 )
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 class SecondaryMethod(Enum):
@@ -768,6 +786,8 @@ def identify_secondary_objects(
     Returns:
         Tuple of (image, stats, parent-child relationships, secondary_labels)
     """
+    profile_total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
     method = _coerce_function_enum(SecondaryMethod, method)
     morphology = MorphologyBackendStrategy.for_callable(
         identify_secondary_objects,
@@ -783,6 +803,13 @@ def identify_secondary_objects(
     )
     inputs = _normalize_secondary_inputs(raw_image_data, primary_labels)
     img = _normalize_intensity_image(inputs.image)
+    _log_profile(
+        "iso_prepare_inputs",
+        time.perf_counter() - phase_started_at,
+        function="identify_secondary_objects",
+        method=method.value,
+    )
+    phase_started_at = time.perf_counter()
     threshold = _threshold_secondary_objects(
         SecondaryThresholdRequest(
             image=img,
@@ -807,6 +834,13 @@ def identify_secondary_objects(
             diagnostics_unit_interval_scale=diagnostics_unit_interval_scale,
         )
     )
+    _log_profile(
+        "iso_threshold",
+        time.perf_counter() - phase_started_at,
+        function="identify_secondary_objects",
+        method=method.value,
+    )
+    phase_started_at = time.perf_counter()
     raw_labels = SecondarySegmentationStrategy.for_method(method).segment(
         SecondarySegmentationRequest(
             image=img,
@@ -820,6 +854,13 @@ def identify_secondary_objects(
             propagation_backend_provider=propagation_backend_provider,
         )
     )
+    _log_profile(
+        "iso_segment",
+        time.perf_counter() - phase_started_at,
+        function="identify_secondary_objects",
+        method=method.value,
+    )
+    phase_started_at = time.perf_counter()
     object_labels = SecondaryObjectLabels.from_raw_labels(
         raw_labels,
         fill_holes=fill_holes,
@@ -827,6 +868,13 @@ def identify_secondary_objects(
         primary_labels=inputs.labels,
         morphology=morphology,
     )
+    _log_profile(
+        "iso_label_variants",
+        time.perf_counter() - phase_started_at,
+        function="identify_secondary_objects",
+        method=method.value,
+    )
+    phase_started_at = time.perf_counter()
     stats = _secondary_object_stats(
         object_labels.segmented,
         image_shape=img.shape,
@@ -835,9 +883,28 @@ def identify_secondary_objects(
         weighted_variance=threshold.weighted_variance,
         sum_of_entropies=threshold.sum_of_entropies,
     )
+    _log_profile(
+        "iso_stats",
+        time.perf_counter() - phase_started_at,
+        function="identify_secondary_objects",
+        method=method.value,
+    )
+    phase_started_at = time.perf_counter()
     relationships = _parent_child_relationship(
         primary_labels if isinstance(primary_labels, ObjectLabelPayload) else inputs.labels,
         object_labels.segmented,
+    )
+    _log_profile(
+        "iso_relationships",
+        time.perf_counter() - phase_started_at,
+        function="identify_secondary_objects",
+        method=method.value,
+    )
+    _log_profile(
+        "iso_total",
+        time.perf_counter() - profile_total_started_at,
+        function="identify_secondary_objects",
+        method=method.value,
     )
     
     return img.astype(np.float32), stats, relationships, object_labels.payload_for_image(image)

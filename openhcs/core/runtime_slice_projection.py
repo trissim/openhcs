@@ -21,6 +21,7 @@ from openhcs.core.runtime_artifact_queries import (
 )
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
+    MeasurementRowAxisField,
     ParentChildRelationshipPayload,
     RuntimePlaneAxis,
 )
@@ -53,7 +54,25 @@ class RuntimeSliceProjectionContext:
             raise ValueError(
                 "RuntimeSliceProjectionContext.slice_index must be within "
                 f"[0, {self.slice_count}), got {self.slice_index}."
-            )
+)
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementTableRepeatedScalarGroupKey:
+    """Nominal identity for append-ordered scalar measurement table groups."""
+
+    table_name: str
+    object_name: str | None
+    source_image_name: str | None
+
+    @classmethod
+    def from_table(cls, table: MeasurementTable) -> "MeasurementTableRepeatedScalarGroupKey":
+        """Return the repeated-scalar group identity declared by one table."""
+        return cls(
+            table_name=table.name,
+            object_name=measurement_table_object_name(table),
+            source_image_name=table.source_image_name,
+        )
 
 
 class RuntimeSliceProjectionStrategy(
@@ -302,7 +321,17 @@ class RuntimeSliceProjection:
     @staticmethod
     def measurement_table_effective_slice_count(value: MeasurementTable) -> int:
         """Return declared measurement-table slice count, treating scalar tables as one slice."""
+        if RuntimeSliceProjection.measurement_table_declares_no_slice_index(value):
+            return 1
         return RuntimeSliceProjection.measurement_table_slice_count(value) or 1
+
+    @staticmethod
+    def measurement_table_declares_no_slice_index(value: MeasurementTable) -> bool:
+        """Return whether declared fields make row-level slice scanning unnecessary."""
+        if not value.fields:
+            return False
+        slice_field = MeasurementRowAxisField.SLICE_INDEX.value
+        return all(field.name != slice_field for field in value.fields)
 
     @staticmethod
     def measurement_table_collection_slice_count(values: Any) -> int | None:
@@ -441,6 +470,47 @@ class RuntimeSliceProjection:
                     )
                 )
         return tuple(aligned)
+
+    @staticmethod
+    def measurement_table_appended_with_repeated_scalar_slice_offset(
+        existing_tables: tuple[MeasurementTable, ...],
+        table: MeasurementTable,
+    ) -> MeasurementTable:
+        """Return a new table offset for append-only repeated scalar table indexing."""
+        scalar_group_size = sum(
+            1
+            for existing_table in existing_tables
+            if RuntimeSliceProjection.measurement_tables_share_repeated_scalar_group(
+                existing_table,
+                table,
+            )
+        )
+        if scalar_group_size == 0:
+            return table
+        if RuntimeSliceProjection.measurement_table_effective_slice_count(table) != 1:
+            return table
+        return RuntimeSliceProjection.measurement_table_with_slice_offset(
+            table,
+            scalar_group_size,
+        )
+
+    @staticmethod
+    def measurement_tables_share_repeated_scalar_group(
+        left: MeasurementTable,
+        right: MeasurementTable,
+    ) -> bool:
+        """Return whether two tables participate in one repeated scalar group."""
+        return (
+            RuntimeSliceProjection.measurement_table_repeated_scalar_group_key(left)
+            == RuntimeSliceProjection.measurement_table_repeated_scalar_group_key(right)
+        )
+
+    @staticmethod
+    def measurement_table_repeated_scalar_group_key(
+        table: MeasurementTable,
+    ) -> MeasurementTableRepeatedScalarGroupKey:
+        """Return the nominal repeated-scalar group identity for one table."""
+        return MeasurementTableRepeatedScalarGroupKey.from_table(table)
 
     @staticmethod
     def single_slice_count(

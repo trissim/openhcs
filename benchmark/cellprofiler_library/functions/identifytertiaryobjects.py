@@ -6,10 +6,14 @@ leaving a ring shape.
 """
 
 import numpy as np
-from typing import Any, Callable, Mapping, Tuple
+from typing import Any, Tuple
 from dataclasses import dataclass
 from numba import njit
 from openhcs.core.memory import numpy
+from openhcs.core.pipeline.function_contracts import (
+    RuntimePure2DSliceBatchRequest,
+    pure_2d_batch_executor,
+)
 from openhcs.core.runtime_semantics import (
     ExplicitObjectLabelDomainDeclaration,
     ObjectLabelDomain,
@@ -105,12 +109,10 @@ def _parent_child_relationship(
 
 
 def _identify_tertiary_objects_batch(
-    func: Callable[..., Any],
-    slices_2d: tuple[Any, ...],
-    kwargs: Mapping[str, Any],
-    slice_count: int,
-    execute_slice: Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
+    request: RuntimePure2DSliceBatchRequest,
 ) -> list[Any]:
+    kwargs = request.kwargs
+    slice_count = request.slice_count
     alignment = aligned_dense_object_label_stack_alignment(
         kwargs["primary_labels"],
         kwargs["secondary_labels"],
@@ -118,8 +120,8 @@ def _identify_tertiary_objects_batch(
     )
     if alignment is None:
         return [
-            execute_slice(func, slice_2d, kwargs, slice_index, slice_count)
-            for slice_index, slice_2d in enumerate(slices_2d)
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
         ]
     primary_stack = alignment.first_stack
     secondary_stack = alignment.second_stack
@@ -135,7 +137,7 @@ def _identify_tertiary_objects_batch(
 
     return [
         (
-            slices_2d[slice_index],
+                request.slices_2d[slice_index],
             _parent_child_relationship(
                 secondary_stack[slice_index],
                 tertiary_stack[slice_index],
@@ -371,6 +373,25 @@ def identify_tertiary_objects(
     )
 
 
-identify_tertiary_objects.__openhcs_pure_2d_batch_executor__ = (
-    _identify_tertiary_objects_batch
-)
+def _prepare_identify_tertiary_objects() -> None:
+    """Compile tertiary-object kernels before benchmarked execution."""
+    image = np.zeros((32, 32), dtype=np.float32)
+    primary = np.zeros((32, 32), dtype=np.int32)
+    secondary = np.zeros((32, 32), dtype=np.int32)
+    primary[10:20, 10:20] = 1
+    secondary[6:24, 6:24] = 1
+    identify_tertiary_objects.__wrapped__(
+        image,
+        primary,
+        secondary,
+        shrink_primary=True,
+    )
+    _tertiary_stack_numba(
+        np.expand_dims(primary, axis=0),
+        np.expand_dims(secondary, axis=0),
+        True,
+    )
+
+
+identify_tertiary_objects.__openhcs_prepare__ = _prepare_identify_tertiary_objects
+pure_2d_batch_executor(_identify_tertiary_objects_batch)(identify_tertiary_objects)

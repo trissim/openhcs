@@ -51,6 +51,16 @@ class RuntimeFunctionInvocationRequest(
     kwargs: Mapping[str, object]
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class RuntimeBatchInvocationRequest(RuntimeImageExecutionContext):
+    """One invocation inside a nominal runtime batch."""
+
+    image: object
+    kwargs: Mapping[str, object]
+    batch_index: int
+    batch_count: int
+
+
 def requested_image_execution_mode(
     *,
     force_full_stack: bool,

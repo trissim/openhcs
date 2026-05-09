@@ -59,6 +59,9 @@ from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.pipeline.function_contracts import (
     ObjectLabelMeasurementExecution,
+    Pure2DSliceBatchExecutor,
+    RuntimeBatchExecutionDomain,
+    RuntimePure2DSliceBatchRequest,
     object_label_measurement_execution_from_callable,
 )
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest
@@ -66,6 +69,7 @@ from openhcs.core.runtime_slice_alignment import (
     RuntimeSliceAlignedValues,
     RuntimeSliceAlignedValueSet,
 )
+from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_FEATURE_NAME_FIELD,
@@ -776,116 +780,237 @@ class CellProfilerModuleExecutor:
         split_seconds = 0.0
         complete_rows_seconds = 0.0
         annotate_seconds = 0.0
-        for measurement_image in measurement_images:
-            for object_spec in object_inputs:
-                label_payload_started_at = time.perf_counter()
-                raw_label_payload = self._object_label_payload(
-                    object_spec,
-                    cellprofiler_runtime,
-                    input_image,
-                )
-                raw_labels = _measurement_labels_for_measurement_image(
-                    measurement_image,
-                    raw_label_payload,
-                    adapter=cellprofiler_runtime,
-                )
-                label_payload_seconds += time.perf_counter() - label_payload_started_at
-                label_align_started_at = time.perf_counter()
-                measurement_labels = MeasurementLabelSourceAlignmentStrategy.align(
-                    measurement_image.payload,
-                    raw_labels,
-                    label_payload=raw_label_payload,
-                )
-                aligned_image = (
-                    _measurement_image_for_labels(
-                        measurement_image.payload,
-                        measurement_labels,
-                        label_payload=raw_label_payload,
-                        reference_domain=measurement_image.reference_domain,
-                    )
-                    if measurement_image.align_to_labels
-                    else measurement_image.payload
-                )
-                measurement_labels = MeasurementLabelSourceAlignmentStrategy.align(
-                    aligned_image,
-                    measurement_labels,
-                    label_payload=raw_label_payload,
-                )
-                completion_label_payload = object_label_payload_with_measurement_labels(
-                    raw_label_payload,
-                    measurement_labels,
-                )
-                executable_labels = (
-                    CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
-                        object_label_measurement_execution_from_callable(func)
-                    ).label_argument(
-                        CellProfilerObjectMeasurementLabelArgumentRequest(
-                            dense_labels=measurement_labels,
-                            label_payload=completion_label_payload,
-                            measurement_image_payload=measurement_image.payload,
-                        )
-                    )
-                )
-                label_align_seconds += time.perf_counter() - label_align_started_at
-                contract_started_at = time.perf_counter()
-                raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
-                    func,
-                    aligned_image,
-                    {**kwargs, "labels": executable_labels},
-                    execution_mode=(
-                        CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
-                            self.module_name
-                        ).execution_mode(
-                            func,
-                            completion_label_payload,
-                            measurement_image.execution_mode,
-                    runtime_slice_count=payload_slice_count(current_image),
-                        )
+        batch_executor = CallableContract.from_callable(func).runtime_batch_executor(
+            RuntimeBatchExecutionDomain.MEASUREMENT_IMAGES
+        )
+
+        def record_measurement_output(
+            raw_output: Any,
+            *,
+            measurement_image: CellProfilerMeasurementImage,
+            object_spec: ArtifactSpec,
+            completion_label_payload: Any,
+        ) -> None:
+            nonlocal split_seconds, complete_rows_seconds, annotate_seconds
+
+            split_started_at = time.perf_counter()
+            _ignored_main_output, artifact_values = _split_cellprofiler_output(
+                raw_output
+            )
+            split_seconds += time.perf_counter() - split_started_at
+            raw_measurement_rows = _measurement_rows_from_output(artifact_values)
+            object_measurement_rows = [
+                row
+                for row in raw_measurement_rows
+                if measurement_row_policy.row_is_object_scoped(row)
+            ]
+            non_object_measurement_rows = [
+                row
+                for row in raw_measurement_rows
+                if not measurement_row_policy.row_is_object_scoped(row)
+            ]
+            combined_rows.extend(non_object_measurement_rows)
+            complete_rows_started_at = time.perf_counter()
+            measurement_rows = measurement_row_policy.complete_rows(
+                object_measurement_rows,
+                label_payload=completion_label_payload,
+                func=func,
+            )
+            complete_rows_seconds += time.perf_counter() - complete_rows_started_at
+            annotate_started_at = time.perf_counter()
+            source_image_name = (
+                measurement_image.source_image_name
+                if row_source_names_required
+                else None
+            )
+            combined_rows.extend(
+                MeasurementRowOwnership(
+                    object_name=(
+                        object_spec.name
+                        if row_object_names_required
+                        or requires_explicit_row_ownership
+                        else None
                     ),
+                    source_image_name=source_image_name,
+                ).annotate_rows(measurement_rows)
+            )
+            annotate_seconds += time.perf_counter() - annotate_started_at
+
+        def prepare_measurement_invocation(
+            measurement_image: CellProfilerMeasurementImage,
+            object_spec: ArtifactSpec,
+        ) -> tuple[Any, Any, Any, ImagePayloadExecutionMode]:
+            nonlocal label_payload_seconds, label_align_seconds
+
+            label_payload_started_at = time.perf_counter()
+            raw_label_payload = self._object_label_payload(
+                object_spec,
+                cellprofiler_runtime,
+                input_image,
+            )
+            raw_labels = _measurement_labels_for_measurement_image(
+                measurement_image,
+                raw_label_payload,
+                adapter=cellprofiler_runtime,
+            )
+            label_payload_seconds += time.perf_counter() - label_payload_started_at
+            label_align_started_at = time.perf_counter()
+            measurement_labels = MeasurementLabelSourceAlignmentStrategy.align(
+                measurement_image.payload,
+                raw_labels,
+                label_payload=raw_label_payload,
+            )
+            aligned_image = (
+                _measurement_image_for_labels(
+                    measurement_image.payload,
+                    measurement_labels,
+                    label_payload=raw_label_payload,
+                    reference_domain=measurement_image.reference_domain,
+                )
+                if measurement_image.align_to_labels
+                else measurement_image.payload
+            )
+            measurement_labels = MeasurementLabelSourceAlignmentStrategy.align(
+                aligned_image,
+                measurement_labels,
+                label_payload=raw_label_payload,
+            )
+            completion_label_payload = object_label_payload_with_measurement_labels(
+                raw_label_payload,
+                measurement_labels,
+            )
+            executable_labels = (
+                CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
+                    object_label_measurement_execution_from_callable(func)
+                ).label_argument(
+                    CellProfilerObjectMeasurementLabelArgumentRequest(
+                        dense_labels=measurement_labels,
+                        label_payload=completion_label_payload,
+                        measurement_image_payload=measurement_image.payload,
+                    )
+                )
+            )
+            label_align_seconds += time.perf_counter() - label_align_started_at
+            execution_mode = (
+                CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
+                    self.module_name
+                ).execution_mode(
+                    func,
+                    completion_label_payload,
+                    measurement_image.execution_mode,
+                    runtime_slice_count=payload_slice_count(current_image),
+                )
+            )
+            return (
+                aligned_image,
+                executable_labels,
+                completion_label_payload,
+                execution_mode,
+            )
+
+        use_measurement_image_batch = (
+            callable(batch_executor) and len(measurement_images) > 1
+        )
+        if not use_measurement_image_batch:
+            for measurement_image in measurement_images:
+                for object_spec in object_inputs:
+                    (
+                        aligned_image,
+                        executable_labels,
+                        completion_label_payload,
+                        execution_mode,
+                    ) = prepare_measurement_invocation(measurement_image, object_spec)
+                    contract_started_at = time.perf_counter()
+                    raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+                        func,
+                        aligned_image,
+                        {**kwargs, "labels": executable_labels},
+                        execution_mode=execution_mode,
+                    )
+                    contract_execute_seconds += (
+                        time.perf_counter() - contract_started_at
+                    )
+                    record_measurement_output(
+                        raw_output,
+                        measurement_image=measurement_image,
+                        object_spec=object_spec,
+                        completion_label_payload=completion_label_payload,
+                    )
+        else:
+            ordered_batch_outputs: dict[
+                int,
+                tuple[Any, CellProfilerMeasurementImage, ArtifactSpec, Any],
+            ] = {}
+            for object_index, object_spec in enumerate(object_inputs):
+                batch_requests: list[RuntimeBatchInvocationRequest] = []
+                batch_contexts: list[
+                    tuple[int, CellProfilerMeasurementImage, ArtifactSpec, Any]
+                ] = []
+                for measurement_image_index, measurement_image in enumerate(
+                    measurement_images
+                ):
+                    (
+                        aligned_image,
+                        executable_labels,
+                        completion_label_payload,
+                        execution_mode,
+                    ) = prepare_measurement_invocation(measurement_image, object_spec)
+                    batch_requests.append(
+                        RuntimeBatchInvocationRequest(
+                            source_image_name=measurement_image.source_image_name,
+                            execution_mode=execution_mode,
+                            image=aligned_image,
+                            kwargs={**kwargs, "labels": executable_labels},
+                            batch_index=len(batch_requests),
+                            batch_count=len(measurement_images),
+                        )
+                    )
+                    batch_contexts.append(
+                        (
+                            measurement_image_index * len(object_inputs)
+                            + object_index,
+                            measurement_image,
+                            object_spec,
+                            completion_label_payload,
+                        )
+                    )
+                contract_started_at = time.perf_counter()
+                raw_outputs = batch_executor(
+                    func,
+                    tuple(batch_requests),
+                    _execute_runtime_batch_invocation,
                 )
                 contract_execute_seconds += time.perf_counter() - contract_started_at
-                split_started_at = time.perf_counter()
-                _ignored_main_output, artifact_values = _split_cellprofiler_output(
-                    raw_output
+                if len(raw_outputs) != len(batch_contexts):
+                    raise ValueError(
+                        f"{function_name} measurement-image batch executor returned "
+                        f"{len(raw_outputs)} outputs for {len(batch_contexts)} requests."
+                    )
+                for raw_output, (
+                    order_index,
+                    measurement_image,
+                    object_spec,
+                    completion_label_payload,
+                ) in zip(raw_outputs, batch_contexts, strict=True):
+                    ordered_batch_outputs[order_index] = (
+                        raw_output,
+                        measurement_image,
+                        object_spec,
+                        completion_label_payload,
+                    )
+            for order_index in range(len(measurement_images) * len(object_inputs)):
+                (
+                    raw_output,
+                    measurement_image,
+                    object_spec,
+                    completion_label_payload,
+                ) = ordered_batch_outputs[order_index]
+                record_measurement_output(
+                    raw_output,
+                    measurement_image=measurement_image,
+                    object_spec=object_spec,
+                    completion_label_payload=completion_label_payload,
                 )
-                split_seconds += time.perf_counter() - split_started_at
-                raw_measurement_rows = _measurement_rows_from_output(artifact_values)
-                object_measurement_rows = [
-                    row
-                    for row in raw_measurement_rows
-                    if measurement_row_policy.row_is_object_scoped(row)
-                ]
-                non_object_measurement_rows = [
-                    row
-                    for row in raw_measurement_rows
-                    if not measurement_row_policy.row_is_object_scoped(row)
-                ]
-                combined_rows.extend(non_object_measurement_rows)
-                complete_rows_started_at = time.perf_counter()
-                measurement_rows = measurement_row_policy.complete_rows(
-                    object_measurement_rows,
-                    label_payload=completion_label_payload,
-                    func=func,
-                )
-                complete_rows_seconds += time.perf_counter() - complete_rows_started_at
-                annotate_started_at = time.perf_counter()
-                source_image_name = (
-                    measurement_image.source_image_name
-                    if row_source_names_required
-                    else None
-                )
-                combined_rows.extend(
-                    MeasurementRowOwnership(
-                        object_name=(
-                            object_spec.name
-                            if row_object_names_required
-                            or requires_explicit_row_ownership
-                            else None
-                        ),
-                        source_image_name=source_image_name,
-                    ).annotate_rows(measurement_rows)
-                )
-                annotate_seconds += time.perf_counter() - annotate_started_at
 
         _log_module_profile(
             "cp_per_object_label_payload",
@@ -2608,6 +2733,129 @@ class ObjectInputBindingRequest(RuntimeInputBindingRequestBase):
         return self.adapter.measurement_tables_for_object(primary_object.name)
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerMeasurementVector:
+    """CellProfiler-facing projection of one object/image measurement vector."""
+
+    slices: tuple[Any, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "slices", tuple(self.slices))
+
+    @property
+    def slice_aligned_value(self) -> np.ndarray | CellProfilerSliceAlignedValues:
+        if len(self.slices) == 1:
+            return np.asarray(self.slices[0])
+        return CellProfilerSliceAlignedValues(
+            tuple(np.asarray(value) for value in self.slices)
+        )
+
+    @property
+    def calculate_math_operand_value(self) -> Any:
+        if len(self.slices) != 1:
+            return self.slice_aligned_value
+        values = np.asarray(self.slices[0])
+        return float(values[0]) if values.size == 1 else values
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerObjectMeasurementVectorBinding:
+    """Nominal binding from object-label runtime inputs to measurement vectors."""
+
+    request: RuntimeInputBindingRequestBase
+    object_name: str
+    feature_name: str
+    object_spec: ArtifactSpec | None = None
+    labels: Any | None = None
+
+    @classmethod
+    def for_object_input(
+        cls,
+        request: RuntimeInputBindingRequestBase,
+        *,
+        object_spec: ArtifactSpec,
+        feature_name: str,
+        labels: Any | None = None,
+    ) -> "CellProfilerObjectMeasurementVectorBinding":
+        return cls(
+            request=request,
+            object_name=object_spec.name,
+            feature_name=feature_name,
+            object_spec=object_spec,
+            labels=labels,
+        )
+
+    @classmethod
+    def for_object_name(
+        cls,
+        request: ObjectInputBindingRequest,
+        *,
+        object_name: str,
+        feature_name: str,
+    ) -> "CellProfilerObjectMeasurementVectorBinding":
+        return cls(
+            request=request,
+            object_name=object_name,
+            feature_name=feature_name,
+            object_spec=_spec_by_name(request.object_inputs, object_name),
+        )
+
+    def vector(self) -> CellProfilerMeasurementVector:
+        if self.object_spec is None:
+            return CellProfilerMeasurementVector(
+                (
+                    self.request.adapter.measurement_values_for_object_feature(
+                        self.object_name,
+                        self.feature_name,
+                    ),
+                )
+            )
+        return CellProfilerMeasurementVector(
+            self.request.adapter.measurement_values_for_label_slices(
+                self.object_name,
+                self.feature_name,
+                self.labels
+                if self.labels is not None
+                else self.request.labels_for(self.object_spec),
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerObjectMeasurementVectorBatchBinding:
+    """Batch object-measurement vector bindings that share runtime semantics."""
+
+    bindings: tuple[CellProfilerObjectMeasurementVectorBinding, ...]
+
+    def vectors(self) -> tuple[CellProfilerMeasurementVector, ...]:
+        if not self.bindings:
+            return ()
+        feature_names = tuple(dict.fromkeys(binding.feature_name for binding in self.bindings))
+        if len(feature_names) != 1 or any(
+            binding.object_spec is None for binding in self.bindings
+        ):
+            return tuple(binding.vector() for binding in self.bindings)
+
+        feature_name = feature_names[0]
+        requests = {
+            binding.object_name: (
+                binding.feature_name,
+                binding.labels
+                if binding.labels is not None
+                else binding.request.labels_for(binding.object_spec),
+            )
+            for binding in self.bindings
+        }
+        vectors = self.bindings[0].request.adapter.measurement_values_for_label_slice_batch(
+            requests,
+            feature_name=feature_name,
+        )
+        return tuple(
+            CellProfilerMeasurementVector(vectors[binding.object_name])
+            for binding in self.bindings
+        )
+
+
 class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
     """Nominal binding policy for CellProfiler object-label inputs."""
 
@@ -3678,6 +3926,20 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
         request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         started_at = time.perf_counter()
+        operand_bindings = self.object_operand_bindings(request)
+        if operand_bindings is not None:
+            vectors = CellProfilerObjectMeasurementVectorBatchBinding(
+                operand_bindings
+            ).vectors()
+            _log_module_profile(
+                "calculate_math_bind_total",
+                time.perf_counter() - started_at,
+            )
+            return {
+                "operand1_value": vectors[0].calculate_math_operand_value,
+                "operand2_value": vectors[1].calculate_math_operand_value,
+            }
+
         operand1_started_at = time.perf_counter()
         operand1_value = self.operand_value(
             request,
@@ -3709,6 +3971,35 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             "operand2_value": operand2_value,
         }
 
+    def object_operand_bindings(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> tuple[CellProfilerObjectMeasurementVectorBinding, ...] | None:
+        bindings: list[CellProfilerObjectMeasurementVectorBinding] = []
+        for feature_kwarg, object_kwarg in (
+            ("operand1_feature", "operand1_object_name"),
+            ("operand2_feature", "operand2_object_name"),
+        ):
+            feature_name = _required_string_kwarg(
+                request.kwargs,
+                feature_kwarg,
+                "CalculateMath",
+            )
+            object_name = _optional_string_kwarg(request.kwargs, object_kwarg)
+            if object_name is None or count_feature_object_name(feature_name) is not None:
+                return None
+            object_spec = _spec_by_name(request.object_inputs, object_name)
+            if object_spec is None:
+                return None
+            bindings.append(
+                CellProfilerObjectMeasurementVectorBinding.for_object_input(
+                    request,
+                    object_spec=object_spec,
+                    feature_name=feature_name,
+                )
+            )
+        return tuple(bindings)
+
     def operand_value(
         self,
         request: ObjectInputBindingRequest,
@@ -3728,24 +4019,14 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
         if object_name is None:
             return self.image_operand_value(request.adapter, feature_name)
 
-        object_spec = _spec_by_name(request.object_inputs, object_name)
-        if object_spec is None:
-            values = request.adapter.measurement_values_for_object_feature(
-                object_name,
-                feature_name,
+        return (
+            CellProfilerObjectMeasurementVectorBinding.for_object_name(
+                request,
+                object_name=object_name,
+                feature_name=feature_name,
             )
-            return float(values[0]) if len(values) == 1 else values
-
-        values = request.adapter.measurement_values_for_label_slices(
-            object_name,
-            feature_name,
-            request.labels_for(object_spec),
-        )
-        if len(values) == 1:
-            slice_values = np.asarray(values[0])
-            return float(slice_values[0]) if slice_values.size == 1 else slice_values
-        return CellProfilerSliceAlignedValues(
-            slices=tuple(np.asarray(value) for value in values),
+            .vector()
+            .calculate_math_operand_value
         )
 
     def image_operand_value(
@@ -3785,7 +4066,7 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
                 feature=feature_name,
             )
             return scalar_value
-        return _slice_aligned_measurement_values(slice_values)
+        return CellProfilerMeasurementVector(slice_values).slice_aligned_value
 
 
 class CellProfilerPerObjectMeasurementPolicy:
@@ -4123,6 +4404,17 @@ class CellProfilerMeasurementRecord:
     source_image_payload: Any | None = None
     fields: tuple[FieldSpec, ...] = ()
 
+    def __post_init__(self) -> None:
+        if self.fields or not _rows_have_inferable_fields(self.rows):
+            return
+        object.__setattr__(
+            self,
+            "fields",
+            _field_specs_for_rows(
+                tuple(measurement_row_mapping(row) for row in self.rows)
+            ),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerMeasurementRecordPartition:
@@ -4133,6 +4425,17 @@ class CellProfilerMeasurementRecordPartition:
     source_image_name: str | None
     source_image_payload: Any | None = None
     fields: tuple[FieldSpec, ...] = ()
+
+    def __post_init__(self) -> None:
+        if self.fields or not _rows_have_inferable_fields(self.rows):
+            return
+        object.__setattr__(
+            self,
+            "fields",
+            _field_specs_for_rows(
+                tuple(measurement_row_mapping(row) for row in self.rows)
+            ),
+        )
 
 
 class CellProfilerImageMeasurementSource(ABC, metaclass=AutoRegisterMeta):
@@ -6560,7 +6863,9 @@ def _measurement_record_fields(
     if fields:
         return fields
     if _rows_have_inferable_fields(rows):
-        return ()
+        return _field_specs_for_rows(
+            [measurement_row_mapping(row) for row in rows]
+        )
     return _measurement_fields_from_callable(func)
 
 
@@ -7325,14 +7630,6 @@ def _object_label_count_from_value(
     return int(label_array.max())
 
 
-def _slice_aligned_measurement_values(
-    value_slices: tuple[np.ndarray, ...],
-) -> np.ndarray | CellProfilerSliceAlignedValues:
-    if len(value_slices) == 1:
-        return value_slices[0]
-    return CellProfilerSliceAlignedValues(value_slices)
-
-
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
     """Authoritative runtime context for binding declared special_inputs."""
@@ -7660,12 +7957,15 @@ class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         )
         return {
             "labels": labels,
-            "measurements": _slice_aligned_measurement_values(
-                request.adapter.measurement_values_for_label_slices(
-                    object_spec.name,
-                    feature_name,
-                    labels,
+            "measurements": (
+                CellProfilerObjectMeasurementVectorBinding.for_object_input(
+                    request,
+                    object_spec=object_spec,
+                    feature_name=feature_name,
+                    labels=labels,
                 )
+                .vector()
+                .slice_aligned_value
             ),
         }
 
@@ -7706,32 +8006,36 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
             return {
                 "labels": labels,
                 "measurement_values_by_rule": tuple(
-                    _slice_aligned_measurement_values(
-                        request.adapter.measurement_values_for_label_slices(
-                            object_spec.name,
-                            _classification_rule_measurement_feature(
-                                rule,
-                                request.module_name,
-                            ),
-                            labels,
-                        )
+                    CellProfilerObjectMeasurementVectorBinding.for_object_input(
+                        request,
+                        object_spec=object_spec,
+                        feature_name=_classification_rule_measurement_feature(
+                            rule,
+                            request.module_name,
+                        ),
+                        labels=labels,
                     )
+                    .vector()
+                    .slice_aligned_value
                     for rule in rules
                 ),
             }
         return {
             "labels": labels,
             **{
-                parameter_name: _slice_aligned_measurement_values(
-                    request.adapter.measurement_values_for_label_slices(
-                        object_spec.name,
-                        _required_string_kwarg(
+                parameter_name: (
+                    CellProfilerObjectMeasurementVectorBinding.for_object_input(
+                        request,
+                        object_spec=object_spec,
+                        feature_name=_required_string_kwarg(
                             request.kwargs,
                             kwarg_name,
                             request.module_name,
                         ),
-                        labels,
+                        labels=labels,
                     )
+                    .vector()
+                    .slice_aligned_value
                 )
                 for parameter_name, kwarg_name in (
                     type(self).measurement_kwarg_by_parameter.items()
@@ -8495,14 +8799,30 @@ class CellProfilerFunctionContractExecutor:
         image: Any,
         **kwargs: Any,
     ) -> Any:
-        return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
-            func,
-            (project_singleton_stack_image_domain(image),),
-            {
-                key: project_singleton_stack_image_domain(value)
-                for key, value in kwargs.items()
-            },
+        function_name = getattr(func, "__name__", "<unknown>")
+        projection_started_at = time.perf_counter()
+        projected_image = project_singleton_stack_image_domain(image)
+        projected_kwargs = {
+            key: project_singleton_stack_image_domain(value)
+            for key, value in kwargs.items()
+        }
+        _log_module_profile(
+            "cp_full_stack_project_domains",
+            time.perf_counter() - projection_started_at,
+            function=function_name,
         )
+        call_started_at = time.perf_counter()
+        result = _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
+            func,
+            (projected_image,),
+            projected_kwargs,
+        )
+        _log_module_profile(
+            "cp_full_stack_raw_call",
+            time.perf_counter() - call_started_at,
+            function=function_name,
+        )
+        return result
 
     def _execute_aligned_multi_image_stack(
         self,
@@ -8595,11 +8915,12 @@ class CellProfilerFunctionContractExecutor:
         if batch_executor is not None and slice_count > 1:
             slice_started_at = time.perf_counter()
             slice_results = batch_executor(
-                func,
-                tuple(slices_2d),
-                kwargs,
-                slice_count,
-                _execute_pure_2d_slice,
+                RuntimePure2DSliceBatchRequest(
+                    func=func,
+                    slices_2d=tuple(slices_2d),
+                    kwargs=kwargs,
+                    execute_slice=_execute_pure_2d_slice,
+                )
             )
             slice_execute_seconds = time.perf_counter() - slice_started_at
         else:
@@ -8687,16 +9008,14 @@ def _pure_2d_batch_executor(
     func: Callable[..., Any],
 ) -> Callable[
     [
-        Callable[..., Any],
-        tuple[Any, ...],
-        Mapping[str, Any],
-        int,
-        Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
+        RuntimePure2DSliceBatchRequest,
     ],
     list[Any],
 ] | None:
-    executor = getattr(func, "__openhcs_pure_2d_batch_executor__", None)
-    return executor if callable(executor) else None
+    executor = CallableContract.from_callable(func).runtime_batch_executor(
+        RuntimeBatchExecutionDomain.PURE_2D_SLICES
+    )
+    return executor if callable(executor) else Pure2DSliceBatchExecutor.default_executor()
 
 
 def _execute_pure_2d_slice(
@@ -8714,6 +9033,19 @@ def _execute_pure_2d_slice(
             sliced_kwargs,
         ),
         slice_index,
+    )
+
+
+def _execute_runtime_batch_invocation(
+    func: Callable[..., Any],
+    request: RuntimeBatchInvocationRequest,
+) -> Any:
+    """Execute one invocation from a core runtime batch request."""
+    return _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+        func,
+        request.image,
+        request.kwargs,
+        execution_mode=request.execution_mode,
     )
 
 

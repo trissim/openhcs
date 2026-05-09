@@ -7,6 +7,10 @@ import numpy as np
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import (
+    RuntimePure2DSliceBatchRequest,
+    pure_2d_batch_executor,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -51,10 +55,11 @@ def medianfilter(
         try:
             import cv2
 
-            if image.dtype in (np.uint8, np.uint16, np.float32):
+            if image.dtype in (np.uint8, np.uint16, np.float32, np.float64):
                 pad_width = window_size // 2
+                cv2_input_dtype = np.float32 if image.dtype == np.float64 else image.dtype
                 padded = np.pad(
-                    np.ascontiguousarray(image),
+                    np.ascontiguousarray(image, dtype=cv2_input_dtype),
                     pad_width,
                     mode="constant",
                     constant_values=0,
@@ -69,9 +74,10 @@ def medianfilter(
         try:
             import cv2
 
-            if image.dtype in (np.uint8, np.uint16, np.float32):
+            if image.dtype in (np.uint8, np.uint16, np.float32, np.float64):
+                cv2_input_dtype = np.float32 if image.dtype == np.float64 else image.dtype
                 return cv2.medianBlur(
-                    np.ascontiguousarray(image),
+                    np.ascontiguousarray(image, dtype=cv2_input_dtype),
                     int(window_size),
                 ).astype(image.dtype, copy=False)
         except ImportError:
@@ -82,21 +88,17 @@ def medianfilter(
     return filtered.astype(image.dtype)
 
 
-def _medianfilter_batch(
-    func,
-    slices_2d: tuple,
-    kwargs: dict,
-    slice_count: int,
-    execute_slice,
-) -> list:
+def _medianfilter_batch(request: RuntimePure2DSliceBatchRequest) -> list:
     """Batch executor for aligned pure-2D median filtering."""
-    del func
+    slices_2d = request.slices_2d
+    kwargs = request.kwargs
     window_size = int(kwargs.get("window_size", 3))
     if window_size % 2 == 0:
         window_size += 1
     if window_size <= 1:
         return list(slices_2d)
-    if kwargs.get("mode", "constant") == "constant":
+    mode = kwargs.get("mode", "constant")
+    if mode == "constant":
         try:
             import cv2
 
@@ -108,10 +110,12 @@ def _medianfilter_batch(
                     np.uint8,
                     np.uint16,
                     np.float32,
+                    np.float64,
                 ):
                     break
+                cv2_input_dtype = np.float32 if data.dtype == np.float64 else data.dtype
                 padded = np.pad(
-                    np.ascontiguousarray(data),
+                    np.ascontiguousarray(data, dtype=cv2_input_dtype),
                     pad_width,
                     mode="constant",
                     constant_values=0,
@@ -126,7 +130,7 @@ def _medianfilter_batch(
                 return outputs
         except ImportError:
             pass
-    if kwargs.get("mode", "constant") == "reflect":
+    if mode == "reflect":
         try:
             import cv2
 
@@ -137,11 +141,13 @@ def _medianfilter_batch(
                     np.uint8,
                     np.uint16,
                     np.float32,
+                    np.float64,
                 ):
                     break
+                cv2_input_dtype = np.float32 if data.dtype == np.float64 else data.dtype
                 outputs.append(
                     cv2.medianBlur(
-                        np.ascontiguousarray(data),
+                        np.ascontiguousarray(data, dtype=cv2_input_dtype),
                         int(window_size),
                     ).astype(data.dtype, copy=False)
                 )
@@ -149,16 +155,35 @@ def _medianfilter_batch(
                 return outputs
         except ImportError:
             pass
-    return [
-        execute_slice(
-            medianfilter,
-            slice_2d,
-            kwargs,
-            slice_index,
-            slice_count,
+    slice_arrays = tuple(np.asarray(slice_2d) for slice_2d in slices_2d)
+    if len({array.shape for array in slice_arrays}) == 1:
+        from scipy.ndimage import median_filter as scipy_median_filter
+
+        stack = np.stack(slice_arrays, axis=0)
+        filtered = scipy_median_filter(
+            stack,
+            size=(1, window_size, window_size),
+            mode=mode,
         )
-        for slice_index, slice_2d in enumerate(slices_2d)
-    ]
+        return [
+            filtered[index].astype(array.dtype, copy=False)
+            for index, array in enumerate(slice_arrays)
+        ]
+    try:
+        from scipy.ndimage import median_filter as scipy_median_filter
+
+        return [
+            scipy_median_filter(array, size=window_size, mode=mode).astype(
+                array.dtype,
+                copy=False,
+            )
+            for array in slice_arrays
+        ]
+    except ImportError:
+        return [
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
+        ]
 
 
-medianfilter.__openhcs_pure_2d_batch_executor__ = _medianfilter_batch
+pure_2d_batch_executor(_medianfilter_batch)(medianfilter)

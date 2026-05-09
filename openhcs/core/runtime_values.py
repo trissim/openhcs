@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import InitVar, dataclass, replace
 import logging
 from pathlib import Path
 from types import MappingProxyType
@@ -43,6 +43,7 @@ from openhcs.core.runtime_semantics import (
     SpatialGridOrdering,
     coerce_enum,
     measurement_table_row_layout,
+    measurement_table_row_layout_from_fields,
     normalize_measurement_table_rows,
 )
 from openhcs.core.registry_strategies import (
@@ -328,9 +329,9 @@ class ImageMetadataPayload(RuntimeArrayPayload):
     metadata: ImagePayloadMetadata
 
     def __post_init__(self) -> None:
-        if not hasattr(self.data, "shape") or not hasattr(self.data, "ndim"):
+        if np.ndim(self.data) == 0:
             raise TypeError(
-                "ImageMetadataPayload.data requires array-like data with shape/ndim, "
+                "ImageMetadataPayload.data requires array-like image data, "
                 f"got {type(self.data).__name__}."
             )
         if not self.metadata.has_values:
@@ -389,18 +390,18 @@ class MaskedImagePayload(RuntimeArrayPayload):
     metadata: ImagePayloadMetadata = ImagePayloadMetadata()
 
     def __post_init__(self) -> None:
-        if not hasattr(self.data, "shape") or not hasattr(self.data, "ndim"):
+        if np.ndim(self.data) == 0:
             raise TypeError(
-                "MaskedImagePayload.data requires array-like data with shape/ndim, "
+                "MaskedImagePayload.data requires array-like image data, "
                 f"got {type(self.data).__name__}."
             )
-        if not hasattr(self.mask, "shape"):
+        mask_shape = tuple(np.shape(self.mask))
+        if not mask_shape:
             raise TypeError(
-                "MaskedImagePayload.mask requires array-like data with shape, "
+                "MaskedImagePayload.mask requires array-like mask data, "
                 f"got {type(self.mask).__name__}."
             )
-        data_shape = tuple(self.data.shape)
-        mask_shape = tuple(self.mask.shape)
+        data_shape = tuple(np.shape(self.data))
         if mask_shape not in _valid_image_mask_shapes(data_shape):
             raise ValueError(
                 "MaskedImagePayload.mask shape must match the image spatial "
@@ -1171,8 +1172,6 @@ class SparseIJVLabelRows(ColumnarRows):
 
     def as_array(self) -> Any:
         _ensure_runtime_payload_integrations_registered()
-        if hasattr(self.data, "ndim") and hasattr(self.data, "shape"):
-            return self.data
         try:
             import numpy as _np
         except Exception as exc:  # pragma: no cover - numpy is a core runtime dep.
@@ -2750,6 +2749,7 @@ class MeasurementTable(NativeRuntimeValue):
     object_id_field: str | None = None
     source_image_name: str | None = None
     subject: MeasurementSubject | None = None
+    validated_runtime_schema: InitVar[bool] = False
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -2767,9 +2767,10 @@ class MeasurementTable(NativeRuntimeValue):
             object_id_field=value.schema.object_id_field,
             source_image_name=value.schema.source_image_name,
             subject=value.schema.measurement_subject,
+            validated_runtime_schema=True,
         )
 
-    def __post_init__(self) -> None:
+    def __post_init__(self, validated_runtime_schema: bool) -> None:
         NativeRuntimeValue.__post_init__(self)
         if self.object_name == "":
             raise ValueError("MeasurementTable.object_name cannot be empty.")
@@ -2790,11 +2791,22 @@ class MeasurementTable(NativeRuntimeValue):
                 f"MeasurementTable '{self.name}' requires table-like rows, "
                 f"got {type(self.rows).__name__}."
             )
-        normalized_rows = normalize_measurement_table_rows(self.rows)
+        declared_layout = (
+            measurement_table_row_layout_from_fields(self.fields)
+            if validated_runtime_schema
+            else None
+        )
+        normalized_rows = (
+            self.rows
+            if declared_layout is not None
+            else normalize_measurement_table_rows(self.rows)
+        )
         if normalized_rows is not self.rows:
             object.__setattr__(self, "rows", normalized_rows)
             object.__setattr__(self, "fields", ())
-        measurement_table_row_layout(self.rows)
+            declared_layout = None
+        if declared_layout is None:
+            measurement_table_row_layout(self.rows)
 
     def runtime_payload(self) -> Any:
         return self.rows
@@ -3583,15 +3595,13 @@ def _validate_object_label_variant(
             f"ObjectLabelSet '{object_name}' {variant_name} requires an "
             f"array-compatible payload, got {type(variant_labels).__name__}."
         )
-    if (
-        hasattr(labels, "shape")
-        and hasattr(variant_labels, "shape")
-        and tuple(labels.shape) != tuple(variant_labels.shape)
-    ):
+    labels_shape = tuple(np.shape(labels))
+    variant_labels_shape = tuple(np.shape(variant_labels))
+    if labels_shape and variant_labels_shape and labels_shape != variant_labels_shape:
         raise ValueError(
             f"ObjectLabelSet '{object_name}' {variant_name} shape "
-            f"{tuple(variant_labels.shape)!r} does not match final labels "
-            f"shape {tuple(labels.shape)!r}."
+            f"{variant_labels_shape!r} does not match final labels "
+            f"shape {labels_shape!r}."
         )
 
 

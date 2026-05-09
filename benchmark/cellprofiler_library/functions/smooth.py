@@ -16,6 +16,10 @@ from numba import njit
 
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import (
+    RuntimePure2DSliceBatchRequest,
+    pure_2d_batch_executor,
+)
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     image_payload_data,
@@ -58,6 +62,27 @@ class SmoothingRequest:
     clip_polynomial: bool
 
 
+@dataclass(frozen=True, slots=True)
+class SmoothingBackendSelectionRequest:
+    """CellProfiler Smooth settings needed to select an equivalent backend."""
+
+    method: SmoothingMethod
+    auto_object_size: bool
+    object_size: float
+    image_shape: tuple[int, int]
+
+    @property
+    def effective_object_size(self) -> float:
+        if not self.auto_object_size:
+            return self.object_size
+        calculated_size = max(1.0, float(np.mean(self.image_shape)) / 40.0)
+        return min(30.0, calculated_size)
+
+    @property
+    def sigma(self) -> float:
+        return self.effective_object_size / 2.35
+
+
 class SmoothingBackendProviderPolicy(
     EnumKeyedStrategyMixin[SmoothingMethod],
     ABC,
@@ -77,25 +102,47 @@ class SmoothingBackendProviderPolicy(
         cls,
         method: SmoothingMethod,
         backend_provider: CellProfilerBackendProvider | None,
+        selection_request: SmoothingBackendSelectionRequest | None = None,
     ) -> CellProfilerBackendProvider:
         if backend_provider is not None:
             return normalize_cellprofiler_backend_provider(backend_provider)
-        return cls.for_enum_member(method).default_provider()
+        return cls.for_enum_member(method).default_provider(selection_request)
 
     @abstractmethod
-    def default_provider(self) -> CellProfilerBackendProvider:
+    def default_provider(
+        self,
+        selection_request: SmoothingBackendSelectionRequest | None,
+    ) -> CellProfilerBackendProvider:
         """Return CP-compatible default provider for this Smooth method."""
 
 
 class NativeSmoothingBackendProviderPolicy(SmoothingBackendProviderPolicy):
     """Smooth methods whose CP reference implementation is the native Python path."""
 
-    def default_provider(self) -> CellProfilerBackendProvider:
+    def default_provider(
+        self,
+        selection_request: SmoothingBackendSelectionRequest | None,
+    ) -> CellProfilerBackendProvider:
+        del selection_request
         return CellProfilerBackendProvider.NATIVE
 
 
-class GaussianSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
+class GaussianSmoothingBackendProviderPolicy(SmoothingBackendProviderPolicy):
+    """Gaussian Smooth backend selection by numerical equivalence class."""
+
     method = SmoothingMethod.GAUSSIAN_FILTER
+    opencv_equivalent_min_sigma: ClassVar[float] = 4.0
+
+    def default_provider(
+        self,
+        selection_request: SmoothingBackendSelectionRequest | None,
+    ) -> CellProfilerBackendProvider:
+        if (
+            selection_request is not None
+            and selection_request.sigma >= self.opencv_equivalent_min_sigma
+        ):
+            return CellProfilerBackendProvider.OPENCV
+        return CellProfilerBackendProvider.NATIVE
 
 
 class MedianSmoothingBackendProviderPolicy(NativeSmoothingBackendProviderPolicy):
@@ -564,11 +611,17 @@ def smooth(
         Smoothed image (H, W)
     """
     smoothing_method = _coerce_function_enum(SmoothingMethod, smoothing_method)
+    pixel_data = np.asarray(image_payload_data(image), dtype=np.float32)
     backend_provider = SmoothingBackendProviderPolicy.resolve(
         smoothing_method,
         smoothing_backend_provider,
+        SmoothingBackendSelectionRequest(
+            method=smoothing_method,
+            auto_object_size=auto_object_size,
+            object_size=float(object_size),
+            image_shape=tuple(int(axis) for axis in pixel_data.shape),
+        ),
     )
-    pixel_data = np.asarray(image_payload_data(image), dtype=np.float32)
     mask = image_payload_mask(image)
     if mask is not None:
         mask = np.asarray(mask, dtype=bool)
@@ -602,31 +655,13 @@ def smooth(
     )
 
 
-def _smooth_batch(
-    func: Callable[..., Any],
-    slices_2d: tuple[Any, ...],
-    kwargs: Mapping[str, Any],
-    slice_count: int,
-    execute_slice: Callable[[Callable[..., Any], Any, Mapping[str, Any], int, int], Any],
-) -> list[Any]:
+def _smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
+    slices_2d = request.slices_2d
+    kwargs = request.kwargs
     smoothing_method = _coerce_function_enum(
         SmoothingMethod,
         kwargs.get("smoothing_method", SmoothingMethod.GAUSSIAN_FILTER),
     )
-    backend_provider = SmoothingBackendProviderPolicy.resolve(
-        smoothing_method,
-        kwargs.get("smoothing_backend_provider"),
-    )
-    if (
-        smoothing_method is not SmoothingMethod.GAUSSIAN_FILTER
-        or backend_provider
-        not in {CellProfilerBackendProvider.NATIVE, CellProfilerBackendProvider.OPENCV}
-    ):
-        return [
-            execute_slice(func, slice_2d, kwargs, slice_index, slice_count)
-            for slice_index, slice_2d in enumerate(slices_2d)
-        ]
-
     pixel_stack = np.ascontiguousarray(
         np.stack(
             [
@@ -636,6 +671,26 @@ def _smooth_batch(
             axis=0,
         ),
     )
+    backend_provider = SmoothingBackendProviderPolicy.resolve(
+        smoothing_method,
+        kwargs.get("smoothing_backend_provider"),
+        SmoothingBackendSelectionRequest(
+            method=smoothing_method,
+            auto_object_size=bool(kwargs.get("auto_object_size", True)),
+            object_size=float(kwargs.get("object_size", 16.0)),
+            image_shape=tuple(int(axis) for axis in pixel_stack.shape[1:]),
+        ),
+    )
+    if (
+        smoothing_method is not SmoothingMethod.GAUSSIAN_FILTER
+        or backend_provider
+        not in {CellProfilerBackendProvider.NATIVE, CellProfilerBackendProvider.OPENCV}
+    ):
+        return [
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
+        ]
+
     masks = tuple(image_payload_mask(slice_2d) for slice_2d in slices_2d)
     mask_stack = None
     if any(mask is not None for mask in masks):
@@ -693,4 +748,4 @@ def _prepare_smooth() -> None:
     smooth.__wrapped__(image)
 
 
-smooth.__openhcs_pure_2d_batch_executor__ = _smooth_batch
+pure_2d_batch_executor(_smooth_batch)(smooth)

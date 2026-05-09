@@ -62,6 +62,49 @@ def test_comparison_observation_extracts_execution_only_speedup(
     assert observation.parity_accuracy == 1.0
 
 
+def test_cached_native_reference_uses_timeout_as_conservative_speed_lower_bound(
+    tmp_path: Path,
+) -> None:
+    case = CellProfilerComparisonCase(
+        name="ExampleTimeoutReference",
+        dataset_path=tmp_path / "ExampleTimeoutReference",
+        cppipe_path=tmp_path / "ExampleTimeoutReference.cppipe",
+        cellprofiler_timeout_seconds=900.0,
+    )
+    native_output = tmp_path / "native"
+    native_output.mkdir()
+    result = CellProfilerCompatibilityResult(
+        native_cellprofiler=BenchmarkResult(
+            tool_name="CellProfiler",
+            dataset_id="dataset",
+            pipeline_name="pipeline",
+            metrics={},
+            output_path=native_output,
+            success=True,
+            provenance={"reused_reference_output": True},
+        ),
+        openhcs_converted=_benchmark_result(
+            "OpenHCS",
+            tmp_path / "openhcs",
+            "EXECUTE_OPENHCS",
+            2.0,
+            provenance={"equivalence_difference_count": 0},
+        ),
+    )
+
+    observation = comparison_observation_from_result(
+        result,
+        case=case,
+        suite_id="suite-1",
+        repetition=1,
+    )
+
+    assert observation.native_cellprofiler.execution_seconds == 900.0
+    assert observation.native_cellprofiler.total_metric_seconds == 900.0
+    assert observation.speedup == 450.0
+    assert observation.total_phase_speedup == 450.0
+
+
 def test_comparison_writers_emit_raw_phase_and_summary_tables(
     tmp_path: Path,
 ) -> None:
