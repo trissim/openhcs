@@ -4172,6 +4172,51 @@ def test_runtime_reference_artifact_equivalence_matches_reversed_pair_features(
     assert report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_matches_colocalization_first_second_correlation_and_overlap(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Correlation_Correlation_Stain1_Stain2,"
+        "Correlation_Overlap_Stain1_Stain2\n"
+        "1,0.5,0.9\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    native_table = MeasurementTable(
+        name="MeasureColocalization",
+        rows=({"correlation": 0.5, "overlap": 0.9},),
+        source_image_name="Stain1__Stain2",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="MeasureColocalization",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=native_table.rows,
+            schema=native_table.runtime_schema(native_table.rows),
+        ),
+        path="/memory/MeasureColocalization.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_matches_area_occupied_owner_suffixes(
     tmp_path: Path,
 ) -> None:

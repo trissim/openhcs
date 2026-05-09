@@ -54,6 +54,7 @@ from openhcs.core.runtime_values import (
     image_payload_slice_context,
     image_payload_with_context,
 )
+from openhcs.core.runtime_invocation import RuntimeOutputBundle
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
 from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStepWellFilterConfig
@@ -171,7 +172,7 @@ class Pure2DSliceResultBatch:
 
     @classmethod
     def from_results(cls, results: Iterable[Any]) -> "Pure2DSliceResultBatch":
-        collected = list(results)
+        collected = [runtime_output_tuple(result) for result in results]
         if not collected:
             raise ValueError("PURE_2D execution cannot aggregate zero slice results.")
 
@@ -200,6 +201,13 @@ class Pure2DSliceResultBatch:
                 auxiliary_groups[index].append(value)
 
         return cls(main_outputs=main_outputs, auxiliary_groups=tuple(auxiliary_groups))
+
+
+def runtime_output_tuple(value: Any) -> Any:
+    """Lower nominal runtime output bundles to the tuple ABI used by contracts."""
+    if isinstance(value, RuntimeOutputBundle):
+        return value.as_runtime_tuple()
+    return value
 
 
 class Pure2DRegisteredStrategyFamily(ABC):

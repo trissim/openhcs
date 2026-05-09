@@ -9,6 +9,7 @@ from benchmark.converter.settings_binder import (
     parse_cellprofiler_int,
 )
 from benchmark.converter.parser import ModuleBlock, ModuleSetting
+from benchmark.converter.module_settings_binding import ModuleUnmappedSettingIgnore
 from benchmark.converter.module_settings_binding import ModuleSettingsBindingStrategy
 from benchmark.converter.module_settings_binding import UnmappedModuleSettingsError
 from benchmark.converter.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
@@ -790,6 +791,26 @@ def test_measure_texture_binds_repeated_texture_scales():
     assert bound.kwargs["gray_levels"] == 128
 
 
+def test_measure_texture_ignores_legacy_gabor_ui_settings():
+    module = ModuleBlock(
+        name="MeasureTexture",
+        module_num=12,
+        settings={
+            "Angles to measure": "Horizontal, Vertical, Diagonal, Anti-diagonal",
+            "Measure Gabor features?": "Yes",
+            "Number of angles to compute for Gabor": "4",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("MeasureTexture").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.unmapped_kwargs == {}
+
+
 def test_measure_granularity_binds_shared_spectrum_settings():
     setting_records = [
         ModuleSetting("Select an image to measure", "BF_image"),
@@ -898,6 +919,152 @@ def test_relate_objects_binds_distance_setting():
 
     assert bound.kwargs["calculate_distances"] == "none"
     assert "calculate_child_parent_distances" not in bound.unmapped_kwargs
+
+
+def test_correct_illumination_binds_legacy_object_size_alias():
+    module = ModuleBlock(
+        name="CorrectIlluminationCalculate",
+        module_num=5,
+        settings={
+            "Approximate object size": "10",
+        },
+        setting_records=[
+            ModuleSetting("Approximate object size", "10"),
+        ],
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module(
+        "CorrectIlluminationCalculate"
+    ).bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["object_width"] == 10
+    assert "approximate_object_size" not in bound.unmapped_kwargs
+
+
+def test_identify_primary_objects_consumes_legacy_input_output_aliases():
+    module = ModuleBlock(
+        name="IdentifyPrimaryObjects",
+        module_num=7,
+        settings={
+            "Input": "CorrGray",
+            "Object": "Comet",
+        },
+        setting_records=[
+            ModuleSetting("Input", "CorrGray"),
+            ModuleSetting("Object", "Comet"),
+        ],
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("IdentifyPrimaryObjects").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_image_intensity_ignores_blank_legacy_object_selector():
+    module = ModuleBlock(
+        name="MeasureImageIntensity",
+        module_num=16,
+        settings={
+            "Select the input objects": "None",
+        },
+        setting_records=[
+            ModuleSetting("Select the input objects", "None"),
+        ],
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("MeasureImageIntensity").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_colocalization_binds_legacy_rank_weighted_typo():
+    module = ModuleBlock(
+        name="MeasureColocalization",
+        module_num=9,
+        settings={
+            "Calculate the Rank Weighted Coloalization coefficients?": "Yes",
+        },
+        setting_records=[
+            ModuleSetting(
+                "Calculate the Rank Weighted Coloalization coefficients?",
+                "Yes",
+            ),
+        ],
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module(
+        "MeasureColocalization"
+    ).bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["do_rwc"] is True
+    assert (
+        "calculate_the_rank_weighted_coloalization_coefficients"
+        not in bound.unmapped_kwargs
+    )
+
+
+def test_measure_colocalization_ignores_inactive_legacy_object_selector():
+    module = ModuleBlock(
+        name="MeasureColocalization",
+        module_num=9,
+        settings={
+            "Select an object to measure": "None",
+            "Hidden": "1",
+        },
+        setting_records=[
+            ModuleSetting("Select an object to measure", "None"),
+            ModuleSetting("Hidden", "1"),
+        ],
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module(
+        "MeasureColocalization"
+    ).bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_colocalization_preserves_active_legacy_object_selector_semantics():
+    module = ModuleBlock(
+        name="MeasureColocalization",
+        module_num=9,
+        settings={
+            "Select an object to measure": "Nuclei",
+        },
+        setting_records=[
+            ModuleSetting("Select an object to measure", "Nuclei"),
+        ],
+    )
+
+    ignored = ModuleUnmappedSettingIgnore.ignored_setting_names_for_module(module)
+    bound = ModuleSettingsBindingStrategy.for_module("MeasureColocalization").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert "select_an_object_to_measure" not in ignored
+    assert bound.unmapped_kwargs == {}
 
 
 def test_measure_object_size_shape_binds_zernike_toggle():
@@ -1339,6 +1506,29 @@ def test_mask_image_binds_mask_source_and_inversion():
         "invert_mask": False,
     }
     assert not bound.unmapped_kwargs
+
+
+def test_mask_objects_ignores_inactive_outline_output_name():
+    module = ModuleBlock(
+        name="MaskObjects",
+        module_num=10,
+        settings={
+            "Retain outlines of the resulting objects?": "No",
+            "Name the outline image": "MaskedOutlines",
+        },
+        setting_records=[
+            ModuleSetting("Retain outlines of the resulting objects?", "No"),
+            ModuleSetting("Name the outline image", "MaskedOutlines"),
+        ],
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("MaskObjects").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.unmapped_kwargs == {}
 
 
 def test_overlay_objects_binds_opacity_and_ignores_contract_routing():

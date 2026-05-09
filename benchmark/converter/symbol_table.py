@@ -22,6 +22,7 @@ from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_semantics.crop import (
     CropShape,
 )
+from benchmark.converter.relate_objects_settings import RELATE_OBJECTS_SAVE_CHILDREN_SETTING
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
@@ -363,7 +364,7 @@ INPUT_IMAGE_SETTING = SettingNameFamily(
 )
 INPUT_OBJECTS_SETTING = SettingNameFamily(
     "Select the input objects",
-    aliases=("Select input objects", "Objects"),
+    aliases=("Select input objects", "Select input object sets", "Objects"),
 )
 OUTPUT_IMAGE_SETTING = SettingNameFamily(
     "Name the output image",
@@ -395,11 +396,6 @@ CHILD_OBJECTS_SETTING = SettingNameFamily(
     "Select the child objects",
     aliases=("Child objects",),
 )
-RELATE_OBJECTS_SAVE_CHILDREN_SETTING = (
-    "Do you want to save the children with parents as a new object set?"
-)
-
-
 class _SymbolTableBuilder:
     def __init__(self, source_schema: PipelineImageSchema) -> None:
         self._symbols: dict[CellProfilerSymbolKey, CellProfilerSymbol] = {}

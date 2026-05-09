@@ -3,15 +3,13 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from typing import Any, ClassVar
+from typing import Any
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
-from openhcs.core.registry_strategies import MostDerivedContextStrategyMixin
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     CellProfilerBackendProvider,
@@ -19,28 +17,15 @@ from openhcs.processing.backends.cellprofiler._backend import (
     cellprofiler_backend_key,
 )
 from openhcs.core.runtime_semantics import (
+    ObjectRelationshipPayloadKernel,
     ParentChildRelationshipPayload,
-    aligned_dense_object_label_arrays,
+    object_label_parent_child_payload,
 )
-from openhcs.core.runtime_values import (
-    ObjectLabelRepresentation,
-    ObjectLabelSet,
-    SparseIJVLabelRows,
-    object_label_dense_array,
-)
-
-
-@dataclass(frozen=True, slots=True)
-class ObjectRelationshipPayloadRequest:
-    """Inputs for deriving CellProfiler-compatible object relationship payloads."""
-
-    backend: "ObjectRelationshipBackendStrategy"
-    parent_labels: Any
-    child_labels: Any
 
 
 class ObjectRelationshipBackendStrategy(
     CellProfilerBackendStrategyMixin,
+    ObjectRelationshipPayloadKernel,
     ABC,
     metaclass=AutoRegisterMeta,
 ):
@@ -86,13 +71,11 @@ class ObjectRelationshipBackendStrategy(
         child_labels: Any,
     ) -> ParentChildRelationshipPayload:
         """Return parent-child ids using the labels' nominal representation."""
-        return ObjectRelationshipPayloadStrategy.for_context(
-            ObjectRelationshipPayloadRequest(
-                backend=self,
-                parent_labels=parent_labels,
-                child_labels=child_labels,
-            )
-        ).payload()
+        return object_label_parent_child_payload(
+            parent_labels,
+            child_labels,
+            kernel=self,
+        )
 
     def parents_of_from_payload(
         self,
@@ -109,166 +92,6 @@ class ObjectRelationshipBackendStrategy(
             if 0 < child_id <= child_count:
                 parents_of[child_id - 1] = int(parent_id)
         return parents_of
-
-
-class ObjectRelationshipPayloadStrategy(
-    MostDerivedContextStrategyMixin[ObjectRelationshipPayloadRequest],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Derive parent-child payloads by nominal object-label representation."""
-
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
-    strategy_key: ClassVar[str | None] = None
-
-    request: ObjectRelationshipPayloadRequest
-
-    def __init__(
-        self,
-        request: ObjectRelationshipPayloadRequest | None = None,
-    ) -> None:
-        if request is not None:
-            self.request = request
-
-    @classmethod
-    def for_context(
-        cls,
-        context: ObjectRelationshipPayloadRequest,
-        *,
-        required: bool = True,
-        error_subject: str | None = None,
-    ) -> "ObjectRelationshipPayloadStrategy":
-        strategy = super().for_context(
-            context,
-            required=required,
-            error_subject=error_subject,
-        )
-        if strategy is None:
-            raise ValueError("Object relationship payload requires a strategy.")
-        strategy.request = context
-        return strategy
-
-    @abstractmethod
-    def matches(self, context: ObjectRelationshipPayloadRequest) -> bool:
-        """Return whether this strategy owns the label representation pair."""
-
-    @abstractmethod
-    def payload(self) -> ParentChildRelationshipPayload:
-        """Return parent-child ids for the strategy's representation contract."""
-
-    @staticmethod
-    def related_payload_from_parents_of(
-        parents_of: np.ndarray,
-        child_ids: np.ndarray,
-    ) -> ParentChildRelationshipPayload:
-        parent_ids: list[int] = []
-        related_child_ids: list[int] = []
-        for child_id in child_ids:
-            if 0 < child_id <= len(parents_of):
-                parent_id = int(parents_of[child_id - 1])
-                if parent_id > 0:
-                    parent_ids.append(parent_id)
-                    related_child_ids.append(int(child_id))
-        return ParentChildRelationshipPayload(
-            parent_ids=tuple(parent_ids),
-            child_ids=tuple(related_child_ids),
-        )
-
-
-class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
-    """Dense label images use maximum positive-pixel overlap."""
-
-    strategy_key = "dense"
-
-    def matches(self, context: ObjectRelationshipPayloadRequest) -> bool:
-        del context
-        return True
-
-    def payload(self) -> ParentChildRelationshipPayload:
-        parent_array, child_array = aligned_dense_object_label_arrays(
-            object_label_dense_array(self.request.parent_labels, dtype=np.int32),
-            object_label_dense_array(self.request.child_labels, dtype=np.int32),
-        )
-        child_count = int(child_array.max()) if child_array.size else 0
-        if child_count <= 0:
-            return ParentChildRelationshipPayload(parent_ids=(), child_ids=())
-        present_children = _present_positive_labels_numba(child_array, child_count)
-        parents_of = self.request.backend.relate_children_to_parents(
-            parent_array,
-            child_array,
-            child_count,
-        )
-        return self.related_payload_from_parents_of(parents_of, present_children)
-
-
-class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadStrategy):
-    """Sparse IJV labels match CellProfiler's non-volumetric object relation."""
-
-    strategy_key = "sparse_ijv"
-
-    def matches(self, context: ObjectRelationshipPayloadRequest) -> bool:
-        return self.is_sparse_ijv(context.parent_labels) or self.is_sparse_ijv(
-            context.child_labels
-        )
-
-    def payload(self) -> ParentChildRelationshipPayload:
-        parent_rows = self.sparse_rows(self.request.parent_labels)
-        child_rows = self.sparse_rows(self.request.child_labels)
-        parent_array = parent_rows.as_yx_label_array()
-        child_array = child_rows.as_yx_label_array()
-        parent_count = self.label_count(parent_array, parent_rows)
-        child_count = self.label_count(child_array, child_rows)
-        if parent_count <= 0 or child_count <= 0:
-            return ParentChildRelationshipPayload(parent_ids=(), child_ids=())
-        parents_of = _relate_sparse_ijv_children_to_parents_numba(
-            np.asarray(parent_array, dtype=np.int64),
-            np.asarray(child_array, dtype=np.int64),
-            child_count,
-            parent_count,
-        )
-        present_children = self.present_sparse_child_ids(child_array, child_rows)
-        return self.related_payload_from_parents_of(parents_of, present_children)
-
-    @classmethod
-    def is_sparse_ijv(cls, labels: Any) -> bool:
-        if isinstance(labels, SparseIJVLabelRows):
-            return True
-        return (
-            isinstance(labels, ObjectLabelSet)
-            and labels.representation is ObjectLabelRepresentation.SPARSE_IJV
-        )
-
-    @classmethod
-    def sparse_rows(cls, labels: Any) -> SparseIJVLabelRows:
-        if isinstance(labels, ObjectLabelSet):
-            if labels.representation is not ObjectLabelRepresentation.SPARSE_IJV:
-                return SparseIJVLabelRows.from_dense_labels(labels.labels)
-            labels = labels.labels
-        if isinstance(labels, SparseIJVLabelRows):
-            return labels
-        return SparseIJVLabelRows.from_dense_labels(labels)
-
-    @staticmethod
-    def label_count(
-        array: np.ndarray,
-        rows: SparseIJVLabelRows,
-    ) -> int:
-        if array.size == 0:
-            return 0
-        return int(np.max(array[:, rows.label_column]))
-
-    @staticmethod
-    def present_sparse_child_ids(
-        child_array: np.ndarray,
-        child_rows: SparseIJVLabelRows,
-    ) -> np.ndarray:
-        if child_array.size == 0:
-            return np.empty(0, dtype=np.int32)
-        return np.unique(child_array[:, child_rows.label_column]).astype(
-            np.int32,
-            copy=False,
-        )
 
 
 class NumbaNumpyObjectRelationshipBackendStrategy(
@@ -298,6 +121,22 @@ class NumbaNumpyObjectRelationshipBackendStrategy(
         return _relate_children_to_parents_numba(
             np.asarray(parent_labels),
             np.asarray(child_labels),
+            child_count,
+            parent_count,
+        )
+
+    def relate_sparse_ijv_children_to_parents(
+        self,
+        parent_rows: np.ndarray,
+        child_rows: np.ndarray,
+        child_count: int,
+        parent_count: int,
+    ) -> np.ndarray:
+        if child_count == 0 or parent_count == 0:
+            return np.zeros(child_count, dtype=np.int32)
+        return _relate_sparse_ijv_children_to_parents_numba(
+            np.asarray(parent_rows, dtype=np.int64),
+            np.asarray(child_rows, dtype=np.int64),
             child_count,
             parent_count,
         )
@@ -349,31 +188,6 @@ def object_relationship_backend(
     return ObjectRelationshipBackendStrategy.for_memory_type(
         backend_provider=backend_provider,
     )
-
-
-@njit(cache=True)
-def _present_positive_labels_numba(
-    labels: np.ndarray,
-    label_count: int,
-) -> np.ndarray:
-    present = np.zeros(label_count + 1, dtype=np.bool_)
-    height, width = labels.shape
-    for row in range(height):
-        for col in range(width):
-            label_id = int(labels[row, col])
-            if label_id > 0 and label_id <= label_count:
-                present[label_id] = True
-    count = 0
-    for label_id in range(1, label_count + 1):
-        if present[label_id]:
-            count += 1
-    labels_out = np.empty(count, dtype=np.int32)
-    index = 0
-    for label_id in range(1, label_count + 1):
-        if present[label_id]:
-            labels_out[index] = label_id
-            index += 1
-    return labels_out
 
 
 @njit(cache=True)

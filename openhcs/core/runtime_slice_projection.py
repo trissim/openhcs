@@ -31,11 +31,13 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelSet,
     ObjectRelationship,
+    SparseIJVLabelRows,
     collapse_singleton_object_label_stack,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
     image_payload_with_context,
+    object_label_dense_array,
     project_image_mask_to_data_domain,
 )
 
@@ -131,6 +133,54 @@ class RuntimeSliceProjection:
                 slice_index=slice_index,
                 slice_count=slice_count,
             ),
+        )
+
+    @classmethod
+    def object_label_endpoint(
+        cls,
+        value: Any,
+        *,
+        slice_index: int | None = None,
+        slice_count: int | None = None,
+    ) -> Any:
+        """Resolve one object-label endpoint through runtime-slice semantics."""
+        if slice_index is None:
+            return value
+        effective_slice_count = slice_count or cls.slice_count_from_values((value,))
+        if effective_slice_count is None:
+            stack_counts = {
+                int(stack.shape[0])
+                for stack in cls.stack_views(value)
+                if stack.shape[0] > slice_index
+            }
+            effective_slice_count = cls.single_slice_count(
+                stack_counts,
+                source_description="object-label endpoint stack views",
+            )
+        if effective_slice_count is None:
+            raise ValueError(
+                "Cannot project object-label endpoint without a declared "
+                "runtime slice count."
+            )
+        return cls.value_for_slice(value, slice_index, effective_slice_count)
+
+    @classmethod
+    def object_label_endpoint_dense_array(
+        cls,
+        value: Any,
+        *,
+        slice_index: int | None = None,
+        slice_count: int | None = None,
+        dtype: object | None = None,
+    ) -> np.ndarray:
+        """Resolve and materialize one object-label endpoint as dense labels."""
+        return object_label_dense_array(
+            cls.object_label_endpoint(
+                value,
+                slice_index=slice_index,
+                slice_count=slice_count,
+            ),
+            dtype=dtype,
         )
 
     @classmethod
@@ -644,6 +694,32 @@ class ObjectRelationshipRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStr
             relationship_type=value.relationship_type,
             slice_count=1,
         )
+
+
+class SparseIJVLabelRowsRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
+    """Project sparse IJV label rows by their declared slice-index column."""
+
+    value_type = SparseIJVLabelRows
+
+    def value_for_slice(
+        self,
+        value: Any,
+        context: RuntimeSliceProjectionContext,
+    ) -> Any:
+        if not isinstance(value, SparseIJVLabelRows):
+            raise TypeError(
+                "SparseIJVLabelRowsRuntimeSliceProjectionStrategy requires "
+                "SparseIJVLabelRows."
+            )
+        return value.slice(context.slice_index)
+
+    def stack_views(self, value: Any) -> tuple[np.ndarray, ...]:
+        if not isinstance(value, SparseIJVLabelRows):
+            raise TypeError(
+                "SparseIJVLabelRowsRuntimeSliceProjectionStrategy requires "
+                "SparseIJVLabelRows."
+            )
+        return ()
 
 
 class ObjectLabelSetRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):

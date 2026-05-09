@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from abc import ABC
+from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Generic, TypeVar
@@ -16,6 +16,14 @@ PayloadT = TypeVar("PayloadT")
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RuntimeInvocationOptions(ABC):
     """Typed, non-callable settings that control one runtime invocation."""
+
+
+class RuntimeOutputBundle(ABC):
+    """Nominal multi-output bundle lowered by runtime execution contracts."""
+
+    @abstractmethod
+    def as_runtime_tuple(self) -> tuple[object, ...]:
+        """Return the positional ABI consumed by runtime output aggregation."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

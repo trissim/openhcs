@@ -24,6 +24,7 @@ from .settings_binder import (
     parse_cellprofiler_float,
     parse_cellprofiler_int,
 )
+from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 
 
 def _enum_literal(enum_type: type[Enum]) -> SettingParser:
@@ -81,7 +82,10 @@ CORRECT_ILLUMINATION_CALCULATE_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
         _enum_literal(FilterSizeMethod),
     ),
     SettingToKeywordBinding(
-        "Approximate object diameter",
+        SettingNameFamily(
+            "Approximate object diameter",
+            aliases=("Approximate object size",),
+        ),
         "object_width",
         parse_cellprofiler_int,
     ),

@@ -122,6 +122,11 @@ def _fill_after_declump_requested(
     return (not use_advanced_settings) or fill_holes.fill_after_declump
 
 
+def _fill_post_declump_labels(labels: np.ndarray, morphology_backend: object) -> np.ndarray:
+    """Apply CellProfiler's post-declump labeled-hole fill phase."""
+    return morphology_backend.fill_labeled_holes(labels)
+
+
 def _declumping_maxima_geometry(
     *,
     min_diameter: int,
@@ -600,7 +605,7 @@ def identify_primary_objects(
     ):
         phase_started_at = time.perf_counter()
         capture_array_fixture("ipo_fill_after", labels=labeled_image)
-        labeled_image = morphology.fill_labeled_holes(labeled_image)
+        labeled_image = _fill_post_declump_labels(labeled_image, morphology)
         _log_profile(
             "ipo_fill_after_declump",
             time.perf_counter() - phase_started_at,

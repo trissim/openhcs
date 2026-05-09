@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 import re
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from collections.abc import Mapping
+from typing import ClassVar
+
+from metaclass_registry import AutoRegisterMeta
 
 import numpy as np
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 from openhcs.core.runtime_semantics import MeasurementImageReferenceDomain
 from openhcs.core.runtime_invocation import (
     RuntimeImageExecutionContext,
@@ -68,13 +73,217 @@ class CellProfilerSourceImagePair:
 
     first_index: int
     second_index: int
-    first_name: str
-    second_name: str
+    runtime_pair: RuntimeMeasurementSourcePair
+    first_display_name: str
+    second_display_name: str
+
+    @classmethod
+    def from_source_image_name(
+        cls,
+        source_image_name: str | None,
+    ) -> "CellProfilerSourceImagePair | None":
+        """Decode a composed source-image name into a pair invocation identity."""
+        if source_image_name is None:
+            return None
+        source_parts = tuple(part for part in source_image_name.split("__") if part)
+        if len(source_parts) != 2:
+            return None
+        first_name, second_name = source_parts
+        return cls(
+            first_index=0,
+            second_index=1,
+            runtime_pair=RuntimeMeasurementSourcePair(first_name, second_name),
+            first_display_name=first_name,
+            second_display_name=second_name,
+        )
+
+    @property
+    def first_name(self) -> str:
+        """Return the first CellProfiler source image display name."""
+        return self.first_display_name
+
+    @property
+    def second_name(self) -> str:
+        """Return the second CellProfiler source image display name."""
+        return self.second_display_name
 
     @property
     def source_image_name(self) -> str:
         """Return CellProfiler's table-level source identity for this pair."""
-        return f"{self.first_name}__{self.second_name}"
+        return RuntimeMeasurementSourcePair.source_pair_name(
+            self.first_display_name,
+            self.second_display_name,
+        )
+
+    def invocation_kwargs(
+        self,
+        *,
+        first_channel_kwarg: str,
+        second_channel_kwarg: str,
+    ) -> dict[str, int]:
+        """Lower this source-pair invocation to CellProfiler channel kwargs."""
+        return {
+            first_channel_kwarg: self.first_index,
+            second_channel_kwarg: self.second_index,
+        }
+
+
+class CellProfilerSourcePairFeature(ABC, metaclass=AutoRegisterMeta):
+    """CellProfiler feature naming semantics for ordered source-image pairs."""
+
+    __registry_key__ = "source_field"
+    __skip_if_no_key__ = True
+
+    source_field: ClassVar[str | None] = None
+    feature_family: ClassVar[str | None] = None
+
+    @classmethod
+    def all(cls) -> tuple["CellProfilerSourcePairFeature", ...]:
+        """Return registered source-pair feature policies in declaration order."""
+        return tuple(
+            feature_type()
+            for feature_type in cls.__registry__.values()
+            if feature_type.source_field is not None
+        )
+
+    @classmethod
+    def source_field_names(cls) -> frozenset[str]:
+        """Return raw result fields owned by source-pair feature policies."""
+        return frozenset(feature.source_field_name for feature in cls.all())
+
+    @property
+    def source_field_name(self) -> str:
+        """Return the raw absorbed-function field represented by this feature."""
+        if self.source_field is None:
+            raise TypeError(f"{type(self).__name__} does not declare source_field.")
+        return self.source_field
+
+    @property
+    def feature_family_name(self) -> str:
+        """Return the CellProfiler measurement feature family."""
+        if self.feature_family is None:
+            raise TypeError(f"{type(self).__name__} does not declare feature_family.")
+        return self.feature_family
+
+    def runtime_feature_name(self, source_pair: CellProfilerSourceImagePair) -> str:
+        """Return the CellProfiler measurement column for this source pair."""
+        first_name, second_name = self.source_names(source_pair)
+        return f"Correlation_{self.feature_family_name}_{first_name}_{second_name}"
+
+    @abstractmethod
+    def source_names(
+        self,
+        source_pair: CellProfilerSourceImagePair,
+    ) -> tuple[str, str]:
+        """Return source display names in CellProfiler's feature orientation."""
+
+
+class FirstSecondCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
+    """Feature policy whose CellProfiler column uses first, then second source."""
+
+    source_field = None
+
+    def source_names(
+        self,
+        source_pair: CellProfilerSourceImagePair,
+    ) -> tuple[str, str]:
+        return source_pair.first_name, source_pair.second_name
+
+
+class SecondFirstCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
+    """Feature policy whose CellProfiler column uses second, then first source."""
+
+    source_field = None
+
+    def source_names(
+        self,
+        source_pair: CellProfilerSourceImagePair,
+    ) -> tuple[str, str]:
+        return source_pair.second_name, source_pair.first_name
+
+
+class CellProfilerCorrelationFeature(FirstSecondCellProfilerSourcePairFeature):
+    """Pearson correlation column emitted in CellProfiler's first-second order."""
+
+    source_field = "correlation"
+    feature_family = "Correlation"
+
+
+class CellProfilerSlopeFeature(FirstSecondCellProfilerSourcePairFeature):
+    """Regression slope from the first source to the second source."""
+
+    source_field = "slope"
+    feature_family = "Slope"
+
+
+class CellProfilerReverseSlopeFeature(SecondFirstCellProfilerSourcePairFeature):
+    """Regression slope from the second source to the first source."""
+
+    source_field = "slope_reverse"
+    feature_family = "Slope"
+
+
+class CellProfilerOverlapFeature(FirstSecondCellProfilerSourcePairFeature):
+    """Overlap coefficient column emitted in CellProfiler's first-second order."""
+
+    source_field = "overlap"
+    feature_family = "Overlap"
+
+
+class CellProfilerK1Feature(FirstSecondCellProfilerSourcePairFeature):
+    """K coefficient for first source against second source."""
+
+    source_field = "k1"
+    feature_family = "K"
+
+
+class CellProfilerK2Feature(SecondFirstCellProfilerSourcePairFeature):
+    """K coefficient for second source against first source."""
+
+    source_field = "k2"
+    feature_family = "K"
+
+
+class CellProfilerMandersM1Feature(FirstSecondCellProfilerSourcePairFeature):
+    """Manders coefficient for first source against second source."""
+
+    source_field = "manders_m1"
+    feature_family = "Manders"
+
+
+class CellProfilerMandersM2Feature(SecondFirstCellProfilerSourcePairFeature):
+    """Manders coefficient for second source against first source."""
+
+    source_field = "manders_m2"
+    feature_family = "Manders"
+
+
+class CellProfilerRWC1Feature(FirstSecondCellProfilerSourcePairFeature):
+    """Rank-weighted colocalization for first source against second source."""
+
+    source_field = "rwc1"
+    feature_family = "RWC"
+
+
+class CellProfilerRWC2Feature(SecondFirstCellProfilerSourcePairFeature):
+    """Rank-weighted colocalization for second source against first source."""
+
+    source_field = "rwc2"
+    feature_family = "RWC"
+
+
+class CellProfilerCostesM1Feature(FirstSecondCellProfilerSourcePairFeature):
+    """Costes thresholded Manders for first source against second source."""
+
+    source_field = "costes_m1"
+    feature_family = "Costes"
+
+
+class CellProfilerCostesM2Feature(SecondFirstCellProfilerSourcePairFeature):
+    """Costes thresholded Manders for second source against first source."""
+
+    source_field = "costes_m2"
+    feature_family = "Costes"
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -131,8 +340,9 @@ class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
             CellProfilerSourceImagePair(
                 first_index=first_index,
                 second_index=second_index,
-                first_name=first_name,
-                second_name=second_name,
+                runtime_pair=RuntimeMeasurementSourcePair(first_name, second_name),
+                first_display_name=first_name,
+                second_display_name=second_name,
             )
             for first_index, first_name in enumerate(self.source_image_names)
             for second_index, second_name in enumerate(self.source_image_names)

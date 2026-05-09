@@ -198,6 +198,8 @@ class OpenHCSRegistry(LibraryRegistryBase):
         """
         # Get module-based functions from cache or discovery
         functions = super().load_or_discover_functions()
+        if not self.MODULES_TO_SCAN:
+            return functions
 
         # Add custom functions from FUNC_REGISTRY
         # Custom functions are registered via register_function() when loaded from .py files

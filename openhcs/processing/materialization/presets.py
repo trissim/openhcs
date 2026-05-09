@@ -6,7 +6,7 @@ without repeating JsonOptions/CsvOptions boilerplate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 from openhcs.processing.materialization.core import MaterializationSpec
@@ -124,6 +124,29 @@ def csv_materializer(
         row_field=row_field,
         row_columns=row_columns,
         row_unpacker=row_unpacker,
+        allowed_backends=allowed_backends,
+    )
+
+
+def csv_dataclass_materializer(
+    row_type: type[Any],
+    *,
+    analysis_type: Optional[str] = None,
+    source: Optional[str] = None,
+    suffix: Optional[str] = None,
+    allowed_backends: Optional[List[str]] = None,
+) -> MaterializationSpec:
+    """Build a CSV materializer from a nominal dataclass row schema."""
+    if not is_dataclass(row_type):
+        raise TypeError(
+            "csv_dataclass_materializer requires a dataclass row type, got "
+            f"{getattr(row_type, '__name__', type(row_type).__name__)}."
+        )
+    return csv_materializer(
+        fields=[field.name for field in dataclass_fields(row_type)],
+        analysis_type=analysis_type,
+        source=source,
+        suffix=suffix,
         allowed_backends=allowed_backends,
     )
 

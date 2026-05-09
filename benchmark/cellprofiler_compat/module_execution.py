@@ -56,6 +56,7 @@ from openhcs.core.measurement_image_alignment import (
     MeasurementImageLabelAlignmentStrategy,
 )
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.pipeline.function_contracts import (
     ObjectLabelMeasurementExecution,
@@ -160,6 +161,7 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     RuntimeCallablePolicy,
     RuntimeCallableView,
     RuntimeInvocationKwargPolicy,
+    runtime_output_tuple,
 )
 from openhcs.processing.materialization import tabular_field_names_from_materialization
 from openhcs.processing.backends.cellprofiler.relationships import (
@@ -199,6 +201,7 @@ from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerResolvedInputRequest,
     CellProfilerSliceAlignedValues,
     CellProfilerSourceImagePair,
+    CellProfilerSourcePairFeature,
     coerce_cellprofiler_grid_cycle_scope,
     illumination_scope_uses_all_images,
     requested_image_execution_mode,
@@ -231,6 +234,39 @@ _INVOCATION_CONTROL_KWARGS = frozenset(
         CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
     )
 )
+
+
+def _cellprofiler_module_policy_registry_key(name: str, cls: type) -> str | None:
+    """Derive the canonical registry key from a policy leaf's module name."""
+    del name
+    module_name = getattr(cls, _MODULE_NAME_REGISTRY_KEY, None)
+    if module_name is None:
+        return None
+    return canonical_module_name(str(module_name))
+
+
+class CellProfilerModulePolicyMeta(AutoRegisterMeta):
+    """AutoRegisterMeta variant for CellProfiler module-name policy families."""
+
+    def __new__(
+        mcs,
+        name: str,
+        bases: tuple[type, ...],
+        attrs: dict[str, Any],
+        registry_config: Any | None = None,
+    ):
+        if registry_config is None and not any(
+            hasattr(base, "__registry__") for base in bases
+        ):
+            attrs.setdefault("__registry_key__", "registry_key")
+            attrs.setdefault("__skip_if_no_key__", True)
+            attrs.setdefault(
+                "__key_extractor__",
+                staticmethod(_cellprofiler_module_policy_registry_key),
+            )
+            attrs.setdefault("registry_key", None)
+            attrs.setdefault(_MODULE_NAME_REGISTRY_KEY, None)
+        return super().__new__(mcs, name, bases, attrs, registry_config)
 
 
 class CellProfilerSpecialInputPayloadSemantics(str, Enum):
@@ -950,7 +986,7 @@ class CellProfilerModuleExecutor:
                         raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
                             func,
                             aligned_image,
-                            {**invocation.kwargs, "labels": executable_labels},
+                            {**invocation.lowered_kwargs(), "labels": executable_labels},
                             execution_mode=execution_mode,
                         )
                         contract_execute_seconds += (
@@ -1003,7 +1039,10 @@ class CellProfilerModuleExecutor:
                                 source_image_name=measurement_image.source_image_name,
                                 execution_mode=execution_mode,
                                 image=aligned_image,
-                                kwargs={**invocation.kwargs, "labels": executable_labels},
+                                kwargs={
+                                    **invocation.lowered_kwargs(),
+                                    "labels": executable_labels,
+                                },
                                 batch_index=len(batch_requests),
                                 batch_count=measurement_batch_count,
                             )
@@ -1241,6 +1280,7 @@ class CellProfilerModuleExecutor:
         row_source_names_required = _row_source_names_required(measurement_images)
         contract_execute_seconds = 0.0
         split_rows_seconds = 0.0
+        combined_records: list[CellProfilerMeasurementRecord] = []
         for measurement_image in measurement_images:
             contract_started_at = time.perf_counter()
             raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
@@ -1276,11 +1316,13 @@ class CellProfilerModuleExecutor:
                     source_image_payload=measurement_image.payload,
                     source_image_name=source_image_name,
                     func=func,
+                    source_image_names=measurement_image.source_image_names,
                 )
             )
+            combined_records.append(measurement_record)
             combined_rows.extend(
                 MeasurementRowOwnership(
-                    source_image_name=source_image_name,
+                    source_image_name=measurement_record.source_image_name,
                 ).annotate_rows(measurement_record.rows)
             )
             split_rows_seconds += time.perf_counter() - split_rows_started_at
@@ -1310,8 +1352,13 @@ class CellProfilerModuleExecutor:
             source_image_name=(
                 None
                 if rows_declare_object_name
-                else CellProfilerMeasurementImage.shared_source_image_name(
-                    measurement_images
+                else (
+                    CellProfilerMeasurementRecord.shared_source_image_name(
+                        tuple(combined_records)
+                    )
+                    or CellProfilerMeasurementImage.shared_source_image_name(
+                        measurement_images
+                    )
                 )
             ),
         )
@@ -1841,12 +1888,11 @@ class CellProfilerMainFlowReplacementRequest:
     output_image: Any
 
 
-class CellProfilerMainFlowReplacementPolicy(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerMainFlowReplacementPolicy(
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
     """Nominal policy for mapping declared CellProfiler image outputs to main flow."""
-
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -1898,12 +1944,11 @@ class CorrectIlluminationCalculateMainFlowReplacementPolicy(
     module_name = "CorrectIlluminationCalculate"
 
 
-class CellProfilerInvocationExecutionModePolicy(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerInvocationExecutionModePolicy(
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
     """Nominal policy for modules whose settings change stack execution mode."""
-
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -2926,12 +2971,12 @@ class CellProfilerObjectMeasurementVectorBatchBinding:
         )
 
 
-class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerObjectInputPolicy(
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
     """Nominal binding policy for CellProfiler object-label inputs."""
 
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
     binds_without_declared_inputs: ClassVar[bool] = False
     supported_non_object_input_kinds: ClassVar[frozenset[ArtifactKind]] = frozenset()
 
@@ -2952,12 +2997,11 @@ class CellProfilerObjectInputPolicy(ABC, metaclass=AutoRegisterMeta):
         """Return absorbed-function kwargs for object-label runtime inputs."""
 
 
-class CellProfilerPrimaryImageInputPolicy(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerPrimaryImageInputPolicy(
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
     """Nominal policy for image artifacts that drive absorbed execution."""
-
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -3140,13 +3184,41 @@ class ObjectMeasurementInvocation:
     kwargs: Mapping[str, Any]
     source_pair: CellProfilerSourceImagePair | None = None
 
+    def lowered_kwargs(self) -> dict[str, Any]:
+        """Return kwargs lowered to the CellProfiler function-call ABI."""
+        return dict(self.kwargs)
 
-class CellProfilerObjectMeasurementRowPolicy(metaclass=AutoRegisterMeta):
+
+@dataclass(frozen=True, slots=True)
+class SourcePairObjectMeasurementInvocation(ObjectMeasurementInvocation):
+    """Object measurement invocation over one ordered source-image pair."""
+
+    first_channel_kwarg: str = "channel_1"
+    second_channel_kwarg: str = "channel_2"
+
+    def __post_init__(self) -> None:
+        if self.source_pair is None:
+            raise ValueError(
+                "SourcePairObjectMeasurementInvocation requires a source_pair."
+            )
+
+    def lowered_kwargs(self) -> dict[str, Any]:
+        assert self.source_pair is not None
+        return {
+            **self.kwargs,
+            **self.source_pair.invocation_kwargs(
+                first_channel_kwarg=self.first_channel_kwarg,
+                second_channel_kwarg=self.second_channel_kwarg,
+            ),
+        }
+
+
+class CellProfilerObjectMeasurementRowPolicy(
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
     """Nominal export-row policy for object-scoped measurement modules."""
 
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
     row_identity: ClassVar[MeasurementObjectRowIdentity] = (
         MeasurementObjectRowIdentity.LABEL_ID
     )
@@ -3723,35 +3795,23 @@ class MeasureObjectIntensityDistributionObjectMeasurementRowPolicy(
         return list(rows)
 
 
+class CellProfilerMeasurementRowIdentityField(str, Enum):
+    """CellProfiler row fields that carry ownership/axis identity, not values."""
+
+    SLICE_INDEX = MeasurementRowAxisField.SLICE_INDEX.value
+    OBJECT_LABEL = MEASUREMENT_OBJECT_LABEL_FIELD
+    OBJECT_NAME = MEASUREMENT_OBJECT_NAME_FIELD
+    SOURCE_IMAGE_NAME = MEASUREMENT_SOURCE_IMAGE_NAME_FIELD
+
+
 class MeasureColocalizationObjectMeasurementRowPolicy(
     CellProfilerObjectMeasurementRowPolicy
 ):
     """Expand composed source stacks into source-pair object measurements."""
 
     module_name = _MEASURE_COLOCALIZATION_MODULE
-    pair_feature_fields: ClassVar[Mapping[str, str]] = MappingProxyType(
-        {
-            "correlation": "Correlation_Correlation_{first}_{second}",
-            "slope": "Correlation_Slope_{first}_{second}",
-            "slope_reverse": "Correlation_Slope_{second}_{first}",
-            "overlap": "Correlation_Overlap_{first}_{second}",
-            "k1": "Correlation_K_{first}_{second}",
-            "k2": "Correlation_K_{second}_{first}",
-            "manders_m1": "Correlation_Manders_{first}_{second}",
-            "manders_m2": "Correlation_Manders_{second}_{first}",
-            "rwc1": "Correlation_RWC_{first}_{second}",
-            "rwc2": "Correlation_RWC_{second}_{first}",
-            "costes_m1": "Correlation_Costes_{first}_{second}",
-            "costes_m2": "Correlation_Costes_{second}_{first}",
-        }
-    )
     identity_fields: ClassVar[frozenset[str]] = frozenset(
-        {
-            "slice_index",
-            MEASUREMENT_OBJECT_LABEL_FIELD,
-            MEASUREMENT_OBJECT_NAME_FIELD,
-            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
-        }
+        field.value for field in CellProfilerMeasurementRowIdentityField
     )
 
     def invocations(
@@ -3763,11 +3823,13 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
         if not source_pairs:
             return super().invocations(measurement_image, kwargs)
         return tuple(
-            ObjectMeasurementInvocation(
+            SourcePairObjectMeasurementInvocation(
                 kwargs={
                     **kwargs,
-                    "channel_1": source_pair.first_index,
-                    "channel_2": source_pair.second_index,
+                    **source_pair.invocation_kwargs(
+                        first_channel_kwarg="channel_1",
+                        second_channel_kwarg="channel_2",
+                    ),
                 },
                 source_pair=source_pair,
             )
@@ -3794,7 +3856,8 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
         """Return one row with CellProfiler source-pair feature names."""
         row_mapping = measurement_row_mapping(row)
         has_pair_features = bool(
-            type(self).pair_feature_fields.keys() & row_mapping.keys()
+            CellProfilerSourcePairFeature.source_field_names()
+            & row_mapping.keys()
         )
         if not has_pair_features:
             return dict(row_mapping)
@@ -3803,15 +3866,12 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
             for field_name, value in row_mapping.items()
             if field_name in type(self).identity_fields
         }
-        for field_name, feature_format in type(self).pair_feature_fields.items():
-            if field_name not in row_mapping:
+        for feature in CellProfilerSourcePairFeature.all():
+            if feature.source_field_name not in row_mapping:
                 continue
-            projected[
-                feature_format.format(
-                    first=source_pair.first_name,
-                    second=source_pair.second_name,
-                )
-            ] = row_mapping[field_name]
+            projected[feature.runtime_feature_name(source_pair)] = row_mapping[
+                feature.source_field_name
+            ]
         return projected
 
     def table_source_image_name(
@@ -4431,13 +4491,9 @@ class SparseIJVMeasurementLabelExecutionModeStrategy(
 
 class CellProfilerObjectMeasurementExecutionDomainPolicy(
     ABC,
-    metaclass=AutoRegisterMeta,
+    metaclass=CellProfilerModulePolicyMeta,
 ):
     """Choose CellProfiler object-measurement execution domain by module semantics."""
-
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -4604,6 +4660,7 @@ class CellProfilerOutputRecordRequest:
     output_values: Mapping[str, Any]
     source_image_name: str | None
     func: Callable[..., Any]
+    source_image_names: tuple[str, ...] = ()
     source_image_payload: Any | None = None
 
 
@@ -4616,6 +4673,7 @@ class CellProfilerMeasurementRecord:
     source_image_name: str | None
     source_image_payload: Any | None = None
     fields: tuple[FieldSpec, ...] = ()
+    owns_source_qualified_features: bool = False
 
     def __post_init__(self) -> None:
         if self.fields or not _rows_have_inferable_fields(self.rows):
@@ -4627,6 +4685,23 @@ class CellProfilerMeasurementRecord:
                 tuple(measurement_row_mapping(row) for row in self.rows)
             ),
         )
+
+    @classmethod
+    def shared_source_image_name(
+        cls,
+        records: tuple["CellProfilerMeasurementRecord", ...],
+    ) -> str | None:
+        """Return a table source only when every record declares the same one."""
+        if (
+            not records
+            or any(record.owns_source_qualified_features for record in records)
+            or any(record.source_image_name is None for record in records)
+        ):
+            return None
+        unique_names = tuple(dict.fromkeys(record.source_image_name for record in records))
+        if len(unique_names) == 1:
+            return unique_names[0]
+        return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -4649,7 +4724,6 @@ class CellProfilerMeasurementRecordPartition:
                 tuple(measurement_row_mapping(row) for row in self.rows)
             ),
         )
-
 
 class CellProfilerImageMeasurementSource(ABC, metaclass=AutoRegisterMeta):
     """Nominal source for image-owned measurement row identity."""
@@ -4952,12 +5026,11 @@ class PlaneObjectLabelSourceBindingProjectionStrategy(
         return request.labels
 
 
-class CellProfilerMeasurementRecordBuilder(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerMeasurementRecordBuilder(
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
     """Nominal module-specific measurement-row enrichment."""
-
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -5011,6 +5084,95 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
             ),
             fields=_measurement_record_fields(request.spec, rows, request.func),
         )
+
+
+class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
+    """Project source-pair result fields through the CellProfiler pair dialect."""
+
+    def build(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> CellProfilerMeasurementRecord:
+        source_rows = _measurement_table_rows(request.value)
+        owns_source_qualified_features = self.rows_have_source_pair_features(
+            source_rows
+        )
+        rows = self.project_rows(source_rows, request)
+        return CellProfilerMeasurementRecord(
+            rows=rows,
+            object_name=None,
+            source_image_name=(
+                None if owns_source_qualified_features else request.source_image_name
+            ),
+            fields=_measurement_record_fields(request.spec, rows, request.func),
+            owns_source_qualified_features=owns_source_qualified_features,
+        )
+
+    def rows_have_source_pair_features(
+        self,
+        rows: Sequence[Any],
+    ) -> bool:
+        """Return whether rows carry fields owned by source-pair feature policies."""
+        source_pair_fields = CellProfilerSourcePairFeature.source_field_names()
+        return any(
+            bool(source_pair_fields & measurement_row_mapping(row).keys())
+            for row in rows
+        )
+
+    def project_rows(
+        self,
+        rows: Sequence[Any],
+        request: CellProfilerOutputRecordRequest,
+    ) -> list[Any]:
+        source_pair = self.source_pair(request)
+        if source_pair is None:
+            return list(rows)
+        return [self.project_row(row, source_pair) for row in rows]
+
+    def source_pair(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> CellProfilerSourceImagePair | None:
+        if len(request.source_image_names) == 2:
+            first_name, second_name = request.source_image_names
+            return CellProfilerSourceImagePair(
+                first_index=0,
+                second_index=1,
+                runtime_pair=RuntimeMeasurementSourcePair(first_name, second_name),
+                first_display_name=first_name,
+                second_display_name=second_name,
+            )
+        return CellProfilerSourceImagePair.from_source_image_name(
+            request.source_image_name
+        )
+
+    def project_row(
+        self,
+        row: Any,
+        source_pair: CellProfilerSourceImagePair,
+    ) -> dict[str, Any]:
+        row_mapping = measurement_row_mapping(row)
+        if not (CellProfilerSourcePairFeature.source_field_names() & row_mapping.keys()):
+            return dict(row_mapping)
+
+        projected: dict[str, Any] = {}
+        for field_name, value in row_mapping.items():
+            if field_name not in CellProfilerSourcePairFeature.source_field_names():
+                projected[field_name] = value
+
+        for feature in CellProfilerSourcePairFeature.all():
+            if feature.source_field_name not in row_mapping:
+                continue
+            projected[feature.runtime_feature_name(source_pair)] = row_mapping[
+                feature.source_field_name
+            ]
+        return projected
+
+
+class MeasureColocalizationMeasurementRecordBuilder(SourcePairMeasurementRecordBuilder):
+    """CellProfiler MeasureColocalization emits source-pair measurement fields."""
+
+    module_name = _MEASURE_COLOCALIZATION_MODULE
 
 
 class ObjectTopologyMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
@@ -5599,6 +5761,22 @@ class CellProfilerOutputValueResolution:
         return cls(recorded_values, context_values)
 
 
+class CellProfilerOutputRole(str, Enum):
+    """Nominal roles used to match CellProfiler return values to artifacts."""
+
+    MAIN_FLOW = "main_flow"
+    SIDECAR = "sidecar"
+
+    @classmethod
+    def for_spec(cls, spec: ArtifactSpec) -> "CellProfilerOutputRole":
+        if (
+            spec.kind in (ArtifactKind.IMAGE, ArtifactKind.OBJECT_LABELS)
+            and spec.sidecar_role is None
+        ):
+            return cls.MAIN_FLOW
+        return cls.SIDECAR
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerReturnedOutputValueMatcher:
     """Resolve retained output specs against a CellProfiler function return."""
@@ -5608,13 +5786,6 @@ class CellProfilerReturnedOutputValueMatcher:
     main_output: Any
     artifact_values: tuple[Any, ...]
     func: Callable[..., Any] | None = None
-    main_output_kinds: ClassVar[frozenset[ArtifactKind]] = frozenset(
-        {
-            ArtifactKind.IMAGE,
-            ArtifactKind.OBJECT_LABELS,
-        }
-    )
-
     def resolve(self) -> dict[str, Any] | None:
         if not self.retained_specs:
             return {}
@@ -5696,10 +5867,7 @@ class CellProfilerReturnedOutputValueMatcher:
 
     def _first_declared_main_output_index(self) -> int | None:
         for index, spec in enumerate(self.declared_specs):
-            if (
-                spec.kind in type(self).main_output_kinds
-                and spec.sidecar_role is None
-            ):
+            if CellProfilerOutputRole.for_spec(spec) is CellProfilerOutputRole.MAIN_FLOW:
                 return index
         return None
 
@@ -6406,6 +6574,7 @@ class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
 
 
 def _split_cellprofiler_output(raw_output: Any) -> tuple[Any, tuple[Any, ...]]:
+    raw_output = runtime_output_tuple(raw_output)
     if isinstance(raw_output, tuple):
         return raw_output[0], tuple(raw_output[1:])
     return raw_output, ()
@@ -7497,12 +7666,24 @@ def _measurement_object_name(
     return None
 
 
-class RelationshipMeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):
-    """CellProfiler relationship feature-name templates."""
+class CellProfilerRelationshipMeasurementFeature(FormattingMeasurementFeatureTemplate):
+    """CellProfiler relationship measurement feature-name contract."""
 
     PARENT = "Parent_{parent_object_name}"
     DISTANCE_CENTROID = "Distance_Centroid_{parent_object_name}"
     DISTANCE_MINIMUM = "Distance_Minimum_{parent_object_name}"
+
+
+# Backwards-compatible alias for existing local callers/tests.
+RelationshipMeasurementFeatureTemplate = CellProfilerRelationshipMeasurementFeature
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipEndpointContract:
+    """Nominal parent/child endpoint contract for one relationship artifact."""
+
+    parent: ArtifactSpec
+    child: ArtifactSpec
 
 
 @dataclass(frozen=True, slots=True)
@@ -7526,16 +7707,23 @@ class RelationshipEndpointResolver:
         self,
         relationship_spec: ArtifactSpec,
     ) -> tuple[ArtifactSpec, ArtifactSpec]:
+        contract = self.endpoint_contract(relationship_spec)
+        return contract.parent, contract.child
+
+    def endpoint_contract(
+        self,
+        relationship_spec: ArtifactSpec,
+    ) -> RelationshipEndpointContract:
         matches = self.artifact_name_matches(relationship_spec)
         if len(matches) == 1:
-            return matches[0]
+            return RelationshipEndpointContract(*matches[0])
         if len(matches) > 1:
             raise ValueError(
                 f"{self.request.executor.module_name} relationship output "
                 f"'{relationship_spec.name}' matches multiple object endpoint pairs."
             )
         if len(self.object_inputs) == 2 and not self.object_outputs:
-            return self.object_inputs[0], self.object_inputs[1]
+            return RelationshipEndpointContract(self.object_inputs[0], self.object_inputs[1])
         endpoints = parent_child_relationship_artifact_endpoints(
             relationship_spec.name,
             parent_candidates=tuple(spec.name for spec in self.object_inputs),
@@ -7548,9 +7736,12 @@ class RelationshipEndpointResolver:
                     (*self.object_outputs, *self.object_inputs),
                     child_name,
                 )
-                return parent_spec, child_spec or ArtifactSpec(
-                    child_name,
-                    ArtifactKind.OBJECT_LABELS,
+                return RelationshipEndpointContract(
+                    parent_spec,
+                    child_spec or ArtifactSpec(
+                        child_name,
+                        ArtifactKind.OBJECT_LABELS,
+                    ),
                 )
         raise NotImplementedError(
             f"{self.request.executor.module_name} relationship output "
@@ -7741,7 +7932,7 @@ class RelationshipMeasurementRows(CellProfilerMeasurementRows):
                 *parent_by_child.keys(),
             )
         )
-        feature_name = RelationshipMeasurementFeatureTemplate.PARENT.feature_name(
+        feature_name = CellProfilerRelationshipMeasurementFeature.PARENT.feature_name(
             parent_object_name=parent_object_name
         )
         return tuple(
@@ -7914,8 +8105,14 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         child_labels = self.object_labels(child_object_name, slice_index=slice_index)
         if parent_labels is None or child_labels is None:
             return ()
-        parent_array = object_label_dense_array(parent_labels, dtype=np.int32)
-        child_array = object_label_dense_array(child_labels, dtype=np.int32)
+        parent_array = RuntimeSliceProjection.object_label_endpoint_dense_array(
+            parent_labels,
+            dtype=np.int32,
+        )
+        child_array = RuntimeSliceProjection.object_label_endpoint_dense_array(
+            child_labels,
+            dtype=np.int32,
+        )
         parent_array, child_array = aligned_dense_object_label_arrays(
             parent_array,
             child_array,
@@ -7938,10 +8135,10 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
             child_array,
             parents_of,
         )
-        centroid_feature = RelationshipMeasurementFeatureTemplate.DISTANCE_CENTROID.feature_name(
+        centroid_feature = CellProfilerRelationshipMeasurementFeature.DISTANCE_CENTROID.feature_name(
             parent_object_name=parent_object_name
         )
-        minimum_feature = RelationshipMeasurementFeatureTemplate.DISTANCE_MINIMUM.feature_name(
+        minimum_feature = CellProfilerRelationshipMeasurementFeature.DISTANCE_MINIMUM.feature_name(
             parent_object_name=parent_object_name
         )
         return tuple(
@@ -7968,11 +8165,10 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         if value is None:
             value = self.request.adapter.get_objects(object_name)
         labels = _label_payload_final(value)
-        if slice_index is None:
-            return labels
-        if isinstance(labels, np.ndarray) and labels.ndim >= 3:
-            return labels[slice_index]
-        return labels
+        return RuntimeSliceProjection.object_label_endpoint(
+            labels,
+            slice_index=slice_index,
+        )
 
 def _object_label_count(
     adapter: CellProfilerRuntimeAdapter,
@@ -8097,12 +8293,11 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
         )
 
 
-class CellProfilerSpecialInputPolicy(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerSpecialInputPolicy(
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
     """Nominal module-specific binding for CellProfiler special_inputs."""
-
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
 
     @classmethod
     @lru_cache(maxsize=None)
@@ -8612,12 +8807,12 @@ class CellProfilerPerImageMeasurementPolicy:
         return not _callable_accepts_composed_image_payload(request.func)
 
 
-class CellProfilerDualScopeMeasurementPolicy(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerDualScopeMeasurementPolicy(
+    ABC,
+    metaclass=CellProfilerModulePolicyMeta,
+):
     """Nominal policy for modules whose `Both` scope emits image and object facts."""
 
-    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
-    __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
     image_function_name: ClassVar[str | None] = None
 
     @classmethod

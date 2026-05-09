@@ -16,7 +16,6 @@ from benchmark.cellprofiler_library.functions.correctilluminationapply import (
     IlluminationCorrectionMethod,
 )
 from benchmark.cellprofiler_library.functions.convertobjectstoimage import ImageMode
-from benchmark.cellprofiler_library.functions.relateobjects import DistanceMethod
 from benchmark.cellprofiler_library.functions.rescaleintensity import (
     AutomaticHigh,
     AutomaticLow,
@@ -78,6 +77,12 @@ from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
 from .resize_objects_settings import resize_objects_bound_kwargs
 from .resize_settings import resize_bound_kwargs
+from .relate_objects_settings import (
+    RELATE_OBJECTS_DISTANCE_SETTING,
+    RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
+    RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
+    parse_relate_objects_distance_method,
+)
 from .settings_binder import (
     cellprofiler_enum_setting_parser,
     cellprofiler_enum_value_setting_parser,
@@ -89,6 +94,7 @@ from .settings_binder import (
     normalize_cellprofiler_setting_name,
 )
 from .symbol_table import (
+    IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING,
     INPUT_IMAGE_SETTING,
     INPUT_OBJECTS_SETTING,
     OUTPUT_IMAGE_SETTING,
@@ -96,7 +102,9 @@ from .symbol_table import (
 )
 from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
+    is_blank_symbol_name,
     optional_setting_value,
+    setting_name_matches,
     setting_names,
     setting_values,
 )
@@ -232,10 +240,40 @@ class ConditionalModuleUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
         cls,
         module: ModuleBlock,
     ) -> tuple[str | SettingNameFamily, ...]:
-        value = optional_setting_value(module, cls.controlling_setting)
-        if value in cls.inactive_when_values:
+        value = cls.controlling_setting_value(module)
+        if value is not None and cls.setting_value_is_inactive(value):
             return (*cls.ignored_settings, *cls.inactive_settings)
         return cls.ignored_settings
+
+    @classmethod
+    def controlling_setting_value(cls, module: ModuleBlock) -> str | None:
+        """Return the controlling setting value used by this inactive policy."""
+        return optional_setting_value(module, cls.controlling_setting)
+
+    @classmethod
+    def setting_value_is_inactive(cls, value: str) -> bool:
+        return value in cls.inactive_when_values
+
+
+class BlankSymbolModuleUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgnore):
+    """Nominal policy for CP settings inactive when their selector is blank."""
+
+    inactive_when_values = ()
+
+    @classmethod
+    def controlling_setting_value(cls, module: ModuleBlock) -> str | None:
+        """Return blank values too, because blank is the inactive signal."""
+        for setting in module.iter_settings():
+            if setting_name_matches(setting.name, cls.controlling_setting):
+                return setting.value.strip()
+        for setting_name, value in module.settings.items():
+            if setting_name_matches(setting_name, cls.controlling_setting):
+                return value.strip()
+        return None
+
+    @classmethod
+    def setting_value_is_inactive(cls, value: str) -> bool:
+        return not value.strip() or is_blank_symbol_name(value)
 
 
 class CorrectIlluminationCalculateUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
@@ -267,23 +305,28 @@ class MeasureObjectIntensityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
     ignored_settings = ("Hidden",)
 
 
-class MeasureImageIntensityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+class MeasureImageIntensityUnmappedSettingIgnore(BlankSymbolModuleUnmappedSettingIgnore):
     """Empty object-set selector is consumed by symbol-table scope selection."""
 
     module_name = "MeasureImageIntensity"
+    controlling_setting = INPUT_OBJECTS_SETTING
     ignored_settings = (
-        "Select input object sets",
         "Measure the intensity only from areas enclosed by objects?",
         "calculate_custom_percentiles",
         "specify_percentiles_to_measure",
     )
+    inactive_settings = (INPUT_OBJECTS_SETTING,)
 
 
-class MeasureColocalizationUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+class MeasureColocalizationUnmappedSettingIgnore(
+    BlankSymbolModuleUnmappedSettingIgnore
+):
     """Empty object selector is consumed by colocalization scope binding."""
 
     module_name = "MeasureColocalization"
-    ignored_settings = ("Select objects to measure",)
+    controlling_setting = SettingNameFamily("Select an object to measure")
+    ignored_settings = ("Select objects to measure", "Hidden")
+    inactive_settings = (SettingNameFamily("Select an object to measure"),)
 
 
 class MeasureGranularityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
@@ -313,29 +356,38 @@ class RelateObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
     ignored_settings = (
         "Parent objects",
         "Child objects",
-        "Calculate per-parent means for all child measurements?",
+        RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
         "Calculate distances to other parents?",
         "Parent name",
-        "Do you want to save the children with parents as a new object set?",
+        RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
         "Name the output object",
     )
 
 
-class MaskObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+class MaskObjectsUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgnore):
     """MaskObjects object/image routing is consumed by the symbol table."""
 
     module_name = "MaskObjects"
+    controlling_setting = "Retain outlines of the resulting objects?"
+    inactive_when_values = ("No",)
     ignored_settings = (
         "Mask using a region defined by other objects or by binary image",
         "Select the masking image",
+        "Retain outlines of the resulting objects?",
     )
+    inactive_settings = ("Name the outline image",)
 
 
 class MeasureTextureUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
     """Legacy hidden group-count setting is parser metadata, not runtime input."""
 
     module_name = "MeasureTexture"
-    ignored_settings = ("Hidden",)
+    ignored_settings = (
+        "Hidden",
+        "Angles to measure",
+        "Measure Gabor features?",
+        "Number of angles to compute for Gabor",
+    )
 
 
 class EnhanceOrSuppressFeaturesUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
@@ -829,6 +881,11 @@ class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
             unmapped_kwargs=unmapped_kwargs,
             include_advanced_setting=True,
         )
+        for setting_name in (
+            *setting_names(INPUT_IMAGE_SETTING),
+            *setting_names(IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING),
+        ):
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
 
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
@@ -1056,7 +1113,10 @@ class EnhanceOrSuppressFeaturesModuleSettingsBindingStrategy(
         for setting_name, parameter_name in type(self).explicit_settings.items():
             value = optional_setting_value(module, setting_name)
             if value is not None:
-                kwargs[parameter_name] = binder.parse_value(setting_name, value)
+                kwargs[parameter_name] = binder.parse_value(
+                    setting_names(setting_name)[0],
+                    value,
+                )
             unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
 
         hole_sizes = optional_setting_value(module, "Range of hole sizes")
@@ -1516,13 +1576,16 @@ class MeasureColocalizationModuleSettingsBindingStrategy(
     module_name = "MeasureColocalization"
     scope_setting_name = SettingNameFamily("Select where to measure correlation")
     default_scope_value = "Across entire image"
-    metric_settings: ClassVar[Mapping[str, str]] = {
+    metric_settings: ClassVar[Mapping[str | SettingNameFamily, str]] = {
         "Set threshold as percentage of maximum intensity for the images": (
             "threshold_percent"
         ),
         "Calculate correlation and slope metrics?": "do_correlation",
         "Calculate the Manders coefficients?": "do_manders",
-        "Calculate the Rank Weighted Colocalization coefficients?": "do_rwc",
+        SettingNameFamily(
+            "Calculate the Rank Weighted Colocalization coefficients?",
+            aliases=("Calculate the Rank Weighted Coloalization coefficients?",),
+        ): "do_rwc",
         "Calculate the Overlap coefficients?": "do_overlap",
         "Calculate the Manders coefficients using Costes auto threshold?": (
             "do_costes"
@@ -1551,7 +1614,11 @@ class MeasureColocalizationModuleSettingsBindingStrategy(
             value = optional_setting_value(module, setting_name)
             if value is not None:
                 kwargs[parameter_name] = binder.parse_value(setting_name, value)
-            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+            for concrete_name in setting_names(setting_name):
+                unmapped_kwargs.pop(
+                    normalize_cellprofiler_setting_name(concrete_name),
+                    None,
+                )
 
         run_all_value = optional_setting_value(module, "Run all metrics?")
         if run_all_value is not None:
@@ -2122,16 +2189,24 @@ class FilterObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(filter_objects_bound_kwargs(module))
 
 
-class RelateObjectsModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrategy):
+class RelateObjectsModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
     """Bind RelateObjects distance settings instead of using expensive defaults."""
 
     module_name = "RelateObjects"
-    distance_setting_name: ClassVar[str] = "Calculate child-parent distances?"
-    per_parent_means_setting_name: ClassVar[str] = (
-        "Calculate per-parent means for all child measurements?"
-    )
-    save_children_setting_name: ClassVar[str] = (
-        "Do you want to save the children with parents as a new object set?"
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        SettingToKeywordBinding(
+            RELATE_OBJECTS_DISTANCE_SETTING,
+            "calculate_distances",
+            parse_relate_objects_distance_method,
+        ),
+        SettingToKeywordBinding(
+            RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
+            "calculate_per_parent_means",
+        ),
+        SettingToKeywordBinding(
+            RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
+            "save_children_with_parents",
+        ),
     )
 
     def _bind(
@@ -2141,48 +2216,32 @@ class RelateObjectsModuleSettingsBindingStrategy(GenericModuleSettingsBindingStr
         binder: SettingsBinder,
         param_mapping: Mapping[str, Any],
     ) -> BoundModuleSettings:
-        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
-        kwargs = dict(bound.kwargs)
-        unmapped_kwargs = dict(bound.unmapped_kwargs)
-        value = optional_setting_value(module, type(self).distance_setting_name)
-        if value is not None:
-            kwargs["calculate_distances"] = _coerce_function_enum(
-                DistanceMethod,
-                value,
-            ).value
-            unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(type(self).distance_setting_name),
-                None,
-            )
-        per_parent_means = optional_setting_value(
+        del param_mapping
+        generic_bound = GenericModuleSettingsBindingStrategy._bind(
+            self,
             module,
-            type(self).per_parent_means_setting_name,
+            binder=binder,
+            param_mapping={},
         )
-        if per_parent_means is not None:
-            kwargs["calculate_per_parent_means"] = binder.parse_value(
-                type(self).per_parent_means_setting_name,
-                per_parent_means,
-            )
-            unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(
-                    type(self).per_parent_means_setting_name
-                ),
-                None,
-            )
-        save_children = optional_setting_value(
+        declared_bound = DeclarativeModuleSettingsBindingStrategy._bind(
+            self,
             module,
-            type(self).save_children_setting_name,
+            binder=binder,
+            param_mapping={},
         )
-        if save_children is not None:
-            kwargs["save_children_with_parents"] = binder.parse_value(
-                type(self).save_children_setting_name,
-                save_children,
-            )
-            unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(type(self).save_children_setting_name),
-                None,
-            )
-        return BoundModuleSettings(kwargs, unmapped_kwargs)
+        return BoundModuleSettings(
+            {**generic_bound.kwargs, **declared_bound.kwargs},
+            {
+                name: value
+                for name, value in generic_bound.unmapped_kwargs.items()
+                if name
+                not in {
+                    normalize_cellprofiler_setting_name(setting_name)
+                    for binding in type(self).setting_bindings
+                    for setting_name in setting_names(binding.setting_name)
+                }
+            },
+        )
 
 
 class DisplayDataOnImageModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):

@@ -60,6 +60,9 @@ def list_cellprofiler_functions() -> tuple[str, ...]:
 
 def get_cellprofiler_function(name: str) -> Callable[..., Any]:
     """Return one exported CellProfiler-compatible processing function."""
+    published = globals().get(name)
+    if callable(published):
+        return published
     return CELLPROFILER_FUNCTIONS[name]
 
 
@@ -76,7 +79,7 @@ def require_cellprofiler_function(
         )
     resolved_function_name = function_name or str(contract_payload["function_name"])
     try:
-        return CELLPROFILER_FUNCTIONS[resolved_function_name]
+        return get_cellprofiler_function(resolved_function_name)
     except KeyError as exc:
         raise KeyError(
             f"CellProfiler-compatible processing module {module_name!r} declares "

@@ -1349,20 +1349,16 @@ class AggregateTieSensitiveLocationFeature:
         context: TieSensitiveLocationValueFeatureContext,
     ) -> "AggregateTieSensitiveLocationFeature | None":
         """Parse an aggregate location feature, if the context declares one."""
-        parts = context.feature_parts
-        if len(parts) < 3 or parts[0] not in _MEASUREMENT_AGGREGATE_PREFIXES:
-            return None
-        aggregate_parts = parts[1:]
-        for feature_start_index in range(1, len(aggregate_parts)):
-            object_name_parts = aggregate_parts[:feature_start_index]
-            feature_parts = aggregate_parts[feature_start_index:]
-            feature_family = context.location_feature_family("_".join(feature_parts))
+        for identity in RuntimeAggregateFeatureIdentity.candidates_from_parts(
+            context.feature_parts
+        ):
+            feature_family = context.location_feature_family(identity.feature_name)
             if feature_family is None:
                 continue
             return cls(
-                aggregate=parts[0],
-                object_name_parts=object_name_parts,
-                feature_parts=feature_parts,
+                aggregate=identity.aggregate,
+                object_name_parts=identity.object_name_parts,
+                feature_parts=identity.feature_parts,
                 feature_family=feature_family,
             )
         return None
@@ -6008,6 +6004,75 @@ def _measurement_feature_key_for_field(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeAggregateFeatureIdentity:
+    """Parsed aggregate measurement feature identity."""
+
+    aggregate: str
+    object_name_parts: tuple[str, ...]
+    feature_parts: tuple[str, ...]
+
+    @classmethod
+    def from_parts(
+        cls,
+        parts: tuple[str, ...],
+        dialect: RuntimeMeasurementDialect,
+    ) -> "RuntimeAggregateFeatureIdentity | None":
+        """Parse an aggregate feature using the runtime measurement dialect."""
+        if len(parts) < 3 or parts[0] not in _MEASUREMENT_AGGREGATE_PREFIXES:
+            return None
+        object_name_parts, feature_parts = _aggregate_object_and_feature_parts(
+            parts[1:],
+            dialect,
+        )
+        if not object_name_parts or not feature_parts:
+            return None
+        return cls(
+            aggregate=parts[0],
+            object_name_parts=object_name_parts,
+            feature_parts=feature_parts,
+        )
+
+    @classmethod
+    def candidates_from_parts(
+        cls,
+        parts: tuple[str, ...],
+    ) -> tuple["RuntimeAggregateFeatureIdentity", ...]:
+        """Return all aggregate object/feature splits for family-owned suffixes."""
+        if len(parts) < 3 or parts[0] not in _MEASUREMENT_AGGREGATE_PREFIXES:
+            return ()
+        return tuple(
+            cls(
+                aggregate=parts[0],
+                object_name_parts=parts[1:feature_start_index],
+                feature_parts=parts[feature_start_index:],
+            )
+            for feature_start_index in range(2, len(parts))
+        )
+
+    @property
+    def object_name(self) -> str:
+        return "_".join(self.object_name_parts)
+
+    @property
+    def feature_name(self) -> str:
+        return "_".join(self.feature_parts)
+
+    def canonical_feature_name_and_source(
+        self,
+        policy: RuntimeEquivalencePolicy,
+        *,
+        known_source_names: tuple[str, ...],
+    ) -> tuple[str, str | None]:
+        """Return the canonical runtime feature/source for the aggregate child feature."""
+        return _canonical_measurement_feature_name_and_source(
+            self.feature_name,
+            policy,
+            source_name=None,
+            known_source_names=known_source_names,
+        )
+
+
 def _aggregate_measurement_feature_key(
     field_name: str,
     subject: RuntimeMeasurementSubjectKey,
@@ -6028,29 +6093,25 @@ def _aggregate_measurement_feature_key(
             ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
             MeasurementStatistic.COUNT.value,
         )
-    if len(parts) < 3 or parts[0] not in _MEASUREMENT_AGGREGATE_PREFIXES:
-        return None
-    object_name_parts, feature_parts = _aggregate_object_and_feature_parts(
-        parts[1:],
+    aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
+        parts,
         policy.measurement_dialect,
     )
-    if not object_name_parts or not feature_parts:
+    if aggregate_identity is None:
         return None
-    feature_name, source_name = _canonical_measurement_feature_name_and_source(
-        "_".join(feature_parts),
+    feature_name, source_name = aggregate_identity.canonical_feature_name_and_source(
         policy,
-        source_name=None,
         known_source_names=known_source_names,
     )
     return RuntimeMeasurementFeatureKey.from_source_qualified_feature(
         RuntimeMeasurementSubjectKey(
             MeasurementScope.OBJECT,
-            "_".join(object_name_parts),
+            aggregate_identity.object_name,
         ),
         feature_name,
         source_name,
         policy.measurement_dialect,
-        parts[0],
+        aggregate_identity.aggregate,
     )
 
 
@@ -6904,17 +6965,16 @@ class RelationshipAggregateFeatureSemantics(
     ) -> str | None:
         """Return child feature represented by a relationship aggregate key."""
         parts = tuple(part for part in feature.feature_name.split("_") if part)
-        if len(parts) < 3 or parts[0] not in _MEASUREMENT_AGGREGATE_PREFIXES:
-            return None
-        target_name_parts, aggregate_child_feature_parts = (
-            _aggregate_object_and_feature_parts(parts[1:], dialect)
+        aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
+            parts,
+            dialect,
         )
-        if not target_name_parts or not aggregate_child_feature_parts:
+        if aggregate_identity is None:
             return None
         context = RelationshipAggregateFeatureContext(
             source_name=feature.subject.name or "",
-            target_name="_".join(target_name_parts),
-            feature_name="_".join(aggregate_child_feature_parts),
+            target_name=aggregate_identity.object_name,
+            feature_name=aggregate_identity.feature_name,
         )
         semantics = cls.for_context(
             context,
@@ -8033,16 +8093,14 @@ def _aggregate_prefixed_feature_name_and_source(
     known_source_names: tuple[str, ...],
     dialect: RuntimeMeasurementDialect,
 ) -> tuple[str, str | None] | None:
-    if len(parts) < 3 or parts[0] not in _MEASUREMENT_AGGREGATE_PREFIXES:
-        return None
-    object_name_parts, feature_parts = _aggregate_object_and_feature_parts(
-        parts[1:],
+    aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
+        parts,
         dialect,
     )
-    if not object_name_parts or not feature_parts:
+    if aggregate_identity is None:
         return None
     feature_name, source_name = _semantic_core_feature_name_and_source(
-        "_".join(feature_parts),
+        aggregate_identity.feature_name,
         known_source_names=known_source_names,
         dialect=dialect,
     )
@@ -8050,7 +8108,13 @@ def _aggregate_prefixed_feature_name_and_source(
     if not feature_name_parts:
         return None
     return (
-        "_".join((parts[0], *object_name_parts, *feature_name_parts)),
+        "_".join(
+            (
+                aggregate_identity.aggregate,
+                *aggregate_identity.object_name_parts,
+                *feature_name_parts,
+            )
+        ),
         source_name,
     )
 

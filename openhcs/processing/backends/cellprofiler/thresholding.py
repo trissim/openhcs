@@ -25,6 +25,30 @@ from openhcs.processing.backends.cellprofiler._backend import (
 CELLPROFILER_THRESHOLD_SMOOTHING_TRUNCATE_SIGMAS = 4.0
 CELLPROFILER_THRESHOLD_SMOOTHING_HALF_MASS_FACTOR = 0.6744
 CELLPROFILER_LI_TOLERANCE = 0.5 / 65536.0
+CELLPROFILER_THRESHOLD_ENTROPY_DELTA = 2.0 ** -8
+CELLPROFILER_THRESHOLD_ENTROPY_BINS = 256
+
+
+@dataclass(frozen=True, slots=True)
+class QuantizedThresholdLogTables:
+    """Log lookup tables for CellProfiler threshold diagnostics."""
+
+    values: np.ndarray
+    weighted_log_values: np.ndarray
+    entropy_log_values: np.ndarray
+    entropy_log_delta_values: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class RectangularMaskDomain:
+    """The true region of a mask that is exactly one filled 2D rectangle."""
+
+    y: slice
+    x: slice
+
+    @property
+    def slices(self) -> tuple[slice, slice]:
+        return self.y, self.x
 
 
 class ThresholdSmoothingBackendStrategy(
@@ -362,21 +386,14 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
             self._validate_inputs(image_array, mask_array, binary_array)
             full_mask = bool(np.all(mask_array))
             if not full_mask:
-                mask_slices = _rectangular_mask_slices(mask_array)
-                if mask_slices is not None:
-                    cropped_image = image_array[mask_slices]
+                mask_domain = _rectangular_mask_domain(mask_array)
+                if mask_domain is not None:
+                    cropped_image = image_array[mask_domain.slices]
                     if bool(np.all(np.isfinite(cropped_image))):
                         if proven_unit_interval_scale is not None:
                             scale = int(proven_unit_interval_scale)
-                            (
-                                values,
-                                weighted_log_values,
-                                entropy_log_values,
-                                entropy_log_delta_values,
-                            ) = (
-                                _quantized_log_tables(scale)
-                            )
-                            y_slice, x_slice = mask_slices
+                            log_tables = _quantized_log_tables(scale)
+                            y_slice, x_slice = mask_domain.slices
                             weighted_variance, sum_of_entropies = (
                                 _threshold_diagnostics_rectangular_mask_quantized_numba(
                                     np.ascontiguousarray(
@@ -384,10 +401,10 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                                     ),
                                     np.ascontiguousarray(binary_array),
                                     _deterministic_normal_noise(image_array.shape),
-                                    values,
-                                    weighted_log_values,
-                                    entropy_log_values,
-                                    entropy_log_delta_values,
+                                    log_tables.values,
+                                    log_tables.weighted_log_values,
+                                    log_tables.entropy_log_values,
+                                    log_tables.entropy_log_delta_values,
                                     int(y_slice.start),
                                     int(y_slice.stop),
                                     int(x_slice.start),
@@ -398,12 +415,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         if full_mask and bool(np.all(np.isfinite(image_array))):
             if proven_unit_interval_scale is not None:
                 scale = int(proven_unit_interval_scale)
-                (
-                    values,
-                    weighted_log_values,
-                    entropy_log_values,
-                    entropy_log_delta_values,
-                ) = _quantized_log_tables(scale)
+                log_tables = _quantized_log_tables(scale)
                 weighted_variance, sum_of_entropies = (
                     _threshold_diagnostics_unmasked_finite_quantized_numba(
                         np.ascontiguousarray(
@@ -411,10 +423,10 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                         ),
                         np.ascontiguousarray(binary_array),
                         _deterministic_normal_noise(image_array.shape),
-                        values,
-                        weighted_log_values,
-                        entropy_log_values,
-                        entropy_log_delta_values,
+                        log_tables.values,
+                        log_tables.weighted_log_values,
+                        log_tables.entropy_log_values,
+                        log_tables.entropy_log_delta_values,
                     )
                 )
                 return float(weighted_variance), float(sum_of_entropies)
@@ -461,12 +473,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         if bool(np.all(flat_mask)) and bool(np.all(np.isfinite(flat_image))):
             if request.proven_unit_interval_scale is not None:
                 scale = int(request.proven_unit_interval_scale)
-                (
-                    values,
-                    weighted_log_values,
-                    entropy_log_values,
-                    entropy_log_delta_values,
-                ) = _quantized_log_tables(scale)
+                log_tables = _quantized_log_tables(scale)
                 weighted_variance, sum_of_entropies = (
                     _threshold_diagnostics_unmasked_finite_quantized_numba(
                         np.ascontiguousarray(
@@ -474,10 +481,10 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                         ),
                         flat_binary,
                         noise,
-                        values,
-                        weighted_log_values,
-                        entropy_log_values,
-                        entropy_log_delta_values,
+                        log_tables.values,
+                        log_tables.weighted_log_values,
+                        log_tables.entropy_log_values,
+                        log_tables.entropy_log_delta_values,
                     )
                 )
                 return float(weighted_variance), float(sum_of_entropies)
@@ -1121,7 +1128,7 @@ def _unit_interval_quantized_codes(
     return None
 
 
-def _rectangular_mask_slices(mask: np.ndarray) -> tuple[slice, slice] | None:
+def _rectangular_mask_domain(mask: np.ndarray) -> RectangularMaskDomain | None:
     """Return the true rectangle for masks that are exactly one filled rectangle."""
     if mask.ndim != 2:
         return None
@@ -1135,25 +1142,26 @@ def _rectangular_mask_slices(mask: np.ndarray) -> tuple[slice, slice] | None:
     x1 = int(column_indices[-1]) + 1
     if int(np.sum(mask)) != (y1 - y0) * (x1 - x0):
         return None
-    return slice(y0, y1), slice(x0, x1)
+    return RectangularMaskDomain(slice(y0, y1), slice(x0, x1))
 
 
 @lru_cache(maxsize=8)
 def _quantized_log_tables(
     scale: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> QuantizedThresholdLogTables:
     codes = np.arange(int(scale) + 1, dtype=np.float32)
     values = (codes / np.float32(scale)).astype(np.float64, copy=False)
-    delta = 2.0 ** -8
     weighted_log_values = np.zeros_like(values)
     positive_values = values > 0.0
     weighted_log_values[positive_values] = np.log2(values[positive_values])
-    entropy_values = np.clip(values, delta, 1.0)
-    return (
-        values,
-        weighted_log_values,
-        np.log2(entropy_values),
-        np.log2(entropy_values + delta),
+    entropy_values = np.clip(values, CELLPROFILER_THRESHOLD_ENTROPY_DELTA, 1.0)
+    return QuantizedThresholdLogTables(
+        values=values,
+        weighted_log_values=weighted_log_values,
+        entropy_log_values=np.log2(entropy_values),
+        entropy_log_delta_values=np.log2(
+            entropy_values + CELLPROFILER_THRESHOLD_ENTROPY_DELTA
+        ),
     )
 
 
@@ -1181,7 +1189,7 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
     weighted_variance = 0.0
     minval = max_value / 256.0
     minval_log = 0.0
-    delta = 2.0 ** -8
+    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
     lower = np.inf
     upper = -np.inf
     foreground_count = 0
@@ -1258,9 +1266,9 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
     if foreground_count == 0 or background_count == 0:
         return weighted_variance, 0.0
 
-    foreground_hist = np.zeros(256, dtype=np.int64)
-    background_hist = np.zeros(256, dtype=np.int64)
-    scale = 256.0 / (upper - lower)
+    foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
     for y in range(height):
         for x in range(width):
             code = codes[y, x]
@@ -1286,9 +1294,9 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
             bin_index = int((log_smoothed_value - lower) * scale)
             if bin_index < 0:
                 continue
-            if bin_index >= 256:
-                if bin_index == 256:
-                    bin_index = 255
+            if bin_index >= CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                if bin_index == CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                    bin_index = CELLPROFILER_THRESHOLD_ENTROPY_BINS - 1
                 else:
                     continue
             if binary_image[y, x]:
@@ -1374,7 +1382,7 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
     if minval == 0.0:
         return weighted_variance, 0.0
 
-    delta = 2.0 ** -8
+    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
     lower = np.inf
     upper = -np.inf
     for y in range(height):
@@ -1418,9 +1426,9 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
     if foreground_count == 0 or background_count == 0:
         return weighted_variance, 0.0
 
-    foreground_hist = np.zeros(256, dtype=np.int64)
-    background_hist = np.zeros(256, dtype=np.int64)
-    histogram_scale = 256.0 / (upper - lower)
+    foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    histogram_scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
     for y in range(y0, y1):
         for x in range(x0, x1):
             code = codes[y, x]
@@ -1446,9 +1454,9 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
             bin_index = int((log_smoothed_value - lower) * histogram_scale)
             if bin_index < 0:
                 continue
-            if bin_index >= 256:
-                if bin_index == 256:
-                    bin_index = 255
+            if bin_index >= CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                if bin_index == CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                    bin_index = CELLPROFILER_THRESHOLD_ENTROPY_BINS - 1
                 else:
                     continue
             if binary_image[y, x]:
@@ -1526,7 +1534,7 @@ def _threshold_diagnostics_unmasked_finite_numba(
     if minval == 0.0:
         return weighted_variance, 0.0
 
-    delta = 2.0 ** -8
+    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
     lower = np.inf
     upper = -np.inf
     foreground_count = 0
@@ -1566,17 +1574,17 @@ def _threshold_diagnostics_unmasked_finite_numba(
     if foreground_count == 0 or background_count == 0:
         return weighted_variance, 0.0
 
-    foreground_hist = np.zeros(256, dtype=np.int64)
-    background_hist = np.zeros(256, dtype=np.int64)
-    scale = 256.0 / (upper - lower)
+    foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
     for y in range(height):
         for x in range(width):
             bin_index = int((log_smoothed[y, x] - lower) * scale)
             if bin_index < 0:
                 continue
-            if bin_index >= 256:
-                if bin_index == 256:
-                    bin_index = 255
+            if bin_index >= CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                if bin_index == CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                    bin_index = CELLPROFILER_THRESHOLD_ENTROPY_BINS - 1
                 else:
                     continue
             if binary_image[y, x]:
@@ -1667,7 +1675,7 @@ def _threshold_diagnostics_numba(
     if entropy_minval == 0.0:
         return weighted_variance, 0.0
 
-    delta = 2.0 ** -8
+    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
     im_min = np.inf
     im_max = -np.inf
     foreground_count = 0
@@ -1713,9 +1721,9 @@ def _threshold_diagnostics_numba(
     if foreground_count == 0 or background_count == 0:
         return weighted_variance, 0.0
 
-    foreground_hist = np.zeros(256, dtype=np.int64)
-    background_hist = np.zeros(256, dtype=np.int64)
-    scale = 256.0 / (upper - lower)
+    foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
     for y in range(height):
         for x in range(width):
             if (not mask[y, x]) or np.isnan(image[y, x]):
@@ -1724,9 +1732,9 @@ def _threshold_diagnostics_numba(
             bin_index = int((log_value - lower) * scale)
             if bin_index < 0:
                 continue
-            if bin_index >= 256:
-                if bin_index == 256:
-                    bin_index = 255
+            if bin_index >= CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                if bin_index == CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                    bin_index = CELLPROFILER_THRESHOLD_ENTROPY_BINS - 1
                 else:
                     continue
             if binary_image[y, x]:
@@ -1833,7 +1841,7 @@ def _threshold_sum_of_entropies_numba(
     if minval == 0.0:
         return 0.0
 
-    delta = 2.0 ** -8
+    delta = CELLPROFILER_THRESHOLD_ENTROPY_DELTA
     im_min = np.inf
     im_max = -np.inf
     foreground_count = 0
@@ -1879,9 +1887,9 @@ def _threshold_sum_of_entropies_numba(
     if foreground_count == 0 or background_count == 0:
         return 0.0
 
-    foreground_hist = np.zeros(256, dtype=np.int64)
-    background_hist = np.zeros(256, dtype=np.int64)
-    scale = 256.0 / (upper - lower)
+    foreground_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    background_hist = np.zeros(CELLPROFILER_THRESHOLD_ENTROPY_BINS, dtype=np.int64)
+    scale = float(CELLPROFILER_THRESHOLD_ENTROPY_BINS) / (upper - lower)
     for y in range(height):
         for x in range(width):
             if (not mask[y, x]) or np.isnan(image[y, x]):
@@ -1890,9 +1898,9 @@ def _threshold_sum_of_entropies_numba(
             bin_index = int((log_value - lower) * scale)
             if bin_index < 0:
                 continue
-            if bin_index >= 256:
-                if bin_index == 256:
-                    bin_index = 255
+            if bin_index >= CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                if bin_index == CELLPROFILER_THRESHOLD_ENTROPY_BINS:
+                    bin_index = CELLPROFILER_THRESHOLD_ENTROPY_BINS - 1
                 else:
                     continue
             if binary_image[y, x]:

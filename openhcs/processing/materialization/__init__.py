@@ -19,6 +19,7 @@ from openhcs.processing.materialization.options import (
     TiffStackOptions,
 )
 from openhcs.processing.materialization.presets import (
+    csv_dataclass_materializer,
     csv_materializer,
     csv_only,
     json_and_csv,
@@ -45,6 +46,7 @@ __all__ = [
     "TiffStackOptions",
     "TextOptions",
     "csv_materializer",
+    "csv_dataclass_materializer",
     "json_materializer",
     "json_only",
     "csv_only",

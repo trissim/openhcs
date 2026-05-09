@@ -15,6 +15,7 @@ import numpy as np
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
+    MostDerivedContextStrategyMixin,
     NominalTypeKeyedStrategyMixin,
 )
 
@@ -2353,6 +2354,268 @@ class ParentChildRelationshipPayload:
         object.__setattr__(self, "slice_count", slice_count)
 
 
+class ObjectRelationshipPayloadKernel(ABC):
+    """Kernel contract used by semantic relationship payload policies."""
+
+    @abstractmethod
+    def relate_children_to_parents(
+        self,
+        parent_labels: np.ndarray,
+        child_labels: np.ndarray,
+        child_count: int,
+    ) -> np.ndarray:
+        """Assign each child label id to its dominant parent label id."""
+
+    @abstractmethod
+    def relate_sparse_ijv_children_to_parents(
+        self,
+        parent_rows: np.ndarray,
+        child_rows: np.ndarray,
+        child_count: int,
+        parent_count: int,
+    ) -> np.ndarray:
+        """Assign sparse IJV child ids to parent ids."""
+
+
+class DefaultObjectRelationshipPayloadKernel(ObjectRelationshipPayloadKernel):
+    """Core NumPy relationship kernel used outside backend-specific execution."""
+
+    def relate_children_to_parents(
+        self,
+        parent_labels: np.ndarray,
+        child_labels: np.ndarray,
+        child_count: int,
+    ) -> np.ndarray:
+        del child_count
+        child_ids, parent_ids = _dominant_parent_ids_by_child(
+            parent_labels,
+            child_labels,
+            child_labels,
+        )
+        parents_of = np.zeros(
+            int(child_labels.max()) if child_labels.size else 0,
+            dtype=np.int32,
+        )
+        for child_id, parent_id in zip(child_ids, parent_ids, strict=True):
+            if 0 < child_id <= parents_of.size:
+                parents_of[int(child_id) - 1] = int(parent_id)
+        return parents_of
+
+    def relate_sparse_ijv_children_to_parents(
+        self,
+        parent_rows: np.ndarray,
+        child_rows: np.ndarray,
+        child_count: int,
+        parent_count: int,
+    ) -> np.ndarray:
+        del parent_count
+        parents_of = np.zeros(child_count, dtype=np.int32)
+        if parent_rows.size == 0 or child_rows.size == 0:
+            return parents_of
+        parent_by_yx = {
+            (int(row[0]), int(row[1])): int(row[2])
+            for row in np.asarray(parent_rows, dtype=np.int64)
+            if int(row[2]) > 0
+        }
+        votes: dict[tuple[int, int], int] = {}
+        for row in np.asarray(child_rows, dtype=np.int64):
+            child_id = int(row[2])
+            if child_id <= 0:
+                continue
+            parent_id = parent_by_yx.get((int(row[0]), int(row[1])), 0)
+            if parent_id <= 0:
+                continue
+            votes[(child_id, parent_id)] = votes.get((child_id, parent_id), 0) + 1
+        for child_id in range(1, child_count + 1):
+            child_votes = tuple(
+                (parent_id, count)
+                for (candidate_child, parent_id), count in votes.items()
+                if candidate_child == child_id
+            )
+            if child_votes:
+                parents_of[child_id - 1] = min(
+                    child_votes,
+                    key=lambda item: (-item[1], item[0]),
+                )[0]
+        return parents_of
+
+
+DEFAULT_OBJECT_RELATIONSHIP_PAYLOAD_KERNEL = DefaultObjectRelationshipPayloadKernel()
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectRelationshipPayloadRequest:
+    """Semantic request for deriving parent-child payloads from label values."""
+
+    parent_labels: Any
+    child_labels: Any
+    kernel: ObjectRelationshipPayloadKernel = DEFAULT_OBJECT_RELATIONSHIP_PAYLOAD_KERNEL
+
+
+class ObjectRelationshipPayloadStrategy(
+    MostDerivedContextStrategyMixin[ObjectRelationshipPayloadRequest],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Derive parent-child payloads by nominal object-label representation."""
+
+    __registry_key__ = "strategy_key"
+    __skip_if_no_key__ = True
+    strategy_key: ClassVar[str | None] = None
+
+    @abstractmethod
+    def matches(self, context: ObjectRelationshipPayloadRequest) -> bool:
+        """Return whether this strategy owns the label representation pair."""
+
+    @abstractmethod
+    def payload(
+        self,
+        context: ObjectRelationshipPayloadRequest,
+    ) -> ParentChildRelationshipPayload:
+        """Return parent-child ids for the strategy's representation contract."""
+
+    @staticmethod
+    def related_payload_from_parents_of(
+        parents_of: np.ndarray,
+        child_ids: np.ndarray,
+    ) -> ParentChildRelationshipPayload:
+        parent_ids: list[int] = []
+        related_child_ids: list[int] = []
+        for child_id in child_ids:
+            if 0 < child_id <= len(parents_of):
+                parent_id = int(parents_of[child_id - 1])
+                if parent_id > 0:
+                    parent_ids.append(parent_id)
+                    related_child_ids.append(int(child_id))
+        return ParentChildRelationshipPayload(
+            parent_ids=tuple(parent_ids),
+            child_ids=tuple(related_child_ids),
+        )
+
+
+class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
+    """Dense label images use maximum positive-pixel overlap."""
+
+    strategy_key = "dense"
+
+    def matches(self, context: ObjectRelationshipPayloadRequest) -> bool:
+        del context
+        return True
+
+    def payload(
+        self,
+        context: ObjectRelationshipPayloadRequest,
+    ) -> ParentChildRelationshipPayload:
+        from openhcs.core.runtime_values import object_label_dense_array
+
+        parent_array, child_array = (
+            object_label_dense_array(labels, dtype=np.int32)
+            for labels in aligned_dense_object_label_arrays(
+                context.parent_labels,
+                context.child_labels,
+            )
+        )
+        child_count = int(child_array.max()) if child_array.size else 0
+        if child_count <= 0:
+            return ParentChildRelationshipPayload(parent_ids=(), child_ids=())
+        parents_of = context.kernel.relate_children_to_parents(
+            parent_array,
+            child_array,
+            child_count,
+        )
+        present_children = np.unique(child_array[child_array > 0]).astype(
+            np.int32,
+            copy=False,
+        )
+        return self.related_payload_from_parents_of(parents_of, present_children)
+
+
+class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadStrategy):
+    """Sparse IJV labels derive parent-child ids through sparse rows."""
+
+    strategy_key = "sparse_ijv"
+
+    def matches(self, context: ObjectRelationshipPayloadRequest) -> bool:
+        return self.is_sparse_ijv(context.parent_labels) or self.is_sparse_ijv(
+            context.child_labels
+        )
+
+    def payload(
+        self,
+        context: ObjectRelationshipPayloadRequest,
+    ) -> ParentChildRelationshipPayload:
+        parent_rows = self.sparse_rows(context.parent_labels)
+        child_rows = self.sparse_rows(context.child_labels)
+        parent_array = parent_rows.as_yx_label_array()
+        child_array = child_rows.as_yx_label_array()
+        parent_count = self.label_count(parent_array, parent_rows)
+        child_count = self.label_count(child_array, child_rows)
+        if parent_count <= 0 or child_count <= 0:
+            return ParentChildRelationshipPayload(parent_ids=(), child_ids=())
+        parents_of = context.kernel.relate_sparse_ijv_children_to_parents(
+            np.asarray(parent_array, dtype=np.int64),
+            np.asarray(child_array, dtype=np.int64),
+            child_count,
+            parent_count,
+        )
+        return self.related_payload_from_parents_of(
+            parents_of,
+            self.present_sparse_child_ids(child_array, child_rows),
+        )
+
+    @classmethod
+    def is_sparse_ijv(cls, labels: Any) -> bool:
+        from openhcs.core.runtime_values import (
+            ObjectLabelRepresentation,
+            ObjectLabelSet,
+            SparseIJVLabelRows,
+        )
+
+        if isinstance(labels, SparseIJVLabelRows):
+            return True
+        return (
+            isinstance(labels, ObjectLabelSet)
+            and labels.representation is ObjectLabelRepresentation.SPARSE_IJV
+        )
+
+    @classmethod
+    def sparse_rows(cls, labels: Any) -> Any:
+        from openhcs.core.runtime_values import (
+            ObjectLabelRepresentation,
+            ObjectLabelSet,
+            SparseIJVLabelRows,
+        )
+
+        if isinstance(labels, ObjectLabelSet):
+            if labels.representation is not ObjectLabelRepresentation.SPARSE_IJV:
+                return SparseIJVLabelRows.from_dense_labels(labels.labels)
+            labels = labels.labels
+        if isinstance(labels, SparseIJVLabelRows):
+            return labels
+        return SparseIJVLabelRows.from_dense_labels(labels)
+
+    @staticmethod
+    def label_count(
+        array: np.ndarray,
+        rows: Any,
+    ) -> int:
+        if array.size == 0:
+            return 0
+        return int(np.max(array[:, rows.label_column]))
+
+    @staticmethod
+    def present_sparse_child_ids(
+        child_array: np.ndarray,
+        child_rows: Any,
+    ) -> np.ndarray:
+        if child_array.size == 0:
+            return np.empty(0, dtype=np.int32)
+        return np.unique(child_array[:, child_rows.label_column]).astype(
+            np.int32,
+            copy=False,
+        )
+
+
 class ObjectLabelLineageGeometry(str, Enum):
     """Geometry relation used to derive parent-child label lineage."""
 
@@ -3535,8 +3798,9 @@ def object_label_parent_child_payload(
     child_labels: Any,
     *,
     child_region_labels: Any | None = None,
+    kernel: ObjectRelationshipPayloadKernel = DEFAULT_OBJECT_RELATIONSHIP_PAYLOAD_KERNEL,
 ) -> ParentChildRelationshipPayload:
-    """Derive parent-child ids from dense object-label images.
+    """Derive parent-child ids from nominal object-label representations.
 
     ``child_region_labels`` lets callers use one label image to enumerate child
     ids while selecting the pixels that define each child's parent context.
@@ -3544,11 +3808,12 @@ def object_label_parent_child_payload(
     import numpy as np
 
     if child_region_labels is None:
-        parent_array, child_array = aligned_dense_object_label_arrays(
-            parent_labels,
-            child_labels,
+        request = ObjectRelationshipPayloadRequest(
+            parent_labels=parent_labels,
+            child_labels=child_labels,
+            kernel=kernel,
         )
-        context_array = child_array
+        return ObjectRelationshipPayloadStrategy.for_context(request).payload(request)
     else:
         parent_array, context_array = aligned_dense_object_label_arrays(
             parent_labels,

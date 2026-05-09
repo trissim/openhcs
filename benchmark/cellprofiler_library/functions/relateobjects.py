@@ -7,11 +7,14 @@ All objects (e.g., speckles) within a parent object (e.g., nucleus) become its c
 """
 
 import numpy as np
-from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.pipeline.function_contracts import (
+    special_inputs,
+    special_outputs,
+)
+from openhcs.core.runtime_invocation import RuntimeOutputBundle
 from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
     aligned_dense_object_label_arrays,
@@ -21,7 +24,7 @@ from openhcs.processing.backends.cellprofiler._backend import CellProfilerBacken
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
-from openhcs.processing.materialization import csv_materializer
+from openhcs.processing.materialization import csv_dataclass_materializer
 from ._enum import _coerce_function_enum
 
 
@@ -44,15 +47,54 @@ class RelationshipMeasurements:
     mean_minimum_distance: float
 
 
+@dataclass(frozen=True, slots=True)
+class RelateObjectsResult(RuntimeOutputBundle):
+    """Nominal result bundle emitted by RelateObjects."""
+
+    output_labels: np.ndarray
+    parent_child_relationship: ParentChildRelationshipPayload
+    relationship_measurements: RelationshipMeasurements
+    saved_child_relationship: ParentChildRelationshipPayload | None = None
+
+    def as_runtime_tuple(self) -> tuple[
+        np.ndarray,
+        ParentChildRelationshipPayload,
+        RelationshipMeasurements,
+    ] | tuple[
+        np.ndarray,
+        ParentChildRelationshipPayload,
+        ParentChildRelationshipPayload,
+        RelationshipMeasurements,
+    ]:
+        """Lower to the current positional function-contract ABI."""
+        if self.saved_child_relationship is None:
+            return (
+                self.output_labels,
+                self.parent_child_relationship,
+                self.relationship_measurements,
+            )
+        return (
+            self.output_labels,
+            self.parent_child_relationship,
+            self.saved_child_relationship,
+            self.relationship_measurements,
+        )
+
+    def __iter__(self):
+        """Preserve direct tuple-unpacking compatibility for function tests."""
+        return iter(self.as_runtime_tuple())
+
+
 @numpy
 @special_inputs("parent_labels", "child_labels")
 @special_outputs(
-    ("relationship_measurements", csv_materializer(
-        fields=["slice_index", "parent_object_count", "child_object_count",
-                "children_with_parents_count", "mean_children_per_parent",
-                "mean_centroid_distance", "mean_minimum_distance"],
-        analysis_type="relate_objects"
-    ))
+    (
+        "relationship_measurements",
+        csv_dataclass_materializer(
+            RelationshipMeasurements,
+            analysis_type="relate_objects",
+        ),
+    )
 )
 def relate_objects(
     image: np.ndarray,
@@ -62,12 +104,7 @@ def relate_objects(
     calculate_per_parent_means: bool = False,
     save_children_with_parents: bool = False,
     relationship_backend_provider: CellProfilerBackendProvider | None = None,
-) -> tuple[np.ndarray, ParentChildRelationshipPayload, RelationshipMeasurements] | tuple[
-    np.ndarray,
-    ParentChildRelationshipPayload,
-    ParentChildRelationshipPayload,
-    RelationshipMeasurements,
-]:
+) -> RelateObjectsResult:
     """
     Relate child objects to parent objects based on spatial overlap.
     
@@ -182,20 +219,13 @@ def relate_objects(
         if parent_idx > 0
     )
 
-    if related_child_ids != parent_child_relationship.child_ids:
-        parent_child_relationship = ParentChildRelationshipPayload(
-            parent_ids=related_parent_ids,
-            child_ids=related_child_ids,
-        )
-    if saved_child_relationship is not None:
-        return (
-            output_labels.astype(np.float32),
-            parent_child_relationship,
-            saved_child_relationship,
-            measurements,
-        )
-    return (
+    parent_child_relationship = ParentChildRelationshipPayload(
+        parent_ids=related_parent_ids,
+        child_ids=related_child_ids,
+    )
+    return RelateObjectsResult(
         output_labels.astype(np.float32),
         parent_child_relationship,
         measurements,
+        saved_child_relationship=saved_child_relationship,
     )

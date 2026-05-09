@@ -154,12 +154,17 @@ class RuntimeMeasurementSourcePair:
     @property
     def source_name(self) -> str:
         """Return the ordered source-pair identity."""
-        return f"{self.first}__{self.second}"
+        return self.source_pair_name(self.first, self.second)
 
     @property
     def reversed_source_name(self) -> str:
         """Return the reversed ordered source-pair identity."""
-        return f"{self.second}__{self.first}"
+        return self.source_pair_name(self.second, self.first)
+
+    @staticmethod
+    def source_pair_name(first: str, second: str) -> str:
+        """Return the ordered source-pair table identity."""
+        return f"{first}__{second}"
 
     @property
     def source_token_counter(self) -> Counter[str]:

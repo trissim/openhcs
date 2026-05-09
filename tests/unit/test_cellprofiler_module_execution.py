@@ -85,7 +85,10 @@ from benchmark.cellprofiler_library.functions.classifyobjects import (
     ClassificationResult,
 )
 from benchmark.cellprofiler_library.functions.threshold import ThresholdResult
-from benchmark.cellprofiler_library.functions.relateobjects import RelationshipMeasurements
+from benchmark.cellprofiler_library.functions.relateobjects import (
+    RelateObjectsResult,
+    RelationshipMeasurements,
+)
 from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     ExcessObjectHandling,
     FillHolesOption,
@@ -122,6 +125,7 @@ from openhcs.core.callable_contract import attach_callable_contract_metadata
 from openhcs.core.config import DtypeConfig
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.processing.backends.lib_registry.unified_registry import Pure2DSliceResultBatch
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
@@ -1783,6 +1787,44 @@ def test_output_value_matching_uses_declared_sidecar_specs_for_pruned_outputs() 
     assert values["Crop_6_measurements"] is measurements
 
 
+def test_pure_2d_batch_lowers_nominal_runtime_output_bundles() -> None:
+    first_output = np.ones((2, 2), dtype=np.float32)
+    second_output = np.full((2, 2), 2, dtype=np.float32)
+    first_relationship = ParentChildRelationshipPayload(parent_ids=(1,), child_ids=(1,))
+    second_relationship = ParentChildRelationshipPayload(parent_ids=(2,), child_ids=(2,))
+    first_measurements = RelationshipMeasurements(
+        slice_index=0,
+        parent_object_count=1,
+        child_object_count=1,
+        children_with_parents_count=1,
+        mean_children_per_parent=1.0,
+        mean_centroid_distance=0.0,
+        mean_minimum_distance=0.0,
+    )
+    second_measurements = RelationshipMeasurements(
+        slice_index=1,
+        parent_object_count=1,
+        child_object_count=1,
+        children_with_parents_count=1,
+        mean_children_per_parent=1.0,
+        mean_centroid_distance=0.0,
+        mean_minimum_distance=0.0,
+    )
+
+    batch = Pure2DSliceResultBatch.from_results(
+        (
+            RelateObjectsResult(first_output, first_relationship, first_measurements),
+            RelateObjectsResult(second_output, second_relationship, second_measurements),
+        )
+    )
+
+    assert batch.main_outputs == [first_output, second_output]
+    assert batch.auxiliary_groups == (
+        [first_relationship, second_relationship],
+        [first_measurements, second_measurements],
+    )
+
+
 def test_output_value_resolution_preserves_pruned_context_outputs() -> None:
     cropped_image = np.zeros((3, 4), dtype=np.float32)
     crop_mask = np.ones((5, 6), dtype=bool)
@@ -2988,12 +3030,56 @@ def test_colocalization_object_row_policy_projects_source_pair_features() -> Non
         {
             "slice_index": 0,
             "object_label": 1,
-            "Correlation_Correlation_DNA_ER": 0.5,
+            "Correlation_Correlation_ER_DNA": 0.5,
             "Correlation_Manders_DNA_ER": 0.7,
             "Correlation_Manders_ER_DNA": 0.8,
         }
     ]
     assert policy.table_source_image_name((measurement_image,), "DNA__ER__RNA") is None
+
+
+def test_colocalization_record_builder_projects_image_source_pair_features() -> None:
+    def measure_colocalization(image: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
+        return image, {"correlation": 0.5}
+
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="MeasureColocalization",
+            inputs=(
+                ArtifactSpec("DNA", ArtifactKind.IMAGE),
+                ArtifactSpec("ER", ArtifactKind.IMAGE),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("DNA", ArtifactKind.IMAGE),
+                ArtifactSpec("ER", ArtifactKind.IMAGE),
+            ),
+            outputs=(ArtifactSpec("Coloc", ArtifactKind.MEASUREMENTS),),
+        )
+    )
+
+    record = CellProfilerMeasurementRecordBuilder.for_module(
+        "MeasureColocalization"
+    ).build(
+        CellProfilerOutputRecordRequest(
+            executor=executor,
+            adapter=None,
+            spec=ArtifactSpec("Coloc", ArtifactKind.MEASUREMENTS),
+            value={"slice_index": 0, "correlation": 0.5, "manders_m1": 0.7},
+            output_values={"Coloc": {"correlation": 0.5}},
+            source_image_name="DNA__ER",
+            func=measure_colocalization,
+            source_image_names=("DNA", "ER"),
+        )
+    )
+
+    assert record.rows == [
+        {
+            "slice_index": 0,
+            "Correlation_Correlation_DNA_ER": 0.5,
+            "Correlation_Manders_DNA_ER": 0.7,
+        }
+    ]
+    assert record.source_image_name is None
 
 
 def test_measure_object_neighbors_records_object_topology_without_image_source() -> None:
