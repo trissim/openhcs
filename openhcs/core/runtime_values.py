@@ -1736,6 +1736,22 @@ class ObjectLabelDenseDataStrategy(
         strategy = cls.for_nominal_value(payload)
         return strategy if strategy is not None else RawObjectLabelDenseDataStrategy()
 
+    @classmethod
+    def dense_data(cls, payload: object) -> object:
+        """Return dense label data through the registered object-label contract."""
+        return cls.for_payload(payload).data(payload)
+
+    @classmethod
+    def spatial_rank(cls, payload: object) -> int | None:
+        """Return object-label dense spatial rank when the payload can materialize it."""
+        dense_data = cls.dense_data(payload)
+        if isinstance(dense_data, np.ndarray):
+            return int(dense_data.ndim)
+        try:
+            return int(np.asarray(dense_data).ndim)
+        except ValueError:
+            return None
+
     @abstractmethod
     def data(self, payload: object) -> object:
         """Return the dense label data represented by payload."""
@@ -1806,7 +1822,7 @@ class ObjectLabelSetIdDomainStrategy(ObjectLabelIdDomainStrategy):
 
 def object_label_dense_data(payload: object) -> object:
     """Return dense label data through the registered object-label strategy family."""
-    return ObjectLabelDenseDataStrategy.for_payload(payload).data(payload)
+    return ObjectLabelDenseDataStrategy.dense_data(payload)
 
 
 def object_label_dense_array(

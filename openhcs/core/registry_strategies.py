@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Mapping, MutableMapping
 from enum import Enum
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
@@ -216,3 +217,35 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
     @abstractmethod
     def matches(self, context: _ContextT) -> bool:
         """Return whether this registered strategy owns ``context``."""
+
+
+class RegisteredLeafClassSpec(ABC):
+    """Nominal declaration for generated AutoRegisterMeta leaf classes."""
+
+    @property
+    @abstractmethod
+    def class_name(self) -> str:
+        """Return the generated class name."""
+
+    @property
+    @abstractmethod
+    def base_type(self) -> type[object]:
+        """Return the nominal base class for the generated leaf."""
+
+    @abstractmethod
+    def class_attributes(self) -> Mapping[str, object]:
+        """Return semantic class attributes for the generated leaf."""
+
+    def declare_in(self, namespace: MutableMapping[str, object]) -> type[object]:
+        """Materialize the generated leaf in ``namespace`` and return it."""
+        class_name = self.class_name
+        declared_type = type(
+            class_name,
+            (self.base_type,),
+            {
+                "__module__": namespace.get("__name__", self.base_type.__module__),
+                **dict(self.class_attributes()),
+            },
+        )
+        namespace[class_name] = declared_type
+        return declared_type

@@ -117,6 +117,7 @@ from openhcs.core.runtime_semantics import (
 from openhcs.core.runtime_stores import require_runtime_value_store
 from openhcs.core.runtime_values import (
     MeasurementTable,
+    ObjectLabelDenseDataStrategy,
     ObjectLabelPayload,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
@@ -142,6 +143,7 @@ from openhcs.core.runtime_values import (
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
     NominalTypeKeyedStrategyMixin,
+    RegisteredLeafClassSpec,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
@@ -1842,34 +1844,17 @@ class ImageMetadataPayloadSpatialRankStrategy(CellProfilerPayloadSpatialRankStra
         return CellProfilerPayloadSpatialRankStrategy.resolve_rank(value.data)
 
 
-class ObjectLabelPayloadSpatialRankStrategy(CellProfilerPayloadSpatialRankStrategy):
-    """Resolve spatial rank for serialized object-label payloads."""
+class ObjectLabelValueSpatialRankStrategy(CellProfilerPayloadSpatialRankStrategy):
+    """Resolve spatial rank for nominal object-label runtime values."""
 
-    value_type = ObjectLabelPayload
+    value_type = (ObjectLabelPayload, ObjectLabelSet)
 
     def spatial_rank(self, value: Any) -> int | None:
-        if not isinstance(value, ObjectLabelPayload):
+        if not isinstance(value, (ObjectLabelPayload, ObjectLabelSet)):
             raise TypeError(
-                "ObjectLabelPayload rank strategy requires ObjectLabelPayload."
+                "Object-label rank strategy requires an object-label runtime value."
             )
-        labels = object_label_dense_array(value)
-        if not isinstance(labels, np.ndarray):
-            return None
-        return int(labels.ndim)
-
-
-class ObjectLabelSetSpatialRankStrategy(CellProfilerPayloadSpatialRankStrategy):
-    """Resolve spatial rank for native object-label runtime values."""
-
-    value_type = ObjectLabelSet
-
-    def spatial_rank(self, value: Any) -> int | None:
-        if not isinstance(value, ObjectLabelSet):
-            raise TypeError("ObjectLabelSet rank strategy requires ObjectLabelSet.")
-        labels = object_label_dense_array(value)
-        if not isinstance(labels, np.ndarray):
-            return None
-        return int(labels.ndim)
+        return ObjectLabelDenseDataStrategy.spatial_rank(value)
 
 
 class VolumetricInputExecutionModePolicy(CellProfilerInvocationExecutionModePolicy):
@@ -2759,11 +2744,25 @@ class IdentifySecondaryObjectsInputPolicy(CellProfilerObjectInputPolicy):
 
 
 @dataclass(frozen=True, slots=True)
-class SingleObjectLabelInputPolicySpec:
+class SingleObjectLabelInputPolicySpec(RegisteredLeafClassSpec):
     """Declarative leaf spec for one object-label binding policy."""
 
     module_name: str
     label_kwarg: str
+
+    @property
+    def class_name(self) -> str:
+        return f"{self.module_name}InputPolicy"
+
+    @property
+    def base_type(self) -> type[object]:
+        return DeclaredSingleObjectLabelInputPolicy
+
+    def class_attributes(self) -> Mapping[str, object]:
+        return {
+            "module_name": self.module_name,
+            "label_kwarg": self.label_kwarg,
+        }
 
 
 class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
@@ -3093,7 +3092,7 @@ class DefaultObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectMeasurementRowPolicySpec:
+class ObjectMeasurementRowPolicySpec(RegisteredLeafClassSpec):
     """Declarative leaf spec for one object measurement row policy."""
 
     module_name: str
@@ -3101,6 +3100,21 @@ class ObjectMeasurementRowPolicySpec:
     missing_value_policy: MissingObjectMeasurementValuePolicy = (
         MissingObjectMeasurementValuePolicy.NAN
     )
+
+    @property
+    def class_name(self) -> str:
+        return f"{self.module_name}ObjectMeasurementRowPolicy"
+
+    @property
+    def base_type(self) -> type[object]:
+        return DeclaredObjectMeasurementRowPolicy
+
+    def class_attributes(self) -> Mapping[str, object]:
+        return {
+            "module_name": self.module_name,
+            "row_identity": self.row_identity,
+            "missing_value_policy": self.missing_value_policy,
+        }
 
 
 class DeclaredObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
@@ -3214,22 +3228,6 @@ class TrackObjectsObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPol
         return MeasurementScope.IMAGE.value
 
 
-def _declare_object_measurement_row_policy(
-    spec: ObjectMeasurementRowPolicySpec,
-) -> None:
-    class_name = f"{spec.module_name}ObjectMeasurementRowPolicy"
-    globals()[class_name] = type(
-        class_name,
-        (DeclaredObjectMeasurementRowPolicy,),
-        {
-            "__module__": __name__,
-            "module_name": spec.module_name,
-            "row_identity": spec.row_identity,
-            "missing_value_policy": spec.missing_value_policy,
-        },
-    )
-
-
 for _row_policy_spec in (
     ObjectMeasurementRowPolicySpec(
         _MEASURE_OBJECT_INTENSITY_MODULE,
@@ -3238,7 +3236,7 @@ for _row_policy_spec in (
         ),
     ),
 ):
-    _declare_object_measurement_row_policy(_row_policy_spec)
+    _row_policy_spec.declare_in(globals())
 
 
 _SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS = (
@@ -3259,23 +3257,8 @@ class DeclaredSingleObjectLabelInputPolicy(SingleObjectLabelInputPolicy):
     """Generated base for modules with one declared label input."""
 
 
-def _declare_single_object_label_input_policy(
-    spec: SingleObjectLabelInputPolicySpec,
-) -> None:
-    class_name = f"{spec.module_name}InputPolicy"
-    globals()[class_name] = type(
-        class_name,
-        (DeclaredSingleObjectLabelInputPolicy,),
-        {
-            "__module__": __name__,
-            "module_name": spec.module_name,
-            "label_kwarg": spec.label_kwarg,
-        },
-    )
-
-
 for _policy_spec in _SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS:
-    _declare_single_object_label_input_policy(_policy_spec)
+    _policy_spec.declare_in(globals())
 
 
 class MeasureObjectNeighborsInputPolicy(CellProfilerObjectInputPolicy):
@@ -3639,10 +3622,10 @@ class DenseArrayMeasurementLabelExecutionModeStrategy(
         return default
 
 
-class ObjectLabelPayloadMeasurementLabelExecutionModeStrategy(
+class ObjectLabelValueMeasurementLabelExecutionModeStrategy(
     MeasurementLabelExecutionModeStrategy
 ):
-    value_type = ObjectLabelPayload
+    value_type = (ObjectLabelPayload, ObjectLabelSet)
 
     def execution_mode(
         self,
@@ -3652,33 +3635,17 @@ class ObjectLabelPayloadMeasurementLabelExecutionModeStrategy(
         *,
         runtime_slice_count: int | None = None,
     ) -> ImagePayloadExecutionMode:
-        if not isinstance(labels, ObjectLabelPayload):
+        if not isinstance(labels, (ObjectLabelPayload, ObjectLabelSet)):
             raise TypeError(
-                "ObjectLabelPayload execution strategy requires ObjectLabelPayload."
+                "Object-label execution strategy requires an object-label runtime value."
             )
         if ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels) is not None:
             return ImagePayloadExecutionMode.NATURAL
-        return MeasurementLabelExecutionModeStrategy.resolve(func, labels.labels, default)
-
-
-class ObjectLabelSetMeasurementLabelExecutionModeStrategy(
-    MeasurementLabelExecutionModeStrategy
-):
-    value_type = ObjectLabelSet
-
-    def execution_mode(
-        self,
-        func: Callable[..., Any],
-        labels: object,
-        default: ImagePayloadExecutionMode,
-        *,
-        runtime_slice_count: int | None = None,
-    ) -> ImagePayloadExecutionMode:
-        if not isinstance(labels, ObjectLabelSet):
-            raise TypeError("ObjectLabelSet execution strategy requires ObjectLabelSet.")
-        if ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels) is not None:
-            return ImagePayloadExecutionMode.NATURAL
-        return MeasurementLabelExecutionModeStrategy.resolve(func, labels.labels, default)
+        return MeasurementLabelExecutionModeStrategy.resolve(
+            func,
+            ObjectLabelDenseDataStrategy.dense_data(labels),
+            default,
+        )
 
 
 class SparseIJVMeasurementLabelExecutionModeStrategy(
@@ -7880,30 +7847,29 @@ class CellProfilerDualScopeMeasurementPolicy(ABC, metaclass=AutoRegisterMeta):
 
 
 @dataclass(frozen=True, slots=True)
-class DualScopeMeasurementPolicySpec:
+class DualScopeMeasurementPolicySpec(RegisteredLeafClassSpec):
     """Declarative leaf spec for one dual-scope measurement module."""
 
     module_name: str
     image_function_name: str
 
+    @property
+    def class_name(self) -> str:
+        return f"{self.module_name}DualScopeMeasurementPolicy"
+
+    @property
+    def base_type(self) -> type[object]:
+        return DeclaredDualScopeMeasurementPolicy
+
+    def class_attributes(self) -> Mapping[str, object]:
+        return {
+            "module_name": self.module_name,
+            "image_function_name": self.image_function_name,
+        }
+
 
 class DeclaredDualScopeMeasurementPolicy(CellProfilerDualScopeMeasurementPolicy):
     """Generated base for modules with image+object measurement scope."""
-
-
-def _declare_dual_scope_measurement_policy(
-    spec: DualScopeMeasurementPolicySpec,
-) -> None:
-    class_name = f"{spec.module_name}DualScopeMeasurementPolicy"
-    globals()[class_name] = type(
-        class_name,
-        (DeclaredDualScopeMeasurementPolicy,),
-        {
-            "__module__": __name__,
-            "module_name": spec.module_name,
-            "image_function_name": spec.image_function_name,
-        },
-    )
 
 
 for _dual_scope_policy_spec in (
@@ -7913,7 +7879,7 @@ for _dual_scope_policy_spec in (
         "measure_colocalization",
     ),
 ):
-    _declare_dual_scope_measurement_policy(_dual_scope_policy_spec)
+    _dual_scope_policy_spec.declare_in(globals())
 
 
 _COMPOSED_IMAGE_PAYLOAD_PARAMETERS = frozenset(

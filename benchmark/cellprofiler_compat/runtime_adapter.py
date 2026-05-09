@@ -56,11 +56,9 @@ from openhcs.core.runtime_stores import (
     replace_runtime_artifact_payload,
 )
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_artifact_queries import (
-    MEASUREMENT_OBJECT_NAME_FIELD,
     RuntimeArtifactQueryContext,
-    measurement_row_mapping,
-    measurement_table_object_name,
     measurement_values_for_label_plane,
     measurement_values_for_label_slices,
     runtime_measurement_tables,
@@ -716,7 +714,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             ),
             object_name,
         )
-        tables = _measurement_tables_with_repeated_scalar_slice_offsets(tables)
+        tables = RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
+            tables
+        )
         self._measurement_cache[cache_key] = tables
         return tables
 
@@ -798,7 +798,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         scoped_tables: list[tuple[str | None, MeasurementTable]] = []
         for record in records:
             table = MeasurementTable.from_runtime_value(record.value)
-            if _measurement_table_matches_object(table, object_name):
+            if RuntimeSliceProjection.measurement_table_matches_object(
+                table,
+                object_name,
+            ):
                 scoped_tables.append((record.key.scope.group_key, table))
 
         if not scoped_tables:
@@ -817,7 +820,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         )
         group_slice_counts = {
             group_key: max(
-                _measurement_table_slice_count(table)
+                RuntimeSliceProjection.measurement_table_effective_slice_count(table)
                 for table_group_key, table in scoped_tables
                 if table_group_key == group_key
             )
@@ -827,11 +830,14 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             label_array.ndim > 2
             and not group_order
             and len(scoped_tables) == 1
-            and _measurement_table_slice_count(scoped_tables[0][1]) == 1
+            and RuntimeSliceProjection.measurement_table_effective_slice_count(
+                scoped_tables[0][1]
+            )
+            == 1
             and _label_stack_repeats_first_plane(label_array)
         ):
             tables = (
-                _measurement_table_broadcast_to_slice_count(
+                RuntimeSliceProjection.measurement_table_broadcast_to_slice_count(
                     scoped_tables[0][1],
                     label_array.shape[0],
                 ),
@@ -847,7 +853,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
 
         tables = tuple(
             (
-                _measurement_table_with_slice_offset(
+                RuntimeSliceProjection.measurement_table_with_slice_offset(
                     table,
                     group_offsets[table_group_key],
                 )
@@ -1489,126 +1495,6 @@ def prepare_cellprofiler_runtime_adapter() -> None:
     for method in SourceBindingMatchMethod:
         SourceBindingMatchPlanResolver.for_method(method)
     tuple(PipelineStartSourceFileLoader.__registry__.values())
-
-
-def _measurement_table_matches_object(
-    table: MeasurementTable,
-    object_name: str,
-) -> bool:
-    table_object_name = measurement_table_object_name(table)
-    if table_object_name is not None:
-        return table_object_name == object_name
-    rows = table.rows
-    if not isinstance(rows, list | tuple):
-        rows = (rows,)
-    return any(
-        measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD) == object_name
-        for row in rows
-    )
-
-
-def _measurement_table_slice_count(table: MeasurementTable) -> int:
-    rows = table.rows
-    if not isinstance(rows, list | tuple):
-        rows = (rows,)
-    slice_indexes = [
-        int(row_mapping["slice_index"])
-        for row in rows
-        for row_mapping in (measurement_row_mapping(row),)
-        if "slice_index" in row_mapping
-    ]
-    if not slice_indexes:
-        return 1
-    return max(slice_indexes) + 1
-
-
-def _measurement_table_with_slice_offset(
-    table: MeasurementTable,
-    slice_offset: int,
-) -> MeasurementTable:
-    if slice_offset == 0:
-        return table
-    rows = table.rows
-    if not isinstance(rows, list | tuple):
-        rows = (rows,)
-    return MeasurementTable(
-        name=table.name,
-        rows=[
-            {
-                **dict(measurement_row_mapping(row)),
-                "slice_index": int(
-                    measurement_row_mapping(row).get("slice_index", 0)
-                )
-                + slice_offset,
-            }
-            for row in rows
-        ],
-        object_name=table.object_name,
-        fields=table.fields,
-        object_id_field=table.object_id_field,
-        source_image_name=table.source_image_name,
-        subject=table.subject,
-    )
-
-
-def _measurement_tables_with_repeated_scalar_slice_offsets(
-    tables: tuple[MeasurementTable, ...],
-) -> tuple[MeasurementTable, ...]:
-    """Offset repeated scalar measurement tables from per-cycle executions.
-
-    OpenHCS can record one table per image-cycle using the same artifact key.
-    CellProfiler semantics treat those as consecutive image sets, so consumers
-    that slice flexible object operations need row slice indices to expose that
-    axis.
-    """
-    grouped: dict[tuple[str, str | None, str | None], list[int]] = {}
-    for index, table in enumerate(tables):
-        grouped.setdefault(
-            (table.name, measurement_table_object_name(table), table.source_image_name),
-            [],
-        ).append(index)
-
-    aligned = list(tables)
-    for indexes in grouped.values():
-        if len(indexes) <= 1:
-            continue
-        if any(_measurement_table_slice_count(tables[index]) != 1 for index in indexes):
-            continue
-        for slice_offset, table_index in enumerate(indexes):
-            aligned[table_index] = _measurement_table_with_slice_offset(
-                tables[table_index],
-                slice_offset,
-            )
-    return tuple(aligned)
-
-
-def _measurement_table_broadcast_to_slice_count(
-    table: MeasurementTable,
-    slice_count: int,
-) -> MeasurementTable:
-    if slice_count <= 1:
-        return table
-    rows = table.rows
-    if not isinstance(rows, list | tuple):
-        rows = (rows,)
-    broadcast_rows: list[Mapping[str, Any]] = []
-    for slice_index in range(slice_count):
-        for row in rows:
-            broadcast_rows.append(
-                {
-                    **dict(measurement_row_mapping(row)),
-                    "slice_index": slice_index,
-                }
-            )
-    return MeasurementTable(
-        name=table.name,
-        rows=broadcast_rows,
-        object_name=table.object_name,
-        fields=table.fields,
-        object_id_field=table.object_id_field,
-        source_image_name=table.source_image_name,
-        subject=table.subject,
-    )
 
 
 def _label_stack_repeats_first_plane(label_array: np.ndarray) -> bool:

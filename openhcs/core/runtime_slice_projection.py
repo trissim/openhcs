@@ -12,7 +12,13 @@ import numpy as np
 
 from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
-from openhcs.core.runtime_artifact_queries import measurement_table_for_slice
+from openhcs.core.runtime_artifact_queries import (
+    MEASUREMENT_OBJECT_NAME_FIELD,
+    measurement_row_mapping,
+    measurement_rows,
+    measurement_table_for_slice,
+    measurement_table_object_name,
+)
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
     ParentChildRelationshipPayload,
@@ -294,6 +300,11 @@ class RuntimeSliceProjection:
         return len(expected_indices)
 
     @staticmethod
+    def measurement_table_effective_slice_count(value: MeasurementTable) -> int:
+        """Return declared measurement-table slice count, treating scalar tables as one slice."""
+        return RuntimeSliceProjection.measurement_table_slice_count(value) or 1
+
+    @staticmethod
     def measurement_table_collection_slice_count(values: Any) -> int | None:
         slice_indices: set[int] = set()
         slice_counts: set[int] = set()
@@ -331,6 +342,105 @@ class RuntimeSliceProjection:
             for row in value.rows
             if isinstance(row, Mapping) and row.get("slice_index") is not None
         }
+
+    @staticmethod
+    def measurement_table_matches_object(
+        table: MeasurementTable,
+        object_name: str,
+    ) -> bool:
+        """Return whether a measurement table declares or rows-match an object name."""
+        table_object_name = measurement_table_object_name(table)
+        if table_object_name is not None:
+            return table_object_name == object_name
+        return any(
+            measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD) == object_name
+            for row in measurement_rows((table,))
+        )
+
+    @staticmethod
+    def measurement_table_with_slice_offset(
+        table: MeasurementTable,
+        slice_offset: int,
+    ) -> MeasurementTable:
+        """Return a table with row slice indexes shifted by ``slice_offset``."""
+        if slice_offset == 0:
+            return table
+        return MeasurementTable(
+            name=table.name,
+            rows=[
+                {
+                    **dict(measurement_row_mapping(row)),
+                    "slice_index": int(
+                        measurement_row_mapping(row).get("slice_index", 0)
+                    )
+                    + slice_offset,
+                }
+                for row in measurement_rows((table,))
+            ],
+            object_name=table.object_name,
+            fields=table.fields,
+            object_id_field=table.object_id_field,
+            source_image_name=table.source_image_name,
+            subject=table.subject,
+        )
+
+    @staticmethod
+    def measurement_table_broadcast_to_slice_count(
+        table: MeasurementTable,
+        slice_count: int,
+    ) -> MeasurementTable:
+        """Return a scalar table repeated across every runtime slice."""
+        if slice_count <= 1:
+            return table
+        return MeasurementTable(
+            name=table.name,
+            rows=[
+                {
+                    **dict(measurement_row_mapping(row)),
+                    "slice_index": slice_index,
+                }
+                for slice_index in range(slice_count)
+                for row in measurement_rows((table,))
+            ],
+            object_name=table.object_name,
+            fields=table.fields,
+            object_id_field=table.object_id_field,
+            source_image_name=table.source_image_name,
+            subject=table.subject,
+        )
+
+    @staticmethod
+    def measurement_tables_with_repeated_scalar_slice_offsets(
+        tables: tuple[MeasurementTable, ...],
+    ) -> tuple[MeasurementTable, ...]:
+        """Offset repeated scalar measurement tables onto consecutive slice indexes."""
+        grouped: dict[tuple[str, str | None, str | None], list[int]] = {}
+        for index, table in enumerate(tables):
+            grouped.setdefault(
+                (table.name, measurement_table_object_name(table), table.source_image_name),
+                [],
+            ).append(index)
+
+        aligned = list(tables)
+        for indexes in grouped.values():
+            if len(indexes) <= 1:
+                continue
+            if any(
+                RuntimeSliceProjection.measurement_table_effective_slice_count(
+                    tables[index]
+                )
+                != 1
+                for index in indexes
+            ):
+                continue
+            for slice_offset, table_index in enumerate(indexes):
+                aligned[table_index] = (
+                    RuntimeSliceProjection.measurement_table_with_slice_offset(
+                        tables[table_index],
+                        slice_offset,
+                    )
+                )
+        return tuple(aligned)
 
     @staticmethod
     def single_slice_count(
