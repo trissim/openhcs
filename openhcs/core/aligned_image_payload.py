@@ -33,11 +33,14 @@ from openhcs.core.runtime_values import (
     ImageMetadataPayload,
     MaskedImagePayload,
     ObjectLabelPayload,
+    ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
     compose_image_payload_metadata,
     image_payload_metadata,
     image_payload_data,
     image_payload_mask,
+    object_label_dense_data,
+    object_label_payload_with_measurement_labels,
     image_payload_with_context,
 )
 
@@ -443,18 +446,55 @@ class MaskedImagePayloadAlignedKwargResolutionStrategy(
     value_type = MaskedImagePayload
 
 
-class ObjectLabelPayloadAlignedKwargResolutionStrategy(
+class ObjectLabelAlignedKwargResolutionStrategy(
     SourceSpatialAlignedKwargResolutionStrategy
 ):
-    """Resolve object-label payloads through source-spatial label metadata."""
+    """Resolve object labels by runtime-slice and source-spatial contracts."""
+
+    def matches(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> bool:
+        return (
+            ObjectLabelRuntimeSliceStackContract.preserves_runtime_slice_stack(
+                value,
+                slice_count=resolver.slice_count,
+            )
+            or super().matches(value, resolver)
+        )
+
+    def resolve(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> Any:
+        if resolver.domain_adapter(value) is not None:
+            return super().resolve(value, resolver)
+        if ObjectLabelRuntimeSliceStackContract.preserves_runtime_slice_stack(
+            value,
+            slice_count=resolver.slice_count,
+        ):
+            labels = np.asarray(object_label_dense_data(value))
+            return object_label_payload_with_measurement_labels(
+                value,
+                labels[resolver.slice_index],
+            )
+        return super().resolve(value, resolver)
+
+
+class ObjectLabelPayloadAlignedKwargResolutionStrategy(
+    ObjectLabelAlignedKwargResolutionStrategy
+):
+    """Resolve object-label payloads through declared label-domain semantics."""
 
     value_type = ObjectLabelPayload
 
 
 class ObjectLabelSetAlignedKwargResolutionStrategy(
-    SourceSpatialAlignedKwargResolutionStrategy
+    ObjectLabelAlignedKwargResolutionStrategy
 ):
-    """Resolve object-label sets through source-spatial label metadata."""
+    """Resolve object-label sets through declared label-domain semantics."""
 
     value_type = ObjectLabelSet
 

@@ -83,6 +83,26 @@ def test_pure_2d_contract_slices_image_metadata_payload_nominally() -> None:
     assert image_payload_metadata(result).channel_source_paths == ("z0.tif", "z1.tif")
 
 
+def test_with_image_payload_data_projects_channel_last_mask_to_grayscale() -> None:
+    mask = np.zeros((4, 5, 2), dtype=bool)
+    mask[:, :, 0] = True
+    source = image_payload_with_context(
+        np.ones((4, 5, 2), dtype=np.float32),
+        mask=mask,
+    )
+
+    result = with_image_payload_data(
+        source,
+        np.ones((4, 5), dtype=np.float32),
+    )
+
+    assert image_payload_data(result).shape == (4, 5)
+    np.testing.assert_array_equal(
+        image_payload_mask(result),
+        np.zeros((4, 5), dtype=bool),
+    )
+
+
 def test_runtime_callable_invocation_can_call_raw_signature_filtered_callable() -> None:
     source = image_payload_with_context(
         np.ones((4, 5), dtype=np.float32),

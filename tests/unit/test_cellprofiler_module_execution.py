@@ -4731,6 +4731,35 @@ def test_aligned_stack_kwargs_projects_runtime_slice_labels_to_reference_slice_d
     )
 
 
+def test_aligned_stack_kwargs_projects_runtime_slice_labels_without_source_metadata() -> None:
+    labels = np.stack(
+        (
+            np.full((4, 4), 1, dtype=np.int32),
+            np.full((4, 4), 2, dtype=np.int32),
+        )
+    )
+    label_payload = ObjectLabelPayload(
+        labels=labels,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+
+    resolved = aligned_image_stack_kwargs(
+        {"labels": label_payload},
+        slice_index=1,
+        slice_count=2,
+        reference_payload=np.ones((4, 4), dtype=np.float32),
+    )
+
+    assert isinstance(resolved["labels"], ObjectLabelPayload)
+    np.testing.assert_array_equal(
+        resolved["labels"].labels,
+        np.full((4, 4), 2, dtype=np.int32),
+    )
+    assert resolved["labels"].domain_scope is ObjectLabelDomainScope.PLANE
+    assert resolved["labels"].plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+
+
 def test_measurement_labels_collapse_channel_broadcast_label_stack() -> None:
     image = np.ones((2, 4, 5), dtype=np.float32)
     label_plane = np.arange(4 * 5, dtype=np.int32).reshape(4, 5)

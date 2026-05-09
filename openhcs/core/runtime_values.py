@@ -505,6 +505,11 @@ def project_image_mask_to_data_domain(mask: Any, data: Any) -> Any | None:
     ):
         return np.all(mask_array, axis=0)
     if (
+        mask_array.ndim >= 3
+        and tuple(mask_array.shape[:-1]) in _valid_image_mask_shapes(data_shape)
+    ):
+        return np.all(mask_array, axis=-1)
+    if (
         len(mask_shape) == len(data_shape)
         and mask_shape[0] == 1
         and data_shape[0] != 1
@@ -556,7 +561,10 @@ def with_image_payload_data(
     metadata: ImagePayloadMetadata | None = None,
 ) -> Any:
     """Preserve image-mask and metadata semantics while replacing pixels."""
-    resolved_mask = image_payload_mask(payload) if mask is None else mask
+    resolved_mask = project_image_mask_to_data_domain(
+        image_payload_mask(payload) if mask is None else mask,
+        data,
+    )
     resolved_metadata = (
         image_payload_metadata(payload) if metadata is None else metadata
     )

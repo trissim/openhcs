@@ -15,6 +15,7 @@ from benchmark.adapters.openhcs import (
     _candidate_measurement_snapshot_cache_key,
     _reference_snapshot_for_equivalence_fallback,
     _reference_measurement_snapshot_cache_key,
+    _runtime_measurement_observation_fingerprint,
     _runtime_execution_cache_key_for_snapshot,
     _runtime_execution_cache_key_matches,
 )
@@ -45,6 +46,7 @@ from openhcs.core.runtime_exports import (
     RuntimeImageExportSpec,
 )
 from openhcs.core.runtime_semantics import MeasurementScope
+from openhcs.core.artifacts import ArtifactKind
 
 
 def test_cellprofiler_compatibility_runner_feeds_native_output_to_openhcs(
@@ -388,6 +390,54 @@ def test_measurement_snapshot_keys_include_semantic_projection_fingerprint(
 
     assert reference_key["semantic_measurement_projection"] == projection_identity
     assert candidate_key["semantic_measurement_projection"] == projection_identity
+
+
+def test_candidate_observation_fingerprint_depends_on_non_image_record_values() -> None:
+    def validation_for(value: object) -> SimpleNamespace:
+        scope = SimpleNamespace(
+            axis_id="A01",
+            group_key=None,
+            site=None,
+            channel=None,
+            z_index=None,
+            timepoint=None,
+        )
+        record = SimpleNamespace(
+            key=SimpleNamespace(
+                name="Measurements",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=scope,
+            ),
+            location=SimpleNamespace(
+                path="/memory/Measurements.pkl",
+                backend="memory",
+            ),
+            value=value,
+        )
+        return SimpleNamespace(
+            expectation=RuntimeExportExpectation.from_flags(
+                table_exports=True,
+                image_exports=False,
+            ),
+            observation=SimpleNamespace(
+                records_by_axis={"A01": (record,)},
+                exports=RuntimeExportObservation(
+                    table_outputs=(),
+                    image_outputs=(),
+                    table_headers_by_path={},
+                    table_row_counts_by_path={},
+                ),
+            ),
+        )
+
+    first = _runtime_measurement_observation_fingerprint(
+        validation_for({"rows": (("feature", 1.0),)})
+    )
+    second = _runtime_measurement_observation_fingerprint(
+        validation_for({"rows": (("feature", 2.0),)})
+    )
+
+    assert first != second
 
 
 def test_saveimages_export_specs_use_runtime_artifacts_not_incidental_files(

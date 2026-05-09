@@ -279,6 +279,7 @@ class RuntimeRecordCacheIdentity:
     timepoint: str | None
     path: str
     backend: str
+    value_digest: str
 
     @classmethod
     def from_record(cls, record: Any) -> "RuntimeRecordCacheIdentity":
@@ -295,7 +296,17 @@ class RuntimeRecordCacheIdentity:
             timepoint=scope.timepoint,
             path=record.location.path,
             backend=record.location.backend,
+            value_digest=cls.value_digest_for(record.value),
         )
+
+    @staticmethod
+    def value_digest_for(value: object) -> str:
+        """Return the cache identity component owned by runtime record values."""
+        try:
+            payload = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
+        except Exception:
+            payload = repr(value).encode("utf-8", errors="replace")
+        return hashlib.sha256(payload).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
