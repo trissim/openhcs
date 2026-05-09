@@ -62,6 +62,21 @@ class CellProfilerImageRequest(CellProfilerResolvedInputRequest):
     payload: object
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerSourceImagePair:
+    """Ordered pair of source images inside a composed CellProfiler payload."""
+
+    first_index: int
+    second_index: int
+    first_name: str
+    second_name: str
+
+    @property
+    def source_image_name(self) -> str:
+        """Return CellProfiler's table-level source identity for this pair."""
+        return f"{self.first_name}__{self.second_name}"
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CellProfilerInvocationRequest(CellProfilerResolvedInputRequest):
     """Resolved invocation inputs for one CellProfiler function call."""
@@ -96,6 +111,33 @@ class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
                 "CellProfilerMeasurementImageDomain, got "
                 f"{type(self.reference_domain).__name__}."
             )
+
+    @classmethod
+    def shared_source_image_name(
+        cls,
+        measurement_images: tuple["CellProfilerMeasurementImage", ...],
+    ) -> str | None:
+        """Return table-level source identity only when all images share one source."""
+        unique_names = tuple(
+            dict.fromkeys(image.source_image_name for image in measurement_images)
+        )
+        if len(unique_names) == 1:
+            return unique_names[0]
+        return None
+
+    def source_image_pairs(self) -> tuple[CellProfilerSourceImagePair, ...]:
+        """Return ordered pairwise source invocations for composed image payloads."""
+        return tuple(
+            CellProfilerSourceImagePair(
+                first_index=first_index,
+                second_index=second_index,
+                first_name=first_name,
+                second_name=second_name,
+            )
+            for first_index, first_name in enumerate(self.source_image_names)
+            for second_index, second_name in enumerate(self.source_image_names)
+            if first_index < second_index
+        )
 
 
 @dataclass(frozen=True, slots=True)

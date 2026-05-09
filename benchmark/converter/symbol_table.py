@@ -395,6 +395,9 @@ CHILD_OBJECTS_SETTING = SettingNameFamily(
     "Select the child objects",
     aliases=("Child objects",),
 )
+RELATE_OBJECTS_SAVE_CHILDREN_SETTING = (
+    "Do you want to save the children with parents as a new object set?"
+)
 
 
 class _SymbolTableBuilder:
@@ -1801,11 +1804,30 @@ def _relate_objects(
         CellProfilerSymbolKind.MEASUREMENTS,
         module,
     )
+    outputs = [relationship, measurements]
+    if _setting_bool(module, RELATE_OBJECTS_SAVE_CHILDREN_SETTING):
+        output_objects = builder.declare(
+            _setting(module, OUTPUT_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        outputs.insert(
+            0,
+            output_objects,
+        )
+        outputs.insert(
+            2,
+            builder.declare(
+                _relationship_name(child.name, output_objects.name),
+                CellProfilerSymbolKind.RELATIONSHIPS,
+                module,
+            ),
+        )
     return _contracts(
         module,
         builder,
         inputs=[parent, child],
-        outputs=[relationship, measurements],
+        outputs=outputs,
     )
 
 

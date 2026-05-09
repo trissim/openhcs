@@ -162,9 +162,15 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     RuntimeInvocationKwargPolicy,
 )
 from openhcs.processing.materialization import tabular_field_names_from_materialization
+from openhcs.processing.backends.cellprofiler.relationships import (
+    ObjectRelationshipBackendStrategy,
+)
 
 from benchmark.converter.artifact_semantics import SpecialOutputKindClassifier
 from benchmark.cellprofiler_library import canonical_module_name, require_function
+from benchmark.cellprofiler_library.functions.relateobjects import (
+    RelationshipMeasurements,
+)
 from benchmark.cellprofiler_library.functions.structuring_elements import (
     build_structuring_element,
 )
@@ -192,6 +198,7 @@ from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerMeasurementImageDomain,
     CellProfilerResolvedInputRequest,
     CellProfilerSliceAlignedValues,
+    CellProfilerSourceImagePair,
     coerce_cellprofiler_grid_cycle_scope,
     illumination_scope_uses_all_images,
     requested_image_execution_mode,
@@ -790,6 +797,7 @@ class CellProfilerModuleExecutor:
             measurement_image: CellProfilerMeasurementImage,
             object_spec: ArtifactSpec,
             completion_label_payload: Any,
+            invocation: ObjectMeasurementInvocation,
         ) -> None:
             nonlocal split_seconds, complete_rows_seconds, annotate_seconds
 
@@ -798,7 +806,10 @@ class CellProfilerModuleExecutor:
                 raw_output
             )
             split_seconds += time.perf_counter() - split_started_at
-            raw_measurement_rows = _measurement_rows_from_output(artifact_values)
+            raw_measurement_rows = measurement_row_policy.project_rows(
+                _measurement_rows_from_output(artifact_values),
+                invocation,
+            )
             object_measurement_rows = [
                 row
                 for row in raw_measurement_rows
@@ -908,11 +919,25 @@ class CellProfilerModuleExecutor:
                 execution_mode,
             )
 
-        use_measurement_image_batch = (
-            callable(batch_executor) and len(measurement_images) > 1
+        measurement_invocations = tuple(
+            measurement_row_policy.invocations(
+                measurement_image,
+                kwargs,
+            )
+            for measurement_image in measurement_images
+        )
+        measurement_batch_count = sum(
+            len(invocations) for invocations in measurement_invocations
+        )
+        use_measurement_image_batch = callable(batch_executor) and any(
+            len(invocations) > 1 for invocations in measurement_invocations
         )
         if not use_measurement_image_batch:
-            for measurement_image in measurement_images:
+            for measurement_image, invocations in zip(
+                measurement_images,
+                measurement_invocations,
+                strict=True,
+            ):
                 for object_spec in object_inputs:
                     (
                         aligned_image,
@@ -920,34 +945,51 @@ class CellProfilerModuleExecutor:
                         completion_label_payload,
                         execution_mode,
                     ) = prepare_measurement_invocation(measurement_image, object_spec)
-                    contract_started_at = time.perf_counter()
-                    raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
-                        func,
-                        aligned_image,
-                        {**kwargs, "labels": executable_labels},
-                        execution_mode=execution_mode,
-                    )
-                    contract_execute_seconds += (
-                        time.perf_counter() - contract_started_at
-                    )
-                    record_measurement_output(
-                        raw_output,
-                        measurement_image=measurement_image,
-                        object_spec=object_spec,
-                        completion_label_payload=completion_label_payload,
-                    )
+                    for invocation in invocations:
+                        contract_started_at = time.perf_counter()
+                        raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
+                            func,
+                            aligned_image,
+                            {**invocation.kwargs, "labels": executable_labels},
+                            execution_mode=execution_mode,
+                        )
+                        contract_execute_seconds += (
+                            time.perf_counter() - contract_started_at
+                        )
+                        record_measurement_output(
+                            raw_output,
+                            measurement_image=measurement_image,
+                            object_spec=object_spec,
+                            completion_label_payload=completion_label_payload,
+                            invocation=invocation,
+                        )
         else:
             ordered_batch_outputs: dict[
                 int,
-                tuple[Any, CellProfilerMeasurementImage, ArtifactSpec, Any],
+                tuple[
+                    Any,
+                    CellProfilerMeasurementImage,
+                    ArtifactSpec,
+                    Any,
+                    ObjectMeasurementInvocation,
+                ],
             ] = {}
+            order_index = 0
             for object_index, object_spec in enumerate(object_inputs):
                 batch_requests: list[RuntimeBatchInvocationRequest] = []
                 batch_contexts: list[
-                    tuple[int, CellProfilerMeasurementImage, ArtifactSpec, Any]
+                    tuple[
+                        int,
+                        CellProfilerMeasurementImage,
+                        ArtifactSpec,
+                        Any,
+                        ObjectMeasurementInvocation,
+                    ]
                 ] = []
-                for measurement_image_index, measurement_image in enumerate(
-                    measurement_images
+                for measurement_image, invocations in zip(
+                    measurement_images,
+                    measurement_invocations,
+                    strict=True,
                 ):
                     (
                         aligned_image,
@@ -955,25 +997,27 @@ class CellProfilerModuleExecutor:
                         completion_label_payload,
                         execution_mode,
                     ) = prepare_measurement_invocation(measurement_image, object_spec)
-                    batch_requests.append(
-                        RuntimeBatchInvocationRequest(
-                            source_image_name=measurement_image.source_image_name,
-                            execution_mode=execution_mode,
-                            image=aligned_image,
-                            kwargs={**kwargs, "labels": executable_labels},
-                            batch_index=len(batch_requests),
-                            batch_count=len(measurement_images),
+                    for invocation in invocations:
+                        batch_requests.append(
+                            RuntimeBatchInvocationRequest(
+                                source_image_name=measurement_image.source_image_name,
+                                execution_mode=execution_mode,
+                                image=aligned_image,
+                                kwargs={**invocation.kwargs, "labels": executable_labels},
+                                batch_index=len(batch_requests),
+                                batch_count=measurement_batch_count,
+                            )
                         )
-                    )
-                    batch_contexts.append(
-                        (
-                            measurement_image_index * len(object_inputs)
-                            + object_index,
-                            measurement_image,
-                            object_spec,
-                            completion_label_payload,
+                        batch_contexts.append(
+                            (
+                                order_index,
+                                measurement_image,
+                                object_spec,
+                                completion_label_payload,
+                                invocation,
+                            )
                         )
-                    )
+                        order_index += 1
                 contract_started_at = time.perf_counter()
                 raw_outputs = batch_executor(
                     func,
@@ -991,25 +1035,29 @@ class CellProfilerModuleExecutor:
                     measurement_image,
                     object_spec,
                     completion_label_payload,
+                    invocation,
                 ) in zip(raw_outputs, batch_contexts, strict=True):
                     ordered_batch_outputs[order_index] = (
                         raw_output,
                         measurement_image,
                         object_spec,
                         completion_label_payload,
+                        invocation,
                     )
-            for order_index in range(len(measurement_images) * len(object_inputs)):
+            for order_index in range(len(ordered_batch_outputs)):
                 (
                     raw_output,
                     measurement_image,
                     object_spec,
                     completion_label_payload,
+                    invocation,
                 ) = ordered_batch_outputs[order_index]
                 record_measurement_output(
                     raw_output,
                     measurement_image=measurement_image,
                     object_spec=object_spec,
                     completion_label_payload=completion_label_payload,
+                    invocation=invocation,
                 )
 
         _log_module_profile(
@@ -1051,9 +1099,10 @@ class CellProfilerModuleExecutor:
         )
 
         combined_source_image_name = (
-            source_image_name
-            if not measurement_images
-            else _single_measurement_image_source_name(measurement_images)
+            measurement_row_policy.table_source_image_name(
+                measurement_images,
+                source_image_name,
+            )
         )
 
         record_started_at = time.perf_counter()
@@ -1202,18 +1251,37 @@ class CellProfilerModuleExecutor:
             )
             contract_execute_seconds += time.perf_counter() - contract_started_at
             split_rows_started_at = time.perf_counter()
-            _ignored_main_output, artifact_values = _split_cellprofiler_output(
-                raw_output
-            )
+            main_output, artifact_values = _split_cellprofiler_output(raw_output)
             source_image_name = (
                 measurement_image.source_image_name
                 if row_source_names_required
                 else None
             )
+            output_values = CellProfilerOutputValueResolution.from_returned_values(
+                measurement_outputs,
+                declared_specs=self.contract.declared_outputs,
+                main_output=main_output,
+                artifact_values=artifact_values,
+                func=func,
+            )
+            measurement_record = CellProfilerMeasurementRecordBuilder.for_module(
+                self.module_name
+            ).build(
+                CellProfilerOutputRecordRequest(
+                    executor=self,
+                    adapter=cellprofiler_runtime,
+                    spec=measurement_outputs[0],
+                    value=output_values.recorded_values[measurement_outputs[0].name],
+                    output_values=output_values.context_values,
+                    source_image_payload=measurement_image.payload,
+                    source_image_name=source_image_name,
+                    func=func,
+                )
+            )
             combined_rows.extend(
                 MeasurementRowOwnership(
                     source_image_name=source_image_name,
-                ).annotate_rows(_measurement_rows_from_output(artifact_values))
+                ).annotate_rows(measurement_record.rows)
             )
             split_rows_seconds += time.perf_counter() - split_rows_started_at
 
@@ -1242,7 +1310,9 @@ class CellProfilerModuleExecutor:
             source_image_name=(
                 None
                 if rows_declare_object_name
-                else _single_measurement_image_source_name(measurement_images)
+                else CellProfilerMeasurementImage.shared_source_image_name(
+                    measurement_images
+                )
             ),
         )
         _log_module_profile(
@@ -3063,6 +3133,14 @@ class MissingObjectMeasurementValuePolicy(str, Enum):
     ZERO_WITHIN_POSITIVE_EXTENT = "zero_within_positive_extent"
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementInvocation:
+    """One semantic object-measurement function invocation."""
+
+    kwargs: Mapping[str, Any]
+    source_pair: CellProfilerSourceImagePair | None = None
+
+
 class CellProfilerObjectMeasurementRowPolicy(metaclass=AutoRegisterMeta):
     """Nominal export-row policy for object-scoped measurement modules."""
 
@@ -3091,6 +3169,34 @@ class CellProfilerObjectMeasurementRowPolicy(metaclass=AutoRegisterMeta):
     def object_identity(self) -> MeasurementObjectRowIdentity:
         """Return the object identity projection for rows emitted by this module."""
         return MeasurementObjectRowIdentity(type(self).row_identity)
+
+    def invocations(
+        self,
+        measurement_image: CellProfilerMeasurementImage,
+        kwargs: Mapping[str, Any],
+    ) -> tuple[ObjectMeasurementInvocation, ...]:
+        """Return semantic function invocations for this measurement image."""
+        del measurement_image
+        return (ObjectMeasurementInvocation(kwargs=kwargs),)
+
+    def project_rows(
+        self,
+        rows: Sequence[Any],
+        invocation: ObjectMeasurementInvocation,
+    ) -> list[Any]:
+        """Return emitted rows projected into this module's feature namespace."""
+        del invocation
+        return list(rows)
+
+    def table_source_image_name(
+        self,
+        measurement_images: tuple[CellProfilerMeasurementImage, ...],
+        source_image_name: str | None,
+    ) -> str | None:
+        """Return table-level source ownership for rows emitted by this policy."""
+        if not measurement_images:
+            return source_image_name
+        return CellProfilerMeasurementImage.shared_source_image_name(measurement_images)
 
     def requires_explicit_row_ownership(self) -> bool:
         """Return whether emitted rows carry mixed measurement ownership."""
@@ -3615,6 +3721,113 @@ class MeasureObjectIntensityDistributionObjectMeasurementRowPolicy(
         """Intensity-distribution functions emit their full dense row domain."""
         del label_payload, func
         return list(rows)
+
+
+class MeasureColocalizationObjectMeasurementRowPolicy(
+    CellProfilerObjectMeasurementRowPolicy
+):
+    """Expand composed source stacks into source-pair object measurements."""
+
+    module_name = _MEASURE_COLOCALIZATION_MODULE
+    pair_feature_fields: ClassVar[Mapping[str, str]] = MappingProxyType(
+        {
+            "correlation": "Correlation_Correlation_{first}_{second}",
+            "slope": "Correlation_Slope_{first}_{second}",
+            "slope_reverse": "Correlation_Slope_{second}_{first}",
+            "overlap": "Correlation_Overlap_{first}_{second}",
+            "k1": "Correlation_K_{first}_{second}",
+            "k2": "Correlation_K_{second}_{first}",
+            "manders_m1": "Correlation_Manders_{first}_{second}",
+            "manders_m2": "Correlation_Manders_{second}_{first}",
+            "rwc1": "Correlation_RWC_{first}_{second}",
+            "rwc2": "Correlation_RWC_{second}_{first}",
+            "costes_m1": "Correlation_Costes_{first}_{second}",
+            "costes_m2": "Correlation_Costes_{second}_{first}",
+        }
+    )
+    identity_fields: ClassVar[frozenset[str]] = frozenset(
+        {
+            "slice_index",
+            MEASUREMENT_OBJECT_LABEL_FIELD,
+            MEASUREMENT_OBJECT_NAME_FIELD,
+            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+        }
+    )
+
+    def invocations(
+        self,
+        measurement_image: CellProfilerMeasurementImage,
+        kwargs: Mapping[str, Any],
+    ) -> tuple[ObjectMeasurementInvocation, ...]:
+        source_pairs = measurement_image.source_image_pairs()
+        if not source_pairs:
+            return super().invocations(measurement_image, kwargs)
+        return tuple(
+            ObjectMeasurementInvocation(
+                kwargs={
+                    **kwargs,
+                    "channel_1": source_pair.first_index,
+                    "channel_2": source_pair.second_index,
+                },
+                source_pair=source_pair,
+            )
+            for source_pair in source_pairs
+        )
+
+    def project_rows(
+        self,
+        rows: Sequence[Any],
+        invocation: ObjectMeasurementInvocation,
+    ) -> list[Any]:
+        if invocation.source_pair is None:
+            return list(rows)
+        return [
+            self.project_row(row, invocation.source_pair)
+            for row in rows
+        ]
+
+    def project_row(
+        self,
+        row: Any,
+        source_pair: CellProfilerSourceImagePair,
+    ) -> dict[str, Any]:
+        """Return one row with CellProfiler source-pair feature names."""
+        row_mapping = measurement_row_mapping(row)
+        has_pair_features = bool(
+            type(self).pair_feature_fields.keys() & row_mapping.keys()
+        )
+        if not has_pair_features:
+            return dict(row_mapping)
+        projected: dict[str, Any] = {
+            field_name: value
+            for field_name, value in row_mapping.items()
+            if field_name in type(self).identity_fields
+        }
+        for field_name, feature_format in type(self).pair_feature_fields.items():
+            if field_name not in row_mapping:
+                continue
+            projected[
+                feature_format.format(
+                    first=source_pair.first_name,
+                    second=source_pair.second_name,
+                )
+            ] = row_mapping[field_name]
+        return projected
+
+    def table_source_image_name(
+        self,
+        measurement_images: tuple[CellProfilerMeasurementImage, ...],
+        source_image_name: str | None,
+    ) -> str | None:
+        del source_image_name
+        source_pairs = tuple(
+            source_pair
+            for measurement_image in measurement_images
+            for source_pair in measurement_image.source_image_pairs()
+        )
+        if len(source_pairs) == 1:
+            return source_pairs[0].source_image_name
+        return None
 
 
 class TrackObjectsObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
@@ -4774,7 +4987,7 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
     ) -> CellProfilerMeasurementRecord:
         rows = [
             *_measurement_table_rows(request.value),
-            *RelationshipMeasurementRows(request).rows(),
+            *RelationshipMeasurementRows.for_request(request).rows(),
         ]
         rows_declare_object_name = _measurement_rows_declare_object_name(rows)
         return CellProfilerMeasurementRecord(
@@ -4940,7 +5153,7 @@ class RelateObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
             rows=len(table_rows),
         )
         relationship_started_at = time.perf_counter()
-        relationship_rows = RelationshipMeasurementRows(request).rows()
+        relationship_rows = RelationshipMeasurementRows.for_request(request).rows()
         _log_module_profile(
             "relate_relationship_rows",
             time.perf_counter() - relationship_started_at,
@@ -4972,7 +5185,7 @@ class IdentifyObjectRelationshipsMeasurementRecordBuilder(
                     request.value,
                     object_name=_single_output_object_name(request),
                 ).rows(),
-                *RelationshipMeasurementRows(request).rows(),
+                *RelationshipMeasurementRows.for_request(request).rows(),
             ],
             object_name=None,
             source_image_name=None,
@@ -5098,7 +5311,7 @@ class IdentifyTertiaryObjectsMeasurementRecordBuilder(
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
         return CellProfilerMeasurementRecord(
-            rows=RelationshipMeasurementRows(request).rows(),
+            rows=RelationshipMeasurementRows.for_request(request).rows(),
             object_name=None,
             source_image_name=None,
         )
@@ -5395,6 +5608,12 @@ class CellProfilerReturnedOutputValueMatcher:
     main_output: Any
     artifact_values: tuple[Any, ...]
     func: Callable[..., Any] | None = None
+    main_output_kinds: ClassVar[frozenset[ArtifactKind]] = frozenset(
+        {
+            ArtifactKind.IMAGE,
+            ArtifactKind.OBJECT_LABELS,
+        }
+    )
 
     def resolve(self) -> dict[str, Any] | None:
         if not self.retained_specs:
@@ -5439,6 +5658,19 @@ class CellProfilerReturnedOutputValueMatcher:
 
     def _declared_return_candidates(self) -> tuple[tuple[ArtifactSpec, Any], ...]:
         main_index = self._declared_main_output_index()
+        first_main_index = self._first_declared_main_output_index()
+        if first_main_index is not None and first_main_index == 0:
+            tail_specs = self.declared_specs[1:]
+            if len(tail_specs) < len(self.artifact_values):
+                return ()
+            return (
+                (self.declared_specs[first_main_index], self.main_output),
+                *zip(
+                    tail_specs[: len(self.artifact_values)],
+                    self.artifact_values,
+                    strict=True,
+                ),
+            )
         if main_index is None:
             if len(self.declared_specs) < len(self.artifact_values):
                 return ()
@@ -5458,8 +5690,16 @@ class CellProfilerReturnedOutputValueMatcher:
         )
 
     def _declared_main_output_index(self) -> int | None:
+        if len(self.declared_specs) != len(self.artifact_values) + 1:
+            return None
+        return self._first_declared_main_output_index()
+
+    def _first_declared_main_output_index(self) -> int | None:
         for index, spec in enumerate(self.declared_specs):
-            if spec.kind is ArtifactKind.IMAGE and spec.sidecar_role is None:
+            if (
+                spec.kind in type(self).main_output_kinds
+                and spec.sidecar_role is None
+            ):
                 return index
         return None
 
@@ -7261,6 +7501,8 @@ class RelationshipMeasurementFeatureTemplate(FormattingMeasurementFeatureTemplat
     """CellProfiler relationship feature-name templates."""
 
     PARENT = "Parent_{parent_object_name}"
+    DISTANCE_CENTROID = "Distance_Centroid_{parent_object_name}"
+    DISTANCE_MINIMUM = "Distance_Minimum_{parent_object_name}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -7339,9 +7581,21 @@ class RelationshipEndpointResolver:
 class RelationshipMeasurementRows(CellProfilerMeasurementRows):
     """Project parent-child relationship payloads into CP object measurement rows."""
 
-    registry_key = "relationship"
+    __registry_key__ = _MODULE_NAME_REGISTRY_KEY
+    __skip_if_no_key__ = True
 
+    module_name: ClassVar[str | None] = None
     request: CellProfilerOutputRecordRequest
+
+    @classmethod
+    def for_request(
+        cls,
+        request: CellProfilerOutputRecordRequest,
+    ) -> "RelationshipMeasurementRows":
+        row_type = cls.__registry__.get(canonical_module_name(request.executor.module_name))
+        if row_type is None:
+            return GenericRelationshipMeasurementRows(request)
+        return row_type(request)
 
     def rows(self) -> list[dict[str, int | str]]:
         rows: list[dict[str, int | str]] = []
@@ -7565,6 +7819,160 @@ class RelationshipMeasurementRows(CellProfilerMeasurementRows):
             MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
         }
 
+
+class GenericRelationshipMeasurementRows(RelationshipMeasurementRows):
+    """Default relationship rows: child counts plus parent ids."""
+
+
+class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
+    """RelateObjects additionally projects configured child-parent distances."""
+
+    module_name = "RelateObjects"
+
+    def rows(self) -> list[dict[str, int | str | float]]:
+        rows: list[dict[str, int | str | float]] = list(super().rows())
+        endpoint_resolver = RelationshipEndpointResolver(self.request)
+        for relationship_spec, payload in self.output_entries():
+            parent_spec, child_spec = endpoint_resolver.endpoint_specs(relationship_spec)
+            if not self.distance_contract_applies(parent_spec, child_spec):
+                continue
+            rows.extend(
+                self.distance_rows(
+                    parent_object_name=parent_spec.name,
+                    child_object_name=child_spec.name,
+                    payload=payload,
+                )
+            )
+        return rows
+
+    def distance_contract_applies(
+        self,
+        parent_spec: ArtifactSpec,
+        child_spec: ArtifactSpec,
+    ) -> bool:
+        object_inputs = RelationshipEndpointResolver(self.request).object_inputs
+        if len(object_inputs) < 2:
+            return False
+        return parent_spec == object_inputs[0] and child_spec == object_inputs[1]
+
+    def distance_rows(
+        self,
+        *,
+        parent_object_name: str,
+        child_object_name: str,
+        payload: ParentChildRelationshipPayload,
+    ) -> tuple[dict[str, int | str | float], ...]:
+        if not self.distance_measurements_declared():
+            return ()
+        sliced_pairs = self.payload_pairs_by_slice(payload)
+        if sliced_pairs is not None:
+            rows: list[dict[str, int | str | float]] = []
+            for slice_index, pairs in sliced_pairs:
+                rows.extend(
+                    self.distance_rows_for_pairs(
+                        parent_object_name=parent_object_name,
+                        child_object_name=child_object_name,
+                        pairs=pairs,
+                        slice_index=slice_index,
+                    )
+                )
+            return tuple(rows)
+        return self.distance_rows_for_pairs(
+            parent_object_name=parent_object_name,
+            child_object_name=child_object_name,
+            pairs=tuple(
+                (int(parent_id), int(child_id))
+                for parent_id, child_id in zip(
+                    payload.parent_ids,
+                    payload.child_ids,
+                    strict=True,
+                )
+            ),
+            slice_index=None,
+        )
+
+    def distance_measurements_declared(self) -> bool:
+        value = self.request.value
+        if not isinstance(value, RelationshipMeasurements):
+            return False
+        return bool(
+            np.isfinite(value.mean_centroid_distance)
+            or np.isfinite(value.mean_minimum_distance)
+        )
+
+    def distance_rows_for_pairs(
+        self,
+        *,
+        parent_object_name: str,
+        child_object_name: str,
+        pairs: tuple[tuple[int, int], ...],
+        slice_index: int | None,
+    ) -> tuple[dict[str, int | str | float], ...]:
+        if not pairs:
+            return ()
+        parent_labels = self.object_labels(parent_object_name, slice_index=slice_index)
+        child_labels = self.object_labels(child_object_name, slice_index=slice_index)
+        if parent_labels is None or child_labels is None:
+            return ()
+        parent_array = object_label_dense_array(parent_labels, dtype=np.int32)
+        child_array = object_label_dense_array(child_labels, dtype=np.int32)
+        parent_array, child_array = aligned_dense_object_label_arrays(
+            parent_array,
+            child_array,
+        )
+        parents_of = np.zeros(
+            int(child_array.max()) if child_array.size else 0,
+            dtype=np.int32,
+        )
+        for parent_id, child_id in pairs:
+            if 0 < child_id <= len(parents_of):
+                parents_of[child_id - 1] = parent_id
+        backend = ObjectRelationshipBackendStrategy.for_memory_type()
+        centroid_distances = backend.centroid_distances(
+            parent_array,
+            child_array,
+            parents_of,
+        )
+        minimum_distances = backend.minimum_distances(
+            parent_array,
+            child_array,
+            parents_of,
+        )
+        centroid_feature = RelationshipMeasurementFeatureTemplate.DISTANCE_CENTROID.feature_name(
+            parent_object_name=parent_object_name
+        )
+        minimum_feature = RelationshipMeasurementFeatureTemplate.DISTANCE_MINIMUM.feature_name(
+            parent_object_name=parent_object_name
+        )
+        return tuple(
+            self.axis_qualified_row(
+                {
+                    MEASUREMENT_OBJECT_NAME_FIELD: child_object_name,
+                    MEASUREMENT_OBJECT_LABEL_FIELD: child_id,
+                    centroid_feature: float(centroid_distances[child_id - 1]),
+                    minimum_feature: float(minimum_distances[child_id - 1]),
+                },
+                slice_index=slice_index,
+            )
+            for _parent_id, child_id in pairs
+            if 0 < child_id <= len(parents_of)
+        )
+
+    def object_labels(
+        self,
+        object_name: str,
+        *,
+        slice_index: int | None = None,
+    ) -> Any | None:
+        value = self.request.output_values.get(object_name)
+        if value is None:
+            value = self.request.adapter.get_objects(object_name)
+        labels = _label_payload_final(value)
+        if slice_index is None:
+            return labels
+        if isinstance(labels, np.ndarray) and labels.ndim >= 3:
+            return labels[slice_index]
+        return labels
 
 def _object_label_count(
     adapter: CellProfilerRuntimeAdapter,
@@ -8419,17 +8827,6 @@ def _pop_measurement_target_scope(
         kwargs.pop(CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG, None),
         default=default,
     )
-
-
-def _single_measurement_image_source_name(
-    measurement_images: tuple["CellProfilerMeasurementImage", ...],
-) -> str | None:
-    unique_names = tuple(
-        dict.fromkeys(image.source_image_name for image in measurement_images)
-    )
-    if len(unique_names) == 1:
-        return unique_names[0]
-    return None
 
 
 def _measurement_source_name_for_specs(

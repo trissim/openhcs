@@ -797,6 +797,46 @@ def test_cellprofiler_symbol_table_accepts_relate_objects_schema_aliases():
     ]
 
 
+def test_relateobjects_saved_children_declares_lineage_relationship() -> None:
+    modules = [
+        _identify_primary(),
+        _module(
+            2,
+            "IdentifyPrimaryObjects",
+            {
+                "Select the input image": "OrigGreen",
+                "Name the primary objects to be identified": "Nucleoli",
+            },
+        ),
+        _module(
+            3,
+            "RelateObjects",
+            {
+                "Parent objects": "Nuclei",
+                "Child objects": "Nucleoli",
+                "Do you want to save the children with parents as a new object set?": "Yes",
+                "Name the output object": "NucleoliChildObjects",
+            },
+        ),
+    ]
+
+    table = CellProfilerSymbolTable.compile(modules)
+    contract = table.contracts_by_module_num[3]
+
+    assert [spec.name for spec in contract.outputs] == [
+        "NucleoliChildObjects",
+        parent_child_relationship_artifact_name("Nuclei", "Nucleoli"),
+        parent_child_relationship_artifact_name("Nucleoli", "NucleoliChildObjects"),
+        "RelateObjects_3_measurements",
+    ]
+    assert [spec.kind for spec in contract.outputs] == [
+        ArtifactKind.OBJECT_LABELS,
+        ArtifactKind.RELATIONSHIPS,
+        ArtifactKind.RELATIONSHIPS,
+        ArtifactKind.MEASUREMENTS,
+    ]
+
+
 def test_pipeline_generator_emits_compiled_artifact_contracts():
     generator = PipelineGenerator()
     modules = [_identify_primary(), _identify_secondary()]

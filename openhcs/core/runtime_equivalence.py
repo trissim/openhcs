@@ -1509,6 +1509,226 @@ _SHAPE_DESCRIPTOR_GATING_FEATURES = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ShapeDescriptorFeatureContext:
+    """Measurement feature context for unstable shape descriptor equivalence."""
+
+    feature: RuntimeMeasurementFeatureKey
+    policy: RuntimeEquivalencePolicy
+
+
+class ShapeDescriptorFeatureSemantics(
+    MostDerivedContextStrategyMixin[ShapeDescriptorFeatureContext],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Classify direct and derived shape descriptor measurement features."""
+
+    __registry_key__ = "strategy_key"
+    __skip_if_no_key__ = True
+
+    strategy_key: ClassVar[str | None] = None
+
+    @abstractmethod
+    def matches(self, context: ShapeDescriptorFeatureContext) -> bool:
+        """Return whether this strategy owns the feature."""
+
+    @abstractmethod
+    def descriptor_feature_name(self, context: ShapeDescriptorFeatureContext) -> str:
+        """Return the underlying child/object descriptor feature name."""
+
+    @abstractmethod
+    def values_equivalent(
+        self,
+        context: ShapeDescriptorFeatureContext,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+    ) -> bool:
+        """Return whether descriptor values are equivalent under policy."""
+
+    def boundary_jitter_values_equivalent(
+        self,
+        context: ShapeDescriptorFeatureContext,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+    ) -> bool:
+        """Return sparse-boundary equivalence for descriptor values."""
+        return _sparse_numeric_counters_equivalent(
+            reference_values,
+            candidate_values,
+            context.policy,
+            abs_tolerance=context.policy.object_boundary_jitter_abs_tolerance,
+            rel_tolerance=context.policy.object_boundary_jitter_rel_tolerance,
+            max_unstable_values=context.policy.object_boundary_jitter_max_unstable_values,
+            max_unstable_fraction=context.policy.object_boundary_jitter_max_unstable_fraction,
+        )
+
+
+class OrientationShapeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics):
+    """Orientation descriptors compare as angular boundary-sensitive values."""
+
+    strategy_key = "orientation_descriptor"
+
+    def matches(self, context: ShapeDescriptorFeatureContext) -> bool:
+        return context.feature.feature_name in _ORIENTATION_FEATURES
+
+    def descriptor_feature_name(self, context: ShapeDescriptorFeatureContext) -> str:
+        return context.feature.feature_name
+
+    def values_equivalent(
+        self,
+        context: ShapeDescriptorFeatureContext,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+    ) -> bool:
+        if context.policy.allow_sparse_object_boundary_jitter:
+            return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
+                reference_values,
+                candidate_values,
+                context.policy,
+            )
+        return _absolute_numeric_counters_equivalent(
+            reference_values,
+            candidate_values,
+            context.policy,
+        )
+
+    def boundary_jitter_values_equivalent(
+        self,
+        context: ShapeDescriptorFeatureContext,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+    ) -> bool:
+        return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
+            reference_values,
+            candidate_values,
+            context.policy,
+        )
+
+
+class ShapeZernikeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics):
+    """Shape Zernike descriptors compare with shape-descriptor tolerance policy."""
+
+    strategy_key = "shape_zernike_descriptor"
+
+    def matches(self, context: ShapeDescriptorFeatureContext) -> bool:
+        descriptor = IndexedObjectZernikeDescriptor.from_feature_name(
+            context.feature.feature_name
+        )
+        return (
+            descriptor is not None
+            and descriptor.family is ObjectZernikeDescriptorFeature.SHAPE
+        )
+
+    def descriptor_feature_name(self, context: ShapeDescriptorFeatureContext) -> str:
+        return context.feature.feature_name
+
+    def values_equivalent(
+        self,
+        context: ShapeDescriptorFeatureContext,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+    ) -> bool:
+        return _sparse_numeric_counters_equivalent(
+            reference_values,
+            candidate_values,
+            context.policy,
+            abs_tolerance=context.policy.shape_descriptor_abs_tolerance,
+            rel_tolerance=context.policy.shape_descriptor_rel_tolerance,
+            max_unstable_values=context.policy.shape_descriptor_max_unstable_values,
+            max_unstable_fraction=context.policy.shape_descriptor_max_unstable_fraction,
+        )
+
+
+class RelationshipAggregateShapeDescriptorFeatureSemantics(
+    ShapeDescriptorFeatureSemantics
+):
+    """Relationship aggregates inherit comparability from child descriptors."""
+
+    strategy_key = "relationship_aggregate_shape_descriptor"
+
+    def matches(self, context: ShapeDescriptorFeatureContext) -> bool:
+        return (
+            self.child_semantics(context, required=False) is not None
+        )
+
+    def descriptor_feature_name(self, context: ShapeDescriptorFeatureContext) -> str:
+        return self.child_semantics(context).descriptor_feature_name(
+            self.child_context(context)
+        )
+
+    def values_equivalent(
+        self,
+        context: ShapeDescriptorFeatureContext,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+    ) -> bool:
+        return self.child_semantics(context).values_equivalent(
+            self.child_context(context),
+            reference_values,
+            candidate_values,
+        )
+
+    def boundary_jitter_values_equivalent(
+        self,
+        context: ShapeDescriptorFeatureContext,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+    ) -> bool:
+        return self.child_semantics(context).boundary_jitter_values_equivalent(
+            self.child_context(context),
+            reference_values,
+            candidate_values,
+        )
+
+    def child_context(
+        self,
+        context: ShapeDescriptorFeatureContext,
+    ) -> ShapeDescriptorFeatureContext:
+        child_feature_name = self.child_feature_name(context)
+        if child_feature_name is None:
+            raise ValueError(
+                "Relationship aggregate shape descriptor strategy lost ownership."
+            )
+        return ShapeDescriptorFeatureContext(
+            RuntimeMeasurementFeatureKey(
+                subject=context.feature.subject,
+                feature_name=child_feature_name,
+                statistic=context.feature.statistic,
+                source_name=context.feature.source_name,
+            ),
+            context.policy,
+        )
+
+    def child_semantics(
+        self,
+        context: ShapeDescriptorFeatureContext,
+        *,
+        required: bool = True,
+    ) -> ShapeDescriptorFeatureSemantics | None:
+        if self.child_feature_name(context) is None:
+            if required:
+                raise ValueError(
+                    "Relationship aggregate shape descriptor strategy requires "
+                    "an aggregate child feature."
+                )
+            return None
+        return ShapeDescriptorFeatureSemantics.for_context(
+            self.child_context(context),
+            required=required,
+            error_subject="relationship aggregate shape descriptor",
+        )
+
+    def child_feature_name(
+        self,
+        context: ShapeDescriptorFeatureContext,
+    ) -> str | None:
+        return RelationshipAggregateFeatureSemantics.aggregate_child_feature_name_from_key(
+            context.feature,
+            context.policy.measurement_dialect,
+        )
+
+
 class ObjectZernikeDescriptorStabilityContract(
     EnumKeyedStrategyMixin[ObjectZernikeDescriptorFeature],
     ABC,
@@ -2615,11 +2835,16 @@ def _sparse_object_boundary_value_feature_equivalent(
         policy.measurement_dialect,
     ):
         return False
-    if feature.feature_name in _ORIENTATION_FEATURES:
-        return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
+    shape_descriptor_context = ShapeDescriptorFeatureContext(feature, policy)
+    shape_descriptor_semantics = ShapeDescriptorFeatureSemantics.for_context(
+        shape_descriptor_context,
+        required=False,
+    )
+    if shape_descriptor_semantics is not None:
+        return shape_descriptor_semantics.boundary_jitter_values_equivalent(
+            shape_descriptor_context,
             reference.values_by_feature[feature],
             candidate.values_by_feature[feature],
-            policy,
         )
     if _numeric_counters_are_binary(
         reference.values_by_feature[feature],
@@ -2861,34 +3086,23 @@ def _unstable_shape_descriptor_values_equivalent(
         return False
     if feature.statistic != "value":
         return False
+    shape_descriptor_context = ShapeDescriptorFeatureContext(feature, policy)
+    semantics = ShapeDescriptorFeatureSemantics.for_context(
+        shape_descriptor_context,
+        required=False,
+    )
+    if semantics is None:
+        return False
     if not _shape_descriptor_geometry_is_stable(feature, reference, candidate, policy):
         return False
 
     reference_values = reference.values_by_feature[feature]
     candidate_values = candidate.values_by_feature[feature]
-    if _is_zernike_feature(feature.feature_name):
-        return _sparse_numeric_counters_equivalent(
-            reference_values,
-            candidate_values,
-            policy,
-            abs_tolerance=policy.shape_descriptor_abs_tolerance,
-            rel_tolerance=policy.shape_descriptor_rel_tolerance,
-            max_unstable_values=policy.shape_descriptor_max_unstable_values,
-            max_unstable_fraction=policy.shape_descriptor_max_unstable_fraction,
-        )
-    if feature.feature_name in _ORIENTATION_FEATURES:
-        if policy.allow_sparse_object_boundary_jitter:
-            return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
-                reference_values,
-                candidate_values,
-                policy,
-            )
-        return _absolute_numeric_counters_equivalent(
-            reference_values,
-            candidate_values,
-            policy,
-        )
-    return False
+    return semantics.values_equivalent(
+        shape_descriptor_context,
+        reference_values,
+        candidate_values,
+    )
 
 
 def _shape_descriptor_geometry_is_stable(
@@ -2991,14 +3205,6 @@ def _object_measurement_role_values_stable(
             continue
         matched_features += 1
     return matched_features >= min_stable_features
-
-
-def _is_zernike_feature(feature_name: str) -> bool:
-    descriptor = IndexedObjectZernikeDescriptor.from_feature_name(feature_name)
-    return (
-        descriptor is not None
-        and descriptor.family is ObjectZernikeDescriptorFeature.SHAPE
-    )
 
 
 def _feature_label(feature: RuntimeMeasurementFeatureKey) -> str:
@@ -6607,6 +6813,207 @@ def _object_label_location_values_by_label_for_plane(
     }
 
 
+RELATIONSHIP_DISTANCE_FEATURE_NAMES = frozenset(
+    (
+        "distance_centroid",
+        "distance_minimum",
+    )
+)
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipAggregateFeatureContext:
+    """Semantic context for deriving parent-row aggregates from child rows."""
+
+    source_name: str
+    target_name: str
+    feature_name: str
+
+
+class RelationshipAggregateFeatureSemantics(
+    MostDerivedContextStrategyMixin[RelationshipAggregateFeatureContext],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Map child measurement features onto relationship aggregate features."""
+
+    __registry_key__ = "strategy_key"
+    __skip_if_no_key__ = True
+
+    strategy_key: ClassVar[str | None] = None
+
+    @abstractmethod
+    def matches(self, context: RelationshipAggregateFeatureContext) -> bool:
+        """Return whether this semantic strategy owns the feature context."""
+
+    @abstractmethod
+    def required_child_feature_names(
+        self,
+        context: RelationshipAggregateFeatureContext,
+    ) -> tuple[str, ...]:
+        """Return child-row features needed to synthesize the aggregate."""
+
+    @abstractmethod
+    def aggregate_feature_name(
+        self,
+        context: RelationshipAggregateFeatureContext,
+        *,
+        aggregate: str = MeasurementStatistic.MEAN.value,
+    ) -> str:
+        """Return the source-row aggregate feature emitted for a child feature."""
+
+    def aggregate_child_feature_name(
+        self,
+        context: RelationshipAggregateFeatureContext,
+    ) -> str:
+        """Return the child feature semantically represented by ``context``."""
+        return _normalize_identifier(context.feature_name)
+
+    @staticmethod
+    def parent_qualified_feature_name(feature_name: str, parent_name: str) -> str:
+        return "_".join(
+            part for part in (feature_name, _normalize_identifier(parent_name)) if part
+        )
+
+    @staticmethod
+    def parent_unqualified_feature_name(feature_name: str, parent_name: str) -> str:
+        parent_suffix = f"_{_normalize_identifier(parent_name)}"
+        if feature_name.endswith(parent_suffix):
+            return feature_name[: -len(parent_suffix)]
+        return feature_name
+
+    @staticmethod
+    def target_aggregate_feature_name(
+        target_name: str,
+        child_feature_name: str,
+        *,
+        aggregate: str = MeasurementStatistic.MEAN.value,
+    ) -> str:
+        parts = (
+            _normalize_identifier(aggregate),
+            _normalize_identifier(target_name),
+            _normalize_identifier(child_feature_name),
+        )
+        return "_".join(part for part in parts if part)
+
+    @classmethod
+    def aggregate_child_feature_name_from_key(
+        cls,
+        feature: RuntimeMeasurementFeatureKey,
+        dialect: RuntimeMeasurementDialect,
+    ) -> str | None:
+        """Return child feature represented by a relationship aggregate key."""
+        parts = tuple(part for part in feature.feature_name.split("_") if part)
+        if len(parts) < 3 or parts[0] not in _MEASUREMENT_AGGREGATE_PREFIXES:
+            return None
+        target_name_parts, aggregate_child_feature_parts = (
+            _aggregate_object_and_feature_parts(parts[1:], dialect)
+        )
+        if not target_name_parts or not aggregate_child_feature_parts:
+            return None
+        context = RelationshipAggregateFeatureContext(
+            source_name=feature.subject.name or "",
+            target_name="_".join(target_name_parts),
+            feature_name="_".join(aggregate_child_feature_parts),
+        )
+        semantics = cls.for_context(
+            context,
+            required=False,
+        )
+        if semantics is None:
+            return None
+        return semantics.aggregate_child_feature_name(context)
+
+
+class GenericRelationshipAggregateFeatureSemantics(
+    RelationshipAggregateFeatureSemantics
+):
+    """Default relationship aggregates preserve the child feature identity."""
+
+    strategy_key = "generic"
+
+    def matches(self, context: RelationshipAggregateFeatureContext) -> bool:
+        del context
+        return True
+
+    def required_child_feature_names(
+        self,
+        context: RelationshipAggregateFeatureContext,
+    ) -> tuple[str, ...]:
+        return (_normalize_identifier(context.feature_name),)
+
+    def aggregate_feature_name(
+        self,
+        context: RelationshipAggregateFeatureContext,
+        *,
+        aggregate: str = MeasurementStatistic.MEAN.value,
+    ) -> str:
+        return self.target_aggregate_feature_name(
+            context.target_name,
+            context.feature_name,
+            aggregate=aggregate,
+        )
+
+    def aggregate_child_feature_name(
+        self,
+        context: RelationshipAggregateFeatureContext,
+    ) -> str:
+        return _normalize_identifier(context.feature_name)
+
+
+class ParentQualifiedDistanceAggregateFeatureSemantics(
+    GenericRelationshipAggregateFeatureSemantics
+):
+    """CellProfiler relationship distance rows qualify child features by parent."""
+
+    strategy_key = "parent_qualified_distance"
+
+    def matches(self, context: RelationshipAggregateFeatureContext) -> bool:
+        feature_name = _normalize_identifier(context.feature_name)
+        return (
+            feature_name in RELATIONSHIP_DISTANCE_FEATURE_NAMES
+            or self.parent_unqualified_feature_name(
+                feature_name,
+                context.source_name,
+            )
+            in RELATIONSHIP_DISTANCE_FEATURE_NAMES
+        )
+
+    def required_child_feature_names(
+        self,
+        context: RelationshipAggregateFeatureContext,
+    ) -> tuple[str, ...]:
+        feature_name = _normalize_identifier(context.feature_name)
+        return (
+            feature_name,
+            self.parent_qualified_feature_name(feature_name, context.source_name),
+        )
+
+    def aggregate_feature_name(
+        self,
+        context: RelationshipAggregateFeatureContext,
+        *,
+        aggregate: str = MeasurementStatistic.MEAN.value,
+    ) -> str:
+        return self.target_aggregate_feature_name(
+            context.target_name,
+            self.parent_unqualified_feature_name(
+                _normalize_identifier(context.feature_name),
+                context.source_name,
+            ),
+            aggregate=aggregate,
+        )
+
+    def aggregate_child_feature_name(
+        self,
+        context: RelationshipAggregateFeatureContext,
+    ) -> str:
+        return self.parent_unqualified_feature_name(
+            _normalize_identifier(context.feature_name),
+            context.source_name,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class RelationshipMeasurementSemantics:
     """Measurement identity contract for a directed object relationship."""
@@ -6675,12 +7082,15 @@ class RelationshipMeasurementSemantics:
         *,
         aggregate: str = MeasurementStatistic.MEAN.value,
     ) -> str:
-        parts = (
-            _normalize_identifier(aggregate),
-            self.target_name,
-            _normalize_identifier(child_feature_name),
+        context = RelationshipAggregateFeatureContext(
+            source_name=self.source_name,
+            target_name=self.target_name,
+            feature_name=child_feature_name,
         )
-        return "_".join(part for part in parts if part)
+        return RelationshipAggregateFeatureSemantics.for_context(
+            context,
+            error_subject="relationship aggregate feature",
+        ).aggregate_feature_name(context, aggregate=aggregate)
 
     def required_child_measurement_keys(
         self,
@@ -6689,18 +7099,38 @@ class RelationshipMeasurementSemantics:
         """Return child measurements needed to synthesize required aggregates."""
         if required_measurement_keys is None:
             return None
-        return frozenset(
-            _runtime_measurement_feature_key(
-                self.target_subject,
-                key.feature_name.removeprefix(self.aggregate_prefix),
-                source_name=key.source_name,
+        child_keys: set[RuntimeMeasurementFeatureKey] = set()
+        for key in required_measurement_keys:
+            if (
+                key.subject != self.source_subject
+                or key.statistic != MeasurementStatistic.VALUE.value
+                or not key.feature_name.startswith(self.aggregate_prefix)
+                or key.feature_name == self.aggregate_prefix
+            ):
+                continue
+            aggregate_child_feature_name = key.feature_name.removeprefix(
+                self.aggregate_prefix
             )
-            for key in required_measurement_keys
-            if key.subject == self.source_subject
-            and key.statistic == MeasurementStatistic.VALUE.value
-            and key.feature_name.startswith(self.aggregate_prefix)
-            and key.feature_name != self.aggregate_prefix
-        )
+            context = RelationshipAggregateFeatureContext(
+                source_name=self.source_name,
+                target_name=self.target_name,
+                feature_name=aggregate_child_feature_name,
+            )
+            semantics = RelationshipAggregateFeatureSemantics.for_context(
+                context,
+                error_subject="relationship aggregate child feature",
+            )
+            child_keys.update(
+                _runtime_measurement_feature_key(
+                    self.target_subject,
+                    child_feature_name,
+                    source_name=key.source_name,
+                )
+                for child_feature_name in semantics.required_child_feature_names(
+                    context
+                )
+            )
+        return frozenset(child_keys)
 
     def measurement_facts(
         self,

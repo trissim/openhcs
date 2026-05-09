@@ -826,6 +826,56 @@ def test_measure_granularity_binds_shared_spectrum_settings():
     }
 
 
+def test_measure_image_quality_ignores_inactive_all_images_selector():
+    module = ModuleBlock(
+        name="MeasureImageQuality",
+        module_num=5,
+        settings={
+            "Calculate metrics for which images?": "All loaded images",
+            "Select the images to measure": "",
+        },
+        setting_records=[
+            ModuleSetting(
+                "Calculate metrics for which images?",
+                "All loaded images",
+            ),
+            ModuleSetting("Select the images to measure", ""),
+        ],
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("MeasureImageQuality").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.unmapped_kwargs == {}
+
+
+def test_measure_image_quality_rejects_active_unmapped_image_selector():
+    module = ModuleBlock(
+        name="MeasureImageQuality",
+        module_num=5,
+        settings={
+            "Calculate metrics for which images?": "Select...",
+            "Select the images to measure": "",
+        },
+        setting_records=[
+            ModuleSetting("Calculate metrics for which images?", "Select..."),
+            ModuleSetting("Select the images to measure", ""),
+        ],
+    )
+
+    with pytest.raises(UnmappedModuleSettingsError) as exc:
+        ModuleSettingsBindingStrategy.for_module("MeasureImageQuality").bind(
+            module,
+            binder=SettingsBinder(),
+            param_mapping={},
+        )
+
+    assert "select_the_images_to_measure" in str(exc.value)
+
+
 def test_relate_objects_binds_distance_setting():
     module = ModuleBlock(
         name="RelateObjects",

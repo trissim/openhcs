@@ -84,6 +84,8 @@ from benchmark.cellprofiler_library.functions.expandorshrinkobjects import (
 from benchmark.cellprofiler_library.functions.classifyobjects import (
     ClassificationResult,
 )
+from benchmark.cellprofiler_library.functions.threshold import ThresholdResult
+from benchmark.cellprofiler_library.functions.relateobjects import RelationshipMeasurements
 from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     ExcessObjectHandling,
     FillHolesOption,
@@ -153,6 +155,9 @@ from openhcs.core.runtime_values import (
     object_label_dense_array,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.backends.cellprofiler.relationships import (
+    ObjectRelationshipBackendStrategy,
+)
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -840,6 +845,53 @@ def test_measure_object_size_shape_uses_compact_row_identity_policy() -> None:
         ).object_identity()
         is MeasurementObjectRowIdentity.LABEL_ID
     )
+
+
+def test_per_image_measurements_use_registered_record_builder() -> None:
+    def threshold_like(image):
+        return image, ThresholdResult(
+            slice_index=0,
+            final_threshold=0.3,
+            original_threshold=0.2,
+            guide_threshold=0.0,
+            sigma=1.0,
+            weighted_variance=0.4,
+            sum_of_entropies=0.5,
+        )
+
+    threshold_like.__processing_contract__ = ProcessingContract.PURE_2D
+    runtime = _FakeCellProfilerRuntime(
+        {"phase": _FakeRuntimeImage(np.ones((4, 4), dtype=np.float32))}
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="Threshold",
+            inputs=(ArtifactSpec("phase", ArtifactKind.IMAGE),),
+            runtime_artifact_inputs=(),
+            outputs=(ArtifactSpec("Threshold_5_measurements", ArtifactKind.MEASUREMENTS),),
+            declared_outputs=(
+                ArtifactSpec("phaseThresh", ArtifactKind.IMAGE),
+                ArtifactSpec("Threshold_5_measurements", ArtifactKind.MEASUREMENTS),
+            ),
+        )
+    )
+
+    result = executor.run(
+        threshold_like,
+        np.ones((4, 4), dtype=np.float32),
+        cellprofiler_runtime=runtime,
+    )
+
+    assert result.shape == (4, 4)
+    assert len(runtime.measurements) == 1
+    _name, rows, kwargs = runtime.measurements[0]
+    assert kwargs["source_image_name"] == "phase"
+    assert {row["feature_name"]: row["result_value"] for row in rows} == {
+        "FinalThreshold_phaseThresh": 0.3,
+        "OrigThreshold_phaseThresh": 0.2,
+        "WeightedVariance_phaseThresh": 0.4,
+        "SumOfEntropies_phaseThresh": 0.5,
+    }
 
 
 def test_per_object_measurement_reuses_2d_labels_for_each_image_stack_slice() -> None:
@@ -2901,6 +2953,49 @@ def test_module_executor_preserves_composed_image_measurements() -> None:
         ]
 
 
+def test_colocalization_object_row_policy_projects_source_pair_features() -> None:
+    policy = CellProfilerObjectMeasurementRowPolicy.for_module("MeasureColocalization")
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="DNA__ER__RNA",
+        source_image_names=("DNA", "ER", "RNA"),
+        payload=np.zeros((3, 4, 5), dtype=np.float32),
+    )
+
+    invocations = policy.invocations(measurement_image, {"do_manders": True})
+
+    assert [invocation.kwargs["channel_1"] for invocation in invocations] == [0, 0, 1]
+    assert [invocation.kwargs["channel_2"] for invocation in invocations] == [1, 2, 2]
+    assert [invocation.source_pair.first_name for invocation in invocations] == [
+        "DNA",
+        "DNA",
+        "ER",
+    ]
+    projected = policy.project_rows(
+        [
+            {
+                "slice_index": 0,
+                "object_label": 1,
+                "correlation": 0.5,
+                "manders_m1": 0.7,
+                "manders_m2": 0.8,
+                "costes_threshold_1": 42.0,
+            }
+        ],
+        invocations[0],
+    )
+
+    assert projected == [
+        {
+            "slice_index": 0,
+            "object_label": 1,
+            "Correlation_Correlation_DNA_ER": 0.5,
+            "Correlation_Manders_DNA_ER": 0.7,
+            "Correlation_Manders_ER_DNA": 0.8,
+        }
+    ]
+    assert policy.table_source_image_name((measurement_image,), "DNA__ER__RNA") is None
+
+
 def test_measure_object_neighbors_records_object_topology_without_image_source() -> None:
     def measure_neighbors(image: np.ndarray) -> tuple[np.ndarray, dict[str, float]]:
         return image, {"number_of_neighbors": 1.0}
@@ -4161,7 +4256,7 @@ def test_relationship_measurements_preserve_pure_2d_slice_indices() -> None:
         func=lambda image: image,
     )
 
-    rows = RelationshipMeasurementRows(request).rows()
+    rows = RelationshipMeasurementRows.for_request(request).rows()
     slice_indices = {
         int(row["slice_index"])
         for row in rows
@@ -4257,7 +4352,7 @@ def test_relationship_measurements_broadcast_singleton_label_counts() -> None:
         func=lambda image: image,
     )
 
-    rows = RelationshipMeasurementRows(request).rows()
+    rows = RelationshipMeasurementRows.for_request(request).rows()
 
     parent_rows = [
         row
@@ -4272,6 +4367,128 @@ def test_relationship_measurements_broadcast_singleton_label_counts() -> None:
         (0, 1),
         (1, 1),
     }
+
+
+def test_relateobjects_relationship_rows_project_distances_nominally() -> None:
+    parent_labels = np.zeros((6, 6), dtype=np.int32)
+    child_labels = np.zeros((6, 6), dtype=np.int32)
+    parent_labels[1:5, 1:5] = 1
+    child_labels[2:4, 2:4] = 1
+    runtime = _FakeCellProfilerRuntime(
+        {"Carrier": _FakeRuntimeImage(np.zeros((6, 6), dtype=np.float32))},
+        objects={
+            "Parents": ObjectLabelSet(name="Parents", labels=parent_labels),
+            "Children": ObjectLabelSet(name="Children", labels=child_labels),
+        },
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="RelateObjects",
+            inputs=(
+                ArtifactSpec("Parents", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Children", ArtifactKind.OBJECT_LABELS),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Parents", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Children", ArtifactKind.OBJECT_LABELS),
+            ),
+            outputs=(
+                ArtifactSpec(
+                    "Parents_Children_relationships",
+                    ArtifactKind.RELATIONSHIPS,
+                ),
+            ),
+        )
+    )
+    payload = ParentChildRelationshipPayload(parent_ids=(1,), child_ids=(1,))
+    request = CellProfilerOutputRecordRequest(
+        executor=executor,
+        adapter=runtime,
+        spec=executor.outputs[0],
+        value=RelationshipMeasurements(
+            slice_index=0,
+            parent_object_count=1,
+            child_object_count=1,
+            children_with_parents_count=1,
+            mean_children_per_parent=1.0,
+            mean_centroid_distance=0.0,
+            mean_minimum_distance=1.0,
+        ),
+        output_values={executor.outputs[0].name: payload},
+        source_image_name=None,
+        func=lambda image: image,
+    )
+
+    rows = RelationshipMeasurementRows.for_request(request).rows()
+
+    distance_rows = [
+        row
+        for row in rows
+        if row.get("object_name") == "Children"
+        and "Distance_Centroid_Parents" in row
+    ]
+    assert len(distance_rows) == 1
+    assert distance_rows[0]["Distance_Centroid_Parents"] == pytest.approx(0.0)
+    assert distance_rows[0]["Distance_Minimum_Parents"] == pytest.approx(
+        np.sqrt(2.5)
+    )
+
+
+def test_object_relationship_backend_uses_sparse_ijv_contract_nominally() -> None:
+    parent_dense = np.zeros((8, 8), dtype=np.int32)
+    child_dense = np.zeros((8, 8), dtype=np.int32)
+    parent_sparse = ObjectLabelSet(
+        name="Parents",
+        labels=SparseIJVLabelRows(
+            np.asarray(
+                (
+                    (1, 1, 1),
+                    (2, 2, 2),
+                ),
+                dtype=np.int32,
+            )
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+    child_sparse = ObjectLabelSet(
+        name="Children",
+        labels=SparseIJVLabelRows(
+            np.asarray(
+                (
+                    (1, 1, 7),
+                    (2, 2, 8),
+                    (7, 7, 9),
+                ),
+                dtype=np.int32,
+            )
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+    parent_dense[1, 1] = 1
+    parent_dense[2, 2] = 2
+    backend = ObjectRelationshipBackendStrategy.for_memory_type()
+
+    dense_payload = backend.parent_child_payload_from_labels(
+        np.zeros((8, 8), dtype=np.int32),
+        child_dense,
+    )
+    sparse_payload = backend.parent_child_payload_from_labels(parent_sparse, child_sparse)
+    mixed_payload = backend.parent_child_payload_from_labels(parent_dense, child_sparse)
+
+    assert dense_payload == ParentChildRelationshipPayload(
+        parent_ids=(),
+        child_ids=(),
+    )
+    assert sparse_payload == ParentChildRelationshipPayload(
+        parent_ids=(1, 2),
+        child_ids=(7, 8),
+    )
+    assert backend.parents_of_from_payload(sparse_payload, 9)[6:9].tolist() == [
+        1,
+        2,
+        0,
+    ]
+    assert mixed_payload == sparse_payload
 
 
 def test_define_grid_automatic_uses_integer_lowest_spot_origin() -> None:

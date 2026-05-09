@@ -2319,6 +2319,69 @@ def test_runtime_reference_artifact_equivalence_allows_stable_geometry_orientati
     assert shape_policy_report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_allows_relationship_mean_orientation_boundary_drift(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Nuclei.csv").write_text(
+        "ImageNumber,ObjectNumber,"
+        "AreaShape_Area,AreaShape_Center_X,AreaShape_Center_Y,"
+        "Mean_Nucleoli_AreaShape_Orientation\n"
+        "1,1,10,3.5,4.5,-45\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    native_table = MeasurementTable(
+        name="RelateObjects",
+        rows=(
+            {
+                "object_label": 1,
+                "object_name": "Nuclei",
+                "area": 10,
+                "center_x": 3.5,
+                "center_y": 4.5,
+                "mean_nucleoli_orientation": 45,
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Nuclei"),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="RelateObjects",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=native_table.rows,
+            schema=native_table.runtime_schema(native_table.rows),
+        ),
+        path="/memory/RelateObjects.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    strict_report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+    shape_policy_report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+        policy=RuntimeEquivalencePolicy(allow_unstable_shape_descriptors=True),
+    )
+
+    assert strict_report.failure_messages() == (
+        "measurement feature object:nuclei/mean_nucleoli_orientation values differ",
+    )
+    assert shape_policy_report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_matches_mean_aggregates(
     tmp_path: Path,
 ) -> None:
@@ -3305,6 +3368,92 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_means
             schema=relationship.runtime_schema(relationship.runtime_payload()),
         ),
         path="/memory/Cells_Nuclei_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_derives_parent_qualified_relationship_distances(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Nuclei.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nucleoli_Distance_Centroid,"
+        "Mean_Nucleoli_Distance_Minimum\n"
+        "1,1,2.0,3.0\n"
+        "1,2,6.0,8.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    child_table = MeasurementTable(
+        name="RelateObjects",
+        rows=(
+            {
+                "object_name": "Nucleoli",
+                "object_label": 1,
+                "distance_centroid_nuclei": 1.0,
+                "distance_minimum_nuclei": 2.0,
+            },
+            {
+                "object_name": "Nucleoli",
+                "object_label": 2,
+                "distance_centroid_nuclei": 3.0,
+                "distance_minimum_nuclei": 4.0,
+            },
+            {
+                "object_name": "Nucleoli",
+                "object_label": 3,
+                "distance_centroid_nuclei": 6.0,
+                "distance_minimum_nuclei": 8.0,
+            },
+        ),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/RelateObjects.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Nuclei", "Nucleoli")
+    relationship = ObjectRelationship(
+        name="Nuclei_Nucleoli_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1, 2),
+        target_ids=(1, 2, 3),
+        relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Nuclei_Nucleoli_relationships.pkl",
         backend="memory",
     )
     observation = RuntimeArtifactExecutionObservation.from_contexts(

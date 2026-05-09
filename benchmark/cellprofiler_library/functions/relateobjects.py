@@ -62,8 +62,9 @@ def relate_objects(
     calculate_per_parent_means: bool = False,
     save_children_with_parents: bool = False,
     relationship_backend_provider: CellProfilerBackendProvider | None = None,
-) -> Tuple[
+) -> tuple[np.ndarray, ParentChildRelationshipPayload, RelationshipMeasurements] | tuple[
     np.ndarray,
+    ParentChildRelationshipPayload,
     ParentChildRelationshipPayload,
     RelationshipMeasurements,
 ]:
@@ -83,28 +84,33 @@ def relate_objects(
         - child_labels with parent assignments encoded (H, W)
         - RelationshipMeasurements dataclass
     """
-    parent_labels = object_label_dense_array(parent_labels, dtype=np.int32)
-    child_labels = object_label_dense_array(child_labels, dtype=np.int32)
-    parent_labels, child_labels = aligned_dense_object_label_arrays(
-        parent_labels,
-        child_labels,
-    )
+    raw_parent_labels = parent_labels
+    raw_child_labels = child_labels
     calculate_distances = _coerce_function_enum(
         DistanceMethod,
         calculate_distances,
+    )
+    relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
+        backend_provider=relationship_backend_provider,
+    )
+    parent_child_relationship = relationship_backend.parent_child_payload_from_labels(
+        raw_parent_labels,
+        raw_child_labels,
+    )
+
+    parent_labels = object_label_dense_array(raw_parent_labels, dtype=np.int32)
+    child_labels = object_label_dense_array(raw_child_labels, dtype=np.int32)
+    parent_labels, child_labels = aligned_dense_object_label_arrays(
+        parent_labels,
+        child_labels,
     )
     
     # Get object counts
     parent_count = int(parent_labels.max()) if parent_labels.max() > 0 else 0
     child_count = int(child_labels.max()) if child_labels.max() > 0 else 0
-    relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
-        backend_provider=relationship_backend_provider,
-    )
     
-    # Relate children to parents based on maximum overlap
-    parents_of = relationship_backend.relate_children_to_parents(
-        parent_labels,
-        child_labels,
+    parents_of = relationship_backend.parents_of_from_payload(
+        parent_child_relationship,
         child_count,
     )
     
@@ -135,15 +141,24 @@ def relate_objects(
         valid_dists = minimum_distances[~np.isnan(minimum_distances)]
         mean_minimum_dist = float(np.mean(valid_dists)) if len(valid_dists) > 0 else np.nan
     
-    # Create output: child labels colored by parent assignment
-    output_labels = np.zeros_like(child_labels)
+    saved_child_relationship: ParentChildRelationshipPayload | None = None
     if save_children_with_parents:
-        keep_child = np.zeros(child_count + 1, dtype=bool)
-        keep_child[1:] = parents_of > 0
+        retained_child_ids = np.flatnonzero(
+            np.concatenate((np.zeros(1, dtype=bool), parents_of > 0))
+        ).astype(np.int32, copy=False)
+        label_indexes = np.zeros(child_count + 1, dtype=np.int32)
+        label_indexes[retained_child_ids] = np.arange(
+            1,
+            len(retained_child_ids) + 1,
+            dtype=np.int32,
+        )
         child_index = np.asarray(child_labels, dtype=np.intp)
-        output_labels = np.where(keep_child[child_index], child_labels, 0)
+        output_labels = label_indexes[child_index]
+        saved_child_relationship = relationship_backend.parent_child_payload_from_labels(
+            child_labels,
+            output_labels,
+        )
     else:
-        # Keep all children, encode parent relationship
         output_labels = child_labels.copy()
     
     measurements = RelationshipMeasurements(
@@ -167,11 +182,20 @@ def relate_objects(
         if parent_idx > 0
     )
 
-    return (
-        output_labels.astype(np.float32),
-        ParentChildRelationshipPayload(
+    if related_child_ids != parent_child_relationship.child_ids:
+        parent_child_relationship = ParentChildRelationshipPayload(
             parent_ids=related_parent_ids,
             child_ids=related_child_ids,
-        ),
+        )
+    if saved_child_relationship is not None:
+        return (
+            output_labels.astype(np.float32),
+            parent_child_relationship,
+            saved_child_relationship,
+            measurements,
+        )
+    return (
+        output_labels.astype(np.float32),
+        parent_child_relationship,
         measurements,
     )

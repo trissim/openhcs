@@ -1132,6 +1132,32 @@ def test_identify_primary_objects_threshold_diagnostics_use_pre_fill_binary(
     np.testing.assert_array_equal(captured["binary"], threshold_binary)
 
 
+def test_identify_primary_objects_does_not_size_filter_after_hole_fill() -> None:
+    image = np.zeros((7, 7), dtype=np.float32)
+    image[1:6, 1] = 1.0
+    image[1:6, 5] = 1.0
+    image[1, 1:6] = 1.0
+    image[5, 1:6] = 1.0
+
+    _image, stats, labels = identify_primary_objects(
+        image,
+        min_diameter=1,
+        max_diameter=5,
+        exclude_size=True,
+        exclude_border_objects=False,
+        unclump_method="None",
+        watershed_method="None",
+        fill_holes="After declumping only",
+        threshold_method="Manual",
+        threshold_smoothing_scale=0.0,
+        manual_threshold=0.5,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert stats.object_count == 1
+    assert int(np.count_nonzero(labels.labels)) == 25
+
+
 def test_identify_primary_objects_declumping_maxima_geometry_matches_public_semantics():
     assert _declumping_maxima_geometry(
         min_diameter=8,

@@ -159,6 +159,42 @@ def test_cellprofiler_threshold_diagnostics_handles_nd_images_as_one_domain() ->
     np.testing.assert_allclose(sum_of_entropies, reference_sum_of_entropies)
 
 
+def test_cellprofiler_threshold_quantized_diagnostics_preserve_low_dynamic_range() -> None:
+    from openhcs.processing.backends.cellprofiler.thresholding import (
+        NumbaNumpyThresholdDiagnosticsBackendStrategy,
+        NumpyThresholdDiagnosticsBackendStrategy,
+    )
+
+    image = np.array(
+        [
+            [0.0001, 0.0004, 0.0012, 0.0030],
+            [0.0002, 0.0005, 0.0015, 0.0034],
+        ],
+        dtype=np.float32,
+    )
+    binary = image > 0.001
+    mask = np.ones(image.shape, dtype=bool)
+
+    weighted_variance, sum_of_entropies = (
+        NumbaNumpyThresholdDiagnosticsBackendStrategy().diagnostics(
+            image,
+            mask,
+            binary,
+            proven_unit_interval_scale=65535,
+        )
+    )
+    reference_weighted_variance = (
+        NumpyThresholdDiagnosticsBackendStrategy().weighted_variance(
+            np.rint(image * 65535).astype(np.int64) / 65535,
+            mask,
+            binary,
+        )
+    )
+
+    np.testing.assert_allclose(weighted_variance, reference_weighted_variance)
+    assert isinstance(sum_of_entropies, float)
+
+
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,

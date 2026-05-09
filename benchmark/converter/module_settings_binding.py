@@ -190,11 +190,52 @@ class ModuleUnmappedSettingIgnore(ABC, metaclass=AutoRegisterMeta):
         ignore_type = cls.__registry__.get(canonical_module_name(module_name))
         if ignore_type is None:
             return frozenset()
+        return ignore_type._normalized_setting_names(ignore_type.ignored_settings)
+
+    @classmethod
+    def ignored_setting_names_for_module(cls, module: ModuleBlock) -> frozenset[str]:
+        ignore_type = cls.__registry__.get(canonical_module_name(module.name))
+        if ignore_type is None:
+            return frozenset()
+        return ignore_type._normalized_setting_names(
+            ignore_type.ignored_settings_for(module)
+        )
+
+    @classmethod
+    def ignored_settings_for(
+        cls,
+        module: ModuleBlock,
+    ) -> tuple[str | SettingNameFamily, ...]:
+        return cls.ignored_settings
+
+    @classmethod
+    def _normalized_setting_names(
+        cls,
+        settings: tuple[str | SettingNameFamily, ...],
+    ) -> frozenset[str]:
         return frozenset(
             normalize_cellprofiler_setting_name(concrete_name)
-            for setting_name in ignore_type.ignored_settings
+            for setting_name in settings
             for concrete_name in setting_names(setting_name)
         )
+
+
+class ConditionalModuleUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
+    """Nominal policy for CP settings inactive under a controlling UI choice."""
+
+    controlling_setting: ClassVar[str | SettingNameFamily]
+    inactive_when_values: ClassVar[tuple[str, ...]]
+    inactive_settings: ClassVar[tuple[str | SettingNameFamily, ...]]
+
+    @classmethod
+    def ignored_settings_for(
+        cls,
+        module: ModuleBlock,
+    ) -> tuple[str | SettingNameFamily, ...]:
+        value = optional_setting_value(module, cls.controlling_setting)
+        if value in cls.inactive_when_values:
+            return (*cls.ignored_settings, *cls.inactive_settings)
+        return cls.ignored_settings
 
 
 class CorrectIlluminationCalculateUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
@@ -254,6 +295,15 @@ class MeasureGranularityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
         "image_count",
         "object_count",
     )
+
+
+class MeasureImageQualityUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgnore):
+    """Image selector is inactive when image quality measures all loaded images."""
+
+    module_name = "MeasureImageQuality"
+    controlling_setting = "Calculate metrics for which images?"
+    inactive_when_values = ("All loaded images",)
+    inactive_settings = ("Select the images to measure",)
 
 
 class RelateObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
@@ -429,7 +479,7 @@ class ModuleSettingsBindingStrategy(ABC, metaclass=AutoRegisterMeta):
             if setting_name not in ignored_unmapped_settings
             and setting_name not in self._artifact_setting_names(module)
             and setting_name
-            not in ModuleUnmappedSettingIgnore.ignored_setting_names_for(module.name)
+            not in ModuleUnmappedSettingIgnore.ignored_setting_names_for_module(module)
         }
         self._validate_mapped_module_settings(module, unmapped_kwargs)
         if len(unmapped_kwargs) != len(bound.unmapped_kwargs):
@@ -2077,6 +2127,12 @@ class RelateObjectsModuleSettingsBindingStrategy(GenericModuleSettingsBindingStr
 
     module_name = "RelateObjects"
     distance_setting_name: ClassVar[str] = "Calculate child-parent distances?"
+    per_parent_means_setting_name: ClassVar[str] = (
+        "Calculate per-parent means for all child measurements?"
+    )
+    save_children_setting_name: ClassVar[str] = (
+        "Do you want to save the children with parents as a new object set?"
+    )
 
     def _bind(
         self,
@@ -2096,6 +2152,34 @@ class RelateObjectsModuleSettingsBindingStrategy(GenericModuleSettingsBindingStr
             ).value
             unmapped_kwargs.pop(
                 normalize_cellprofiler_setting_name(type(self).distance_setting_name),
+                None,
+            )
+        per_parent_means = optional_setting_value(
+            module,
+            type(self).per_parent_means_setting_name,
+        )
+        if per_parent_means is not None:
+            kwargs["calculate_per_parent_means"] = binder.parse_value(
+                type(self).per_parent_means_setting_name,
+                per_parent_means,
+            )
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(
+                    type(self).per_parent_means_setting_name
+                ),
+                None,
+            )
+        save_children = optional_setting_value(
+            module,
+            type(self).save_children_setting_name,
+        )
+        if save_children is not None:
+            kwargs["save_children_with_parents"] = binder.parse_value(
+                type(self).save_children_setting_name,
+                save_children,
+            )
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(type(self).save_children_setting_name),
                 None,
             )
         return BoundModuleSettings(kwargs, unmapped_kwargs)

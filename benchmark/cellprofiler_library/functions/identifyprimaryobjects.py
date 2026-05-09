@@ -600,21 +600,7 @@ def identify_primary_objects(
     ):
         phase_started_at = time.perf_counter()
         capture_array_fixture("ipo_fill_after", labels=labeled_image)
-        filled_labeled_image = morphology.fill_labeled_holes(labeled_image)
-        fill_changed_labels = (
-            filled_labeled_image is not labeled_image
-            and not np.array_equal(filled_labeled_image, labeled_image)
-        )
-        labeled_image = filled_labeled_image
-        if fill_changed_labels and exclude_size and object_count > 0:
-            labeled_image = _filter_labels_below_minimum_diameter(
-                labeled_image,
-                min_diameter,
-            )
-            labeled_image = _filter_labels_above_maximum_diameter(
-                labeled_image,
-                max_diameter,
-            )
+        labeled_image = morphology.fill_labeled_holes(labeled_image)
         _log_profile(
             "ipo_fill_after_declump",
             time.perf_counter() - phase_started_at,

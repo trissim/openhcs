@@ -368,7 +368,12 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                     if bool(np.all(np.isfinite(cropped_image))):
                         if proven_unit_interval_scale is not None:
                             scale = int(proven_unit_interval_scale)
-                            values, log_values, log_delta_values = (
+                            (
+                                values,
+                                weighted_log_values,
+                                entropy_log_values,
+                                entropy_log_delta_values,
+                            ) = (
                                 _quantized_log_tables(scale)
                             )
                             y_slice, x_slice = mask_slices
@@ -380,8 +385,9 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                                     np.ascontiguousarray(binary_array),
                                     _deterministic_normal_noise(image_array.shape),
                                     values,
-                                    log_values,
-                                    log_delta_values,
+                                    weighted_log_values,
+                                    entropy_log_values,
+                                    entropy_log_delta_values,
                                     int(y_slice.start),
                                     int(y_slice.stop),
                                     int(x_slice.start),
@@ -392,7 +398,12 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         if full_mask and bool(np.all(np.isfinite(image_array))):
             if proven_unit_interval_scale is not None:
                 scale = int(proven_unit_interval_scale)
-                values, log_values, log_delta_values = _quantized_log_tables(scale)
+                (
+                    values,
+                    weighted_log_values,
+                    entropy_log_values,
+                    entropy_log_delta_values,
+                ) = _quantized_log_tables(scale)
                 weighted_variance, sum_of_entropies = (
                     _threshold_diagnostics_unmasked_finite_quantized_numba(
                         np.ascontiguousarray(
@@ -401,8 +412,9 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                         np.ascontiguousarray(binary_array),
                         _deterministic_normal_noise(image_array.shape),
                         values,
-                        log_values,
-                        log_delta_values,
+                        weighted_log_values,
+                        entropy_log_values,
+                        entropy_log_delta_values,
                     )
                 )
                 return float(weighted_variance), float(sum_of_entropies)
@@ -449,7 +461,12 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
         if bool(np.all(flat_mask)) and bool(np.all(np.isfinite(flat_image))):
             if request.proven_unit_interval_scale is not None:
                 scale = int(request.proven_unit_interval_scale)
-                values, log_values, log_delta_values = _quantized_log_tables(scale)
+                (
+                    values,
+                    weighted_log_values,
+                    entropy_log_values,
+                    entropy_log_delta_values,
+                ) = _quantized_log_tables(scale)
                 weighted_variance, sum_of_entropies = (
                     _threshold_diagnostics_unmasked_finite_quantized_numba(
                         np.ascontiguousarray(
@@ -458,8 +475,9 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
                         flat_binary,
                         noise,
                         values,
-                        log_values,
-                        log_delta_values,
+                        weighted_log_values,
+                        entropy_log_values,
+                        entropy_log_delta_values,
                     )
                 )
                 return float(weighted_variance), float(sum_of_entropies)
@@ -1123,15 +1141,19 @@ def _rectangular_mask_slices(mask: np.ndarray) -> tuple[slice, slice] | None:
 @lru_cache(maxsize=8)
 def _quantized_log_tables(
     scale: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     codes = np.arange(int(scale) + 1, dtype=np.float32)
     values = (codes / np.float32(scale)).astype(np.float64, copy=False)
     delta = 2.0 ** -8
-    clipped = np.clip(values, delta, 1.0)
+    weighted_log_values = np.zeros_like(values)
+    positive_values = values > 0.0
+    weighted_log_values[positive_values] = np.log2(values[positive_values])
+    entropy_values = np.clip(values, delta, 1.0)
     return (
         values,
-        np.log2(clipped),
-        np.log2(clipped + delta),
+        weighted_log_values,
+        np.log2(entropy_values),
+        np.log2(entropy_values + delta),
     )
 
 
@@ -1141,8 +1163,9 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
     binary_image: np.ndarray,
     noise: np.ndarray,
     values: np.ndarray,
-    log_values: np.ndarray,
-    log_delta_values: np.ndarray,
+    weighted_log_values: np.ndarray,
+    entropy_log_values: np.ndarray,
+    entropy_log_delta_values: np.ndarray,
 ) -> tuple[float, float]:
     height, width = codes.shape
     if height == 0 or width == 0:
@@ -1185,9 +1208,9 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
                     entropy_log_value = math.log2(clipped)
                     log_delta_value = math.log2(clipped + delta)
                 else:
-                    weighted_log_value = log_values[code]
-                    entropy_log_value = weighted_log_value
-                    log_delta_value = log_delta_values[code]
+                    weighted_log_value = weighted_log_values[code]
+                    entropy_log_value = entropy_log_values[code]
+                    log_delta_value = entropy_log_delta_values[code]
                 noise_value = noise[y, x]
                 log_smoothed_value = (
                     log_delta_value * noise_value
@@ -1251,8 +1274,8 @@ def _threshold_diagnostics_unmasked_finite_quantized_numba(
                 entropy_log_value = math.log2(clipped)
                 log_delta_value = math.log2(clipped + delta)
             else:
-                entropy_log_value = log_values[code]
-                log_delta_value = log_delta_values[code]
+                entropy_log_value = entropy_log_values[code]
+                log_delta_value = entropy_log_delta_values[code]
             noise_value = noise[y, x]
             log_smoothed_value = (
                 log_delta_value * noise_value
@@ -1288,8 +1311,9 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
     binary_image: np.ndarray,
     noise: np.ndarray,
     values: np.ndarray,
-    log_values: np.ndarray,
-    log_delta_values: np.ndarray,
+    weighted_log_values: np.ndarray,
+    entropy_log_values: np.ndarray,
+    entropy_log_delta_values: np.ndarray,
     y0: int,
     y1: int,
     x0: int,
@@ -1320,7 +1344,7 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
             for x in range(x0, x1):
                 code = codes[y, x]
                 value = values[code]
-                log_value = minval_log if value < minval else log_values[code]
+                log_value = minval_log if value < minval else weighted_log_values[code]
                 if binary_image[y, x]:
                     fg_count += 1
                     fg_sum += log_value
@@ -1366,8 +1390,8 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
                 log_value = math.log2(clipped)
                 log_delta_value = math.log2(clipped + delta)
             else:
-                log_value = log_values[code]
-                log_delta_value = log_delta_values[code]
+                log_value = entropy_log_values[code]
+                log_delta_value = entropy_log_delta_values[code]
             noise_value = noise[y, x]
             log_smoothed_value = (
                 log_delta_value * noise_value
@@ -1410,8 +1434,8 @@ def _threshold_diagnostics_rectangular_mask_quantized_numba(
                 log_value = math.log2(clipped)
                 log_delta_value = math.log2(clipped + delta)
             else:
-                log_value = log_values[code]
-                log_delta_value = log_delta_values[code]
+                log_value = entropy_log_values[code]
+                log_delta_value = entropy_log_delta_values[code]
             noise_value = noise[y, x]
             log_smoothed_value = (
                 log_delta_value * noise_value

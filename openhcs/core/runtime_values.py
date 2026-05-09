@@ -1132,6 +1132,25 @@ class SparseIJVLabelRows(ColumnarRows):
         return cls(data)
 
     @classmethod
+    def from_dense_labels(cls, labels: Any) -> "SparseIJVLabelRows":
+        import numpy as _np
+
+        label_array = _np.asarray(labels)
+        if label_array.ndim != 2:
+            raise ValueError(
+                "SparseIJVLabelRows.from_dense_labels requires a 2-D label image."
+            )
+        rows, columns = _np.nonzero(label_array > 0)
+        if rows.size == 0:
+            return cls(_np.zeros((0, 3), dtype=_np.int32))
+        return cls(
+            _np.column_stack((rows, columns, label_array[rows, columns])).astype(
+                _np.int32,
+                copy=False,
+            )
+        )
+
+    @classmethod
     def from_slices(cls, values: Sequence["SparseIJVLabelRows"]) -> "SparseIJVLabelRows":
         import numpy as _np
 
