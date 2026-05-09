@@ -7,7 +7,11 @@ from typing import Any
 from benchmark.cellprofiler_compat.measurement_lookup import count_feature_object_name
 
 from .parser import ModuleBlock
-from .setting_names import SettingNameFamily, optional_setting_value
+from .setting_names import (
+    SettingNameFamily,
+    normalized_symbol_name,
+    optional_setting_value,
+)
 from .settings_binder import SettingsBinder
 
 
@@ -198,8 +202,4 @@ def _optional_object_name(
     value = optional_setting_value(module, setting_name)
     if value is None:
         return None
-    normalized = value.strip()
-    if not normalized or normalized.lower() in {"none", "do not use"}:
-        return None
-    return normalized
-
+    return normalized_symbol_name(value)

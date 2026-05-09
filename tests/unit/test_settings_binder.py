@@ -20,6 +20,7 @@ from benchmark.cellprofiler_library.functions.rescaleintensity import (
 )
 from benchmark.cellprofiler_library.functions.maskimage import MaskSource
 from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
+from benchmark.cellprofiler_library.functions.imagemath import MathOperation
 from benchmark.cellprofiler_library.functions.watershed import (
     WatershedDeclumpMethod,
     WatershedMethod,
@@ -1231,7 +1232,7 @@ def test_image_math_binds_operation_semantics():
     )
 
     assert bound.kwargs == {
-        "operation": "Invert",
+        "operation": MathOperation.INVERT,
         "exponent": 1.0,
         "after_factor": 1.0,
         "addend": 0.0,

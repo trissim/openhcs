@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import ast
 import subprocess
 import sys
+from pathlib import Path
 
 import numpy as np
 import pytest
@@ -10,6 +12,28 @@ from openhcs.constants.constants import MemoryType
 from openhcs.core.callable_contract import PROCESSING_CONTRACT_ATTR
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+
+def test_openhcs_product_code_does_not_import_benchmark_package() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    offenders: list[tuple[str, int, str]] = []
+    for file_path in sorted((repo_root / "openhcs").rglob("*.py")):
+        tree = ast.parse(file_path.read_text(), filename=str(file_path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "benchmark" or alias.name.startswith("benchmark."):
+                        offenders.append(
+                            (str(file_path.relative_to(repo_root)), node.lineno, alias.name)
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                module_name = node.module or ""
+                if module_name == "benchmark" or module_name.startswith("benchmark."):
+                    offenders.append(
+                        (str(file_path.relative_to(repo_root)), node.lineno, module_name)
+                    )
+
+    assert offenders == []
 
 
 def test_cellprofiler_processing_backend_exports_absorbed_function() -> None:

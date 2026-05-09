@@ -101,7 +101,9 @@ def normalized_symbol_name(value: str) -> str | None:
 def is_blank_symbol_name(value: str) -> bool:
     """Return whether a CellProfiler setting value means no artifact symbol."""
     return _normalized_setting_literal(value) in {
+        "leave_blank",
         "leave_this_black",
+        "leave_this_blank",
         "none",
         "do_not_use",
         "no",

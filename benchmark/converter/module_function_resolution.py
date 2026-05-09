@@ -26,6 +26,7 @@ from .setting_names import (
     SettingNameFamily,
     required_setting_value,
     setting_values,
+    split_symbol_names,
 )
 
 
@@ -307,16 +308,7 @@ def _setting_has_symbolic_values(
     module: ModuleBlock,
     setting: SettingNameFamily,
 ) -> bool:
-    return any(
-        _is_meaningful_symbolic_value(part)
-        for value in setting_values(module, setting)
-        for part in value.split(",")
-    )
-
-
-def _is_meaningful_symbolic_value(value: str) -> bool:
-    normalized = value.strip().lower()
-    return normalized not in {"", "none", "do not use", "leave this black"}
+    return any(split_symbol_names(value) for value in setting_values(module, setting))
 
 
 def _measurement_target_scope(value: str) -> MeasurementTargetScope:

@@ -6,7 +6,7 @@ from enum import Enum
 from typing import Any
 
 from .parser import ModuleBlock
-from .setting_names import optional_setting_value
+from .setting_names import is_blank_symbol_name, optional_setting_value
 from .settings_binder import SettingsBinder
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerGridCycleScope,
@@ -283,4 +283,4 @@ def _literal_from_fragments(
 
 
 def _is_blank_symbol(value: str) -> bool:
-    return value.strip().lower() in {"", "none", "do not use", "leave this blank"}
+    return is_blank_symbol_name(value)

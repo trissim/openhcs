@@ -7,8 +7,17 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from openhcs.interop.cellprofiler.setting_names import (
+    normalized_symbol_name,
+    split_symbol_names,
+)
+
 from .parser import ModuleBlock, ModuleSetting
-from .setting_names import SettingNameFamily, block_setting_value, repeating_setting_blocks
+from .setting_names import (
+    SettingNameFamily,
+    block_setting_value,
+    repeating_setting_blocks,
+)
 
 
 AREA_OCCUPIED_MODE_SETTING = SettingNameFamily(
@@ -64,10 +73,10 @@ class AreaOccupiedMeasurementRow:
             operand=AreaOccupiedOperand.from_literal(
                 block_setting_value(block, AREA_OCCUPIED_MODE_SETTING)
             ),
-            binary_image_name=_optional_symbol_value(
+            binary_image_name=normalized_symbol_name(
                 block_setting_value(block, AREA_OCCUPIED_BINARY_IMAGE_SETTING)
             ),
-            objects_name=_optional_symbol_value(
+            objects_name=normalized_symbol_name(
                 block_setting_value(block, AREA_OCCUPIED_OBJECTS_SETTING)
             ),
             retained_image_name=_retained_area_occupied_image_name(block),
@@ -139,18 +148,9 @@ def _retained_area_occupied_image_name(
     retain = block_setting_value(block, AREA_OCCUPIED_RETAIN_IMAGE_SETTING)
     if retain.strip().lower() != "yes":
         return None
-    return _optional_symbol_value(
+    return normalized_symbol_name(
         block_setting_value(block, AREA_OCCUPIED_OUTPUT_IMAGE_SETTING)
     )
-
-
-def _optional_symbol_value(value: str) -> str | None:
-    normalized = value.strip()
-    if not normalized:
-        return None
-    if normalized.lower() in {"leave this black", "none", "do not use"}:
-        return None
-    return normalized
 
 
 def _expanded_area_occupied_rows(
@@ -192,11 +192,7 @@ def _expanded_area_occupied_rows(
 
 
 def _split_symbol_values(value: str) -> tuple[str, ...]:
-    return tuple(
-        symbol
-        for part in value.split(",")
-        if (symbol := _optional_symbol_value(part)) is not None
-    )
+    return split_symbol_names(value)
 
 
 def _required_single_name(

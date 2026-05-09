@@ -102,6 +102,7 @@ from openhcs.interop.cellprofiler.setting_names import (
     required_setting_value,
     setting_names,
     setting_values,
+    normalized_symbol_name,
     split_symbol_names,
 )
 from .straighten_worms_settings import (
@@ -2416,23 +2417,7 @@ def _normalized_setting_symbol(
     value = _optional_setting(module, setting)
     if value is None:
         return None
-    normalized = _normalize_symbol_name(value)
-    return _normalized_optional_symbol_value(normalized)
-
-
-def _normalized_optional_symbol_value(value: str) -> str | None:
-    if not value.strip():
-        return None
-    normalized = _normalize_symbol_name(value)
-    if normalized.lower() in {
-        "leave blank",
-        "leave this black",
-        "leave this blank",
-        "none",
-        "do not use",
-    }:
-        return None
-    return normalized
+    return normalized_symbol_name(value)
 
 
 def _setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:

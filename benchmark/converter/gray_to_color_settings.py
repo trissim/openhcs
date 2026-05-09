@@ -10,6 +10,7 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 
 from .parser import ModuleBlock
+from .setting_names import is_blank_symbol_name, normalized_symbol_name
 
 
 class GrayToColorScheme(str, Enum):
@@ -167,10 +168,12 @@ def gray_to_color_stack_channels(
     weight = "1.0"
     for setting in module.iter_settings():
         if setting.name == "Image name":
-            if image_name is not None and not is_blank_gray_to_color_source(image_name):
+            if (
+                normalized_image_name := normalized_symbol_name(image_name or "")
+            ) is not None:
                 channels.append(
                     GrayToColorStackChannelSetting(
-                        image_name=image_name,
+                        image_name=normalized_image_name,
                         color=color,
                         weight=weight,
                     )
@@ -186,10 +189,12 @@ def gray_to_color_stack_channels(
             continue
         if setting.name == "Weight":
             weight = setting.value.strip()
-    if image_name is not None and not is_blank_gray_to_color_source(image_name):
+    if (
+        normalized_image_name := normalized_symbol_name(image_name or "")
+    ) is not None:
         channels.append(
             GrayToColorStackChannelSetting(
-                image_name=image_name,
+                image_name=normalized_image_name,
                 color=color,
                 weight=weight,
             )
@@ -199,13 +204,8 @@ def gray_to_color_stack_channels(
 
 def is_blank_gray_to_color_source(value: str) -> bool:
     """Whether one GrayToColor input literal means 'unused'."""
-    return value.strip().lower() in {"", "leave this black", "none", "do not use"}
+    return is_blank_symbol_name(value)
 
 
 def _normalized_source_name(value: str) -> str | None:
-    normalized = value.strip()
-    if is_blank_gray_to_color_source(normalized):
-        return None
-    if not normalized:
-        return None
-    return normalized
+    return normalized_symbol_name(value)

@@ -11,6 +11,10 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 
+from benchmark.cellprofiler_library.functions.imagemath import (
+    ImageMathOperationStrategy,
+)
+
 from .parser import ModuleBlock
 from .setting_names import optional_setting_value
 from .settings_binder import (
@@ -22,7 +26,11 @@ from .settings_binder import (
 
 
 IMAGE_MATH_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
-    SettingToKeywordBinding("Operation", "operation"),
+    SettingToKeywordBinding(
+        "Operation",
+        "operation",
+        lambda value: ImageMathOperationStrategy.coerce(value).operation,
+    ),
     SettingToKeywordBinding(
         "Raise the power of the result by",
         "exponent",
@@ -63,7 +71,7 @@ def image_math_bound_kwargs(
 ) -> dict[str, Any]:
     """Return absorbed-function kwargs for CellProfiler ImageMath."""
     kwargs = binder.bind_declared(module, IMAGE_MATH_SETTINGS)
-    factors = _image_math_factors(module)
+    factors = ImageMathOperandFactorSettingResolver.bound_factors(module)
     if factors:
         kwargs["factors"] = factors
     return kwargs
@@ -109,17 +117,26 @@ class ImageMathOperandFactorSettingResolver(
     def registered_settings(cls) -> tuple[ImageMathOperandFactorSetting, ...]:
         return tuple(
             ImageMathOperandFactorSetting(
-                resolver_type._ordinal(),
+                resolver_type.ordinal_member(),
                 resolver_type.setting_name,
             )
             for resolver_type in sorted(
                 cls.registered_strategy_types(),
-                key=lambda registered_type: registered_type._ordinal().value,
+                key=lambda registered_type: registered_type.ordinal_member().value,
             )
         )
 
     @classmethod
-    def _ordinal(cls) -> ImageMathOperandOrdinal:
+    def bound_factors(cls, module: ModuleBlock) -> tuple[float, ...]:
+        factors: list[float] = []
+        for setting in cls.registered_settings():
+            value = setting.value_for_module(module)
+            if value is not None:
+                factors.append(value)
+        return tuple(factors)
+
+    @classmethod
+    def ordinal_member(cls) -> ImageMathOperandOrdinal:
         if not isinstance(cls.ordinal, ImageMathOperandOrdinal):
             raise TypeError(f"{cls.__name__} must declare an ImageMath operand ordinal.")
         return cls.ordinal
@@ -133,12 +150,3 @@ class FirstImageMathOperandFactorSetting(ImageMathOperandFactorSettingResolver):
 class SecondImageMathOperandFactorSetting(ImageMathOperandFactorSettingResolver):
     ordinal = ImageMathOperandOrdinal.SECOND
     setting_name = "Multiply the second image by"
-
-
-def _image_math_factors(module: ModuleBlock) -> tuple[float, ...]:
-    factors: list[float] = []
-    for setting in ImageMathOperandFactorSettingResolver.registered_settings():
-        value = setting.value_for_module(module)
-        if value is not None:
-            factors.append(value)
-    return tuple(factors)

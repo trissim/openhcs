@@ -123,6 +123,9 @@ dmypy.json
 output/
 *.json
 !examples/*.json
+!benchmark/manifests/official23_plus_monolayer.json
+!benchmark/manifests/extra_provided_not_in_23_axis1.json
+!benchmark/manifests/official23_plus_extra6_axis1.json
 tests/integration/tests_data/
 
 # Embedded repositories
@@ -134,6 +137,7 @@ archive/
 audit/
 plans/*
 !plans/root-artifact-cleanup.md
+!plans/core_surface_reduction_plan_20260509.md
 semantic_matrix_analyzer/
 tools/
 bin/

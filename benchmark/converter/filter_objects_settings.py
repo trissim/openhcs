@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any
 
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
+from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
 
 from benchmark.cellprofiler_compat.measurement_lookup import child_count_feature_child_name
 
@@ -98,7 +99,7 @@ class FilterObjectsAdditionalObjectRow(FilterObjectsObjectPair):
                     default="No",
                 )
             ),
-            outline_image_name=_optional_symbol_value(
+            outline_image_name=normalized_symbol_name(
                 block_setting_value(block, FILTER_OBJECTS_OUTLINE_IMAGE_SETTING)
             ),
         ).validated(module)
@@ -289,7 +290,7 @@ def filter_objects_plan(module: ModuleBlock) -> FilterObjectsPlan:
         ),
         outline_image_name=_main_outline_image_name(module),
         additional_rows=filter_objects_additional_rows(module),
-        enclosing_object_name=_optional_symbol_value(
+        enclosing_object_name=normalized_symbol_name(
             optional_setting_value(module, FILTER_OBJECTS_ENCLOSING_OBJECT_SETTING)
             or ""
         ),
@@ -426,7 +427,7 @@ def _mapping_additional_rows(
             retain_outline=_setting_bool(
                 _indexed_value(outline_flags, index, default="No")
             ),
-            outline_image_name=_optional_symbol_value(
+            outline_image_name=normalized_symbol_name(
                 _indexed_value(outline_names, index)
             ),
         ).validated(module)
@@ -438,7 +439,7 @@ def _main_outline_image_name(module: ModuleBlock) -> str | None:
     names = setting_values(module, FILTER_OBJECTS_OUTLINE_IMAGE_SETTING)
     if not names:
         return None
-    return _optional_symbol_value(names[0])
+    return normalized_symbol_name(names[0])
 
 
 def _filter_mode_value(module: ModuleBlock) -> str:
@@ -476,21 +477,12 @@ def _indexed_value(
     return values[-1]
 
 
-def _optional_symbol_value(value: str) -> str | None:
-    normalized = value.strip()
-    if not normalized:
-        return None
-    if normalized.lower() in {"none", "do not use", "leave this black"}:
-        return None
-    return normalized
-
-
 def _require_symbol_value(
     value: str,
     module: ModuleBlock,
     setting_name: str | SettingNameFamily,
 ) -> None:
-    if _optional_symbol_value(value) is not None:
+    if normalized_symbol_name(value) is not None:
         return
     raise ValueError(
         f"Module {module.name}({module.module_num}) has an empty "

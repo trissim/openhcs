@@ -13,7 +13,7 @@ from collections.abc import Callable, Mapping
 from functools import lru_cache, wraps
 from typing import Any
 
-from benchmark.cellprofiler_library import (
+from openhcs.processing.backends.cellprofiler.library import (
     coerce_absorbed_processing_contract,
     function_inventory,
     get_contract,

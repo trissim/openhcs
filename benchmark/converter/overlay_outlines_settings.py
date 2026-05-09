@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
+
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
     SettingNameFamily,
@@ -78,8 +80,8 @@ class OverlayOutlineSourceFields(OverlayOutlineSymbolPair):
         source_kind: str,
     ) -> "OverlayOutlineSourceFields":
         return cls(
-            image_name=_optional_symbol_value(image_name),
-            objects_name=_optional_symbol_value(objects_name),
+            image_name=normalized_symbol_name(image_name),
+            objects_name=normalized_symbol_name(objects_name),
             source_kind_literal=source_kind,
         )
 
@@ -281,12 +283,3 @@ def _indexed_value(
     if index < len(values):
         return values[index]
     return values[-1]
-
-
-def _optional_symbol_value(value: str) -> str | None:
-    normalized = value.strip()
-    if not normalized:
-        return None
-    if normalized.lower() in {"leave this black", "none", "do not use"}:
-        return None
-    return normalized

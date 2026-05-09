@@ -8,15 +8,21 @@ min/max, standard deviation, inversion, log transform, and logical operations.
 """
 
 import numpy as np
-from typing import Any, Tuple
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Any, Callable, ClassVar, Tuple
 from enum import Enum
+from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
     image_payload_with_context,
 )
+
+ImageMathBinaryOperator = Callable[[np.ndarray, np.ndarray], np.ndarray]
 
 
 class MathOperation(Enum):
@@ -40,44 +46,388 @@ class MathOperation(Enum):
     EQUALS = "equals"
 
 
-BINARY_OUTPUT_OPS = [MathOperation.AND, MathOperation.OR, MathOperation.NOT, MathOperation.EQUALS]
-SINGLE_IMAGE_OPS = [MathOperation.INVERT, MathOperation.COMPLEMENT, MathOperation.LOG_TRANSFORM, MathOperation.LOG_TRANSFORM_LEGACY, MathOperation.NOT, MathOperation.NONE]
+class ImageMathOperationStrategy(
+    EnumKeyedStrategyMixin[MathOperation],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal owner for ImageMath operation arity, literals, and execution."""
+
+    __registry_key__ = "operation_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "operation"
+    __enum_label_attr__ = "operation_label"
+
+    operation: ClassVar[MathOperation | None] = None
+    operation_label: ClassVar[str | None] = None
+    cellprofiler_literals: ClassVar[tuple[str, ...]] = ()
+    single_image: ClassVar[bool] = False
+    binary_output: ClassVar[bool] = False
+    implementation_namespace_key: ClassVar[str | None] = None
+
+    @staticmethod
+    def normalized_cellprofiler_literal(value: str) -> str:
+        return "_".join(value.strip().lower().replace("-", " ").split())
+
+    @staticmethod
+    def operands_are_logical(pixel_data: list[np.ndarray]) -> bool:
+        return all(pd.dtype == bool for pd in pixel_data if not np.isscalar(pd))
+
+    @classmethod
+    def materialized_namespace(
+        cls,
+        operation: MathOperation,
+        implementation: ImageMathBinaryOperator | None,
+    ) -> dict[str, Any]:
+        namespace: dict[str, Any] = {
+            "__module__": __name__,
+            "operation": operation,
+        }
+        if cls.implementation_namespace_key is not None:
+            namespace[cls.implementation_namespace_key] = implementation
+        return namespace
+
+    @classmethod
+    def coerce(cls, value: MathOperation | str) -> "ImageMathOperationStrategy":
+        if isinstance(value, MathOperation):
+            return cls.for_enum_member(value)
+        literal = cls.normalized_cellprofiler_literal(str(value))
+        for strategy_type in cls.registered_strategy_types():
+            if literal in strategy_type.normalized_cellprofiler_literals():
+                return strategy_type()
+        raise ValueError(f"Unsupported ImageMath operation {value!r}.")
+
+    @classmethod
+    def normalized_cellprofiler_literals(cls) -> frozenset[str]:
+        operation = cls.operation
+        if not isinstance(operation, MathOperation):
+            raise TypeError(f"{cls.__name__} must declare a MathOperation.")
+        literals = (operation.name, operation.value, *cls.cellprofiler_literals)
+        return frozenset(cls.normalized_cellprofiler_literal(literal) for literal in literals)
+
+    def prepare_initial_output(
+        self,
+        image: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        if self.single_image:
+            output = image.astype(np.float64, copy=True)
+            if not self.binary_output and factors[0] != 1.0:
+                output *= factors[0]
+            return output
+        return pixel_data[0].copy()
+
+    @abstractmethod
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        """Apply this ImageMath operation to prepared operands."""
 
 
-_CELLPROFILER_IMAGE_MATH_OPERATIONS = {
-    "add": MathOperation.ADD,
-    "subtract": MathOperation.SUBTRACT,
-    "absolute_difference": MathOperation.DIFFERENCE,
-    "difference": MathOperation.DIFFERENCE,
-    "multiply": MathOperation.MULTIPLY,
-    "divide": MathOperation.DIVIDE,
-    "average": MathOperation.AVERAGE,
-    "minimum": MathOperation.MINIMUM,
-    "maximum": MathOperation.MAXIMUM,
-    "standard_deviation": MathOperation.STDEV,
-    "stdev": MathOperation.STDEV,
-    "invert": MathOperation.INVERT,
-    "complement": MathOperation.COMPLEMENT,
-    "log_transform": MathOperation.LOG_TRANSFORM,
-    "log_transform_base_2": MathOperation.LOG_TRANSFORM,
-    "log_transform_base2": MathOperation.LOG_TRANSFORM,
-    "log_transform_legacy": MathOperation.LOG_TRANSFORM_LEGACY,
-    "none": MathOperation.NONE,
-    "or": MathOperation.OR,
-    "and": MathOperation.AND,
-    "not": MathOperation.NOT,
-    "equals": MathOperation.EQUALS,
-}
+class PairwiseNumpyImageMathOperationStrategy(ImageMathOperationStrategy):
+    """Template for ImageMath operations that reduce operands with one NumPy op."""
+
+    implementation_namespace_key = "numpy_operator"
+    numpy_operator: ClassVar[ImageMathBinaryOperator | None] = None
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del factors
+        if self.numpy_operator is None:
+            raise TypeError(f"{type(self).__name__} must declare a NumPy operator.")
+        for pd in pixel_data[1:]:
+            output_pixel_data = self.numpy_operator(output_pixel_data, pd)
+        return output_pixel_data
 
 
-def _coerce_math_operation(value: MathOperation | str) -> MathOperation:
-    if isinstance(value, MathOperation):
-        return value
-    normalized = "_".join(str(value).strip().lower().replace("-", " ").split())
-    try:
-        return _CELLPROFILER_IMAGE_MATH_OPERATIONS[normalized]
-    except KeyError as exc:
-        raise ValueError(f"Unsupported ImageMath operation {value!r}.") from exc
+class SubtractImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.SUBTRACT
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del factors
+        if self.operands_are_logical(pixel_data):
+            output_pixel_data = pixel_data[0].copy()
+            for pd in pixel_data[1:]:
+                output_pixel_data[pd.astype(bool)] = False
+            return output_pixel_data
+        for pd in pixel_data[1:]:
+            output_pixel_data = np.subtract(output_pixel_data, pd)
+        return output_pixel_data
+
+
+class DifferenceImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.DIFFERENCE
+    cellprofiler_literals = ("difference",)
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del factors
+        if self.operands_are_logical(pixel_data):
+            for pd in pixel_data[1:]:
+                output_pixel_data = np.logical_xor(output_pixel_data, pd)
+            return output_pixel_data
+        for pd in pixel_data[1:]:
+            output_pixel_data = np.abs(np.subtract(output_pixel_data, pd))
+        return output_pixel_data
+
+
+class MultiplyImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.MULTIPLY
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del factors
+        if self.operands_are_logical(pixel_data):
+            for pd in pixel_data[1:]:
+                output_pixel_data = np.logical_and(output_pixel_data, pd)
+            return output_pixel_data
+        for pd in pixel_data[1:]:
+            output_pixel_data = np.multiply(output_pixel_data, pd)
+        return output_pixel_data
+
+
+class AverageImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.AVERAGE
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        for pd in pixel_data[1:]:
+            output_pixel_data = np.add(output_pixel_data, pd)
+        if not self.operands_are_logical(pixel_data):
+            output_pixel_data = output_pixel_data / sum(factors[: len(pixel_data)])
+        return output_pixel_data
+
+
+class StandardDeviationImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.STDEV
+    cellprofiler_literals = ("stdev",)
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del output_pixel_data, factors
+        return np.std(np.array(pixel_data), axis=0)
+
+
+class InvertingImageMathOperationStrategy(ImageMathOperationStrategy):
+    """Template for CP ImageMath operations backed by skimage inversion."""
+
+    single_image = True
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del pixel_data, factors
+        import skimage.util
+
+        return skimage.util.invert(output_pixel_data)
+
+
+class LogTransformImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.LOG_TRANSFORM
+    cellprofiler_literals = ("log_transform", "log_transform_base_2")
+    single_image = True
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del pixel_data, factors
+        return np.log2(output_pixel_data + 1)
+
+
+class LegacyLogTransformImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.LOG_TRANSFORM_LEGACY
+    single_image = True
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del pixel_data, factors
+        return np.log2(output_pixel_data)
+
+
+class NoOpImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.NONE
+    single_image = True
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del pixel_data, factors
+        return output_pixel_data
+
+
+class LogicalReductionImageMathOperationStrategy(ImageMathOperationStrategy):
+    """Template for binary ImageMath operations that reduce logical operands."""
+
+    binary_output = True
+    implementation_namespace_key = "logical_operator"
+    logical_operator: ClassVar[ImageMathBinaryOperator | None] = None
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del factors
+        if self.logical_operator is None:
+            raise TypeError(f"{type(self).__name__} must declare a logical operator.")
+        for pd in pixel_data[1:]:
+            output_pixel_data = self.logical_operator(output_pixel_data, pd)
+        return output_pixel_data.astype(np.float64)
+
+
+class NotImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.NOT
+    single_image = True
+    binary_output = True
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del pixel_data, factors
+        return np.logical_not(output_pixel_data).astype(np.float64)
+
+
+class EqualsImageMathOperationStrategy(ImageMathOperationStrategy):
+    operation = MathOperation.EQUALS
+    binary_output = True
+
+    def apply(
+        self,
+        output_pixel_data: np.ndarray,
+        pixel_data: list[np.ndarray],
+        factors: tuple[float, ...],
+    ) -> np.ndarray:
+        del output_pixel_data, factors
+        result = np.ones(pixel_data[0].shape, dtype=bool)
+        comparator = pixel_data[0]
+        for pd in pixel_data[1:]:
+            result = result & (comparator == pd)
+        return result.astype(np.float64)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageMathOperationClassDeclaration:
+    """Typed declaration for metadata-only ImageMath strategy leaves."""
+
+    class_name: str
+    base_type: type[ImageMathOperationStrategy]
+    operation: MathOperation
+    implementation: ImageMathBinaryOperator | None = None
+
+    def materialize_into(
+        self,
+        namespace: dict[str, Any],
+    ) -> type[ImageMathOperationStrategy]:
+        class_namespace = self.base_type.materialized_namespace(
+            self.operation,
+            self.implementation,
+        )
+        strategy_type = type(self.class_name, (self.base_type,), class_namespace)
+        namespace[self.class_name] = strategy_type
+        return strategy_type
+
+
+IMAGE_MATH_OPERATION_CLASS_DECLARATIONS: tuple[
+    ImageMathOperationClassDeclaration,
+    ...,
+] = (
+    ImageMathOperationClassDeclaration(
+        "AddImageMathOperationStrategy",
+        PairwiseNumpyImageMathOperationStrategy,
+        MathOperation.ADD,
+        np.add,
+    ),
+    ImageMathOperationClassDeclaration(
+        "DivideImageMathOperationStrategy",
+        PairwiseNumpyImageMathOperationStrategy,
+        MathOperation.DIVIDE,
+        np.divide,
+    ),
+    ImageMathOperationClassDeclaration(
+        "MinimumImageMathOperationStrategy",
+        PairwiseNumpyImageMathOperationStrategy,
+        MathOperation.MINIMUM,
+        np.minimum,
+    ),
+    ImageMathOperationClassDeclaration(
+        "MaximumImageMathOperationStrategy",
+        PairwiseNumpyImageMathOperationStrategy,
+        MathOperation.MAXIMUM,
+        np.maximum,
+    ),
+    ImageMathOperationClassDeclaration(
+        "InvertImageMathOperationStrategy",
+        InvertingImageMathOperationStrategy,
+        MathOperation.INVERT,
+    ),
+    ImageMathOperationClassDeclaration(
+        "ComplementImageMathOperationStrategy",
+        InvertingImageMathOperationStrategy,
+        MathOperation.COMPLEMENT,
+    ),
+    ImageMathOperationClassDeclaration(
+        "OrImageMathOperationStrategy",
+        LogicalReductionImageMathOperationStrategy,
+        MathOperation.OR,
+        np.logical_or,
+    ),
+    ImageMathOperationClassDeclaration(
+        "AndImageMathOperationStrategy",
+        LogicalReductionImageMathOperationStrategy,
+        MathOperation.AND,
+        np.logical_and,
+    ),
+)
+
+
+for image_math_operation_class_declaration in IMAGE_MATH_OPERATION_CLASS_DECLARATIONS:
+    image_math_operation_class_declaration.materialize_into(globals())
 
 
 def _apply_image_mask(pixel_data: np.ndarray, mask: Any | None) -> np.ndarray:
@@ -174,9 +524,7 @@ def image_math(
     Returns:
         Processed image of shape (1, H, W).
     """
-    import skimage.util
-
-    operation = _coerce_math_operation(operation)
+    operation_strategy = ImageMathOperationStrategy.coerce(operation)
     source_payload = image
     image = image_payload_data(image)
     
@@ -192,111 +540,21 @@ def image_math(
     
     # Apply factors to each image (except for binary output operations)
     pixel_data = []
-    operand_count = 1 if operation in SINGLE_IMAGE_OPS else n_images
+    operand_count = 1 if operation_strategy.single_image else n_images
     operand_masks = _image_math_operand_masks(source_payload, operand_count)
     for i in range(operand_count):
         pd = image[i].astype(np.float64)
-        if operation not in BINARY_OUTPUT_OPS and factors[i] != 1.0:
+        if not operation_strategy.binary_output and factors[i] != 1.0:
             pd = pd * factors[i]
         pixel_data.append(pd)
-    
-    # Helper to check if all inputs are boolean
-    def use_logical_operation(data_list):
-        return all(pd.dtype == bool for pd in data_list if not np.isscalar(pd))
-    
-    if operation in SINGLE_IMAGE_OPS:
-        output_pixel_data = image.astype(np.float64, copy=True)
-        if operation not in BINARY_OUTPUT_OPS and factors[0] != 1.0:
-            output_pixel_data *= factors[0]
-    else:
-        output_pixel_data = pixel_data[0].copy()
-    
-    if operation == MathOperation.ADD:
-        for pd in pixel_data[1:]:
-            output_pixel_data = np.add(output_pixel_data, pd)
-    
-    elif operation == MathOperation.SUBTRACT:
-        if use_logical_operation(pixel_data):
-            output_pixel_data = pixel_data[0].copy()
-            for pd in pixel_data[1:]:
-                output_pixel_data[pd.astype(bool)] = False
-        else:
-            for pd in pixel_data[1:]:
-                output_pixel_data = np.subtract(output_pixel_data, pd)
-    
-    elif operation == MathOperation.DIFFERENCE:
-        if use_logical_operation(pixel_data):
-            for pd in pixel_data[1:]:
-                output_pixel_data = np.logical_xor(output_pixel_data, pd)
-        else:
-            for pd in pixel_data[1:]:
-                output_pixel_data = np.abs(np.subtract(output_pixel_data, pd))
-    
-    elif operation == MathOperation.MULTIPLY:
-        if use_logical_operation(pixel_data):
-            for pd in pixel_data[1:]:
-                output_pixel_data = np.logical_and(output_pixel_data, pd)
-        else:
-            for pd in pixel_data[1:]:
-                output_pixel_data = np.multiply(output_pixel_data, pd)
-    
-    elif operation == MathOperation.DIVIDE:
-        for pd in pixel_data[1:]:
-            output_pixel_data = np.divide(output_pixel_data, pd)
-    
-    elif operation == MathOperation.AVERAGE:
-        for pd in pixel_data[1:]:
-            output_pixel_data = np.add(output_pixel_data, pd)
-        if not use_logical_operation(pixel_data):
-            total_factor = sum(factors[:n_images])
-            output_pixel_data = output_pixel_data / total_factor
-    
-    elif operation == MathOperation.MINIMUM:
-        for pd in pixel_data[1:]:
-            output_pixel_data = np.minimum(output_pixel_data, pd)
-    
-    elif operation == MathOperation.MAXIMUM:
-        for pd in pixel_data[1:]:
-            output_pixel_data = np.maximum(output_pixel_data, pd)
-    
-    elif operation == MathOperation.STDEV:
-        pixel_array = np.array(pixel_data)
-        output_pixel_data = np.std(pixel_array, axis=0)
-    
-    elif operation in (MathOperation.INVERT, MathOperation.COMPLEMENT):
-        output_pixel_data = skimage.util.invert(output_pixel_data)
-    
-    elif operation == MathOperation.NOT:
-        output_pixel_data = np.logical_not(output_pixel_data).astype(np.float64)
-    
-    elif operation == MathOperation.LOG_TRANSFORM:
-        output_pixel_data = np.log2(output_pixel_data + 1)
-    
-    elif operation == MathOperation.LOG_TRANSFORM_LEGACY:
-        output_pixel_data = np.log2(output_pixel_data)
-    
-    elif operation == MathOperation.AND:
-        for pd in pixel_data[1:]:
-            output_pixel_data = np.logical_and(output_pixel_data, pd)
-        output_pixel_data = output_pixel_data.astype(np.float64)
-    
-    elif operation == MathOperation.OR:
-        for pd in pixel_data[1:]:
-            output_pixel_data = np.logical_or(output_pixel_data, pd)
-        output_pixel_data = output_pixel_data.astype(np.float64)
-    
-    elif operation == MathOperation.EQUALS:
-        output_pixel_data = np.ones(pixel_data[0].shape, dtype=bool)
-        comparitor = pixel_data[0]
-        for pd in pixel_data[1:]:
-            output_pixel_data = output_pixel_data & (comparitor == pd)
-        output_pixel_data = output_pixel_data.astype(np.float64)
-    
-    elif operation == MathOperation.NONE:
-        pass  # output_pixel_data is already a copy
+    output_pixel_data = operation_strategy.apply(
+        operation_strategy.prepare_initial_output(image, pixel_data, factors),
+        pixel_data,
+        factors,
+    )
     
     # Post-processing (not for binary output operations)
-    if operation not in BINARY_OUTPUT_OPS:
+    if not operation_strategy.binary_output:
         if exponent != 1.0:
             output_pixel_data = output_pixel_data ** exponent
         if after_factor != 1.0:

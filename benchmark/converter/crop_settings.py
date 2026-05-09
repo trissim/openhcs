@@ -12,7 +12,11 @@ from benchmark.cellprofiler_semantics.crop import (
 from openhcs.core.artifacts import CROP_MASK_ARTIFACT_SIDECAR
 
 from .parser import ModuleBlock
-from .setting_names import optional_setting_value, required_setting_value
+from .setting_names import (
+    normalized_symbol_name,
+    optional_setting_value,
+    required_setting_value,
+)
 from .settings_binder import SettingsBinder
 
 CROP_SHAPE_SETTING = "Select the cropping shape"
@@ -28,8 +32,6 @@ CROP_TOP_BOTTOM_SETTING = "Top and bottom rectangle positions"
 CROP_ELLIPSE_CENTER_SETTING = "Coordinates of ellipse center"
 CROP_ELLIPSE_X_RADIUS_SETTING = "Ellipse radius, X direction"
 CROP_ELLIPSE_Y_RADIUS_SETTING = "Ellipse radius, Y direction"
-
-_NO_SYMBOL_LITERALS = frozenset({"", "none", "do not use", "leave this black"})
 
 
 def crop_bound_kwargs(
@@ -141,10 +143,7 @@ def _optional_symbol(
     value = optional_setting_value(module, setting_name)
     if value is None:
         return None
-    normalized = value.strip()
-    if normalized.lower() in _NO_SYMBOL_LITERALS:
-        return None
-    return normalized
+    return normalized_symbol_name(value)
 
 
 def _without_none_values(values: dict[str, Any]) -> dict[str, Any]:
