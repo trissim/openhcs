@@ -19,6 +19,7 @@ from types import MappingProxyType
 from typing import Any, ClassVar, get_args, get_origin, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.record_algebra import product_record
 import numpy as np
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
@@ -142,8 +143,10 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
+    GeneratedLeafClassSpec,
     NominalTypeKeyedStrategyMixin,
     RegisteredLeafClassSpec,
+    RegisteredEnumMeta,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
@@ -492,6 +495,7 @@ class CellProfilerModuleExecutor:
         **kwargs: Any,
     ) -> Any:
         """Call the absorbed function and record declared outputs through the adapter."""
+        function_name = getattr(func, "__name__", "<unknown>")
         run_started_at = time.perf_counter()
         mode_started_at = time.perf_counter()
         if self._runs_per_image_measurement(func):
@@ -499,7 +503,7 @@ class CellProfilerModuleExecutor:
                 "cp_runs_per_image_check",
                 time.perf_counter() - mode_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
             )
             per_image_started_at = time.perf_counter()
             result = self._run_per_image_measurement(
@@ -513,13 +517,13 @@ class CellProfilerModuleExecutor:
                 "cp_run_per_image_measurement",
                 time.perf_counter() - per_image_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
             )
             _log_module_profile(
                 "cp_module_run_total",
                 time.perf_counter() - run_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
             )
             return result
 
@@ -527,7 +531,7 @@ class CellProfilerModuleExecutor:
             "cp_runs_per_image_check",
             time.perf_counter() - mode_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
         )
         image_request_started_at = time.perf_counter()
         image_request = self._image_request(
@@ -539,7 +543,7 @@ class CellProfilerModuleExecutor:
             "cp_image_request",
             time.perf_counter() - image_request_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
         )
         object_mode_started_at = time.perf_counter()
         if self._runs_per_object_measurement():
@@ -547,7 +551,7 @@ class CellProfilerModuleExecutor:
                 "cp_runs_per_object_check",
                 time.perf_counter() - object_mode_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
             )
             per_object_started_at = time.perf_counter()
             result = self._run_per_object_measurement(
@@ -563,13 +567,13 @@ class CellProfilerModuleExecutor:
                 "cp_run_per_object_measurement",
                 time.perf_counter() - per_object_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
             )
             _log_module_profile(
                 "cp_module_run_total",
                 time.perf_counter() - run_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
             )
             return result
 
@@ -577,7 +581,7 @@ class CellProfilerModuleExecutor:
             "cp_runs_per_object_check",
             time.perf_counter() - object_mode_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
         )
         invocation_started_at = time.perf_counter()
         invocation = self._invocation_request(
@@ -592,7 +596,7 @@ class CellProfilerModuleExecutor:
             "cp_invocation_request",
             time.perf_counter() - invocation_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
         )
         execute_started_at = time.perf_counter()
         raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
@@ -605,7 +609,7 @@ class CellProfilerModuleExecutor:
             "cp_contract_execute",
             time.perf_counter() - execute_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
             **_profile_payload_fields("input", invocation.image),
             **_profile_payload_fields("output", raw_output),
         )
@@ -615,7 +619,7 @@ class CellProfilerModuleExecutor:
             "cp_split_output",
             time.perf_counter() - split_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
         )
         record_started_at = time.perf_counter()
         self._record_outputs(
@@ -630,7 +634,7 @@ class CellProfilerModuleExecutor:
             "cp_record_outputs",
             time.perf_counter() - record_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
         )
         replace_started_at = time.perf_counter()
         if not self._replaces_main_flow(
@@ -641,13 +645,13 @@ class CellProfilerModuleExecutor:
                 "cp_replace_main_flow_check",
                 time.perf_counter() - replace_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
             )
             _log_module_profile(
                 "cp_module_run_total",
                 time.perf_counter() - run_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
             )
             return image
         result = _openhcs_main_flow_output(image, main_output)
@@ -655,13 +659,13 @@ class CellProfilerModuleExecutor:
             "cp_replace_main_flow_check",
             time.perf_counter() - replace_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
         )
         _log_module_profile(
             "cp_module_run_total",
             time.perf_counter() - run_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
         )
         return result
 
@@ -1394,6 +1398,7 @@ class CellProfilerModuleExecutor:
         if not self.outputs:
             return
 
+        function_name = getattr(func, "__name__", "<unknown>")
         values_started_at = time.perf_counter()
         output_values = CellProfilerOutputValueResolution.from_returned_values(
             self.outputs,
@@ -1406,7 +1411,7 @@ class CellProfilerModuleExecutor:
             "cp_output_values_by_kind",
             time.perf_counter() - values_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
             outputs=len(self.outputs),
         )
         order_started_at = time.perf_counter()
@@ -1415,7 +1420,7 @@ class CellProfilerModuleExecutor:
             "cp_output_recording_order",
             time.perf_counter() - order_started_at,
             module=self.module_name,
-            function=getattr(func, "__name__", "<unknown>"),
+            function=function_name,
             outputs=len(self.outputs),
         )
         for spec in ordered_outputs:
@@ -1436,7 +1441,7 @@ class CellProfilerModuleExecutor:
                 "cp_output_record_one",
                 time.perf_counter() - record_started_at,
                 module=self.module_name,
-                function=getattr(func, "__name__", "<unknown>"),
+                function=function_name,
                 artifact=spec.name,
                 kind=spec.kind.value,
                 **_profile_payload_fields(
@@ -1933,52 +1938,59 @@ class StructuringElementExecutionModePolicy(VolumetricInputExecutionModePolicy):
         return default
 
 
-class ThresholdExecutionModePolicy(VolumetricInputExecutionModePolicy):
-    """Threshold uses the whole Z volume for volumetric CellProfiler inputs."""
+@dataclass(frozen=True, slots=True)
+class InvocationExecutionModePolicySpec(GeneratedLeafClassSpec):
+    """Declarative leaf spec for module-name execution-mode policies."""
 
-    module_name = "Threshold"
+    module_name: str
 
-
-class WatershedExecutionModePolicy(VolumetricInputExecutionModePolicy):
-    """Watershed uses the whole Z volume for volumetric CellProfiler inputs."""
-
-    module_name = "Watershed"
+    def class_attributes(self) -> Mapping[str, object]:
+        return {"module_name": self.module_name}
 
 
-class ClosingExecutionModePolicy(StructuringElementExecutionModePolicy):
-    """Closing follows CellProfiler's structuring-element rank dispatch."""
-
-    module_name = "Closing"
-
-
-class OpeningExecutionModePolicy(StructuringElementExecutionModePolicy):
-    """Opening follows CellProfiler's structuring-element rank dispatch."""
-
-    module_name = "Opening"
-
-
-class ErodeImageExecutionModePolicy(StructuringElementExecutionModePolicy):
-    """ErodeImage follows CellProfiler's structuring-element rank dispatch."""
-
-    module_name = "ErodeImage"
-
-
-class ErodeObjectsExecutionModePolicy(StructuringElementExecutionModePolicy):
-    """ErodeObjects follows CellProfiler's structuring-element rank dispatch."""
-
-    module_name = "ErodeObjects"
-
-
-class DilateImageExecutionModePolicy(StructuringElementExecutionModePolicy):
-    """DilateImage follows CellProfiler's structuring-element rank dispatch."""
-
-    module_name = "DilateImage"
-
-
-class RemoveHolesExecutionModePolicy(VolumetricInputExecutionModePolicy):
-    """RemoveHoles fills holes in the current volumetric image domain."""
-
-    module_name = "RemoveHoles"
+for _execution_mode_policy_spec in (
+    InvocationExecutionModePolicySpec(
+        class_name="ThresholdExecutionModePolicy",
+        base_type=VolumetricInputExecutionModePolicy,
+        module_name="Threshold",
+    ),
+    InvocationExecutionModePolicySpec(
+        class_name="WatershedExecutionModePolicy",
+        base_type=VolumetricInputExecutionModePolicy,
+        module_name="Watershed",
+    ),
+    InvocationExecutionModePolicySpec(
+        class_name="RemoveHolesExecutionModePolicy",
+        base_type=VolumetricInputExecutionModePolicy,
+        module_name="RemoveHoles",
+    ),
+    InvocationExecutionModePolicySpec(
+        class_name="ClosingExecutionModePolicy",
+        base_type=StructuringElementExecutionModePolicy,
+        module_name="Closing",
+    ),
+    InvocationExecutionModePolicySpec(
+        class_name="OpeningExecutionModePolicy",
+        base_type=StructuringElementExecutionModePolicy,
+        module_name="Opening",
+    ),
+    InvocationExecutionModePolicySpec(
+        class_name="ErodeImageExecutionModePolicy",
+        base_type=StructuringElementExecutionModePolicy,
+        module_name="ErodeImage",
+    ),
+    InvocationExecutionModePolicySpec(
+        class_name="ErodeObjectsExecutionModePolicy",
+        base_type=StructuringElementExecutionModePolicy,
+        module_name="ErodeObjects",
+    ),
+    InvocationExecutionModePolicySpec(
+        class_name="DilateImageExecutionModePolicy",
+        base_type=StructuringElementExecutionModePolicy,
+        module_name="DilateImage",
+    ),
+):
+    _execution_mode_policy_spec.declare_in(globals())
 
 
 class CellProfilerImageExecutionStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -2511,8 +2523,13 @@ class DenseLabelImageSpecialInputValueStrategy(CellProfilerSpecialInputValueStra
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class RuntimeInputBindingRequestBase(ABC):
+class RuntimeInputBindingRequestBase(ABC, metaclass=AutoRegisterMeta):
     """Shared runtime context for artifact-backed runtime-input binding."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
 
     module_name: str
     adapter: CellProfilerRuntimeAdapter
@@ -2551,6 +2568,8 @@ def _object_label_runtime_payload(objects: ObjectLabelSet) -> Any:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ObjectInputBindingRequest(RuntimeInputBindingRequestBase):
     """Authoritative runtime context for binding object-label inputs."""
+
+    registry_key = "object_input"
 
     object_inputs: tuple[ArtifactSpec, ...]
     runtime_inputs: tuple[ArtifactSpec, ...] = ()
@@ -2744,19 +2763,11 @@ class IdentifySecondaryObjectsInputPolicy(CellProfilerObjectInputPolicy):
 
 
 @dataclass(frozen=True, slots=True)
-class SingleObjectLabelInputPolicySpec(RegisteredLeafClassSpec):
+class SingleObjectLabelInputPolicySpec(GeneratedLeafClassSpec):
     """Declarative leaf spec for one object-label binding policy."""
 
     module_name: str
     label_kwarg: str
-
-    @property
-    def class_name(self) -> str:
-        return f"{self.module_name}InputPolicy"
-
-    @property
-    def base_type(self) -> type[object]:
-        return DeclaredSingleObjectLabelInputPolicy
 
     def class_attributes(self) -> Mapping[str, object]:
         return {
@@ -3092,7 +3103,7 @@ class DefaultObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectMeasurementRowPolicySpec(RegisteredLeafClassSpec):
+class ObjectMeasurementRowPolicySpec(GeneratedLeafClassSpec):
     """Declarative leaf spec for one object measurement row policy."""
 
     module_name: str
@@ -3100,14 +3111,6 @@ class ObjectMeasurementRowPolicySpec(RegisteredLeafClassSpec):
     missing_value_policy: MissingObjectMeasurementValuePolicy = (
         MissingObjectMeasurementValuePolicy.NAN
     )
-
-    @property
-    def class_name(self) -> str:
-        return f"{self.module_name}ObjectMeasurementRowPolicy"
-
-    @property
-    def base_type(self) -> type[object]:
-        return DeclaredObjectMeasurementRowPolicy
 
     def class_attributes(self) -> Mapping[str, object]:
         return {
@@ -3125,17 +3128,6 @@ class CompactMeasuredObjectMeasurementRowPolicy(DeclaredObjectMeasurementRowPoli
     """Use CP's compact row identity for emitted measurement rows."""
 
     row_identity = MeasurementObjectRowIdentity.ROW_ORDINAL
-
-    def retains_unmeasured_compact_row(
-        self,
-        row_mapping: Mapping[str, object],
-        *,
-        object_id_field: str,
-        axis_fields: Sequence[str],
-    ) -> bool:
-        """CP compact shape-style rows preserve rows emitted by the module."""
-        del row_mapping, object_id_field, axis_fields
-        return True
 
     def required_object_ids_for_axis(
         self,
@@ -3230,7 +3222,9 @@ class TrackObjectsObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPol
 
 for _row_policy_spec in (
     ObjectMeasurementRowPolicySpec(
-        _MEASURE_OBJECT_INTENSITY_MODULE,
+        class_name=f"{_MEASURE_OBJECT_INTENSITY_MODULE}ObjectMeasurementRowPolicy",
+        base_type=DeclaredObjectMeasurementRowPolicy,
+        module_name=_MEASURE_OBJECT_INTENSITY_MODULE,
         missing_value_policy=(
             MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT
         ),
@@ -3238,23 +3232,54 @@ for _row_policy_spec in (
 ):
     _row_policy_spec.declare_in(globals())
 
-
-_SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS = (
-    SingleObjectLabelInputPolicySpec("Crop", "cropping_labels"),
-    SingleObjectLabelInputPolicySpec(_MEASURE_OBJECT_SIZE_SHAPE_MODULE, "labels"),
-    SingleObjectLabelInputPolicySpec(_MEASURE_OBJECT_INTENSITY_MODULE, "labels"),
-    SingleObjectLabelInputPolicySpec(
-        _MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE,
-        "labels",
-    ),
-    SingleObjectLabelInputPolicySpec(_MEASURE_TEXTURE_MODULE, "labels"),
-    SingleObjectLabelInputPolicySpec(_MEASURE_COLOCALIZATION_MODULE, "labels"),
-    SingleObjectLabelInputPolicySpec(_MEASURE_GRANULARITY_MODULE, "labels"),
-)
-
-
 class DeclaredSingleObjectLabelInputPolicy(SingleObjectLabelInputPolicy):
     """Generated base for modules with one declared label input."""
+
+
+_SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS = (
+    SingleObjectLabelInputPolicySpec(
+        class_name="CropInputPolicy",
+        base_type=DeclaredSingleObjectLabelInputPolicy,
+        module_name="Crop",
+        label_kwarg="cropping_labels",
+    ),
+    SingleObjectLabelInputPolicySpec(
+        class_name=f"{_MEASURE_OBJECT_SIZE_SHAPE_MODULE}InputPolicy",
+        base_type=DeclaredSingleObjectLabelInputPolicy,
+        module_name=_MEASURE_OBJECT_SIZE_SHAPE_MODULE,
+        label_kwarg="labels",
+    ),
+    SingleObjectLabelInputPolicySpec(
+        class_name=f"{_MEASURE_OBJECT_INTENSITY_MODULE}InputPolicy",
+        base_type=DeclaredSingleObjectLabelInputPolicy,
+        module_name=_MEASURE_OBJECT_INTENSITY_MODULE,
+        label_kwarg="labels",
+    ),
+    SingleObjectLabelInputPolicySpec(
+        class_name=f"{_MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE}InputPolicy",
+        base_type=DeclaredSingleObjectLabelInputPolicy,
+        module_name=_MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE,
+        label_kwarg="labels",
+    ),
+    SingleObjectLabelInputPolicySpec(
+        class_name=f"{_MEASURE_TEXTURE_MODULE}InputPolicy",
+        base_type=DeclaredSingleObjectLabelInputPolicy,
+        module_name=_MEASURE_TEXTURE_MODULE,
+        label_kwarg="labels",
+    ),
+    SingleObjectLabelInputPolicySpec(
+        class_name=f"{_MEASURE_COLOCALIZATION_MODULE}InputPolicy",
+        base_type=DeclaredSingleObjectLabelInputPolicy,
+        module_name=_MEASURE_COLOCALIZATION_MODULE,
+        label_kwarg="labels",
+    ),
+    SingleObjectLabelInputPolicySpec(
+        class_name=f"{_MEASURE_GRANULARITY_MODULE}InputPolicy",
+        base_type=DeclaredSingleObjectLabelInputPolicy,
+        module_name=_MEASURE_GRANULARITY_MODULE,
+        label_kwarg="labels",
+    ),
+)
 
 
 for _policy_spec in _SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS:
@@ -3869,6 +3894,81 @@ class CellProfilerMeasurementRecordPartition:
     fields: tuple[FieldSpec, ...] = ()
 
 
+class CellProfilerImageMeasurementSource(ABC, metaclass=AutoRegisterMeta):
+    """Nominal source for image-owned measurement row identity."""
+
+    __registry_key__ = "__name__"
+
+    @abstractmethod
+    def source_image_name(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> str | None:
+        """Return the image name used to qualify recorded measurement rows."""
+
+    @abstractmethod
+    def source_image_payload(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> Any | None:
+        """Return the payload that anchors image-owned measurement rows."""
+
+    def require_produced_artifact(self) -> "ProducedArtifactImageMeasurementSource":
+        """Return this source as a produced artifact source, or fail loudly."""
+        raise ValueError("Measurement ownership requires an image output.")
+
+
+class ProducedArtifactImageMeasurementSourceBase(CellProfilerImageMeasurementSource):
+    """Measurement source owned by a produced image artifact."""
+
+    artifact_spec: ArtifactSpec
+
+    def source_image_name(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> str | None:
+        del request
+        return self.artifact_spec.name
+
+    def source_image_payload(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> Any | None:
+        return request.output_values.get(
+            self.artifact_spec.name,
+            request.source_image_payload,
+        )
+
+    def require_produced_artifact(self) -> "ProducedArtifactImageMeasurementSource":
+        return self
+
+
+ProducedArtifactImageMeasurementSource = product_record(
+    "ProducedArtifactImageMeasurementSource",
+    "artifact_spec: ArtifactSpec",
+    bases=(ProducedArtifactImageMeasurementSourceBase,),
+    doc="Measurement source owned by a produced image artifact.",
+    module_name=__name__,
+)
+
+
+class UnqualifiedRuntimeImageMeasurementSource(CellProfilerImageMeasurementSource):
+    """Measurement source backed by the runtime input image without row naming."""
+
+    def source_image_name(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> str | None:
+        del request
+        return None
+
+    def source_image_payload(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> Any | None:
+        return request.source_image_payload
+
+
 class CellProfilerMeasurementImagePlaneCountStrategy(
     NominalTypeKeyedStrategyMixin,
     ABC,
@@ -4121,17 +4221,6 @@ class CellProfilerMeasurementRecordBuilder(ABC, metaclass=AutoRegisterMeta):
     ) -> CellProfilerMeasurementRecord:
         """Return measurement rows plus the object set they describe."""
 
-    def image_measurement_source_payload(
-        self,
-        request: CellProfilerOutputRecordRequest,
-        image_spec: ArtifactSpec | None,
-    ) -> Any | None:
-        """Return the payload that anchors image-owned measurement row identity."""
-        if image_spec is not None and image_spec.name in request.output_values:
-            return request.output_values[image_spec.name]
-        return request.source_image_payload
-
-
 class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
     """Use the emitted rows and infer object ownership from declared inputs."""
 
@@ -4195,29 +4284,28 @@ class ProducedImageMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
         rows = _measurement_table_rows(request.value)
-        source_image_spec = self._primary_image_output_spec(request)
+        source_image = self._primary_image_measurement_source(request)
         return CellProfilerMeasurementRecord(
             rows=rows,
             object_name=None,
-            source_image_name=source_image_spec.name if source_image_spec else None,
-            source_image_payload=self.image_measurement_source_payload(
-                request,
-                source_image_spec,
-            ),
+            source_image_name=source_image.source_image_name(request),
+            source_image_payload=source_image.source_image_payload(request),
             fields=_measurement_record_fields(request.spec, rows, request.func),
         )
 
-    def _primary_image_output_spec(
+    def _primary_image_measurement_source(
         self,
         request: CellProfilerOutputRecordRequest,
-    ) -> ArtifactSpec | None:
+    ) -> CellProfilerImageMeasurementSource:
         image_specs = tuple(
             spec
             for spec in request.executor.contract.declared_outputs
             if spec.kind is ArtifactKind.IMAGE and spec.sidecar_role is None
         )
-        if len(image_specs) <= 1:
-            return image_specs[0] if image_specs else None
+        if not image_specs:
+            return UnqualifiedRuntimeImageMeasurementSource()
+        if len(image_specs) == 1:
+            return ProducedArtifactImageMeasurementSource(image_specs[0])
         retained_image_names = {
             name
             for name, value in request.output_values.items()
@@ -4227,11 +4315,17 @@ class ProducedImageMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
             spec for spec in image_specs if spec.name in retained_image_names
         )
         if len(retained_specs) == 1:
-            return retained_specs[0]
+            return ProducedArtifactImageMeasurementSource(retained_specs[0])
         raise ValueError(
             "Produced-image measurement ownership requires exactly one primary image "
             f"output spec, got {[spec.name for spec in image_specs]!r}."
         )
+
+    def _required_primary_image_measurement_source(
+        self,
+        request: CellProfilerOutputRecordRequest,
+    ) -> ProducedArtifactImageMeasurementSource:
+        return self._primary_image_measurement_source(request).require_produced_artifact()
 
 
 class CropMeasurementRecordBuilder(ProducedImageMeasurementRecordBuilder):
@@ -4249,20 +4343,15 @@ class ThresholdMeasurementRecordBuilder(ProducedImageMeasurementRecordBuilder):
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        source_image_spec = self._primary_image_output_spec(request)
-        if source_image_spec is None:
-            raise ValueError("Threshold measurement ownership requires an image output.")
+        source_image = self._required_primary_image_measurement_source(request)
         return CellProfilerMeasurementRecord(
             rows=ThresholdMeasurementRows(
                 request.value,
-                object_name=source_image_spec.name,
+                object_name=source_image.artifact_spec.name,
             ).rows(),
             object_name=None,
             source_image_name=None,
-            source_image_payload=self.image_measurement_source_payload(
-                request,
-                source_image_spec,
-            ),
+            source_image_payload=source_image.source_image_payload(request),
         )
 
 
@@ -4527,26 +4616,14 @@ class CellProfilerImageOutputContextStrategy(
 class ContextualCellProfilerImageOutputStrategy(CellProfilerImageOutputContextStrategy):
     """Preserve outputs that already carry OpenHCS image context."""
 
-    value_type = ImageMetadataPayload
+    value_type = (ImageMetadataPayload, MaskedImagePayload)
 
     def runtime_image_value(self, value: Any, source_image_payload: Any) -> Any:
         del source_image_payload
-        if not isinstance(value, ImageMetadataPayload):
+        if not isinstance(value, (ImageMetadataPayload, MaskedImagePayload)):
             raise TypeError(
-                "Contextual image output strategy requires ImageMetadataPayload."
+                "Contextual image output strategy requires an OpenHCS image payload."
             )
-        return value
-
-
-class MaskedCellProfilerImageOutputStrategy(ContextualCellProfilerImageOutputStrategy):
-    """Preserve masked outputs that already carry OpenHCS image context."""
-
-    value_type = MaskedImagePayload
-
-    def runtime_image_value(self, value: Any, source_image_payload: Any) -> Any:
-        del source_image_payload
-        if not isinstance(value, MaskedImagePayload):
-            raise TypeError("Masked image output strategy requires MaskedImagePayload.")
         return value
 
 
@@ -5034,15 +5111,21 @@ class ClassifyObjectsMeasurementStatField(str, Enum):
     SLICE_INDEX = MeasurementRowAxisField.SLICE_INDEX.value
 
 
-class ClassifyObjectsMeasurementFeatureTemplate(str, Enum):
+class FormattingMeasurementFeatureTemplate(str, Enum, metaclass=RegisteredEnumMeta):
+    """Shared feature-name formatting contract for templated measurement names."""
+
+    __registry_key__ = "__name__"
+
+    def feature_name(self, **values: object) -> str:
+        return self.value.format(**values)
+
+
+class ClassifyObjectsMeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):
     """CellProfiler ClassifyObjects feature-name templates."""
 
     OBJECTS_PER_BIN = "Classify_{bin_name}_NumObjectsPerBin"
     PERCENT_PER_BIN = "Classify_{bin_name}_PctObjectsPerBin"
     OBJECT_CLASS = "Classify_{bin_name}"
-
-    def feature_name(self, *, bin_name: str) -> str:
-        return self.value.format(bin_name=bin_name)
 
 
 class AlignMeasurementStatField(str, Enum):
@@ -5066,8 +5149,13 @@ class AlignMeasurementFeature(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerMeasurementRows(ABC):
+class CellProfilerMeasurementRows(ABC, metaclass=AutoRegisterMeta):
     """Base contract for emitted CellProfiler measurement fact rows."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
 
     @abstractmethod
     def rows(self) -> list[dict[str, Any]]:
@@ -5109,6 +5197,8 @@ class CellProfilerResultMeasurementRows(CellProfilerMeasurementRows):
 @dataclass(frozen=True, slots=True)
 class ClassifyObjectsMeasurementRows(CellProfilerResultMeasurementRows):
     """Project absorbed ClassifyObjects results into CP measurement rows."""
+
+    registry_key = "classify_objects"
 
     object_name: str | None
 
@@ -5212,6 +5302,8 @@ class ClassifyObjectsMeasurementRows(CellProfilerResultMeasurementRows):
 class AlignMeasurementRows(CellProfilerResultMeasurementRows):
     """Project absorbed Align results into CP image measurement rows."""
 
+    registry_key = "align"
+
     output_names: tuple[str, ...]
     features: ClassVar[tuple[AlignMeasurementFeature, ...]] = (
         AlignMeasurementFeature.X_SHIFT,
@@ -5259,16 +5351,13 @@ class ThresholdMeasurementStatField(str, Enum):
     SUM_OF_ENTROPIES = "sum_of_entropies"
 
 
-class ThresholdMeasurementFeatureTemplate(str, Enum):
+class ThresholdMeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):
     """CellProfiler image-measurement feature names parameterized by object."""
 
     FINAL_THRESHOLD = "FinalThreshold_{object_name}"
     ORIGINAL_THRESHOLD = "OrigThreshold_{object_name}"
     WEIGHTED_VARIANCE = "WeightedVariance_{object_name}"
     SUM_OF_ENTROPIES = "SumOfEntropies_{object_name}"
-
-    def feature_name(self, object_name: str) -> str:
-        return self.value.format(object_name=object_name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -5303,6 +5392,8 @@ class ThresholdMeasurementStatSchema:
 class ThresholdMeasurementRows(CellProfilerResultMeasurementRows):
     """Project absorbed threshold stats into CP image measurement rows."""
 
+    registry_key = "threshold"
+
     object_name: str
     schema: ThresholdMeasurementStatSchema = ThresholdMeasurementStatSchema()
 
@@ -5318,24 +5409,24 @@ class ThresholdMeasurementRows(CellProfilerResultMeasurementRows):
             final_threshold = self.schema.final_threshold(stat_row)
             values = {
                 ThresholdMeasurementFeatureTemplate.FINAL_THRESHOLD.feature_name(
-                    self.object_name
+                    object_name=self.object_name
                 ): final_threshold,
                 ThresholdMeasurementFeatureTemplate.ORIGINAL_THRESHOLD.feature_name(
-                    self.object_name
+                    object_name=self.object_name
                 ): self.schema.value_or_default(
                     stat_row,
                     ThresholdMeasurementStatField.ORIGINAL_THRESHOLD,
                     final_threshold,
                 ),
                 ThresholdMeasurementFeatureTemplate.WEIGHTED_VARIANCE.feature_name(
-                    self.object_name
+                    object_name=self.object_name
                 ): self.schema.value_or_default(
                     stat_row,
                     ThresholdMeasurementStatField.WEIGHTED_VARIANCE,
                     0.0,
                 ),
                 ThresholdMeasurementFeatureTemplate.SUM_OF_ENTROPIES.feature_name(
-                    self.object_name
+                    object_name=self.object_name
                 ): self.schema.value_or_default(
                     stat_row,
                     ThresholdMeasurementStatField.SUM_OF_ENTROPIES,
@@ -5380,6 +5471,8 @@ class ObjectLocationCenterValues:
 @dataclass(frozen=True, slots=True)
 class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
     """Emit CP object location rows from a declared object-label domain."""
+
+    registry_key = "object_location"
 
     label_payload: Any
     object_name: str
@@ -6795,13 +6888,10 @@ def _measurement_object_name(
     return None
 
 
-class RelationshipMeasurementFeatureTemplate(str, Enum):
+class RelationshipMeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):
     """CellProfiler relationship feature-name templates."""
 
     PARENT = "Parent_{parent_object_name}"
-
-    def feature_name(self, *, parent_object_name: str) -> str:
-        return self.value.format(parent_object_name=parent_object_name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -6879,6 +6969,8 @@ class RelationshipEndpointResolver:
 @dataclass(frozen=True, slots=True)
 class RelationshipMeasurementRows(CellProfilerMeasurementRows):
     """Project parent-child relationship payloads into CP object measurement rows."""
+
+    registry_key = "relationship"
 
     request: CellProfilerOutputRecordRequest
 
@@ -7180,6 +7272,8 @@ def _slice_aligned_measurement_values(
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
     """Authoritative runtime context for binding declared special_inputs."""
+
+    registry_key = "special_input"
 
     parameter_names: tuple[str, ...]
     special_input_specs: tuple[ArtifactSpec, ...]
@@ -7847,19 +7941,11 @@ class CellProfilerDualScopeMeasurementPolicy(ABC, metaclass=AutoRegisterMeta):
 
 
 @dataclass(frozen=True, slots=True)
-class DualScopeMeasurementPolicySpec(RegisteredLeafClassSpec):
+class DualScopeMeasurementPolicySpec(GeneratedLeafClassSpec):
     """Declarative leaf spec for one dual-scope measurement module."""
 
     module_name: str
     image_function_name: str
-
-    @property
-    def class_name(self) -> str:
-        return f"{self.module_name}DualScopeMeasurementPolicy"
-
-    @property
-    def base_type(self) -> type[object]:
-        return DeclaredDualScopeMeasurementPolicy
 
     def class_attributes(self) -> Mapping[str, object]:
         return {
@@ -7873,10 +7959,17 @@ class DeclaredDualScopeMeasurementPolicy(CellProfilerDualScopeMeasurementPolicy)
 
 
 for _dual_scope_policy_spec in (
-    DualScopeMeasurementPolicySpec("MeasureTexture", "measure_texture"),
     DualScopeMeasurementPolicySpec(
-        "MeasureColocalization",
-        "measure_colocalization",
+        class_name="MeasureTextureDualScopeMeasurementPolicy",
+        base_type=DeclaredDualScopeMeasurementPolicy,
+        module_name="MeasureTexture",
+        image_function_name="measure_texture",
+    ),
+    DualScopeMeasurementPolicySpec(
+        class_name="MeasureColocalizationDualScopeMeasurementPolicy",
+        base_type=DeclaredDualScopeMeasurementPolicy,
+        module_name="MeasureColocalization",
+        image_function_name="measure_colocalization",
     ),
 ):
     _dual_scope_policy_spec.declare_in(globals())
@@ -8084,10 +8177,7 @@ class CellProfilerPure2DOutputAggregator(ABC, metaclass=AutoRegisterMeta):
         for aggregator_type in cls.registered_aggregator_families():
             if aggregator_type.supports(slice_outputs):
                 return aggregator_type().aggregate_outputs(slice_outputs, memory_type)
-        return RegistryPure2DOutputAggregator().aggregate_outputs(
-            slice_outputs,
-            memory_type,
-        )
+        return Pure2DAuxiliaryOutputAggregator.aggregate(list(slice_outputs), memory_type)
 
     @classmethod
     def supports(cls, slice_outputs: Sequence[Any]) -> bool:
@@ -8136,23 +8226,10 @@ class CellProfilerPure2DOutputAggregator(ABC, metaclass=AutoRegisterMeta):
         """Aggregate one output position across pure-2D slices."""
 
 
-class ObjectLabelPayloadPure2DOutputAggregator(CellProfilerPure2DOutputAggregator):
-    """Aggregate typed object-label payload outputs."""
+class ObjectLabelValuePure2DOutputAggregator(CellProfilerPure2DOutputAggregator):
+    """Aggregate typed object-label outputs."""
 
-    output_type = ObjectLabelPayload
-
-    def aggregate_outputs(
-        self,
-        slice_outputs: Sequence[Any],
-        memory_type: str,
-    ) -> Any:
-        return ObjectLabelPure2DSliceAggregator.aggregate(slice_outputs, memory_type)
-
-
-class ObjectLabelSetPure2DOutputAggregator(CellProfilerPure2DOutputAggregator):
-    """Aggregate typed object-label-set outputs."""
-
-    output_type = ObjectLabelSet
+    output_type = None
 
     def aggregate_outputs(
         self,
@@ -8173,24 +8250,6 @@ class ImagePayloadPure2DOutputAggregator(CellProfilerPure2DOutputAggregator):
         memory_type: str,
     ) -> Any:
         return _stack_cellprofiler_slice_outputs(slice_outputs, memory_type)
-
-
-class MaskedImagePayloadPure2DOutputAggregator(ImagePayloadPure2DOutputAggregator):
-    """Register masked image payload outputs for pure-2D aggregation."""
-
-    output_type = MaskedImagePayload
-
-
-class ImageMetadataPayloadPure2DOutputAggregator(ImagePayloadPure2DOutputAggregator):
-    """Register image metadata payload outputs for pure-2D aggregation."""
-
-    output_type = ImageMetadataPayload
-
-
-class NumPyImagePure2DOutputAggregator(ImagePayloadPure2DOutputAggregator):
-    """Register NumPy image arrays for CellProfiler pure-2D aggregation."""
-
-    output_type = np.ndarray
 
 
 class CellProfilerImagePayloadOutputTypes:
@@ -8233,19 +8292,44 @@ class ParentChildRelationshipPure2DOutputAggregator(CellProfilerPure2DOutputAggr
         )
 
 
-class RegistryPure2DOutputAggregator(CellProfilerPure2DOutputAggregator):
-    """Delegate generic auxiliary outputs to the OpenHCS registry semantics."""
+@dataclass(frozen=True, slots=True)
+class Pure2DOutputAggregatorSpec(GeneratedLeafClassSpec):
+    """Declarative leaf spec for one pure-2D output aggregator."""
 
-    @classmethod
-    def supports(cls, slice_outputs: Sequence[Any]) -> bool:
-        return False
+    output_type: type[object]
 
-    def aggregate_outputs(
-        self,
-        slice_outputs: Sequence[Any],
-        memory_type: str,
-    ) -> Any:
-        return Pure2DAuxiliaryOutputAggregator.aggregate(list(slice_outputs), memory_type)
+    def class_attributes(self) -> Mapping[str, object]:
+        return {"output_type": self.output_type}
+
+
+for _pure_2d_output_aggregator_spec in (
+    Pure2DOutputAggregatorSpec(
+        "ObjectLabelPayloadPure2DOutputAggregator",
+        ObjectLabelValuePure2DOutputAggregator,
+        ObjectLabelPayload,
+    ),
+    Pure2DOutputAggregatorSpec(
+        "ObjectLabelSetPure2DOutputAggregator",
+        ObjectLabelValuePure2DOutputAggregator,
+        ObjectLabelSet,
+    ),
+    Pure2DOutputAggregatorSpec(
+        "MaskedImagePayloadPure2DOutputAggregator",
+        ImagePayloadPure2DOutputAggregator,
+        MaskedImagePayload,
+    ),
+    Pure2DOutputAggregatorSpec(
+        "ImageMetadataPayloadPure2DOutputAggregator",
+        ImagePayloadPure2DOutputAggregator,
+        ImageMetadataPayload,
+    ),
+    Pure2DOutputAggregatorSpec(
+        "NumPyImagePure2DOutputAggregator",
+        ImagePayloadPure2DOutputAggregator,
+        np.ndarray,
+    ),
+):
+    _pure_2d_output_aggregator_spec.declare_in(globals())
 
 
 def _stack_cellprofiler_slice_outputs(

@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
-from enum import Enum
+from dataclasses import dataclass
+from enum import Enum, EnumMeta
 from typing import Any, ClassVar, Generic, TypeVar, cast
+
+from metaclass_registry import AutoRegisterMeta
 
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
@@ -16,6 +19,10 @@ _ContextStrategyT = TypeVar(
     "_ContextStrategyT",
     bound="MostDerivedContextStrategyMixin[Any]",
 )
+
+
+class RegisteredEnumMeta(AutoRegisterMeta, EnumMeta):
+    """Metaclass for enum families that also need AutoRegisterMeta membership."""
 
 
 class EnumKeyedStrategyMixin(Generic[_EnumT]):
@@ -222,15 +229,8 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
 class RegisteredLeafClassSpec(ABC):
     """Nominal declaration for generated AutoRegisterMeta leaf classes."""
 
-    @property
-    @abstractmethod
-    def class_name(self) -> str:
-        """Return the generated class name."""
-
-    @property
-    @abstractmethod
-    def base_type(self) -> type[object]:
-        """Return the nominal base class for the generated leaf."""
+    class_name: str
+    base_type: type[object]
 
     @abstractmethod
     def class_attributes(self) -> Mapping[str, object]:
@@ -249,3 +249,11 @@ class RegisteredLeafClassSpec(ABC):
         )
         namespace[class_name] = declared_type
         return declared_type
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedLeafClassSpec(RegisteredLeafClassSpec):
+    """Concrete generated-leaf declaration with explicit class and base identity."""
+
+    class_name: str
+    base_type: type[object]
