@@ -1,0 +1,102 @@
+{
+  "cases": [
+    {
+      "name": "cp_tutorial_3d_noise_nuclei",
+      "dataset_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/3DNoiseNuclei/Input3DNuclei",
+      "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/3DNoiseNuclei/3DNucleiPipelineComputeConsumingFinal.cppipe",
+      "dataset_id": "CellProfiler_tutorials",
+      "microscope_type": "cellprofiler_tutorials",
+      "value_only": true,
+      "assay_category": "3D nuclei segmentation",
+      "module_category": "3D segmentation",
+      "cellprofiler_timeout_seconds": 900.0,
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      }
+    },
+    {
+      "name": "cp_tutorial_advanced_segmentation_final",
+      "dataset_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/AdvancedSegmentation/BBBC022_20585_AE",
+      "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/AdvancedSegmentation/BBBC022_Analysis_Final.cppipe",
+      "dataset_id": "CellProfiler_tutorials",
+      "microscope_type": "cellprofiler_tutorials",
+      "value_only": true,
+      "assay_category": "Cell Painting morphology",
+      "module_category": "Advanced segmentation + measurement",
+      "cellprofiler_timeout_seconds": 900.0,
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      }
+    },
+    {
+      "name": "cp_tutorial_quality_control",
+      "dataset_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/QualityControl/BBBC022_20585_AE",
+      "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/QualityControl/BBBC022_QC.cppipe",
+      "dataset_id": "CellProfiler_tutorials",
+      "microscope_type": "cellprofiler_tutorials",
+      "value_only": true,
+      "assay_category": "Cell Painting quality control",
+      "module_category": "Image quality measurement",
+      "cellprofiler_timeout_seconds": 900.0,
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      }
+    },
+    {
+      "name": "cp_tutorial_beginner_segmentation_final",
+      "dataset_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/BeginnerSegmentation/images_Illum-corrected",
+      "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/BeginnerSegmentation/segmentation_final.cppipe",
+      "dataset_id": "CellProfiler_tutorials",
+      "microscope_type": "cellprofiler_tutorials",
+      "value_only": true,
+      "assay_category": "Cell morphology",
+      "module_category": "Segmentation + intensity measurement",
+      "cellprofiler_timeout_seconds": 900.0,
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      }
+    },
+    {
+      "name": "cp_tutorial_pixel_based_classification",
+      "dataset_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/PixelBasedClassification/images",
+      "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/PixelBasedClassification/pixel_based_classification_cho.cppipe",
+      "dataset_id": "CellProfiler_tutorials",
+      "microscope_type": "cellprofiler_tutorials",
+      "value_only": true,
+      "assay_category": "Pixel classification",
+      "module_category": "Pixel classification",
+      "cellprofiler_timeout_seconds": 900.0,
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      }
+    },
+    {
+      "name": "cp_tutorial_translocation_final",
+      "dataset_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/Translocation/TranslocationData",
+      "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/Translocation/Translocation_final.cppipe",
+      "dataset_id": "CellProfiler_tutorials",
+      "microscope_type": "cellprofiler_tutorials",
+      "value_only": true,
+      "assay_category": "Translocation assay",
+      "module_category": "Segmentation + classification",
+      "cellprofiler_timeout_seconds": 900.0,
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      }
+    },
+    {
+      "name": "cp4_supplement_combine_objects",
+      "dataset_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler4_benchmark_supplement/data/CombineObjects",
+      "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler4_benchmark_supplement/data/CombineObjects/CombineObjectsDemo.cppipe",
+      "dataset_id": "CellProfiler4_benchmark_supplement",
+      "microscope_type": "cellprofiler4_benchmark",
+      "value_only": true,
+      "assay_category": "Object-combination benchmark",
+      "module_category": "Object set algebra",
+      "cellprofiler_timeout_seconds": 900.0,
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      }
+    }
+  ]
+}
