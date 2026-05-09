@@ -9,6 +9,7 @@ from openhcs.core.runtime_semantics import (
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     NativeNumpyRadialDistributionBackendStrategy,
+    NumbaNumpyRadialDistributionBackendStrategy,
     radial_distribution_backend,
 )
 
@@ -155,3 +156,52 @@ def test_explicit_numba_radial_provider_remains_available():
     )
 
     assert selected.backend_provider is CellProfilerBackendProvider.NUMBA
+
+
+def test_numba_self_centered_radial_distribution_matches_native_reference():
+    image = np.arange(25, dtype=np.float32).reshape((5, 5))
+    labels = np.array(
+        [
+            [0, 1, 1, 0, 0],
+            [0, 1, 1, 0, 0],
+            [0, 0, 0, 2, 2],
+            [0, 0, 0, 2, 2],
+            [0, 0, 0, 0, 0],
+        ],
+        dtype=np.int32,
+    )
+
+    native = NativeNumpyRadialDistributionBackendStrategy().measure_self_centered(
+        image,
+        labels,
+        bin_count=4,
+        wants_scaled=True,
+        maximum_radius=100,
+    )
+    accelerated = NumbaNumpyRadialDistributionBackendStrategy().measure_self_centered(
+        image,
+        labels,
+        bin_count=4,
+        wants_scaled=True,
+        maximum_radius=100,
+    )
+
+    np.testing.assert_allclose(
+        accelerated.fraction_at_distance,
+        native.fraction_at_distance,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        accelerated.mean_pixel_fraction,
+        native.mean_pixel_fraction,
+        equal_nan=True,
+    )
+    np.testing.assert_allclose(
+        accelerated.radial_cv_by_bin,
+        native.radial_cv_by_bin,
+        equal_nan=True,
+    )
+    np.testing.assert_array_equal(
+        accelerated.object_has_pixels,
+        native.object_has_pixels,
+    )

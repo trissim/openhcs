@@ -313,19 +313,7 @@ class WholeImageThresholdDiagnosticDomainStrategy(ThresholdDiagnosticDomainStrat
     domain = ThresholdDiagnosticDomain.ND_IMAGE
 
     def diagnostics(self, request: ThresholdDiagnosticRequest) -> tuple[float, float]:
-        mask = request.full_mask()
-        return (
-            _numpy_threshold_weighted_variance(
-                request.image,
-                mask,
-                request.binary_image,
-            ),
-            _numpy_threshold_sum_of_entropies(
-                request.image,
-                mask,
-                request.binary_image,
-            ),
-        )
+        return request.backend.diagnostics_whole_image(request)
 
 
 class NumbaNumpyThresholdDiagnosticsBackendStrategy(
@@ -442,6 +430,53 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
             np.ascontiguousarray(mask_array),
             np.ascontiguousarray(binary_array),
             _deterministic_normal_noise(image_array.shape),
+        )
+        return float(weighted_variance), float(sum_of_entropies)
+
+    def diagnostics_whole_image(
+        self,
+        request: ThresholdDiagnosticRequest,
+    ) -> tuple[float, float]:
+        """Evaluate an ND CellProfiler image as one flattened measurement domain."""
+        image_array = request.image
+        binary_array = request.binary_image
+        mask_array = request.full_mask()
+        flat_image = np.ascontiguousarray(image_array.reshape(-1, 1))
+        flat_binary = np.ascontiguousarray(binary_array.reshape(-1, 1))
+        flat_mask = np.ascontiguousarray(mask_array.reshape(-1, 1))
+        noise = _deterministic_normal_noise(image_array.shape).reshape(-1, 1)
+
+        if bool(np.all(flat_mask)) and bool(np.all(np.isfinite(flat_image))):
+            if request.proven_unit_interval_scale is not None:
+                scale = int(request.proven_unit_interval_scale)
+                values, log_values, log_delta_values = _quantized_log_tables(scale)
+                weighted_variance, sum_of_entropies = (
+                    _threshold_diagnostics_unmasked_finite_quantized_numba(
+                        np.ascontiguousarray(
+                            np.rint(flat_image * scale).astype(np.int64),
+                        ),
+                        flat_binary,
+                        noise,
+                        values,
+                        log_values,
+                        log_delta_values,
+                    )
+                )
+                return float(weighted_variance), float(sum_of_entropies)
+            weighted_variance, sum_of_entropies = (
+                _threshold_diagnostics_unmasked_finite_numba(
+                    flat_image,
+                    flat_binary,
+                    noise,
+                )
+            )
+            return float(weighted_variance), float(sum_of_entropies)
+
+        weighted_variance, sum_of_entropies = _threshold_diagnostics_numba(
+            flat_image,
+            flat_mask,
+            flat_binary,
+            noise,
         )
         return float(weighted_variance), float(sum_of_entropies)
 

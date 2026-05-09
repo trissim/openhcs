@@ -862,12 +862,10 @@ class CellProfilerModuleExecutor:
                 ]
                 combined_rows.extend(non_object_measurement_rows)
                 complete_rows_started_at = time.perf_counter()
-                measurement_rows = _complete_object_measurement_rows(
+                measurement_rows = measurement_row_policy.complete_rows(
                     object_measurement_rows,
                     label_payload=completion_label_payload,
                     func=func,
-                    object_identity=measurement_row_policy.object_identity(),
-                    row_policy=measurement_row_policy,
                 )
                 complete_rows_seconds += time.perf_counter() - complete_rows_started_at
                 annotate_started_at = time.perf_counter()
@@ -3065,11 +3063,145 @@ class CellProfilerObjectMeasurementRowPolicy(metaclass=AutoRegisterMeta):
     ) -> tuple[int, ...]:
         """Return object row IDs required by this policy for one measurement axis."""
         del projected_rows, object_id_field
-        return _measurement_object_row_ids_for_axis(
-            label_payload,
+        schema = ObjectMeasurementRowCompletionSchema(
+            field_names=(),
+            object_id_field=MEASUREMENT_OBJECT_LABEL_FIELD,
+            axis_fields=tuple(axis_fields),
+        )
+        return schema.object_ids_for_axis(
+            label_payload=label_payload,
             object_identity=object_identity,
-            axis_fields=axis_fields,
             axis_key=axis_key,
+        )
+
+    def required_object_ids_by_axis(
+        self,
+        *,
+        label_payload: Any,
+        projection: "ObjectMeasurementRowIdentityProjectionResult",
+        object_identity: MeasurementObjectRowIdentity,
+        object_id_field: str,
+        axis_fields: Sequence[str],
+        axis_keys: Sequence[tuple[Any, ...]],
+    ) -> dict[tuple[Any, ...], tuple[int, ...]]:
+        """Return required object row IDs for every measurement axis."""
+        return {
+            axis_key: self.required_object_ids_for_axis(
+                label_payload=label_payload,
+                projected_rows=projection.rows,
+                object_identity=object_identity,
+                object_id_field=object_id_field,
+                axis_fields=axis_fields,
+                axis_key=axis_key,
+            )
+            for axis_key in axis_keys
+        }
+
+    def complete_rows(
+        self,
+        rows: Sequence[Any],
+        *,
+        label_payload: Any,
+        func: Callable[..., Any],
+    ) -> list[Any]:
+        """Pad per-object measurement rows across this policy's object domain."""
+        schema = ObjectMeasurementRowCompletionSchema.from_rows(rows, func)
+        object_identity = self.object_identity()
+        projection_request = ObjectMeasurementRowIdentityProjectionRequest(
+            rows=rows,
+            object_id_field=schema.object_id_field,
+            axis_fields=schema.axis_fields,
+            row_policy=self,
+        )
+        projection = MeasurementObjectRowIdentityProjectionStrategy.project(
+            object_identity,
+            projection_request,
+        )
+        projected_rows = projection.rows
+        if projected_rows and not any(
+            object_id is not None for object_id, _axis_key in projection.row_keys
+        ):
+            return list(projected_rows)
+        axis_keys = projection_request.axis_keys_for_label_payload(
+            projection,
+            label_payload=label_payload,
+        )
+        if not axis_keys:
+            axis_keys = ((),)
+        object_ids_by_axis = self.required_object_ids_by_axis(
+            label_payload=label_payload,
+            projection=projection,
+            object_identity=object_identity,
+            object_id_field=schema.object_id_field,
+            axis_fields=schema.axis_fields,
+            axis_keys=axis_keys,
+        )
+        object_ids = tuple(
+            sorted(
+                {
+                    object_id
+                    for axis_object_ids in object_ids_by_axis.values()
+                    for object_id in axis_object_ids
+                }
+            )
+        )
+        if not object_ids:
+            return list(projected_rows)
+
+        required_row_keys = {
+            (object_id, axis_key)
+            for axis_key in axis_keys
+            for object_id in object_ids_by_axis[axis_key]
+        }
+        present_row_keys: set[tuple[int, tuple[Any, ...]]] = set()
+        for object_id, row_axis_key in projection.row_keys:
+            if object_id is None:
+                continue
+            row_key = (object_id, row_axis_key)
+            if row_key not in required_row_keys:
+                continue
+            present_row_keys.add(row_key)
+            if len(present_row_keys) == len(required_row_keys):
+                break
+        completed_rows = list(projected_rows)
+        appended_row_keys: list[tuple[int, tuple[Any, ...]]] = []
+        missing_row_keys = [
+            (object_id, axis_key)
+            for axis_key in axis_keys
+            for object_id in object_ids_by_axis[axis_key]
+            if (object_id, axis_key) not in present_row_keys
+        ]
+        if not missing_row_keys:
+            return list(projected_rows)
+
+        unique_missing_axis_keys = tuple(
+            dict.fromkeys(axis_key for _object_id, axis_key in missing_row_keys)
+        )
+        positive_label_extent_by_axis = {
+            axis_key: schema.positive_extent_for_missing_measurements(
+                label_payload=label_payload,
+                axis_key=axis_key,
+                row_policy=self,
+            )
+            for axis_key in unique_missing_axis_keys
+        }
+        for object_id, axis_key in missing_row_keys:
+            row = schema.missing_row(
+                object_id=object_id,
+                axis_key=axis_key,
+                label_payload=label_payload,
+                row_policy=self,
+                positive_label_extent=positive_label_extent_by_axis[axis_key],
+            )
+            completed_rows.append(row)
+            appended_row_keys.append((object_id, axis_key))
+        completed_row_keys = list(projection.row_keys)
+        completed_row_keys.extend(appended_row_keys)
+        return projection.ordered_rows(
+            rows=completed_rows,
+            row_keys=completed_row_keys,
+            object_ids=object_ids,
+            axis_keys=axis_keys,
         )
 
     def missing_measurement_value(
@@ -3141,21 +3273,47 @@ class CompactMeasuredObjectMeasurementRowPolicy(DeclaredObjectMeasurementRowPoli
     ) -> tuple[int, ...]:
         """Compact CP rows are dense over emitted row ordinals."""
         del label_payload, object_identity
+        projection_request = ObjectMeasurementRowIdentityProjectionRequest(
+            rows=projected_rows,
+            object_id_field=object_id_field,
+            axis_fields=axis_fields,
+            row_policy=self,
+        )
         object_ids = tuple(
             object_id
             for row in projected_rows
-            if _measurement_axis_key_from_row(row, axis_fields) == axis_key
-            for object_id in (
-                _measurement_object_label_from_row(
-                    row,
-                    object_id_field=object_id_field,
-                ),
-            )
+            if projection_request.axis_key(row) == axis_key
+            for object_id in (projection_request.object_label(row),)
             if object_id is not None
         )
         if not object_ids:
             return ()
         return tuple(range(1, max(object_ids) + 1))
+
+    def required_object_ids_by_axis(
+        self,
+        *,
+        label_payload: Any,
+        projection: "ObjectMeasurementRowIdentityProjectionResult",
+        object_identity: MeasurementObjectRowIdentity,
+        object_id_field: str,
+        axis_fields: Sequence[str],
+        axis_keys: Sequence[tuple[Any, ...]],
+    ) -> dict[tuple[Any, ...], tuple[int, ...]]:
+        """Compact CP rows are dense over emitted row ordinals per axis."""
+        del label_payload, object_identity, object_id_field, axis_fields
+        max_object_id_by_axis = {axis_key: 0 for axis_key in axis_keys}
+        for object_id, axis_key in projection.row_keys:
+            if object_id is None or axis_key not in max_object_id_by_axis:
+                continue
+            max_object_id_by_axis[axis_key] = max(
+                max_object_id_by_axis[axis_key],
+                object_id,
+            )
+        return {
+            axis_key: tuple(range(1, max_object_id + 1))
+            for axis_key, max_object_id in max_object_id_by_axis.items()
+        }
 
 
 class FeatureAnchoredCompactObjectMeasurementRowPolicy(
@@ -3198,6 +3356,17 @@ class MeasureObjectIntensityDistributionObjectMeasurementRowPolicy(
     """Use CP's compact measured-object rows for intensity-distribution exports."""
 
     module_name = _MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE
+
+    def complete_rows(
+        self,
+        rows: Sequence[Any],
+        *,
+        label_payload: Any,
+        func: Callable[..., Any],
+    ) -> list[Any]:
+        """Intensity-distribution functions emit their full dense row domain."""
+        del label_payload, func
+        return list(rows)
 
 
 class TrackObjectsObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
@@ -3510,13 +3679,10 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
     ) -> dict[str, Any]:
         started_at = time.perf_counter()
         operand1_started_at = time.perf_counter()
-        operand1_value = _calculate_math_operand_value(
-            request.adapter,
-            request.kwargs,
+        operand1_value = self.operand_value(
+            request,
             feature_kwarg="operand1_feature",
             object_kwarg="operand1_object_name",
-            object_inputs=request.object_inputs,
-            labels_for=request.label_payload_for,
         )
         _log_module_profile(
             "calculate_math_operand_bind",
@@ -3524,13 +3690,10 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             operand="1",
         )
         operand2_started_at = time.perf_counter()
-        operand2_value = _calculate_math_operand_value(
-            request.adapter,
-            request.kwargs,
+        operand2_value = self.operand_value(
+            request,
             feature_kwarg="operand2_feature",
             object_kwarg="operand2_object_name",
-            object_inputs=request.object_inputs,
-            labels_for=request.label_payload_for,
         )
         _log_module_profile(
             "calculate_math_operand_bind",
@@ -3545,6 +3708,84 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             "operand1_value": operand1_value,
             "operand2_value": operand2_value,
         }
+
+    def operand_value(
+        self,
+        request: ObjectInputBindingRequest,
+        *,
+        feature_kwarg: str,
+        object_kwarg: str,
+    ) -> Any:
+        feature_name = _required_string_kwarg(
+            request.kwargs,
+            feature_kwarg,
+            "CalculateMath",
+        )
+        object_name = _optional_string_kwarg(request.kwargs, object_kwarg)
+        count_object_name = count_feature_object_name(feature_name)
+        if count_object_name is not None:
+            return float(_object_label_count(request.adapter, count_object_name))
+        if object_name is None:
+            return self.image_operand_value(request.adapter, feature_name)
+
+        object_spec = _spec_by_name(request.object_inputs, object_name)
+        if object_spec is None:
+            values = request.adapter.measurement_values_for_object_feature(
+                object_name,
+                feature_name,
+            )
+            return float(values[0]) if len(values) == 1 else values
+
+        values = request.adapter.measurement_values_for_label_slices(
+            object_name,
+            feature_name,
+            request.labels_for(object_spec),
+        )
+        if len(values) == 1:
+            slice_values = np.asarray(values[0])
+            return float(slice_values[0]) if slice_values.size == 1 else slice_values
+        return CellProfilerSliceAlignedValues(
+            slices=tuple(np.asarray(value) for value in values),
+        )
+
+    def image_operand_value(
+        self,
+        adapter: CellProfilerRuntimeAdapter,
+        feature_name: str,
+    ) -> Any:
+        tables_started_at = time.perf_counter()
+        measurement_tables = adapter.measurement_tables(match_group=False)
+        _log_module_profile(
+            "calculate_math_measurement_tables",
+            time.perf_counter() - tables_started_at,
+            feature=feature_name,
+            count=len(measurement_tables),
+        )
+        slice_started_at = time.perf_counter()
+        slice_values = _calculate_math_image_operand_values_by_slice(
+            measurement_tables,
+            feature_name,
+        )
+        _log_module_profile(
+            "calculate_math_image_operand_slices",
+            time.perf_counter() - slice_started_at,
+            feature=feature_name,
+            sliced=slice_values is not None,
+        )
+        if slice_values is None:
+            scalar_started_at = time.perf_counter()
+            scalar_value = measurement_scalar_value_for_feature(
+                measurement_tables,
+                feature_name,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            )
+            _log_module_profile(
+                "calculate_math_image_operand_scalar",
+                time.perf_counter() - scalar_started_at,
+                feature=feature_name,
+            )
+            return scalar_value
+        return _slice_aligned_measurement_values(slice_values)
 
 
 class CellProfilerPerObjectMeasurementPolicy:
@@ -5652,17 +5893,6 @@ def _measurement_rows_declare_object_name(rows: Sequence[Any]) -> bool:
     )
 
 
-def _measurement_object_label_from_row(
-    row: Any,
-    *,
-    object_id_field: str | None = None,
-) -> int | None:
-    return measurement_object_label(
-        measurement_row_mapping(row),
-        object_id_field=object_id_field,
-    )
-
-
 def _field_specs_for_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[FieldSpec, ...]:
     field_names: list[str] = []
     seen: set[str] = set()
@@ -5675,307 +5905,6 @@ def _field_specs_for_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[FieldSpec,
     return tuple(FieldSpec(field_name) for field_name in field_names)
 
 
-def _complete_object_measurement_rows(
-    rows: Sequence[Any],
-    *,
-    label_payload: Any,
-    func: Callable[..., Any],
-    object_identity: MeasurementObjectRowIdentity | str = (
-        MeasurementObjectRowIdentity.LABEL_ID
-    ),
-    row_policy: CellProfilerObjectMeasurementRowPolicy | None = None,
-) -> list[Any]:
-    """Pad per-object measurement rows across the dense object-label ID domain."""
-    resolved_identity = MeasurementObjectRowIdentity(object_identity)
-    resolved_row_policy = row_policy or DefaultObjectMeasurementRowPolicy()
-    field_names = _measurement_row_field_names(rows, func)
-    object_id_field = _measurement_object_id_field_for_fields(field_names)
-    axis_fields = _measurement_axis_fields_for_fields(field_names)
-    projected_rows = MeasurementObjectRowIdentityProjectionStrategy.project(
-        resolved_identity,
-        ObjectMeasurementRowIdentityProjectionRequest(
-            rows=rows,
-            object_id_field=object_id_field,
-            axis_fields=axis_fields,
-            row_policy=resolved_row_policy,
-        ),
-    )
-    if projected_rows and not any(
-        measurement_row_has_object_identity(measurement_row_mapping(row))
-        for row in projected_rows
-    ):
-        return list(projected_rows)
-    axis_keys = _object_measurement_axis_keys(
-        projected_rows,
-        axis_fields,
-        label_payload=label_payload,
-    )
-    if not axis_keys:
-        axis_keys = ((),)
-    object_ids_by_axis = {
-        axis_key: resolved_row_policy.required_object_ids_for_axis(
-            label_payload=label_payload,
-            projected_rows=projected_rows,
-            object_identity=resolved_identity,
-            object_id_field=object_id_field,
-            axis_fields=axis_fields,
-            axis_key=axis_key,
-        )
-        for axis_key in axis_keys
-    }
-    object_ids = tuple(
-        sorted(
-            {
-                object_id
-                for axis_object_ids in object_ids_by_axis.values()
-                for object_id in axis_object_ids
-            }
-        )
-    )
-    if not object_ids:
-        return list(projected_rows)
-
-    required_row_keys = {
-        (object_id, axis_key)
-        for axis_key in axis_keys
-        for object_id in object_ids_by_axis[axis_key]
-    }
-    present_row_keys: set[tuple[int, tuple[Any, ...]]] = set()
-    for row in projected_rows:
-        object_id = _measurement_object_label_from_row(
-            row,
-            object_id_field=object_id_field,
-        )
-        if object_id is None:
-            continue
-        row_key = (object_id, _measurement_axis_key_from_row(row, axis_fields))
-        if row_key not in required_row_keys:
-            continue
-        present_row_keys.add(row_key)
-        if len(present_row_keys) == len(required_row_keys):
-            break
-    completed_rows = list(projected_rows)
-    appended_row_keys: list[tuple[int, tuple[Any, ...]]] = []
-    missing_row_keys = [
-        (object_id, axis_key)
-        for axis_key in axis_keys
-        for object_id in object_ids_by_axis[axis_key]
-        if (object_id, axis_key) not in present_row_keys
-    ]
-    if not missing_row_keys:
-        return list(projected_rows)
-
-    unique_missing_axis_keys = tuple(
-        dict.fromkeys(axis_key for _object_id, axis_key in missing_row_keys)
-    )
-    positive_label_extent_by_axis = {
-        axis_key: _positive_label_extent_for_missing_measurements(
-            _label_payload_for_measurement_axis(
-                label_payload,
-                axis_fields=axis_fields,
-                axis_key=axis_key,
-            ),
-            row_policy=resolved_row_policy,
-        )
-        for axis_key in unique_missing_axis_keys
-    }
-    for object_id, axis_key in missing_row_keys:
-        row = _missing_object_measurement_row(
-            field_names,
-            object_id_field=object_id_field,
-            object_id=object_id,
-            axis_fields=axis_fields,
-            axis_key=axis_key,
-            label_payload=label_payload,
-            row_policy=resolved_row_policy,
-            positive_label_extent=positive_label_extent_by_axis[axis_key],
-        )
-        completed_rows.append(row)
-        appended_row_keys.append((object_id, axis_key))
-    completed_row_keys = [
-        (
-            _measurement_object_label_from_row(
-                row,
-                object_id_field=object_id_field,
-            ),
-            _measurement_axis_key_from_row(row, axis_fields),
-        )
-        for row in projected_rows
-    ]
-    completed_row_keys.extend(appended_row_keys)
-    return _order_object_measurement_rows_from_keys(
-        completed_rows,
-        row_keys=completed_row_keys,
-        object_ids=object_ids,
-        axis_keys=axis_keys,
-    )
-
-
-def _order_object_measurement_rows_from_keys(
-    rows: Sequence[Any],
-    *,
-    row_keys: Sequence[tuple[int | None, tuple[Any, ...]]],
-    object_ids: Sequence[int],
-    axis_keys: Sequence[tuple[Any, ...]],
-) -> list[Any]:
-    """Return measurement rows using precomputed object/axis keys."""
-    object_order = {object_id: index for index, object_id in enumerate(object_ids)}
-    axis_order = {axis_key: index for index, axis_key in enumerate(axis_keys)}
-    indexed_rows = tuple(enumerate(zip(rows, row_keys, strict=True)))
-    return [
-        row
-        for _index, (row, _row_key) in sorted(
-            indexed_rows,
-            key=lambda item: _object_measurement_row_order_key_from_key(
-                item[1][1],
-                item[0],
-                object_order=object_order,
-                axis_order=axis_order,
-            ),
-        )
-    ]
-
-
-def _order_object_measurement_rows(
-    rows: Sequence[Any],
-    *,
-    object_ids: Sequence[int],
-    object_id_field: str,
-    axis_fields: Sequence[str],
-    axis_keys: Sequence[tuple[Any, ...]],
-) -> list[Any]:
-    """Return completed measurement rows in dense object-domain order."""
-    object_order = {object_id: index for index, object_id in enumerate(object_ids)}
-    axis_order = {axis_key: index for index, axis_key in enumerate(axis_keys)}
-    indexed_rows = tuple(enumerate(rows))
-    return [
-        row
-        for _index, row in sorted(
-            indexed_rows,
-            key=lambda item: _object_measurement_row_order_key(
-                item[1],
-                item[0],
-                object_order=object_order,
-                object_id_field=object_id_field,
-                axis_fields=axis_fields,
-                axis_order=axis_order,
-            ),
-        )
-    ]
-
-
-def _object_measurement_row_order_key(
-    row: Any,
-    fallback_index: int,
-    *,
-    object_order: Mapping[int, int],
-    object_id_field: str,
-    axis_fields: Sequence[str],
-    axis_order: Mapping[tuple[Any, ...], int],
-) -> tuple[int, int, int]:
-    row_mapping = measurement_row_mapping(row)
-    object_id = measurement_object_label(row_mapping, object_id_field=object_id_field)
-    axis_key = _measurement_axis_key(row_mapping, axis_fields)
-    return (
-        axis_order.get(axis_key, len(axis_order)),
-        object_order.get(object_id, len(object_order)) if object_id is not None else len(object_order),
-        fallback_index,
-    )
-
-
-def _object_measurement_row_order_key_from_key(
-    row_key: tuple[int | None, tuple[Any, ...]],
-    fallback_index: int,
-    *,
-    object_order: Mapping[int, int],
-    axis_order: Mapping[tuple[Any, ...], int],
-) -> tuple[int, int, int]:
-    object_id, axis_key = row_key
-    return (
-        axis_order.get(axis_key, len(axis_order)),
-        object_order.get(object_id, len(object_order)) if object_id is not None else len(object_order),
-        fallback_index,
-    )
-
-
-def _measurement_object_row_ids(
-    label_payload: Any,
-    *,
-    object_identity: MeasurementObjectRowIdentity,
-) -> tuple[int, ...]:
-    label_ids = dense_object_label_id_domain(label_payload)
-    if object_identity is MeasurementObjectRowIdentity.LABEL_ID:
-        return label_ids
-    if object_identity is MeasurementObjectRowIdentity.ROW_ORDINAL:
-        return tuple(range(1, len(label_ids) + 1))
-    raise ValueError(f"Unsupported measurement object row identity: {object_identity}.")
-
-
-def _measurement_object_row_ids_for_axis(
-    label_payload: Any,
-    *,
-    object_identity: MeasurementObjectRowIdentity,
-    axis_fields: Sequence[str],
-    axis_key: tuple[Any, ...],
-) -> tuple[int, ...]:
-    return _measurement_object_row_ids(
-        _label_payload_for_measurement_axis(
-            label_payload,
-            axis_fields=axis_fields,
-            axis_key=axis_key,
-        ),
-        object_identity=object_identity,
-    )
-
-
-def _label_payload_for_measurement_axis(
-    label_payload: Any,
-    *,
-    axis_fields: Sequence[str],
-    axis_key: tuple[Any, ...],
-) -> Any:
-    normalized_axis_fields = tuple(
-        str(field_name).strip().lower() for field_name in axis_fields
-    )
-    if "slice_index" not in normalized_axis_fields:
-        return label_payload
-    slice_axis_position = normalized_axis_fields.index("slice_index")
-    if slice_axis_position >= len(axis_key):
-        return label_payload
-    slice_index = int(axis_key[slice_axis_position])
-    labels = np.asarray(_label_payload_final(label_payload))
-    if labels.ndim < 3:
-        return label_payload
-    if slice_index < 0 or slice_index >= labels.shape[0]:
-        raise ValueError(
-            f"Measurement slice_index {slice_index} is outside label stack "
-            f"with {labels.shape[0]} slices."
-        )
-    return RuntimeSliceProjection.value_for_slice(label_payload, slice_index, labels.shape[0])
-
-
-def _positive_object_label_extent(label_payload: Any) -> int:
-    """Return the highest positive dense label ID present in the payload."""
-    labels = np.asarray(_label_payload_final(label_payload))
-    if labels.size == 0:
-        return 0
-    positive_labels = labels[labels > 0]
-    if positive_labels.size == 0:
-        return 0
-    return int(np.max(positive_labels))
-
-
-def _positive_label_extent_for_missing_measurements(
-    label_payload: Any,
-    *,
-    row_policy: CellProfilerObjectMeasurementRowPolicy,
-) -> int | None:
-    policy = MissingObjectMeasurementValuePolicy(type(row_policy).missing_value_policy)
-    if policy is not MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT:
-        return None
-    return _positive_object_label_extent(label_payload)
-
-
 @dataclass(frozen=True, slots=True)
 class ObjectMeasurementRowIdentityProjectionRequest:
     """Typed context for projecting source rows into CellProfiler row identity."""
@@ -5984,6 +5913,258 @@ class ObjectMeasurementRowIdentityProjectionRequest:
     object_id_field: str
     axis_fields: Sequence[str]
     row_policy: CellProfilerObjectMeasurementRowPolicy
+
+    def object_label(self, row: Any) -> int | None:
+        """Return the object identity encoded by one source row."""
+        return measurement_object_label(
+            measurement_row_mapping(row),
+            object_id_field=self.object_id_field,
+        )
+
+    def axis_key(self, row: Any) -> tuple[Any, ...]:
+        """Return the measurement-axis key encoded by one source row."""
+        return self.axis_key_from_mapping(measurement_row_mapping(row))
+
+    def axis_key_from_mapping(self, row: Mapping[str, Any]) -> tuple[Any, ...]:
+        """Return the measurement-axis key encoded by one row mapping."""
+        if not self.axis_fields:
+            return ()
+        if len(self.axis_fields) == 1:
+            return (row.get(self.axis_fields[0]),)
+        return tuple(row.get(field_name) for field_name in self.axis_fields)
+
+    def row_with_object_id(self, row: Any, object_id: int) -> dict[str, Any]:
+        """Return a row projected to the requested object identity field."""
+        projected_row = dict(measurement_row_mapping(row))
+        projected_row[self.object_id_field] = object_id
+        return projected_row
+
+    def axis_keys_for_label_payload(
+        self,
+        projection: "ObjectMeasurementRowIdentityProjectionResult",
+        *,
+        label_payload: Any,
+    ) -> tuple[tuple[Any, ...], ...]:
+        """Return measurement axes valid for completing rows against labels."""
+        if not self.axis_fields:
+            return ((),)
+        if not projection.rows:
+            return ()
+        labels = np.asarray(_label_payload_final(label_payload))
+        if labels.ndim < 3 and tuple(self.axis_fields) == ("slice_index",):
+            return (projection.row_keys[0][1],)
+        return projection.axis_keys
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementRowCompletionSchema:
+    """Nominal table schema for completing object-scoped measurement rows."""
+
+    field_names: tuple[str, ...]
+    object_id_field: str
+    axis_fields: tuple[str, ...]
+
+    @classmethod
+    def from_rows(
+        cls,
+        rows: Sequence[Any],
+        func: Callable[..., Any],
+    ) -> "ObjectMeasurementRowCompletionSchema":
+        field_names = cls.field_names_from_rows(rows, func)
+        return cls(
+            field_names=field_names,
+            object_id_field=cls.object_id_field_from_fields(field_names),
+            axis_fields=cls.axis_fields_from_fields(field_names),
+        )
+
+    @staticmethod
+    def field_names_from_rows(
+        rows: Sequence[Any],
+        func: Callable[..., Any],
+    ) -> tuple[str, ...]:
+        if rows:
+            return tuple(str(key) for key in measurement_row_mapping(rows[0]).keys())
+        return tuple(field.name for field in _measurement_fields_from_callable(func))
+
+    @staticmethod
+    def object_id_field_from_fields(field_names: Sequence[str]) -> str:
+        for field_name in field_names:
+            if field_name in _MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS:
+                return field_name
+        return MEASUREMENT_OBJECT_LABEL_FIELD
+
+    @staticmethod
+    def axis_fields_from_fields(field_names: Sequence[str]) -> tuple[str, ...]:
+        axis_field_names = measurement_row_axis_field_names()
+        return tuple(
+            field_name
+            for field_name in field_names
+            if (
+                field_name in axis_field_names
+                and field_name not in _MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS
+            )
+        )
+
+    def object_ids_for_axis(
+        self,
+        *,
+        label_payload: Any,
+        object_identity: MeasurementObjectRowIdentity,
+        axis_key: tuple[Any, ...],
+    ) -> tuple[int, ...]:
+        axis_payload = self.label_payload_for_axis(label_payload, axis_key=axis_key)
+        label_ids = dense_object_label_id_domain(axis_payload)
+        if object_identity is MeasurementObjectRowIdentity.LABEL_ID:
+            return label_ids
+        if object_identity is MeasurementObjectRowIdentity.ROW_ORDINAL:
+            return tuple(range(1, len(label_ids) + 1))
+        raise ValueError(
+            f"Unsupported measurement object row identity: {object_identity}."
+        )
+
+    def label_payload_for_axis(
+        self,
+        label_payload: Any,
+        *,
+        axis_key: tuple[Any, ...],
+    ) -> Any:
+        normalized_axis_fields = tuple(
+            str(field_name).strip().lower() for field_name in self.axis_fields
+        )
+        slice_axis_name = MeasurementRowAxisField.SLICE_INDEX.value
+        if slice_axis_name not in normalized_axis_fields:
+            return label_payload
+        slice_axis_position = normalized_axis_fields.index(slice_axis_name)
+        if slice_axis_position >= len(axis_key):
+            return label_payload
+        slice_index = int(axis_key[slice_axis_position])
+        labels = np.asarray(_label_payload_final(label_payload))
+        if labels.ndim < 3:
+            return label_payload
+        if slice_index < 0 or slice_index >= labels.shape[0]:
+            raise ValueError(
+                f"Measurement slice_index {slice_index} is outside label stack "
+                f"with {labels.shape[0]} slices."
+            )
+        return RuntimeSliceProjection.value_for_slice(
+            label_payload,
+            slice_index,
+            labels.shape[0],
+        )
+
+    def positive_extent_for_missing_measurements(
+        self,
+        *,
+        label_payload: Any,
+        axis_key: tuple[Any, ...],
+        row_policy: CellProfilerObjectMeasurementRowPolicy,
+    ) -> int | None:
+        policy = MissingObjectMeasurementValuePolicy(type(row_policy).missing_value_policy)
+        if policy is not MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT:
+            return None
+        axis_payload = self.label_payload_for_axis(label_payload, axis_key=axis_key)
+        return self.positive_object_label_extent(axis_payload)
+
+    @staticmethod
+    def positive_object_label_extent(label_payload: Any) -> int:
+        labels = np.asarray(_label_payload_final(label_payload))
+        if labels.size == 0:
+            return 0
+        positive_labels = labels[labels > 0]
+        if positive_labels.size == 0:
+            return 0
+        return int(np.max(positive_labels))
+
+    def missing_row(
+        self,
+        *,
+        object_id: int,
+        axis_key: Sequence[Any],
+        label_payload: Any,
+        row_policy: CellProfilerObjectMeasurementRowPolicy,
+        positive_label_extent: int | None = None,
+    ) -> dict[str, Any]:
+        axis_values = self.axis_values_for_key(axis_key)
+        row = {
+            field_name: row_policy.missing_measurement_value(
+                object_id=object_id,
+                label_payload=label_payload,
+                field_name=field_name,
+                positive_label_extent=positive_label_extent,
+            )
+            for field_name in self.field_names
+            if (
+                field_name not in _MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS
+                and field_name not in axis_values
+            )
+        }
+        row.update(axis_values)
+        row[self.object_id_field] = object_id
+        return row
+
+    def axis_values_for_key(self, axis_key: Sequence[Any]) -> dict[str, Any]:
+        if len(axis_key) > len(self.axis_fields):
+            raise ValueError(
+                "Measurement axis key has more values than axis fields; got "
+                f"{tuple(axis_key)!r} for fields {tuple(self.axis_fields)!r}."
+            )
+        return dict(zip(self.axis_fields, axis_key, strict=False))
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementRowIdentityProjectionResult:
+    """Rows plus their nominal object/axis identity after projection."""
+
+    rows: tuple[Any, ...]
+    row_keys: tuple[tuple[int | None, tuple[Any, ...]], ...]
+    axis_keys: tuple[tuple[Any, ...], ...]
+
+    def ordered_rows(
+        self,
+        *,
+        object_ids: Sequence[int],
+        axis_keys: Sequence[tuple[Any, ...]],
+        rows: Sequence[Any] | None = None,
+        row_keys: Sequence[tuple[int | None, tuple[Any, ...]]] | None = None,
+    ) -> list[Any]:
+        """Return rows in dense object/axis order using projected identities."""
+        ordered_rows = self.rows if rows is None else rows
+        ordered_row_keys = self.row_keys if row_keys is None else row_keys
+        object_order = {object_id: index for index, object_id in enumerate(object_ids)}
+        axis_order = {axis_key: index for index, axis_key in enumerate(axis_keys)}
+        indexed_rows = tuple(enumerate(zip(ordered_rows, ordered_row_keys, strict=True)))
+        return [
+            row
+            for _index, (row, _row_key) in sorted(
+                indexed_rows,
+                key=lambda item: self.row_order_key(
+                    item[1][1],
+                    item[0],
+                    object_order=object_order,
+                    axis_order=axis_order,
+                ),
+            )
+        ]
+
+    @staticmethod
+    def row_order_key(
+        row_key: tuple[int | None, tuple[Any, ...]],
+        fallback_index: int,
+        *,
+        object_order: Mapping[int, int],
+        axis_order: Mapping[tuple[Any, ...], int],
+    ) -> tuple[int, int, int]:
+        """Return a stable ordering key for one projected measurement row."""
+        object_id, axis_key = row_key
+        return (
+            axis_order.get(axis_key, len(axis_order)),
+            (
+                object_order.get(object_id, len(object_order))
+                if object_id is not None
+                else len(object_order)
+            ),
+            fallback_index,
+        )
 
 
 @dataclass(slots=True)
@@ -6062,7 +6243,7 @@ class MeasurementObjectRowIdentityProjectionStrategy(
         cls,
         object_identity: MeasurementObjectRowIdentity,
         request: ObjectMeasurementRowIdentityProjectionRequest,
-    ) -> list[Any]:
+    ) -> ObjectMeasurementRowIdentityProjectionResult:
         """Project rows using the strategy declared by ``object_identity``."""
         return cls.for_enum_member(object_identity).project_rows(request)
 
@@ -6070,7 +6251,7 @@ class MeasurementObjectRowIdentityProjectionStrategy(
     def project_rows(
         self,
         request: ObjectMeasurementRowIdentityProjectionRequest,
-    ) -> list[Any]:
+    ) -> ObjectMeasurementRowIdentityProjectionResult:
         """Return rows with the requested object-row identity."""
 
 
@@ -6084,8 +6265,20 @@ class LabelIdMeasurementObjectRowIdentityProjectionStrategy(
     def project_rows(
         self,
         request: ObjectMeasurementRowIdentityProjectionRequest,
-    ) -> list[Any]:
-        return list(request.rows)
+    ) -> ObjectMeasurementRowIdentityProjectionResult:
+        rows = tuple(request.rows)
+        row_keys = tuple(
+            (
+                request.object_label(row),
+                request.axis_key(row),
+            )
+            for row in rows
+        )
+        return ObjectMeasurementRowIdentityProjectionResult(
+            rows=rows,
+            row_keys=row_keys,
+            axis_keys=tuple(dict.fromkeys(axis_key for _object_id, axis_key in row_keys)),
+        )
 
 
 class RowOrdinalMeasurementObjectRowIdentityProjectionStrategy(
@@ -6098,12 +6291,12 @@ class RowOrdinalMeasurementObjectRowIdentityProjectionStrategy(
     def project_rows(
         self,
         request: ObjectMeasurementRowIdentityProjectionRequest,
-    ) -> list[Any]:
+    ) -> ObjectMeasurementRowIdentityProjectionResult:
         ordinal_state = ObjectMeasurementRowOrdinalProjectionState()
         row_entries: list[tuple[Any, Mapping[str, object], tuple[Any, ...], bool]] = []
         for row in request.rows:
             row_mapping = measurement_row_mapping(row)
-            axis_key = _measurement_axis_key(row_mapping, request.axis_fields)
+            axis_key = request.axis_key_from_mapping(row_mapping)
             measured = request.row_policy.row_has_measured_object(
                 row_mapping,
                 object_id_field=request.object_id_field,
@@ -6136,167 +6329,38 @@ class RowOrdinalMeasurementObjectRowIdentityProjectionStrategy(
                     continue
                 ordinal = ordinal_state.next_unbound_ordinal(axis_key)
             projected_rows.append(
-                _measurement_row_with_object_id(
-                    row,
-                    object_id_field=request.object_id_field,
-                    object_id=ordinal,
-                )
+                request.row_with_object_id(row, ordinal)
             )
             projected_row_keys.append((ordinal, axis_key))
-        return _order_object_measurement_rows_from_keys(
-            projected_rows,
-            row_keys=projected_row_keys,
-            object_ids=tuple(sorted(dict.fromkeys(ordinal for ordinal, _axis_key in projected_row_keys))),
-            axis_keys=tuple(dict.fromkeys(axis_key for _row, _mapping, axis_key, _measured in row_entries)),
+        object_ids = tuple(
+            sorted(dict.fromkeys(ordinal for ordinal, _axis_key in projected_row_keys))
         )
-
-def _measurement_row_with_object_id(
-    row: Any,
-    *,
-    object_id_field: str,
-    object_id: int,
-) -> dict[str, Any]:
-    projected_row = dict(measurement_row_mapping(row))
-    projected_row[object_id_field] = object_id
-    return projected_row
-
-
-def _measurement_axis_fields_for_fields(field_names: Sequence[str]) -> tuple[str, ...]:
-    axis_field_names = measurement_row_axis_field_names()
-    return tuple(
-        field_name
-        for field_name in field_names
-        if (
-            field_name in axis_field_names
-            and field_name not in _MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS
+        axis_keys = tuple(
+            dict.fromkeys(axis_key for _row, _mapping, axis_key, _measured in row_entries)
         )
-    )
-
-
-def _measurement_axis_keys(
-    rows: Sequence[Any],
-    axis_fields: Sequence[str],
-) -> tuple[tuple[Any, ...], ...]:
-    if not axis_fields:
-        return ((),)
-    return tuple(
-        dict.fromkeys(
-            _measurement_axis_key_from_row(row, axis_fields)
-            for row in rows
+        projection = ObjectMeasurementRowIdentityProjectionResult(
+            rows=tuple(projected_rows),
+            row_keys=tuple(projected_row_keys),
+            axis_keys=axis_keys,
         )
-    )
-
-
-def _object_measurement_axis_keys(
-    rows: Sequence[Any],
-    axis_fields: Sequence[str],
-    *,
-    label_payload: Any,
-) -> tuple[tuple[Any, ...], ...]:
-    if not axis_fields:
-        return ((),)
-    if not rows:
-        return ()
-    labels = np.asarray(_label_payload_final(label_payload))
-    if labels.ndim < 3 and tuple(axis_fields) == ("slice_index",):
-        return (_measurement_axis_key_from_row(rows[0], axis_fields),)
-    return _measurement_axis_keys(rows, axis_fields)
-
-
-def _measurement_axis_keys_from_mappings(
-    rows: Sequence[Mapping[str, Any]],
-    axis_fields: Sequence[str],
-) -> tuple[tuple[Any, ...], ...]:
-    if not axis_fields:
-        return ((),)
-    return tuple(
-        dict.fromkeys(
-            _measurement_axis_key(row, axis_fields)
-            for row in rows
+        object_order = {object_id: index for index, object_id in enumerate(object_ids)}
+        axis_order = {axis_key: index for index, axis_key in enumerate(axis_keys)}
+        ordered_entries = tuple(
+            sorted(
+                enumerate(zip(projection.rows, projection.row_keys, strict=True)),
+                key=lambda item: projection.row_order_key(
+                    item[1][1],
+                    item[0],
+                    object_order=object_order,
+                    axis_order=axis_order,
+                ),
+            )
         )
-    )
-
-
-def _measurement_axis_key(
-    row: Mapping[str, Any],
-    axis_fields: Sequence[str],
-) -> tuple[Any, ...]:
-    if not axis_fields:
-        return ()
-    if len(axis_fields) == 1:
-        return (row.get(axis_fields[0]),)
-    return tuple(row.get(field_name) for field_name in axis_fields)
-
-
-def _measurement_axis_key_from_row(
-    row: Any,
-    axis_fields: Sequence[str],
-) -> tuple[Any, ...]:
-    if not axis_fields:
-        return ()
-    row_mapping = measurement_row_mapping(row)
-    if len(axis_fields) == 1:
-        return (row_mapping.get(axis_fields[0]),)
-    return tuple(row_mapping.get(field_name) for field_name in axis_fields)
-
-
-def _missing_object_measurement_row(
-    field_names: Sequence[str],
-    *,
-    object_id_field: str,
-    object_id: int,
-    axis_fields: Sequence[str],
-    axis_key: Sequence[Any],
-    label_payload: Any,
-    row_policy: CellProfilerObjectMeasurementRowPolicy,
-    positive_label_extent: int | None = None,
-) -> dict[str, Any]:
-    axis_values = _measurement_axis_values_for_key(axis_fields, axis_key)
-    row = {
-        field_name: row_policy.missing_measurement_value(
-            object_id=object_id,
-            label_payload=label_payload,
-            field_name=field_name,
-            positive_label_extent=positive_label_extent,
+        return ObjectMeasurementRowIdentityProjectionResult(
+            rows=tuple(row for _index, (row, _row_key) in ordered_entries),
+            row_keys=tuple(row_key for _index, (_row, row_key) in ordered_entries),
+            axis_keys=axis_keys,
         )
-        for field_name in field_names
-        if (
-            field_name not in _MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS
-            and field_name not in axis_values
-        )
-    }
-    row.update(axis_values)
-    row[object_id_field] = object_id
-    return row
-
-
-def _measurement_axis_values_for_key(
-    axis_fields: Sequence[str],
-    axis_key: Sequence[Any],
-) -> dict[str, Any]:
-    """Return known axis values, leaving absent axes to row-value policy."""
-    if len(axis_key) > len(axis_fields):
-        raise ValueError(
-            "Measurement axis key has more values than axis fields; got "
-            f"{tuple(axis_key)!r} for fields {tuple(axis_fields)!r}."
-        )
-    return dict(zip(axis_fields, axis_key, strict=False))
-
-
-def _measurement_row_field_names(
-    rows: Sequence[Any],
-    func: Callable[..., Any],
-) -> tuple[str, ...]:
-    if rows:
-        return tuple(str(key) for key in measurement_row_mapping(rows[0]).keys())
-    return tuple(field.name for field in _measurement_fields_from_callable(func))
-
-
-def _measurement_object_id_field_for_fields(field_names: Sequence[str]) -> str:
-    for field_name in field_names:
-        if field_name in _MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS:
-            return field_name
-    return MEASUREMENT_OBJECT_LABEL_FIELD
 
 
 _MISSING_MEASUREMENT_OBJECT_NAME = object()
@@ -7743,80 +7807,6 @@ def _optional_string_kwarg(
         raise TypeError(f"Expected string kwarg {name!r}, got {type(value).__name__}.")
     normalized = value.strip()
     return normalized or None
-
-
-def _calculate_math_operand_value(
-    adapter: CellProfilerRuntimeAdapter,
-    kwargs: Mapping[str, Any],
-    *,
-    feature_kwarg: str,
-    object_kwarg: str,
-    object_inputs: tuple[ArtifactSpec, ...] = (),
-    labels_for: Callable[[ArtifactSpec], Any] | None = None,
-) -> Any:
-    feature_name = _required_string_kwarg(kwargs, feature_kwarg, "CalculateMath")
-    object_name = _optional_string_kwarg(kwargs, object_kwarg)
-    count_object_name = count_feature_object_name(feature_name)
-    if count_object_name is not None:
-        return float(_object_label_count(adapter, count_object_name))
-    if object_name is None:
-        return _calculate_math_image_operand_value(adapter, feature_name)
-    label_spec = _spec_by_name(object_inputs, object_name)
-    if label_spec is not None and labels_for is not None:
-        return _slice_aligned_measurement_values(
-            adapter.measurement_values_for_label_slices(
-                object_name,
-                feature_name,
-                labels_for(label_spec),
-            )
-        )
-    values = measurement_values_for_feature(
-        adapter.measurement_tables_for_object(object_name),
-        feature_name,
-        object_count=_object_label_count(adapter, object_name),
-        object_name=object_name,
-        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-    )
-    return float(values[0]) if len(values) == 1 else values
-
-
-def _calculate_math_image_operand_value(
-    adapter: CellProfilerRuntimeAdapter,
-    feature_name: str,
-) -> Any:
-    tables_started_at = time.perf_counter()
-    measurement_tables = adapter.measurement_tables(match_group=False)
-    _log_module_profile(
-        "calculate_math_measurement_tables",
-        time.perf_counter() - tables_started_at,
-        feature=feature_name,
-        count=len(measurement_tables),
-    )
-    slice_started_at = time.perf_counter()
-    slice_values = _calculate_math_image_operand_values_by_slice(
-        measurement_tables,
-        feature_name,
-    )
-    _log_module_profile(
-        "calculate_math_image_operand_slices",
-        time.perf_counter() - slice_started_at,
-        feature=feature_name,
-        sliced=slice_values is not None,
-    )
-    if slice_values is None:
-        scalar_started_at = time.perf_counter()
-        scalar_value = measurement_scalar_value_for_feature(
-            measurement_tables,
-            feature_name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
-        _log_module_profile(
-            "calculate_math_image_operand_scalar",
-            time.perf_counter() - scalar_started_at,
-            feature=feature_name,
-        )
-        return scalar_value
-    return _slice_aligned_measurement_values(slice_values)
 
 
 def _calculate_math_image_operand_values_by_slice(

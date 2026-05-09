@@ -131,6 +131,14 @@ class MorphologyBackendStrategy(
         """Return grayscale morphological closing for a 2-D image."""
 
     @abstractmethod
+    def erode_labeled_objects(
+        self,
+        labels: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
+        """Erode labeled objects while preserving label identities."""
+
+    @abstractmethod
     def block_labels(
         self,
         image_shape: tuple[int, int],
@@ -267,6 +275,13 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         footprint: np.ndarray,
     ) -> np.ndarray:
         return _skimage_grayscale_opening(image, footprint)
+
+    def erode_labeled_objects(
+        self,
+        labels: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
+        return _scipy_erode_labeled_objects(labels, footprint)
 
     def block_labels(
         self,
@@ -592,6 +607,21 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             mask is not None,
             max(1, int(block_size)),
         )
+
+    def erode_labeled_objects(
+        self,
+        labels: np.ndarray,
+        footprint: np.ndarray,
+    ) -> np.ndarray:
+        labels_array = np.asarray(labels)
+        footprint_array = np.asarray(footprint, dtype=bool)
+        if labels_array.ndim not in (2, 3) or footprint_array.ndim != labels_array.ndim:
+            return super().erode_labeled_objects(labels_array, footprint_array)
+        offsets = _footprint_offsets_nd(footprint_array)
+        return _erode_labeled_objects_numba(
+            np.ascontiguousarray(labels_array),
+            offsets,
+        ).astype(labels_array.dtype, copy=False)
 
     def local_maxima_by_label(
         self,
@@ -1035,6 +1065,20 @@ def _scipy_blockwise_minimum(
     return result
 
 
+def _scipy_erode_labeled_objects(
+    labels: np.ndarray,
+    footprint: np.ndarray,
+) -> np.ndarray:
+    import scipy.ndimage
+
+    labels_array = np.asarray(labels)
+    contours = scipy.ndimage.morphological_gradient(
+        labels_array,
+        footprint=np.asarray(footprint, dtype=bool),
+    )
+    return labels_array * (contours == 0)
+
+
 @njit(cache=True)
 def _block_labels_2d_numba(
     height: int,
@@ -1132,6 +1176,61 @@ def _blockwise_minimum_numba(
                         if not has_mask or mask[y, x]:
                             for channel in range(channel_count):
                                 output[y, x, channel] = minima[label, channel]
+    return output
+
+
+@njit(cache=True)
+def _erode_labeled_objects_numba(
+    labels: np.ndarray,
+    offsets: np.ndarray,
+) -> np.ndarray:
+    output = np.zeros(labels.shape, dtype=labels.dtype)
+    if labels.ndim == 2:
+        height, width = labels.shape
+        for y in range(height):
+            for x in range(width):
+                label = labels[y, x]
+                if label == 0:
+                    continue
+                keep = True
+                for offset_index in range(offsets.shape[0]):
+                    yy = y + offsets[offset_index, 0]
+                    xx = x + offsets[offset_index, 1]
+                    if yy < 0 or xx < 0 or yy >= height or xx >= width:
+                        continue
+                    if labels[yy, xx] != label:
+                        keep = False
+                        break
+                if keep:
+                    output[y, x] = label
+        return output
+
+    z_size, y_size, x_size = labels.shape
+    for z in range(z_size):
+        for y in range(y_size):
+            for x in range(x_size):
+                label = labels[z, y, x]
+                if label == 0:
+                    continue
+                keep = True
+                for offset_index in range(offsets.shape[0]):
+                    zz = z + offsets[offset_index, 0]
+                    yy = y + offsets[offset_index, 1]
+                    xx = x + offsets[offset_index, 2]
+                    if (
+                        zz < 0
+                        or yy < 0
+                        or xx < 0
+                        or zz >= z_size
+                        or yy >= y_size
+                        or xx >= x_size
+                    ):
+                        continue
+                    if labels[zz, yy, xx] != label:
+                        keep = False
+                        break
+                if keep:
+                    output[z, y, x] = label
     return output
 
 
@@ -1637,6 +1736,17 @@ def _footprint_offsets(footprint: np.ndarray) -> np.ndarray:
         np.column_stack((coords[:, 0] - center_y, coords[:, 1] - center_x)),
         dtype=np.int64,
     )
+
+
+def _footprint_offsets_nd(footprint: np.ndarray) -> np.ndarray:
+    footprint_array = np.asarray(footprint, dtype=bool)
+    if footprint_array.ndim not in (2, 3):
+        raise NotImplementedError(
+            "CellProfiler-compatible morphology currently supports 2-D and 3-D footprints."
+        )
+    center = np.asarray(footprint_array.shape, dtype=np.int64) // 2
+    coords = np.argwhere(footprint_array).astype(np.int64)
+    return np.ascontiguousarray(coords - center)
 
 
 def _border_component_ids(component_labels: np.ndarray) -> set[int]:

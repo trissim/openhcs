@@ -16,13 +16,17 @@ from openhcs.core.aligned_image_payload import (
 )
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.constants.constants import MemoryType
-from openhcs.interop.cellprofiler.runtime.invocation import CellProfilerMeasurementImage
+from openhcs.interop.cellprofiler.runtime.invocation import (
+    CellProfilerMeasurementImage,
+    CellProfilerSliceAlignedValues,
+)
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerGridCycleScope,
     CellProfilerInvocationOptions,
 )
 from benchmark.cellprofiler_compat.module_execution import (
     AlignMeasurementFeature,
+    CalculateMathInputPolicy,
     CellProfilerFunctionContractExecutor,
     CellProfilerInvocationExecutionModePolicy,
     CellProfilerMeasurementRecordBuilder,
@@ -32,6 +36,9 @@ from benchmark.cellprofiler_compat.module_execution import (
     CellProfilerModuleExecutor,
     CellProfilerObjectMeasurementExecutionDomainPolicy,
     CellProfilerObjectMeasurementRowPolicy,
+    CompactMeasuredObjectMeasurementRowPolicy,
+    DefaultObjectMeasurementRowPolicy,
+    ObjectInputBindingRequest,
     ObjectLocationMeasurementRows,
     RelationshipMeasurementRows,
     RelationshipMeasurementFeatureTemplate,
@@ -41,7 +48,6 @@ from benchmark.cellprofiler_compat.module_execution import (
     CellProfilerPure2DOutputAggregator,
     _coerce_invocation_kwargs,
     _cellprofiler_global_image_number_rows,
-    _complete_object_measurement_rows,
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_measurement_image,
@@ -182,6 +188,23 @@ def _synthetic_axis_object_measurement_function(
     return image, []
 
 
+def complete_object_measurement_rows(
+    rows,
+    *,
+    label_payload,
+    func,
+    object_identity=MeasurementObjectRowIdentity.LABEL_ID,
+    row_policy=None,
+):
+    if row_policy is None:
+        row_policy = (
+            CompactMeasuredObjectMeasurementRowPolicy()
+            if object_identity is MeasurementObjectRowIdentity.ROW_ORDINAL
+            else DefaultObjectMeasurementRowPolicy()
+        )
+    return row_policy.complete_rows(rows, label_payload=label_payload, func=func)
+
+
 class _FakeCellProfilerRuntime:
     def __init__(
         self,
@@ -263,6 +286,86 @@ class _FakeCellProfilerRuntime:
 
     def add_relationship(self, name: str, **kwargs: object) -> None:
         self.relationships.append((name, kwargs))
+
+
+class _CalculateMathObjectOperandAdapter:
+    def __init__(self, labels: np.ndarray) -> None:
+        self.labels = labels
+        self.feature_requests: list[tuple[str, str, object]] = []
+
+    def get_objects(self, name: str) -> ObjectLabelSet:
+        return ObjectLabelSet(name=name, labels=self.labels)
+
+    def resolve_source_objects(
+        self,
+        name: str,
+        current_image: object,
+    ) -> ObjectLabelSet:
+        del current_image
+        return self.get_objects(name)
+
+    def measurement_values_for_label_slices(
+        self,
+        object_name: str,
+        feature_name: str,
+        labels: object,
+        *,
+        group_key: str | None = None,
+    ) -> tuple[np.ndarray, ...]:
+        del group_key
+        self.feature_requests.append((object_name, feature_name, labels))
+        return (
+            np.asarray([1.0, 2.0], dtype=float),
+            np.asarray([3.0, 4.0], dtype=float),
+        )
+
+    def measurement_values_for_object_feature(
+        self,
+        object_name: str,
+        feature_name: str,
+        *,
+        group_key: str | None = None,
+    ) -> np.ndarray:
+        raise AssertionError(
+            "CalculateMath object operands must use the label-slice domain "
+            f"for {object_name}:{feature_name}, not the collapsed object feature path."
+        )
+
+
+def test_calculate_math_object_operands_preserve_label_slice_domain() -> None:
+    labels = np.asarray(
+        [
+            [[0, 1], [2, 0]],
+            [[0, 1], [0, 2]],
+        ],
+        dtype=np.int32,
+    )
+    adapter = _CalculateMathObjectOperandAdapter(labels)
+    request = ObjectInputBindingRequest(
+        module_name="CalculateMath",
+        object_inputs=(ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),),
+        adapter=adapter,
+        kwargs={
+            "operand1_feature": "Intensity_MeanIntensity_DNA",
+            "operand1_object_name": "Nuclei",
+        },
+        current_image=np.zeros((2, 2), dtype=np.float32),
+        external_object_names=frozenset(),
+    )
+
+    value = CalculateMathInputPolicy().operand_value(
+        request,
+        feature_kwarg="operand1_feature",
+        object_kwarg="operand1_object_name",
+    )
+
+    assert isinstance(value, CellProfilerSliceAlignedValues)
+    assert value.slice_count == 2
+    np.testing.assert_array_equal(value.value_for_slice(0), [1.0, 2.0])
+    np.testing.assert_array_equal(value.value_for_slice(1), [3.0, 4.0])
+    assert adapter.feature_requests == [
+        ("Nuclei", "Intensity_MeanIntensity_DNA", labels)
+    ]
 
 
 def test_special_inputs_bind_from_declared_role_order_not_runtime_dedup_order() -> None:
@@ -463,7 +566,7 @@ def test_complete_object_measurement_rows_uses_declared_label_domain() -> None:
         declared_object_count=3,
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [],
         label_payload=payload,
         func=_synthetic_object_measurement_function,
@@ -479,7 +582,7 @@ def test_complete_object_measurement_rows_handles_empty_rows_with_axis_fields() 
         declared_object_count=2,
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [],
         label_payload=payload,
         func=_synthetic_axis_object_measurement_function,
@@ -501,7 +604,7 @@ def test_complete_object_measurement_rows_preserves_sliced_object_label_set_doma
         source_image_name="BF_image",
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [
             {"slice_index": 0, "object_label": 1, "value": 10.0},
             {"slice_index": 1, "object_label": 1, "value": 20.0},
@@ -557,7 +660,7 @@ def test_measure_object_intensity_zero_fills_missing_positive_extent() -> None:
         "MeasureObjectIntensity"
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [{"object_label": 1, "value": 7.0}],
         label_payload=payload,
         func=_synthetic_object_measurement_function,
@@ -583,7 +686,7 @@ def test_complete_object_measurement_rows_uses_slice_local_label_domain() -> Non
         "MeasureObjectIntensity"
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [
             {"slice_index": 0, "object_label": 1, "value": 10.0},
             {"slice_index": 0, "object_label": 3, "value": 30.0},
@@ -614,7 +717,7 @@ def test_complete_object_measurement_rows_orders_sparse_label_domain() -> None:
         declared_object_count=5,
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [
             {"object_label": 3, "value": 30.0},
             {"object_label": 1, "value": 10.0},
@@ -635,7 +738,7 @@ def test_complete_object_measurement_rows_preserves_measurement_axes() -> None:
         declared_object_count=2,
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [
             {
                 "object_label": 1,
@@ -675,7 +778,7 @@ def test_complete_object_measurement_rows_supports_compact_row_identity() -> Non
         declared_object_ids=(10, 20, 30, 40, 50),
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [
             {"object_label": 10, "Area": 10.0},
             {"object_label": 20},
@@ -703,7 +806,7 @@ def test_measure_object_size_shape_compact_rows_preserve_emitted_padding() -> No
         "MeasureObjectSizeShape"
     )
 
-    rows = _complete_object_measurement_rows(
+    rows = complete_object_measurement_rows(
         [
             {"object_label": 10, "Area": 10.0},
             {"object_label": 20},

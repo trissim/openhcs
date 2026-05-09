@@ -273,7 +273,7 @@ class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.CENTROSOME
-    is_default_backend = False
+    is_default_backend = True
 
     def smooth_background_plane(
         self,
@@ -432,7 +432,7 @@ class NumbaExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA_EXACT
-    is_default_backend = True
+    is_default_backend = False
 
 
 class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(

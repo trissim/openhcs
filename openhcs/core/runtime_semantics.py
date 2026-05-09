@@ -1856,6 +1856,10 @@ def measurement_table_row_layouts(rows: object) -> frozenset[MeasurementTableRow
     row_sequence = rows if isinstance(rows, list | tuple) else (rows,)
     if not row_sequence:
         return frozenset()
+    if isinstance(row_sequence[0], ObjectMeasurementValueRow) and all(
+        isinstance(row, ObjectMeasurementValueRow) for row in row_sequence
+    ):
+        return frozenset((MeasurementTableRowLayout.LONG,))
     return frozenset(_measurement_row_layout(row) for row in row_sequence)
 
 

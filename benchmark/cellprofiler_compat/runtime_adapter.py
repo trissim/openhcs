@@ -13,6 +13,7 @@ from pathlib import Path
 import time
 from types import MappingProxyType
 from typing import Any, ClassVar
+from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
@@ -58,7 +59,14 @@ from openhcs.core.runtime_stores import (
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_artifact_queries import (
+    MEASUREMENT_FEATURE_NAME_FIELDS,
+    MEASUREMENT_OBJECT_ID_FIELDS,
+    MEASUREMENT_OBJECT_NAME_FIELD,
+    MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
     RuntimeArtifactQueryContext,
+    measurement_row_mapping,
+    measurement_rows,
+    measurement_values_for_feature,
     measurement_values_for_label_plane,
     measurement_values_for_label_slices,
     runtime_measurement_tables,
@@ -95,6 +103,7 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
     normalize_artifact_value,
 )
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
@@ -106,6 +115,109 @@ _SOURCE_CANDIDATE_PROCESS_CACHE: OrderedDict[
     tuple[Hashable, ...],
     tuple["ParsedSourceCandidate", ...],
 ] = OrderedDict()
+_OBJECT_FEATURE_VALUE_PROCESS_CACHE: WeakKeyDictionary[
+    RuntimeValueStore,
+    dict[tuple[Hashable, ...], Any],
+] = WeakKeyDictionary()
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementTableCacheKey:
+    """Semantic cache key for object-subject measurement table queries."""
+
+    group_key: str | None
+    match_group: bool
+    object_name: str
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementTableIndexCacheKey:
+    """Semantic cache key for object-subject measurement table indexes."""
+
+    group_key: str | None
+    match_group: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementTableIndex:
+    """Nominal object-subject measurement table index."""
+
+    tables_by_object: Mapping[str, tuple[MeasurementTable, ...]]
+    complete: bool = False
+
+    @classmethod
+    def from_tables(
+        cls,
+        tables: tuple[MeasurementTable, ...],
+    ) -> "ObjectMeasurementTableIndex":
+        """Return a complete index over the provided measurement tables."""
+        table_lists: dict[str, list[MeasurementTable]] = {}
+        for table in tables:
+            for table_object_name in cls.table_object_names(table):
+                table_lists.setdefault(table_object_name, []).append(table)
+        return cls(
+            MappingProxyType(
+                {
+                    object_name: RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
+                        tuple(object_tables)
+                    )
+                    for object_name, object_tables in table_lists.items()
+                }
+            ),
+            complete=True,
+        )
+
+    @staticmethod
+    def table_object_names(table: MeasurementTable) -> tuple[str, ...]:
+        """Return all object subjects declared by a measurement table."""
+        if table.object_name is not None:
+            return (table.object_name,)
+        object_names = tuple(
+            dict.fromkeys(
+                str(row_mapping[MEASUREMENT_OBJECT_NAME_FIELD])
+                for row in measurement_rows((table,))
+                for row_mapping in (measurement_row_mapping(row),)
+                if row_mapping.get(MEASUREMENT_OBJECT_NAME_FIELD) not in (None, "")
+            )
+        )
+        return object_names
+
+    def for_object(self, object_name: str) -> tuple[MeasurementTable, ...] | None:
+        """Return indexed tables for one object, or ``None`` when unknown."""
+        if not self.complete:
+            return None
+        return self.tables_by_object.get(object_name, ())
+
+    def with_table(self, table: MeasurementTable) -> "ObjectMeasurementTableIndex":
+        """Return this index updated with one object-subject measurement table."""
+        object_names = self.table_object_names(table)
+        if not object_names:
+            return self
+        tables_by_object = dict(self.tables_by_object)
+        for object_name in object_names:
+            existing_tables = tuple(
+                existing
+                for existing in tables_by_object.get(object_name, ())
+                if existing.name != table.name
+            )
+            tables_by_object[object_name] = (
+                *existing_tables,
+                table,
+            )
+        return ObjectMeasurementTableIndex(
+            MappingProxyType(tables_by_object),
+            complete=self.complete,
+        )
+
+
+_OBJECT_MEASUREMENT_TABLE_PROCESS_CACHE: WeakKeyDictionary[
+    RuntimeValueStore,
+    dict[ObjectMeasurementTableCacheKey, tuple[MeasurementTable, ...]],
+] = WeakKeyDictionary()
+_OBJECT_MEASUREMENT_TABLE_INDEX_PROCESS_CACHE: WeakKeyDictionary[
+    RuntimeValueStore,
+    dict[ObjectMeasurementTableIndexCacheKey, ObjectMeasurementTableIndex],
+] = WeakKeyDictionary()
 _PIPELINE_START_PAYLOAD_CACHE_LIMIT = 64
 _PIPELINE_START_PAYLOAD_PROCESS_CACHE: OrderedDict[
     tuple[Hashable, ...],
@@ -225,6 +337,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         repr=False,
         compare=False,
     )
+    _artifact_availability_cache: dict[tuple[Hashable, ...], bool] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_value_store, RuntimeValueStore):
@@ -277,6 +395,31 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         source_paths = self.source_binding_context.step_input_source_paths
         mapped = source_paths.get(path) or path
         return source_path_identity_key(mapped)
+
+    def object_feature_value_cache(self) -> dict[tuple[Hashable, ...], Any]:
+        """Return the process cache for stable object-feature vectors in this store."""
+        return _OBJECT_FEATURE_VALUE_PROCESS_CACHE.setdefault(
+            self.runtime_value_store,
+            {},
+        )
+
+    def object_measurement_table_cache(
+        self,
+    ) -> dict[ObjectMeasurementTableCacheKey, tuple[MeasurementTable, ...]]:
+        """Return the process cache for object-subject measurement table queries."""
+        return _OBJECT_MEASUREMENT_TABLE_PROCESS_CACHE.setdefault(
+            self.runtime_value_store,
+            {},
+        )
+
+    def object_measurement_table_index_cache(
+        self,
+    ) -> dict[ObjectMeasurementTableIndexCacheKey, ObjectMeasurementTableIndex]:
+        """Return the process cache for object-subject measurement table indexes."""
+        return _OBJECT_MEASUREMENT_TABLE_INDEX_PROCESS_CACHE.setdefault(
+            self.runtime_value_store,
+            {},
+        )
 
     def cellprofiler_ordered_pipeline_image_paths(self) -> tuple[str, ...]:
         """Return loadable pipeline input paths in CellProfiler image order."""
@@ -332,6 +475,27 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
 
         self._source_order_cache[cache_key] = 1
         return 1
+
+    def invalidate_runtime_query_caches_for_kind(self, kind: ArtifactKind) -> None:
+        """Invalidate adapter caches whose semantic domain can change for ``kind``."""
+        RuntimeArtifactCacheInvalidationPolicy.for_kind(kind).invalidate(self)
+
+    def require_artifact_available(self, *, name: str, kind: ArtifactKind) -> None:
+        """Fail loudly unless a runtime artifact is declared, bound, or resolvable."""
+        cache_key = (
+            "artifact_available",
+            self.runtime_value_store.revision,
+            self.group_key,
+            name,
+            kind,
+        )
+        if self._artifact_availability_cache.get(cache_key):
+            return
+        if self.has_source_binding(name, kind):
+            self._artifact_availability_cache[cache_key] = True
+            return
+        self._resolve_runtime_record(name=name, kind=kind)
+        self._artifact_availability_cache[cache_key] = True
 
     def resolve_source_image(
         self,
@@ -654,25 +818,30 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         object_id_field: str | None = None,
         source_image_name: str | None = None,
     ) -> StoredRuntimeValue:
-        if object_name is not None and not self.has_source_binding(
-            object_name,
-            ArtifactKind.OBJECT_LABELS,
-        ):
-            self._resolve_runtime_record(
+        validation_started_at = time.perf_counter()
+        if object_name is not None:
+            self.require_artifact_available(
                 name=object_name,
                 kind=ArtifactKind.OBJECT_LABELS,
             )
+        _log_adapter_profile(
+            "adapter_measurement_subject_validation",
+            time.perf_counter() - validation_started_at,
+            artifact=name,
+            object=object_name,
+        )
+        measurement_table = MeasurementTable(
+            name=name,
+            rows=rows,
+            object_name=object_name,
+            fields=fields,
+            object_id_field=object_id_field,
+            source_image_name=source_image_name,
+        )
         return self._record_native_value(
             name,
             ArtifactKind.MEASUREMENTS,
-            MeasurementTable(
-                name=name,
-                rows=rows,
-                object_name=object_name,
-                fields=fields,
-                object_id_field=object_id_field,
-                source_image_name=source_image_name,
-            ),
+            measurement_table,
         )
 
     def get_measurements(
@@ -697,26 +866,48 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     ) -> tuple[MeasurementTable, ...]:
         """Return prior measurement tables whose subject is an object set."""
         resolved_group_key = self.group_key if group_key is None else group_key
-        cache_key = (
-            "object",
-            self.runtime_value_store.revision,
-            resolved_group_key if match_group else None,
-            match_group,
-            object_name,
+        cache_key = ObjectMeasurementTableCacheKey(
+            group_key=resolved_group_key if match_group else None,
+            match_group=match_group,
+            object_name=object_name,
         )
         cached = self._measurement_cache.get(cache_key)
         if cached is not None:
             return cached
-        tables = runtime_measurement_tables_for_object(
-            self._measurement_query_context(
-                group_key=group_key,
-                match_group=match_group,
-            ),
-            object_name,
+        object_table_cache = self.object_measurement_table_cache()
+        cached = object_table_cache.get(cache_key)
+        if cached is not None:
+            self._measurement_cache[cache_key] = cached
+            return cached
+        index_cache_key = ObjectMeasurementTableIndexCacheKey(
+            group_key=resolved_group_key if match_group else None,
+            match_group=match_group,
         )
-        tables = RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
-            tables
-        )
+        object_table_index_cache = self.object_measurement_table_index_cache()
+        object_table_index = object_table_index_cache.get(index_cache_key)
+        if object_table_index is None:
+            object_table_index = ObjectMeasurementTableIndex.from_tables(
+                runtime_measurement_tables(
+                    self._measurement_query_context(
+                        group_key=group_key,
+                        match_group=match_group,
+                    )
+                )
+            )
+            object_table_index_cache[index_cache_key] = object_table_index
+        tables = object_table_index.for_object(object_name)
+        if tables is None:
+            tables = runtime_measurement_tables_for_object(
+                self._measurement_query_context(
+                    group_key=group_key,
+                    match_group=match_group,
+                ),
+                object_name,
+            )
+            tables = RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
+                tables
+            )
+        object_table_cache[cache_key] = tables
         self._measurement_cache[cache_key] = tables
         return tables
 
@@ -730,8 +921,21 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     ) -> tuple[Any, ...]:
         """Return object measurements aligned to label planes with adapter caching."""
         label_array = np.asarray(labels)
+        label_domain = dense_object_label_id_domain(labels)
+        resolved_group_key = self.group_key if group_key is None else group_key
+        cache_key = (
+            "object_label_values",
+            self.runtime_value_store.revision,
+            resolved_group_key,
+            object_name,
+            feature_name,
+            label_domain,
+        )
+        cached = self._measurement_cache.get(cache_key)
+        if cached is not None:
+            return cached
         if label_array.ndim <= 2:
-            return (
+            values = (
                 measurement_values_for_label_plane(
                     self.measurement_tables_for_object(
                         object_name,
@@ -743,18 +947,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                     dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
                 ),
             )
-        resolved_group_key = self.group_key if group_key is None else group_key
-        cache_key = (
-            "object_label_values",
-            self.runtime_value_store.revision,
-            resolved_group_key,
-            object_name,
-            feature_name,
-            id(labels),
-        )
-        cached = self._measurement_cache.get(cache_key)
-        if cached is not None:
-            return cached
+            self._measurement_cache[cache_key] = values
+            return values
         tables = self._measurement_tables_for_multiplane_labels(
             object_name,
             labels,
@@ -769,6 +963,165 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         )
         self._measurement_cache[cache_key] = values
         return values
+
+    def measurement_values_for_object_feature(
+        self,
+        object_name: str,
+        feature_name: str,
+        *,
+        group_key: str | None = None,
+    ) -> Any:
+        """Return one object feature vector over the object's declared domain."""
+        started_at = time.perf_counter()
+        objects_started_at = time.perf_counter()
+        objects = self.get_objects(object_name, group_key=group_key)
+        _log_adapter_profile(
+            "adapter_object_feature_get_objects",
+            time.perf_counter() - objects_started_at,
+            object=object_name,
+            feature=feature_name,
+        )
+        domain_started_at = time.perf_counter()
+        object_domain = dense_object_label_id_domain(objects)
+        _log_adapter_profile(
+            "adapter_object_feature_domain",
+            time.perf_counter() - domain_started_at,
+            object=object_name,
+            feature=feature_name,
+            count=len(object_domain),
+        )
+        resolved_group_key = self.group_key if group_key is None else group_key
+        cache_key = (
+            "object_feature_values",
+            resolved_group_key,
+            object_name,
+            feature_name,
+            object_domain,
+        )
+        object_feature_cache = self.object_feature_value_cache()
+        cached = object_feature_cache.get(cache_key)
+        if cached is not None:
+            _log_adapter_profile(
+                "adapter_object_feature_values",
+                time.perf_counter() - started_at,
+                object=object_name,
+                feature=feature_name,
+                cached=True,
+            )
+            return cached
+        tables_started_at = time.perf_counter()
+        tables = self.measurement_tables_for_object(
+            object_name,
+            group_key=group_key,
+        )
+        _log_adapter_profile(
+            "adapter_object_feature_tables",
+            time.perf_counter() - tables_started_at,
+            object=object_name,
+            feature=feature_name,
+            count=len(tables),
+        )
+        values_started_at = time.perf_counter()
+        values = measurement_values_for_feature(
+            tables,
+            feature_name,
+            object_count=len(object_domain),
+            object_ids=object_domain,
+            object_name=object_name,
+            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+        )
+        _log_adapter_profile(
+            "adapter_object_feature_extract",
+            time.perf_counter() - values_started_at,
+            object=object_name,
+            feature=feature_name,
+            count=len(values),
+        )
+        object_feature_cache[cache_key] = values
+        _log_adapter_profile(
+            "adapter_object_feature_values",
+            time.perf_counter() - started_at,
+            object=object_name,
+            feature=feature_name,
+            cached=False,
+        )
+        return values
+
+    def invalidate_object_feature_value_cache(self, table: MeasurementTable) -> None:
+        """Invalidate cached object-feature vectors touched by a measurement write."""
+        object_names = ObjectMeasurementTableIndex.table_object_names(table)
+        if not object_names:
+            return
+        object_feature_cache = self.object_feature_value_cache()
+        object_cache_keys = tuple(
+            cache_key
+            for cache_key in object_feature_cache
+            if cache_key[2] in object_names
+        )
+        if not object_cache_keys:
+            return
+        feature_names = self.object_measurement_feature_names(table)
+        for cache_key in object_cache_keys:
+            _, _, _cached_object_name, cached_feature_name, _ = cache_key
+            if feature_names and cached_feature_name not in feature_names:
+                continue
+            del object_feature_cache[cache_key]
+
+    def invalidate_object_measurement_table_cache(self, table: MeasurementTable) -> None:
+        """Invalidate cached object-subject table queries touched by a write."""
+        object_names = ObjectMeasurementTableIndex.table_object_names(table)
+        if not object_names:
+            return
+        object_table_cache = self.object_measurement_table_cache()
+        for cache_key in tuple(object_table_cache):
+            if cache_key.object_name in object_names:
+                del object_table_cache[cache_key]
+
+    def record_object_measurement_table_cache_write(
+        self,
+        table: MeasurementTable,
+    ) -> None:
+        """Write-through update for object-subject measurement table indexes."""
+        if not ObjectMeasurementTableIndex.table_object_names(table):
+            return
+        object_table_index_cache = self.object_measurement_table_index_cache()
+        for cache_key in (
+            ObjectMeasurementTableIndexCacheKey(self.group_key, True),
+            ObjectMeasurementTableIndexCacheKey(None, False),
+        ):
+            existing_index = object_table_index_cache.get(cache_key)
+            if existing_index is None:
+                continue
+            object_table_index_cache[cache_key] = existing_index.with_table(table)
+
+    def object_measurement_feature_names(
+        self,
+        table: MeasurementTable,
+    ) -> frozenset[str]:
+        """Return feature names declared by an object measurement table."""
+        feature_names: set[str] = set()
+        for row in measurement_rows((table,)):
+            row_mapping = measurement_row_mapping(row)
+            for field_name in MEASUREMENT_FEATURE_NAME_FIELDS:
+                value = row_mapping.get(field_name)
+                if value not in (None, ""):
+                    feature_names.add(str(value))
+        if feature_names:
+            return frozenset(feature_names)
+
+        non_feature_fields = {
+            MEASUREMENT_OBJECT_NAME_FIELD,
+            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+            *(str(field_name) for field_name in MEASUREMENT_OBJECT_ID_FIELDS),
+            *(field_name for field_name in MEASUREMENT_FEATURE_NAME_FIELDS),
+        }
+        if table.object_id_field is not None:
+            non_feature_fields.add(table.object_id_field)
+        return frozenset(
+            field.name
+            for field in table.fields
+            if field.name not in non_feature_fields
+        )
 
     def _measurement_tables_for_multiplane_labels(
         self,
@@ -1052,6 +1405,15 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             native_value,
             axis_id=self.axis_id,
         )
+        if expected_kind is ArtifactKind.MEASUREMENTS:
+            measurement_table = (
+                native_value
+                if isinstance(native_value, MeasurementTable)
+                else MeasurementTable.from_runtime_value(runtime_value)
+            )
+            self.invalidate_object_measurement_table_cache(measurement_table)
+            self.invalidate_object_feature_value_cache(measurement_table)
+            self.record_object_measurement_table_cache_write(measurement_table)
         _log_adapter_profile(
             "adapter_normalize_artifact_value",
             time.perf_counter() - normalize_started_at,
@@ -1073,7 +1435,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             path=plan.path,
             backend=self.backend,
         )
-        self._clear_runtime_query_caches()
+        self.invalidate_runtime_query_caches_for_kind(expected_kind)
         _log_adapter_profile(
             "adapter_runtime_store_replace",
             time.perf_counter() - store_started_at,
@@ -1088,11 +1450,20 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         )
         return stored_value
 
-    def _clear_runtime_query_caches(self) -> None:
+    def clear_runtime_query_caches(self) -> None:
+        """Clear every runtime query cache owned by this adapter."""
         self._image_cache.clear()
         self._object_cache.clear()
         self._measurement_cache.clear()
+        self.object_feature_value_cache().clear()
+        self.object_measurement_table_cache().clear()
+        self.object_measurement_table_index_cache().clear()
         self._label_domain_cache.clear()
+        self._artifact_availability_cache.clear()
+
+    def clear_measurement_query_cache(self) -> None:
+        """Clear cached measurement table queries after measurement writes."""
+        self._measurement_cache.clear()
 
     def _require_output_plan(
         self,
@@ -1272,6 +1643,74 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 count=len(candidates),
             )
         return candidates
+
+
+class RuntimeArtifactCacheInvalidationPolicy(
+    EnumKeyedStrategyMixin[ArtifactKind],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal cache invalidation policy for one runtime artifact domain."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "kind"
+    kind: ClassVar[ArtifactKind | None] = None
+
+    @classmethod
+    def for_kind(cls, kind: ArtifactKind) -> "RuntimeArtifactCacheInvalidationPolicy":
+        policy_type = cls.__registry__.get(
+            kind.value,
+            FullRuntimeArtifactCacheInvalidationPolicy,
+        )
+        return policy_type()
+
+    @abstractmethod
+    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
+        """Invalidate adapter caches affected by this artifact kind."""
+
+
+class FullRuntimeArtifactCacheInvalidationPolicy(RuntimeArtifactCacheInvalidationPolicy):
+    """Conservative invalidation for artifact kinds without narrower semantics."""
+
+    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
+        adapter.clear_runtime_query_caches()
+
+
+class ImageRuntimeArtifactCacheInvalidationPolicy(FullRuntimeArtifactCacheInvalidationPolicy):
+    """Image writes may affect image reads and image-derived measurement alignment."""
+
+    kind = ArtifactKind.IMAGE
+
+
+class ObjectLabelRuntimeArtifactCacheInvalidationPolicy(
+    FullRuntimeArtifactCacheInvalidationPolicy
+):
+    """Object writes may affect label reads, label domains, and measurement alignment."""
+
+    kind = ArtifactKind.OBJECT_LABELS
+
+
+class MeasurementRuntimeArtifactCacheInvalidationPolicy(
+    RuntimeArtifactCacheInvalidationPolicy
+):
+    """Measurement writes invalidate measurement queries without discarding labels/images."""
+
+    kind = ArtifactKind.MEASUREMENTS
+
+    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
+        adapter.clear_measurement_query_cache()
+
+
+class RelationshipRuntimeArtifactCacheInvalidationPolicy(
+    RuntimeArtifactCacheInvalidationPolicy
+):
+    """Relationship writes are independent of image/object/measurement read caches."""
+
+    kind = ArtifactKind.RELATIONSHIPS
+
+    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
+        return None
 
 
 @dataclass(frozen=True, slots=True)

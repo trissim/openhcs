@@ -47,6 +47,24 @@ def medianfilter(
         window_size += 1
     if window_size <= 1:
         return image
+    if mode == "constant" and image.ndim == 2 and window_size > 1:
+        try:
+            import cv2
+
+            if image.dtype in (np.uint8, np.uint16, np.float32):
+                pad_width = window_size // 2
+                padded = np.pad(
+                    np.ascontiguousarray(image),
+                    pad_width,
+                    mode="constant",
+                    constant_values=0,
+                )
+                return cv2.medianBlur(padded, int(window_size))[
+                    pad_width:-pad_width,
+                    pad_width:-pad_width,
+                ].astype(image.dtype, copy=False)
+        except ImportError:
+            pass
     if mode == "reflect" and image.ndim == 2 and window_size > 1:
         try:
             import cv2
@@ -78,6 +96,36 @@ def _medianfilter_batch(
         window_size += 1
     if window_size <= 1:
         return list(slices_2d)
+    if kwargs.get("mode", "constant") == "constant":
+        try:
+            import cv2
+
+            outputs = []
+            pad_width = window_size // 2
+            for slice_2d in slices_2d:
+                data = np.asarray(slice_2d)
+                if data.ndim != 2 or data.dtype not in (
+                    np.uint8,
+                    np.uint16,
+                    np.float32,
+                ):
+                    break
+                padded = np.pad(
+                    np.ascontiguousarray(data),
+                    pad_width,
+                    mode="constant",
+                    constant_values=0,
+                )
+                outputs.append(
+                    cv2.medianBlur(padded, int(window_size))[
+                        pad_width:-pad_width,
+                        pad_width:-pad_width,
+                    ].astype(data.dtype, copy=False)
+                )
+            else:
+                return outputs
+        except ImportError:
+            pass
     if kwargs.get("mode", "constant") == "reflect":
         try:
             import cv2

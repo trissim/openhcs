@@ -4,6 +4,9 @@ Original: erode_objects
 """
 
 import numpy as np
+import logging
+import os
+import time
 from typing import Tuple
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_semantics import (
@@ -21,6 +24,21 @@ from benchmark.cellprofiler_library.functions.structuring_elements import (
     adapt_structuring_element_rank,
     build_structuring_element,
 )
+from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 @dataclass
@@ -67,6 +85,7 @@ def erode_objects(
         Tuple of (image, erosion_stats, eroded_labels)
     """
     from skimage.measure import label as relabel
+    total_started_at = time.perf_counter()
     labels = object_label_dense_array(labels, dtype=np.int32)
 
     footprint = adapt_structuring_element_rank(
@@ -74,14 +93,21 @@ def erode_objects(
         labels.ndim,
     )
 
+    phase_started_at = time.perf_counter()
     input_labels = np.unique(labels)
     input_labels = input_labels[input_labels != 0]
     input_count = len(input_labels)
+    _log_profile("erode_objects_input_labels", time.perf_counter() - phase_started_at)
 
-    contours = _morphological_gradient(labels, footprint)
-    eroded = labels * (contours == 0)
+    phase_started_at = time.perf_counter()
+    eroded = MorphologyBackendStrategy.for_memory_type().erode_labeled_objects(
+        labels,
+        footprint,
+    )
+    _log_profile("erode_objects_backend", time.perf_counter() - phase_started_at)
 
     if preserve_midpoints:
+        phase_started_at = time.perf_counter()
         missing_labels = np.setxor1d(labels, eroded)
         preservation = MidpointPreservationPolicy.for_footprint(footprint)
         eroded = preservation.preserve_missing_labels(
@@ -89,13 +115,23 @@ def erode_objects(
             eroded,
             missing_labels,
         )
+        _log_profile(
+            "erode_objects_preserve_midpoints",
+            time.perf_counter() - phase_started_at,
+            missing=len(missing_labels),
+            policy=type(preservation).__name__,
+        )
 
     if relabel_objects:
+        phase_started_at = time.perf_counter()
         eroded = relabel(eroded > 0).astype(labels.dtype)
+        _log_profile("erode_objects_relabel", time.perf_counter() - phase_started_at)
 
+    phase_started_at = time.perf_counter()
     output_labels = np.unique(eroded)
     output_labels = output_labels[output_labels != 0]
     output_count = len(output_labels)
+    _log_profile("erode_objects_output_labels", time.perf_counter() - phase_started_at)
 
     stats = ErosionStats(
         slice_index=0,
@@ -104,26 +140,11 @@ def erode_objects(
         objects_removed=input_count - output_count
     )
     
+    phase_started_at = time.perf_counter()
     relationship = object_label_lineage_payload(labels, eroded)
+    _log_profile("erode_objects_lineage", time.perf_counter() - phase_started_at)
+    _log_profile("erode_objects_total", time.perf_counter() - total_started_at)
     return image, stats, relationship, eroded
-
-
-def _morphological_gradient(labels: np.ndarray, footprint: np.ndarray) -> np.ndarray:
-    import scipy.ndimage
-
-    if footprint.ndim == 2 and labels.ndim > 2:
-        output = np.zeros_like(labels)
-        for index, plane in enumerate(labels):
-            output[index] = scipy.ndimage.morphological_gradient(
-                plane,
-                footprint=footprint,
-            )
-        return output
-    if footprint.ndim > 2 and labels.ndim == 2:
-        raise NotImplementedError(
-            "A 3D structuring element cannot be applied to a 2D object set."
-        )
-    return scipy.ndimage.morphological_gradient(labels, footprint=footprint)
 
 
 class MidpointPreservationPolicy:
@@ -136,9 +157,34 @@ class MidpointPreservationPolicy:
         missing_labels: np.ndarray,
     ) -> np.ndarray:
         for label_id in missing_labels:
-            binary = labels == label_id
-            midpoint = self.midpoint_distance(binary)
-            eroded[midpoint == np.max(midpoint)] = label_id
+            label_positions = np.argwhere(labels == label_id)
+            if label_positions.size == 0:
+                continue
+            lower = label_positions.min(axis=0)
+            upper = label_positions.max(axis=0) + 1
+            expanded_lower = np.maximum(lower - 1, 0)
+            expanded_upper = np.minimum(upper + 1, labels.shape)
+            expanded_slices = tuple(
+                slice(int(start), int(stop))
+                for start, stop in zip(expanded_lower, expanded_upper, strict=True)
+            )
+            inner_slices = tuple(
+                slice(int(start - expanded_start), int(stop - expanded_start))
+                for start, stop, expanded_start in zip(
+                    lower,
+                    upper,
+                    expanded_lower,
+                    strict=True,
+                )
+            )
+            output_slices = tuple(
+                slice(int(start), int(stop))
+                for start, stop in zip(lower, upper, strict=True)
+            )
+            binary = labels[expanded_slices] == label_id
+            midpoint = self.midpoint_distance(binary)[inner_slices]
+            eroded_region = eroded[output_slices]
+            eroded_region[midpoint == np.max(midpoint)] = label_id
         return eroded
 
     def midpoint_distance(self, binary: np.ndarray) -> np.ndarray:

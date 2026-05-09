@@ -3,7 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass
+import hashlib
+import logging
+import os
+import time
 
 import numpy as np
 import scipy.sparse
@@ -20,6 +25,26 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
 
 
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+_RADIAL_LABEL_GEOMETRY_CACHE_LIMIT = 16
+_RADIAL_LABEL_GEOMETRY_CACHE: OrderedDict[
+    "RadialLabelGeometryCacheKey",
+    "RadialLabelGeometry",
+] = OrderedDict()
+
+
+def _runtime_profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _runtime_profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+
+
 @dataclass(frozen=True, slots=True)
 class RadialDistributionArrays:
     """Dense per-object radial intensity-distribution arrays."""
@@ -29,6 +54,43 @@ class RadialDistributionArrays:
     radial_cv_by_bin: np.ndarray
     object_has_pixels: np.ndarray
     n_bins: int
+
+
+@dataclass(frozen=True, slots=True)
+class RadialCenterDistanceFields:
+    """CellProfiler center-propagation fields for radial measurements."""
+
+    d_from_center: np.ndarray
+    center_labels: np.ndarray
+    centers_i: np.ndarray
+    centers_j: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class RadialLabelGeometryCacheKey:
+    """Content identity for radial geometry derived only from object labels."""
+
+    dtype: str
+    shape: tuple[int, ...]
+    digest: bytes
+
+    @classmethod
+    def from_labels(cls, labels: np.ndarray) -> "RadialLabelGeometryCacheKey":
+        label_array = np.ascontiguousarray(labels, dtype=np.int32)
+        digest = hashlib.blake2b(label_array.view(np.uint8), digest_size=16).digest()
+        return cls(
+            dtype=str(label_array.dtype),
+            shape=tuple(int(value) for value in label_array.shape),
+            digest=digest,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RadialLabelGeometry:
+    """Label-only radial geometry shared by all intensity images for a label plane."""
+
+    d_to_edge: np.ndarray
+    center_fields: RadialCenterDistanceFields
 
 
 class RadialDistributionBackendStrategy(
@@ -85,6 +147,127 @@ class RadialDistributionBackendStrategy(
     ) -> RadialDistributionArrays:
         """Return radial-distribution arrays using each object's own center."""
 
+    def center_distance_fields(
+        self,
+        labels: np.ndarray,
+        centers_i: np.ndarray,
+        centers_j: np.ndarray,
+    ) -> RadialCenterDistanceFields:
+        """Return CP-compatible propagated center labels and distances."""
+        labels_array = np.asarray(labels, dtype=np.int32)
+        object_count = int(labels_array.max()) if labels_array.size else 0
+        object_labels = np.arange(1, object_count + 1, dtype=np.int32)
+        center_labels = np.zeros(labels_array.shape, dtype=int)
+        centers_i_int = np.asarray(centers_i, dtype=int)
+        centers_j_int = np.asarray(centers_j, dtype=int)
+        valid_center_bounds = (
+            (centers_i_int >= 0)
+            & (centers_i_int < labels_array.shape[0])
+            & (centers_j_int >= 0)
+            & (centers_j_int < labels_array.shape[1])
+        )
+        sampled_center_labels = np.zeros(object_count, dtype=np.int32)
+        sampled_center_labels[valid_center_bounds] = labels_array[
+            centers_i_int[valid_center_bounds],
+            centers_j_int[valid_center_bounds],
+        ]
+        valid_centers = valid_center_bounds & (sampled_center_labels == object_labels)
+        if np.any(valid_centers):
+            center_labels[
+                centers_i_int[valid_centers],
+                centers_j_int[valid_centers],
+            ] = labels_array[
+                centers_i_int[valid_centers],
+                centers_j_int[valid_centers],
+            ]
+        shape_backend = shape_measurement_backend(
+            backend_provider=CellProfilerBackendProvider.CENTROSOME,
+        )
+        phase_started_at = time.perf_counter()
+        colors = shape_backend.color_labels(labels_array)
+        _log_profile(
+            "idist_center_color_labels",
+            time.perf_counter() - phase_started_at,
+            objects=object_count,
+            colors=int(np.max(colors)) if colors.size else 0,
+        )
+        d_from_center = np.zeros(labels_array.shape, dtype=float)
+        propagated_center_labels = np.zeros(labels_array.shape, dtype=int)
+        phase_started_at = time.perf_counter()
+        for color in range(1, int(np.max(colors)) + 1):
+            mask = colors == color
+            propagated_labels, propagated_distances = shape_backend.propagate(
+                np.zeros(center_labels.shape),
+                center_labels,
+                mask,
+                1,
+            )
+            d_from_center[mask] = propagated_distances[mask]
+            propagated_center_labels[mask] = propagated_labels[mask]
+        _log_profile(
+            "idist_center_propagate",
+            time.perf_counter() - phase_started_at,
+            objects=object_count,
+            colors=int(np.max(colors)) if colors.size else 0,
+        )
+
+        return RadialCenterDistanceFields(
+            d_from_center=d_from_center,
+            center_labels=propagated_center_labels,
+            centers_i=np.asarray(centers_i, dtype=np.float64),
+            centers_j=np.asarray(centers_j, dtype=np.float64),
+        )
+
+    def label_geometry(self, labels: np.ndarray) -> RadialLabelGeometry:
+        """Return CP-compatible radial geometry derived only from object labels."""
+        labels_array = np.ascontiguousarray(labels, dtype=np.int32)
+        cache_key = RadialLabelGeometryCacheKey.from_labels(labels_array)
+        cached = _RADIAL_LABEL_GEOMETRY_CACHE.get(cache_key)
+        if cached is not None:
+            _RADIAL_LABEL_GEOMETRY_CACHE.move_to_end(cache_key)
+            _log_profile(
+                "idist_label_geometry_cache_hit",
+                0.0,
+                objects=int(labels_array.max()) if labels_array.size else 0,
+            )
+            return cached
+
+        object_count = int(labels_array.max()) if labels_array.size else 0
+        shape_backend = shape_measurement_backend(
+            backend_provider=CellProfilerBackendProvider.CENTROSOME,
+        )
+        phase_started_at = time.perf_counter()
+        d_to_edge = shape_backend.distance_to_edge(labels_array)
+        _log_profile(
+            "idist_distance_to_edge",
+            time.perf_counter() - phase_started_at,
+            objects=object_count,
+        )
+        phase_started_at = time.perf_counter()
+        centers_i, centers_j = shape_backend.maximum_position_of_labels(
+            d_to_edge,
+            labels_array,
+            np.arange(1, object_count + 1, dtype=np.int32),
+        )
+        _log_profile(
+            "idist_maximum_position",
+            time.perf_counter() - phase_started_at,
+            objects=object_count,
+        )
+        geometry = RadialLabelGeometry(
+            d_to_edge=d_to_edge,
+            center_fields=self.center_distance_fields(
+                labels_array,
+                centers_i,
+                centers_j,
+            ),
+        )
+        _RADIAL_LABEL_GEOMETRY_CACHE[cache_key] = geometry
+        _RADIAL_LABEL_GEOMETRY_CACHE.move_to_end(cache_key)
+        while len(_RADIAL_LABEL_GEOMETRY_CACHE) > _RADIAL_LABEL_GEOMETRY_CACHE_LIMIT:
+            _RADIAL_LABEL_GEOMETRY_CACHE.popitem(last=False)
+        return geometry
+
 
 class NativeNumpyRadialDistributionBackendStrategy(
     RadialDistributionBackendStrategy
@@ -97,7 +280,7 @@ class NativeNumpyRadialDistributionBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NATIVE
-    is_default_backend = True
+    is_default_backend = False
 
     def measure(
         self,
@@ -254,55 +437,20 @@ class NativeNumpyRadialDistributionBackendStrategy(
                 n_bins=n_bins,
             )
 
-        object_labels = np.arange(1, object_count + 1, dtype=np.int32)
-        center_labels = np.zeros(labels_array.shape, dtype=int)
-        centers_i_array = np.asarray(centers_i, dtype=int)
-        centers_j_array = np.asarray(centers_j, dtype=int)
-        valid_center_bounds = (
-            (centers_i_array >= 0)
-            & (centers_i_array < labels_array.shape[0])
-            & (centers_j_array >= 0)
-            & (centers_j_array < labels_array.shape[1])
+        center_fields = self.center_distance_fields(
+            labels_array,
+            centers_i,
+            centers_j,
         )
-        sampled_center_labels = np.zeros(object_count, dtype=np.int32)
-        sampled_center_labels[valid_center_bounds] = labels_array[
-            centers_i_array[valid_center_bounds],
-            centers_j_array[valid_center_bounds],
-        ]
-        valid_centers = valid_center_bounds & (sampled_center_labels == object_labels)
-        if np.any(valid_centers):
-            center_labels[
-                centers_i_array[valid_centers],
-                centers_j_array[valid_centers],
-            ] = labels_array[
-                centers_i_array[valid_centers],
-                centers_j_array[valid_centers],
-            ]
-        shape_backend = shape_measurement_backend(
-            backend_provider=CellProfilerBackendProvider.CENTROSOME,
-        )
-        colors = shape_backend.color_labels(labels_array)
-        d_from_center = np.zeros(labels_array.shape, dtype=float)
-        propagated_center_labels = np.zeros(labels_array.shape, dtype=int)
-        for color in range(1, int(np.max(colors)) + 1):
-            mask = colors == color
-            propagated_labels, propagated_distances = shape_backend.propagate(
-                np.zeros(center_labels.shape),
-                center_labels,
-                mask,
-                1,
-            )
-            d_from_center[mask] = propagated_distances[mask]
-            propagated_center_labels[mask] = propagated_labels[mask]
 
         return self.measure(
             image,
             labels_array,
             d_to_edge_array,
-            d_from_center,
-            propagated_center_labels,
-            np.asarray(centers_i, dtype=np.float64),
-            np.asarray(centers_j, dtype=np.float64),
+            center_fields.d_from_center,
+            center_fields.center_labels,
+            center_fields.centers_i,
+            center_fields.centers_j,
             bin_count=bin_count,
             wants_scaled=wants_scaled,
             maximum_radius=maximum_radius,
@@ -328,22 +476,15 @@ class NativeNumpyRadialDistributionBackendStrategy(
                 object_has_pixels=np.zeros(0, dtype=bool),
                 n_bins=n_bins,
             )
-        shape_backend = shape_measurement_backend(
-            backend_provider=CellProfilerBackendProvider.CENTROSOME,
-        )
-        d_to_edge = shape_backend.distance_to_edge(labels_array)
-        object_labels = np.arange(1, object_count + 1, dtype=np.int32)
-        centers_i, centers_j = shape_backend.maximum_position_of_labels(
-            d_to_edge,
-            labels_array,
-            object_labels,
-        )
-        return self.measure_from_centers(
+        geometry = self.label_geometry(labels_array)
+        return self.measure(
             image,
             labels_array,
-            d_to_edge,
-            centers_i,
-            centers_j,
+            geometry.d_to_edge,
+            geometry.center_fields.d_from_center,
+            geometry.center_fields.center_labels,
+            geometry.center_fields.centers_i,
+            geometry.center_fields.centers_j,
             bin_count=bin_count,
             wants_scaled=wants_scaled,
             maximum_radius=maximum_radius,
@@ -361,7 +502,7 @@ class NumbaNumpyRadialDistributionBackendStrategy(
     )
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
-    is_default_backend = False
+    is_default_backend = True
 
     def prepare_backend(self) -> None:
         labels = np.zeros((8, 8), dtype=np.int32)
@@ -497,17 +638,24 @@ class NumbaNumpyRadialDistributionBackendStrategy(
                 n_bins=n_bins,
             )
 
+        center_fields = self.center_distance_fields(
+            labels_array,
+            centers_i_array,
+            centers_j_array,
+        )
         (
             fraction_at_distance,
             mean_pixel_fraction,
             radial_cv_by_bin,
             object_has_pixels,
-        ) = _measure_radial_distribution_from_centers_numba(
+        ) = _measure_radial_distribution_numba(
             image_array,
             labels_array,
             d_to_edge_array,
-            centers_i_array,
-            centers_j_array,
+            np.ascontiguousarray(center_fields.d_from_center, dtype=np.float64),
+            np.ascontiguousarray(center_fields.center_labels, dtype=np.int32),
+            np.ascontiguousarray(center_fields.centers_i, dtype=np.float64),
+            np.ascontiguousarray(center_fields.centers_j, dtype=np.float64),
             int(bin_count),
             bool(wants_scaled),
             int(maximum_radius),
@@ -541,19 +689,15 @@ class NumbaNumpyRadialDistributionBackendStrategy(
                 object_has_pixels=np.zeros(0, dtype=bool),
                 n_bins=n_bins,
             )
-        shape_backend = shape_measurement_backend()
-        d_to_edge = shape_backend.distance_to_edge(labels_array)
-        centers_i, centers_j = shape_backend.maximum_position_of_labels(
-            d_to_edge,
-            labels_array,
-            np.arange(1, object_count + 1, dtype=np.int32),
-        )
-        return self.measure_from_centers(
+        geometry = self.label_geometry(labels_array)
+        return self.measure(
             image,
             labels_array,
-            d_to_edge,
-            centers_i,
-            centers_j,
+            geometry.d_to_edge,
+            geometry.center_fields.d_from_center,
+            geometry.center_fields.center_labels,
+            geometry.center_fields.centers_i,
+            geometry.center_fields.centers_j,
             bin_count=bin_count,
             wants_scaled=wants_scaled,
             maximum_radius=maximum_radius,
@@ -576,6 +720,8 @@ __all__ = [
     "NumbaNumpyRadialDistributionBackendStrategy",
     "RadialDistributionArrays",
     "RadialDistributionBackendStrategy",
+    "RadialLabelGeometry",
+    "RadialLabelGeometryCacheKey",
     "radial_distribution_backend",
 ]
 
@@ -627,140 +773,6 @@ def _measure_radial_distribution_numba(
                 center_index = center_labels[y, x] - 1
                 center_i = centers_i[center_index]
                 center_j = centers_j[center_index]
-                imask = 1 if y > center_i else 0
-                jmask = 1 if x > center_j else 0
-                absmask = 1 if abs(y - center_i) > abs(x - center_j) else 0
-                radial_index = imask + jmask * 2 + absmask * 4
-                radial_values[bin_index, object_index, radial_index] += pixel_value
-                radial_counts[bin_index, object_index, radial_index] += 1.0
-
-    fraction_at_distance = np.zeros((object_count, bin_count + 1), dtype=np.float64)
-    fraction_at_bin = np.zeros((object_count, bin_count + 1), dtype=np.float64)
-    object_has_pixels = np.zeros(object_count, dtype=np.bool_)
-    eps = np.finfo(np.float64).eps
-
-    for object_index in range(object_count):
-        intensity_sum = 0.0
-        pixel_count = 0.0
-        for bin_index in range(bin_count + 1):
-            intensity_sum += histogram[object_index, bin_index]
-            pixel_count += number_at_distance[object_index, bin_index]
-        if intensity_sum == 0.0:
-            intensity_sum = 1.0
-        if pixel_count > 0.0:
-            object_has_pixels[object_index] = True
-        else:
-            pixel_count = 1.0
-        for bin_index in range(bin_count + 1):
-            fraction_at_distance[object_index, bin_index] = (
-                histogram[object_index, bin_index] / intensity_sum
-            )
-            fraction_at_bin[object_index, bin_index] = (
-                number_at_distance[object_index, bin_index] / pixel_count
-            )
-
-    mean_pixel_fraction = np.zeros((object_count, bin_count + 1), dtype=np.float64)
-    for object_index in range(object_count):
-        for bin_index in range(bin_count + 1):
-            mean_pixel_fraction[object_index, bin_index] = (
-                fraction_at_distance[object_index, bin_index]
-                / (fraction_at_bin[object_index, bin_index] + eps)
-            )
-
-    radial_cv_by_bin = np.zeros((n_bins, object_count), dtype=np.float64)
-    for bin_index in range(n_bins):
-        for object_index in range(object_count):
-            populated_wedges = 0
-            wedge_sum = 0.0
-            wedge_sum_sq = 0.0
-            for radial_index in range(8):
-                count = radial_counts[bin_index, object_index, radial_index]
-                if count <= 0.0:
-                    continue
-                radial_mean = (
-                    radial_values[bin_index, object_index, radial_index] / count
-                )
-                populated_wedges += 1
-                wedge_sum += radial_mean
-                wedge_sum_sq += radial_mean * radial_mean
-            if populated_wedges == 0:
-                continue
-            mean = wedge_sum / populated_wedges
-            variance = wedge_sum_sq / populated_wedges - mean * mean
-            if variance < 0.0:
-                variance = 0.0
-            radial_cv_by_bin[bin_index, object_index] = np.sqrt(variance) / (
-                mean + eps
-            )
-
-    return (
-        fraction_at_distance,
-        mean_pixel_fraction,
-        radial_cv_by_bin,
-        object_has_pixels,
-    )
-
-
-@njit(cache=True)
-def _measure_radial_distribution_from_centers_numba(
-    image: np.ndarray,
-    labels: np.ndarray,
-    d_to_edge: np.ndarray,
-    centers_i: np.ndarray,
-    centers_j: np.ndarray,
-    bin_count: int,
-    wants_scaled: bool,
-    maximum_radius: int,
-    object_count: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    height, width = labels.shape
-    histogram = np.zeros((object_count, bin_count + 1), dtype=np.float64)
-    number_at_distance = np.zeros((object_count, bin_count + 1), dtype=np.float64)
-    n_bins = bin_count if wants_scaled else bin_count + 1
-    radial_values = np.zeros((n_bins, object_count, 8), dtype=np.float64)
-    radial_counts = np.zeros((n_bins, object_count, 8), dtype=np.float64)
-    center_valid = np.zeros(object_count + 1, dtype=np.bool_)
-
-    for label_id in range(1, object_count + 1):
-        center_i = int(centers_i[label_id - 1])
-        center_j = int(centers_j[label_id - 1])
-        if (
-            center_i >= 0
-            and center_i < height
-            and center_j >= 0
-            and center_j < width
-            and labels[center_i, center_j] == label_id
-        ):
-            center_valid[label_id] = True
-
-    for y in range(height):
-        for x in range(width):
-            label_id = labels[y, x]
-            if label_id <= 0 or label_id > object_count or not center_valid[label_id]:
-                continue
-            object_index = label_id - 1
-            center_i = centers_i[object_index]
-            center_j = centers_j[object_index]
-            dy = float(y) - center_i
-            dx = float(x) - center_j
-            d_from_center = np.sqrt(dy * dy + dx * dx)
-            if wants_scaled:
-                denominator = d_from_center + d_to_edge[y, x] + 0.001
-                normalized_distance = d_from_center / denominator
-            else:
-                normalized_distance = d_from_center / maximum_radius
-
-            bin_index = int(normalized_distance * bin_count)
-            if bin_index > bin_count:
-                bin_index = bin_count
-            if bin_index < 0:
-                bin_index = 0
-
-            pixel_value = image[y, x]
-            histogram[object_index, bin_index] += pixel_value
-            number_at_distance[object_index, bin_index] += 1.0
-
-            if bin_index < n_bins:
                 imask = 1 if y > center_i else 0
                 jmask = 1 if x > center_j else 0
                 absmask = 1 if abs(y - center_i) > abs(x - center_j) else 0

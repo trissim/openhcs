@@ -2944,7 +2944,7 @@ def test_correct_illumination_exact_convex_hull_matches_native_reference():
     np.testing.assert_array_equal(accelerated, reference)
 
 
-def test_correct_illumination_convex_hull_default_uses_numba_exact_backend():
+def test_correct_illumination_convex_hull_default_uses_centrosome_backend():
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
     )
@@ -2965,7 +2965,7 @@ def test_correct_illumination_convex_hull_default_uses_numba_exact_backend():
         filter_size_method="Manually",
         manual_filter_size=3,
         rescale_option="No",
-        convex_hull_backend_provider=CellProfilerBackendProvider.NUMBA_EXACT,
+        convex_hull_backend_provider=CellProfilerBackendProvider.CENTROSOME,
         dtype_config=DtypeConfig(),
     )
 
