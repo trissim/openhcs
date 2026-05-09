@@ -61,8 +61,8 @@ from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
     measurement_row_mapping,
     measurement_table_object_name,
+    measurement_values_for_label_plane,
     measurement_values_for_label_slices,
-    measurement_value_index,
     runtime_measurement_tables,
     runtime_measurement_tables_for_scope,
     runtime_measurement_tables_for_object,
@@ -732,11 +732,15 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         label_array = np.asarray(labels)
         if label_array.ndim <= 2:
             return (
-                self._measurement_values_for_label_plane(
-                    object_name,
+                measurement_values_for_label_plane(
+                    self.measurement_tables_for_object(
+                        object_name,
+                        group_key=group_key,
+                    ),
                     feature_name,
                     labels,
-                    group_key=group_key,
+                    object_name=object_name,
+                    dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
                 ),
             )
         resolved_group_key = self.group_key if group_key is None else group_key
@@ -862,39 +866,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             )
         self._measurement_cache[cache_key] = tables
         return tables
-
-    def _measurement_values_for_label_plane(
-        self,
-        object_name: str,
-        feature_name: str,
-        labels: object,
-        *,
-        group_key: str | None,
-    ) -> Any:
-        resolved_group_key = self.group_key if group_key is None else group_key
-        domain = self._dense_label_domain(labels)
-        cache_key = (
-            "object_feature_index",
-            self.runtime_value_store.revision,
-            resolved_group_key,
-            object_name,
-            feature_name,
-        )
-        value_index = self._measurement_cache.get(cache_key)
-        if value_index is None:
-            value_index = measurement_value_index(
-                self.measurement_tables_for_object(object_name, group_key=group_key),
-                feature_name,
-                object_name=object_name,
-                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-            )
-            self._measurement_cache[cache_key] = value_index
-        values_by_label, positional_values = value_index
-        if values_by_label:
-            return np.array([values_by_label.get(label, np.nan) for label in domain])
-        if positional_values:
-            return np.array(positional_values[: len(domain)])
-        raise ValueError(f"Could not resolve measurement feature {feature_name!r}.")
 
     def _dense_label_domain(self, labels: object) -> tuple[int, ...]:
         cache_key = id(labels)
@@ -2150,6 +2121,8 @@ def _source_payload_for_declared_image_type(
         payload,
         source_metadata=source_metadata,
         source_path=source_path,
+        read_backend=request.backend,
+        filemanager=_require_processing_context(request.adapter).filemanager,
     )
 
 
@@ -2641,7 +2614,7 @@ def _pipeline_start_payload_cache_key(
     context = adapter.source_binding_context
     return (
         backend,
-        id(_require_processing_context(adapter).filemanager),
+        _require_processing_context(adapter).filemanager,
         selected_paths,
         context.metadata_identity_for_paths(selected_paths),
     )

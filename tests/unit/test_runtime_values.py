@@ -44,12 +44,24 @@ from openhcs.core.runtime_values import (
     object_label_payload_from_source_image,
     object_label_payload_with_dense_labels,
     object_label_payload_with_measurement_labels,
+    object_label_set_from_source_image,
     object_label_set_with_replacement_labels,
     with_derived_image_payload_data,
 )
 from openhcs.core.runtime_semantics import (
+    ExplicitObjectLabelDomainDeclaration,
+    ObjectFeatureArrayDomain,
+    ObjectFeatureArrayDomainStrategy,
+    ObjectFeatureMissingValue,
+    ObjectFeatureMissingValueStrategy,
+    ObjectLabelDomain,
+    ObjectLabelDomainMetadata,
+    ObjectLabelDomainMetadataStrategy,
+    ObjectFeatureValueTable,
     ObjectLabelVariant,
+    ObjectShapeMeasurementFeature,
     RuntimePlaneAxis,
+    ShapeObjectFeatureValueTable,
     SpatialGridOrdering,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
@@ -67,6 +79,30 @@ class ArrayLike(RuntimeArrayPayload):
         return data
 
 
+class NominalObjectLabelDomainCarrier(ObjectLabelDomainMetadata):
+    def __init__(self, domain: ObjectLabelDomain) -> None:
+        self._domain = domain
+
+    def object_label_domain(self) -> ObjectLabelDomain:
+        return self._domain
+
+
+class SpecificNominalObjectLabelDomainCarrier(NominalObjectLabelDomainCarrier):
+    pass
+
+
+class SpecificNominalObjectLabelDomainStrategy(ObjectLabelDomainMetadataStrategy):
+    value_type = SpecificNominalObjectLabelDomainCarrier
+
+    def object_label_domain(self, value: object) -> ObjectLabelDomain:
+        return ObjectLabelDomain(declared_object_ids=(8,))
+
+
+class StructuralObjectLabelDomainLookalike:
+    def object_label_domain(self) -> ObjectLabelDomain:
+        return ObjectLabelDomain(declared_object_count=99)
+
+
 def test_object_label_dense_data_uses_nominal_payload_registry() -> None:
     labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
     payload = ObjectLabelPayload(labels=labels)
@@ -77,6 +113,108 @@ def test_object_label_dense_data_uses_nominal_payload_registry() -> None:
     assert object_label_dense_data(label_set) is labels
     assert object_label_dense_data(labels) is labels
     assert object_label_dense_array(payload, dtype=np.int32).dtype == np.int32
+
+
+def test_object_label_domain_preservation_uses_nominal_metadata_contract() -> None:
+    labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
+    source = NominalObjectLabelDomainCarrier(
+        ObjectLabelDomain(declared_object_ids=(4, 7))
+    )
+
+    rebuilt = object_label_payload_with_dense_labels(source, labels)
+
+    assert rebuilt.declared_object_ids == (4, 7)
+
+
+def test_object_label_domain_preservation_uses_mro_specific_provider() -> None:
+    labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
+    source = SpecificNominalObjectLabelDomainCarrier(
+        ObjectLabelDomain(declared_object_ids=(4, 7))
+    )
+
+    rebuilt = object_label_payload_with_dense_labels(source, labels)
+
+    assert rebuilt.declared_object_ids == (8,)
+
+
+def test_object_label_domain_preservation_rejects_structural_lookalikes() -> None:
+    labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
+
+    rebuilt = object_label_payload_with_dense_labels(
+        StructuralObjectLabelDomainLookalike(),
+        labels,
+    )
+
+    assert rebuilt.declared_object_count is None
+    assert rebuilt.declared_object_ids == ()
+
+
+def test_shape_object_feature_table_uses_registered_nominal_contract() -> None:
+    table = ShapeObjectFeatureValueTable.from_feature_arrays(
+        {
+            ObjectShapeMeasurementFeature.AREA.value: np.asarray([10.0]),
+            ObjectShapeMeasurementFeature.MAXIMUM_RADIUS.value: np.asarray([2.0]),
+        },
+        measured_object_ids=(2,),
+        object_domain=(1, 2),
+    )
+
+    assert issubclass(ShapeObjectFeatureValueTable, ObjectFeatureValueTable)
+    assert ShapeObjectFeatureValueTable in ObjectFeatureValueTable.registered_strategy_types()
+
+    rows = table.rows()
+    assert rows[0]["object_label"] == 1
+    assert np.isnan(rows[0][ObjectShapeMeasurementFeature.AREA.value])
+    assert rows[0][ObjectShapeMeasurementFeature.MAXIMUM_RADIUS.value] == 0.0
+    assert rows[0][ObjectShapeMeasurementFeature.CENTER_Z.value] == 0.0
+    assert rows[1]["object_label"] == 2
+    assert rows[1][ObjectShapeMeasurementFeature.AREA.value] == 10.0
+
+
+def test_shape_object_feature_table_rejects_undeclared_dense_feature_domain() -> None:
+    table = ShapeObjectFeatureValueTable.from_feature_arrays(
+        {
+            ObjectShapeMeasurementFeature.ZERNIKE.value: np.asarray(
+                [0.1, 0.2, 0.3],
+            ),
+        },
+        measured_object_ids=(1, 3),
+        object_domain=(1, 2, 3),
+    )
+
+    with pytest.raises(ValueError, match="feature-array domain"):
+        table.rows()
+
+
+def test_shape_descriptor_row_ordinal_domain_is_registered_nominally() -> None:
+    table = ShapeObjectFeatureValueTable.from_feature_arrays(
+        {
+            ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER.value: np.asarray(
+                [0.0, 20.0],
+            ),
+            "Zernike_0_0": np.asarray([0.1, 0.2]),
+        },
+        measured_object_ids=(1, 3),
+        object_domain=(1, 2, 3),
+    )
+
+    assert (
+        ObjectFeatureArrayDomainStrategy.for_enum_member(
+            ObjectFeatureArrayDomain.ROW_ORDINAL
+        ).domain
+        is ObjectFeatureArrayDomain.ROW_ORDINAL
+    )
+    assert (
+        ObjectFeatureMissingValueStrategy.for_enum_member(
+            ObjectFeatureMissingValue.ZERO
+        ).missing_value
+        is ObjectFeatureMissingValue.ZERO
+    )
+
+    rows = table.rows()
+    assert rows[1][ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER.value] == 20.0
+    assert rows[2][ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER.value] == 0.0
+    assert np.isnan(rows[2]["Zernike_0_0"])
 
 
 def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
@@ -93,8 +231,12 @@ def test_object_label_payload_builder_uses_nominal_payload_registry() -> None:
     rebuilt = object_label_payload_with_dense_labels(
         payload,
         transformed_labels,
-        declared_object_count=1,
-        declared_object_ids=(2,),
+        domain_declaration=ExplicitObjectLabelDomainDeclaration(
+            ObjectLabelDomain(
+                declared_object_count=1,
+                declared_object_ids=(2,),
+            )
+        ),
     )
 
     assert isinstance(
@@ -129,6 +271,33 @@ def test_object_label_payload_from_source_image_uses_image_metadata() -> None:
     assert payload.declared_object_count == 2
     assert payload.spatial_origin_yx == (2, 3)
     assert payload.source_spatial_shape_yx == (10, 12)
+
+
+def test_object_label_set_from_source_image_uses_image_metadata() -> None:
+    image = ImageMetadataPayload(
+        data=np.zeros((4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(2, 3),
+            source_spatial_shape_yx=(10, 12),
+        ),
+    )
+    sparse_rows = SparseIJVLabelRows(
+        np.array([[0, 0, 1], [1, 1, 2]], dtype=np.int32)
+    )
+
+    label_set = object_label_set_from_source_image(
+        image,
+        name="OverlappingWorms",
+        labels=sparse_rows,
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+        declared_object_count=2,
+    )
+
+    assert label_set.labels is sparse_rows
+    assert label_set.representation is ObjectLabelRepresentation.SPARSE_IJV
+    assert label_set.declared_object_count == 2
+    assert label_set.spatial_origin_yx == (2, 3)
+    assert label_set.source_spatial_shape_yx == (10, 12)
 
 
 def test_object_label_set_replacement_preserves_sparse_ijv_representation() -> None:
@@ -883,6 +1052,43 @@ def test_normalize_measurement_table_infers_fields_and_object_schema():
         "object_id",
     )
     assert value.schema.fields == (FieldSpec("object_id"), FieldSpec("area"))
+
+
+def test_measurement_table_normalizes_mixed_long_and_wide_rows():
+    table = MeasurementTable(
+        name="NucleiMeasurements",
+        rows=[
+            {"object_label": 1, "area": 12.0},
+            {
+                "object_label": 1,
+                "feature_name": "Perimeter",
+                "result_value": 8.0,
+            },
+        ],
+        object_name="Nuclei",
+    )
+
+    assert table.fields == ()
+    assert table.rows == [
+        {
+            "object_label": 1,
+            "feature_name": "area",
+            "result_value": 12.0,
+        },
+        {
+            "object_label": 1,
+            "feature_name": "Perimeter",
+            "result_value": 8.0,
+        },
+    ]
+
+
+def test_measurement_table_treats_value_named_columns_as_wide_without_feature_axis():
+    rows = [{"image_number": 1, "mean_value": 0.5, "min_value": 0.1}]
+
+    table = MeasurementTable(name="ImageMeasurements", rows=rows)
+
+    assert table.rows is rows
 
 
 def test_normalize_measurement_table_accepts_registered_columnar_rows():

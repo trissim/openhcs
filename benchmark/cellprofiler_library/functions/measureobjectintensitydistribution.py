@@ -4,11 +4,18 @@ import logging
 import numpy as np
 import os
 import time
-from typing import Tuple, List, Optional, Any
-from dataclasses import dataclass
+from typing import Tuple, List, Any
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_semantics import (
+    ObjectIntensityDistributionMeasurementFeature,
+    ObjectMeasurementValueRow,
+    ObjectZernikeDescriptorFeature,
+    dense_object_label_extent_id_domain,
+    indexed_object_intensity_distribution_feature_name,
+    indexed_object_intensity_zernike_feature_name,
+)
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
@@ -46,38 +53,12 @@ class ZernikeMode(Enum):
     MAGNITUDES_AND_PHASE = "magnitudes_and_phase"
 
 
-@dataclass
-class RadialDistributionMeasurement:
-    """Measurements for radial intensity distribution."""
-    object_label: int
-    bin_index: int
-    bin_count: int
-    frac_at_d: float
-    mean_frac: float
-    radial_cv: float
-
-
-@dataclass
-class ZernikeMeasurement:
-    """Zernike moment measurements."""
-    object_label: int
-    n: int
-    m: int
-    magnitude: float
-    phase: Optional[float] = None
-
-
 @numpy
 @special_inputs("labels")
 @special_outputs(
     ("radial_measurements", csv_materializer(
         fields=[
             "object_label",
-            "bin_index",
-            "bin_count",
-            "frac_at_d",
-            "mean_frac",
-            "radial_cv",
             "feature_name",
             "result_value",
         ],
@@ -132,8 +113,8 @@ def measure_object_intensity_distribution(
     wants_zernikes = _coerce_zernike_mode(wants_zernikes)
     measurements: list[Any] = []
     
-    nobjects = int(np.max(labels_2d))
-    if nobjects == 0:
+    object_ids = dense_object_label_extent_id_domain(labels_2d)
+    if not object_ids:
         # Return empty measurements
         return image, measurements
     
@@ -151,7 +132,7 @@ def measure_object_intensity_distribution(
         "idist_radial_backend",
         time.perf_counter() - phase_started_at,
         function="measure_object_intensity_distribution",
-        nobjects=nobjects,
+        nobjects=len(object_ids),
         bins=radial_arrays.n_bins,
     )
 
@@ -159,7 +140,9 @@ def measure_object_intensity_distribution(
         # Missing label IDs inside the dense object domain carry no radial
         # fraction; CP-style exports keep RadialCV at zero but mark
         # FracAtD/MeanFrac as NaN.
-        for obj_idx in range(nobjects):
+        bin_index = bin_idx + 1
+        for object_label in object_ids:
+            obj_idx = object_label - 1
             frac_at_d = (
                 float(radial_arrays.fraction_at_distance[obj_idx, bin_idx])
                 if radial_arrays.object_has_pixels[obj_idx]
@@ -170,14 +153,37 @@ def measure_object_intensity_distribution(
                 if radial_arrays.object_has_pixels[obj_idx]
                 else np.nan
             )
-            measurements.append(RadialDistributionMeasurement(
-                object_label=obj_idx + 1,
-                bin_index=bin_idx + 1,
-                bin_count=bin_count,
-                frac_at_d=frac_at_d,
-                mean_frac=mean_frac,
-                radial_cv=float(radial_cv[obj_idx])
-            ))
+            measurements.extend(
+                (
+                    ObjectMeasurementValueRow(
+                        object_label=object_label,
+                        feature_name=indexed_object_intensity_distribution_feature_name(
+                            ObjectIntensityDistributionMeasurementFeature.FRACTION_AT_DISTANCE,
+                            bin_index=bin_index,
+                            bin_count=bin_count,
+                        ),
+                        result_value=frac_at_d,
+                    ),
+                    ObjectMeasurementValueRow(
+                        object_label=object_label,
+                        feature_name=indexed_object_intensity_distribution_feature_name(
+                            ObjectIntensityDistributionMeasurementFeature.MEAN_FRACTION,
+                            bin_index=bin_index,
+                            bin_count=bin_count,
+                        ),
+                        result_value=mean_frac,
+                    ),
+                    ObjectMeasurementValueRow(
+                        object_label=object_label,
+                        feature_name=indexed_object_intensity_distribution_feature_name(
+                            ObjectIntensityDistributionMeasurementFeature.RADIAL_CV,
+                            bin_index=bin_index,
+                            bin_count=bin_count,
+                        ),
+                        result_value=float(radial_cv[obj_idx]),
+                    ),
+                )
+            )
     
     phase_started_at = time.perf_counter()
     for bin_idx in range(radial_arrays.n_bins):
@@ -236,7 +242,7 @@ def _zernike_measurement_rows(
     wants_zernikes: ZernikeMode,
     zernike_degree: int,
     backend_provider: CellProfilerBackendProvider | None = None,
-) -> list[dict[str, Any]]:
+) -> list[ObjectMeasurementValueRow]:
     """Return CellProfiler-compatible long-form Zernike measurement rows."""
     labels_int = object_label_dense_array(labels, dtype=np.int32)
     object_count = int(labels_int.max()) if labels_int.size else 0
@@ -254,7 +260,7 @@ def _zernike_measurement_rows(
     if len(zernike_indexes) == 0:
         return []
 
-    rows: list[dict[str, Any]] = []
+    rows: list[ObjectMeasurementValueRow] = []
 
     for index, (n, m) in enumerate(zernike_indexes):
         for object_label, magnitude in zip(
@@ -263,11 +269,15 @@ def _zernike_measurement_rows(
             strict=True,
         ):
             rows.append(
-                {
-                    "object_label": int(object_label),
-                    "feature_name": f"ZernikeMagnitude_{int(n)}_{int(m)}",
-                    "result_value": float(magnitude),
-                }
+                ObjectMeasurementValueRow(
+                    object_label=int(object_label),
+                    feature_name=indexed_object_intensity_zernike_feature_name(
+                        ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
+                        degree=int(n),
+                        repetition=int(m),
+                    ),
+                    result_value=float(magnitude),
+                )
             )
 
         if wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE:
@@ -277,11 +287,15 @@ def _zernike_measurement_rows(
                 strict=True,
             ):
                 rows.append(
-                    {
-                        "object_label": int(object_label),
-                        "feature_name": f"ZernikePhase_{int(n)}_{int(m)}",
-                        "result_value": float(phase),
-                    }
+                    ObjectMeasurementValueRow(
+                        object_label=int(object_label),
+                        feature_name=indexed_object_intensity_zernike_feature_name(
+                            ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
+                            degree=int(n),
+                            repetition=int(m),
+                        ),
+                        result_value=float(phase),
+                    )
                 )
 
     return rows
@@ -292,25 +306,33 @@ def _empty_zernike_measurement_rows(
     zernike_indexes: list[tuple[int, int]],
     *,
     wants_zernikes: ZernikeMode,
-) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
+) -> list[ObjectMeasurementValueRow]:
+    rows: list[ObjectMeasurementValueRow] = []
     for n, m in zernike_indexes:
         for object_label in range(1, object_count + 1):
             rows.append(
-                {
-                    "object_label": object_label,
-                    "feature_name": f"ZernikeMagnitude_{int(n)}_{int(m)}",
-                    "result_value": np.nan,
-                }
+                ObjectMeasurementValueRow(
+                    object_label=object_label,
+                    feature_name=indexed_object_intensity_zernike_feature_name(
+                        ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
+                        degree=int(n),
+                        repetition=int(m),
+                    ),
+                    result_value=np.nan,
+                )
             )
         if wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE:
             for object_label in range(1, object_count + 1):
                 rows.append(
-                    {
-                        "object_label": object_label,
-                        "feature_name": f"ZernikePhase_{int(n)}_{int(m)}",
-                        "result_value": np.nan,
-                    }
+                    ObjectMeasurementValueRow(
+                        object_label=object_label,
+                        feature_name=indexed_object_intensity_zernike_feature_name(
+                            ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
+                            degree=int(n),
+                            repetition=int(m),
+                        ),
+                        result_value=np.nan,
+                    )
                 )
     return rows
 

@@ -29,17 +29,21 @@ from openhcs.core.runtime_semantics import (
     MeasurementScope,
     MeasurementSubject,
     ObjectLabelDomain,
+    ObjectLabelDomainDeclaration,
     ObjectLabelDomainMetadata,
     ObjectLabelDomainScope,
     ObjectLabelIdDomainStrategy,
     ObjectLabelRepresentation,
     ObjectLabelVariant,
+    PreserveSourceObjectLabelDomainDeclaration,
     RelationshipEndpoint,
     RelationshipSemantics,
     RuntimePlaneAxis,
     SpatialGridOrigin,
     SpatialGridOrdering,
     coerce_enum,
+    measurement_table_row_layout,
+    normalize_measurement_table_rows,
 )
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
@@ -1818,6 +1822,256 @@ def object_label_dense_array(
     return np.array(dense_data, dtype=dtype, copy=copy)
 
 
+class ObjectLabelDataRuntimeSliceStackContract(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Declare runtime-slice preservation for a concrete label representation."""
+
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def preserves_runtime_slice_stack(
+        cls,
+        labels: object,
+        *,
+        plane_axis: RuntimePlaneAxis,
+        slice_count: int,
+    ) -> bool:
+        if plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+            return False
+        strategy = cls.for_nominal_value(labels)
+        return (
+            False
+            if strategy is None
+            else strategy.label_data_preserves_runtime_slice_stack(
+                labels,
+                slice_count=slice_count,
+            )
+        )
+
+    @classmethod
+    def runtime_slice_count(
+        cls,
+        labels: object,
+        *,
+        plane_axis: RuntimePlaneAxis,
+    ) -> int | None:
+        """Return the runtime-slice count encoded by this label data."""
+        if plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
+            return None
+        strategy = cls.for_nominal_value(labels)
+        if strategy is None:
+            return None
+        return strategy.label_data_runtime_slice_count(labels)
+
+    @abstractmethod
+    def label_data_preserves_runtime_slice_stack(
+        self,
+        labels: object,
+        *,
+        slice_count: int,
+    ) -> bool:
+        """Return whether this label representation carries one row per runtime slice."""
+
+    @abstractmethod
+    def label_data_runtime_slice_count(self, labels: object) -> int | None:
+        """Return the runtime-slice count carried by this label representation."""
+
+
+class SparseIJVLabelRowsRuntimeSliceStackContract(
+    ObjectLabelDataRuntimeSliceStackContract
+):
+    """Sparse IJV labels preserve runtime slicing when they declare slice indexes."""
+
+    value_type = SparseIJVLabelRows
+
+    def label_data_preserves_runtime_slice_stack(
+        self,
+        labels: object,
+        *,
+        slice_count: int,
+    ) -> bool:
+        del slice_count
+        if not isinstance(labels, SparseIJVLabelRows):
+            raise TypeError(
+                "SparseIJVLabelRowsRuntimeSliceStackContract requires "
+                f"SparseIJVLabelRows, got {type(labels).__name__}."
+            )
+        return labels.has_slice_index
+
+    def label_data_runtime_slice_count(self, labels: object) -> int | None:
+        if not isinstance(labels, SparseIJVLabelRows):
+            raise TypeError(
+                "SparseIJVLabelRowsRuntimeSliceStackContract requires "
+                f"SparseIJVLabelRows, got {type(labels).__name__}."
+            )
+        if not labels.has_slice_index:
+            return None
+        slice_indices = labels.slice_indices()
+        return max(slice_indices) + 1 if slice_indices else 0
+
+
+class DenseArrayLabelRuntimeSliceStackContract(
+    ObjectLabelDataRuntimeSliceStackContract
+):
+    """Dense array labels preserve runtime slicing when axis 0 is the slice axis."""
+
+    value_type = np.ndarray
+
+    def label_data_preserves_runtime_slice_stack(
+        self,
+        labels: object,
+        *,
+        slice_count: int,
+    ) -> bool:
+        if not isinstance(labels, np.ndarray):
+            raise TypeError(
+                "DenseArrayLabelRuntimeSliceStackContract requires ndarray, "
+                f"got {type(labels).__name__}."
+            )
+        return labels.ndim >= 3 and int(labels.shape[0]) == int(slice_count)
+
+    def label_data_runtime_slice_count(self, labels: object) -> int | None:
+        if not isinstance(labels, np.ndarray):
+            raise TypeError(
+                "DenseArrayLabelRuntimeSliceStackContract requires ndarray, "
+                f"got {type(labels).__name__}."
+            )
+        if labels.ndim < 3:
+            return None
+        return int(labels.shape[0])
+
+
+class ObjectLabelRuntimeSliceStackContract(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Declare whether an object-label payload carries the runtime slice axis."""
+
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def preserves_runtime_slice_stack(
+        cls,
+        value: object,
+        *,
+        slice_count: int,
+    ) -> bool:
+        strategy = cls.for_nominal_value(value)
+        return (
+            False
+            if strategy is None
+            else strategy.value_preserves_runtime_slice_stack(
+                value,
+                slice_count=slice_count,
+            )
+        )
+
+    @classmethod
+    def runtime_slice_count(cls, value: object) -> int | None:
+        """Return the runtime-slice count encoded by one object-label value."""
+        strategy = cls.for_nominal_value(value)
+        if strategy is None:
+            return None
+        return strategy.value_runtime_slice_count(value)
+
+    @abstractmethod
+    def value_preserves_runtime_slice_stack(
+        self,
+        value: object,
+        *,
+        slice_count: int,
+    ) -> bool:
+        """Return whether the payload must remain stack-shaped until execution."""
+
+    @abstractmethod
+    def value_runtime_slice_count(self, value: object) -> int | None:
+        """Return the runtime-slice count carried by this object-label value."""
+
+
+class ObjectLabelPayloadRuntimeSliceStackContract(ObjectLabelRuntimeSliceStackContract):
+    """Runtime-slice contract for dense object-label payloads."""
+
+    value_type = ObjectLabelPayload
+
+    def value_preserves_runtime_slice_stack(
+        self,
+        value: object,
+        *,
+        slice_count: int,
+    ) -> bool:
+        if not isinstance(value, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadRuntimeSliceStackContract requires "
+                f"ObjectLabelPayload, got {type(value).__name__}."
+            )
+        if value.domain_scope is not ObjectLabelDomainScope.PLANE:
+            return False
+        return ObjectLabelDataRuntimeSliceStackContract.preserves_runtime_slice_stack(
+            value.labels,
+            plane_axis=value.plane_axis,
+            slice_count=slice_count,
+        )
+
+    def value_runtime_slice_count(self, value: object) -> int | None:
+        if not isinstance(value, ObjectLabelPayload):
+            raise TypeError(
+                "ObjectLabelPayloadRuntimeSliceStackContract requires "
+                f"ObjectLabelPayload, got {type(value).__name__}."
+            )
+        if value.domain_scope is not ObjectLabelDomainScope.PLANE:
+            return None
+        return ObjectLabelDataRuntimeSliceStackContract.runtime_slice_count(
+            value.labels,
+            plane_axis=value.plane_axis,
+        )
+
+
+class ObjectLabelSetRuntimeSliceStackContract(
+    ObjectLabelPayloadRuntimeSliceStackContract
+):
+    """Runtime-slice contract for native object-label sets."""
+
+    value_type = ObjectLabelSet
+
+    def value_preserves_runtime_slice_stack(
+        self,
+        value: object,
+        *,
+        slice_count: int,
+    ) -> bool:
+        if not isinstance(value, ObjectLabelSet):
+            raise TypeError(
+                "ObjectLabelSetRuntimeSliceStackContract requires ObjectLabelSet, "
+                f"got {type(value).__name__}."
+            )
+        if value.domain_scope is not ObjectLabelDomainScope.PLANE:
+            return False
+        return ObjectLabelDataRuntimeSliceStackContract.preserves_runtime_slice_stack(
+            value.labels,
+            plane_axis=value.plane_axis,
+            slice_count=slice_count,
+        )
+
+    def value_runtime_slice_count(self, value: object) -> int | None:
+        if not isinstance(value, ObjectLabelSet):
+            raise TypeError(
+                "ObjectLabelSetRuntimeSliceStackContract requires ObjectLabelSet, "
+                f"got {type(value).__name__}."
+            )
+        if value.domain_scope is not ObjectLabelDomainScope.PLANE:
+            return None
+        return ObjectLabelDataRuntimeSliceStackContract.runtime_slice_count(
+            value.labels,
+            plane_axis=value.plane_axis,
+        )
+
+
 class ObjectLabelPayloadBuilderStrategy(
     NominalTypeKeyedStrategyMixin,
     ABC,
@@ -1841,9 +2095,7 @@ class ObjectLabelPayloadBuilderStrategy(
         source: object,
         labels: object,
         *,
-        declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | None,
-        domain_scope: ObjectLabelDomainScope | None,
+        declared_domain: ObjectLabelDomain,
     ) -> ObjectLabelPayload:
         """Return transformed labels wrapped in the source object's semantic domain."""
 
@@ -1858,9 +2110,7 @@ class ObjectLabelPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
         source: object,
         labels: object,
         *,
-        declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | None,
-        domain_scope: ObjectLabelDomainScope | None,
+        declared_domain: ObjectLabelDomain,
     ) -> ObjectLabelPayload:
         if not isinstance(source, ObjectLabelPayload):
             raise TypeError(
@@ -1869,18 +2119,10 @@ class ObjectLabelPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
             )
         return ObjectLabelPayload(
             labels=labels,
-            declared_object_count=(
-                declared_object_count
-                if declared_object_count is not None
-                else source.declared_object_count
-            ),
-            declared_object_ids=(
-                declared_object_ids
-                if declared_object_ids is not None
-                else source.declared_object_ids
-            ),
-            declared_object_id_domains=source.declared_object_id_domains,
-            domain_scope=domain_scope or source.domain_scope,
+            declared_object_count=declared_domain.declared_object_count,
+            declared_object_ids=declared_domain.declared_object_ids,
+            declared_object_id_domains=declared_domain.declared_object_id_domains,
+            domain_scope=declared_domain.scope,
             plane_axis=source.plane_axis,
             spatial_origin_yx=source.spatial_origin_yx,
             source_spatial_shape_yx=source.source_spatial_shape_yx,
@@ -1897,9 +2139,7 @@ class ObjectLabelSetPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
         source: object,
         labels: object,
         *,
-        declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | None,
-        domain_scope: ObjectLabelDomainScope | None,
+        declared_domain: ObjectLabelDomain,
     ) -> ObjectLabelPayload:
         if not isinstance(source, ObjectLabelSet):
             raise TypeError(
@@ -1908,18 +2148,10 @@ class ObjectLabelSetPayloadBuilder(ObjectLabelPayloadBuilderStrategy):
             )
         return ObjectLabelPayload(
             labels=labels,
-            declared_object_count=(
-                declared_object_count
-                if declared_object_count is not None
-                else source.declared_object_count
-            ),
-            declared_object_ids=(
-                declared_object_ids
-                if declared_object_ids is not None
-                else source.declared_object_ids
-            ),
-            declared_object_id_domains=source.declared_object_id_domains,
-            domain_scope=domain_scope or source.domain_scope,
+            declared_object_count=declared_domain.declared_object_count,
+            declared_object_ids=declared_domain.declared_object_ids,
+            declared_object_id_domains=declared_domain.declared_object_id_domains,
+            domain_scope=declared_domain.scope,
             plane_axis=source.plane_axis,
             spatial_origin_yx=source.spatial_origin_yx,
             source_spatial_shape_yx=source.source_spatial_shape_yx,
@@ -1934,15 +2166,14 @@ class RawObjectLabelPayloadBuilderStrategy(ObjectLabelPayloadBuilderStrategy):
         source: object,
         labels: object,
         *,
-        declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | None,
-        domain_scope: ObjectLabelDomainScope | None,
+        declared_domain: ObjectLabelDomain,
     ) -> ObjectLabelPayload:
         return ObjectLabelPayload(
             labels=labels,
-            declared_object_count=declared_object_count,
-            declared_object_ids=tuple(declared_object_ids or ()),
-            domain_scope=domain_scope or ObjectLabelDomainScope.PAYLOAD,
+            declared_object_count=declared_domain.declared_object_count,
+            declared_object_ids=declared_domain.declared_object_ids,
+            declared_object_id_domains=declared_domain.declared_object_id_domains,
+            domain_scope=declared_domain.scope,
         )
 
 
@@ -1950,17 +2181,16 @@ def object_label_payload_with_dense_labels(
     source: object,
     labels: object,
     *,
-    declared_object_count: int | None = None,
-    declared_object_ids: tuple[int, ...] | None = None,
-    domain_scope: ObjectLabelDomainScope | None = None,
+    domain_declaration: ObjectLabelDomainDeclaration = (
+        PreserveSourceObjectLabelDomainDeclaration()
+    ),
 ) -> ObjectLabelPayload:
     """Build a dense-label payload while preserving nominal object-label metadata."""
+    declared_domain = domain_declaration.declared_domain(source, labels)
     return ObjectLabelPayloadBuilderStrategy.for_source(source).build(
         source,
         labels,
-        declared_object_count=declared_object_count,
-        declared_object_ids=declared_object_ids,
-        domain_scope=domain_scope,
+        declared_domain=declared_domain,
     )
 
 
@@ -1979,6 +2209,32 @@ def object_label_payload_from_source_image(
         labels=labels,
         unedited_labels=unedited_labels,
         small_removed_labels=small_removed_labels,
+        declared_object_count=declared_object_count,
+        declared_object_ids=declared_object_ids,
+        spatial_origin_yx=metadata.spatial_origin_yx,
+        source_spatial_shape_yx=metadata.source_spatial_shape_yx,
+    )
+
+
+def object_label_set_from_source_image(
+    image: object,
+    *,
+    name: str,
+    labels: object,
+    representation: ObjectLabelRepresentation = ObjectLabelRepresentation.DENSE_LABELS,
+    declared_object_count: int | None = None,
+    declared_object_ids: tuple[int, ...] = (),
+    unedited_labels: object | None = None,
+    small_removed_labels: object | None = None,
+) -> ObjectLabelSet:
+    """Build native object labels in the source spatial domain carried by an image."""
+    metadata = image_payload_metadata(image)
+    return ObjectLabelSet(
+        name=name,
+        labels=labels,
+        unedited_labels=unedited_labels,
+        small_removed_labels=small_removed_labels,
+        representation=representation,
         declared_object_count=declared_object_count,
         declared_object_ids=declared_object_ids,
         spatial_origin_yx=metadata.spatial_origin_yx,
@@ -2518,6 +2774,11 @@ class MeasurementTable(NativeRuntimeValue):
                 f"MeasurementTable '{self.name}' requires table-like rows, "
                 f"got {type(self.rows).__name__}."
             )
+        normalized_rows = normalize_measurement_table_rows(self.rows)
+        if normalized_rows is not self.rows:
+            object.__setattr__(self, "rows", normalized_rows)
+            object.__setattr__(self, "fields", ())
+        measurement_table_row_layout(self.rows)
 
     def runtime_payload(self) -> Any:
         return self.rows
@@ -3507,7 +3768,7 @@ def _measurement_source_image_name(value: MeasurementTable) -> str | None:
     if value.source_image_name is not None:
         return value.source_image_name
     if value.subject and value.subject.scope is MeasurementScope.IMAGE:
-        return value.subject.name
+        return value.subject.source_image_name
     return None
 
 

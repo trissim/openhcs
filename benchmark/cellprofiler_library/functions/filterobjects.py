@@ -27,6 +27,7 @@ from openhcs.core.runtime_artifact_queries import (
     normalize_measurement_token,
 )
 from openhcs.core.runtime_semantics import (
+    DenseObjectLabelExtentDomainDeclaration,
     ObjectShapeMeasurementFeature,
     ObjectLabelMeasurementValues,
     ParentChildRelationshipPayload,
@@ -686,7 +687,7 @@ def _filtered_object_payload(
     return object_label_payload_with_dense_labels(
         input_value,
         output_labels,
-        declared_object_count=int(np.max(output_labels)) if output_labels.size else 0,
+        domain_declaration=DenseObjectLabelExtentDomainDeclaration(),
     )
 
 

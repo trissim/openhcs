@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
+from functools import lru_cache
 from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -295,6 +296,13 @@ class RuntimePlaneAxis(str, Enum):
         return unique_axes[0]
 
 
+class MeasurementImageReferenceDomain(str, Enum):
+    """Semantic image domain used as the reference for object measurement."""
+
+    SOURCE_IMAGE = "source_image"
+    OBJECT_LABELS = "object_labels"
+
+
 class RuntimePlaneProjectionScope(str, Enum):
     """Execution scope that determines whether a runtime slice is selectable."""
 
@@ -499,6 +507,31 @@ class ObjectLabelDomain:
             return tuple(range(1, self.declared_object_count + 1))
         return None
 
+    def with_runtime_declaration_overrides(
+        self,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_id_domains: tuple[tuple[int, ...], ...],
+    ) -> "ObjectLabelDomain":
+        """Return this domain with explicit runtime declarations applied."""
+        return ObjectLabelDomain(
+            declared_object_count=(
+                declared_object_count
+                if declared_object_count is not None
+                else self.declared_object_count
+            ),
+            declared_object_ids=(
+                tuple(declared_object_ids)
+                if declared_object_ids is not None
+                else self.declared_object_ids
+            ),
+            declared_object_id_domains=(
+                self.declared_object_id_domains or declared_object_id_domains
+            ),
+            scope=self.scope,
+        )
+
     @classmethod
     def explicit_plane_id_domains(
         cls,
@@ -562,6 +595,50 @@ class ObjectLabelDomainMetadata(ABC):
     @abstractmethod
     def object_label_domain(self) -> ObjectLabelDomain:
         """Return the declared object-label identity domain."""
+
+
+class ObjectLabelDomainMetadataStrategy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered extractor for nominal object-label domain metadata."""
+
+    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+
+    @classmethod
+    def for_value(cls, value: object) -> "ObjectLabelDomainMetadataStrategy":
+        strategy = cls.for_nominal_value(value)
+        return strategy if strategy is not None else RawObjectLabelDomainMetadataStrategy()
+
+    @abstractmethod
+    def object_label_domain(self, value: object) -> ObjectLabelDomain:
+        """Return the declared object-label identity domain for ``value``."""
+
+
+class NominalObjectLabelDomainMetadataStrategy(ObjectLabelDomainMetadataStrategy):
+    """Use the domain declared by a nominal object-label domain provider."""
+
+    value_type = ObjectLabelDomainMetadata
+
+    def object_label_domain(self, value: object) -> ObjectLabelDomain:
+        if not isinstance(value, ObjectLabelDomainMetadata):
+            raise TypeError(
+                "NominalObjectLabelDomainMetadataStrategy requires "
+                f"ObjectLabelDomainMetadata, got {type(value).__name__}."
+            )
+        return value.object_label_domain()
+
+
+class RawObjectLabelDomainMetadataStrategy(ObjectLabelDomainMetadataStrategy):
+    """Default domain metadata for values that do not carry object-label identity."""
+
+    def object_label_domain(self, value: object) -> ObjectLabelDomain:
+        del value
+        return ObjectLabelDomain()
 
 
 @dataclass(frozen=True, slots=True)
@@ -938,7 +1015,10 @@ class ObjectMeasurementFeatureRole(str, Enum):
 
     COUNT = "count"
     IDENTIFIER = "identifier"
+    MEASURED_OBJECT_ANCHOR = "measured_object_anchor"
     LOCATION = "location"
+    INTENSITY = "intensity"
+    CALCULATED = "calculated"
     SHAPE_DESCRIPTOR = "shape_descriptor"
     ZERNIKE_DESCRIPTOR = "zernike_descriptor"
 
@@ -959,6 +1039,160 @@ class ObjectCoreMeasurementFeature(str, Enum):
     CENTER_X = "center_x"
     CENTER_Y = "center_y"
     CENTER_Z = "center_z"
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLocationCoordinateValues:
+    """Dense label-indexed values and missing-row policy for one coordinate."""
+
+    values: Any
+    include_missing: bool
+
+
+class ObjectLocationCoordinateProjectionStrategy(
+    EnumKeyedStrategyMixin[ObjectCoreMeasurementFeature],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Project dense-label coordinates for one nominal object-location feature."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "coordinate_feature"
+
+    coordinate_feature: ClassVar[ObjectCoreMeasurementFeature]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def coordinate_values(
+        self,
+        axis_centers: Sequence[Any],
+        counts: Any,
+    ) -> ObjectLocationCoordinateValues:
+        """Return dense label-indexed coordinate values for this feature."""
+
+    @staticmethod
+    def missing_for_absent_labels(values: Any, counts: Any) -> Any:
+        import numpy as np
+
+        result = np.asarray(values, dtype=float).copy()
+        result[counts == 0] = np.nan
+        return result
+
+
+class AxisBackedObjectLocationCoordinateProjectionStrategy(
+    ObjectLocationCoordinateProjectionStrategy
+):
+    """Base for coordinates backed by a concrete dense-array axis when present."""
+
+    required_ndim: ClassVar[int]
+    axis_offset: ClassVar[int]
+
+    def coordinate_values(
+        self,
+        axis_centers: Sequence[Any],
+        counts: Any,
+    ) -> ObjectLocationCoordinateValues:
+        import numpy as np
+
+        if len(axis_centers) >= type(self).required_ndim:
+            return ObjectLocationCoordinateValues(
+                axis_centers[type(self).axis_offset],
+                include_missing=False,
+            )
+        return ObjectLocationCoordinateValues(
+            self.missing_for_absent_labels(np.zeros(len(counts)), counts),
+            include_missing=False,
+        )
+
+
+class CenterXObjectLocationCoordinateProjectionStrategy(
+    AxisBackedObjectLocationCoordinateProjectionStrategy
+):
+    """X is the final dense-array axis."""
+
+    coordinate_feature = ObjectCoreMeasurementFeature.CENTER_X
+    required_ndim = 1
+    axis_offset = -1
+
+
+class CenterYObjectLocationCoordinateProjectionStrategy(
+    AxisBackedObjectLocationCoordinateProjectionStrategy
+):
+    """Y is the penultimate dense-array axis, or zero for present 1D labels."""
+
+    coordinate_feature = ObjectCoreMeasurementFeature.CENTER_Y
+    required_ndim = 2
+    axis_offset = -2
+
+
+class CenterZObjectLocationCoordinateProjectionStrategy(
+    AxisBackedObjectLocationCoordinateProjectionStrategy
+):
+    """Z is the third-from-final dense-array axis, or zero for present 2D labels."""
+
+    coordinate_feature = ObjectCoreMeasurementFeature.CENTER_Z
+    required_ndim = 3
+    axis_offset = -3
+
+
+def object_location_coordinate_arrays(
+    axis_centers: Sequence[Any],
+    counts: Any,
+) -> tuple[tuple[str, ObjectLocationCoordinateValues], ...]:
+    """Return nominal object-location coordinate arrays in core feature order."""
+    return tuple(
+        (
+            feature.value,
+            ObjectLocationCoordinateProjectionStrategy.for_enum_member(
+                feature,
+            ).coordinate_values(axis_centers, counts),
+        )
+        for feature in (
+            ObjectCoreMeasurementFeature.CENTER_X,
+            ObjectCoreMeasurementFeature.CENTER_Y,
+            ObjectCoreMeasurementFeature.CENTER_Z,
+        )
+    )
+
+
+class ObjectLocationMeasurementFeature(str, Enum):
+    """Canonical CellProfiler-style object location feature names."""
+
+    CENTER_X = "Location_Center_X"
+    CENTER_Y = "Location_Center_Y"
+    CENTER_Z = "Location_Center_Z"
+
+    @property
+    def core_feature(self) -> ObjectCoreMeasurementFeature:
+        """Return the normalized core feature represented by this location feature."""
+        return ObjectCoreMeasurementFeature[self.name]
+
+
+class ObjectIntensityMeasurementFeature(str, Enum):
+    """Canonical object intensity measurement field names."""
+
+    INTEGRATED_INTENSITY = "IntegratedIntensity"
+    MEAN_INTENSITY = "MeanIntensity"
+    STD_INTENSITY = "StdIntensity"
+    MIN_INTENSITY = "MinIntensity"
+    MAX_INTENSITY = "MaxIntensity"
+    INTEGRATED_INTENSITY_EDGE = "IntegratedIntensityEdge"
+    MEAN_INTENSITY_EDGE = "MeanIntensityEdge"
+    STD_INTENSITY_EDGE = "StdIntensityEdge"
+    MIN_INTENSITY_EDGE = "MinIntensityEdge"
+    MAX_INTENSITY_EDGE = "MaxIntensityEdge"
+    MASS_DISPLACEMENT = "MassDisplacement"
+    LOWER_QUARTILE_INTENSITY = "LowerQuartileIntensity"
+    MEDIAN_INTENSITY = "MedianIntensity"
+    MAD_INTENSITY = "MADIntensity"
+    UPPER_QUARTILE_INTENSITY = "UpperQuartileIntensity"
+    CENTER_MASS_INTENSITY_X = "CenterMassIntensity_X"
+    CENTER_MASS_INTENSITY_Y = "CenterMassIntensity_Y"
+    CENTER_MASS_INTENSITY_Z = "CenterMassIntensity_Z"
+    MAX_INTENSITY_X = "MaxIntensity_X"
+    MAX_INTENSITY_Y = "MaxIntensity_Y"
+    MAX_INTENSITY_Z = "MaxIntensity_Z"
 
 
 class ObjectShapeMeasurementFeature(str, Enum):
@@ -1017,14 +1251,116 @@ class ObjectZernikeDescriptorFeature(str, Enum):
     INTENSITY_PHASE = "zernike_phase"
 
 
+class ObjectIntensityDistributionMeasurementFeature(str, Enum):
+    """Canonical object intensity-distribution feature families."""
+
+    FRACTION_AT_DISTANCE = "FracAtD"
+    MEAN_FRACTION = "MeanFrac"
+    RADIAL_CV = "RadialCV"
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementValueRow:
+    """Nominal long-form object measurement row."""
+
+    object_label: int
+    feature_name: str
+    result_value: float
+
+
+class ObjectIntensityZernikeFeatureNameStrategy(
+    EnumKeyedStrategyMixin[ObjectZernikeDescriptorFeature],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Render intensity Zernike feature families with nominal dispatch."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "feature"
+
+    feature: ClassVar[ObjectZernikeDescriptorFeature]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def family_name(self) -> str:
+        """Return the external feature-family name for this descriptor."""
+
+    def feature_name(self, *, degree: int, repetition: int) -> str:
+        """Return CP-compatible long-form intensity Zernike feature identity."""
+        return (
+            f"IntensityDistribution_{self.family_name()}_"
+            f"{int(degree)}_{int(repetition)}"
+        )
+
+
+class ObjectIntensityZernikeMagnitudeFeatureNameStrategy(
+    ObjectIntensityZernikeFeatureNameStrategy
+):
+    """Render intensity Zernike magnitude rows."""
+
+    feature = ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE
+
+    def family_name(self) -> str:
+        return "ZernikeMagnitude"
+
+
+class ObjectIntensityZernikePhaseFeatureNameStrategy(
+    ObjectIntensityZernikeFeatureNameStrategy
+):
+    """Render intensity Zernike phase rows."""
+
+    feature = ObjectZernikeDescriptorFeature.INTENSITY_PHASE
+
+    def family_name(self) -> str:
+        return "ZernikePhase"
+
+
+def indexed_object_intensity_distribution_feature_name(
+    feature: ObjectIntensityDistributionMeasurementFeature | str,
+    *,
+    bin_index: int,
+    bin_count: int,
+) -> str:
+    """Return CP-compatible long-form radial distribution feature identity."""
+    feature = coerce_enum(
+        ObjectIntensityDistributionMeasurementFeature,
+        feature,
+        "indexed_object_intensity_distribution_feature_name.feature",
+    )
+    return f"IntensityDistribution_{feature.value}_{int(bin_index)}of{int(bin_count)}"
+
+
+def indexed_object_intensity_zernike_feature_name(
+    feature: ObjectZernikeDescriptorFeature | str,
+    *,
+    degree: int,
+    repetition: int,
+) -> str:
+    """Return CP-compatible long-form intensity Zernike feature identity."""
+    feature = coerce_enum(
+        ObjectZernikeDescriptorFeature,
+        feature,
+        "indexed_object_intensity_zernike_feature_name.feature",
+    )
+    return ObjectIntensityZernikeFeatureNameStrategy.for_enum_member(
+        feature
+    ).feature_name(degree=degree, repetition=repetition)
+
+
 class MeasurementRowAxisField(str, Enum):
     """Canonical row-axis fields for long/tall measurement tables."""
 
+    IMAGE_NUMBER = "image_number"
     SLICE_INDEX = "slice_index"
     FEATURE_NAME = "feature_name"
     MEASUREMENT_NAME = "measurement_name"
     OUTPUT_NAME = "output_name"
     OBJECT_NAME = "object_name"
+    OBJECT_LABEL = "object_label"
+    OBJECT_NUMBER = "object_number"
+    OBJECT_ID = "object_id"
+    LABEL = "label"
     SOURCE_IMAGE_NAME = "source_image_name"
     BIN_INDEX = "bin_index"
     BIN_COUNT = "bin_count"
@@ -1033,6 +1369,541 @@ class MeasurementRowAxisField(str, Enum):
     GRAY_LEVELS = "gray_levels"
     ZERNIKE_N = "n"
     ZERNIKE_M = "m"
+
+
+class MeasurementRowValueField(str, Enum):
+    """Canonical scalar value fields for long/tall measurement rows."""
+
+    RESULT_VALUE = "result_value"
+    MEASUREMENT_VALUE = "measurement_value"
+    VALUE = "value"
+    MEAN_VALUE = "mean_value"
+
+
+class ObjectFeatureArrayDomain(str, Enum):
+    """How a feature array indexes values for an object-feature table."""
+
+    MEASURED_OBJECT_ID = "measured_object_id"
+    LABEL_ID = "label_id"
+    ROW_ORDINAL = "row_ordinal"
+
+
+class ObjectFeatureMissingValue(str, Enum):
+    """How an object-feature table represents unmeasured feature values."""
+
+    NAN = "nan"
+    ZERO = "zero"
+
+
+def zernike_shape_feature_names(*, max_order: int) -> tuple[str, ...]:
+    """Return canonical shape-Zernike feature names for a maximum order."""
+    names: list[str] = []
+    for n in range(max_order + 1):
+        for m in range(n % 2, n + 1, 2):
+            names.append(f"{ObjectShapeMeasurementFeature.ZERNIKE.value}_{n}_{m}")
+    return tuple(names)
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectFeatureArrayDomainContext:
+    """Feature-array indexing inputs for one object-feature table."""
+
+    object_id: int
+    values: np.ndarray
+    measured_object_ids: tuple[int, ...]
+    object_domain: tuple[int, ...]
+
+    @property
+    def value_count(self) -> int:
+        return int(self.values.shape[0])
+
+    @property
+    def measured_object_count(self) -> int:
+        return len(self.measured_object_ids)
+
+    @property
+    def measured_object_max(self) -> int:
+        return max(self.measured_object_ids, default=0)
+
+
+class ObjectFeatureArrayDomainStrategy(
+    EnumKeyedStrategyMixin[ObjectFeatureArrayDomain],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Project feature arrays according to their declared object domain."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "domain"
+
+    domain: ClassVar[ObjectFeatureArrayDomain]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
+        """Return the value index for ``context.object_id``."""
+
+    @abstractmethod
+    def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
+        """Return whether the feature array shape is valid for this domain."""
+
+
+class MeasuredObjectFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
+    """Feature arrays indexed by compact measured-object IDs."""
+
+    domain = ObjectFeatureArrayDomain.MEASURED_OBJECT_ID
+
+    def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
+        try:
+            value_index = context.measured_object_ids.index(context.object_id)
+        except ValueError:
+            return None
+        return value_index if value_index < context.value_count else None
+
+    def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
+        return context.value_count == context.measured_object_count
+
+
+class LabelIdFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
+    """Feature arrays indexed by dense label ID minus one."""
+
+    domain = ObjectFeatureArrayDomain.LABEL_ID
+
+    def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
+        value_index = context.object_id - 1
+        return value_index if 0 <= value_index < context.value_count else None
+
+    def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
+        return context.value_count >= context.measured_object_max
+
+
+class RowOrdinalFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
+    """Feature arrays indexed by the emitted row ordinal."""
+
+    domain = ObjectFeatureArrayDomain.ROW_ORDINAL
+
+    def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
+        try:
+            value_index = context.object_domain.index(context.object_id)
+        except ValueError:
+            return None
+        return value_index if value_index < context.value_count else None
+
+    def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
+        return context.value_count <= len(context.object_domain)
+
+
+class ObjectFeatureMissingValueStrategy(
+    EnumKeyedStrategyMixin[ObjectFeatureMissingValue],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Emit declared missing values for unmeasured object-feature rows."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "missing_value"
+
+    missing_value: ClassVar[ObjectFeatureMissingValue]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def value(self) -> float:
+        """Return the scalar missing value represented by this policy."""
+
+
+class NanObjectFeatureMissingValueStrategy(ObjectFeatureMissingValueStrategy):
+    """Represent missing object features as NaN."""
+
+    missing_value = ObjectFeatureMissingValue.NAN
+
+    def value(self) -> float:
+        return float(np.nan)
+
+
+class ZeroObjectFeatureMissingValueStrategy(ObjectFeatureMissingValueStrategy):
+    """Represent missing object features as numeric zero."""
+
+    missing_value = ObjectFeatureMissingValue.ZERO
+
+    def value(self) -> float:
+        return 0.0
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectFeatureValueTable(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Wide object-feature values aligned onto a declared object-id domain."""
+
+    __registry_key__ = "table_label"
+    __skip_if_no_key__ = True
+
+    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
+    value_type_label: ClassVar[str | None] = None
+    table_label: ClassVar[str | None] = None
+    feature_values: Mapping[str, Any]
+    measured_object_ids: tuple[int, ...]
+    object_domain: tuple[int, ...]
+    object_id_field: str = MeasurementRowAxisField.OBJECT_LABEL.value
+    slice_index_field: str = MeasurementRowAxisField.SLICE_INDEX.value
+    slice_index: int = 0
+    feature_array_domains: ClassVar[Mapping[str, ObjectFeatureArrayDomain]] = {}
+    feature_missing_values: ClassVar[Mapping[str, ObjectFeatureMissingValue]] = {}
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "measured_object_ids",
+            ObjectLabelDomain._normalize_ids(
+                self.measured_object_ids,
+                "ObjectFeatureValueTable.measured_object_ids",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "object_domain",
+            ObjectLabelDomain._normalize_ids(
+                self.object_domain,
+                "ObjectFeatureValueTable.object_domain",
+            ),
+        )
+        object.__setattr__(self, "slice_index", int(self.slice_index))
+
+    @classmethod
+    def from_feature_arrays(
+        cls,
+        feature_values: Mapping[str, Any],
+        measured_object_ids: Iterable[int],
+        object_domain: Iterable[int],
+        **kwargs: Any,
+    ) -> "ObjectFeatureValueTable":
+        """Build a declared-domain table from measured feature arrays."""
+        return cls(
+            feature_values=feature_values,
+            measured_object_ids=tuple(int(object_id) for object_id in measured_object_ids),
+            object_domain=tuple(int(object_id) for object_id in object_domain),
+            **kwargs,
+        )
+
+    def rows(self) -> list[dict[str, float | int]]:
+        """Return wide rows ordered by the declared object domain."""
+        feature_items = tuple(
+            (
+                feature_name,
+                np.asarray(values),
+                self.python_feature_values(values),
+                self.missing_feature_value(feature_name),
+            )
+            for feature_name, values in self.feature_values.items()
+        )
+        for feature_name, values, _python_values, _missing_value in feature_items:
+            self.validate_feature_value_domain(
+                feature_name,
+                values,
+            )
+        rows: list[dict[str, float | int]] = []
+        for object_id in self.object_domain:
+            row: dict[str, float | int] = {
+                self.slice_index_field: self.slice_index,
+                self.object_id_field: object_id,
+            }
+            for feature_name, values, python_values, missing_value in feature_items:
+                if values.ndim == 0:
+                    row[feature_name] = python_values
+                    continue
+                value_index = self.feature_value_index(
+                    feature_name,
+                    object_id,
+                    values=values,
+                )
+                row[feature_name] = (
+                    missing_value if value_index is None else python_values[value_index]
+                )
+            self.complete_row(row)
+            rows.append(row)
+        return rows
+
+    def feature_value_index(
+        self,
+        feature_name: str,
+        object_id: int,
+        *,
+        values: np.ndarray,
+    ) -> int | None:
+        """Return the feature-array index for one declared object ID."""
+        return ObjectFeatureArrayDomainStrategy.for_enum_member(
+            self.feature_array_domain(feature_name)
+        ).value_index(
+            ObjectFeatureArrayDomainContext(
+                object_id=object_id,
+                values=values,
+                measured_object_ids=self.measured_object_ids,
+                object_domain=self.object_domain,
+            )
+        )
+
+    def feature_array_domain(self, feature_name: str) -> ObjectFeatureArrayDomain:
+        """Return the declared indexing domain for one feature array."""
+        return self.feature_array_domains.get(
+            feature_name,
+            ObjectFeatureArrayDomain.MEASURED_OBJECT_ID,
+        )
+
+    def validate_feature_value_domain(
+        self,
+        feature_name: str,
+        values: np.ndarray,
+    ) -> None:
+        """Fail when a feature array is not aligned to a declared object domain."""
+        if values.ndim == 0:
+            return
+        context = ObjectFeatureArrayDomainContext(
+            object_id=0,
+            values=values,
+            measured_object_ids=self.measured_object_ids,
+            object_domain=self.object_domain,
+        )
+        if ObjectFeatureArrayDomainStrategy.for_enum_member(
+            self.feature_array_domain(feature_name)
+        ).accepts(context):
+            return
+        raise ValueError(
+            f"{type(self).__name__} feature {feature_name!r} has {context.value_count} "
+            f"values for {context.measured_object_count} measured objects. Feature arrays "
+            "must align to measured_object_ids unless the table declares another "
+            "feature-array domain."
+        )
+
+    def python_feature_values(self, values: Any) -> Any:
+        """Return Python-native feature values for row serialization."""
+        array = np.asarray(values)
+        if array.ndim == 0:
+            return array.item()
+        return array.tolist()
+
+    def complete_row(self, row: dict[str, float | int]) -> None:
+        """Add table-specific axis/value fields after feature projection."""
+        del row
+
+    def missing_feature_value(self, feature_name: str) -> float:
+        """Return the missing value for an unmeasured object feature."""
+        return ObjectFeatureMissingValueStrategy.for_enum_member(
+            self.feature_missing_value(feature_name)
+        ).value()
+
+    def feature_missing_value(self, feature_name: str) -> ObjectFeatureMissingValue:
+        """Return the declared missing-value policy for one feature."""
+        return self.feature_missing_values.get(
+            feature_name,
+            ObjectFeatureMissingValue.NAN,
+        )
+
+
+class GenericObjectFeatureValueTable(ObjectFeatureValueTable):
+    """Generic object feature table with NaN missing values."""
+
+    table_label = "generic"
+
+
+class ShapeObjectFeatureValueTable(ObjectFeatureValueTable):
+    """Object shape feature rows with CellProfiler-compatible missing values."""
+
+    table_label = "shape"
+    feature_array_domains: ClassVar[Mapping[str, ObjectFeatureArrayDomain]] = {
+        **{
+            feature.value: ObjectFeatureArrayDomain.ROW_ORDINAL
+            for feature in (
+                ObjectShapeMeasurementFeature.MIN_FERET_DIAMETER,
+                ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER,
+            )
+        },
+        **{
+            field_name: ObjectFeatureArrayDomain.ROW_ORDINAL
+            for field_name in zernike_shape_feature_names(max_order=9)
+        },
+        **{
+            feature.value: ObjectFeatureArrayDomain.LABEL_ID
+            for feature in (
+                ObjectShapeMeasurementFeature.CENTER_X,
+                ObjectShapeMeasurementFeature.CENTER_Y,
+            )
+        },
+    }
+    feature_missing_values: ClassVar[Mapping[str, ObjectFeatureMissingValue]] = {
+        feature.value: ObjectFeatureMissingValue.ZERO
+        for feature in (
+            ObjectShapeMeasurementFeature.MIN_FERET_DIAMETER,
+            ObjectShapeMeasurementFeature.MAX_FERET_DIAMETER,
+            ObjectShapeMeasurementFeature.MAXIMUM_RADIUS,
+            ObjectShapeMeasurementFeature.MEAN_RADIUS,
+            ObjectShapeMeasurementFeature.MEDIAN_RADIUS,
+        )
+    }
+
+    def complete_row(self, row: dict[str, float | int]) -> None:
+        row[ObjectShapeMeasurementFeature.CENTER_Z.value] = 0.0
+
+
+class MeasurementTableRowLayout(str, Enum):
+    """Nominal row layout for measurement tables."""
+
+    EMPTY = "empty"
+    LONG = "long"
+    WIDE = "wide"
+
+
+class MeasurementRowLayoutProjectionStrategy(
+    EnumKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Project one nominal measurement row layout into canonical long form."""
+
+    __registry_key__ = "layout"
+    __skip_if_no_key__ = True
+    layout: ClassVar[MeasurementTableRowLayout | None] = None
+
+    @abstractmethod
+    def long_rows(self, row: object) -> tuple[Mapping[str, object], ...]:
+        """Return canonical long-form rows for one source row."""
+
+
+class LongMeasurementRowProjectionStrategy(MeasurementRowLayoutProjectionStrategy):
+    """Preserve already-long rows."""
+
+    layout = MeasurementTableRowLayout.LONG
+
+    def long_rows(self, row: object) -> tuple[Mapping[str, object], ...]:
+        return (measurement_row_mapping(row),)
+
+
+class WideMeasurementRowProjectionStrategy(MeasurementRowLayoutProjectionStrategy):
+    """Explode wide feature columns into canonical long-form rows."""
+
+    layout = MeasurementTableRowLayout.WIDE
+
+    def long_rows(self, row: object) -> tuple[Mapping[str, object], ...]:
+        row_mapping = measurement_row_mapping(row)
+        axis_fields = measurement_row_axis_field_names()
+        axis_values = {
+            str(field_name): value
+            for field_name, value in row_mapping.items()
+            if str(field_name) in axis_fields
+        }
+        long_rows: list[Mapping[str, object]] = []
+        for field_name, value in row_mapping.items():
+            field_text = str(field_name)
+            if field_text in axis_fields:
+                continue
+            long_row = dict(axis_values)
+            long_row[MeasurementRowAxisField.FEATURE_NAME.value] = field_text
+            long_row[MeasurementRowValueField.RESULT_VALUE.value] = value
+            long_rows.append(long_row)
+        return tuple(long_rows)
+
+
+def measurement_row_feature_field_names() -> frozenset[str]:
+    """Return row fields that name long-form measurement features."""
+    return frozenset(
+        (
+            MeasurementRowAxisField.FEATURE_NAME.value,
+            MeasurementRowAxisField.MEASUREMENT_NAME.value,
+            MeasurementRowAxisField.OUTPUT_NAME.value,
+        )
+    )
+
+
+def measurement_row_value_field_names() -> frozenset[str]:
+    """Return row fields that carry long-form measurement values."""
+    return frozenset(field.value for field in MeasurementRowValueField)
+
+
+def measurement_row_mapping(row: object) -> Mapping[str, object]:
+    """Return a mapping view for a supported measurement row payload."""
+    if isinstance(row, Mapping):
+        return row
+    if is_dataclass(row):
+        return {name: getattr(row, name) for name in _dataclass_field_names(type(row))}
+    try:
+        return vars(row)
+    except TypeError as exc:
+        raise TypeError(
+            f"Unsupported measurement row type {type(row).__name__}."
+        ) from exc
+
+
+def measurement_table_row_layout(rows: object) -> MeasurementTableRowLayout:
+    """Return the declared layout implied by a table row payload."""
+    observed_layouts = measurement_table_row_layouts(rows)
+    if not observed_layouts:
+        return MeasurementTableRowLayout.EMPTY
+    if len(observed_layouts) != 1:
+        raise ValueError(
+            "MeasurementTable rows must not mix long-form and wide-form layouts; "
+            f"got {sorted(layout.value for layout in observed_layouts)!r}."
+        )
+    return next(iter(observed_layouts))
+
+
+def measurement_table_row_layouts(rows: object) -> frozenset[MeasurementTableRowLayout]:
+    """Return every nominal row layout observed in a measurement payload."""
+    if rows is None:
+        return frozenset()
+    row_sequence = rows if isinstance(rows, list | tuple) else (rows,)
+    if not row_sequence:
+        return frozenset()
+    return frozenset(_measurement_row_layout(row) for row in row_sequence)
+
+
+def normalize_measurement_table_rows(rows: object) -> object:
+    """Return homogeneous measurement rows, canonicalizing mixed tables to long form."""
+    observed_layouts = measurement_table_row_layouts(rows)
+    if len(observed_layouts) <= 1:
+        return rows
+    return measurement_rows_as_layout(rows, MeasurementTableRowLayout.LONG)
+
+
+def measurement_rows_as_layout(
+    rows: object,
+    layout: MeasurementTableRowLayout,
+) -> object:
+    """Project measurement rows into a declared table layout."""
+    if layout is not MeasurementTableRowLayout.LONG:
+        raise ValueError(f"Unsupported measurement row layout projection: {layout.value}.")
+    row_sequence = rows if isinstance(rows, list | tuple) else (rows,)
+    return [
+        projected_row
+        for row in row_sequence
+        for projected_row in MeasurementRowLayoutProjectionStrategy.for_enum_member(
+            _measurement_row_layout(row)
+        ).long_rows(row)
+    ]
+
+
+def _measurement_row_layout(row: object) -> MeasurementTableRowLayout:
+    field_names = frozenset(str(field_name) for field_name in measurement_row_mapping(row))
+    has_feature_field = bool(field_names & measurement_row_feature_field_names())
+    has_value_field = bool(field_names & measurement_row_value_field_names())
+    if has_feature_field and not has_value_field:
+        raise ValueError(
+            "Long-form measurement rows must declare both a feature field and a "
+            f"value field, got fields {sorted(field_names)!r}."
+        )
+    return (
+        MeasurementTableRowLayout.LONG
+        if has_feature_field
+        else MeasurementTableRowLayout.WIDE
+    )
+
+
+@lru_cache(maxsize=256)
+def _dataclass_field_names(row_type: type[object]) -> tuple[str, ...]:
+    """Return dataclass field names without per-row reflection overhead."""
+    return tuple(field.name for field in fields(row_type))
 
 
 class MeasurementObjectRowIdentity(str, Enum):
@@ -1241,11 +2112,7 @@ def _indexed_object_shape_fields(
 
 
 def _zernike_feature_names(*, max_order: int) -> tuple[str, ...]:
-    return tuple(
-        indexed_measurement_feature_name(ObjectShapeMeasurementFeature.ZERNIKE, n, m)
-        for n in range(max_order + 1)
-        for m in range(n % 2, n + 1, 2)
-    )
+    return zernike_shape_feature_names(max_order=max_order)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1268,6 +2135,15 @@ class MeasurementSubject:
             raise ValueError(
                 f"MeasurementSubject.name is required for {scope.value} scope."
             )
+
+    @property
+    def source_image_name(self) -> str | None:
+        """Return the concrete source image represented by this subject, if any."""
+        if self.scope is not MeasurementScope.IMAGE or self.name is None:
+            return None
+        if self.name.casefold() == MeasurementScope.IMAGE.value:
+            return None
+        return self.name
 
 
 @dataclass(frozen=True, slots=True)
@@ -1908,6 +2784,20 @@ class DenseObjectLabelStackAlignment:
 
 
 @dataclass(frozen=True, slots=True)
+class DenseObjectLabelMaskStackAlignment:
+    """Aligned dense object-label and mask stacks over the runtime-slice axis."""
+
+    label_stack: Any
+    mask_stack: Any
+    label_projection: SourceSpatialDomainProjection | None = None
+
+    def restore_label_stack(self, labels: Any) -> Any:
+        if self.label_projection is None:
+            return labels
+        return self.label_projection.restore(labels)
+
+
+@dataclass(frozen=True, slots=True)
 class DenseObjectLabelPairAligner:
     """Align two dense object-label payloads before pairwise semantics."""
 
@@ -1990,6 +2880,113 @@ class DenseObjectLabelPairAligner:
         if array.ndim == 2:
             return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
         return None
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelMaskAligner:
+    """Align dense object labels with an image/binary mask in source geometry."""
+
+    labels: Any
+    mask: Any
+
+    def aligned(self) -> tuple[Any, Any]:
+        alignment = SourceSpatialAlignmentPair.from_values(
+            self.labels,
+            self.mask,
+        ).aligned()
+        labels = DenseObjectLabelStack.from_labels(
+            alignment.first,
+        ).collapse_singleton_plane()
+        mask = self._collapse_singleton_mask_plane(alignment.second)
+
+        if labels.shape == mask.shape:
+            return labels, mask
+
+        if labels.ndim == 3 and mask.ndim == 2 and labels.shape[1:] == mask.shape:
+            labels = project_dense_object_label_stack(labels)
+        if mask.ndim == 3 and labels.ndim == 2 and mask.shape[1:] == labels.shape:
+            mask = self._project_mask_stack(mask)
+        if labels.shape != mask.shape:
+            raise ValueError(
+                "Dense object labels and mask must share a common geometry after "
+                f"alignment; got {labels.shape} and {mask.shape}."
+            )
+        return labels, mask
+
+    def aligned_stack_context(
+        self,
+        slice_count: int,
+    ) -> DenseObjectLabelMaskStackAlignment | None:
+        alignment = SourceSpatialAlignmentPair.from_values(
+            self.labels,
+            self.mask,
+        ).aligned()
+        label_stack = self._stack_view(alignment.first, slice_count)
+        mask_stack = self._stack_view(alignment.second, slice_count)
+        if label_stack is None or mask_stack is None:
+            return None
+        if label_stack.shape != mask_stack.shape:
+            raise ValueError(
+                "Dense object-label and mask stacks must share a common geometry "
+                f"after alignment; got {label_stack.shape} and {mask_stack.shape}."
+            )
+        return DenseObjectLabelMaskStackAlignment(
+            label_stack,
+            mask_stack,
+            alignment.first_projection,
+        )
+
+    @staticmethod
+    def _collapse_singleton_mask_plane(mask: Any) -> Any:
+        import numpy as np
+
+        array = np.asarray(mask)
+        if array.ndim == 3 and array.shape[0] == 1:
+            return array[0]
+        return mask
+
+    @staticmethod
+    def _project_mask_stack(mask: Any) -> Any:
+        import numpy as np
+
+        array = np.asarray(mask)
+        positive = array != 0
+        conflicts = int(np.count_nonzero(np.count_nonzero(positive, axis=0) > 1))
+        if conflicts:
+            raise ValueError(
+                "Mask stack cannot be projected to one XY plane because "
+                f"{conflicts} pixels are positive in multiple planes."
+            )
+        return np.max(array, axis=0)
+
+    @staticmethod
+    def _stack_view(value: Any, slice_count: int) -> Any | None:
+        import numpy as np
+
+        array = np.asarray(value)
+        if array.ndim == 3 and array.shape[0] == slice_count:
+            return np.ascontiguousarray(array)
+        if array.ndim == 2:
+            return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
+        return None
+
+
+def aligned_dense_object_labels_and_mask(
+    labels: Any,
+    mask: Any,
+) -> tuple[Any, Any]:
+    """Align dense object labels with a binary/image mask without label coercion."""
+    return DenseObjectLabelMaskAligner(labels, mask).aligned()
+
+
+def aligned_dense_object_label_mask_stack_alignment(
+    labels: Any,
+    mask: Any,
+    *,
+    slice_count: int,
+) -> DenseObjectLabelMaskStackAlignment | None:
+    """Return aligned object-label/mask stacks plus native-domain restoration."""
+    return DenseObjectLabelMaskAligner(labels, mask).aligned_stack_context(slice_count)
 
 
 @dataclass(frozen=True, slots=True)
@@ -2188,12 +3185,11 @@ def dense_object_label_id_domain(
     positive IDs so sparse or non-contiguous labels do not fabricate phantom
     measurement rows.
     """
-    payload_ids: tuple[int, ...] = ()
-    payload_count: int | None = None
-    if isinstance(labels, ObjectLabelDomainMetadata):
-        payload_domain = labels.object_label_domain()
-        payload_ids = payload_domain.declared_object_ids
-        payload_count = payload_domain.declared_object_count
+    payload_domain = ObjectLabelDomainMetadataStrategy.for_value(
+        labels
+    ).object_label_domain(labels)
+    payload_ids = payload_domain.declared_object_ids
+    payload_count = payload_domain.declared_object_count
     resolved_ids = declared_object_ids if declared_object_ids is not None else payload_ids
     if resolved_ids:
         ids = tuple(int(object_id) for object_id in resolved_ids)
@@ -2236,6 +3232,56 @@ def dense_object_label_max_present_id(labels: Any) -> int:
     return ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
 
 
+class ObjectLabelDomainDeclaration(ABC):
+    """Nominal declaration for transformed object-label identity domains."""
+
+    @abstractmethod
+    def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
+        """Return the object-label identity domain for transformed labels."""
+
+
+@dataclass(frozen=True, slots=True)
+class ExplicitObjectLabelDomainDeclaration(ObjectLabelDomainDeclaration):
+    """Use an explicitly supplied object-label domain."""
+
+    domain: ObjectLabelDomain
+
+    def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
+        del source, labels
+        return self.domain
+
+
+@dataclass(frozen=True, slots=True)
+class PreserveSourceObjectLabelDomainDeclaration(ObjectLabelDomainDeclaration):
+    """Preserve source object-label declarations across shape-preserving transforms."""
+
+    def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
+        del labels
+        return ObjectLabelDomainMetadataStrategy.for_value(source).object_label_domain(
+            source
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class PresentObjectLabelIdsDomainDeclaration(ObjectLabelDomainDeclaration):
+    """Declare only object IDs materially present in transformed labels."""
+
+    def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
+        del source
+        return ObjectLabelDomain(declared_object_ids=dense_object_label_present_ids(labels))
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelExtentDomainDeclaration(ObjectLabelDomainDeclaration):
+    """Declare the dense positive extent represented by transformed labels."""
+
+    def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
+        del source
+        return ObjectLabelDomain(
+            declared_object_count=dense_object_label_max_present_id(labels)
+        )
+
+
 def dense_object_label_plane_id_domains(
     labels: Any,
     *,
@@ -2251,14 +3297,12 @@ def dense_object_label_plane_id_domains(
     contributes its own dense label domain rather than repeating the global
     declaration for every slice.
     """
-    payload_domain = (
-        labels.object_label_domain()
-        if isinstance(labels, ObjectLabelDomainMetadata)
-        else ObjectLabelDomain(
-            declared_object_count=declared_object_count,
-            declared_object_ids=tuple(declared_object_ids or ()),
-            declared_object_id_domains=declared_object_id_domains,
-        )
+    payload_domain = ObjectLabelDomainMetadataStrategy.for_value(
+        labels
+    ).object_label_domain(labels).with_runtime_declaration_overrides(
+        declared_object_count=declared_object_count,
+        declared_object_ids=declared_object_ids,
+        declared_object_id_domains=declared_object_id_domains,
     )
     resolved_scope = domain_scope or payload_domain.scope
     return ObjectLabelPlaneDomainStrategy.for_enum_member(
@@ -2288,14 +3332,12 @@ def dense_object_label_identity_domains(
     domain_scope: ObjectLabelDomainScope | None = None,
 ) -> tuple[tuple[int, ...], ...]:
     """Return object-id domains for object identity rows represented by labels."""
-    payload_domain = (
-        labels.object_label_domain()
-        if isinstance(labels, ObjectLabelDomainMetadata)
-        else ObjectLabelDomain(
-            declared_object_count=declared_object_count,
-            declared_object_ids=tuple(declared_object_ids or ()),
-            declared_object_id_domains=declared_object_id_domains,
-        )
+    payload_domain = ObjectLabelDomainMetadataStrategy.for_value(
+        labels
+    ).object_label_domain(labels).with_runtime_declaration_overrides(
+        declared_object_count=declared_object_count,
+        declared_object_ids=declared_object_ids,
+        declared_object_id_domains=declared_object_id_domains,
     )
     resolved_scope = domain_scope or payload_domain.scope
     return ObjectLabelPlaneDomainStrategy.for_enum_member(

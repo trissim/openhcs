@@ -14,6 +14,7 @@ from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import (
+    ExplicitObjectLabelDomainDeclaration,
     ObjectLabelDomain,
     ObjectLabelDomainScope,
     dense_object_label_max_present_id,
@@ -553,9 +554,7 @@ def expand_or_shrink_objects(
     return image, object_label_payload_with_dense_labels(
         labels,
         result_labels.astype(np.int32, copy=False),
-        declared_object_count=output_domain.declared_object_count,
-        declared_object_ids=output_domain.declared_object_ids,
-        domain_scope=output_domain.scope,
+        domain_declaration=ExplicitObjectLabelDomainDeclaration(output_domain),
     )
 
 

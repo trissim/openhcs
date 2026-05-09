@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass
+from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
+from dataclasses import dataclass
 from functools import lru_cache
 import re
-from typing import Any
+from typing import Any, ClassVar
 from weakref import WeakKeyDictionary
+
+from abc import ABC, abstractmethod
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.measurement_lookup_dialect import (
@@ -16,10 +19,13 @@ from openhcs.core.measurement_lookup_dialect import (
     RuntimeMeasurementLookupDialectLike,
     resolve_runtime_measurement_lookup_dialect,
 )
+from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
     ObjectLabelMeasurementValues,
     dense_object_label_id_domain,
+    dense_object_label_present_ids,
+    measurement_row_mapping,
 )
 from openhcs.core.runtime_stores import (
     RuntimeValueStore,
@@ -290,6 +296,121 @@ class MeasurementFeatureQuery:
             or row_object_name is None
             or row_object_name == self.object_name
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementLabelPlaneBinding:
+    """Bind one object measurement feature onto a label-plane object domain."""
+
+    measurement_tables: tuple[MeasurementTable, ...]
+    object_name: str
+    feature_name: str
+    labels: object
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    )
+
+    @property
+    def object_domain(self) -> tuple[int, ...]:
+        """Return the object IDs represented by this label plane."""
+        return dense_object_label_id_domain(self.labels)
+
+    @property
+    def value_index(self) -> tuple[dict[int, float], list[float]]:
+        """Return prior measurements keyed by label or compact position."""
+        return measurement_value_index(
+            self.measurement_tables,
+            self.feature_name,
+            object_name=self.object_name,
+            dialect=self.dialect,
+        )
+
+    def values(self) -> Any:
+        """Return measurement values aligned to the label-plane domain."""
+        policy = ObjectMeasurementLabelPlaneBindingPolicy.for_nominal_value(self)
+        if policy is None:
+            raise TypeError(
+                "No ObjectMeasurementLabelPlaneBindingPolicy registered for "
+                f"{type(self).__name__}."
+            )
+        return policy.values(self)
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IndexedObjectMeasurementLabelPlaneBinding(ObjectMeasurementLabelPlaneBinding):
+    """Bind an already-indexed measurement feature onto a label plane."""
+
+    indexed_values: tuple[dict[int, float], list[float]]
+
+    @property
+    def object_domain(self) -> tuple[int, ...]:
+        """Return object IDs materially present in this indexed label plane."""
+        return dense_object_label_present_ids(self.labels)
+
+    @property
+    def value_index(self) -> tuple[dict[int, float], list[float]]:
+        """Return the supplied per-plane measurement index."""
+        return self.indexed_values
+
+
+class ObjectMeasurementLabelPlaneBindingPolicy(
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered alignment policy for object measurements and label planes."""
+
+    __registry_key__ = "value_type_label"
+    __skip_if_no_key__ = True
+    value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
+    value_type_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def values(self, binding: ObjectMeasurementLabelPlaneBinding) -> Any:
+        """Return values aligned to ``binding.object_domain``."""
+
+
+class DefaultObjectMeasurementLabelPlaneBindingPolicy(
+    ObjectMeasurementLabelPlaneBindingPolicy
+):
+    """Align label-keyed measurements first, then compact positional rows."""
+
+    value_type = ObjectMeasurementLabelPlaneBinding
+
+    def values(self, binding: ObjectMeasurementLabelPlaneBinding) -> Any:
+        import numpy as np
+
+        domain = binding.object_domain
+        values_by_label, positional_values = binding.value_index
+        if not domain:
+            return np.array([], dtype=float)
+        if values_by_label:
+            return np.array([values_by_label.get(label, np.nan) for label in domain])
+        if positional_values:
+            return np.array(positional_values[: len(domain)])
+        raise ValueError(
+            f"Could not resolve measurement feature {binding.feature_name!r}."
+        )
+
+
+def measurement_values_for_label_plane(
+    measurement_tables: tuple[MeasurementTable, ...],
+    feature_name: str,
+    labels: object,
+    *,
+    object_name: str,
+    dialect: RuntimeMeasurementLookupDialectLike = (
+        CURRENT_RUNTIME_MEASUREMENT_LOOKUP_DIALECT
+    ),
+) -> Any:
+    """Return one feature vector aligned to a label-plane object domain."""
+    return ObjectMeasurementLabelPlaneBinding(
+        measurement_tables=measurement_tables,
+        object_name=object_name,
+        feature_name=feature_name,
+        labels=labels,
+        dialect=dialect,
+    ).values()
 
 
 def runtime_measurement_tables(
@@ -648,26 +769,6 @@ def _columnar_measurement_rows(rows: ColumnarRows) -> tuple[Mapping[str, object]
     )
 
 
-def measurement_row_mapping(row: object) -> Mapping[str, object]:
-    """Return a mapping view for a supported measurement row payload."""
-    if isinstance(row, Mapping):
-        return row
-    if is_dataclass(row):
-        return {name: getattr(row, name) for name in _dataclass_field_names(type(row))}
-    try:
-        return vars(row)
-    except TypeError as exc:
-        raise TypeError(
-            f"Unsupported measurement row type {type(row).__name__}."
-        ) from exc
-
-
-@lru_cache(maxsize=256)
-def _dataclass_field_names(row_type: type[object]) -> tuple[str, ...]:
-    """Return dataclass field names without per-row reflection overhead."""
-    return tuple(field.name for field in fields(row_type))
-
-
 def normalize_measurement_token(value: object) -> str:
     """Normalize feature/source names for runtime measurement lookup."""
     return _normalize_measurement_text(str(value))
@@ -796,6 +897,18 @@ def measurement_object_label(
         if key in row:
             return _coerce_measurement_object_label(row[key])
     return None
+
+
+def measurement_row_has_object_identity(
+    row: Mapping[str, object],
+    *,
+    object_id_field: str | None = None,
+) -> bool:
+    """Return whether a measurement row carries object identity."""
+    try:
+        return measurement_object_label(row, object_id_field=object_id_field) is not None
+    except (TypeError, ValueError):
+        return False
 
 
 def _coerce_measurement_object_label(value: object) -> int | None:
@@ -996,27 +1109,41 @@ def measurement_values_for_label_slices(
         )
         if values_by_slice is not None:
             return tuple(
-                (
-                    _measurement_values_for_label_plane(
-                        label_plane,
-                        *_measurement_value_index_for_label_slice(
-                            values_by_slice,
-                            slice_index,
-                        ),
-                        feature_name,
-                    )
-                )
+                IndexedObjectMeasurementLabelPlaneBinding(
+                    measurement_tables=(),
+                    object_name=object_name or "",
+                    feature_name=feature_name,
+                    labels=label_plane,
+                    dialect=dialect,
+                    indexed_values=_measurement_value_index_for_label_slice(
+                        values_by_slice,
+                        slice_index,
+                    ),
+                ).values()
                 for slice_index, label_plane in enumerate(label_planes)
             )
     return tuple(
-        _measurement_values_for_label_slice(
-            measurement_tables_for_slice(measurement_tables, slice_index),
-            feature_name,
-            label_plane,
-            object_name=object_name,
+        IndexedObjectMeasurementLabelPlaneBinding(
+            measurement_tables=sliced_tables,
+            object_name=object_name or "",
+            feature_name=feature_name,
+            labels=label_plane,
             dialect=dialect,
+            indexed_values=measurement_value_index(
+                sliced_tables,
+                feature_name,
+                object_name=object_name,
+                dialect=dialect,
+            ),
+        ).values()
+        for slice_index, label_plane, sliced_tables in (
+            (
+                index,
+                plane,
+                measurement_tables_for_slice(measurement_tables, index),
+            )
+            for index, plane in enumerate(label_planes)
         )
-        for slice_index, label_plane in enumerate(label_planes)
     )
 
 
@@ -1187,67 +1314,79 @@ def annotate_measurement_row_source_image(
     }
 
 
+@dataclass(frozen=True, slots=True)
+class MeasurementRowQualifier:
+    """One typed ownership qualifier attached to a measurement row."""
+
+    field_name: str
+    value: str
+
+    @classmethod
+    def optional(
+        cls,
+        *,
+        field_name: str,
+        value: str | None,
+    ) -> "MeasurementRowQualifier | None":
+        if value is None:
+            return None
+        normalized = value.strip()
+        if not normalized:
+            raise ValueError(f"{field_name} cannot be empty.")
+        return cls(field_name=field_name, value=normalized)
+
+    def apply(self, row: MutableMapping[str, object]) -> None:
+        row[self.field_name] = self.value
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementRowOwnership:
+    """Shared object/source ownership qualifiers for measurement rows."""
+
+    object_name: str | None = None
+    source_image_name: str | None = None
+
+    @property
+    def qualifiers(self) -> tuple[MeasurementRowQualifier, ...]:
+        return tuple(
+            qualifier
+            for qualifier in (
+                MeasurementRowQualifier.optional(
+                    field_name=MEASUREMENT_OBJECT_NAME_FIELD,
+                    value=self.object_name,
+                ),
+                MeasurementRowQualifier.optional(
+                    field_name=MEASUREMENT_SOURCE_IMAGE_NAME_FIELD,
+                    value=self.source_image_name,
+                ),
+            )
+            if qualifier is not None
+        )
+
+    def annotate_rows(self, rows: Sequence[object]) -> list[object]:
+        """Attach ownership qualifiers, copying only non-mutable row values."""
+        qualifiers = self.qualifiers
+        if not qualifiers:
+            return list(rows)
+        return [self.annotate_row(row, qualifiers=qualifiers) for row in rows]
+
+    def annotate_row(
+        self,
+        row: object,
+        *,
+        qualifiers: Sequence[MeasurementRowQualifier],
+    ) -> Mapping[str, object]:
+        annotated_row: MutableMapping[str, object] = (
+            row
+            if isinstance(row, MutableMapping)
+            else dict(measurement_row_mapping(row))
+        )
+        for qualifier in qualifiers:
+            qualifier.apply(annotated_row)
+        return annotated_row
+
+
 def _label_planes_are_empty(label_planes: tuple[Any, ...]) -> bool:
     import numpy as np
 
     return all(not np.any(label_plane > 0) for label_plane in label_planes)
-
-
-def _measurement_values_for_label_plane(
-    label_plane: Any,
-    values_by_label: Mapping[int, float],
-    positional_values: list[float],
-    feature_name: str,
-) -> Any:
-    import numpy as np
-
-    positive_labels = _positive_label_ids(label_plane)
-    if not positive_labels:
-        return np.array([], dtype=float)
-    if values_by_label:
-        return np.array(
-            [values_by_label.get(label, np.nan) for label in positive_labels]
-        )
-    if positional_values:
-        return np.array(positional_values[: len(positive_labels)])
-    raise ValueError(
-        f"Could not resolve measurement feature {feature_name!r} for "
-        f"positive labels {positive_labels[:5]!r}."
-    )
-
-
-def _positive_label_ids(label_plane: Any) -> tuple[int, ...]:
-    """Return positive object IDs actually present in one label plane."""
-    import numpy as np
-
-    label_array = np.asarray(label_plane)
-    if not label_array.size:
-        return ()
-    positive_labels = label_array[label_array > 0]
-    if not positive_labels.size:
-        return ()
-    return tuple(int(label_id) for label_id in np.unique(positive_labels))
-
-
-def _measurement_values_for_label_slice(
-    measurement_tables: tuple[MeasurementTable, ...],
-    feature_name: str,
-    label_plane: Any,
-    *,
-    object_name: str | None,
-    dialect: RuntimeMeasurementLookupDialectLike,
-) -> Any:
-    import numpy as np
-
-    values_by_label, positional_values = measurement_value_index(
-        measurement_tables,
-        feature_name,
-        object_name=object_name,
-        dialect=dialect,
-    )
-    return _measurement_values_for_label_plane(
-        label_plane,
-        values_by_label,
-        positional_values,
-        feature_name,
-    )

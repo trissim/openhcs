@@ -11,14 +11,18 @@ from dataclasses import dataclass
 from numba import njit
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_semantics import (
+    ExplicitObjectLabelDomainDeclaration,
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
     ParentChildRelationshipPayload,
     aligned_dense_object_label_arrays,
     aligned_dense_object_label_stack_alignment,
-    dense_object_label_id_domain,
+    dense_object_label_plane_id_domains,
     object_label_parent_child_payload,
 )
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
+    ObjectLabelSet,
     object_label_dense_array,
     object_label_payload_with_dense_labels,
 )
@@ -33,6 +37,31 @@ class TertiaryObjectStats:
     mean_area: float
     primary_parent_count: int
     secondary_parent_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TertiaryObjectLabelOutput:
+    """Typed tertiary labels preserving the secondary object-label domain."""
+
+    source: object
+    labels: np.ndarray
+
+    def value(self) -> object:
+        if not isinstance(self.source, (ObjectLabelPayload, ObjectLabelSet)):
+            return self.labels
+        return object_label_payload_with_dense_labels(
+            self.source,
+            self.labels,
+            domain_declaration=ExplicitObjectLabelDomainDeclaration(
+                ObjectLabelDomain(
+                    declared_object_id_domains=dense_object_label_plane_id_domains(
+                        self.labels,
+                        domain_scope=ObjectLabelDomainScope.PLANE,
+                    ),
+                    scope=ObjectLabelDomainScope.PLANE,
+                )
+            ),
+        )
 
 
 def _outline(
@@ -123,7 +152,10 @@ def _identify_tertiary_objects_batch(
                 primary_parent_count=int(primary_counts[slice_index]),
                 secondary_parent_count=int(secondary_counts[slice_index]),
             ),
-            output_tertiary_stack[slice_index],
+            TertiaryObjectLabelOutput(
+                kwargs["secondary_labels"],
+                output_tertiary_stack[slice_index],
+            ).value(),
         )
         for slice_index in range(slice_count)
     ]
@@ -335,11 +367,7 @@ def identify_tertiary_objects(
             parent_context_labels=secondary_array,
         ),
         stats,
-        object_label_payload_with_dense_labels(
-            secondary_payload,
-            tertiary_labels_out,
-            declared_object_ids=dense_object_label_id_domain(secondary_payload),
-        ),
+        TertiaryObjectLabelOutput(secondary_payload, tertiary_labels_out).value(),
     )
 
 

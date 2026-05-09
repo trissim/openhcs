@@ -8,6 +8,7 @@ import numpy as np
 import os
 import skimage.measure
 import time
+from dataclasses import dataclass
 from typing import Any
 from numba import njit
 from openhcs.core.memory import numpy
@@ -18,15 +19,18 @@ from openhcs.core.pipeline.function_contracts import (
 )
 
 from openhcs.core.runtime_semantics import (
-    dense_object_label_extent_id_domain,
+    dense_object_label_id_domain,
+    MeasurementRowAxisField,
     ObjectLabelRepresentation,
     ObjectShapeMeasurementFeature,
+    ShapeObjectFeatureValueTable,
     indexed_measurement_feature_name,
     object_shape_measurement_all_field_names,
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
     ObjectLabelSet,
+    ObjectLabelRuntimeSliceStackContract,
     SparseIJVLabelRows,
     object_label_dense_array,
 )
@@ -86,6 +90,34 @@ def measure_object_size_shape(
         Tuple of (original image, list of measurement rows per object)
     """
     total_started_at = time.perf_counter()
+    dense_slice_count = (
+        ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels)
+        if isinstance(labels, ObjectLabelSet)
+        else None
+    )
+    if (
+        isinstance(labels, ObjectLabelSet)
+        and labels.representation is ObjectLabelRepresentation.DENSE_LABELS
+        and dense_slice_count is not None
+        and dense_slice_count > 1
+    ):
+        rows = DenseRuntimeSliceObjectSizeShapeMeasurement(
+            labels=labels,
+            slice_count=dense_slice_count,
+            calculate_advanced=calculate_advanced,
+            calculate_zernikes=calculate_zernikes,
+            shape_backend_provider=shape_backend_provider,
+            zernike_backend_provider=zernike_backend_provider,
+        ).rows()
+        _log_profile(
+            "moss_total",
+            time.perf_counter() - total_started_at,
+            function="measure_object_size_shape",
+            objects=len(rows),
+            representation=labels.representation.value,
+        )
+        return image, rows
+
     if (
         isinstance(labels, ObjectLabelSet)
         and labels.representation is ObjectLabelRepresentation.SPARSE_IJV
@@ -125,11 +157,11 @@ def measure_object_size_shape(
         objects=len(measured_labels),
     )
     phase_started_at = time.perf_counter()
-    rows = _object_size_shape_rows(
+    rows = ShapeObjectFeatureValueTable.from_feature_arrays(
         feature_values,
         measured_labels,
-        object_domain=dense_object_label_extent_id_domain(labels),
-    )
+        object_domain=dense_object_label_id_domain(labels),
+    ).rows()
     _log_profile(
         "moss_rows",
         time.perf_counter() - phase_started_at,
@@ -143,6 +175,60 @@ def measure_object_size_shape(
         objects=len(measured_labels),
     )
     return image, rows
+
+
+@dataclass(frozen=True, slots=True)
+class DenseRuntimeSliceObjectSizeShapeMeasurement:
+    """Per-plane 2D size/shape measurement for runtime-slice object domains."""
+
+    labels: ObjectLabelSet
+    slice_count: int
+    calculate_advanced: bool
+    calculate_zernikes: bool
+    shape_backend_provider: CellProfilerBackendProvider | None
+    zernike_backend_provider: CellProfilerBackendProvider | None
+
+    def rows(self) -> list[dict[str, Any]]:
+        label_stack = object_label_dense_array(self.labels, dtype=np.int32)
+        if label_stack.ndim != 3 or label_stack.shape[0] != self.slice_count:
+            raise ValueError(
+                "Dense runtime-slice object labels must have shape "
+                f"(slice, y, x), got {label_stack.shape!r} for "
+                f"{self.slice_count} runtime slices."
+            )
+        rows: list[dict[str, Any]] = []
+        for slice_index in range(self.slice_count):
+            rows.extend(self.slice_rows(label_stack[slice_index], slice_index))
+        return rows
+
+    def slice_rows(
+        self,
+        labels_2d: np.ndarray,
+        slice_index: int,
+    ) -> list[dict[str, Any]]:
+        feature_values, measured_labels = _measure_object_size_shape_features_2d(
+            labels_2d,
+            calculate_advanced=self.calculate_advanced,
+            calculate_zernikes=self.calculate_zernikes,
+            shape_backend_provider=self.shape_backend_provider,
+            zernike_backend_provider=self.zernike_backend_provider,
+        )
+        slice_domain = self.labels.object_label_domain().project_slice(
+            slice_index,
+            self.slice_count,
+        )
+        rows = ShapeObjectFeatureValueTable.from_feature_arrays(
+            feature_values,
+            measured_labels,
+            object_domain=dense_object_label_id_domain(
+                labels_2d,
+                declared_object_count=slice_domain.declared_object_count,
+                declared_object_ids=slice_domain.declared_object_ids,
+            ),
+        ).rows()
+        for row in rows:
+            row[MeasurementRowAxisField.SLICE_INDEX.value] = int(slice_index)
+        return rows
 
 
 def _measure_object_size_shape_features(
@@ -237,7 +323,6 @@ def _measure_object_size_shape_features_2d(
         function="measure_object_size_shape",
         objects=nobjects,
     )
-    dense_labels = np.arange(1, int(np.max(labels)) + 1, dtype=measured_labels.dtype)
     with np.errstate(divide="ignore", invalid="ignore"):
         form_factor = 4.0 * np.pi * area / perimeter**2
     with np.errstate(divide="ignore", invalid="ignore"):
@@ -245,13 +330,13 @@ def _measure_object_size_shape_features_2d(
     phase_started_at = time.perf_counter()
     min_feret_diameter, max_feret_diameter = shape_backend.feret_diameters(
         labels,
-        dense_labels,
+        measured_labels,
     )
     _log_profile(
         "moss_feret_diameters",
         time.perf_counter() - phase_started_at,
         function="measure_object_size_shape",
-        objects=int(dense_labels.size),
+        objects=int(measured_labels.size),
     )
 
     phase_started_at = time.perf_counter()
@@ -260,7 +345,7 @@ def _measure_object_size_shape_features_2d(
         "moss_dense_centers",
         time.perf_counter() - phase_started_at,
         function="measure_object_size_shape",
-        objects=int(dense_labels.size),
+        objects=int(dense_center_x.size),
     )
     center_x = _compact_values_with_dense_tail(
         np.asarray(props["centroid-1"], dtype=float),
@@ -435,12 +520,11 @@ def _object_size_shape_sparse_ijv_2d_rows(
             rows.append(_empty_sparse_ijv_shape_row(int(object_id)))
             continue
         _offset_sparse_ijv_shape_features(feature_values, offset_y=min_y, offset_x=min_x)
-        row = _object_size_shape_rows(
+        row = ShapeObjectFeatureValueTable.from_feature_arrays(
             feature_values,
             np.asarray([int(object_id)], dtype=np.int32),
             object_domain=(int(object_id),),
-        )[0]
-        row["object_label"] = int(object_id)
+        ).rows()[0]
         rows.append(row)
     return rows
 
@@ -454,14 +538,19 @@ def _sparse_ijv_object_ids(labels: ObjectLabelSet, ijv: np.ndarray) -> np.ndarra
 
 
 def _empty_sparse_ijv_shape_row(object_id: int) -> dict[str, Any]:
-    row: dict[str, Any] = {
-        field: _missing_shape_feature_value(field)
-        for field in object_shape_measurement_field_names()
+    axis_fields = {
+        MeasurementRowAxisField.SLICE_INDEX.value,
+        MeasurementRowAxisField.OBJECT_LABEL.value,
     }
-    row["slice_index"] = 0
-    row["object_label"] = object_id
-    row["Center_Z"] = 0.0
-    return row
+    return ShapeObjectFeatureValueTable.from_feature_arrays(
+        {
+            field: np.asarray([], dtype=float)
+            for field in object_shape_measurement_field_names()
+            if field not in axis_fields
+        },
+        (),
+        object_domain=(object_id,),
+    ).rows()[0]
 
 
 def _offset_sparse_ijv_shape_features(
@@ -652,80 +741,6 @@ def _desired_region_properties(
     return properties
 
 
-def _object_size_shape_rows(
-    feature_values: dict[str, np.ndarray],
-    measured_labels: np.ndarray,
-    *,
-    object_domain: tuple[int, ...],
-) -> list[dict[str, float | int]]:
-    rows: list[dict[str, float | int]] = []
-    measured_label_ids = tuple(int(label) for label in np.asarray(measured_labels))
-    measured_label_count = len(measured_label_ids)
-    measured_label_max = max(measured_label_ids, default=0)
-    measured_label_index = {
-        object_id: index for index, object_id in enumerate(measured_label_ids)
-    }
-    feature_items = tuple(
-        (
-            feature_name,
-            np.asarray(values),
-            _python_feature_values(values),
-            _missing_shape_feature_value(feature_name),
-        )
-        for feature_name, values in feature_values.items()
-    )
-    for object_label in object_domain:
-        row: dict[str, float | int] = {
-            "slice_index": 0,
-            "object_label": object_label,
-            "Center_Z": 0.0,
-        }
-        for feature_name, values, python_values, missing_value in feature_items:
-            if values.ndim > 0:
-                value_index = _feature_value_index(
-                    object_label,
-                    values=values,
-                    measured_label_count=measured_label_count,
-                    measured_label_max=measured_label_max,
-                    measured_label_index=measured_label_index,
-                )
-                if value_index is None:
-                    value = missing_value
-                else:
-                    value = python_values[value_index]
-            else:
-                value = python_values
-            row[feature_name] = value
-        rows.append(row)
-    return rows
-
-
-def _feature_value_index(
-    object_label: int,
-    *,
-    values: np.ndarray,
-    measured_label_count: int,
-    measured_label_max: int,
-    measured_label_index: dict[int, int],
-) -> int | None:
-    if values.shape[0] == measured_label_count:
-        return measured_label_index.get(object_label)
-    if values.shape[0] >= measured_label_max:
-        value_index = object_label - 1
-        return value_index if 0 <= value_index < values.shape[0] else None
-    value_index = measured_label_index.get(object_label)
-    if value_index is None or value_index >= values.shape[0]:
-        return None
-    return value_index
-
-
-def _python_feature_values(values: np.ndarray) -> object:
-    array = np.asarray(values)
-    if array.ndim == 0:
-        return array.item()
-    return array.tolist()
-
-
 def _shape_feature(feature: ObjectShapeMeasurementFeature) -> str:
     return feature.value
 
@@ -885,16 +900,6 @@ def _surface_area(volume: np.ndarray) -> float:
     except ValueError:
         return 0.0
     return float(skimage.measure.mesh_surface_area(verts, faces))
-
-
-def _missing_shape_feature_value(feature_name: str) -> float:
-    if feature_name in {
-        _shape_feature(ObjectShapeMeasurementFeature.MAXIMUM_RADIUS),
-        _shape_feature(ObjectShapeMeasurementFeature.MEAN_RADIUS),
-        _shape_feature(ObjectShapeMeasurementFeature.MEDIAN_RADIUS),
-    }:
-        return 0.0
-    return np.nan
 
 
 def _prepare_measure_object_size_shape() -> None:

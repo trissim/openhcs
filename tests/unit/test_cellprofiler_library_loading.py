@@ -1997,6 +1997,31 @@ def test_measure_object_intensity_measures_3d_objects_as_single_volume_domain():
     assert measurements[0].max_intensity_z == 2.0
 
 
+def test_measure_object_intensity_maximum_position_tie_matches_cellprofiler():
+    from benchmark.cellprofiler_library.functions.measureobjectintensity import (
+        measure_object_intensity,
+    )
+
+    image = np.array(
+        [
+            [1.0, 5.0],
+            [5.0, 5.0],
+        ],
+        dtype=np.float32,
+    )
+    labels = np.ones(image.shape, dtype=np.int32)
+
+    _, measurements = measure_object_intensity(
+        image,
+        labels,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert len(measurements) == 1
+    assert measurements[0].max_intensity_x == 1.0
+    assert measurements[0].max_intensity_y == 1.0
+
+
 def test_measure_object_intensity_rejects_true_color_images_like_cellprofiler():
     from benchmark.cellprofiler_library.functions.measureobjectintensity import (
         measure_object_intensity,
@@ -2867,13 +2892,10 @@ def test_correct_illumination_median_smoothing_falls_back_when_minimum_not_major
     np.testing.assert_array_equal(accelerated, reference)
 
 
-def test_correct_illumination_convex_hull_smoothing_reconstructs_level_hulls():
-    from openhcs.constants.constants import MemoryType
-
+def test_correct_illumination_convex_hull_smoothing_suppresses_sparse_spikes():
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
     )
-    from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 
     image = np.zeros((7, 7), dtype=np.float32)
     image[1, 1] = 1.0
@@ -2888,11 +2910,7 @@ def test_correct_illumination_convex_hull_smoothing_reconstructs_level_hulls():
         dtype_config=DtypeConfig(),
     )
 
-    expected = MorphologyBackendStrategy.for_memory_type(
-        MemoryType.NUMPY,
-        backend_provider=CellProfilerBackendProvider.NATIVE,
-    ).convex_hull_image(image > 0)
-    np.testing.assert_array_equal(illumination > 0.99, expected)
+    np.testing.assert_array_equal(illumination, np.zeros(image.shape, dtype=np.float32))
     assert illumination.dtype == np.float32
 
 

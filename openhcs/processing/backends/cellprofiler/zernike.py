@@ -196,11 +196,7 @@ class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         import centrosome.zernike
 
         labels_array = np.asarray(labels)
-        dense_labels = np.arange(
-            1,
-            int(np.max(labels_array)) + 1,
-            dtype=np.asarray(measured_labels).dtype,
-        )
+        measured_label_ids = np.asarray(measured_labels, dtype=np.int32)
         zernike_numbers_array = centrosome.zernike.get_zernike_indexes(
             int(max_order) + 1
         )
@@ -211,7 +207,7 @@ class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         zernike_values = centrosome.zernike.zernike(
             zernike_numbers_array,
             labels_array,
-            dense_labels,
+            measured_label_ids,
         )
         return zernike_numbers, np.asarray(zernike_values)
 
@@ -345,23 +341,19 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             zernike_numbers = tuple((int(n), int(m)) for n, m in zernike_numbers_array)
             return zernike_numbers, np.zeros((0, len(zernike_numbers)), dtype=float)
 
-        dense_labels = np.arange(
-            1,
-            int(np.max(labels_array)) + 1,
-            dtype=np.asarray(measured_labels).dtype,
-        )
+        measured_label_ids = np.asarray(measured_labels, dtype=np.int32)
         zernike_numbers_array = _zernike_indexes_array(int(max_order))
         zernike_numbers = tuple((int(n), int(m)) for n, m in zernike_numbers_array)
         if zernike_numbers_array.size == 0:
-            return zernike_numbers, np.zeros((dense_labels.size, 0), dtype=float)
+            return zernike_numbers, np.zeros((measured_label_ids.size, 0), dtype=float)
 
         geometry = _zernike_label_geometry(
             labels_array,
-            dense_labels.astype(np.int32, copy=False),
+            measured_label_ids,
         )
         if geometry.y_coords.size == 0:
             return zernike_numbers, np.zeros(
-                (dense_labels.size, zernike_numbers_array.shape[0]),
+                (measured_label_ids.size, zernike_numbers_array.shape[0]),
                 dtype=float,
             )
 
@@ -372,7 +364,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         label_values = geometry.label_values
         valid = (
             (label_values > 0)
-            & (label_values <= dense_labels.size)
+            & (label_values <= measured_label_ids.size)
             & np.isfinite(radii[label_values - 1])
             & (radii[label_values - 1] > 0)
         )
@@ -381,7 +373,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         label_values = np.ascontiguousarray(label_values[valid], dtype=np.int32)
         if y_coords.size == 0:
             return zernike_numbers, np.zeros(
-                (dense_labels.size, zernike_numbers_array.shape[0]),
+                (measured_label_ids.size, zernike_numbers_array.shape[0]),
                 dtype=float,
             )
 
@@ -401,12 +393,12 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             exponents,
             term_counts,
             denominators,
-            int(dense_labels.size),
+            int(measured_label_ids.size),
         )
         _log_profile(
             "zernike_shape_score",
             time.perf_counter() - score_started_at,
-            objects=int(dense_labels.size),
+            objects=int(measured_label_ids.size),
             pixels=int(y_coords.size),
             orders=zernike_numbers_array.shape[0],
         )
@@ -505,7 +497,16 @@ def _zernike_label_geometry(
     )
     compact_started_at = time.perf_counter()
     y_coords, x_coords = np.nonzero(labels_array > 0)
-    label_values = labels_array[y_coords, x_coords]
+    label_to_row = np.zeros(int(labels_array.max(initial=0)) + 1, dtype=np.int32)
+    valid_object_ids = object_ids_array[
+        (object_ids_array > 0) & (object_ids_array < label_to_row.size)
+    ]
+    label_to_row[valid_object_ids] = np.arange(
+        1,
+        valid_object_ids.size + 1,
+        dtype=np.int32,
+    )
+    label_values = label_to_row[labels_array[y_coords, x_coords]]
     _log_profile(
         "zernike_geometry_compact_pixels",
         time.perf_counter() - compact_started_at,

@@ -87,6 +87,24 @@ CALCULATE_MATH = "CalculateMath"
 class ArrayLike(RuntimeArrayPayload):
     shape = (2, 2)
 
+    @property
+    def ndim(self):
+        return len(self.shape)
+
+    def array_payload_data(self):
+        return np.zeros(self.shape, dtype=np.int32)
+
+    def with_data(self, data):
+        return data
+
+
+def declared_processing_contract(contract: ProcessingContract):
+    def decorator(func):
+        func.__processing_contract__ = contract
+        return func
+
+    return decorator
+
 
 class FileManagerStub:
     def __init__(self):
@@ -2321,6 +2339,7 @@ def test_cellprofiler_module_executor_records_object_output_through_adapter():
         (ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
     )
 
+    @declared_processing_contract(ProcessingContract.PURE_2D)
     def identify(image_arg, *, min_diameter):
         assert image_arg is image
         assert min_diameter == 8
@@ -2409,6 +2428,7 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements():
         ),
     )
 
+    @declared_processing_contract(ProcessingContract.FLEXIBLE)
     def measure(image_arg, *, labels):
         assert image_arg is image
         assert labels is adapter.get_objects(NUCLEI).labels
@@ -2418,7 +2438,7 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements():
     measurements = adapter.get_measurements(NUCLEI_MEASUREMENTS)
 
     assert measurements.rows == [
-        {"object_id": 1, "area": 12.0, "object_name": NUCLEI},
+        {"object_id": 1, "area": 12.0},
     ]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name == DNA_IMAGE
@@ -2448,6 +2468,7 @@ def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image(
         ),
     )
 
+    @declared_processing_contract(ProcessingContract.PURE_2D)
     def measure(image_arg, *, labels):
         seen.append((image_arg.copy(), labels.copy()))
         return image_arg, rows
@@ -2462,8 +2483,9 @@ def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image(
     np.testing.assert_array_equal(measurement_image, np.zeros_like(labels, dtype=image.dtype))
     np.testing.assert_array_equal(measurement_labels, labels)
     assert measurements.rows == [
-        {"object_id": 1, "area": float(labels.size), "object_name": NUCLEI},
+        {"object_id": 1, "area": float(labels.size)},
     ]
+    assert measurements.object_name == NUCLEI
 
 
 def test_cellprofiler_module_executor_measures_each_declared_image_for_single_object():
@@ -2492,6 +2514,7 @@ def test_cellprofiler_module_executor_measures_each_declared_image_for_single_ob
     )
     seen = []
 
+    @declared_processing_contract(ProcessingContract.PURE_2D)
     def measure(image_arg, *, labels):
         seen.append((float(image_arg.mean()), int(labels.max())))
         return image_arg, [{"mean": float(image_arg.mean()), "label": int(labels.max())}]
@@ -2549,6 +2572,7 @@ def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed(
     )
     seen = []
 
+    @declared_processing_contract(ProcessingContract.PURE_2D)
     def measure(image_arg, *, labels):
         seen.append((image_arg.shape, labels.shape))
         return image_arg[0], [{"object_count": int(labels.max())}]
@@ -2562,7 +2586,7 @@ def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed(
 
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [((2, 4, 5), (4, 5))]
-    assert measurements.rows == [{"object_count": 1, "object_name": NUCLEI}]
+    assert measurements.rows == [{"object_count": 1}]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name == f"{DNA_IMAGE}__PH3"
 
@@ -2589,6 +2613,7 @@ def test_cellprofiler_module_executor_combines_multi_object_measurements():
         ),
     )
 
+    @declared_processing_contract(ProcessingContract.PURE_2D)
     def measure(image_arg, *, labels):
         if labels is nuclei:
             return image_arg, [{"object": NUCLEI}]
@@ -2837,14 +2862,14 @@ def test_calculate_math_records_object_indexed_measurements():
 
     np.testing.assert_array_equal(result, np.zeros((2, 2), dtype=np.float32))
     assert measurements.object_name == NUCLEI
-    assert [row.object_name for row in measurements.rows] == [NUCLEI, NUCLEI]
-    assert [row.object_label for row in measurements.rows] == [1, 2]
-    assert [row.feature_name for row in measurements.rows] == [
+    assert [row["object_name"] for row in measurements.rows] == [NUCLEI, NUCLEI]
+    assert [row["object_label"] for row in measurements.rows] == [1, 2]
+    assert [row["feature_name"] for row in measurements.rows] == [
         "Math_Ratio",
         "Math_Ratio",
     ]
     np.testing.assert_allclose(
-        [row.result_value for row in measurements.rows],
+        [row["result_value"] for row in measurements.rows],
         [0.5, 0.25],
     )
     np.testing.assert_allclose(
@@ -2903,10 +2928,10 @@ def test_calculate_math_resolves_image_scoped_measurements_via_core_query():
     assert measurements.object_name is None
     assert len(measurements.rows) == 1
     row = measurements.rows[0]
-    assert row.feature_name == "Math_Stain1Colocalized"
-    assert row.operand1_value == 17809.0
-    assert row.operand2_value == 30324.0
-    assert row.result_value == pytest.approx(17809.0 / 30324.0)
+    assert row["feature_name"] == "Math_Stain1Colocalized"
+    assert row["operand1_value"] == 17809.0
+    assert row["operand2_value"] == 30324.0
+    assert row["result_value"] == pytest.approx(17809.0 / 30324.0)
 
 
 def test_calculate_math_aligns_image_scoped_measurements_by_slice():
@@ -2963,10 +2988,10 @@ def test_calculate_math_aligns_image_scoped_measurements_by_slice():
 
     np.testing.assert_array_equal(result, np.zeros((2, 2, 2), dtype=np.float32))
     assert measurements.object_name is None
-    assert [row.slice_index for row in measurements.rows] == [0, 1]
-    assert [row.object_label for row in measurements.rows] == [None, None]
+    assert [row["slice_index"] for row in measurements.rows] == [0, 1]
+    assert [row["object_label"] for row in measurements.rows] == [None, None]
     np.testing.assert_allclose(
-        [row.result_value for row in measurements.rows],
+        [row["result_value"] for row in measurements.rows],
         [0.5, 0.5],
     )
 
@@ -3242,6 +3267,7 @@ def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
     )
     seen_images = []
 
+    @declared_processing_contract(ProcessingContract.PURE_2D)
     def measure(image_arg, *, labels):
         seen_images.append((image_arg.copy(), labels.copy()))
         return image_arg, [{"object_count": int(labels.max())}]
@@ -3249,13 +3275,35 @@ def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
     result = executor.run(measure, image, cellprofiler_runtime=adapter)
     measurements = adapter.get_measurements(MEASUREMENTS)
 
-    assert len(seen_images) == 2
+    assert len(seen_images) == 4
     for measurement_image, measurement_labels in seen_images:
         assert measurement_image.shape == measurement_labels.shape == (4, 5)
     np.testing.assert_array_equal(result, image)
     assert measurements.rows == [
-        {"object_count": 1, "object_name": NUCLEI},
-        {"object_count": 2, "object_name": CELLS},
+        {
+            "object_count": 1,
+            "slice_index": 0,
+            "object_name": NUCLEI,
+            "image_number": 1,
+        },
+        {
+            "object_count": 1,
+            "slice_index": 1,
+            "object_name": NUCLEI,
+            "image_number": 2,
+        },
+        {
+            "object_count": 2,
+            "slice_index": 0,
+            "object_name": CELLS,
+            "image_number": 1,
+        },
+        {
+            "object_count": 2,
+            "slice_index": 1,
+            "object_name": CELLS,
+            "image_number": 2,
+        },
     ]
 
 
@@ -3290,6 +3338,7 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
     )
     seen = []
 
+    @declared_processing_contract(ProcessingContract.FLEXIBLE)
     def measure(image_arg, *, labels):
         seen.append((float(image_arg.mean()), int(labels.max())))
         return image_arg, [{"mean": float(image_arg.mean()), "label": int(labels.max())}]
@@ -3404,6 +3453,7 @@ def test_cellprofiler_module_executor_records_relationship_and_measurement_outpu
         inputs=(),
     )
 
+    @declared_processing_contract(ProcessingContract.FLEXIBLE)
     @special_inputs("parent_labels", "child_labels")
     def relate(image_arg, *, parent_labels, child_labels):
         assert image_arg is image

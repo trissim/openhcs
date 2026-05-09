@@ -233,6 +233,8 @@ class MeasureImageIntensityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
     ignored_settings = (
         "Select input object sets",
         "Measure the intensity only from areas enclosed by objects?",
+        "calculate_custom_percentiles",
+        "specify_percentiles_to_measure",
     )
 
 
@@ -247,7 +249,11 @@ class MeasureGranularityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
     """Granularity object mask routing is consumed by measurement scope binding."""
 
     module_name = "MeasureGranularity"
-    ignored_settings = ("Measure within objects?",)
+    ignored_settings = (
+        "Measure within objects?",
+        "image_count",
+        "object_count",
+    )
 
 
 class RelateObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):

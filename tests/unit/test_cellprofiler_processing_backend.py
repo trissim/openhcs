@@ -929,6 +929,45 @@ def test_legacy_fast_shape_zernike_backend_matches_centrosome_provider() -> None
     )
 
 
+def test_shape_zernike_backend_uses_declared_measured_label_domain() -> None:
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+    from openhcs.processing.backends.cellprofiler.zernike import (
+        shape_zernike_moments,
+    )
+
+    labels = np.zeros((16, 18), dtype=np.int32)
+    labels[2:8, 3:10] = 1
+    labels[9:14, 11:16] = 3
+    measured_labels = np.array([1, 3], dtype=np.int32)
+
+    legacy_fast_indexes, legacy_fast_values = shape_zernike_moments(
+        labels,
+        measured_labels,
+        max_order=5,
+        backend_provider=CellProfilerBackendProvider.LEGACY_FAST,
+    )
+    centrosome_indexes, centrosome_values = shape_zernike_moments(
+        labels,
+        measured_labels,
+        max_order=5,
+        backend_provider=CellProfilerBackendProvider.CENTROSOME,
+    )
+
+    assert legacy_fast_indexes == centrosome_indexes
+    assert legacy_fast_values.shape == centrosome_values.shape == (
+        measured_labels.size,
+        len(legacy_fast_indexes),
+    )
+    np.testing.assert_allclose(
+        legacy_fast_values,
+        centrosome_values,
+        atol=1e-12,
+        rtol=1e-12,
+    )
+
+
 def test_legacy_fast_shape_zernike_backend_zeros_pixels_outside_unit_circle() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,

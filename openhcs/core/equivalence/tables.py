@@ -232,9 +232,9 @@ def aggregate_measurement_table_key(
 
     Grouped execution can materialize an already-aggregated measurement table
     once per group key. Row-local image identity fields carry the actual
-    measurement scope, so repeated materializations of the same runtime table
-    payload should only contribute once. Group-local tables remain
-    count-preserving because distinct payload objects are not collapsed.
+    measurement scope, so repeated materializations of the same semantic table
+    should only contribute once. Group-local tables remain count-preserving
+    when they do not carry multiple row-local image identities.
     """
     normalized_field_cache: dict[str, str] = {}
 
@@ -264,12 +264,9 @@ def aggregate_measurement_table_key(
 
     if len(row_identity_values) <= 1:
         return None
-    return RuntimeMeasurementTableIdentity.from_table_row_fingerprint(
+    return RuntimeMeasurementTableIdentity.from_table_rows(
         table,
-        RuntimeMeasurementRowFingerprint(
-            row_count=row_count,
-            digest=f"runtime-payload:{id(table.rows)}".encode("ascii"),
-        ),
+        iter_measurement_rows((table,)),
     )
 
 

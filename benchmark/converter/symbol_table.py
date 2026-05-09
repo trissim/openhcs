@@ -233,13 +233,13 @@ class ModuleArtifactContracts:
 
         Source-bound artifacts are intentionally excluded: they are normal inputs
         from the source-binding layer, not side-channel artifact reads. Values
-        produced by prior modules remain artifact inputs. ``input_symbols`` is
-        already deduplicated unless a nominal input-role policy preserved
-        repeated CellProfiler names, so this must not deduplicate again.
+        produced by prior modules remain artifact inputs. Repeated function
+        roles can preserve duplicate ``input_symbols`` for positional binding,
+        but the runtime artifact store has one value per semantic name/kind.
         """
         return tuple(
             symbol.artifact_spec()
-            for symbol in self.input_symbols
+            for symbol in _unique_symbols(self.input_symbols)
             if not symbol.is_external_source
         )
 

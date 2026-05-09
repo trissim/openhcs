@@ -86,9 +86,9 @@ def test_runtime_execution_cache_policy_uses_snapshots_for_value_only_runs() -> 
 
     policy = RuntimeExecutionCacheWritePolicy.for_request(request)
 
-    assert not policy.write_manifest
+    assert policy.write_manifest
     assert not policy.include_image_records
-    assert not policy.include_non_image_records
+    assert policy.include_non_image_records
 
 
 def test_non_image_runtime_cache_excludes_array_payload_kinds() -> None:

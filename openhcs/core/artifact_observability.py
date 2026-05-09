@@ -48,6 +48,18 @@ class ObjectLabelArtifactObservabilityStrategy(ArtifactObservabilityStrategy):
         return declared_outputs
 
 
+class MeasurementArtifactObservabilityStrategy(ArtifactObservabilityStrategy):
+    """Measurement artifacts are externally visible semantic facts."""
+
+    strategy_key = ArtifactKind.MEASUREMENTS
+
+    def externally_required_outputs(
+        self,
+        declared_outputs: tuple[ArtifactSpec, ...],
+    ) -> tuple[ArtifactSpec, ...]:
+        return declared_outputs
+
+
 def externally_required_artifact_outputs(
     declared_outputs: tuple[ArtifactSpec, ...],
 ) -> tuple[ArtifactSpec, ...]:

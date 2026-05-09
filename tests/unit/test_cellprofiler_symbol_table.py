@@ -261,7 +261,6 @@ def test_watershed_contract_preserves_same_runtime_image_as_mask_role():
     assert [spec.name for spec in watershed_contract.runtime_artifact_inputs] == [
         "MembFinal",
         "cellSeeds",
-        "MembFinal",
     ]
 
 
@@ -2112,11 +2111,13 @@ def test_straightenworms_compiles_repeated_image_outputs_and_settings():
 
     assert [spec.name for spec in contract.inputs] == [
         "NonOverlappingWorms",
+        "UntangleWorms_1_measurements",
         "mCherry",
         "GFP",
     ]
     assert [spec.name for spec in contract.runtime_artifact_inputs] == [
         "NonOverlappingWorms",
+        "UntangleWorms_1_measurements",
     ]
     assert [spec.name for spec in contract.outputs] == [
         "Straightened_mCherry",

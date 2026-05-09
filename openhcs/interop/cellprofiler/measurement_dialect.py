@@ -8,6 +8,7 @@ from openhcs.core.equivalence import (
     RuntimeEquivalencePolicy,
     RuntimeMeasurementFeatureNumericTolerance,
     RuntimeMeasurementDialect,
+    RuntimeMeasurementSourceNameEncoding,
 )
 from openhcs.core.measurement_lookup_dialect import RuntimeMeasurementLookupDialect
 from openhcs.core.runtime_semantics import PairMeasurementFeature
@@ -19,6 +20,7 @@ CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES = (
     ("area", "occupied"),
     ("image", "quality"),
     ("area", "shape"),
+    ("intensity", "distribution"),
     ("intensity",),
     ("texture",),
     ("location",),
@@ -51,6 +53,12 @@ CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
     source_feature_prefixes=(
         ("crop", "area", "retained", "after", "cropping"),
         ("crop", "original", "image", "area"),
+    ),
+    calculated_feature_prefixes=(
+        ("math",),
+        ("worm",),
+        ("fat", "regions"),
+        ("mean", "fat", "regions"),
     ),
     directional_pair_feature_aliases=MappingProxyType(
         {
@@ -93,6 +101,16 @@ CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
     ),
     numbered_feature_prefix_aliases=MappingProxyType(
         {"gs": ("granularity",)}
+    ),
+    source_name_encoding_by_scope=MappingProxyType(
+        {
+            MeasurementScope.IMAGE: (
+                RuntimeMeasurementSourceNameEncoding.FEATURE_SUFFIX
+            ),
+            MeasurementScope.OBJECT: (
+                RuntimeMeasurementSourceNameEncoding.FEATURE_SUFFIX
+            ),
+        }
     ),
 )
 CELLPROFILER_FEATURE_NUMERIC_TOLERANCES = (
@@ -211,6 +229,19 @@ CELLPROFILER_FEATURE_NUMERIC_TOLERANCES = (
         subject_scope=MeasurementScope.OBJECT,
         statistic="mean",
         numeric_abs_tolerance=1.0,
+        numeric_rel_tolerance=1e-3,
+    ),
+    RuntimeMeasurementFeatureNumericTolerance(
+        feature_name_prefixes=(
+            "track_objects_displacement_",
+            "track_objects_distance_traveled_",
+            "track_objects_integrated_distance_",
+            "track_objects_linearity_",
+            "track_objects_trajectory_x_",
+            "track_objects_trajectory_y_",
+        ),
+        subject_scope=MeasurementScope.OBJECT,
+        numeric_abs_tolerance=5e-2,
         numeric_rel_tolerance=1e-3,
     ),
     RuntimeMeasurementFeatureNumericTolerance(

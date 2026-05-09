@@ -30,7 +30,13 @@ from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_OBJECT_NUMBER_FIELD,
 )
 from openhcs.core.runtime_semantics import ObjectLabelRepresentation
-from openhcs.core.runtime_values import ObjectLabelSet, SparseIJVLabelRows
+from openhcs.core.runtime_values import (
+    ObjectLabelPayload,
+    ObjectLabelSet,
+    SparseIJVLabelRows,
+    object_label_payload_from_source_image,
+    object_label_set_from_source_image,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -159,8 +165,8 @@ class WormControlPointMeasurementSchema:
 @dataclass(frozen=True, slots=True)
 class WormLabelOutputRequest:
     sparse_overlapping: ObjectLabelSet
-    overlapping: np.ndarray
-    nonoverlapping: np.ndarray
+    overlapping: ObjectLabelPayload
+    nonoverlapping: ObjectLabelPayload
 
 
 class WormLabelOutputStrategy(
@@ -185,7 +191,7 @@ class WormLabelOutputStrategy(
     def outputs(
         self,
         request: WormLabelOutputRequest,
-    ) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
+    ) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
         """Return the public overlapping and nonoverlapping label payloads."""
 
 
@@ -195,8 +201,8 @@ class WithOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     def outputs(
         self,
         request: WormLabelOutputRequest,
-    ) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
-        return request.sparse_overlapping, request.overlapping.copy()
+    ) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
+        return request.sparse_overlapping, request.overlapping
 
 
 class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
@@ -205,8 +211,8 @@ class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     def outputs(
         self,
         request: WormLabelOutputRequest,
-    ) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
-        return request.nonoverlapping.copy(), request.nonoverlapping
+    ) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
+        return request.nonoverlapping, request.nonoverlapping
 
 
 class BothOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
@@ -215,7 +221,7 @@ class BothOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     def outputs(
         self,
         request: WormLabelOutputRequest,
-    ) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
+    ) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
         return request.sparse_overlapping, request.nonoverlapping
 
 
@@ -281,8 +287,8 @@ def untangle_worms(
 ) -> tuple[
     np.ndarray,
     list[dict[str, float | int | str]],
-    ObjectLabelSet | np.ndarray,
-    np.ndarray,
+    ObjectLabelSet | ObjectLabelPayload,
+    ObjectLabelPayload,
 ]:
     """
     Untangle overlapping worms in a binary image.
@@ -324,8 +330,15 @@ def untangle_worms(
     labels, count = label(binary, structure=eight_connectivity())
     
     if count == 0:
-        empty_labels = np.zeros_like(image, dtype=np.int32)
-        return image, [], empty_labels, empty_labels
+        empty_labels, empty_nonoverlapping_labels = _worm_label_outputs(
+            [],
+            source_image=image,
+            image_shape=image.shape,
+            radii_from_training=radii_array,
+            overlap_style=overlap_style,
+            overlapping_object_name=overlapping_object_name,
+        )
+        return image, [], empty_labels, empty_nonoverlapping_labels
     
     # Skeletonize
     skeleton = skeletonize_worm_mask(binary)
@@ -420,6 +433,7 @@ def untangle_worms(
     
     overlapping_labels, nonoverlapping_labels = _worm_label_outputs(
         all_path_coords,
+        source_image=image,
         image_shape=image.shape,
         radii_from_training=radii_array,
         overlap_style=overlap_style,
@@ -1055,11 +1069,12 @@ def _select_one_worm_path_level(
 def _worm_label_outputs(
     all_path_coords: list[np.ndarray],
     *,
+    source_image: object,
     image_shape: tuple[int, int],
     radii_from_training: np.ndarray,
     overlap_style: OverlapStyle,
     overlapping_object_name: str,
-) -> tuple[ObjectLabelSet | np.ndarray, np.ndarray]:
+) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
     ijv_parts: list[np.ndarray] = []
     overlap_hits = np.zeros(image_shape, dtype=np.int16)
     overlapping = np.zeros(image_shape, dtype=np.int32)
@@ -1089,16 +1104,27 @@ def _worm_label_outputs(
         if ijv_parts
         else np.zeros((0, 3), dtype=np.int32)
     )
-    sparse_overlapping = ObjectLabelSet(
+    sparse_overlapping = object_label_set_from_source_image(
+        source_image,
         name=overlapping_object_name,
         labels=SparseIJVLabelRows(ijv),
         representation=ObjectLabelRepresentation.SPARSE_IJV,
     )
+    overlapping_payload = object_label_payload_from_source_image(
+        source_image,
+        overlapping,
+        declared_object_count=len(all_path_coords),
+    )
+    nonoverlapping_payload = object_label_payload_from_source_image(
+        source_image,
+        nonoverlapping,
+        declared_object_count=len(all_path_coords),
+    )
     return WormLabelOutputStrategy.for_overlap_style(overlap_style).outputs(
         WormLabelOutputRequest(
             sparse_overlapping=sparse_overlapping,
-            overlapping=overlapping,
-            nonoverlapping=nonoverlapping,
+            overlapping=overlapping_payload,
+            nonoverlapping=nonoverlapping_payload,
         )
     )
 

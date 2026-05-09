@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from enum import Enum
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
+_ContextT = TypeVar("_ContextT")
 _StrategyT = TypeVar("_StrategyT", bound="EnumKeyedStrategyMixin[Any]")
 _TypeStrategyT = TypeVar("_TypeStrategyT", bound="NominalTypeKeyedStrategyMixin")
+_ContextStrategyT = TypeVar(
+    "_ContextStrategyT",
+    bound="MostDerivedContextStrategyMixin[Any]",
+)
 
 
 class EnumKeyedStrategyMixin(Generic[_EnumT]):
@@ -89,12 +95,32 @@ class NominalTypeKeyedStrategyMixin:
         cls: type[_TypeStrategyT],
         value: object,
     ) -> _TypeStrategyT | None:
-        """Instantiate the first registered strategy owning ``value``."""
+        """Instantiate the most specific registered strategy owning ``value``."""
+        value_mro = type(value).mro()
+        best_match: tuple[int, type[_TypeStrategyT]] | None = None
         for strategy_type in cls.registered_strategy_types():
             member = strategy_type.value_type
             if _is_nominal_type_member(member) and isinstance(value, member):
-                return strategy_type()
-        return None
+                distance = cls.nominal_type_distance(value_mro, member)
+                if best_match is None or distance < best_match[0]:
+                    best_match = (distance, strategy_type)
+        return None if best_match is None else best_match[1]()
+
+    @staticmethod
+    def nominal_type_distance(
+        value_mro: list[type[object]],
+        member: type[object] | tuple[type[object], ...],
+    ) -> int:
+        """Return the MRO distance from a runtime value to a registered member."""
+        if isinstance(member, tuple):
+            return min(
+                NominalTypeKeyedStrategyMixin.nominal_type_distance(value_mro, item)
+                for item in member
+            )
+        try:
+            return value_mro.index(member)
+        except ValueError:
+            return len(value_mro)
 
 
 def _is_nominal_type_member(value: object) -> bool:
@@ -109,3 +135,84 @@ def _nominal_type_key(value: type[object] | tuple[type[object], ...]) -> str:
     if isinstance(value, tuple):
         return "|".join(_nominal_type_key(item) for item in value)
     return f"{value.__module__}.{value.__qualname__}"
+
+
+class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
+    """Mixin for registry families selected by context and strategy inheritance.
+
+    Concrete strategies implement ``matches`` and express precedence through
+    normal Python inheritance. Selection returns the single most-derived
+    matching implementation, so callers do not need local if/elif chains,
+    priority numbers, or repeated registry scans.
+    """
+
+    strategy_key_attr: ClassVar[str] = "strategy_key"
+
+    @classmethod
+    def registered_strategy_types(
+        cls: type[_ContextStrategyT],
+    ) -> tuple[type[_ContextStrategyT], ...]:
+        """Return registered concrete strategy classes."""
+        return tuple(
+            cast(type[_ContextStrategyT], item) for item in cls.__registry__.values()
+        )
+
+    @classmethod
+    def for_context(
+        cls: type[_ContextStrategyT],
+        context: _ContextT,
+        *,
+        required: bool = True,
+        error_subject: str | None = None,
+    ) -> _ContextStrategyT | None:
+        """Instantiate the single most-derived registered strategy for context."""
+        owning_strategy_types = cls.owning_strategy_types(context)
+        if not owning_strategy_types:
+            if not required:
+                return None
+            raise ValueError(
+                f"{cls._error_subject(error_subject)} requires a matching strategy."
+            )
+        if len(owning_strategy_types) != 1:
+            names = tuple(
+                cls._strategy_name(strategy_type)
+                for strategy_type in owning_strategy_types
+            )
+            raise ValueError(
+                f"{cls._error_subject(error_subject)} requires exactly one "
+                f"most-derived strategy, got {names!r}."
+            )
+        return owning_strategy_types[0]()
+
+    @classmethod
+    def owning_strategy_types(
+        cls: type[_ContextStrategyT],
+        context: _ContextT,
+    ) -> tuple[type[_ContextStrategyT], ...]:
+        """Return most-derived registered strategies matching ``context``."""
+        matching_strategy_types = tuple(
+            strategy_type
+            for strategy_type in cls.registered_strategy_types()
+            if strategy_type().matches(context)
+        )
+        return tuple(
+            candidate_type
+            for candidate_type in matching_strategy_types
+            if not any(
+                other_type is not candidate_type
+                and issubclass(other_type, candidate_type)
+                for other_type in matching_strategy_types
+            )
+        )
+
+    @classmethod
+    def _error_subject(cls, explicit_subject: str | None) -> str:
+        return explicit_subject or cls.__name__
+
+    @classmethod
+    def _strategy_name(cls, strategy_type: type[_ContextStrategyT]) -> object:
+        return getattr(strategy_type, cls.strategy_key_attr, strategy_type.__name__)
+
+    @abstractmethod
+    def matches(self, context: _ContextT) -> bool:
+        """Return whether this registered strategy owns ``context``."""

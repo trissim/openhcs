@@ -90,6 +90,13 @@ class SourceAssignmentBase(ABC):
     def artifact_kind(self) -> ArtifactKind:
         """Artifact kind bound by this source assignment."""
 
+    @property
+    def measurement_source_names(self) -> tuple[str, ...]:
+        """Return measurement feature source qualifiers declared by this alias."""
+        if not self.artifact_kind.participates_in_measurement_source_names:
+            return ()
+        return source_alias_measurement_names(self.alias)
+
     def to_binding(self) -> NamedSourceBinding:
         return NamedSourceBinding(
             alias=self.alias,
@@ -483,10 +490,10 @@ class PipelineImageSchema:
     def measurement_source_names(self) -> tuple[str, ...]:
         """Return source names that may appear in measurement feature names."""
         names: set[str] = set()
-        for alias in self.assignments_by_alias:
-            names.update(source_alias_measurement_names(alias))
-        for alias in self.source_artifacts_by_alias:
-            names.update(source_alias_measurement_names(alias))
+        for assignment in self.assignments_by_alias.values():
+            names.update(assignment.measurement_source_names)
+        for assignment in self.source_artifacts_by_alias.values():
+            names.update(assignment.measurement_source_names)
         return tuple(sorted(names, key=lambda value: value.lower()))
 
     def resolved_source_artifact_for_alias(

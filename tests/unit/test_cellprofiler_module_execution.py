@@ -10,9 +10,11 @@ from openhcs.core.aligned_image_payload import (
     ImagePayloadExecutionMode,
     compose_aligned_image_payload,
     compose_one_image_bundle,
+    aligned_image_stack_kwargs,
     payload_slice_count,
     payload_slices_for_alignment,
 )
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.constants.constants import MemoryType
 from openhcs.interop.cellprofiler.runtime.invocation import CellProfilerMeasurementImage
 from openhcs.interop.cellprofiler.runtime import (
@@ -20,12 +22,19 @@ from openhcs.interop.cellprofiler.runtime import (
     CellProfilerInvocationOptions,
 )
 from benchmark.cellprofiler_compat.module_execution import (
+    AlignMeasurementFeature,
     CellProfilerFunctionContractExecutor,
     CellProfilerInvocationExecutionModePolicy,
     CellProfilerMeasurementRecordBuilder,
+    ClassifyObjectsMeasurementFeatureTemplate,
+    MeasurementLabelSourceAlignmentStrategy,
     CellProfilerMeasurementImageDomain,
     CellProfilerModuleExecutor,
+    CellProfilerObjectMeasurementExecutionDomainPolicy,
     CellProfilerObjectMeasurementRowPolicy,
+    ObjectLocationMeasurementRows,
+    RelationshipMeasurementRows,
+    RelationshipMeasurementFeatureTemplate,
     CellProfilerOutputValueResolution,
     CellProfilerOutputRecordRequest,
     CellProfilerOutputRecorder,
@@ -35,18 +44,13 @@ from benchmark.cellprofiler_compat.module_execution import (
     _complete_object_measurement_rows,
     _measurement_image_for_labels,
     _measurement_labels,
-    _measurement_labels_for_image,
     _measurement_labels_for_measurement_image,
     _measurement_record_fields,
-    _measurement_table_slice_count,
     _measurement_table_rows,
-    _object_location_measurement_rows,
     _object_only_reference_image,
     _output_values_by_kind,
     _processing_contract_for_callable,
     _unstack_cellprofiler_image_slices,
-    _relationship_measurement_rows,
-    _slice_pure_2d_value,
 )
 from benchmark.cellprofiler_library.functions.structuring_elements import StructuringElement
 from benchmark.cellprofiler_library.functions.colortogray import color_to_gray
@@ -113,6 +117,7 @@ from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
+    ObjectLocationMeasurementFeature,
     ObjectLabelDomainScope,
     ObjectLabelRepresentation,
     ParentChildRelationshipPayload,
@@ -121,6 +126,7 @@ from openhcs.core.runtime_semantics import (
     RuntimePlaneAxisProjector,
     SpatialGridOrdering,
     object_label_parent_child_payload,
+    object_shape_measurement_all_field_names,
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
@@ -202,6 +208,21 @@ class _FakeCellProfilerRuntime:
 
     def get_image(self, name: str) -> _FakeRuntimeImage:
         return self.images[name]
+
+    def add_image(
+        self,
+        name: str,
+        data: object,
+        **kwargs: object,
+    ) -> None:
+        self.images[name] = _FakeRuntimeImage(
+            data,
+            source_image_name=(
+                str(kwargs["source_image_name"])
+                if kwargs.get("source_image_name") is not None
+                else None
+            ),
+        )
 
     def get_objects(self, name: str) -> ObjectLabelSet:
         return self.runtime_objects[name]
@@ -673,6 +694,35 @@ def test_complete_object_measurement_rows_supports_compact_row_identity() -> Non
     assert np.isnan(rows[4]["Area"])
 
 
+def test_measure_object_size_shape_compact_rows_preserve_emitted_padding() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.zeros((4, 4), dtype=np.int32),
+        declared_object_ids=(10, 20, 30, 40, 50),
+    )
+    row_policy = CellProfilerObjectMeasurementRowPolicy.for_module(
+        "MeasureObjectSizeShape"
+    )
+
+    rows = _complete_object_measurement_rows(
+        [
+            {"object_label": 10, "Area": 10.0},
+            {"object_label": 20},
+            {"object_label": 25, "Area": np.nan},
+            {"object_label": 30, "Area": 30.0},
+            {"object_label": 50, "Area": 50.0},
+        ],
+        label_payload=payload,
+        func=_synthetic_object_measurement_function,
+        object_identity=row_policy.object_identity(),
+        row_policy=row_policy,
+    )
+
+    assert [row["object_label"] for row in rows] == [1, 2, 3, 4, 5]
+    assert [row["Area"] for row in rows[:3]] == [10.0, 30.0, 50.0]
+    assert "Area" not in rows[3]
+    assert np.isnan(rows[4]["Area"])
+
+
 def test_measure_object_size_shape_uses_compact_row_identity_policy() -> None:
     assert (
         CellProfilerObjectMeasurementRowPolicy.for_module(
@@ -771,7 +821,7 @@ def test_measure_object_size_shape_declares_schema_on_special_output() -> None:
 
     fields = _measurement_record_fields(spec, [], measure_object_size_shape)
 
-    assert tuple(field.name for field in fields) == object_shape_measurement_field_names()
+    assert tuple(field.name for field in fields) == object_shape_measurement_all_field_names()
 
 
 def test_measure_object_size_shape_outputs_basic_measurement_rows() -> None:
@@ -862,7 +912,7 @@ def test_measure_object_size_shape_orientation_uses_cellprofiler_diagonal_tie() 
     assert rows[0]["Orientation"] == 45.0
 
 
-def test_measure_object_size_shape_zernikes_preserve_dense_label_gaps() -> None:
+def test_measure_object_size_shape_zernikes_use_declared_row_ordinal_domain() -> None:
     image = np.ones((12, 12), dtype=np.float32)
     labels = np.zeros(image.shape, dtype=np.int32)
     labels[1:4, 1:4] = 1
@@ -881,7 +931,8 @@ def test_measure_object_size_shape_zernikes_preserve_dense_label_gaps() -> None:
     assert np.isnan(rows[1]["Area"])
     assert np.isnan(rows[1]["Center_X"])
     assert np.isnan(rows[1]["Center_Y"])
-    assert np.isnan(rows[1]["Zernike_0_0"])
+    assert np.isfinite(rows[1]["Zernike_0_0"])
+    assert np.isnan(rows[2]["Zernike_0_0"])
     assert rows[2]["Area"] == 16.0
 
 
@@ -1845,8 +1896,10 @@ def test_identify_secondary_objects_collapses_singleton_image_label_and_mask_pla
         dtype_config=DtypeConfig(),
     )
 
-    assert secondary.shape == (5, 5)
-    assert secondary.max() == 1
+    secondary_labels = object_label_dense_array(secondary)
+
+    assert secondary_labels.shape == (5, 5)
+    assert secondary_labels.max() == 1
 
 
 def test_secondary_propagation_aligns_label_and_mask_planes_to_image_geometry():
@@ -1963,7 +2016,7 @@ def test_pure_2d_object_label_payload_slice_projects_plane_domain() -> None:
         domain_scope=ObjectLabelDomainScope.PLANE,
     )
 
-    sliced = _slice_pure_2d_value(payload, slice_index=1, slice_count=2)
+    sliced = RuntimeSliceProjection.value_for_slice(payload, slice_index=1, slice_count=2)
 
     assert isinstance(sliced, ObjectLabelPayload)
     assert sliced.labels.shape == (2, 2)
@@ -1986,7 +2039,7 @@ def test_pure_2d_object_label_set_slice_projects_plane_domain() -> None:
         domain_scope=ObjectLabelDomainScope.PLANE,
     )
 
-    sliced = _slice_pure_2d_value(label_set, slice_index=0, slice_count=2)
+    sliced = RuntimeSliceProjection.value_for_slice(label_set, slice_index=0, slice_count=2)
 
     assert isinstance(sliced, ObjectLabelSet)
     assert sliced.labels.shape == (2, 2)
@@ -2748,6 +2801,47 @@ def test_measure_object_neighbors_records_object_topology_without_image_source()
     assert record.source_image_name is None
 
 
+def test_track_objects_record_builder_uses_nominal_image_table_ownership() -> None:
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="TrackObjects",
+            inputs=(ArtifactSpec("Embryos", ArtifactKind.OBJECT_LABELS),),
+            runtime_artifact_inputs=(ArtifactSpec("Embryos", ArtifactKind.OBJECT_LABELS),),
+            outputs=(ArtifactSpec("Tracking", ArtifactKind.MEASUREMENTS),),
+        )
+    )
+
+    record = CellProfilerMeasurementRecordBuilder.for_module("TrackObjects").build(
+        CellProfilerOutputRecordRequest(
+            executor=executor,
+            adapter=None,
+            spec=ArtifactSpec("Tracking", ArtifactKind.MEASUREMENTS),
+            value=[
+                {
+                    "image_number": 1,
+                    "object_label": 1,
+                    "feature_name": "TrackObjects_Label_50",
+                    "measurement_value": 1,
+                },
+                {
+                    "image_number": 1,
+                    "feature_name": "TrackObjects_NewObjectCount_Embryos_50",
+                    "measurement_value": 1,
+                },
+            ],
+            output_values={},
+            source_image_name="OrigColor",
+            func=_synthetic_object_measurement_function,
+        )
+    )
+
+    object_row, image_row = record.rows
+    assert object_row["object_name"] == "Embryos"
+    assert "source_image_name" not in object_row
+    assert image_row["source_image_name"] == "image"
+    assert "object_name" not in image_row
+
+
 def test_object_label_output_recorder_uses_output_label_domain() -> None:
     input_labels = np.zeros((5, 5), dtype=np.int32)
     input_labels[1, 1] = 1
@@ -2894,25 +2988,25 @@ def test_align_measurement_builder_records_output_scoped_shifts() -> None:
         {
             "slice_index": 0,
             "source_image_name": "Stain1",
-            "feature_name": "Align_Xshift",
+            "feature_name": AlignMeasurementFeature.X_SHIFT.value,
             "result_value": 0.0,
         },
         {
             "slice_index": 0,
             "source_image_name": "Stain1",
-            "feature_name": "Align_Yshift",
+            "feature_name": AlignMeasurementFeature.Y_SHIFT.value,
             "result_value": 0.0,
         },
         {
             "slice_index": 0,
             "source_image_name": "Stain2",
-            "feature_name": "Align_Xshift",
+            "feature_name": AlignMeasurementFeature.X_SHIFT.value,
             "result_value": -1.0,
         },
         {
             "slice_index": 0,
             "source_image_name": "Stain2",
-            "feature_name": "Align_Yshift",
+            "feature_name": AlignMeasurementFeature.Y_SHIFT.value,
             "result_value": 1.0,
         },
     ]
@@ -2956,13 +3050,13 @@ def test_align_measurement_builder_records_additional_output_shifts() -> None:
         {
             "slice_index": 0,
             "source_image_name": "AlignedCombined",
-            "feature_name": "Align_Xshift",
+            "feature_name": AlignMeasurementFeature.X_SHIFT.value,
             "result_value": -2.0,
         },
         {
             "slice_index": 0,
             "source_image_name": "AlignedCombined",
-            "feature_name": "Align_Yshift",
+            "feature_name": AlignMeasurementFeature.Y_SHIFT.value,
             "result_value": 1.0,
         },
     ]
@@ -3004,13 +3098,13 @@ def test_align_measurement_builder_uses_declared_outputs_when_images_pruned() ->
         {
             "slice_index": 0,
             "source_image_name": "AlignedWell",
-            "feature_name": "Align_Xshift",
+            "feature_name": AlignMeasurementFeature.X_SHIFT.value,
             "result_value": -3.0,
         },
         {
             "slice_index": 0,
             "source_image_name": "AlignedWell",
-            "feature_name": "Align_Yshift",
+            "feature_name": AlignMeasurementFeature.Y_SHIFT.value,
             "result_value": 2.0,
         },
     ]
@@ -3120,12 +3214,48 @@ def test_classification_rows_include_unclassified_objects() -> None:
         (row["object_label"], row["feature_name"], row["result_value"])
         for row in object_rows
     } == {
-        (1, "Classify_Small", 1),
-        (1, "Classify_Large", 0),
-        (2, "Classify_Small", 0),
-        (2, "Classify_Large", 0),
-        (3, "Classify_Small", 0),
-        (3, "Classify_Large", 1),
+        (
+            1,
+            ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS.feature_name(
+                bin_name="Small"
+            ),
+            1,
+        ),
+        (
+            1,
+            ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS.feature_name(
+                bin_name="Large"
+            ),
+            0,
+        ),
+        (
+            2,
+            ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS.feature_name(
+                bin_name="Small"
+            ),
+            0,
+        ),
+        (
+            2,
+            ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS.feature_name(
+                bin_name="Large"
+            ),
+            0,
+        ),
+        (
+            3,
+            ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS.feature_name(
+                bin_name="Small"
+            ),
+            0,
+        ),
+        (
+            3,
+            ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS.feature_name(
+                bin_name="Large"
+            ),
+            1,
+        ),
     }
 
 
@@ -3888,7 +4018,7 @@ def test_relationship_measurements_preserve_pure_2d_slice_indices() -> None:
         func=lambda image: image,
     )
 
-    rows = _relationship_measurement_rows(request)
+    rows = RelationshipMeasurementRows(request).rows()
     slice_indices = {
         int(row["slice_index"])
         for row in rows
@@ -3907,7 +4037,7 @@ def test_parent_child_relationship_payload_slices_with_pure_2d_kwargs() -> None:
         slice_count=2,
     )
 
-    sliced = _slice_pure_2d_value(payload, slice_index=1, slice_count=2)
+    sliced = RuntimeSliceProjection.value_for_slice(payload, slice_index=1, slice_count=2)
 
     assert sliced == ParentChildRelationshipPayload(
         parent_ids=(2, 4),
@@ -3929,7 +4059,7 @@ def test_object_relationship_slices_with_pure_2d_kwargs() -> None:
         slice_count=2,
     )
 
-    sliced = _slice_pure_2d_value(relationship, slice_index=1, slice_count=2)
+    sliced = RuntimeSliceProjection.value_for_slice(relationship, slice_index=1, slice_count=2)
 
     assert isinstance(sliced, ObjectRelationship)
     assert sliced.source_ids == (2, 4)
@@ -3984,13 +4114,16 @@ def test_relationship_measurements_broadcast_singleton_label_counts() -> None:
         func=lambda image: image,
     )
 
-    rows = _relationship_measurement_rows(request)
+    rows = RelationshipMeasurementRows(request).rows()
 
     parent_rows = [
         row
         for row in rows
         if row.get("object_name") == "Children"
-        and "Parent_Parents" in row
+        and RelationshipMeasurementFeatureTemplate.PARENT.feature_name(
+            parent_object_name="Parents"
+        )
+        in row
     ]
     assert {(row["slice_index"], row["object_label"]) for row in parent_rows} == {
         (0, 1),
@@ -4209,7 +4342,10 @@ def test_object_location_measurements_preserve_declared_empty_grid_cells() -> No
     labels[1, 3:5, 3:5] = 2
     payload = ObjectLabelPayload(labels=labels, declared_object_count=3)
 
-    rows = _object_location_measurement_rows(payload, object_name="GridObjects")
+    rows = ObjectLocationMeasurementRows(
+        payload,
+        object_name="GridObjects",
+    ).rows()
 
     by_key = {
         (
@@ -4219,14 +4355,14 @@ def test_object_location_measurements_preserve_declared_empty_grid_cells() -> No
         ): row["result_value"]
         for row in rows
     }
-    assert by_key[(0, 1, "Location_Center_X")] == 1.5
-    assert by_key[(0, 1, "Location_Center_Y")] == 1.5
-    assert np.isnan(by_key[(0, 2, "Location_Center_X")])
-    assert np.isnan(by_key[(0, 3, "Location_Center_Y")])
-    assert np.isnan(by_key[(1, 1, "Location_Center_X")])
-    assert by_key[(1, 2, "Location_Center_X")] == 3.5
-    assert by_key[(1, 2, "Location_Center_Y")] == 3.5
-    assert np.isnan(by_key[(1, 3, "Location_Center_Y")])
+    assert by_key[(0, 1, ObjectLocationMeasurementFeature.CENTER_X.value)] == 1.5
+    assert by_key[(0, 1, ObjectLocationMeasurementFeature.CENTER_Y.value)] == 1.5
+    assert np.isnan(by_key[(0, 2, ObjectLocationMeasurementFeature.CENTER_X.value)])
+    assert np.isnan(by_key[(0, 3, ObjectLocationMeasurementFeature.CENTER_Y.value)])
+    assert np.isnan(by_key[(1, 1, ObjectLocationMeasurementFeature.CENTER_X.value)])
+    assert by_key[(1, 2, ObjectLocationMeasurementFeature.CENTER_X.value)] == 3.5
+    assert by_key[(1, 2, ObjectLocationMeasurementFeature.CENTER_Y.value)] == 3.5
+    assert np.isnan(by_key[(1, 3, ObjectLocationMeasurementFeature.CENTER_Y.value)])
 
 
 def test_sparse_object_label_aggregation_preserves_declared_domain() -> None:
@@ -4269,7 +4405,7 @@ def test_measurement_table_collection_slice_count_accepts_sharded_offsets() -> N
         object_name="Objects",
     )
 
-    assert _measurement_table_slice_count((first, second)) == 2
+    assert RuntimeSliceProjection.slice_count_from_values((first, second)) == 2
 
 
 def test_unstack_cellprofiler_image_slices_collapses_pairwise_slice_grid() -> None:
@@ -4375,10 +4511,81 @@ def test_measurement_labels_preserve_stack_for_object_domain_alignment() -> None
     image = np.ones((1, 4, 5), dtype=np.float32)
     labels = np.arange(2 * 4 * 5, dtype=np.int32).reshape(2, 4, 5)
 
-    measurement_labels = _measurement_labels_for_image(image, labels)
+    measurement_labels = MeasurementLabelSourceAlignmentStrategy.align(image, labels)
 
     assert measurement_labels.shape == labels.shape
     np.testing.assert_array_equal(measurement_labels, labels)
+
+
+def test_measurement_label_alignment_preserves_runtime_slice_payload_for_aligned_stack() -> None:
+    first_image = image_payload_with_context(
+        np.ones((2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(0, 0),
+            source_spatial_shape_yx=(4, 4),
+        ),
+    )
+    second_image = image_payload_with_context(
+        np.ones((2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(2, 0),
+            source_spatial_shape_yx=(4, 4),
+        ),
+    )
+    labels = np.stack(
+        (
+            np.full((4, 4), 1, dtype=np.int32),
+            np.full((4, 4), 2, dtype=np.int32),
+        )
+    )
+    label_payload = ObjectLabelPayload(
+        labels=labels,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+
+    measurement_labels = MeasurementLabelSourceAlignmentStrategy.align(
+        AlignedImageStack((first_image, second_image)),
+        labels,
+        label_payload=label_payload,
+    )
+
+    assert measurement_labels.shape == labels.shape
+    np.testing.assert_array_equal(measurement_labels, labels)
+
+
+def test_aligned_stack_kwargs_projects_runtime_slice_labels_to_reference_slice_domain() -> None:
+    reference_slice = image_payload_with_context(
+        np.ones((2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(2, 0),
+            source_spatial_shape_yx=(4, 4),
+        ),
+    )
+    labels = np.stack(
+        (
+            np.full((4, 4), 1, dtype=np.int32),
+            np.full((4, 4), 2, dtype=np.int32),
+        )
+    )
+    label_payload = ObjectLabelPayload(
+        labels=labels,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+        source_spatial_shape_yx=(4, 4),
+    )
+
+    resolved = aligned_image_stack_kwargs(
+        {"labels": label_payload},
+        slice_index=1,
+        slice_count=2,
+        reference_payload=reference_slice,
+    )
+
+    np.testing.assert_array_equal(
+        resolved["labels"],
+        np.full((2, 2), 2, dtype=np.int32),
+    )
 
 
 def test_measurement_labels_collapse_channel_broadcast_label_stack() -> None:
@@ -4386,7 +4593,7 @@ def test_measurement_labels_collapse_channel_broadcast_label_stack() -> None:
     label_plane = np.arange(4 * 5, dtype=np.int32).reshape(4, 5)
     labels = np.stack((label_plane, label_plane))
 
-    measurement_labels = _measurement_labels_for_image(image, labels)
+    measurement_labels = MeasurementLabelSourceAlignmentStrategy.align(image, labels)
 
     assert measurement_labels.shape == label_plane.shape
     np.testing.assert_array_equal(measurement_labels, label_plane)
@@ -4617,6 +4824,53 @@ def test_measurement_labels_do_not_project_runtime_slice_label_stack_by_source_a
     np.testing.assert_array_equal(measurement_labels, label_planes)
 
 
+def test_measurement_labels_do_not_project_runtime_slice_stack_for_aligned_measurement_image() -> None:
+    class Adapter(RuntimePlaneAxisProjector):
+        def runtime_slice_plane_index(self) -> int | None:
+            return 1
+
+        def source_binding_axis_plane_index(
+            self,
+            source_aliases: tuple[str, ...],
+        ) -> int | None:
+            return {"CropBlue": 0, "CropGreen": 1}.get(source_aliases[0])
+
+    label_planes = np.stack(
+        (
+            np.full((4, 5), 10, dtype=np.int32),
+            np.full((4, 5), 20, dtype=np.int32),
+            np.full((4, 5), 30, dtype=np.int32),
+        )
+    )
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=label_planes,
+        source_image_name="CropBlue",
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+    measurement_image = CellProfilerMeasurementImage(
+        source_image_name="CropBlue__CropGreen",
+        source_image_names=("CropBlue", "CropGreen"),
+        payload=AlignedImageStack(
+            (
+                np.ones((2, 4, 5), dtype=np.float32),
+                np.ones((2, 4, 5), dtype=np.float32),
+                np.ones((2, 4, 5), dtype=np.float32),
+            )
+        ),
+    )
+
+    measurement_labels = _measurement_labels_for_measurement_image(
+        measurement_image,
+        labels,
+        adapter=Adapter(),
+    )
+
+    assert measurement_labels.shape == label_planes.shape
+    np.testing.assert_array_equal(measurement_labels, label_planes)
+
+
 def test_measurement_labels_project_runtime_slice_stack_for_single_plane_source() -> None:
     class Adapter(RuntimePlaneAxisProjector):
         def runtime_slice_plane_index(self) -> int | None:
@@ -4770,6 +5024,33 @@ def test_object_label_payload_preserves_source_metadata_for_measurements() -> No
 
     assert payload is labels
     assert payload.source_image_name == "rawDNA"
+
+
+def test_measurement_image_for_labels_uses_object_label_source_spatial_crop() -> None:
+    image = image_payload_with_context(
+        np.arange(25, dtype=np.float32).reshape(5, 5),
+        metadata=ImagePayloadMetadata(
+            spatial_origin_yx=(0, 0),
+            source_spatial_shape_yx=(5, 5),
+        ),
+    )
+    label_payload = ObjectLabelPayload(
+        labels=np.ones((2, 2), dtype=np.int32),
+        spatial_origin_yx=(1, 1),
+        source_spatial_shape_yx=(5, 5),
+    )
+
+    aligned = _measurement_image_for_labels(
+        image,
+        label_payload.labels,
+        label_payload=label_payload,
+        reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+    )
+
+    np.testing.assert_array_equal(
+        np.asarray(aligned),
+        np.asarray([[6.0, 7.0], [11.0, 12.0]], dtype=np.float32),
+    )
 
 
 def test_image_request_source_name_uses_primary_images_not_object_inputs() -> None:
@@ -5292,3 +5573,60 @@ def test_structuring_element_execution_policy_uses_object_label_kwargs_rank() ->
     )
 
     assert mode is ImagePayloadExecutionMode.FULL_STACK
+
+
+def test_object_measurement_execution_policy_uses_full_stack_for_3d_labels() -> None:
+    policy = CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
+        "MeasureObjectSizeShape"
+    )
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.zeros((3, 5, 5), dtype=np.int32),
+    )
+
+    mode = policy.execution_mode(
+        measure_object_size_shape,
+        labels,
+        ImagePayloadExecutionMode.NATURAL,
+    )
+
+    assert mode is ImagePayloadExecutionMode.FULL_STACK
+
+
+def test_object_measurement_execution_policy_keeps_runtime_slice_stack_natural() -> None:
+    policy = CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
+        "MeasureObjectSizeShape"
+    )
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.zeros((3, 5, 5), dtype=np.int32),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+
+    mode = policy.execution_mode(
+        measure_object_size_shape,
+        labels,
+        ImagePayloadExecutionMode.NATURAL,
+        runtime_slice_count=1,
+    )
+
+    assert mode is ImagePayloadExecutionMode.NATURAL
+
+
+def test_object_measurement_execution_policy_keeps_2d_labels_natural() -> None:
+    policy = CellProfilerObjectMeasurementExecutionDomainPolicy.for_module(
+        "MeasureObjectSizeShape"
+    )
+    labels = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.zeros((5, 5), dtype=np.int32),
+    )
+
+    mode = policy.execution_mode(
+        measure_object_size_shape,
+        labels,
+        ImagePayloadExecutionMode.NATURAL,
+    )
+
+    assert mode is ImagePayloadExecutionMode.NATURAL

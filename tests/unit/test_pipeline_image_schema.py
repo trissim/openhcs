@@ -53,6 +53,28 @@ def test_pipeline_image_schema_builder_rejects_alias_kind_conflicts():
         )
 
 
+def test_pipeline_image_schema_measurement_source_names_exclude_object_artifacts():
+    builder = PipelineImageSchemaBuilder()
+    builder.declare_assignment(
+        ImageAssignment(
+            alias="OrigColor",
+            image_type="Color image",
+            selector=SourceSelector(),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        )
+    )
+    builder.declare_source_artifact(
+        SourceArtifactAssignment(
+            alias="Embryos",
+            kind=ArtifactKind.OBJECT_LABELS,
+            selector=SourceSelector(),
+            origin=SourceBindingOrigin.STEP_INPUT,
+        )
+    )
+
+    assert builder.build().measurement_source_names == ("OrigColor",)
+
+
 @pytest.mark.parametrize(
     ("image_type", "artifact_kind", "participates_in_stack"),
     (

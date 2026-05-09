@@ -15,8 +15,12 @@ from openhcs.core.equivalence.policy import (
     RuntimeMeasurementFeatureNumericTolerance,
     RuntimeMeasurementQualifierValueMode,
     RuntimeMeasurementRowQualifier,
+    RuntimeMeasurementRowQualifierSequence,
+    RuntimeMeasurementSourceQualifiedFeature,
+    RuntimeMeasurementSourceNameEncoding,
     normalize_runtime_identifier,
     normalize_runtime_source_name,
+    runtime_source_name_tokens,
 )
 from openhcs.core.equivalence.keys import (
     RuntimeMeasurementFeatureKey,

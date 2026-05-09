@@ -834,7 +834,9 @@ def test_generated_cellprofiler_pipeline_executes_gray_to_color_module():
     )
 
     assert len(color_image_records) == 1
-    assert color_image_records[0].value.schema.source_image_name == SOURCE_IMAGE
+    assert color_image_records[0].value.schema.source_image_name == (
+        f"{NUCLEI_IMAGE}__{SOURCE_IMAGE}"
+    )
     assert color_image_records[0].value.data.shape == (64, 64, 3)
     assert image.shape == color_image_records[0].value.data.shape
 

@@ -693,7 +693,7 @@ def _object_intensity_scan_numba(
             weighted_y[index] += y * value
             if value < min_values[index]:
                 min_values[index] = value
-            if value > max_values[index]:
+            if value >= max_values[index]:
                 max_values[index] = value
                 max_x[index] = x
                 max_y[index] = y

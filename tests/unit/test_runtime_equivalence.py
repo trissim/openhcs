@@ -44,8 +44,13 @@ from openhcs.core.runtime_semantics import (
     MeasurementScope,
     MeasurementSubject,
     ObjectCoreMeasurementFeature,
+    ObjectMeasurementFeatureRole,
     ObjectLabelDomainScope,
     RelationshipSemantics,
+)
+from openhcs.core.equivalence.measurement_features import (
+    object_measurement_feature_has_role,
+    object_measurement_feature_requires_sparse_boundary_object_count_stability,
 )
 from openhcs.core.runtime_stores import (
     RuntimeArtifactLocation,
@@ -299,6 +304,67 @@ def test_runtime_reference_artifact_equivalence_skips_runtime_table_padding_rows
         ),
         subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
     )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="MeasureObjectSizeShape",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=native_table.rows,
+            schema=native_table.runtime_schema(native_table.rows),
+        ),
+        path="/memory/MeasureObjectSizeShape.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_skips_runtime_shape_padding_defaults(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "Image,Cells,Cells,Cells\n"
+        "ImageNumber,ObjectNumber,AreaShape_Area,AreaShape_Center_X,"
+        "AreaShape_Center_Z\n"
+        "1,1,10,4.5,0\n",
+        encoding="utf-8",
+    )
+    native_table = MeasurementTable(
+        name="MeasureObjectSizeShape",
+        rows=(
+            {
+                "object_label": 1,
+                "object_name": "Cells",
+                "area": 10,
+                "center_x": 4.5,
+                "center_z": 0.0,
+            },
+            {
+                "object_label": 2,
+                "object_name": "Cells",
+                "area": np.nan,
+                "center_x": np.nan,
+                "center_z": 0.0,
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    store = RuntimeValueStore()
     store.record(
         RuntimeValue(
             key=ArtifactKey(
@@ -1512,6 +1578,34 @@ def test_runtime_measurement_equivalence_uses_feature_numeric_tolerance() -> Non
     assert tolerant_report.is_equivalent
 
 
+def test_cellprofiler_track_objects_motion_features_use_declared_numeric_tolerance() -> None:
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Embryos")
+    feature = RuntimeMeasurementFeatureKey(
+        subject=subject,
+        feature_name="track_objects_integrated_distance_50",
+    )
+    reference = RuntimeMeasurementSnapshot(
+        {
+            feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "28.4402354989"): 1}
+            ),
+        }
+    )
+    candidate = RuntimeMeasurementSnapshot(
+        {
+            feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "28.4077925806"): 1}
+            ),
+        }
+    )
+
+    assert runtime_measurement_equivalence(
+        reference,
+        candidate,
+        policy=cellprofiler_runtime_equivalence_policy(),
+    ).is_equivalent
+
+
 def test_feature_numeric_tolerance_does_not_apply_to_other_features() -> None:
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells")
     feature = RuntimeMeasurementFeatureKey(
@@ -1554,8 +1648,8 @@ def test_feature_numeric_tolerance_does_not_apply_to_other_features() -> None:
 
 def test_cellprofiler_policy_tolerates_area_derived_colocalized_fraction() -> None:
     feature = RuntimeMeasurementFeatureKey(
-        subject=RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "stain_1"),
-        feature_name="colocalized",
+        subject=RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image"),
+        feature_name="colocalized_stain_1",
     )
     reference = RuntimeMeasurementSnapshot(
         {
@@ -1597,10 +1691,33 @@ def test_cellprofiler_policy_tolerates_area_derived_colocalized_fraction() -> No
     assert cellprofiler_report.is_equivalent
 
 
+def test_cellprofiler_dialect_places_image_sources_in_feature_suffix() -> None:
+    identity = CELLPROFILER_MEASUREMENT_DIALECT.encode_source_qualified_feature(
+        "align_xshift",
+        "Stain1",
+        MeasurementScope.IMAGE,
+    )
+
+    assert identity.feature_name == "align_xshift_stain_1"
+    assert identity.source_name is None
+
+
+def test_cellprofiler_dialect_places_sources_before_row_qualifiers() -> None:
+    identity = CELLPROFILER_MEASUREMENT_DIALECT.encode_source_qualified_feature(
+        "sum_variance_10_01_256",
+        "CorrGray",
+        MeasurementScope.OBJECT,
+        qualifiers=("10", "01", "256"),
+    )
+
+    assert identity.feature_name == "sum_variance_corr_gray_10_01_256"
+    assert identity.source_name is None
+
+
 def test_cellprofiler_policy_tolerates_image_texture_numeric_drift() -> None:
     feature = RuntimeMeasurementFeatureKey(
-        subject=RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "corr_gray"),
-        feature_name="sum_variance_10_01_256",
+        subject=RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image"),
+        feature_name="sum_variance_corr_gray_10_01_256",
     )
     reference = RuntimeMeasurementSnapshot(
         {
@@ -1635,7 +1752,7 @@ def test_cellprofiler_policy_tolerates_image_texture_numeric_drift() -> None:
 def test_cellprofiler_image_texture_tolerance_does_not_apply_to_objects() -> None:
     feature = RuntimeMeasurementFeatureKey(
         subject=RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "comet"),
-        feature_name="sum_variance_10_01_256",
+        feature_name="sum_variance_corr_gray_10_01_256",
     )
     reference = RuntimeMeasurementSnapshot(
         {
@@ -1720,7 +1837,56 @@ def test_runtime_reference_artifact_equivalence_allows_max_location_ties(
     )
 
     assert strict_report.failure_messages() == (
-        "measurement feature object:nuclei/max_intensity_x@crop_blue values differ",
+        "measurement feature object:nuclei/max_intensity_x_crop_blue values differ",
+    )
+    assert tie_policy_report.is_equivalent
+
+
+def test_runtime_measurement_equivalence_allows_aggregate_max_location_ties_when_value_is_stable() -> None:
+    location_feature = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Nuclei"),
+        "mean_h_2_ax_max_intensity_x_orig_green",
+    )
+    value_feature = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Nuclei"),
+        "mean_h_2_ax_max_intensity_orig_green",
+    )
+    reference = RuntimeMeasurementSnapshot(
+        {
+            location_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "371.1578947368"): 1}
+            ),
+            value_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.5698784421"): 1}
+            ),
+        }
+    )
+    candidate = RuntimeMeasurementSnapshot(
+        {
+            location_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "371.1315789474"): 1}
+            ),
+            value_feature: Counter(
+                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.5698784421"): 1}
+            ),
+        }
+    )
+
+    strict_report = runtime_measurement_equivalence(
+        reference,
+        candidate,
+        policy=RuntimeEquivalencePolicy(),
+    )
+    tie_policy_report = runtime_measurement_equivalence(
+        reference,
+        candidate,
+        policy=RuntimeEquivalencePolicy(
+            allow_tie_sensitive_location_mismatches=True
+        ),
+    )
+
+    assert strict_report.failure_messages() == (
+        "measurement feature object:nuclei/mean_h_2_ax_max_intensity_x_orig_green values differ",
     )
     assert tie_policy_report.is_equivalent
 
@@ -2655,6 +2821,172 @@ def test_runtime_reference_artifact_equivalence_matches_binned_row_qualifiers(
     assert report.is_equivalent
 
 
+def test_cellprofiler_runtime_policy_allows_source_qualified_intensity_boundary_jitter(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    reference_rows = "\n".join(
+        f"1,{object_number},10.0"
+        for object_number in range(1, 101)
+    )
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Intensity_IntegratedIntensity_CorrProtein\n"
+        f"{reference_rows}\n",
+        encoding="utf-8",
+    )
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Count_Cells,Mean_Cells_Intensity_IntegratedIntensity_CorrProtein\n"
+        "1,100,10.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    object_rows = tuple(
+        {
+            "object_label": object_number,
+            "object_name": "Cells",
+            "integrated_intensity": 10.5 if object_number == 4 else 10.0,
+            "source_image_name": "CorrProtein",
+        }
+        for object_number in range(1, 101)
+    )
+    object_table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=object_rows,
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    image_table = MeasurementTable(
+        name="IdentifyPrimaryObjects",
+        rows=({"image_number": 1, "count_cells": 100},),
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "Image"),
+    )
+    for table in (object_table, image_table):
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=table.name,
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01"),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            path=f"/memory/{table.name}.pkl",
+            backend="memory",
+        )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+        policy=cellprofiler_runtime_equivalence_policy(),
+    )
+
+    assert report.is_equivalent
+
+
+def test_cellprofiler_runtime_policy_allows_calculated_object_boundary_jitter(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    reference_rows = "\n".join(
+        f"1,{object_number},1.0"
+        for object_number in range(1, 101)
+    )
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Math_Ratio1\n"
+        f"{reference_rows}\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    object_rows = tuple(
+        {
+            "object_label": object_number,
+            "object_name": "Cells",
+            "feature_name": "Math_Ratio1",
+            "result_value": 1.002 if object_number == 4 else 1.0,
+        }
+        for object_number in range(1, 101)
+    )
+    object_table = MeasurementTable(
+        name="CalculateMath",
+        rows=object_rows,
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    count_table = MeasurementTable(
+        name="IdentifyPrimaryObjects",
+        rows=({"image_number": 1, "count_cells": 100},),
+        subject=MeasurementSubject(MeasurementScope.IMAGE, "Image"),
+    )
+    for table in (object_table, count_table):
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=table.name,
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01"),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            path=f"/memory/{table.name}.pkl",
+            backend="memory",
+        )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+        policy=cellprofiler_runtime_equivalence_policy(),
+    )
+
+    assert report.is_equivalent
+
+
+def test_cellprofiler_dialect_classifies_worm_and_related_child_features_as_calculated() -> None:
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "NonOverlappingWorms")
+
+    for feature_name in (
+        "worm_length",
+        "worm_control_point_x_1",
+        "fat_regions_count",
+        "mean_fat_regions_area",
+    ):
+        assert object_measurement_feature_has_role(
+            RuntimeMeasurementFeatureKey(
+                subject=subject,
+                feature_name=feature_name,
+                statistic=MeasurementStatistic.VALUE.value,
+            ),
+            ObjectMeasurementFeatureRole.CALCULATED,
+            CELLPROFILER_MEASUREMENT_DIALECT,
+        )
+
+
+def test_calculated_object_features_do_not_require_count_stability_for_boundary_jitter() -> None:
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "NonOverlappingWorms")
+
+    assert not object_measurement_feature_requires_sparse_boundary_object_count_stability(
+        RuntimeMeasurementFeatureKey(
+            subject=subject,
+            feature_name="mean_fat_regions_area",
+            statistic=MeasurementStatistic.VALUE.value,
+        ),
+        CELLPROFILER_MEASUREMENT_DIALECT,
+    )
+
+
 def test_runtime_reference_artifact_equivalence_ignores_missing_row_qualifiers(
     tmp_path: Path,
 ) -> None:
@@ -2775,7 +3107,7 @@ def test_runtime_measurement_snapshot_normalizes_exported_numeric_qualifiers(
     )
 
     feature_names = {key.feature_name for key in snapshot.values_by_feature}
-    assert "angular_second_moment_3_00_256" in feature_names
+    assert "angular_second_moment_crop_blue_3_00_256" in feature_names
 
 
 def test_runtime_reference_artifact_equivalence_matches_relationship_features(
@@ -2988,6 +3320,83 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_means
     assert report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_derives_relationship_child_means_with_canonical_endpoint_names(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Nuclei.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_H2AX_Intensity_IntegratedIntensity_Green\n"
+        "1,1,2.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    child_table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=(
+            {
+                "object_name": "h_2_ax",
+                "object_label": 1,
+                "integrated_intensity": 1.0,
+            },
+            {
+                "object_name": "h_2_ax",
+                "object_label": 2,
+                "integrated_intensity": 3.0,
+            },
+        ),
+        source_image_name="Green",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/MeasureObjectIntensity.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Nuclei", "H2AX")
+    relationship = ObjectRelationship(
+        name="Nuclei_H2AX_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1),
+        target_ids=(1, 2),
+        relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Nuclei_H2AX_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_keys_relationship_child_means_by_slice(
     tmp_path: Path,
 ) -> None:
@@ -3043,6 +3452,85 @@ def test_runtime_reference_artifact_equivalence_keys_relationship_child_means_by
         relationship_type=semantics.relationship_type,
         slice_indices=(0, 1),
         slice_count=2,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Cells_Nuclei_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_aligns_unsliced_relationship_to_single_slice_child_rows(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nuclei_Intensity_IntegratedIntensity_Green\n"
+        "1,1,2.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    child_table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=(
+            {
+                "slice_index": 0,
+                "object_name": "Nuclei",
+                "object_label": 1,
+                "integrated_intensity": 1.0,
+            },
+            {
+                "slice_index": 0,
+                "object_name": "Nuclei",
+                "object_label": 2,
+                "integrated_intensity": 3.0,
+            },
+        ),
+        source_image_name="Green",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/MeasureObjectIntensity.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    relationship = ObjectRelationship(
+        name="Cells_Nuclei_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1),
+        target_ids=(1, 2),
+        relationship_type=semantics.relationship_type,
     )
     store.record(
         RuntimeValue(
@@ -3682,6 +4170,61 @@ def test_runtime_reference_artifact_equivalence_matches_image_source_features(
     assert report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_preserves_row_source_qualified_image_features(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,ImageQuality_FocusScore_OrigBlue,"
+        "ImageQuality_FocusScore_OrigGreen\n"
+        "1,0.75,0.5\n",
+        encoding="utf-8",
+    )
+    table = MeasurementTable(
+        name="MeasureImageQuality",
+        rows=(
+            {
+                "image_number": 1,
+                "focus_score": 0.75,
+                "source_image_name": "OrigBlue",
+            },
+            {
+                "image_number": 1,
+                "focus_score": 0.5,
+                "source_image_name": "OrigGreen",
+            },
+        ),
+    )
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="MeasureImageQuality",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=table.rows,
+            schema=table.runtime_schema(table.rows),
+        ),
+        path="/memory/MeasureImageQuality.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_matches_qualified_neighbor_features(
     tmp_path: Path,
 ) -> None:
@@ -4030,7 +4573,7 @@ def test_runtime_reference_artifact_equivalence_detects_unmatched_scale_counts(
     )
 
     assert report.failure_messages() == (
-        "measurement feature image:orig_blue/correlation values differ",
+        "measurement feature image:image/correlation_orig_blue values differ",
     )
 
 
@@ -4288,8 +4831,8 @@ def test_runtime_reference_artifact_equivalence_allows_threshold_sensitive_pair_
     )
 
     assert strict_report.failure_messages() == (
-        "measurement feature image:stain_1_stain_2/costes values differ",
-        "measurement feature image:stain_2_stain_1/costes values differ",
+        "measurement feature image:image/costes_stain_1_stain_2 values differ",
+        "measurement feature image:image/costes_stain_2_stain_1 values differ",
     )
     assert threshold_pair_report.is_equivalent
 
@@ -4508,6 +5051,85 @@ def test_runtime_measurement_snapshot_uses_declared_plane_object_domains(
         ("number", "0.0", 3),
         ("number", "1.0", 2),
     }
+
+
+def test_runtime_measurement_snapshot_suppresses_label_geometry_mean_when_locations_are_measured(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells")
+    mean_center_x_key = RuntimeMeasurementFeatureKey(
+        subject,
+        ObjectCoreMeasurementFeature.CENTER_X.value,
+        MeasurementStatistic.MEAN.value,
+    )
+    measurement_table = MeasurementTable(
+        name="MeasureObjectSizeShape",
+        rows=(
+            {
+                "image_number": 1,
+                "object_name": "Cells",
+                "object_label": 1,
+                "center_x": 3.0,
+            },
+            {
+                "image_number": 1,
+                "object_name": "Cells",
+                "object_label": 2,
+                "center_x": 5.0,
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="MeasureObjectSizeShape",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=measurement_table.rows,
+            schema=measurement_table.runtime_schema(measurement_table.rows),
+        ),
+        path="/memory/MeasureObjectSizeShape.pkl",
+        backend="memory",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="Cells",
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=ObjectLabelPayload(
+                labels=np.array([[1, 2], [0, 0]], dtype=np.uint16),
+                domain_scope=ObjectLabelDomainScope.PLANE,
+            ),
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.OBJECT_LABELS,
+                object_name="Cells",
+            ),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset({mean_center_x_key}),
+    )
+
+    assert {
+        (signature.kind.value, signature.value, count)
+        for signature, count in snapshot.values_by_feature[mean_center_x_key].items()
+    } == {("number", "4.0", 1)}
 
 
 def test_runtime_measurement_snapshot_projects_identity_only_object_exports(
@@ -4739,6 +5361,59 @@ def test_runtime_measurement_snapshot_preserves_group_local_duplicate_rows(
     } == {
         ("number", "10.0", 2),
     }
+
+
+def test_runtime_measurement_snapshot_encodes_object_source_as_feature_suffix(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=(
+            {
+                "object_name": "Cells",
+                "object_label": 1,
+                "mean_intensity": 0.25,
+            },
+        ),
+        source_image_name="RawGFP",
+    )
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="MeasureObjectIntensity",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=table.rows,
+            schema=table.runtime_schema(table.rows),
+        ),
+        path="/memory/MeasureObjectIntensity.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+    required_key = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "Cells"),
+        "mean_intensity_raw_gfp",
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=RuntimeEquivalencePolicy(),
+        required_measurement_keys=frozenset({required_key}),
+    )
+
+    assert (
+        snapshot.values_by_feature[required_key][
+            RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "0.25")
+        ]
+        == 1
+    )
 
 
 def test_runtime_measurement_snapshot_derives_means_per_row_image_identity(
@@ -5123,7 +5798,7 @@ def test_runtime_reference_artifact_equivalence_derives_declared_label_centers(
                         ],
                         dtype=np.uint16,
                     ),
-                    declared_object_ids=(1, 2, 4),
+                    declared_object_count=4,
                 ),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
@@ -5175,7 +5850,7 @@ def test_runtime_reference_artifact_equivalence_uses_declared_label_count(
                     ],
                     dtype=np.uint16,
                 ),
-                declared_object_ids=(1, 2, 4),
+                declared_object_count=4,
             ),
             schema=RuntimeValueSchema(
                 kind=ArtifactKind.OBJECT_LABELS,
@@ -5198,7 +5873,7 @@ def test_runtime_reference_artifact_equivalence_uses_declared_label_count(
     assert report.is_equivalent
 
 
-def test_runtime_measurement_snapshot_counts_primary_object_rows_before_dense_label_domain(
+def test_runtime_measurement_snapshot_declared_object_domain_owns_count_before_row_fallback(
     tmp_path: Path,
 ) -> None:
     candidate_root = tmp_path / "candidate"
@@ -5269,7 +5944,57 @@ def test_runtime_measurement_snapshot_counts_primary_object_rows_before_dense_la
     assert {
         (signature.kind.value, signature.value, count)
         for signature, count in snapshot.values_by_feature[object_count_key].items()
-    } == {("number", "3.0", 1)}
+    } == {("number", "4.0", 1)}
+
+
+def test_runtime_measurement_snapshot_row_source_identity_does_not_qualify_image_subject_feature(
+    tmp_path: Path,
+) -> None:
+    candidate_root = tmp_path / "candidate"
+    candidate_root.mkdir()
+    store = RuntimeValueStore()
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name="TrackObjects_measurements",
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=[
+                {
+                    "image_number": 1,
+                    "feature_name": "TrackObjects_NewObjectCount_Embryos_50",
+                    "measurement_value": 4,
+                    "source_image_name": "image",
+                }
+            ],
+            schema=RuntimeValueSchema(
+                kind=ArtifactKind.MEASUREMENTS,
+                object_name="Embryos",
+            ),
+        ),
+        path="/memory/TrackObjects_measurements.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+    key = RuntimeMeasurementFeatureKey(
+        RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "image"),
+        "track_objects_new_object_count_embryos_50",
+    )
+
+    snapshot = RuntimeMeasurementSnapshot.from_artifact_execution_observation(
+        observation,
+        policy=cellprofiler_runtime_equivalence_policy(),
+        known_source_names=("OrigColor",),
+        required_measurement_keys=frozenset({key}),
+    )
+
+    assert snapshot.values_by_feature[key] == {
+        RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "4.0"): 1
+    }
 
 
 def test_runtime_measurement_snapshot_completes_object_numbers_from_primary_rows(
@@ -5886,6 +6611,86 @@ def test_runtime_reference_artifact_equivalence_merges_object_location_alias_row
                 "image_number": 1,
                 "object_label": 2,
                 "Center_X": np.nan,
+                "object_name": "Cells",
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    location_table = MeasurementTable(
+        name="IdentifyObjects",
+        rows=(
+            {
+                "image_number": 1,
+                "object_label": 1,
+                "feature_name": "Location_Center_X",
+                "result_value": 8.5,
+                "object_name": "Cells",
+            },
+            {
+                "image_number": 1,
+                "object_label": 2,
+                "feature_name": "Location_Center_X",
+                "result_value": 9.5,
+                "object_name": "Cells",
+            },
+        ),
+        subject=MeasurementSubject(MeasurementScope.OBJECT, "Cells"),
+    )
+    for table in (location_table, size_shape_table):
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=table.name,
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01"),
+                ),
+                data=table.rows,
+                schema=table.runtime_schema(table.rows),
+            ),
+            path=f"/memory/{table.name}.pkl",
+            backend="memory",
+        )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_uses_nominal_image_identity_dominance_for_aggregates(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Image.csv").write_text(
+        "ImageNumber,Mean_Cells_Location_Center_X\n"
+        "1,9.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    size_shape_table = MeasurementTable(
+        name="MeasureObjectSizeShape",
+        rows=(
+            {
+                "image_number": 1,
+                "slice_index": 0,
+                "object_label": 1,
+                "Center_X": 8.5,
+                "object_name": "Cells",
+            },
+            {
+                "image_number": 1,
+                "slice_index": 0,
+                "object_label": 2,
+                "Center_X": 9.5,
                 "object_name": "Cells",
             },
         ),

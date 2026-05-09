@@ -10,6 +10,7 @@ from collections.abc import Mapping
 import numpy as np
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.runtime_semantics import MeasurementImageReferenceDomain
 from openhcs.core.runtime_invocation import (
     RuntimeImageExecutionContext,
     RuntimeInvocationOptions,
@@ -69,11 +70,7 @@ class CellProfilerInvocationRequest(CellProfilerResolvedInputRequest):
     kwargs: Mapping[str, object]
 
 
-class CellProfilerMeasurementImageDomain(Enum):
-    """Semantic domain represented by a measurement image argument."""
-
-    SOURCE_IMAGE = "source_image"
-    OBJECT_LABELS = "object_labels"
+CellProfilerMeasurementImageDomain = MeasurementImageReferenceDomain
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)

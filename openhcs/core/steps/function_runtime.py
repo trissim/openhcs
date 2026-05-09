@@ -159,6 +159,38 @@ class VirtualWorkspaceSourceProjection:
     source_paths_by_virtual_path: Mapping[str, str]
     source_metadata_by_path: Mapping[str, Mapping[str, str]]
 
+    def source_path_for(
+        self,
+        *,
+        virtual_path: str,
+        full_virtual_path: str,
+        fallback_path: str,
+    ) -> str:
+        """Return the physical source path represented by a virtual workspace path."""
+        for key in (virtual_path, full_virtual_path):
+            source_path = self.source_paths_by_virtual_path.get(str(key))
+            if source_path is not None:
+                return source_path
+        return fallback_path
+
+    def source_metadata_for(
+        self,
+        *,
+        virtual_path: str,
+        full_virtual_path: str,
+    ) -> Mapping[str, str] | None:
+        """Return source metadata represented by a virtual workspace path."""
+        for key in (virtual_path, full_virtual_path):
+            metadata = self.source_metadata_by_path.get(str(key))
+            if metadata is not None:
+                return metadata
+        source_path = self.source_path_for(
+            virtual_path=virtual_path,
+            full_virtual_path=full_virtual_path,
+            fallback_path=full_virtual_path,
+        )
+        return self.source_metadata_by_path.get(source_path)
+
 
 @dataclass(slots=True)
 class SourceBindingExecutionCache:
@@ -173,39 +205,6 @@ class SourceBindingExecutionCache:
             virtual_workspace_projections={},
             physical_source_files={},
         )
-
-
-def _source_projection_metadata(
-    projection: VirtualWorkspaceSourceProjection,
-    *,
-    virtual_path: str,
-    full_virtual_path: str,
-) -> Mapping[str, str] | None:
-    for key in (virtual_path, full_virtual_path):
-        metadata = projection.source_metadata_by_path.get(str(key))
-        if metadata is not None:
-            return metadata
-    source_path = _source_projection_source_path(
-        projection,
-        virtual_path=virtual_path,
-        full_virtual_path=full_virtual_path,
-        fallback_path=full_virtual_path,
-    )
-    return projection.source_metadata_by_path.get(source_path)
-
-
-def _source_projection_source_path(
-    projection: VirtualWorkspaceSourceProjection,
-    *,
-    virtual_path: str,
-    full_virtual_path: str,
-    fallback_path: str,
-) -> str:
-    for key in (virtual_path, full_virtual_path):
-        source_path = projection.source_paths_by_virtual_path.get(str(key))
-        if source_path is not None:
-            return source_path
-    return fallback_path
 
 
 _SOURCE_BINDING_EXECUTION_CACHES: WeakKeyDictionary[
@@ -872,17 +871,17 @@ class PatternGroupRuntime:
         return [
             apply_source_image_loading_semantics(
                 payload,
-                source_metadata=_source_projection_metadata(
-                    source_projection,
+                source_metadata=source_projection.source_metadata_for(
                     virtual_path=virtual_path,
                     full_virtual_path=full_virtual_path,
                 ),
-                source_path=_source_projection_source_path(
-                    source_projection,
+                source_path=source_projection.source_path_for(
                     virtual_path=virtual_path,
                     full_virtual_path=full_virtual_path,
                     fallback_path=full_virtual_path,
                 ),
+                read_backend=Backend.DISK.value,
+                filemanager=self.context.filemanager,
             )
             for payload, virtual_path, full_virtual_path in zip(
                 raw_slices,

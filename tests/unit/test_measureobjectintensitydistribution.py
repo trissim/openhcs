@@ -2,6 +2,10 @@ import numpy as np
 
 from benchmark.cellprofiler_library.functions import measureobjectintensitydistribution as mid
 from openhcs.core.config import DtypeConfig
+from openhcs.core.runtime_semantics import (
+    ObjectIntensityDistributionMeasurementFeature,
+    indexed_object_intensity_distribution_feature_name,
+)
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     NativeNumpyRadialDistributionBackendStrategy,
@@ -30,7 +34,7 @@ def test_native_radial_distribution_excludes_pixels_without_valid_center():
     assert np.all(radial_arrays.radial_cv_by_bin[:, 0] == 0.0)
 
 
-def test_radial_distribution_marks_missing_dense_label_fraction_fields_nan():
+def test_radial_distribution_uses_dense_extent_domain_for_missing_object_rows():
     image = np.ones((3, 3), dtype=np.float32)
     labels = np.array(
         [
@@ -48,15 +52,81 @@ def test_radial_distribution_marks_missing_dense_label_fraction_fields_nan():
         dtype_config=DtypeConfig(),
     )
 
-    missing_label_measurements = [
+    gap_label_measurements = [
         measurement for measurement in measurements
         if measurement.object_label == 2
     ]
+    label_three_measurements = [
+        measurement for measurement in measurements
+        if measurement.object_label == 3
+    ]
 
-    assert len(missing_label_measurements) == 4
-    assert all(np.isnan(measurement.frac_at_d) for measurement in missing_label_measurements)
-    assert all(np.isnan(measurement.mean_frac) for measurement in missing_label_measurements)
-    assert all(measurement.radial_cv == 0.0 for measurement in missing_label_measurements)
+    assert len(gap_label_measurements) == 12
+    assert len(label_three_measurements) == 12
+    gap_values_by_feature = {
+        measurement.feature_name: measurement.result_value
+        for measurement in gap_label_measurements
+    }
+    values_by_feature = {
+        measurement.feature_name: measurement.result_value
+        for measurement in label_three_measurements
+    }
+    for bin_index in range(1, 5):
+        assert np.isfinite(
+            values_by_feature[
+                indexed_object_intensity_distribution_feature_name(
+                    ObjectIntensityDistributionMeasurementFeature.FRACTION_AT_DISTANCE,
+                    bin_index=bin_index,
+                    bin_count=4,
+                )
+            ]
+        )
+        assert np.isnan(
+            gap_values_by_feature[
+                indexed_object_intensity_distribution_feature_name(
+                    ObjectIntensityDistributionMeasurementFeature.FRACTION_AT_DISTANCE,
+                    bin_index=bin_index,
+                    bin_count=4,
+                )
+            ]
+        )
+        assert np.isnan(
+            gap_values_by_feature[
+                indexed_object_intensity_distribution_feature_name(
+                    ObjectIntensityDistributionMeasurementFeature.MEAN_FRACTION,
+                    bin_index=bin_index,
+                    bin_count=4,
+                )
+            ]
+        )
+        assert (
+            gap_values_by_feature[
+                indexed_object_intensity_distribution_feature_name(
+                    ObjectIntensityDistributionMeasurementFeature.RADIAL_CV,
+                    bin_index=bin_index,
+                    bin_count=4,
+                )
+            ]
+            == 0.0
+        )
+        assert np.isfinite(
+            values_by_feature[
+                indexed_object_intensity_distribution_feature_name(
+                    ObjectIntensityDistributionMeasurementFeature.MEAN_FRACTION,
+                    bin_index=bin_index,
+                    bin_count=4,
+                )
+            ]
+        )
+        assert np.isfinite(
+            values_by_feature[
+                indexed_object_intensity_distribution_feature_name(
+                    ObjectIntensityDistributionMeasurementFeature.RADIAL_CV,
+                    bin_index=bin_index,
+                    bin_count=4,
+                )
+            ]
+        )
 
 
 def test_radial_cv_ignores_empty_angular_wedges():

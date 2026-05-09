@@ -417,10 +417,14 @@ class SourceSpatialAlignedKwargResolutionStrategy(
             raise TypeError(
                 "Source-spatial kwarg strategy requires a source-domain adapter."
             )
-        return adapter.materialize_for_slice(
+        resolved = adapter.materialize_for_slice(
             resolver.slice_index,
             resolver.slice_count,
         )
+        reference_domain = resolver.reference_domain()
+        if reference_domain is None:
+            return resolved
+        return reference_domain.extract_source_array(resolved)
 
 
 class ImageMetadataPayloadAlignedKwargResolutionStrategy(

@@ -9,6 +9,7 @@ from types import MappingProxyType
 from nominal_refactor_advisor.collection_algebra import sorted_tuple
 
 from openhcs.core.equivalence.policy import (
+    DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
     RuntimeMeasurementDialect,
     RuntimeMeasurementQualifierValueMode,
     RuntimeMeasurementRowQualifier,
@@ -16,7 +17,9 @@ from openhcs.core.equivalence.policy import (
 )
 from openhcs.core.equivalence.tables import measurement_table_cell_payload
 
-IMAGE_IDENTITY_FIELDS = frozenset({"image_number", "image_id", "slice_index"})
+IMAGE_IDENTITY_FIELDS = (
+    DEFAULT_RUNTIME_MEASUREMENT_DIALECT.row_identity_contract.image_identity_fields
+)
 _MeasurementQualifierValueRenderer = Callable[[tuple[object, ...]], str | None]
 _MEASUREMENT_DIALECT_QUALIFIER_FIELD_NAMES_CACHE: dict[
     int,
@@ -80,14 +83,22 @@ _MEASUREMENT_QUALIFIER_VALUE_RENDERERS = _measurement_qualifier_value_renderers(
 
 def measurement_row_image_identity_key(
     row: Mapping[str, object],
+    dialect: RuntimeMeasurementDialect = DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
 ) -> tuple[tuple[str, object], ...]:
     """Return the image identity carried by a measurement row."""
+    contract = dialect.row_identity_contract
+    normalized_present_fields = frozenset(
+        normalize_runtime_identifier(field_name)
+        for field_name, value in row.items()
+        if value is not None and str(value).strip()
+    )
+    selected_fields = contract.selected_image_identity_fields(
+        normalized_present_fields
+    )
     identity_values: list[tuple[str, object]] = []
     for field_name, value in row.items():
         normalized_field_name = normalize_runtime_identifier(field_name)
-        if normalized_field_name not in IMAGE_IDENTITY_FIELDS:
-            continue
-        if value is None or not str(value).strip():
+        if normalized_field_name not in selected_fields:
             continue
         identity_values.append(
             (
@@ -101,9 +112,10 @@ def measurement_row_image_identity_key(
 def axis_scoped_measurement_row_identity(
     row: Mapping[str, object],
     axis_key: object | None,
+    dialect: RuntimeMeasurementDialect = DEFAULT_RUNTIME_MEASUREMENT_DIALECT,
 ) -> tuple[tuple[str, object], ...]:
     """Return row identity scoped by runtime axis for local image numbering."""
-    row_identity = measurement_row_image_identity_key(row)
+    row_identity = measurement_row_image_identity_key(row, dialect)
     if axis_key is None:
         return row_identity
     return (

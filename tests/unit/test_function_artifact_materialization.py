@@ -2,6 +2,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_stores import RuntimeValueStore
@@ -9,7 +10,7 @@ from openhcs.core.runtime_values import RuntimeArrayPayload, normalize_artifact_
 from openhcs.core.steps.function_artifact_materialization import (
     materialize_artifact_outputs,
 )
-from openhcs.processing.materialization import CsvOptions, JsonOptions
+from openhcs.processing.materialization import CsvOptions, JsonOptions, csv_only
 
 
 class FileManagerStub:
@@ -29,6 +30,12 @@ class FileManagerStub:
 
 class ArrayLike(RuntimeArrayPayload):
     shape = (2, 2)
+
+    def array_payload_data(self):
+        return np.zeros(self.shape, dtype=np.int32)
+
+    def with_data(self, data):
+        return data
 
 
 def _plan(output_plan):
@@ -55,13 +62,13 @@ def _context(filemanager):
     )
 
 
-def test_materialize_artifact_outputs_loads_vfs_payload_through_store_record(
+def test_materialize_artifact_outputs_uses_runtime_store_payload(
     monkeypatch,
 ):
     output_plan = ArtifactOutputPlan(
         name="positions",
         path="/memory/positions.pkl",
-        materialization=object(),
+        materialization=csv_only(),
     )
     filemanager = FileManagerStub()
     filemanager.memory[output_plan.path] = {"x": "from-vfs"}
@@ -85,7 +92,7 @@ def test_materialize_artifact_outputs_loads_vfs_payload_through_store_record(
     materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
 
     assert materialized == [
-        ({"x": "from-vfs"}, "/analysis/A01_positions_step7.roi.zip")
+        ({"x": "from-runtime"}, "/analysis/A01_positions_step7.roi.zip")
     ]
 
 
@@ -103,11 +110,13 @@ def test_materialize_artifact_outputs_requires_runtime_store_record():
         materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
 
 
-def test_materialize_artifact_outputs_requires_vfs_payload_for_store_record():
+def test_materialize_artifact_outputs_does_not_require_vfs_payload_for_store_record(
+    monkeypatch,
+):
     output_plan = ArtifactOutputPlan(
         name="positions",
         path="/memory/positions.pkl",
-        materialization=object(),
+        materialization=csv_only(),
     )
     filemanager = FileManagerStub()
     context = _context(filemanager)
@@ -116,9 +125,22 @@ def test_materialize_artifact_outputs_requires_vfs_payload_for_store_record():
         path=output_plan.path,
         backend="memory",
     )
+    materialized = []
 
-    with pytest.raises(RuntimeError, match="VFS payload is missing"):
-        materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
+    def fake_materialize(_spec, data, path, *_args, **_kwargs):
+        materialized.append((data, path))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(filemanager, _plan(output_plan), "disk", context)
+
+    assert materialized == [
+        ({"x": 1}, "/analysis/A01_positions_step7.roi.zip")
+    ]
 
 
 def test_materialize_artifact_outputs_defaults_measurements_to_existing_csv_spec(
