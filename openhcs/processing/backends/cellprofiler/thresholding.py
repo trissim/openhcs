@@ -308,13 +308,20 @@ class ThresholdDiagnosticRequest:
 class ThresholdDiagnosticDomainStrategy(ABC, metaclass=AutoRegisterMeta):
     """Apply CellProfiler threshold diagnostics in the correct image domain."""
 
-    __registry_key__ = "domain"
+    __registry_key__ = "domain_key"
     __skip_if_no_key__ = True
     domain: ClassVar[ThresholdDiagnosticDomain | None] = None
+    domain_key: ClassVar[str | None] = None
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        domain = cls.__dict__.get("domain")
+        if isinstance(domain, ThresholdDiagnosticDomain):
+            cls.domain_key = domain.value
 
     @classmethod
     def evaluate(cls, request: ThresholdDiagnosticRequest) -> tuple[float, float]:
-        strategy_type = cls.__registry__[request.domain]
+        strategy_type = cls.__registry__[request.domain.value]
         return strategy_type().diagnostics(request)
 
     @abstractmethod

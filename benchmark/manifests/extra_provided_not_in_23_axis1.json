@@ -2,7 +2,7 @@
   "cases": [
     {
       "name": "cp_tutorial_3d_noise_nuclei",
-      "dataset_path": "/tmp/openhcs_labmeeting_prelim/tutorial_axis1_subsets_20260509/3d_noise_axis1",
+      "dataset_path": "/tmp/openhcs_axisone_subsets/current/3d_noise_axis1",
       "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/3DNoiseNuclei/3DNucleiPipelineComputeConsumingFinal.cppipe",
       "dataset_id": "CellProfiler_tutorials",
       "microscope_type": "cellprofiler_tutorials",
@@ -16,7 +16,7 @@
     },
     {
       "name": "cp_tutorial_advanced_segmentation_final",
-      "dataset_path": "/tmp/openhcs_labmeeting_prelim/tutorial_axis1_subsets_20260509/advanced_axis1",
+      "dataset_path": "/tmp/openhcs_axisone_subsets/current/advanced_axis1",
       "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/AdvancedSegmentation/BBBC022_Analysis_Final.cppipe",
       "dataset_id": "CellProfiler_tutorials",
       "microscope_type": "cellprofiler_tutorials",
@@ -30,7 +30,7 @@
     },
     {
       "name": "cp_tutorial_quality_control",
-      "dataset_path": "/tmp/openhcs_labmeeting_prelim/tutorial_axis1_subsets_20260509/quality_control_axis1",
+      "dataset_path": "/tmp/openhcs_axisone_subsets/current/quality_control_axis1",
       "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/QualityControl/BBBC022_QC.cppipe",
       "dataset_id": "CellProfiler_tutorials",
       "microscope_type": "cellprofiler_tutorials",
@@ -44,7 +44,7 @@
     },
     {
       "name": "cp_tutorial_beginner_segmentation_final",
-      "dataset_path": "/tmp/openhcs_labmeeting_prelim/tutorial_axis1_subsets_20260509/beginner_axis1",
+      "dataset_path": "/tmp/openhcs_axisone_subsets/current/beginner_axis1",
       "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/BeginnerSegmentation/segmentation_final.cppipe",
       "dataset_id": "CellProfiler_tutorials",
       "microscope_type": "cellprofiler_tutorials",
@@ -58,7 +58,7 @@
     },
     {
       "name": "cp_tutorial_pixel_based_classification",
-      "dataset_path": "/tmp/openhcs_labmeeting_prelim/tutorial_axis1_subsets_20260509/pixel_axis1",
+      "dataset_path": "/tmp/openhcs_axisone_subsets/current/pixel_axis1",
       "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/PixelBasedClassification/pixel_based_classification_cho.cppipe",
       "dataset_id": "CellProfiler_tutorials",
       "microscope_type": "cellprofiler_tutorials",
@@ -72,7 +72,7 @@
     },
     {
       "name": "cp_tutorial_translocation_final",
-      "dataset_path": "/tmp/openhcs_labmeeting_prelim/tutorial_axis1_subsets_20260509/translocation_axis1",
+      "dataset_path": "/tmp/openhcs_axisone_subsets/current/translocation_axis1",
       "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler_tutorials/data/Translocation/Translocation_final.cppipe",
       "dataset_id": "CellProfiler_tutorials",
       "microscope_type": "cellprofiler_tutorials",
@@ -86,7 +86,7 @@
     },
     {
       "name": "cp4_supplement_combine_objects",
-      "dataset_path": "/tmp/openhcs_labmeeting_prelim/tutorial_axis1_subsets_20260509/cp4_combine_objects_axis1",
+      "dataset_path": "/tmp/openhcs_axisone_subsets/current/cp4_combine_objects_axis1",
       "cppipe_path": "/tmp/openhcs_benchmark_dataset_cache_last8/CellProfiler4_benchmark_supplement/data/CombineObjects/CombineObjectsDemo.cppipe",
       "dataset_id": "CellProfiler4_benchmark_supplement",
       "microscope_type": "cellprofiler4_benchmark",

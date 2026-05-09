@@ -15,6 +15,7 @@ from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from benchmark.cellprofiler_library.functions.correctilluminationapply import (
     IlluminationCorrectionMethod,
 )
+from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
 from benchmark.cellprofiler_library.functions.convertobjectstoimage import ImageMode
 from benchmark.cellprofiler_library.functions.rescaleintensity import (
     AutomaticHigh,
@@ -192,6 +193,12 @@ class ModuleUnmappedSettingIgnore(ABC, metaclass=AutoRegisterMeta):
 
     module_name: ClassVar[str | None] = None
     ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        module_name = cls.__dict__.get("module_name")
+        if isinstance(module_name, str):
+            cls.module_name = canonical_module_name(module_name)
 
     @classmethod
     def ignored_setting_names_for(cls, module_name: str) -> frozenset[str]:
@@ -498,6 +505,12 @@ class ModuleSettingsBindingStrategy(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "module_name"
     __skip_if_no_key__ = True
     module_name: ClassVar[str | None] = None
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        module_name = cls.__dict__.get("module_name")
+        if isinstance(module_name, str):
+            cls.module_name = canonical_module_name(module_name)
 
     @classmethod
     def for_module(cls, module_name: str) -> "ModuleSettingsBindingStrategy":
@@ -1692,6 +1705,19 @@ class ConvertObjectsToImageModuleSettingsBindingStrategy(
             cellprofiler_enum_value_setting_parser(ImageMode),
         ),
         SettingToKeywordBinding("Select the colormap", "colormap_value"),
+    )
+
+
+class CombineObjectsModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
+    """Bind object-overlap policy into CombineObjects' nominal method enum."""
+
+    module_name = "CombineObjects"
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Select how to handle overlapping objects",
+            "method",
+            cellprofiler_enum_setting_parser(CombineMethod),
+        ),
     )
 
 

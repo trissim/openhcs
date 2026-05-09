@@ -19,6 +19,7 @@ from benchmark.cellprofiler_library.functions.rescaleintensity import (
     RescaleMethod,
 )
 from benchmark.cellprofiler_library.functions.maskimage import MaskSource
+from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
 from benchmark.cellprofiler_library.functions.watershed import (
     WatershedDeclumpMethod,
     WatershedMethod,
@@ -159,6 +160,28 @@ def test_watershed_settings_bind_seed_dilation_structuring_element():
 
     assert bound.kwargs["structuring_element"] == "ball"
     assert bound.kwargs["structuring_element_size"] == 5
+
+
+def test_combine_objects_binds_overlap_policy_nominally():
+    module = ModuleBlock(
+        name="CombineObjects",
+        module_num=5,
+        settings={
+            "Select initial object set": "A",
+            "Select object set to combine": "B",
+            "Select how to handle overlapping objects": "Merge",
+            "Name the combined object set": "CombinedObjects",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("CombineObjects").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["method"] is CombineMethod.MERGE
+    assert not bound.unmapped_kwargs
 
 
 def test_watershed_runtime_family_follows_module_revision():
