@@ -16,7 +16,7 @@ from openhcs.core.config import LazyProcessingConfig
 from openhcs.constants.constants import VariableComponents, GroupBy
 
 # Absorbed CellProfiler functions (dynamically loaded)
-from benchmark.cellprofiler_library import get_function
+from openhcs.processing.backends.cellprofiler.library import get_function
 
 identify_primary_objects = get_function("IdentifyPrimaryObjects")
 identify_secondary_objects = get_function("IdentifySecondaryObjects")

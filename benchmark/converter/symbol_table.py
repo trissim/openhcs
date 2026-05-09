@@ -18,7 +18,6 @@ from typing import ClassVar, Iterable, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
-from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_semantics.crop import (
     CropShape,
 )
@@ -55,6 +54,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock
+from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 
 from .align_settings import align_image_plan
 from .area_occupied_settings import (

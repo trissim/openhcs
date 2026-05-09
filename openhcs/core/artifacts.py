@@ -7,6 +7,7 @@ objects, measurements, relationships, and other richer runtime state.
 
 from dataclasses import dataclass, replace
 from enum import Enum
+from collections.abc import Iterable
 from typing import Any, ClassVar, Mapping, Self, cast
 
 
@@ -131,6 +132,61 @@ class ArtifactSpec:
     materialization: Any = None
     required: bool = True
     sidecar_role: ArtifactSidecarRole | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactSpecCollection:
+    """Ordered query surface over declared artifact specs."""
+
+    specs: tuple[ArtifactSpec, ...]
+
+    def __init__(self, specs: Iterable[ArtifactSpec]):
+        normalized = tuple(specs)
+        for spec in normalized:
+            if not isinstance(spec, ArtifactSpec):
+                raise TypeError(
+                    "ArtifactSpecCollection requires ArtifactSpec values, "
+                    f"got {type(spec).__name__}."
+                )
+        object.__setattr__(self, "specs", normalized)
+
+    def of_kind(self, kind: ArtifactKind) -> tuple[ArtifactSpec, ...]:
+        """Return specs with the requested artifact kind, preserving order."""
+        resolved_kind = kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
+        return tuple(spec for spec in self.specs if spec.kind is resolved_kind)
+
+    def by_name(self, name: str) -> ArtifactSpec | None:
+        """Return the first spec with a matching artifact name."""
+        for spec in self.specs:
+            if spec.name == name:
+                return spec
+        return None
+
+    def by_name_and_kind(
+        self,
+        name: str,
+        kind: ArtifactKind,
+    ) -> ArtifactSpec | None:
+        """Return the first spec matching both artifact name and kind."""
+        resolved_kind = kind if isinstance(kind, ArtifactKind) else ArtifactKind(kind)
+        for spec in self.specs:
+            if spec.name == name and spec.kind is resolved_kind:
+                return spec
+        return None
+
+    def unique(self, *, conflict_context: str = "artifact spec") -> tuple[ArtifactSpec, ...]:
+        """Return specs de-duplicated by artifact identity, failing on conflicts."""
+        unique_specs: dict[tuple[str, ArtifactKind], ArtifactSpec] = {}
+        for spec in self.specs:
+            key = (spec.name, spec.kind)
+            existing = unique_specs.get(key)
+            if existing is not None and existing != spec:
+                raise ValueError(
+                    f"Conflicting {conflict_context} declarations for "
+                    f"{spec.kind.value}:{spec.name}."
+                )
+            unique_specs[key] = spec
+        return tuple(unique_specs.values())
 
 
 @dataclass(frozen=True)

@@ -849,6 +849,7 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
 
     assert len(generated.artifact_contracts) == 2
     assert "CELLPROFILER_MODULE_CONTRACTS" in generated.code
+    assert "benchmark.cellprofiler_library" not in generated.code
     assert "ModuleArtifactContract(" in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" in generated.code
     assert "runtime_artifact_inputs=(ArtifactSpec('Nuclei'" in generated.code

@@ -9,8 +9,8 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_library.functions.watershed import WatershedRuntimeFamily
+from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 
 from .parser import ModuleBlock
 

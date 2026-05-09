@@ -55,6 +55,16 @@ def get_contract(module_name: str) -> dict[str, Any] | None:
     return _absorbed_library.get_contract(module_name)
 
 
+def validated_contracts() -> Mapping[str, dict[str, Any]]:
+    """Return validated absorbed module contracts keyed by canonical module name."""
+    return {
+        module_name: contract
+        for module_name in list_modules()
+        if (contract := get_contract(module_name)) is not None
+        and contract.get("validated", False)
+    }
+
+
 def list_modules() -> list[str]:
     """List absorbed CellProfiler module names."""
     return _absorbed_library.list_modules()

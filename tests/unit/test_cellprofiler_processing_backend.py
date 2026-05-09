@@ -36,6 +36,16 @@ def test_openhcs_product_code_does_not_import_benchmark_package() -> None:
     assert offenders == []
 
 
+def test_generated_cellprofiler_pipelines_import_product_library() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    offenders: list[str] = []
+    for file_path in sorted((repo_root / "benchmark" / "cellprofiler_pipelines").glob("*_openhcs.py")):
+        if "benchmark.cellprofiler_library" in file_path.read_text():
+            offenders.append(str(file_path.relative_to(repo_root)))
+
+    assert offenders == []
+
+
 def test_cellprofiler_processing_backend_exports_absorbed_function() -> None:
     from openhcs.processing.backends import cellprofiler
 

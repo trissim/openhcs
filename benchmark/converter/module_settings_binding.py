@@ -10,7 +10,6 @@ from typing import Any, ClassVar, final
 
 from metaclass_registry import AutoRegisterMeta
 
-from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from benchmark.cellprofiler_library.functions.correctilluminationapply import (
     IlluminationCorrectionMethod,
@@ -38,6 +37,7 @@ from benchmark.converter.artifact_semantics import artifact_setting_symbols
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
 )
+from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs

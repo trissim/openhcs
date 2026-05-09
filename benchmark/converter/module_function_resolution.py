@@ -8,10 +8,10 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
-from benchmark.cellprofiler_library import canonical_module_name
 from openhcs.interop.cellprofiler.measurement_scope import (
     CellProfilerMeasurementTargetScope as MeasurementTargetScope,
 )
+from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 
 from .classify_objects_settings import ClassifyObjectsVariant
 from .grid_settings import DefineGridVariant, IdentifyObjectsInGridVariant

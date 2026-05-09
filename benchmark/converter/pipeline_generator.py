@@ -39,7 +39,6 @@ from openhcs.interop.cellprofiler.runtime import (
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 
-from benchmark.cellprofiler_library import canonical_module_name
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
     CalculationScope,
@@ -54,6 +53,10 @@ from openhcs.interop.cellprofiler.setting_names import (
     SettingNameFamily,
     setting_values,
     split_symbol_names,
+)
+from openhcs.processing.backends.cellprofiler.library import (
+    canonical_module_name,
+    validated_contracts,
 )
 from .symbol_table import (
     CellProfilerSymbolTable,
@@ -322,13 +325,34 @@ from openhcs.constants.input_source import InputSource
         Args:
             library_root: Path to absorbed cellprofiler_library
         """
+        self._explicit_library_root = library_root is not None
         self.library_root = library_root or Path(__file__).parent.parent / "cellprofiler_library"
         self.settings_binder = SettingsBinder()
         self._registry = self._load_registry()
 
     def _load_registry(self) -> Dict[str, dict]:
-        """Load full module metadata from absorbed library."""
-        contracts_file = self.library_root / "contracts.json"
+        """Load full module metadata from the OpenHCS-owned absorbed catalog."""
+        if self._explicit_library_root:
+            return self._load_legacy_registry(self.library_root)
+
+        try:
+            registry = {
+                module_name: {
+                    "function_name": info["function_name"],
+                    "contract": info.get("contract", "pure_2d"),
+                    "category": info.get("category", "image_operation"),
+                    "confidence": info.get("confidence", 0.5),
+                }
+                for module_name, info in validated_contracts().items()
+            }
+            logger.info(f"Loaded {len(registry)} absorbed functions from registry")
+            return registry
+        except Exception as e:
+            raise RuntimeError(f"Failed to load registry: {e}")
+
+    def _load_legacy_registry(self, library_root: Path) -> Dict[str, dict]:
+        """Load metadata from an explicit maintenance-time absorbed-library root."""
+        contracts_file = library_root / "contracts.json"
         if not contracts_file.exists():
             raise FileNotFoundError(
                 f"No absorbed library found at {contracts_file}. "
@@ -337,8 +361,7 @@ from openhcs.constants.input_source import InputSource
 
         try:
             data = json.loads(contracts_file.read_text())
-            # Store full metadata, not just function name
-            registry = {
+            return {
                 module_name: {
                     "function_name": info["function_name"],
                     "contract": info.get("contract", "pure_2d"),
@@ -348,8 +371,6 @@ from openhcs.constants.input_source import InputSource
                 for module_name, info in data.items()
                 if info.get("validated", False)
             }
-            logger.info(f"Loaded {len(registry)} absorbed functions from registry")
-            return registry
         except Exception as e:
             raise RuntimeError(f"Failed to load registry: {e}")
 

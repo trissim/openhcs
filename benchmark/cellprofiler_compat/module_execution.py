@@ -32,7 +32,7 @@ from openhcs.core.aligned_image_payload import (
     payload_slice_count,
     project_singleton_stack_image_domain,
 )
-from openhcs.core.artifacts import ArtifactKind, ArtifactSpec
+from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
 from openhcs.core.callable_contract import CallableContract, RAW_PROCESSING_FUNCTION_ATTR
 from openhcs.core.config import DtypeConfig
 from openhcs.core.memory import (
@@ -71,6 +71,7 @@ from openhcs.core.runtime_slice_alignment import (
     RuntimeSliceAlignedValueSet,
 )
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+from openhcs.core.runtime_output_matching import RuntimeReturnedOutputMatcher
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_FEATURE_NAME_FIELD,
@@ -414,18 +415,16 @@ class CellProfilerModuleExecutor:
         declared_inputs = _declared_input_specs_for_contract(self.contract)
         runtime_image_names = tuple(
             spec.name
-            for spec in _specs_of_kind(
-                self.contract.runtime_artifact_inputs,
-                ArtifactKind.IMAGE,
-            )
+            for spec in ArtifactSpecCollection(
+                self.contract.runtime_artifact_inputs
+            ).of_kind(ArtifactKind.IMAGE)
         )
         runtime_image_name_set = frozenset(runtime_image_names)
         runtime_object_names = frozenset(
             spec.name
-            for spec in _specs_of_kind(
-                self.contract.runtime_artifact_inputs,
-                ArtifactKind.OBJECT_LABELS,
-            )
+            for spec in ArtifactSpecCollection(
+                self.contract.runtime_artifact_inputs
+            ).of_kind(ArtifactKind.OBJECT_LABELS)
         )
         ordered_outputs = _output_recording_order(self.contract.outputs)
 
@@ -438,12 +437,12 @@ class CellProfilerModuleExecutor:
         object.__setattr__(
             self,
             "_object_inputs",
-            _specs_of_kind(declared_inputs, ArtifactKind.OBJECT_LABELS),
+            ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.OBJECT_LABELS),
         )
         object.__setattr__(
             self,
             "_spatial_grid_inputs",
-            _specs_of_kind(declared_inputs, ArtifactKind.SPATIAL_GRID),
+            ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.SPATIAL_GRID),
         )
         object.__setattr__(self, "_runtime_image_names_cache", runtime_image_names)
         object.__setattr__(self, "_runtime_image_name_set", runtime_image_name_set)
@@ -452,7 +451,7 @@ class CellProfilerModuleExecutor:
             "_external_source_image_names_cache",
             external_image_names := tuple(
                 spec.name
-                for spec in _specs_of_kind(declared_inputs, ArtifactKind.IMAGE)
+                for spec in ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)
                 if spec.name not in runtime_image_name_set
             ),
         )
@@ -461,9 +460,8 @@ class CellProfilerModuleExecutor:
             "_external_source_object_names_cache",
             external_object_names := tuple(
                 spec.name
-                for spec in _specs_of_kind(
-                    self.contract.inputs,
-                    ArtifactKind.OBJECT_LABELS,
+                for spec in ArtifactSpecCollection(self.contract.inputs).of_kind(
+                    ArtifactKind.OBJECT_LABELS
                 )
                 if spec.name not in runtime_object_names
             ),
@@ -508,7 +506,7 @@ class CellProfilerModuleExecutor:
 
     @property
     def image_outputs(self) -> tuple[ArtifactSpec, ...]:
-        return _specs_of_kind(self.outputs, ArtifactKind.IMAGE)
+        return ArtifactSpecCollection(self.outputs).of_kind(ArtifactKind.IMAGE)
 
     def prepare(self, func: Callable[..., Any]) -> None:
         """Resolve nominal policies used by this executor before timed execution."""
@@ -763,7 +761,7 @@ class CellProfilerModuleExecutor:
     ) -> Any:
         function_name = getattr(func, "__name__", "<unknown>")
         object_inputs = self._object_input_specs()
-        measurement_outputs = _specs_of_kind(self.outputs, ArtifactKind.MEASUREMENTS)
+        measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(ArtifactKind.MEASUREMENTS)
         if len(measurement_outputs) != 1:
             raise NotImplementedError(
                 f"{self.module_name} per-object execution requires exactly one "
@@ -1235,7 +1233,7 @@ class CellProfilerModuleExecutor:
         **kwargs: Any,
     ) -> Any:
         function_name = getattr(func, "__name__", "<unknown>")
-        measurement_outputs = _specs_of_kind(self.outputs, ArtifactKind.MEASUREMENTS)
+        measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(ArtifactKind.MEASUREMENTS)
         if len(measurement_outputs) != 1:
             raise NotImplementedError(
                 f"{self.module_name} per-image execution requires exactly one "
@@ -1587,9 +1585,8 @@ class CellProfilerModuleExecutor:
                 "no declared special_inputs binding."
             )
 
-        object_inputs = _specs_of_kind(
-            runtime_inputs,
-            ArtifactKind.OBJECT_LABELS,
+        object_inputs = ArtifactSpecCollection(runtime_inputs).of_kind(
+            ArtifactKind.OBJECT_LABELS
         )
         return object_input_policy.bind(
             ObjectInputBindingRequest(
@@ -2912,7 +2909,7 @@ class CellProfilerObjectMeasurementVectorBinding:
             request=request,
             object_name=object_name,
             feature_name=feature_name,
-            object_spec=_spec_by_name(request.object_inputs, object_name),
+            object_spec=ArtifactSpecCollection(request.object_inputs).by_name(object_name),
         )
 
     def vector(self) -> CellProfilerMeasurementVector:
@@ -3031,7 +3028,7 @@ class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
         func: Callable[..., Any],
         declared_inputs: tuple[ArtifactSpec, ...],
     ) -> tuple[ArtifactSpec, ...]:
-        image_inputs = _specs_of_kind(declared_inputs, ArtifactKind.IMAGE)
+        image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)
         special_image_count = len(
             CellProfilerSpecialInputPolicy.for_module(
                 canonical_module_name(module_name)
@@ -4110,7 +4107,7 @@ class FilterObjectsRuntimeInputPlan:
         runtime_inputs: tuple[ArtifactSpec, ...],
         kwargs: Mapping[str, Any],
     ) -> "FilterObjectsRuntimeInputPlan":
-        object_inputs = _specs_of_kind(runtime_inputs, ArtifactKind.OBJECT_LABELS)
+        object_inputs = ArtifactSpecCollection(runtime_inputs).of_kind(ArtifactKind.OBJECT_LABELS)
         object_count = int(kwargs.get("additional_object_count", 0)) + 1
         enclosing_name = kwargs.get("enclosing_object_name")
         object_specs = object_inputs[:object_count]
@@ -4118,15 +4115,18 @@ class FilterObjectsRuntimeInputPlan:
         relationship_spec = None
         measurement_relationship_specs: list[ArtifactSpec] = []
         if enclosing_name is not None:
-            enclosing_spec = _spec_by_name(object_inputs, str(enclosing_name))
+            enclosing_spec = ArtifactSpecCollection(object_inputs).by_name(
+                str(enclosing_name)
+            )
             if enclosing_spec is None:
                 raise RuntimeError(
                     "FilterObjects enclosing object input "
                     f"{enclosing_name!r} was not declared in the runtime contract."
                 )
             if object_specs:
-                relationship_spec = _spec_by_name_and_kind(
-                    runtime_inputs,
+                relationship_spec = ArtifactSpecCollection(
+                    runtime_inputs
+                ).by_name_and_kind(
                     parent_child_relationship_artifact_name(
                         str(enclosing_name),
                         object_specs[0].name,
@@ -4135,8 +4135,7 @@ class FilterObjectsRuntimeInputPlan:
                 )
         if object_specs:
             for child_object_name in _filter_objects_child_count_object_names(kwargs):
-                relationship = _spec_by_name_and_kind(
-                    runtime_inputs,
+                relationship = ArtifactSpecCollection(runtime_inputs).by_name_and_kind(
                     parent_child_relationship_artifact_name(
                         object_specs[0].name,
                         child_object_name,
@@ -4149,7 +4148,7 @@ class FilterObjectsRuntimeInputPlan:
             object_specs=object_specs,
             enclosing_spec=enclosing_spec,
             relationship_spec=relationship_spec,
-            measurement_relationship_specs=_unique_specs(measurement_relationship_specs),
+            measurement_relationship_specs=ArtifactSpecCollection(measurement_relationship_specs).unique(conflict_context="CellProfiler input spec"),
         )
 
 
@@ -4261,7 +4260,7 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             object_name = _optional_string_kwarg(request.kwargs, object_kwarg)
             if object_name is None or count_feature_object_name(feature_name) is not None:
                 return None
-            object_spec = _spec_by_name(request.object_inputs, object_name)
+            object_spec = ArtifactSpecCollection(request.object_inputs).by_name(object_name)
             if object_spec is None:
                 return None
             bindings.append(
@@ -5285,10 +5284,9 @@ class AlignMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
     ) -> CellProfilerMeasurementRecord:
         output_names = tuple(
             spec.name
-            for spec in _specs_of_kind(
-                request.executor.contract.declared_outputs,
-                ArtifactKind.IMAGE,
-            )
+            for spec in ArtifactSpecCollection(
+                request.executor.contract.declared_outputs
+            ).of_kind(ArtifactKind.IMAGE)
         )
         return CellProfilerMeasurementRecord(
             rows=AlignMeasurementRows(request.value, output_names=output_names).rows(),
@@ -5712,12 +5710,12 @@ def _output_values_by_kind(
     func: Callable[..., Any] | None = None,
     declared_output_specs: tuple[ArtifactSpec, ...] = (),
 ) -> dict[str, Any]:
-    resolved = CellProfilerReturnedOutputValueMatcher(
+    resolved = RuntimeReturnedOutputMatcher(
         retained_specs=output_specs,
         declared_specs=declared_output_specs,
         main_output=main_output,
         artifact_values=artifact_values,
-        func=func,
+        returned_specs=CellProfilerCallableOutputSpecs(func).artifact_specs(),
     ).resolve()
     if resolved is not None:
         return resolved
@@ -5761,243 +5759,19 @@ class CellProfilerOutputValueResolution:
         return cls(recorded_values, context_values)
 
 
-class CellProfilerOutputRole(str, Enum):
-    """Nominal roles used to match CellProfiler return values to artifacts."""
-
-    MAIN_FLOW = "main_flow"
-    SIDECAR = "sidecar"
-
-    @classmethod
-    def for_spec(cls, spec: ArtifactSpec) -> "CellProfilerOutputRole":
-        if (
-            spec.kind in (ArtifactKind.IMAGE, ArtifactKind.OBJECT_LABELS)
-            and spec.sidecar_role is None
-        ):
-            return cls.MAIN_FLOW
-        return cls.SIDECAR
-
-
 @dataclass(frozen=True, slots=True)
-class CellProfilerReturnedOutputValueMatcher:
-    """Resolve retained output specs against a CellProfiler function return."""
+class CellProfilerCallableOutputSpecs:
+    """CellProfiler special-output declarations lowered to artifact specs."""
 
-    retained_specs: tuple[ArtifactSpec, ...]
-    declared_specs: tuple[ArtifactSpec, ...]
-    main_output: Any
-    artifact_values: tuple[Any, ...]
     func: Callable[..., Any] | None = None
-    def resolve(self) -> dict[str, Any] | None:
-        if not self.retained_specs:
-            return {}
-        declared_resolution = self._resolve_from_declared_outputs()
-        if declared_resolution is not None:
-            return declared_resolution
 
-        if len(self.retained_specs) == 1:
-            return {
-                self.retained_specs[0].name: self._single_output_value(
-                    self.retained_specs[0]
-                )
-            }
-
-        positional_resolution = self._resolve_positional_outputs()
-        if positional_resolution is not None:
-            return positional_resolution
-
-        return self._resolve_from_callable_special_outputs()
-
-    def _single_output_value(self, spec: ArtifactSpec) -> Any:
-        if spec.kind is ArtifactKind.IMAGE:
-            return self.main_output
-        if not self.artifact_values:
-            raise ValueError(
-                f"CellProfiler module did not return a value for output '{spec.name}'."
-            )
-        if spec.kind is ArtifactKind.OBJECT_LABELS:
-            return self.artifact_values[-1]
-        if spec.kind is ArtifactKind.MEASUREMENTS:
-            return self.artifact_values[-1]
-        return self.artifact_values[0]
-
-    def _resolve_from_declared_outputs(self) -> dict[str, Any] | None:
-        if not self.declared_specs:
-            return None
-        return self._resolve_from_candidates(
-            self._declared_return_candidates(),
-            require_exact_names=True,
-        )
-
-    def _declared_return_candidates(self) -> tuple[tuple[ArtifactSpec, Any], ...]:
-        main_index = self._declared_main_output_index()
-        first_main_index = self._first_declared_main_output_index()
-        if first_main_index is not None and first_main_index == 0:
-            tail_specs = self.declared_specs[1:]
-            if len(tail_specs) < len(self.artifact_values):
-                return ()
-            return (
-                (self.declared_specs[first_main_index], self.main_output),
-                *zip(
-                    tail_specs[: len(self.artifact_values)],
-                    self.artifact_values,
-                    strict=True,
-                ),
-            )
-        if main_index is None:
-            if len(self.declared_specs) < len(self.artifact_values):
-                return ()
-            return tuple(
-                zip(
-                    self.declared_specs[: len(self.artifact_values)],
-                    self.artifact_values,
-                    strict=True,
-                )
-            )
-        tail_specs = self.declared_specs[main_index + 1 :]
-        if len(tail_specs) < len(self.artifact_values):
-            return ()
-        return (
-            (self.declared_specs[main_index], self.main_output),
-            *zip(tail_specs[: len(self.artifact_values)], self.artifact_values, strict=True),
-        )
-
-    def _declared_main_output_index(self) -> int | None:
-        if len(self.declared_specs) != len(self.artifact_values) + 1:
-            return None
-        return self._first_declared_main_output_index()
-
-    def _first_declared_main_output_index(self) -> int | None:
-        for index, spec in enumerate(self.declared_specs):
-            if CellProfilerOutputRole.for_spec(spec) is CellProfilerOutputRole.MAIN_FLOW:
-                return index
-        return None
-
-    def _resolve_positional_outputs(self) -> dict[str, Any] | None:
-        if (
-            self.retained_specs[0].kind is ArtifactKind.IMAGE
-            and len(self.retained_specs) == len(self.artifact_values) + 1
-        ):
-            return {
-                self.retained_specs[0].name: self.main_output,
-                **{
-                    spec.name: value
-                    for spec, value in zip(
-                        self.retained_specs[1:],
-                        self.artifact_values,
-                        strict=True,
-                    )
-                },
-            }
-        if len(self.retained_specs) != len(self.artifact_values):
-            return None
-        return {
-            spec.name: value
-            for spec, value in zip(self.retained_specs, self.artifact_values, strict=True)
-        }
-
-    def _resolve_from_callable_special_outputs(self) -> dict[str, Any] | None:
-        candidate_specs = self._callable_returned_output_specs()
-        if not candidate_specs:
-            return None
-        candidate_specs = self._returned_output_specs_with_retained_tail(
-            candidate_specs,
-            len(self.artifact_values),
-        )
-        return self._resolve_from_candidates(
-            (
-                (ArtifactSpec("<main>", ArtifactKind.IMAGE), self.main_output),
-                *zip(candidate_specs, self.artifact_values, strict=False),
-            ),
-            require_exact_names=False,
-        )
-
-    def _resolve_from_candidates(
-        self,
-        candidates: tuple[tuple[ArtifactSpec, Any], ...],
-        *,
-        require_exact_names: bool,
-    ) -> dict[str, Any] | None:
-        if not candidates:
-            return None
-        resolved: dict[str, Any] = {}
-        cursor = 0
-        for spec in self.retained_specs:
-            match_index = self._next_candidate_index(
-                candidates,
-                spec,
-                cursor,
-                require_exact_names=require_exact_names,
-            )
-            if match_index is None:
-                return None
-            resolved[spec.name] = candidates[match_index][1]
-            cursor = match_index + 1
-        return resolved
-
-    def _next_candidate_index(
-        self,
-        candidates: tuple[tuple[ArtifactSpec, Any], ...],
-        retained_spec: ArtifactSpec,
-        cursor: int,
-        *,
-        require_exact_names: bool,
-    ) -> int | None:
-        for index in range(cursor, len(candidates)):
-            if self._same_artifact_identity(candidates[index][0], retained_spec):
-                return index
-        if require_exact_names:
-            return None
-        for index in range(cursor, len(candidates)):
-            if self._same_artifact_semantics(candidates[index][0], retained_spec):
-                return index
-        return None
-
-    @staticmethod
-    def _same_artifact_identity(left: ArtifactSpec, right: ArtifactSpec) -> bool:
-        return (
-            left.name == right.name
-            and left.kind is right.kind
-            and left.sidecar_role is right.sidecar_role
-        )
-
-    @staticmethod
-    def _same_artifact_semantics(left: ArtifactSpec, right: ArtifactSpec) -> bool:
-        return left.kind is right.kind and left.sidecar_role is right.sidecar_role
-
-    def _returned_output_specs_with_retained_tail(
-        self,
-        candidate_specs: tuple[ArtifactSpec, ...],
-        artifact_value_count: int,
-    ) -> tuple[ArtifactSpec, ...]:
-        if len(candidate_specs) >= artifact_value_count:
-            return candidate_specs
-        remaining_counts: dict[tuple[ArtifactKind, Any], int] = {}
-        for spec in self.retained_specs:
-            key = (spec.kind, spec.sidecar_role)
-            remaining_counts[key] = remaining_counts.get(key, 0) + 1
-        for spec in candidate_specs:
-            key = (spec.kind, spec.sidecar_role)
-            if key not in remaining_counts:
-                continue
-            remaining_counts[key] -= 1
-            if remaining_counts[key] <= 0:
-                remaining_counts.pop(key)
-        tail: list[ArtifactSpec] = []
-        for spec in self.retained_specs:
-            key = (spec.kind, spec.sidecar_role)
-            count = remaining_counts.get(key, 0)
-            if count <= 0:
-                continue
-            tail.append(spec)
-            remaining_counts[key] = count - 1
-        return (*candidate_specs, *tail[: artifact_value_count - len(candidate_specs)])
-
-    def _callable_returned_output_specs(self) -> tuple[ArtifactSpec, ...]:
+    def artifact_specs(self) -> tuple[ArtifactSpec, ...]:
         if self.func is None:
             return ()
-        raw_outputs = self._callable_special_outputs(self.func)
+        raw_outputs = self.callable_special_outputs(self.func)
         return tuple(
             ArtifactSpec(
-                self._special_output_name(output_spec),
+                self.special_output_name(output_spec),
                 SpecialOutputKindClassifier.kind_for(output_spec),
             )
             for output_spec in raw_outputs
@@ -6008,18 +5782,10 @@ class CellProfilerReturnedOutputValueMatcher:
         cls,
         func: Callable[..., Any] | None,
     ) -> tuple[ArtifactSpec, ...]:
-        if func is None:
-            return ()
-        return tuple(
-            ArtifactSpec(
-                cls._special_output_name(output_spec),
-                SpecialOutputKindClassifier.kind_for(output_spec),
-            )
-            for output_spec in cls._callable_special_outputs(func)
-        )
+        return cls(func).artifact_specs()
 
     @staticmethod
-    def _callable_special_outputs(func: Callable[..., Any]) -> tuple[object, ...]:
+    def callable_special_outputs(func: Callable[..., Any]) -> tuple[object, ...]:
         candidates: list[Any] = [func]
         raw_func = getattr(func, RAW_PROCESSING_FUNCTION_ATTR, None)
         if callable(raw_func):
@@ -6034,7 +5800,7 @@ class CellProfilerReturnedOutputValueMatcher:
         return ()
 
     @staticmethod
-    def _special_output_name(spec: object) -> str:
+    def special_output_name(spec: object) -> str:
         if isinstance(spec, str):
             return spec
         if isinstance(spec, tuple) and len(spec) == 2 and isinstance(spec[0], str):
@@ -6043,7 +5809,7 @@ class CellProfilerReturnedOutputValueMatcher:
 
 
 def _single_output_object_name(request: CellProfilerOutputRecordRequest) -> str:
-    object_outputs = _specs_of_kind(request.executor.outputs, ArtifactKind.OBJECT_LABELS)
+    object_outputs = ArtifactSpecCollection(request.executor.outputs).of_kind(ArtifactKind.OBJECT_LABELS)
     if len(object_outputs) != 1:
         raise NotImplementedError(
             f"{request.executor.module_name} threshold measurement semantics "
@@ -7589,48 +7355,6 @@ def _label_payload_small_removed(payload: Any) -> Any | None:
     return collapse_singleton_object_label_stack(payload.small_removed_labels)
 
 
-def _specs_of_kind(
-    specs: Sequence[ArtifactSpec],
-    kind: ArtifactKind,
-) -> tuple[ArtifactSpec, ...]:
-    return tuple(spec for spec in specs if spec.kind is kind)
-
-
-def _spec_by_name(
-    specs: Sequence[ArtifactSpec],
-    name: str,
-) -> ArtifactSpec | None:
-    for spec in specs:
-        if spec.name == name:
-            return spec
-    return None
-
-
-def _spec_by_name_and_kind(
-    specs: Sequence[ArtifactSpec],
-    name: str,
-    kind: ArtifactKind,
-) -> ArtifactSpec | None:
-    for spec in specs:
-        if spec.name == name and spec.kind is kind:
-            return spec
-    return None
-
-
-def _unique_specs(specs: Sequence[ArtifactSpec]) -> tuple[ArtifactSpec, ...]:
-    unique: dict[tuple[str, ArtifactKind], ArtifactSpec] = {}
-    for spec in specs:
-        key = (spec.name, spec.kind)
-        existing = unique.get(key)
-        if existing is not None and existing != spec:
-            raise ValueError(
-                f"Conflicting CellProfiler input spec declarations for "
-                f"{spec.kind.value}:{spec.name}."
-            )
-        unique[key] = spec
-    return tuple(unique.values())
-
-
 def _require_exact_object_count(
     module_name: str,
     object_inputs: tuple[ArtifactSpec, ...],
@@ -7660,7 +7384,7 @@ def _object_input_labels(
 def _measurement_object_name(
     inputs: tuple[ArtifactSpec, ...],
 ) -> str | None:
-    object_inputs = _specs_of_kind(inputs, ArtifactKind.OBJECT_LABELS)
+    object_inputs = ArtifactSpecCollection(inputs).of_kind(ArtifactKind.OBJECT_LABELS)
     if len(object_inputs) == 1:
         return object_inputs[0].name
     return None
@@ -7694,14 +7418,15 @@ class RelationshipEndpointResolver:
 
     @property
     def object_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return _specs_of_kind(
-            self.request.executor._declared_input_specs(),
-            ArtifactKind.OBJECT_LABELS,
+        return ArtifactSpecCollection(
+            self.request.executor._declared_input_specs()
+        ).of_kind(
+            ArtifactKind.OBJECT_LABELS
         )
 
     @property
     def object_outputs(self) -> tuple[ArtifactSpec, ...]:
-        return _specs_of_kind(self.request.executor.outputs, ArtifactKind.OBJECT_LABELS)
+        return ArtifactSpecCollection(self.request.executor.outputs).of_kind(ArtifactKind.OBJECT_LABELS)
 
     def endpoint_specs(
         self,
@@ -7730,12 +7455,11 @@ class RelationshipEndpointResolver:
         )
         if endpoints is not None:
             parent_name, child_name = endpoints
-            parent_spec = _spec_by_name(self.object_inputs, parent_name)
+            parent_spec = ArtifactSpecCollection(self.object_inputs).by_name(parent_name)
             if parent_spec is not None:
-                child_spec = _spec_by_name(
+                child_spec = ArtifactSpecCollection(
                     (*self.object_outputs, *self.object_inputs),
-                    child_name,
-                )
+                ).by_name(child_name)
                 return RelationshipEndpointContract(
                     parent_spec,
                     child_spec or ArtifactSpec(
@@ -8268,11 +7992,11 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
 
     @property
     def object_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return _specs_of_kind(self.special_input_specs, ArtifactKind.OBJECT_LABELS)
+        return ArtifactSpecCollection(self.special_input_specs).of_kind(ArtifactKind.OBJECT_LABELS)
 
     @property
     def image_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return _specs_of_kind(self.special_input_specs, ArtifactKind.IMAGE)
+        return ArtifactSpecCollection(self.special_input_specs).of_kind(ArtifactKind.IMAGE)
 
     def runtime_value(
         self,
@@ -8351,7 +8075,7 @@ class CropSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         declared_inputs: tuple[ArtifactSpec, ...],
     ) -> tuple[ArtifactSpec, ...]:
         del module_name, func
-        image_inputs = _specs_of_kind(declared_inputs, ArtifactKind.IMAGE)
+        image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)
         return image_inputs[1:]
 
     def bind(
@@ -8478,7 +8202,7 @@ class WatershedSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         declared_inputs: tuple[ArtifactSpec, ...],
     ) -> tuple[ArtifactSpec, ...]:
         del module_name, func
-        return _specs_of_kind(declared_inputs, ArtifactKind.IMAGE)[1:]
+        return ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)[1:]
 
     def bind(
         self,
@@ -8502,9 +8226,8 @@ class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicy):
     ) -> dict[str, Any]:
         object_inputs = request.object_inputs
         _require_exact_object_count(request.module_name, object_inputs, 1)
-        measurement_inputs = _specs_of_kind(
-            request.runtime_inputs,
-            ArtifactKind.MEASUREMENTS,
+        measurement_inputs = ArtifactSpecCollection(request.runtime_inputs).of_kind(
+            ArtifactKind.MEASUREMENTS
         )
         bound: dict[str, Any] = {
             "worm_labels": request.labels_for(object_inputs[0]),
@@ -8676,7 +8399,7 @@ def _signature_special_image_inputs(
     func: Callable[..., Any],
     declared_inputs: tuple[ArtifactSpec, ...],
 ) -> tuple[ArtifactSpec, ...]:
-    image_inputs = _specs_of_kind(declared_inputs, ArtifactKind.IMAGE)
+    image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)
     special_input_count = len(special_input_names_from_callable(func))
     non_image_count = len(
         tuple(spec for spec in declared_inputs if spec.kind is not ArtifactKind.IMAGE)
@@ -8791,14 +8514,13 @@ class CellProfilerPerImageMeasurementPolicy:
             return False
         if any(
             spec.kind is not ArtifactKind.MEASUREMENTS
-            for spec in CellProfilerReturnedOutputValueMatcher.callable_returned_output_specs(
+            for spec in CellProfilerCallableOutputSpecs.callable_returned_output_specs(
                 request.func
             )
         ):
             return False
-        measurement_outputs = _specs_of_kind(
-            request.outputs,
-            ArtifactKind.MEASUREMENTS,
+        measurement_outputs = ArtifactSpecCollection(request.outputs).of_kind(
+            ArtifactKind.MEASUREMENTS
         )
         if len(measurement_outputs) != 1:
             return False

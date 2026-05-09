@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
-from benchmark.cellprofiler_library import (
+from openhcs.processing.backends.cellprofiler.library import (
     canonical_module_name,
     get_contract,
     list_modules,
