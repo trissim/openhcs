@@ -289,6 +289,27 @@ CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS = (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerModulePolicyRegistryConfigContext:
+    """Metaclass registry-config context for CellProfiler module policies."""
+
+    raw_registry_config: Any
+    defaults: CellProfilerModulePolicyRegistryDefaults
+
+    def apply_root_defaults(self, bases: tuple[type, ...], attrs: dict[str, Any]) -> None:
+        """Install implicit root defaults when this declaration starts a registry."""
+        if self.defaults.applies_to_root_bases(bases):
+            self.defaults.apply_to(attrs)
+
+
+CELLPROFILER_MODULE_POLICY_IMPLICIT_REGISTRY_CONTEXT = (
+    CellProfilerModulePolicyRegistryConfigContext(
+        raw_registry_config=None,
+        defaults=CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS,
+    )
+)
+
+
 class CellProfilerModulePolicyMeta(AutoRegisterMeta):
     """AutoRegisterMeta variant for CellProfiler module-name policy families."""
 
@@ -297,16 +318,18 @@ class CellProfilerModulePolicyMeta(AutoRegisterMeta):
         name: str,
         bases: tuple[type, ...],
         attrs: dict[str, Any],
-        registry_config: Any | None = None,
+        registry_config: CellProfilerModulePolicyRegistryConfigContext = (
+            CELLPROFILER_MODULE_POLICY_IMPLICIT_REGISTRY_CONTEXT
+        ),
     ):
-        if (
-            registry_config is None
-            and CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.applies_to_root_bases(
-                bases
-            )
-        ):
-            CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.apply_to(attrs)
-        return super().__new__(mcs, name, bases, attrs, registry_config)
+        registry_config.apply_root_defaults(bases, attrs)
+        return super().__new__(
+            mcs,
+            name,
+            bases,
+            attrs,
+            registry_config.raw_registry_config,
+        )
 
 
 class CellProfilerSpecialInputPayloadSemantics(str, Enum):
