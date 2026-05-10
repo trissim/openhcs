@@ -652,9 +652,12 @@ def module_contract_literal(
     ),
 ) -> str:
     """Render a deterministic Python literal for generated pipeline files."""
-    input_specs = ", ".join(_artifact_spec_literal(spec) for spec in contract.inputs)
+    artifact_literals = ArtifactSpecLiteralAuthority()
+    input_specs = ", ".join(
+        artifact_literals.literal_for(spec) for spec in contract.inputs
+    )
     output_specs = ", ".join(
-        _artifact_spec_literal(
+        artifact_literals.literal_for(
             spec,
             preserve_default_materialization=(
                 (spec.kind, spec.name) not in externally_materialized_outputs
@@ -668,7 +671,8 @@ def module_contract_literal(
         for spec in contract.outputs
     )
     runtime_input_specs = ", ".join(
-        _artifact_spec_literal(spec) for spec in contract.runtime_artifact_inputs
+        artifact_literals.literal_for(spec)
+        for spec in contract.runtime_artifact_inputs
     )
     if len(contract.inputs) == 1:
         input_specs += ","
@@ -682,21 +686,46 @@ def module_contract_literal(
         f"inputs=({input_specs}), "
         f"runtime_artifact_inputs=({runtime_input_specs}), "
         f"outputs=({output_specs})"
-        f"{_declared_outputs_literal(contract)}"
+        f"{artifact_literals.declared_outputs_literal(contract)}"
         ")"
     )
 
 
-def _declared_outputs_literal(contract: ModuleArtifactContracts) -> str:
-    """Render declared outputs only when pruning made them differ from outputs."""
-    if contract.declared_outputs == contract.outputs:
-        return ""
-    declared_output_specs = ", ".join(
-        _artifact_spec_literal(spec) for spec in contract.declared_outputs
-    )
-    if len(contract.declared_outputs) == 1:
-        declared_output_specs += ","
-    return f", declared_outputs=({declared_output_specs})"
+class ArtifactSpecLiteralAuthority:
+    """Nominal authority for generated ArtifactSpec Python literals."""
+
+    def declared_outputs_literal(self, contract: ModuleArtifactContracts) -> str:
+        """Render declared outputs only when pruning made them differ from outputs."""
+        if contract.declared_outputs == contract.outputs:
+            return ""
+        declared_output_specs = ", ".join(
+            self.literal_for(spec) for spec in contract.declared_outputs
+        )
+        if len(contract.declared_outputs) == 1:
+            declared_output_specs += ","
+        return f", declared_outputs=({declared_output_specs})"
+
+    def literal_for(
+        self,
+        spec: ArtifactSpec,
+        *,
+        preserve_default_materialization: bool = False,
+        materialization_literal: str | None = None,
+    ) -> str:
+        keyword_args: list[str] = []
+        if materialization_literal is not None:
+            keyword_args.append(f"materialization={materialization_literal}")
+        elif (
+            preserve_default_materialization
+            and spec.kind not in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
+        ):
+            keyword_args.append("materialization=NO_ARTIFACT_MATERIALIZATION")
+        if spec.sidecar_role is not None:
+            keyword_args.append(
+                f"sidecar_role=ArtifactSidecarRole.{spec.sidecar_role.name}"
+            )
+        args = [repr(spec.name), f"ArtifactKind.{spec.kind.name}", *keyword_args]
+        return f"ArtifactSpec({', '.join(args)})"
 
 
 def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
@@ -770,8 +799,10 @@ def _source_selector_literal(selector: SourceSelector) -> str:
             metadata_literals += ","
         field_literals.append(f"metadata=({metadata_literals})")
     if selector.filters:
+        filter_literals_authority = SourceFilterClauseLiteralAuthority()
         filter_literals = ", ".join(
-            _source_filter_clause_literal(clause) for clause in selector.filters
+            filter_literals_authority.literal_for(clause)
+            for clause in selector.filters
         )
         if len(selector.filters) == 1:
             filter_literals += ","
@@ -799,8 +830,10 @@ def _metadata_extraction_rule_literal(rule: MetadataExtractionRule) -> str:
         f"pattern={rule.pattern!r}",
     ]
     if rule.filters:
+        filter_literals_authority = SourceFilterClauseLiteralAuthority()
         filter_literals = ", ".join(
-            _source_filter_clause_literal(clause) for clause in rule.filters
+            filter_literals_authority.literal_for(clause)
+            for clause in rule.filters
         )
         if len(rule.filters) == 1:
             filter_literals += ","
@@ -808,14 +841,17 @@ def _metadata_extraction_rule_literal(rule: MetadataExtractionRule) -> str:
     return f"MetadataExtractionRule({', '.join(field_literals)})"
 
 
-def _source_filter_clause_literal(clause: SourceFilterClause) -> str:
-    field_literals = [
-        f"subject=SourceFilterSubject.{clause.subject.name}",
-        f"match_type=SourceFilterMatchType.{clause.match_type.name}",
-    ]
-    if clause.value is not None:
-        field_literals.append(f"value={clause.value!r}")
-    return f"SourceFilterClause({', '.join(field_literals)})"
+class SourceFilterClauseLiteralAuthority:
+    """Nominal authority for generated SourceFilterClause Python literals."""
+
+    def literal_for(self, clause: SourceFilterClause) -> str:
+        field_literals = [
+            f"subject=SourceFilterSubject.{clause.subject.name}",
+            f"match_type=SourceFilterMatchType.{clause.match_type.name}",
+        ]
+        if clause.value is not None:
+            field_literals.append(f"value={clause.value!r}")
+        return f"SourceFilterClause({', '.join(field_literals)})"
 
 
 def _source_binding_match_plan_literal(plan: SourceBindingMatchPlan) -> str:
@@ -848,28 +884,6 @@ def _source_binding_match_field_literal(field: SourceBindingMatchField) -> str:
         f"alias={field.alias!r}, metadata_field={field.metadata_field!r}"
         ")"
     )
-
-
-def _artifact_spec_literal(
-    spec: ArtifactSpec,
-    *,
-    preserve_default_materialization: bool = False,
-    materialization_literal: str | None = None,
-) -> str:
-    keyword_args: list[str] = []
-    if materialization_literal is not None:
-        keyword_args.append(f"materialization={materialization_literal}")
-    elif (
-        preserve_default_materialization
-        and spec.kind not in DEFAULT_ARTIFACT_MATERIALIZATION_RULES
-    ):
-        keyword_args.append("materialization=NO_ARTIFACT_MATERIALIZATION")
-    if spec.sidecar_role is not None:
-        keyword_args.append(
-            f"sidecar_role=ArtifactSidecarRole.{spec.sidecar_role.name}"
-        )
-    args = [repr(spec.name), f"ArtifactKind.{spec.kind.name}", *keyword_args]
-    return f"ArtifactSpec({', '.join(args)})"
 
 
 @dataclass(frozen=True, slots=True)
