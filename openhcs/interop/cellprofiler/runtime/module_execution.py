@@ -1940,7 +1940,7 @@ class CellProfilerModuleExecutor:
             _CELLPROFILER_EXECUTION_MODE_OVERRIDE_KWARG,
             None,
         )
-        if self._canonical_module_name == "TrackObjects":
+        if self._canonical_module_name == _TRACK_OBJECTS_MODULE:
             source_image_name = (
                 image_request.source_image_name
                 or self._object_input_source_image_name(adapter)
@@ -3269,6 +3269,7 @@ _MEASURE_TEXTURE_MODULE = "MeasureTexture"
 _MEASURE_COLOCALIZATION_MODULE = "MeasureColocalization"
 _MEASURE_GRANULARITY_MODULE = "MeasureGranularity"
 _MEASURE_OBJECT_NEIGHBORS_MODULE = "MeasureObjectNeighbors"
+_CROP_MODULE = "Crop"
 _TRACK_OBJECTS_MODULE = "TrackObjects"
 _OBJECT_ROW_SEQUENCE_KWARGS = frozenset({"object_labels"})
 _MEASUREMENT_COMPLETION_OBJECT_ID_FIELDS = (
@@ -4049,7 +4050,7 @@ _SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS = (
     SingleObjectLabelInputPolicySpec(
         class_name="CropInputPolicy",
         base_type=DeclaredSingleObjectLabelInputPolicy,
-        module_name="Crop",
+        module_name=_CROP_MODULE,
         label_kwarg="cropping_labels",
     ),
     SingleObjectLabelInputPolicySpec(
@@ -5542,7 +5543,7 @@ class ProducedImageMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
 CellProfilerModulePolicyLeafSpec(
     class_name="CropMeasurementRecordBuilder",
     base_type=ProducedImageMeasurementRecordBuilder,
-    module_name="Crop",
+    module_name=_CROP_MODULE,
 ).declare_in(globals())
 
 
@@ -5788,7 +5789,7 @@ class IdentifyTertiaryObjectsMeasurementRecordBuilder(
 class TrackObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
     """Expose TrackObjects long-form image and object measurements."""
 
-    module_name = "TrackObjects"
+    module_name = _TRACK_OBJECTS_MODULE
 
     def build(
         self,
@@ -8288,7 +8289,7 @@ class PositionalSpecialInputPolicy(CellProfilerSpecialInputPolicy):
 class CropSpecialInputPolicy(CellProfilerSpecialInputPolicy):
     """Bind Crop side inputs without making them primary image domains."""
 
-    module_name = "Crop"
+    module_name = _CROP_MODULE
 
     def special_image_inputs(
         self,
