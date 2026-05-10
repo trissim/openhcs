@@ -34,7 +34,7 @@ from .processing_contract_resolution import (
     ProcessingContractResolutionSource,
     resolve_processing_contract,
 )
-from .symbol_table import ModuleContractBuilder
+from openhcs.interop.cellprofiler.symbol_table import ModuleContractBuilder
 
 
 class ArtifactContractCoverage(str, Enum):

@@ -114,7 +114,7 @@ from .settings_binder import (
     SettingsBinder,
     normalize_cellprofiler_setting_name,
 )
-from .symbol_table import (
+from openhcs.interop.cellprofiler.symbol_table import (
     IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING,
     INPUT_IMAGE_SETTING,
     INPUT_OBJECTS_SETTING,

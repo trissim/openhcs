@@ -63,7 +63,7 @@ from openhcs.processing.backends.cellprofiler.library import (
     canonical_module_name,
     validated_contracts,
 )
-from .symbol_table import (
+from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbolTable,
     ModuleArtifactContracts,
     module_contract_literal,
