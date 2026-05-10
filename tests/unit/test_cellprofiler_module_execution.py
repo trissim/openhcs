@@ -236,6 +236,15 @@ class _FakeCellProfilerRuntime:
         if missing:
             raise AssertionError(f"Unexpected missing image aliases: {missing!r}")
 
+    def cellprofiler_ordered_pipeline_image_paths(self) -> tuple[str, ...]:
+        return ()
+
+    def cellprofiler_source_order_path(self, path: str) -> str:
+        return path
+
+    def cellprofiler_axis_image_number_start(self) -> int:
+        return 1
+
     def resolve_source_image(self, alias: str, current_image: object) -> np.ndarray:
         del current_image
         return self.images[alias].data

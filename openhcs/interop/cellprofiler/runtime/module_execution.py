@@ -2498,9 +2498,6 @@ def _cellprofiler_image_number_start(
 ) -> int:
     """Return CP's 1-based ImageNumber for the first plane in a stack."""
     source_paths = _payload_source_paths(image_payload)
-    source_context = getattr(adapter, "source_binding_context", None)
-    if source_context is None:
-        return 1
     ordered_pipeline_paths = adapter.cellprofiler_ordered_pipeline_image_paths()
     if not ordered_pipeline_paths:
         return 1
