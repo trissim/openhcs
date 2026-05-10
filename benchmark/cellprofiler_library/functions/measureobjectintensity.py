@@ -23,7 +23,7 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     object_label_dense_array,
 )
-from benchmark.cellprofiler_library.image_geometry import cellprofiler_grayscale_plane
+from openhcs.processing.backends.cellprofiler.image_geometry import cellprofiler_grayscale_plane
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.cellprofiler.intensity import object_intensity_backend
 

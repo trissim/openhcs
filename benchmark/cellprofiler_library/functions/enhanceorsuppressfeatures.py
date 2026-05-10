@@ -20,7 +20,7 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from benchmark.cellprofiler_library.image_geometry import cellprofiler_grayscale_plane
+from openhcs.processing.backends.cellprofiler.image_geometry import cellprofiler_grayscale_plane
 
 
 class OperationMethod(Enum):

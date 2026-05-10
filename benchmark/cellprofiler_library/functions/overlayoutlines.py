@@ -19,8 +19,8 @@ from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
 
-from benchmark.cellprofiler_library.color import coerce_rgb_color
-from benchmark.cellprofiler_library.image_geometry import (
+from openhcs.processing.backends.cellprofiler.color import coerce_rgb_color
+from openhcs.processing.backends.cellprofiler.image_geometry import (
     align_binary_mask_to_shape,
     align_label_plane_to_shape,
     collapse_singleton_plane_stack,

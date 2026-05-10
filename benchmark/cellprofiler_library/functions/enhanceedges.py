@@ -24,7 +24,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     normalize_cellprofiler_backend_provider,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from benchmark.cellprofiler_library.image_geometry import CellProfilerPlaneGeometry
+from openhcs.processing.backends.cellprofiler.image_geometry import CellProfilerPlaneGeometry
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 
 

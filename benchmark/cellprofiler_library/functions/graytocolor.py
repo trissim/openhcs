@@ -16,7 +16,7 @@ from metaclass_registry import AutoRegisterMeta
 import numpy as np
 from openhcs.core.memory import numpy
 
-from benchmark.cellprofiler_library.color import coerce_rgb_color
+from openhcs.processing.backends.cellprofiler.color import coerce_rgb_color
 
 
 class GrayToColorScheme(str, Enum):

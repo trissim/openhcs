@@ -46,7 +46,7 @@ from benchmark.cellprofiler_library.functions.thresholding import (
 from benchmark.cellprofiler_library.functions.watershed import (
     cellprofiler_legacy_watershed,
 )
-from benchmark.cellprofiler_library.image_geometry import (
+from openhcs.processing.backends.cellprofiler.image_geometry import (
     CellProfilerPlaneGeometry,
     collapse_singleton_plane_stack,
 )

@@ -8,7 +8,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs
 
-from benchmark.cellprofiler_library.image_geometry import CellProfilerPlaneGeometry
+from openhcs.processing.backends.cellprofiler.image_geometry import CellProfilerPlaneGeometry
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

@@ -13,7 +13,7 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
 )
 
-from benchmark.cellprofiler_library.image_geometry import (
+from openhcs.processing.backends.cellprofiler.image_geometry import (
     aligned_image_mask_planes,
     binary_mask_plane,
     collapse_singleton_plane_stack,
