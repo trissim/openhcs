@@ -153,6 +153,23 @@ class CellProfilerSymbolKind(str, Enum):
             CellProfilerSymbolKind.SPATIAL_GRID: ArtifactKind.SPATIAL_GRID,
         }[self]
 
+    @classmethod
+    def from_artifact_kind(cls, kind: ArtifactKind) -> "CellProfilerSymbolKind":
+        """Return the CellProfiler workspace kind for an OpenHCS artifact kind."""
+        try:
+            return {
+                ArtifactKind.IMAGE: cls.IMAGE,
+                ArtifactKind.OBJECT_LABELS: cls.OBJECTS,
+                ArtifactKind.MEASUREMENTS: cls.MEASUREMENTS,
+                ArtifactKind.RELATIONSHIPS: cls.RELATIONSHIPS,
+                ArtifactKind.SPATIAL_GRID: cls.SPATIAL_GRID,
+            }[kind]
+        except KeyError as exc:
+            raise ValueError(
+                f"CellProfiler converter cannot map artifact kind {kind.value!r} "
+                "to a workspace symbol kind."
+            ) from exc
+
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerSymbolKey:
@@ -200,6 +217,19 @@ class CellProfilerSymbol:
     def is_external_source(self) -> bool:
         """Whether this symbol is supplied by source bindings rather than a module."""
         return self.source_bound and self.producer_module_num is None
+
+    @staticmethod
+    def unique_by_key(
+        symbols: Iterable["CellProfilerSymbol"],
+    ) -> tuple["CellProfilerSymbol", ...]:
+        """Return symbols deduplicated by typed workspace identity."""
+        unique: list[CellProfilerSymbol] = []
+        seen: set[CellProfilerSymbolKey] = set()
+        for symbol in symbols:
+            if symbol.key not in seen:
+                unique.append(symbol)
+                seen.add(symbol.key)
+        return tuple(unique)
 
 
 @dataclass(frozen=True, slots=True)
@@ -253,7 +283,7 @@ class ModuleArtifactContracts:
         """
         return tuple(
             symbol.artifact_spec()
-            for symbol in _unique_symbols(self.input_symbols)
+            for symbol in CellProfilerSymbol.unique_by_key(self.input_symbols)
             if not symbol.is_external_source
         )
 
@@ -443,7 +473,7 @@ class _SymbolTableBuilder:
         self,
         symbols: Iterable[CellProfilerSymbol],
     ) -> StepSourceBindingsConfig:
-        external_symbols = _unique_symbols(symbols)
+        external_symbols = CellProfilerSymbol.unique_by_key(symbols)
         if not external_symbols:
             return EMPTY_SOURCE_BINDINGS
         bindings = tuple(
@@ -997,37 +1027,6 @@ class ModuleArtifactNamePolicy:
         return special.name
 
 
-def _measure_object_neighbors_output_image_names(
-    module: ModuleBlock,
-) -> tuple[str, ...]:
-    output_names = module.get_setting_values("Name the output image")
-    name_policy = ModuleArtifactNamePolicy(module)
-    outputs: list[str] = []
-    if _setting_bool(module, NEIGHBOR_COUNT_IMAGE_SETTING):
-        outputs.append(name_policy.indexed_output_image_name(output_names, 0))
-    if _setting_bool(module, PERCENT_TOUCHING_IMAGE_SETTING):
-        outputs.append(name_policy.indexed_output_image_name(output_names, 1))
-    return tuple(outputs)
-
-
-def _setting_bool(
-    module: ModuleBlock,
-    setting: str | SettingNameFamily,
-) -> bool:
-    value = optional_setting_value(module, setting)
-    if value is None:
-        return False
-    normalized = value.strip().lower()
-    if normalized in {"yes", "true", "1"}:
-        return True
-    if normalized in {"no", "false", "0"}:
-        return False
-    raise ValueError(
-        f"Unsupported boolean setting {value!r} in module "
-        f"{module.name}({module.module_num})."
-    )
-
-
 class FilterObjectsOutputSymbolKindStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal symbol-kind mapping for FilterObjects output roles."""
 
@@ -1085,7 +1084,114 @@ def _overlay_outline_symbol_kind(
     return CellProfilerSymbolKind.OBJECTS
 
 
-class ModuleContractBuilder(ABC, metaclass=AutoRegisterMeta):
+class CellProfilerContractAssemblyMixin:
+    """Shared artifact-contract assembly semantics for CellProfiler builders."""
+
+    def assemble_contract(
+        self,
+        module: ModuleBlock,
+        builder: _SymbolTableBuilder,
+        *,
+        inputs: Iterable[CellProfilerSymbol] = (),
+        outputs: Iterable[CellProfilerSymbol] = (),
+        preserve_duplicate_inputs: bool = False,
+    ) -> ModuleArtifactContracts:
+        preserve_role_inputs = (
+            preserve_duplicate_inputs
+            or ModuleInputRolePolicy.for_module(module.name).preserve_duplicate_inputs(
+                module
+            )
+        )
+        input_symbols = (
+            tuple(inputs)
+            if preserve_role_inputs
+            else CellProfilerSymbol.unique_by_key(inputs)
+        )
+        output_symbols = CellProfilerSymbol.unique_by_key(outputs)
+        return ModuleArtifactContracts(
+            module_name=module.name,
+            module_num=module.module_num,
+            input_symbols=input_symbols,
+            output_symbols=output_symbols,
+            declared_output_symbols=output_symbols,
+            source_bindings=builder.source_bindings_for(
+                symbol for symbol in input_symbols if symbol.is_external_source
+            ),
+        )
+
+    def setting_bool(
+        self,
+        module: ModuleBlock,
+        setting: str | SettingNameFamily,
+    ) -> bool:
+        value = optional_setting_value(module, setting)
+        if value is None:
+            return False
+        normalized = value.strip().lower()
+        if normalized in {"yes", "true", "1"}:
+            return True
+        if normalized in {"no", "false", "0"}:
+            return False
+        raise ValueError(
+            f"Unsupported boolean setting {value!r} in module "
+            f"{module.name}({module.module_num})."
+        )
+
+    def setting_symbol_names(
+        self,
+        module: ModuleBlock,
+        name: str | SettingNameFamily,
+    ) -> tuple[str, ...]:
+        symbols = self.optional_setting_symbol_names(module, name)
+        if not symbols:
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) missing setting "
+                f"{setting_names(name)}."
+            )
+        return symbols
+
+    def optional_setting_symbol_names(
+        self,
+        module: ModuleBlock,
+        name: str | SettingNameFamily,
+    ) -> tuple[str, ...]:
+        return tuple(
+            symbol
+            for value in setting_values(module, name)
+            for symbol in _split_names(value)
+        )
+
+    def normalized_setting_symbol(
+        self,
+        module: ModuleBlock,
+        setting: str | SettingNameFamily,
+    ) -> str | None:
+        value = optional_setting_value(module, setting)
+        if value is None:
+            return None
+        return normalized_symbol_name(value)
+
+    def retained_output_image(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+        *,
+        retain_setting: str,
+        output_setting: str | SettingNameFamily,
+    ) -> tuple[CellProfilerSymbol, ...]:
+        if not _any_truthy_setting_value(module, retain_setting):
+            return ()
+        output_name = self.normalized_setting_symbol(module, output_setting)
+        if output_name is None:
+            return ()
+        return (builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module),)
+
+
+class ModuleContractBuilder(
+    CellProfilerContractAssemblyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal family for per-module CellProfiler artifact contract compilation."""
 
     __registry_key__ = "module_name"
@@ -1130,7 +1236,11 @@ class UnsupportedModuleContractBuilder(ModuleContractBuilder):
         )
 
 
-class InferredModuleContractPattern(ABC, metaclass=AutoRegisterMeta):
+class InferredModuleContractPattern(
+    CellProfilerContractAssemblyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal family for deriving common CellProfiler artifact contracts."""
 
     __registry_key__ = "pattern_name"
@@ -1181,7 +1291,7 @@ class SemanticSettingsContractPattern(InferredModuleContractPattern):
         inputs = [
             builder.require(
                 symbol.name,
-                _symbol_kind_for_artifact_kind(symbol.role.artifact_kind),
+                CellProfilerSymbolKind.from_artifact_kind(symbol.role.artifact_kind),
                 module,
             )
             for symbol in setting_symbols
@@ -1196,7 +1306,7 @@ class SemanticSettingsContractPattern(InferredModuleContractPattern):
         )
         if not inputs and not outputs:
             return None
-        return _contracts(module, builder, inputs=inputs, outputs=outputs)
+        return self.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
 
 
 class InfrastructureModuleContractBuilder(ModuleContractBuilder):
@@ -1239,7 +1349,7 @@ class WatershedContractBuilder(ModuleContractBuilder):
             )
         ]
         for setting in (WATERSHED_MARKERS_SETTING, WATERSHED_MASK_SETTING):
-            artifact_name = _normalized_setting_symbol(module, setting)
+            artifact_name = self.normalized_setting_symbol(module, setting)
             if artifact_name is not None:
                 inputs.append(
                     builder.require(
@@ -1259,7 +1369,7 @@ class WatershedContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.OBJECTS,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module, builder, inputs=inputs, outputs=[measurements, objects]
         )
 
@@ -1300,7 +1410,7 @@ class CropContractBuilder(ModuleContractBuilder):
         mask_inputs = CropMaskInputStrategy.for_shape(crop_shape(module)).inputs(
             mask_request
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[image, *mask_inputs],
@@ -1357,7 +1467,7 @@ class FilterObjectsContractBuilder(ModuleContractBuilder):
                     module,
                 )
             )
-        return _contracts(module, builder, inputs=inputs, outputs=outputs)
+        return self.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
 
 
 class DefineGridManualContractBuilder(ModuleContractBuilder):
@@ -1373,11 +1483,11 @@ class DefineGridManualContractBuilder(ModuleContractBuilder):
         images = [
             builder.require(name, CellProfilerSymbolKind.IMAGE, module)
             for name in (
-                _normalized_setting_symbol(
+                self.normalized_setting_symbol(
                     module,
                     "Select the image on which to display the grid",
                 ),
-                _normalized_setting_symbol(
+                self.normalized_setting_symbol(
                     module,
                     "Select the image to display when drawing",
                 ),
@@ -1387,14 +1497,14 @@ class DefineGridManualContractBuilder(ModuleContractBuilder):
         objects = [
             builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
             for name in (
-                _normalized_setting_symbol(
+                self.normalized_setting_symbol(
                     module,
                     "Select the previously identified objects",
                 ),
             )
             if name is not None
         ]
-        retained_images = _retained_output_image(
+        retained_images = self.retained_output_image(
             builder,
             module,
             retain_setting="Retain an image of the grid?",
@@ -1405,7 +1515,7 @@ class DefineGridManualContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.SPATIAL_GRID,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[*images, *objects],
@@ -1432,7 +1542,7 @@ class ColorToGrayContractBuilder(ModuleContractBuilder):
             builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module)
             for output_name in color_to_gray_output_names(module)
         ]
-        return _contracts(module, builder, inputs=[image], outputs=outputs)
+        return self.assemble_contract(module, builder, inputs=[image], outputs=outputs)
 
 
 class UnmixColorsContractBuilder(ModuleContractBuilder):
@@ -1454,7 +1564,7 @@ class UnmixColorsContractBuilder(ModuleContractBuilder):
             builder.declare(row.image_name, CellProfilerSymbolKind.IMAGE, module)
             for row in unmix_colors_output_rows(module)
         ]
-        return _contracts(module, builder, inputs=[image], outputs=outputs)
+        return self.assemble_contract(module, builder, inputs=[image], outputs=outputs)
 
 
 class CorrectIlluminationApplyContractBuilder(ModuleContractBuilder):
@@ -1499,7 +1609,7 @@ class CorrectIlluminationApplyContractBuilder(ModuleContractBuilder):
             outputs.append(
                 builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module)
             )
-        return _contracts(module, builder, inputs=inputs, outputs=outputs)
+        return self.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
 
 
 class AlignContractBuilder(ModuleContractBuilder):
@@ -1528,7 +1638,7 @@ class AlignContractBuilder(ModuleContractBuilder):
                 module,
             )
         )
-        return _contracts(module, builder, inputs=inputs, outputs=outputs)
+        return self.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
 
 
 class OpeningContractBuilder(ModuleContractBuilder):
@@ -1551,7 +1661,7 @@ class OpeningContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.IMAGE,
             module,
         )
-        return _contracts(module, builder, inputs=[image], outputs=[output])
+        return self.assemble_contract(module, builder, inputs=[image], outputs=[output])
 
 
 class CalculateMathContractBuilder(ModuleContractBuilder):
@@ -1573,7 +1683,9 @@ class CalculateMathContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
-        return _contracts(module, builder, inputs=objects, outputs=[measurements])
+        return self.assemble_contract(
+            module, builder, inputs=objects, outputs=[measurements]
+        )
 
 
 class UntangleWormsContractBuilder(ModuleContractBuilder):
@@ -1606,7 +1718,7 @@ class UntangleWormsContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.OBJECTS,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[image],
@@ -1658,7 +1770,7 @@ class StraightenWormsContractBuilder(ModuleContractBuilder):
         side_inputs = [input_objects]
         if producer_measurements is not None:
             side_inputs.append(producer_measurements)
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[*side_inputs, *image_inputs],
@@ -1691,7 +1803,7 @@ class IdentifyPrimaryObjectsContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[image],
@@ -1734,7 +1846,7 @@ class IdentifySecondaryObjectsContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.RELATIONSHIPS,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[input_objects, image],
@@ -1782,7 +1894,7 @@ class IdentifyTertiaryObjectsContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[larger, smaller],
@@ -1802,9 +1914,11 @@ class ClassifyObjectsContractBuilder(ModuleContractBuilder):
     ) -> ModuleArtifactContracts:
         objects = [
             builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-            for name in _setting_symbol_names(module, CLASSIFY_OBJECTS_INPUT_SETTING)
+            for name in self.setting_symbol_names(
+                module, CLASSIFY_OBJECTS_INPUT_SETTING
+            )
         ]
-        retained_images = _retained_output_image(
+        retained_images = self.retained_output_image(
             builder,
             module,
             retain_setting="Retain an image of the classified objects?",
@@ -1815,7 +1929,7 @@ class ClassifyObjectsContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=objects,
@@ -1854,7 +1968,7 @@ class RelateObjectsContractBuilder(ModuleContractBuilder):
             module,
         )
         outputs = [relationship, measurements]
-        if _setting_bool(module, RELATE_OBJECTS_SAVE_CHILDREN_SETTING):
+        if self.setting_bool(module, RELATE_OBJECTS_SAVE_CHILDREN_SETTING):
             output_objects = builder.declare(
                 _setting(module, OUTPUT_OBJECTS_SETTING),
                 CellProfilerSymbolKind.OBJECTS,
@@ -1869,7 +1983,7 @@ class RelateObjectsContractBuilder(ModuleContractBuilder):
                     module,
                 ),
             )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[parent, child],
@@ -1897,7 +2011,9 @@ class ConvertObjectsToImageContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.IMAGE,
             module,
         )
-        return _contracts(module, builder, inputs=[objects], outputs=[output])
+        return self.assemble_contract(
+            module, builder, inputs=[objects], outputs=[output]
+        )
 
 
 class GrayToColorContractBuilder(ModuleContractBuilder):
@@ -1921,7 +2037,7 @@ class GrayToColorContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.IMAGE,
             module,
         )
-        return _contracts(module, builder, inputs=images, outputs=[output])
+        return self.assemble_contract(module, builder, inputs=images, outputs=[output])
 
 
 class OverlayOutlinesContractBuilder(ModuleContractBuilder):
@@ -1957,7 +2073,7 @@ class OverlayOutlinesContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.IMAGE,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=inputs,
@@ -1990,7 +2106,9 @@ class OverlayObjectsContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.IMAGE,
             module,
         )
-        return _contracts(module, builder, inputs=[image, objects], outputs=[output])
+        return self.assemble_contract(
+            module, builder, inputs=[image, objects], outputs=[output]
+        )
 
 
 class MeasurementModuleContractBuilder(ModuleContractBuilder):
@@ -2018,7 +2136,7 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[*images, *objects],
@@ -2027,7 +2145,7 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
 
     def image_names(self, module: ModuleBlock) -> tuple[str, ...]:
         setting = type(self).image_setting
-        return () if setting is None else _setting_symbol_names(module, setting)
+        return () if setting is None else self.setting_symbol_names(module, setting)
 
     def object_names(self, module: ModuleBlock) -> tuple[str, ...]:
         object_setting = type(self).object_setting
@@ -2035,12 +2153,12 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
         required = (
             ()
             if object_setting is None
-            else _setting_symbol_names(module, object_setting)
+            else self.setting_symbol_names(module, object_setting)
         )
         optional = (
             ()
             if optional_object_setting is None
-            else _optional_setting_symbol_names(module, optional_object_setting)
+            else self.optional_setting_symbol_names(module, optional_object_setting)
         )
         return (*required, *optional)
 
@@ -2197,14 +2315,24 @@ class MeasureObjectNeighborsContractBuilder(ModuleContractBuilder):
         )
         image_outputs = [
             builder.declare(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in _measure_object_neighbors_output_image_names(module)
+            for name in self.output_image_names(module)
         ]
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[measured, neighbors],
             outputs=[*image_outputs, measurements],
         )
+
+    def output_image_names(self, module: ModuleBlock) -> tuple[str, ...]:
+        output_names = module.get_setting_values("Name the output image")
+        name_policy = ModuleArtifactNamePolicy(module)
+        outputs: list[str] = []
+        if self.setting_bool(module, NEIGHBOR_COUNT_IMAGE_SETTING):
+            outputs.append(name_policy.indexed_output_image_name(output_names, 0))
+        if self.setting_bool(module, PERCENT_TOUCHING_IMAGE_SETTING):
+            outputs.append(name_policy.indexed_output_image_name(output_names, 1))
+        return tuple(outputs)
 
 
 class MeasureImageAreaOccupiedContractBuilder(ModuleContractBuilder):
@@ -2255,7 +2383,7 @@ class MeasureImageAreaOccupiedContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=inputs,
@@ -2283,13 +2411,13 @@ class _SingleInputSingleOutputContractPattern(InferredModuleContractPattern):
             for setting in type(self).excluded_settings
         ):
             return None
-        input_name = _normalized_setting_symbol(module, type(self).input_setting)
-        output_name = _normalized_setting_symbol(module, type(self).output_setting)
+        input_name = self.normalized_setting_symbol(module, type(self).input_setting)
+        output_name = self.normalized_setting_symbol(module, type(self).output_setting)
         if input_name is None or output_name is None:
             return None
         input_symbol = builder.require(input_name, type(self).input_kind, module)
         output_symbol = builder.declare(output_name, type(self).output_kind, module)
-        return _contracts(
+        return self.assemble_contract(
             module,
             builder,
             inputs=[input_symbol],
@@ -2388,14 +2516,14 @@ def _semantic_output_symbols(
         outputs.append(
             builder.declare(
                 name,
-                _symbol_kind_for_artifact_kind(special.kind),
+                CellProfilerSymbolKind.from_artifact_kind(special.kind),
                 module,
             )
         )
 
     for kind, names in output_names.items():
         outputs.extend(_declare_outputs(builder, module, names, kind))
-    return _unique_symbols(outputs)
+    return CellProfilerSymbol.unique_by_key(outputs)
 
 
 def _setting_output_names_by_kind(
@@ -2405,21 +2533,6 @@ def _setting_output_names_by_kind(
     for symbol in setting_outputs:
         names_by_kind.setdefault(symbol.role.artifact_kind, []).append(symbol.name)
     return names_by_kind
-
-
-def _retained_output_image(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-    *,
-    retain_setting: str,
-    output_setting: str | SettingNameFamily,
-) -> tuple[CellProfilerSymbol, ...]:
-    if not _any_truthy_setting_value(module, retain_setting):
-        return ()
-    output_name = _normalized_setting_symbol(module, output_setting)
-    if output_name is None:
-        return ()
-    return (builder.declare(output_name, CellProfilerSymbolKind.IMAGE, module),)
 
 
 def _any_truthy_setting_value(
@@ -2438,7 +2551,7 @@ def _declare_outputs(
     names: Iterable[str],
     kind: ArtifactKind,
 ) -> tuple[CellProfilerSymbol, ...]:
-    symbol_kind = _symbol_kind_for_artifact_kind(kind)
+    symbol_kind = CellProfilerSymbolKind.from_artifact_kind(kind)
     return tuple(builder.declare(name, symbol_kind, module) for name in names)
 
 
@@ -2461,75 +2574,8 @@ def _relationship_output_name(
     return None
 
 
-def _symbol_kind_for_artifact_kind(kind: ArtifactKind) -> CellProfilerSymbolKind:
-    try:
-        return {
-            ArtifactKind.IMAGE: CellProfilerSymbolKind.IMAGE,
-            ArtifactKind.OBJECT_LABELS: CellProfilerSymbolKind.OBJECTS,
-            ArtifactKind.MEASUREMENTS: CellProfilerSymbolKind.MEASUREMENTS,
-            ArtifactKind.RELATIONSHIPS: CellProfilerSymbolKind.RELATIONSHIPS,
-            ArtifactKind.SPATIAL_GRID: CellProfilerSymbolKind.SPATIAL_GRID,
-        }[kind]
-    except KeyError as exc:
-        raise ValueError(
-            f"CellProfiler converter cannot map artifact kind {kind.value!r} "
-            "to a workspace symbol kind."
-        ) from exc
-
-
-def _contracts(
-    module: ModuleBlock,
-    builder: _SymbolTableBuilder,
-    *,
-    inputs: Iterable[CellProfilerSymbol] = (),
-    outputs: Iterable[CellProfilerSymbol] = (),
-    preserve_duplicate_inputs: bool = False,
-) -> ModuleArtifactContracts:
-    preserve_role_inputs = (
-        preserve_duplicate_inputs
-        or ModuleInputRolePolicy.for_module(module.name).preserve_duplicate_inputs(
-            module
-        )
-    )
-    input_symbols = tuple(inputs) if preserve_role_inputs else _unique_symbols(inputs)
-    return ModuleArtifactContracts(
-        module_name=module.name,
-        module_num=module.module_num,
-        input_symbols=input_symbols,
-        output_symbols=_unique_symbols(outputs),
-        declared_output_symbols=_unique_symbols(outputs),
-        source_bindings=builder.source_bindings_for(
-            symbol for symbol in input_symbols if symbol.is_external_source
-        ),
-    )
-
-
 def _setting(module: ModuleBlock, name: str | SettingNameFamily) -> str:
     return required_setting_value(module, name)
-
-
-def _setting_symbol_names(
-    module: ModuleBlock,
-    name: str | SettingNameFamily,
-) -> tuple[str, ...]:
-    symbols = _optional_setting_symbol_names(module, name)
-    if not symbols:
-        raise ValueError(
-            f"Module {module.name}({module.module_num}) missing setting "
-            f"{setting_names(name)}."
-        )
-    return symbols
-
-
-def _optional_setting_symbol_names(
-    module: ModuleBlock,
-    name: str | SettingNameFamily,
-) -> tuple[str, ...]:
-    return tuple(
-        symbol
-        for value in setting_values(module, name)
-        for symbol in _split_names(value)
-    )
 
 
 def _optional_setting(
@@ -2543,16 +2589,6 @@ def _split_names(value: str) -> tuple[str, ...]:
     return tuple(_normalize_symbol_name(part) for part in split_symbol_names(value))
 
 
-def _normalized_setting_symbol(
-    module: ModuleBlock,
-    setting: str | SettingNameFamily,
-) -> str | None:
-    value = _optional_setting(module, setting)
-    if value is None:
-        return None
-    return normalized_symbol_name(value)
-
-
 def _setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:
     return setting_names(name)
 
@@ -2562,19 +2598,6 @@ def _normalize_symbol_name(name: str) -> str:
     if not normalized:
         raise ValueError("CellProfiler symbol names cannot be empty.")
     return normalized
-
-
-def _unique_symbols(
-    symbols: Iterable[CellProfilerSymbol],
-) -> tuple[CellProfilerSymbol, ...]:
-    unique: list[CellProfilerSymbol] = []
-    seen: set[tuple[str, CellProfilerSymbolKind]] = set()
-    for symbol in symbols:
-        key = (symbol.name, symbol.kind)
-        if key not in seen:
-            unique.append(symbol)
-            seen.add(key)
-    return tuple(unique)
 
 
 def _relationship_name(parent: str, child: str) -> str:
