@@ -37,6 +37,7 @@ from openhcs.core.artifacts import (
 )
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.core.registry_strategies import GeneratedLeafClassSpec
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -260,9 +261,7 @@ class ModuleArtifactContracts:
     def external_source_symbols(self) -> tuple[CellProfilerSymbol, ...]:
         """Source-bound names this module expects from input metadata/channels."""
         return tuple(
-            symbol
-            for symbol in self.input_symbols
-            if symbol.is_external_source
+            symbol for symbol in self.input_symbols if symbol.is_external_source
         )
 
     @property
@@ -420,6 +419,8 @@ DISPLAY_OBJECTS_SETTING = SettingNameFamily(
 )
 PARENT_OBJECTS_SETTING = RELATE_OBJECTS_PARENT_OBJECTS_SETTING
 CHILD_OBJECTS_SETTING = RELATE_OBJECTS_CHILD_OBJECTS_SETTING
+
+
 class _SymbolTableBuilder:
     def __init__(self, source_schema: PipelineImageSchema) -> None:
         self._symbols: dict[CellProfilerSymbolKey, CellProfilerSymbol] = {}
@@ -446,8 +447,7 @@ class _SymbolTableBuilder:
         if not external_symbols:
             return EMPTY_SOURCE_BINDINGS
         bindings = tuple(
-            self._source_binding_for_symbol(symbol)
-            for symbol in external_symbols
+            self._source_binding_for_symbol(symbol) for symbol in external_symbols
         )
         return StepSourceBindingsConfig(
             groups=(GroupedSourceBindings(bindings=bindings),),
@@ -638,8 +638,7 @@ def module_contract_literal(
         for spec in contract.outputs
     )
     runtime_input_specs = ", ".join(
-        _artifact_spec_literal(spec)
-        for spec in contract.runtime_artifact_inputs
+        _artifact_spec_literal(spec) for spec in contract.runtime_artifact_inputs
     )
     if len(contract.inputs) == 1:
         input_specs += ","
@@ -677,16 +676,14 @@ def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
     field_literals: list[str] = []
     if config.groups:
         group_literals = ", ".join(
-            _grouped_source_bindings_literal(group)
-            for group in config.groups
+            _grouped_source_bindings_literal(group) for group in config.groups
         )
         if len(config.groups) == 1:
             group_literals += ","
         field_literals.append(f"groups=({group_literals})")
     if config.metadata_rules:
         metadata_rule_literals = ", ".join(
-            _metadata_extraction_rule_literal(rule)
-            for rule in config.metadata_rules
+            _metadata_extraction_rule_literal(rule) for rule in config.metadata_rules
         )
         if len(config.metadata_rules) == 1:
             metadata_rule_literals += ","
@@ -700,8 +697,7 @@ def source_bindings_literal(config: StepSourceBindingsConfig) -> str:
 
 def _grouped_source_bindings_literal(group: GroupedSourceBindings) -> str:
     binding_literals = ", ".join(
-        _named_source_binding_literal(binding)
-        for binding in group.bindings
+        _named_source_binding_literal(binding) for binding in group.bindings
     )
     if len(group.bindings) == 1:
         binding_literals += ","
@@ -717,15 +713,13 @@ def _grouped_source_bindings_literal(group: GroupedSourceBindings) -> str:
 def _named_source_binding_literal(binding: NamedSourceBinding) -> str:
     field_literals = [f"alias={binding.alias!r}"]
     if binding.artifact_kind is not ArtifactKind.IMAGE:
-        field_literals.append(f"artifact_kind=ArtifactKind.{binding.artifact_kind.name}")
+        field_literals.append(
+            f"artifact_kind=ArtifactKind.{binding.artifact_kind.name}"
+        )
     if binding.selector != SourceSelector():
-        field_literals.append(
-            f"selector={_source_selector_literal(binding.selector)}"
-        )
+        field_literals.append(f"selector={_source_selector_literal(binding.selector)}")
     if binding.origin is not SourceBindingOrigin.STEP_INPUT:
-        field_literals.append(
-            f"origin=SourceBindingOrigin.{binding.origin.name}"
-        )
+        field_literals.append(f"origin=SourceBindingOrigin.{binding.origin.name}")
     return f"NamedSourceBinding({', '.join(field_literals)})"
 
 
@@ -733,24 +727,21 @@ def _source_selector_literal(selector: SourceSelector) -> str:
     field_literals: list[str] = []
     if selector.components:
         component_literals = ", ".join(
-            _component_selector_literal(component)
-            for component in selector.components
+            _component_selector_literal(component) for component in selector.components
         )
         if len(selector.components) == 1:
             component_literals += ","
         field_literals.append(f"components=({component_literals})")
     if selector.metadata:
         metadata_literals = ", ".join(
-            _metadata_selector_literal(metadata)
-            for metadata in selector.metadata
+            _metadata_selector_literal(metadata) for metadata in selector.metadata
         )
         if len(selector.metadata) == 1:
             metadata_literals += ","
         field_literals.append(f"metadata=({metadata_literals})")
     if selector.filters:
         filter_literals = ", ".join(
-            _source_filter_clause_literal(clause)
-            for clause in selector.filters
+            _source_filter_clause_literal(clause) for clause in selector.filters
         )
         if len(selector.filters) == 1:
             filter_literals += ","
@@ -779,8 +770,7 @@ def _metadata_extraction_rule_literal(rule: MetadataExtractionRule) -> str:
     ]
     if rule.filters:
         filter_literals = ", ".join(
-            _source_filter_clause_literal(clause)
-            for clause in rule.filters
+            _source_filter_clause_literal(clause) for clause in rule.filters
         )
         if len(rule.filters) == 1:
             filter_literals += ","
@@ -815,8 +805,7 @@ def _source_binding_match_dimension_literal(
     dimension: SourceBindingMatchDimension,
 ) -> str:
     field_literals = ", ".join(
-        _source_binding_match_field_literal(field)
-        for field in dimension.fields
+        _source_binding_match_field_literal(field) for field in dimension.fields
     )
     if len(dimension.fields) == 1:
         field_literals += ","
@@ -910,25 +899,39 @@ class ResolvedCropMaskInputStrategy(CropMaskInputStrategy):
         return resolver(module)
 
 
-class PreviousCropMaskInputStrategy(ResolvedCropMaskInputStrategy):
-    shape = CropShape.CROPPING.value
-    symbol_kind = CellProfilerSymbolKind.IMAGE
-    missing_input_description = "previous cropping"
-    artifact_name_resolver = staticmethod(crop_previous_mask_artifact_name)
-
-
-class ImageCropMaskInputStrategy(ResolvedCropMaskInputStrategy):
-    shape = CropShape.IMAGE.value
-    symbol_kind = CellProfilerSymbolKind.IMAGE
-    missing_input_description = "image-mask cropping"
-    artifact_name_resolver = staticmethod(crop_mask_image_name)
-
-
-class ObjectsCropMaskInputStrategy(ResolvedCropMaskInputStrategy):
-    shape = CropShape.OBJECTS.value
-    symbol_kind = CellProfilerSymbolKind.OBJECTS
-    missing_input_description = "object-mask cropping"
-    artifact_name_resolver = staticmethod(crop_objects_name)
+for _crop_mask_input_strategy in (
+    GeneratedLeafClassSpec(
+        "PreviousCropMaskInputStrategy",
+        ResolvedCropMaskInputStrategy,
+        attributes={
+            "shape": CropShape.CROPPING.value,
+            "symbol_kind": CellProfilerSymbolKind.IMAGE,
+            "missing_input_description": "previous cropping",
+            "artifact_name_resolver": staticmethod(crop_previous_mask_artifact_name),
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "ImageCropMaskInputStrategy",
+        ResolvedCropMaskInputStrategy,
+        attributes={
+            "shape": CropShape.IMAGE.value,
+            "symbol_kind": CellProfilerSymbolKind.IMAGE,
+            "missing_input_description": "image-mask cropping",
+            "artifact_name_resolver": staticmethod(crop_mask_image_name),
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "ObjectsCropMaskInputStrategy",
+        ResolvedCropMaskInputStrategy,
+        attributes={
+            "shape": CropShape.OBJECTS.value,
+            "symbol_kind": CellProfilerSymbolKind.OBJECTS,
+            "missing_input_description": "object-mask cropping",
+            "artifact_name_resolver": staticmethod(crop_objects_name),
+        },
+    ),
+):
+    _crop_mask_input_strategy.declare_in(globals())
 
 
 class RectangleCropMaskInputStrategy(CropMaskInputStrategy):
@@ -994,7 +997,9 @@ class ModuleArtifactNamePolicy:
         return special.name
 
 
-def _measure_object_neighbors_output_image_names(module: ModuleBlock) -> tuple[str, ...]:
+def _measure_object_neighbors_output_image_names(
+    module: ModuleBlock,
+) -> tuple[str, ...]:
     output_names = module.get_setting_values("Name the output image")
     name_policy = ModuleArtifactNamePolicy(module)
     outputs: list[str] = []
@@ -1045,9 +1050,7 @@ class FilterObjectsOutputSymbolKindStrategy(ABC, metaclass=AutoRegisterMeta):
         """Return the OpenHCS symbol kind for this output role."""
 
 
-class FilterObjectsFilteredObjectOutputStrategy(
-    FilterObjectsOutputSymbolKindStrategy
-):
+class FilterObjectsFilteredObjectOutputStrategy(FilterObjectsOutputSymbolKindStrategy):
     """Map relabeled FilterObjects outputs to object-label artifacts."""
 
     role = FilterObjectsOutputRole.FILTERED_OBJECTS
@@ -1056,9 +1059,7 @@ class FilterObjectsFilteredObjectOutputStrategy(
         return CellProfilerSymbolKind.OBJECTS
 
 
-class FilterObjectsOutlineImageOutputStrategy(
-    FilterObjectsOutputSymbolKindStrategy
-):
+class FilterObjectsOutlineImageOutputStrategy(FilterObjectsOutputSymbolKindStrategy):
     """Map retained FilterObjects outlines to image artifacts."""
 
     role = FilterObjectsOutputRole.OUTLINE_IMAGE
@@ -1067,9 +1068,7 @@ class FilterObjectsOutlineImageOutputStrategy(
         return CellProfilerSymbolKind.IMAGE
 
 
-class FilterObjectsRelationshipsOutputStrategy(
-    FilterObjectsOutputSymbolKindStrategy
-):
+class FilterObjectsRelationshipsOutputStrategy(FilterObjectsOutputSymbolKindStrategy):
     """Map relabeled object lineage to directed relationship artifacts."""
 
     role = FilterObjectsOutputRole.RELATIONSHIPS
@@ -1192,11 +1191,7 @@ class SemanticSettingsContractPattern(InferredModuleContractPattern):
             builder,
             module,
             tuple(inputs),
-            tuple(
-                symbol
-                for symbol in setting_symbols
-                if not symbol.role.is_input
-            ),
+            tuple(symbol for symbol in setting_symbols if not symbol.role.is_input),
             special_outputs,
         )
         if not inputs and not outputs:
@@ -1264,7 +1259,9 @@ class WatershedContractBuilder(ModuleContractBuilder):
             CellProfilerSymbolKind.OBJECTS,
             module,
         )
-        return _contracts(module, builder, inputs=inputs, outputs=[measurements, objects])
+        return _contracts(
+            module, builder, inputs=inputs, outputs=[measurements, objects]
+        )
 
 
 class CropContractBuilder(ModuleContractBuilder):
@@ -1634,11 +1631,15 @@ class StraightenWormsContractBuilder(ModuleContractBuilder):
         )
         image_bindings = straighten_worms_image_bindings(module)
         image_inputs = [
-            builder.require(binding.input_image_name, CellProfilerSymbolKind.IMAGE, module)
+            builder.require(
+                binding.input_image_name, CellProfilerSymbolKind.IMAGE, module
+            )
             for binding in image_bindings
         ]
         image_outputs = [
-            builder.declare(binding.output_image_name, CellProfilerSymbolKind.IMAGE, module)
+            builder.declare(
+                binding.output_image_name, CellProfilerSymbolKind.IMAGE, module
+            )
             for binding in image_bindings
         ]
         output_objects = builder.declare(
@@ -1911,7 +1912,9 @@ class GrayToColorContractBuilder(ModuleContractBuilder):
     ) -> ModuleArtifactContracts:
         images = [
             builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in GrayToColorInputNameResolver.for_module(module).input_names(module)
+            for name in GrayToColorInputNameResolver.for_module(module).input_names(
+                module
+            )
         ]
         output = builder.declare(
             _setting(module, OUTPUT_IMAGE_SETTING),
@@ -2042,6 +2045,16 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
         return (*required, *optional)
 
 
+MeasurementModuleContractBuilderTypes = Mapping[
+    str,
+    type[MeasurementModuleContractBuilder],
+]
+MeasurementModuleContractBuilderLineage = Mapping[
+    type[MeasurementModuleContractBuilder],
+    type[MeasurementModuleContractBuilder],
+]
+
+
 @dataclass(frozen=True, slots=True)
 class MeasurementModuleContractBuilderDeclaration:
     """Authoritative declaration for measurement-table contract builders."""
@@ -2078,7 +2091,7 @@ class MeasurementModuleContractBuilderFamily:
 
     def contract_builder_types(
         self,
-    ) -> Mapping[str, type[MeasurementModuleContractBuilder]]:
+    ) -> MeasurementModuleContractBuilderTypes:
         return MappingProxyType(
             {
                 declaration.class_name: declaration.contract_builder_type(
@@ -2090,8 +2103,8 @@ class MeasurementModuleContractBuilderFamily:
 
     def generated_lineage(
         self,
-        generated_types: Mapping[str, type[MeasurementModuleContractBuilder]],
-    ) -> Mapping[type[MeasurementModuleContractBuilder], type[MeasurementModuleContractBuilder]]:
+        generated_types: MeasurementModuleContractBuilderTypes,
+    ) -> MeasurementModuleContractBuilderLineage:
         return MappingProxyType(
             {
                 generated_type: self.base_type
@@ -2212,13 +2225,17 @@ class MeasureImageAreaOccupiedContractBuilder(ModuleContractBuilder):
             )
         inputs = [
             *(
-                builder.require(row.binary_image_name, CellProfilerSymbolKind.IMAGE, module)
+                builder.require(
+                    row.binary_image_name, CellProfilerSymbolKind.IMAGE, module
+                )
                 for row in rows
                 if row.operand is AreaOccupiedOperand.BINARY_IMAGE
                 and row.binary_image_name is not None
             ),
             *(
-                builder.require(row.objects_name, CellProfilerSymbolKind.OBJECTS, module)
+                builder.require(
+                    row.objects_name, CellProfilerSymbolKind.OBJECTS, module
+                )
                 for row in rows
                 if row.operand is AreaOccupiedOperand.OBJECTS
                 and row.objects_name is not None
@@ -2280,48 +2297,57 @@ class _SingleInputSingleOutputContractPattern(InferredModuleContractPattern):
         )
 
 
-class SingleImageToImageContractPattern(_SingleInputSingleOutputContractPattern):
-    """Infer common image-transform modules."""
-
-    pattern_name = "single_image_to_image"
-    input_setting = INPUT_IMAGE_SETTING
-    input_kind = CellProfilerSymbolKind.IMAGE
-    output_setting = OUTPUT_IMAGE_SETTING
-    output_kind = CellProfilerSymbolKind.IMAGE
-    excluded_settings = (OUTPUT_OBJECTS_SETTING,)
-
-
-class SingleImageToObjectContractPattern(_SingleInputSingleOutputContractPattern):
-    """Infer common image-segmentation modules."""
-
-    pattern_name = "single_image_to_object"
-    input_setting = INPUT_IMAGE_SETTING
-    input_kind = CellProfilerSymbolKind.IMAGE
-    output_setting = OUTPUT_OBJECTS_SETTING
-    output_kind = CellProfilerSymbolKind.OBJECTS
-    excluded_settings = (OUTPUT_IMAGE_SETTING,)
-
-
-class SingleObjectToImageContractPattern(_SingleInputSingleOutputContractPattern):
-    """Infer common object-rendering modules."""
-
-    pattern_name = "single_object_to_image"
-    input_setting = INPUT_OBJECTS_SETTING
-    input_kind = CellProfilerSymbolKind.OBJECTS
-    output_setting = OUTPUT_IMAGE_SETTING
-    output_kind = CellProfilerSymbolKind.IMAGE
-    excluded_settings = (OUTPUT_OBJECTS_SETTING,)
-
-
-class SingleObjectToObjectContractPattern(_SingleInputSingleOutputContractPattern):
-    """Infer common object-transform modules."""
-
-    pattern_name = "single_object_to_object"
-    input_setting = INPUT_OBJECTS_SETTING
-    input_kind = CellProfilerSymbolKind.OBJECTS
-    output_setting = OUTPUT_OBJECTS_SETTING
-    output_kind = CellProfilerSymbolKind.OBJECTS
-    excluded_settings = (OUTPUT_IMAGE_SETTING,)
+for _single_input_output_contract_pattern in (
+    GeneratedLeafClassSpec(
+        "SingleImageToImageContractPattern",
+        _SingleInputSingleOutputContractPattern,
+        attributes={
+            "pattern_name": "single_image_to_image",
+            "input_setting": INPUT_IMAGE_SETTING,
+            "input_kind": CellProfilerSymbolKind.IMAGE,
+            "output_setting": OUTPUT_IMAGE_SETTING,
+            "output_kind": CellProfilerSymbolKind.IMAGE,
+            "excluded_settings": (OUTPUT_OBJECTS_SETTING,),
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "SingleImageToObjectContractPattern",
+        _SingleInputSingleOutputContractPattern,
+        attributes={
+            "pattern_name": "single_image_to_object",
+            "input_setting": INPUT_IMAGE_SETTING,
+            "input_kind": CellProfilerSymbolKind.IMAGE,
+            "output_setting": OUTPUT_OBJECTS_SETTING,
+            "output_kind": CellProfilerSymbolKind.OBJECTS,
+            "excluded_settings": (OUTPUT_IMAGE_SETTING,),
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "SingleObjectToImageContractPattern",
+        _SingleInputSingleOutputContractPattern,
+        attributes={
+            "pattern_name": "single_object_to_image",
+            "input_setting": INPUT_OBJECTS_SETTING,
+            "input_kind": CellProfilerSymbolKind.OBJECTS,
+            "output_setting": OUTPUT_IMAGE_SETTING,
+            "output_kind": CellProfilerSymbolKind.IMAGE,
+            "excluded_settings": (OUTPUT_OBJECTS_SETTING,),
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "SingleObjectToObjectContractPattern",
+        _SingleInputSingleOutputContractPattern,
+        attributes={
+            "pattern_name": "single_object_to_object",
+            "input_setting": INPUT_OBJECTS_SETTING,
+            "input_kind": CellProfilerSymbolKind.OBJECTS,
+            "output_setting": OUTPUT_OBJECTS_SETTING,
+            "output_kind": CellProfilerSymbolKind.OBJECTS,
+            "excluded_settings": (OUTPUT_IMAGE_SETTING,),
+        },
+    ),
+):
+    _single_input_output_contract_pattern.declare_in(globals())
 
 
 def _semantic_output_symbols(
@@ -2345,13 +2371,11 @@ def _semantic_output_symbols(
         )
 
     measurement_output_count = sum(
-        special.kind is ArtifactKind.MEASUREMENTS
-        for special in special_outputs
+        special.kind is ArtifactKind.MEASUREMENTS for special in special_outputs
     )
     for special in special_outputs:
         if special.kind is ArtifactKind.IMAGE and any(
-            output.kind is CellProfilerSymbolKind.IMAGE
-            for output in outputs
+            output.kind is CellProfilerSymbolKind.IMAGE for output in outputs
         ):
             continue
         name = ModuleArtifactNamePolicy(module).special_output_name(
@@ -2463,7 +2487,9 @@ def _contracts(
 ) -> ModuleArtifactContracts:
     preserve_role_inputs = (
         preserve_duplicate_inputs
-        or ModuleInputRolePolicy.for_module(module.name).preserve_duplicate_inputs(module)
+        or ModuleInputRolePolicy.for_module(module.name).preserve_duplicate_inputs(
+            module
+        )
     )
     input_symbols = tuple(inputs) if preserve_role_inputs else _unique_symbols(inputs)
     return ModuleArtifactContracts(
