@@ -20,19 +20,14 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.interop.cellprofiler.image_math_settings import (
+    ImageMathOperation as MathOperation,
+)
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerSliceAlignedValues,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
-
-
-class MathOperation(Enum):
-    MULTIPLY = "multiply"
-    DIVIDE = "divide"
-    ADD = "add"
-    SUBTRACT = "subtract"
-    NONE = "none"
 
 
 class RoundingMethod(Enum):
