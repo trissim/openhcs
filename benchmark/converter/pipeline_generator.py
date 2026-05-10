@@ -51,7 +51,9 @@ from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_sym
 from openhcs.interop.cellprofiler.module_function_resolution import (
     ModuleFunctionResolutionStrategy,
 )
-from .module_settings_binding import ModuleSettingsBindingStrategy
+from openhcs.interop.cellprofiler.module_settings_binding import (
+    ModuleSettingsBindingStrategy,
+)
 from .processing_contract_resolution import resolve_processing_contract
 from .settings_binder import SettingsBinder, normalize_cellprofiler_setting_name
 from openhcs.interop.cellprofiler.setting_names import (
