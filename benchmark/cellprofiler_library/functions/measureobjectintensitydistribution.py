@@ -6,7 +6,6 @@ import os
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Tuple, List, Any
-from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import (
     measurement_image_batch_executor,
@@ -30,6 +29,11 @@ from openhcs.processing.backends.cellprofiler.intensity_distribution import (
 from openhcs.processing.backends.cellprofiler.zernike import (
     intensity_zernike_moments,
 )
+from openhcs.interop.cellprofiler.intensity_distribution_settings import (
+    IntensityDistributionCenterChoice as CenterChoice,
+    IntensityDistributionZernikeMode as ZernikeMode,
+)
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.materialization import csv_materializer
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
@@ -45,18 +49,6 @@ def _log_profile(label: str, seconds: float, **fields: object) -> None:
         return
     field_text = " ".join(f"{key}={value}" for key, value in fields.items())
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
-
-
-class CenterChoice(Enum):
-    SELF = "self"
-    CENTERS_OF_OTHER = "centers_of_other"
-    EDGES_OF_OTHER = "edges_of_other"
-
-
-class ZernikeMode(Enum):
-    NONE = "none"
-    MAGNITUDES = "magnitudes"
-    MAGNITUDES_AND_PHASE = "magnitudes_and_phase"
 
 
 @numpy
@@ -105,7 +97,7 @@ def measure_object_intensity_distribution(
     total_started_at = time.perf_counter()
     img_2d, labels_2d = _intensity_distribution_2d_inputs(image, labels)
     
-    wants_zernikes = _coerce_zernike_mode(wants_zernikes)
+    wants_zernikes = coerce_cellprofiler_enum(ZernikeMode, wants_zernikes)
     object_ids = dense_object_label_extent_id_domain(labels_2d)
     if not object_ids:
         return image, []
@@ -265,7 +257,10 @@ def _measure_object_intensity_distribution_batch(
         return [execute_request(func, item) for item in requests]
 
     first_kwargs = requests[0].kwargs
-    wants_zernikes = _coerce_zernike_mode(first_kwargs.get("wants_zernikes", ZernikeMode.NONE))
+    wants_zernikes = coerce_cellprofiler_enum(
+        ZernikeMode,
+        first_kwargs.get("wants_zernikes", ZernikeMode.NONE),
+    )
     radial_backend = radial_distribution_backend(
         backend_provider=first_kwargs.get("radial_distribution_backend_provider"),
     )
@@ -306,16 +301,6 @@ def _measure_object_intensity_distribution_batch(
             )
         outputs.append((request.image, rows))
     return outputs
-
-
-def _coerce_zernike_mode(value: ZernikeMode | str) -> ZernikeMode:
-    if isinstance(value, ZernikeMode):
-        return value
-    normalized = str(value).strip().lower().replace(" ", "_")
-    for mode in ZernikeMode:
-        if normalized in {mode.name.lower(), mode.value}:
-            return mode
-    raise ValueError(f"Unknown Zernike mode: {value!r}.")
 
 
 def _zernike_measurement_rows(
