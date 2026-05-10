@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum, EnumMeta
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
@@ -257,3 +257,8 @@ class GeneratedLeafClassSpec(RegisteredLeafClassSpec):
 
     class_name: str
     base_type: type[object]
+    attributes: Mapping[str, object] = field(default_factory=dict, kw_only=True)
+
+    def class_attributes(self) -> Mapping[str, object]:
+        """Return the declared class attributes for this generated leaf."""
+        return self.attributes

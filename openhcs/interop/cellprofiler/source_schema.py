@@ -25,6 +25,7 @@ from openhcs.core.pipeline_image_schema import (
     image_type_artifact_kind,
     image_type_participates_in_image_stack,
 )
+from openhcs.core.registry_strategies import GeneratedLeafClassSpec
 from openhcs.core.source_bindings import (
     MetadataExtractionRule,
     MetadataSource,
@@ -48,6 +49,9 @@ from .setting_names import (
     decode_cellprofiler_setting_literal,
     repeating_setting_blocks,
 )
+
+ModuleSettingBlock = tuple[ModuleSetting, ...]
+ModuleSettingBlocks = tuple[ModuleSettingBlock, ...]
 
 _METADATA_MATCH_PATTERN = re.compile(
     r"\(metadata does (?P<field>[A-Za-z0-9_]+) \"(?P<value>[^\"]+)\"\)"
@@ -103,19 +107,24 @@ class SourceFilterSubjectLiteral(SourceSchemaLiteralResolver):
         return f"Unsupported source filter subject: {value!r}."
 
 
-class FileFilterSubjectLiteral(SourceFilterSubjectLiteral):
-    literal = "file"
-    subject = SourceFilterSubject.FILE
-
-
-class DirectoryFilterSubjectLiteral(SourceFilterSubjectLiteral):
-    literal = "directory"
-    subject = SourceFilterSubject.DIRECTORY
-
-
-class ExtensionFilterSubjectLiteral(SourceFilterSubjectLiteral):
-    literal = "extension"
-    subject = SourceFilterSubject.EXTENSION
+for _source_filter_subject_literal in (
+    GeneratedLeafClassSpec(
+        "FileFilterSubjectLiteral",
+        SourceFilterSubjectLiteral,
+        attributes={"literal": "file", "subject": SourceFilterSubject.FILE},
+    ),
+    GeneratedLeafClassSpec(
+        "DirectoryFilterSubjectLiteral",
+        SourceFilterSubjectLiteral,
+        attributes={"literal": "directory", "subject": SourceFilterSubject.DIRECTORY},
+    ),
+    GeneratedLeafClassSpec(
+        "ExtensionFilterSubjectLiteral",
+        SourceFilterSubjectLiteral,
+        attributes={"literal": "extension", "subject": SourceFilterSubject.EXTENSION},
+    ),
+):
+    _source_filter_subject_literal.declare_in(globals())
 
 
 class SourceFilterOperatorLiteral(SourceSchemaLiteralResolver):
@@ -140,44 +149,67 @@ class SourceFilterOperatorLiteral(SourceSchemaLiteralResolver):
         return self.match_type
 
 
-class ContainsFilterOperatorLiteral(SourceFilterOperatorLiteral):
-    literal = "contain"
-    match_type = SourceFilterMatchType.CONTAINS
-    negated_match_type = SourceFilterMatchType.DOES_NOT_CONTAIN
-
-
-class ContainsRegexFilterOperatorLiteral(SourceFilterOperatorLiteral):
-    literal = "containregexp"
-    match_type = SourceFilterMatchType.CONTAINS_REGEX
-    negated_match_type = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX
-
-
-class EqualsFilterOperatorLiteral(SourceFilterOperatorLiteral):
-    literal = "eq"
-    match_type = SourceFilterMatchType.EQUALS
-    negated_match_type = SourceFilterMatchType.DOES_NOT_EQUAL
-
-
-class StartsWithFilterOperatorLiteral(SourceFilterOperatorLiteral):
-    literal = "startwith"
-    match_type = SourceFilterMatchType.STARTS_WITH
-    negated_match_type = SourceFilterMatchType.DOES_NOT_START_WITH
-
-
-class EndsWithFilterOperatorLiteral(SourceFilterOperatorLiteral):
-    literal = "endwith"
-    match_type = SourceFilterMatchType.ENDS_WITH
-    negated_match_type = SourceFilterMatchType.DOES_NOT_END_WITH
-
-
-class IsImageFilterOperatorLiteral(SourceFilterOperatorLiteral):
-    literal = "isimage"
-    match_type = SourceFilterMatchType.IS_IMAGE
-
-
-class IsTifFilterOperatorLiteral(SourceFilterOperatorLiteral):
-    literal = "istif"
-    match_type = SourceFilterMatchType.IS_TIF
+for _source_filter_operator_literal in (
+    GeneratedLeafClassSpec(
+        "ContainsFilterOperatorLiteral",
+        SourceFilterOperatorLiteral,
+        attributes={
+            "literal": "contain",
+            "match_type": SourceFilterMatchType.CONTAINS,
+            "negated_match_type": SourceFilterMatchType.DOES_NOT_CONTAIN,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "ContainsRegexFilterOperatorLiteral",
+        SourceFilterOperatorLiteral,
+        attributes={
+            "literal": "containregexp",
+            "match_type": SourceFilterMatchType.CONTAINS_REGEX,
+            "negated_match_type": SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "EqualsFilterOperatorLiteral",
+        SourceFilterOperatorLiteral,
+        attributes={
+            "literal": "eq",
+            "match_type": SourceFilterMatchType.EQUALS,
+            "negated_match_type": SourceFilterMatchType.DOES_NOT_EQUAL,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "StartsWithFilterOperatorLiteral",
+        SourceFilterOperatorLiteral,
+        attributes={
+            "literal": "startwith",
+            "match_type": SourceFilterMatchType.STARTS_WITH,
+            "negated_match_type": SourceFilterMatchType.DOES_NOT_START_WITH,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "EndsWithFilterOperatorLiteral",
+        SourceFilterOperatorLiteral,
+        attributes={
+            "literal": "endwith",
+            "match_type": SourceFilterMatchType.ENDS_WITH,
+            "negated_match_type": SourceFilterMatchType.DOES_NOT_END_WITH,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "IsImageFilterOperatorLiteral",
+        SourceFilterOperatorLiteral,
+        attributes={
+            "literal": "isimage",
+            "match_type": SourceFilterMatchType.IS_IMAGE,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "IsTifFilterOperatorLiteral",
+        SourceFilterOperatorLiteral,
+        attributes={"literal": "istif", "match_type": SourceFilterMatchType.IS_TIF},
+    ),
+):
+    _source_filter_operator_literal.declare_in(globals())
 
 
 class SourceBindingMatchMethodLiteral(SourceSchemaLiteralResolver):
@@ -191,14 +223,133 @@ class SourceBindingMatchMethodLiteral(SourceSchemaLiteralResolver):
         return f"Unsupported NamesAndTypes image set matching method: {value!r}."
 
 
-class MetadataMatchMethodLiteral(SourceBindingMatchMethodLiteral):
-    literal = "metadata"
-    method = SourceBindingMatchMethod.METADATA
+for _source_binding_match_method_literal in (
+    GeneratedLeafClassSpec(
+        "MetadataMatchMethodLiteral",
+        SourceBindingMatchMethodLiteral,
+        attributes={
+            "literal": "metadata",
+            "method": SourceBindingMatchMethod.METADATA,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "OrderMatchMethodLiteral",
+        SourceBindingMatchMethodLiteral,
+        attributes={"literal": "order", "method": SourceBindingMatchMethod.ORDER},
+    ),
+):
+    _source_binding_match_method_literal.declare_in(globals())
 
 
-class OrderMatchMethodLiteral(SourceBindingMatchMethodLiteral):
-    literal = "order"
-    method = SourceBindingMatchMethod.ORDER
+class SourceFilterCriteriaParser(ABC, metaclass=AutoRegisterMeta):
+    """Nominal parser for CellProfiler source-filter criteria strings."""
+
+    __registry_key__ = "parser_key"
+    __skip_if_no_key__ = True
+    parser_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_key(cls, parser_key: str) -> "SourceFilterCriteriaParser":
+        return cls.__registry__[parser_key]()
+
+    @abstractmethod
+    def filter_clauses_from_criteria(
+        self,
+        criteria: str,
+    ) -> tuple[SourceFilterClause, ...]:
+        """Parse CellProfiler source-filter clauses from one criteria string."""
+
+
+class CellProfilerSourceFilterCriteriaParser(SourceFilterCriteriaParser):
+    """Parse CellProfiler's source-filter criteria expression subset."""
+
+    parser_key = "cellprofiler"
+
+    def filter_clauses_from_criteria(
+        self,
+        criteria: str,
+    ) -> tuple[SourceFilterClause, ...]:
+        decoded_criteria = decode_cellprofiler_setting_literal(criteria)
+        stripped = decoded_criteria.strip()
+        if not stripped:
+            return ()
+        matches = tuple(_FILTER_CLAUSE_PATTERN.finditer(decoded_criteria))
+        if not matches:
+            if not _SOURCE_FILTER_SUBJECT_PATTERN.search(decoded_criteria):
+                return ()
+            raise ValueError(
+                "Unsupported CellProfiler source filter criteria: "
+                f"{criteria!r}."
+            )
+        return tuple(
+            clause
+            for match in matches
+            if (clause := self.filter_clause_from_match(match)) is not None
+        )
+
+    def filter_clause_from_match(
+        self,
+        match: re.Match[str],
+    ) -> SourceFilterClause | None:
+        """Return one source-filter clause for a regex match."""
+        subject = self.filter_subject(match.group("subject"))
+        operator = match.group("operator")
+        negated = bool(match.group("negation"))
+        value = match.group("value")
+        if value == "":
+            return None
+        if (
+            subject is SourceFilterSubject.EXTENSION
+            and not negated
+            and operator.startswith("is")
+            and operator not in {"isimage", "istif"}
+        ):
+            return SourceFilterClause(
+                subject=subject,
+                match_type=SourceFilterMatchType.EQUALS,
+                value=f".{operator.removeprefix('is')}",
+            )
+        return SourceFilterClause(
+            subject=subject,
+            match_type=self.filter_match_type(
+                operator=operator,
+                negated=negated,
+            ),
+            value=value,
+        )
+
+    @staticmethod
+    def filter_subject(value: str) -> SourceFilterSubject:
+        """Resolve a CellProfiler source-filter subject literal."""
+        resolver = SourceFilterSubjectLiteral.for_literal(value)
+        if not isinstance(resolver, SourceFilterSubjectLiteral):
+            raise TypeError(
+                "Expected source-filter subject resolver, got "
+                f"{type(resolver).__name__}."
+            )
+        return resolver.subject
+
+    @staticmethod
+    def filter_match_type(
+        *,
+        operator: str,
+        negated: bool,
+    ) -> SourceFilterMatchType:
+        """Resolve a CellProfiler source-filter operator literal."""
+        resolver = SourceFilterOperatorLiteral.for_literal(operator)
+        if not isinstance(resolver, SourceFilterOperatorLiteral):
+            raise TypeError(
+                "Expected source-filter operator resolver, got "
+                f"{type(resolver).__name__}."
+            )
+        return resolver.match_type_for_negation(negated)
+
+
+def cellprofiler_source_filter_criteria_parser() -> SourceFilterCriteriaParser:
+    """Return the registered parser for CellProfiler source-filter criteria."""
+    return SourceFilterCriteriaParser.for_key("cellprofiler")
+
+
 _LOAD_IMAGES_ALIAS_SETTING = (
     "What do you want to call this image in CellProfiler?"
 )
@@ -351,7 +502,9 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
         module: ModuleBlock,
         state: PipelineImageSchemaBuilder,
     ) -> None:
-        assignment_blocks = _names_and_types_blocks(module.iter_settings())
+        assignment_blocks = NamesAndTypesAssignmentBlockStrategy.blocks_for(
+            module.iter_settings()
+        )
         match_plan = _match_plan_from_names_and_types(module, assignment_blocks)
         if match_plan is not None:
             state.declare_match_plan(match_plan)
@@ -419,7 +572,6 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "strategy_name"
     __skip_if_no_key__ = True
     strategy_name: ClassVar[str | None] = None
-    priority: ClassVar[int] = 100
     match_setting: ClassVar[str | None] = None
     block_start_name: ClassVar[str | None] = None
     exact_count: ClassVar[int | None] = None
@@ -430,11 +582,8 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
     def blocks_for(
         cls,
         settings: Sequence[ModuleSetting],
-    ) -> tuple[tuple[ModuleSetting, ...], ...]:
-        for strategy_type in sorted(
-            cls.__registry__.values(),
-            key=lambda candidate: candidate.priority,
-        ):
+    ) -> ModuleSettingBlocks:
+        for strategy_type in cls.__registry__.values():
             strategy = strategy_type()
             if strategy.matches(settings):
                 return strategy.blocks(settings)
@@ -442,21 +591,21 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
 
     def matches(self, settings: Sequence[ModuleSetting]) -> bool:
         """Whether this layout applies to the ordered NamesAndTypes settings."""
-        count = _setting_count(
+        count = self.setting_count(
             settings,
-            _required_strategy_attr(type(self).match_setting, "match_setting"),
+            self.required_match_setting,
         )
         exact_count = type(self).exact_count
         if exact_count is not None:
-            return self._matches_blocks(settings, count == exact_count)
+            return self.matches_blocks(settings, count == exact_count)
         minimum_count = type(self).minimum_count
         if minimum_count is None:
             raise TypeError(
                 f"{type(self).__name__} must define exact_count or minimum_count."
             )
-        return self._matches_blocks(settings, count >= minimum_count)
+        return self.matches_blocks(settings, count >= minimum_count)
 
-    def _matches_blocks(
+    def matches_blocks(
         self,
         settings: Sequence[ModuleSetting],
         count_matches: bool,
@@ -466,95 +615,120 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
         if not type(self).require_block_source_alias:
             return True
         return all(
-            _block_declares_source_alias(block)
+            self.block_declares_source_alias(block)
             for block in self.blocks(settings)
         )
 
     def blocks(
         self,
         settings: Sequence[ModuleSetting],
-    ) -> tuple[tuple[ModuleSetting, ...], ...]:
+    ) -> ModuleSettingBlocks:
         """Return ordered assignment blocks for this layout."""
         return repeating_setting_blocks(
             settings,
-            start_name=_required_strategy_attr(
-                type(self).block_start_name,
-                "block_start_name",
-            ),
+            start_name=self.required_block_start_name,
+        )
+
+    @property
+    def required_match_setting(self) -> str:
+        """Return the setting name that identifies this layout."""
+        value = type(self).match_setting
+        if value is None:
+            raise TypeError(
+                f"{type(self).__name__} must define match_setting."
+            )
+        return value
+
+    @property
+    def required_block_start_name(self) -> str:
+        """Return the setting name that starts one assignment block."""
+        value = type(self).block_start_name
+        if value is None:
+            raise TypeError(
+                f"{type(self).__name__} must define block_start_name."
+            )
+        return value
+
+    @staticmethod
+    def setting_count(
+        settings: Sequence[ModuleSetting],
+        name: str,
+    ) -> int:
+        """Return how often a setting appears in the candidate layout."""
+        return sum(1 for setting in settings if setting.name == name)
+
+    @staticmethod
+    def block_declares_source_alias(block: Sequence[ModuleSetting]) -> bool:
+        """Return whether a block declares either image or object source alias."""
+        return bool(
+            block_setting_value(block, "Name to assign these images", default="")
+            or block_setting_value(block, "Name to assign these objects", default="")
         )
 
 
-class RepeatedAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
-    """NamesAndTypes stores each assignment as a full repeated setting block."""
-
-    strategy_name = "repeated_assignment"
-    priority = 20
-    match_setting = "Assign a name to"
-    block_start_name = "Assign a name to"
-    minimum_count = 2
-
-
-class RepeatedRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
-    """NamesAndTypes stores a global preamble followed by repeated rule rows."""
-
-    strategy_name = "repeated_rule_criteria"
-    priority = 10
-    match_setting = "Select the rule criteria"
-    block_start_name = "Select the rule criteria"
-    minimum_count = 2
-    require_block_source_alias = True
-
-
-class SingleAssignmentBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
-    """NamesAndTypes stores one full assignment block."""
-
-    strategy_name = "single_assignment"
-    priority = 40
-    match_setting = "Assign a name to"
-    block_start_name = "Assign a name to"
-    exact_count = 1
-
-
-class SingleRuleCriteriaBlockStrategy(NamesAndTypesAssignmentBlockStrategy):
-    """NamesAndTypes stores one assignment row starting at rule criteria."""
-
-    strategy_name = "single_rule_criteria"
-    priority = 30
-    match_setting = "Select the rule criteria"
-    block_start_name = "Select the rule criteria"
-    exact_count = 1
-    require_block_source_alias = True
-
-
-def _names_and_types_blocks(
-    settings: Sequence[ModuleSetting],
-) -> tuple[tuple[ModuleSetting, ...], ...]:
-    return NamesAndTypesAssignmentBlockStrategy.blocks_for(settings)
-
-
-def _setting_count(
-    settings: Sequence[ModuleSetting],
-    name: str,
-) -> int:
-    return sum(1 for setting in settings if setting.name == name)
-
-
-def _required_strategy_attr[T](value: T | None, name: str) -> T:
-    if value is None:
-        raise TypeError(f"NamesAndTypes assignment strategy must define {name}.")
-    return value
-
-
-def _block_declares_source_alias(block: Sequence[ModuleSetting]) -> bool:
-    return bool(
-        block_setting_value(block, "Name to assign these images", default="")
-        or block_setting_value(block, "Name to assign these objects", default="")
-    )
+for _names_and_types_assignment_strategy in (
+    GeneratedLeafClassSpec(
+        "RepeatedRuleCriteriaBlockStrategy",
+        NamesAndTypesAssignmentBlockStrategy,
+        attributes={
+            "strategy_name": "repeated_rule_criteria",
+            "match_setting": "Select the rule criteria",
+            "block_start_name": "Select the rule criteria",
+            "minimum_count": 2,
+            "require_block_source_alias": True,
+            "__doc__": (
+                "NamesAndTypes stores a global preamble followed by repeated "
+                "rule rows."
+            ),
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "RepeatedAssignmentBlockStrategy",
+        NamesAndTypesAssignmentBlockStrategy,
+        attributes={
+            "strategy_name": "repeated_assignment",
+            "match_setting": "Assign a name to",
+            "block_start_name": "Assign a name to",
+            "minimum_count": 2,
+            "__doc__": (
+                "NamesAndTypes stores each assignment as a full repeated "
+                "setting block."
+            ),
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "SingleRuleCriteriaBlockStrategy",
+        NamesAndTypesAssignmentBlockStrategy,
+        attributes={
+            "strategy_name": "single_rule_criteria",
+            "match_setting": "Select the rule criteria",
+            "block_start_name": "Select the rule criteria",
+            "exact_count": 1,
+            "require_block_source_alias": True,
+            "__doc__": (
+                "NamesAndTypes stores one assignment row starting at rule "
+                "criteria."
+            ),
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "SingleAssignmentBlockStrategy",
+        NamesAndTypesAssignmentBlockStrategy,
+        attributes={
+            "strategy_name": "single_assignment",
+            "match_setting": "Assign a name to",
+            "block_start_name": "Assign a name to",
+            "exact_count": 1,
+            "__doc__": "NamesAndTypes stores one full assignment block.",
+        },
+    ),
+):
+    _names_and_types_assignment_strategy.declare_in(globals())
 
 
 def _load_images_blocks(
     settings: Sequence[ModuleSetting],
-) -> tuple[tuple[ModuleSetting, ...], ...]:
+) -> ModuleSettingBlocks:
     return repeating_setting_blocks(
         settings,
         start_name=_LOAD_IMAGES_MATCH_TEXT_SETTING,
@@ -575,7 +749,11 @@ def _images_rule_filters(
     filtering_mode: str,
     criteria: str,
 ) -> tuple[SourceFilterClause, ...]:
-    filters = list(_filter_clauses_from_criteria(criteria))
+    filters = list(
+        cellprofiler_source_filter_criteria_parser().filter_clauses_from_criteria(
+            criteria
+        )
+    )
     if _criteria_is_multi_clause_disjunction(criteria, filters):
         # PipelineImageSchema.ImagesRule is intentionally conjunctive. A
         # multi-clause CP Images disjunction is a source-universe prefilter, so
@@ -765,10 +943,10 @@ def _compile_metadata_block(
         MetadataExtractionRule(
             source=source,
             pattern=_required_metadata_pattern_for_block(block, source),
-            filters=_filter_clauses_from_criteria(
-                block_setting_value(
-                    block,
-                    "Select the filtering criteria",
+            filters=(
+                cellprofiler_source_filter_criteria_parser()
+                .filter_clauses_from_criteria(
+                    block_setting_value(block, "Select the filtering criteria")
                 )
             ),
         )
@@ -917,80 +1095,6 @@ def _legacy_regex_value(
     return ""
 
 
-def _filter_clauses_from_criteria(
-    criteria: str,
-) -> tuple[SourceFilterClause, ...]:
-    decoded_criteria = decode_cellprofiler_setting_literal(criteria)
-    stripped = decoded_criteria.strip()
-    if not stripped:
-        return ()
-    matches = tuple(_FILTER_CLAUSE_PATTERN.finditer(decoded_criteria))
-    if not matches:
-        if not _SOURCE_FILTER_SUBJECT_PATTERN.search(decoded_criteria):
-            return ()
-        raise ValueError(
-            "Unsupported CellProfiler source filter criteria: "
-            f"{criteria!r}."
-        )
-    return tuple(
-        clause
-        for match in matches
-        if (clause := _filter_clause_from_match(match)) is not None
-    )
-
-
-def _filter_clause_from_match(match: re.Match[str]) -> SourceFilterClause | None:
-    subject = _filter_subject(match.group("subject"))
-    operator = match.group("operator")
-    negated = bool(match.group("negation"))
-    value = match.group("value")
-    if value == "":
-        return None
-    if (
-        subject is SourceFilterSubject.EXTENSION
-        and not negated
-        and operator.startswith("is")
-        and operator not in {"isimage", "istif"}
-    ):
-        return SourceFilterClause(
-            subject=subject,
-            match_type=SourceFilterMatchType.EQUALS,
-            value=f".{operator.removeprefix('is')}",
-        )
-    return SourceFilterClause(
-        subject=subject,
-        match_type=_filter_match_type(
-            operator=operator,
-            negated=negated,
-        ),
-        value=value,
-    )
-
-
-def _filter_subject(value: str) -> SourceFilterSubject:
-    resolver = SourceFilterSubjectLiteral.for_literal(value)
-    if not isinstance(resolver, SourceFilterSubjectLiteral):
-        raise TypeError(
-            "Expected source-filter subject resolver, got "
-            f"{type(resolver).__name__}."
-        )
-    return resolver.subject
-
-
-def _filter_match_type(
-    *,
-    operator: str,
-    negated: bool,
-) -> SourceFilterMatchType:
-    resolver = SourceFilterOperatorLiteral.for_literal(operator)
-    if not isinstance(resolver, SourceFilterOperatorLiteral):
-        raise TypeError(
-            "Expected source-filter operator resolver, got "
-            f"{type(resolver).__name__}."
-        )
-    return resolver.match_type_for_negation(negated)
-
-
 def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:
     metadata_selectors: list[MetadataSelector] = []
     for match in _METADATA_MATCH_PATTERN.finditer(rule_criteria):
@@ -999,7 +1103,10 @@ def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:
         metadata_selectors.append(MetadataSelector(field, value))
     return SourceSelector(
         metadata=tuple(metadata_selectors),
-        filters=_filter_clauses_from_criteria(rule_criteria),
+        filters=(
+            cellprofiler_source_filter_criteria_parser()
+            .filter_clauses_from_criteria(rule_criteria)
+        ),
     )
 
 
