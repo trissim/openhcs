@@ -9,7 +9,6 @@ min/max, standard deviation, inversion, log transform, and logical operations.
 
 import numpy as np
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Tuple
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
@@ -23,6 +22,7 @@ from openhcs.core.runtime_values import (
 from openhcs.interop.cellprofiler.image_math_settings import (
     ImageMathOperation as MathOperation,
 )
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 ImageMathBinaryOperator = Callable[[np.ndarray, np.ndarray], np.ndarray]
 
@@ -43,47 +43,14 @@ class ImageMathOperationStrategy(
     operation_label: ClassVar[str | None] = None
     single_image: ClassVar[bool] = False
     binary_output: ClassVar[bool] = False
-    implementation_namespace_key: ClassVar[str | None] = None
-
-    @staticmethod
-    def normalized_cellprofiler_literal(value: str) -> str:
-        return "_".join(value.strip().lower().replace("-", " ").split())
 
     @staticmethod
     def operands_are_logical(pixel_data: list[np.ndarray]) -> bool:
         return all(pd.dtype == bool for pd in pixel_data if not np.isscalar(pd))
 
     @classmethod
-    def materialized_namespace(
-        cls,
-        operation: MathOperation,
-        implementation: ImageMathBinaryOperator | None,
-    ) -> dict[str, Any]:
-        namespace: dict[str, Any] = {
-            "__module__": __name__,
-            "operation": operation,
-        }
-        if cls.implementation_namespace_key is not None:
-            namespace[cls.implementation_namespace_key] = implementation
-        return namespace
-
-    @classmethod
     def coerce(cls, value: MathOperation | str) -> "ImageMathOperationStrategy":
-        if isinstance(value, MathOperation):
-            return cls.for_enum_member(value)
-        literal = cls.normalized_cellprofiler_literal(str(value))
-        for strategy_type in cls.registered_strategy_types():
-            if literal in strategy_type.normalized_cellprofiler_literals():
-                return strategy_type()
-        raise ValueError(f"Unsupported ImageMath operation {value!r}.")
-
-    @classmethod
-    def normalized_cellprofiler_literals(cls) -> frozenset[str]:
-        operation = cls.operation
-        if not isinstance(operation, MathOperation):
-            raise TypeError(f"{cls.__name__} must declare a MathOperation.")
-        literals = (operation.name, *operation.cellprofiler_literals)
-        return frozenset(cls.normalized_cellprofiler_literal(literal) for literal in literals)
+        return cls.for_enum_member(coerce_cellprofiler_enum(MathOperation, value))
 
     def prepare_initial_output(
         self,
@@ -111,7 +78,6 @@ class ImageMathOperationStrategy(
 class PairwiseNumpyImageMathOperationStrategy(ImageMathOperationStrategy):
     """Template for ImageMath operations that reduce operands with one NumPy op."""
 
-    implementation_namespace_key = "numpy_operator"
     numpy_operator: ClassVar[ImageMathBinaryOperator | None] = None
 
     def apply(
@@ -126,6 +92,26 @@ class PairwiseNumpyImageMathOperationStrategy(ImageMathOperationStrategy):
         for pd in pixel_data[1:]:
             output_pixel_data = self.numpy_operator(output_pixel_data, pd)
         return output_pixel_data
+
+
+class AddImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
+    operation = MathOperation.ADD
+    numpy_operator = np.add
+
+
+class DivideImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
+    operation = MathOperation.DIVIDE
+    numpy_operator = np.divide
+
+
+class MinimumImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
+    operation = MathOperation.MINIMUM
+    numpy_operator = np.minimum
+
+
+class MaximumImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
+    operation = MathOperation.MAXIMUM
+    numpy_operator = np.maximum
 
 
 class SubtractImageMathOperationStrategy(ImageMathOperationStrategy):
@@ -232,6 +218,14 @@ class InvertingImageMathOperationStrategy(ImageMathOperationStrategy):
         return skimage.util.invert(output_pixel_data)
 
 
+class InvertImageMathOperationStrategy(InvertingImageMathOperationStrategy):
+    operation = MathOperation.INVERT
+
+
+class ComplementImageMathOperationStrategy(InvertingImageMathOperationStrategy):
+    operation = MathOperation.COMPLEMENT
+
+
 class LogTransformImageMathOperationStrategy(ImageMathOperationStrategy):
     operation = MathOperation.LOG_TRANSFORM
     single_image = True
@@ -278,7 +272,6 @@ class LogicalReductionImageMathOperationStrategy(ImageMathOperationStrategy):
     """Template for binary ImageMath operations that reduce logical operands."""
 
     binary_output = True
-    implementation_namespace_key = "logical_operator"
     logical_operator: ClassVar[ImageMathBinaryOperator | None] = None
 
     def apply(
@@ -293,6 +286,16 @@ class LogicalReductionImageMathOperationStrategy(ImageMathOperationStrategy):
         for pd in pixel_data[1:]:
             output_pixel_data = self.logical_operator(output_pixel_data, pd)
         return output_pixel_data.astype(np.float64)
+
+
+class OrImageMathOperationStrategy(LogicalReductionImageMathOperationStrategy):
+    operation = MathOperation.OR
+    logical_operator = np.logical_or
+
+
+class AndImageMathOperationStrategy(LogicalReductionImageMathOperationStrategy):
+    operation = MathOperation.AND
+    logical_operator = np.logical_and
 
 
 class NotImageMathOperationStrategy(ImageMathOperationStrategy):
@@ -326,85 +329,6 @@ class EqualsImageMathOperationStrategy(ImageMathOperationStrategy):
         for pd in pixel_data[1:]:
             result = result & (comparator == pd)
         return result.astype(np.float64)
-
-
-@dataclass(frozen=True, slots=True)
-class ImageMathOperationClassDeclaration:
-    """Typed declaration for metadata-only ImageMath strategy leaves."""
-
-    class_name: str
-    base_type: type[ImageMathOperationStrategy]
-    operation: MathOperation
-    implementation: ImageMathBinaryOperator | None = None
-
-    def materialize_into(
-        self,
-        namespace: dict[str, Any],
-    ) -> type[ImageMathOperationStrategy]:
-        class_namespace = self.base_type.materialized_namespace(
-            self.operation,
-            self.implementation,
-        )
-        strategy_type = type(self.class_name, (self.base_type,), class_namespace)
-        namespace[self.class_name] = strategy_type
-        return strategy_type
-
-
-IMAGE_MATH_OPERATION_CLASS_DECLARATIONS: tuple[
-    ImageMathOperationClassDeclaration,
-    ...,
-] = (
-    ImageMathOperationClassDeclaration(
-        "AddImageMathOperationStrategy",
-        PairwiseNumpyImageMathOperationStrategy,
-        MathOperation.ADD,
-        np.add,
-    ),
-    ImageMathOperationClassDeclaration(
-        "DivideImageMathOperationStrategy",
-        PairwiseNumpyImageMathOperationStrategy,
-        MathOperation.DIVIDE,
-        np.divide,
-    ),
-    ImageMathOperationClassDeclaration(
-        "MinimumImageMathOperationStrategy",
-        PairwiseNumpyImageMathOperationStrategy,
-        MathOperation.MINIMUM,
-        np.minimum,
-    ),
-    ImageMathOperationClassDeclaration(
-        "MaximumImageMathOperationStrategy",
-        PairwiseNumpyImageMathOperationStrategy,
-        MathOperation.MAXIMUM,
-        np.maximum,
-    ),
-    ImageMathOperationClassDeclaration(
-        "InvertImageMathOperationStrategy",
-        InvertingImageMathOperationStrategy,
-        MathOperation.INVERT,
-    ),
-    ImageMathOperationClassDeclaration(
-        "ComplementImageMathOperationStrategy",
-        InvertingImageMathOperationStrategy,
-        MathOperation.COMPLEMENT,
-    ),
-    ImageMathOperationClassDeclaration(
-        "OrImageMathOperationStrategy",
-        LogicalReductionImageMathOperationStrategy,
-        MathOperation.OR,
-        np.logical_or,
-    ),
-    ImageMathOperationClassDeclaration(
-        "AndImageMathOperationStrategy",
-        LogicalReductionImageMathOperationStrategy,
-        MathOperation.AND,
-        np.logical_and,
-    ),
-)
-
-
-for image_math_operation_class_declaration in IMAGE_MATH_OPERATION_CLASS_DECLARATIONS:
-    image_math_operation_class_declaration.materialize_into(globals())
 
 
 def _apply_image_mask(pixel_data: np.ndarray, mask: Any | None) -> np.ndarray:
