@@ -52,6 +52,7 @@ from .setting_names import (
 
 ModuleSettingBlock = tuple[ModuleSetting, ...]
 ModuleSettingBlocks = tuple[ModuleSettingBlock, ...]
+CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY = "cellprofiler"
 
 _METADATA_MATCH_PATTERN = re.compile(
     r"\(metadata does (?P<field>[A-Za-z0-9_]+) \"(?P<value>[^\"]+)\"\)"
@@ -263,7 +264,7 @@ class SourceFilterCriteriaParser(ABC, metaclass=AutoRegisterMeta):
 class CellProfilerSourceFilterCriteriaParser(SourceFilterCriteriaParser):
     """Parse CellProfiler's source-filter criteria expression subset."""
 
-    parser_key = "cellprofiler"
+    parser_key = CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY
 
     def filter_clauses_from_criteria(
         self,
@@ -347,7 +348,165 @@ class CellProfilerSourceFilterCriteriaParser(SourceFilterCriteriaParser):
 
 def cellprofiler_source_filter_criteria_parser() -> SourceFilterCriteriaParser:
     """Return the registered parser for CellProfiler source-filter criteria."""
-    return SourceFilterCriteriaParser.for_key("cellprofiler")
+    return SourceFilterCriteriaParser.for_key(CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY)
+
+
+class SourceBindingMatchMetadataParser(ABC, metaclass=AutoRegisterMeta):
+    """Nominal parser for image-set match metadata declarations."""
+
+    __registry_key__ = "parser_key"
+    __skip_if_no_key__ = True
+    parser_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_key(cls, parser_key: str) -> "SourceBindingMatchMetadataParser":
+        return cls.__registry__[parser_key]()
+
+    @abstractmethod
+    def match_dimensions(
+        self,
+        raw_match_metadata: str,
+    ) -> tuple[SourceBindingMatchDimension, ...]:
+        """Parse one CellProfiler match-metadata declaration."""
+
+    @abstractmethod
+    def merge_match_dimensions_from_blocks(
+        self,
+        blocks: Sequence[Sequence[ModuleSetting]],
+    ) -> tuple[SourceBindingMatchDimension, ...]:
+        """Merge repeated assignment-block match-metadata declarations."""
+
+
+class CellProfilerSourceBindingMatchMetadataParser(SourceBindingMatchMetadataParser):
+    """Parse CellProfiler NamesAndTypes match-metadata declarations."""
+
+    parser_key = CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY
+
+    def match_dimensions(
+        self,
+        raw_match_metadata: str,
+    ) -> tuple[SourceBindingMatchDimension, ...]:
+        try:
+            records = ast.literal_eval(
+                decode_cellprofiler_setting_literal(raw_match_metadata)
+            )
+        except (SyntaxError, ValueError) as exc:
+            raise ValueError(
+                "Invalid NamesAndTypes 'Match metadata' value: "
+                f"{raw_match_metadata!r}."
+            ) from exc
+        if not isinstance(records, list):
+            raise TypeError(
+                "NamesAndTypes 'Match metadata' must parse to a list of "
+                "alias-field maps."
+            )
+        dimensions: list[SourceBindingMatchDimension] = []
+        for record in records:
+            if not isinstance(record, dict):
+                raise TypeError(
+                    "NamesAndTypes 'Match metadata' entries must be dictionaries."
+                )
+            fields = tuple(
+                SourceBindingMatchField(alias=str(alias), metadata_field=str(field))
+                for alias, field in record.items()
+                if field is not None
+            )
+            if fields:
+                dimensions.append(SourceBindingMatchDimension(fields=fields))
+        return tuple(dimensions)
+
+    def merge_match_dimensions_from_blocks(
+        self,
+        blocks: Sequence[Sequence[ModuleSetting]],
+    ) -> tuple[SourceBindingMatchDimension, ...]:
+        merged_dimensions: list[list[SourceBindingMatchField]] = []
+        for block in blocks:
+            raw_match_metadata = block_setting_value(block, "Match metadata").strip()
+            if not raw_match_metadata:
+                continue
+            block_dimensions = self.match_dimensions(raw_match_metadata)
+            if not merged_dimensions:
+                merged_dimensions = [[] for _ in block_dimensions]
+            if len(merged_dimensions) != len(block_dimensions):
+                raise ValueError(
+                    "NamesAndTypes declared incompatible image-set match dimensions "
+                    "across repeated image assignments."
+                )
+            for index, dimension in enumerate(block_dimensions):
+                merged_dimensions[index].extend(dimension.fields)
+        return tuple(
+            SourceBindingMatchDimension(fields=tuple(fields))
+            for fields in merged_dimensions
+            if fields
+        )
+
+
+def cellprofiler_source_binding_match_metadata_parser() -> (
+    SourceBindingMatchMetadataParser
+):
+    """Return the registered parser for CellProfiler match-metadata settings."""
+    return SourceBindingMatchMetadataParser.for_key(
+        CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY
+    )
+
+
+class SourceBindingOriginPolicy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal policy for assigning source-binding origin domains."""
+
+    __registry_key__ = "policy_key"
+    __skip_if_no_key__ = True
+    policy_key: ClassVar[str | None] = None
+
+    @classmethod
+    def for_key(cls, policy_key: str) -> "SourceBindingOriginPolicy":
+        return cls.__registry__[policy_key]()
+
+    @abstractmethod
+    def origin_for_selector(self, selector: SourceSelector) -> SourceBindingOrigin:
+        """Return the source origin implied by a selector."""
+
+    @abstractmethod
+    def origin_for_source_artifact(
+        self,
+        artifact_kind: ArtifactKind,
+        image_type: str,
+        selector: SourceSelector,
+    ) -> SourceBindingOrigin:
+        """Return the source origin implied by an artifact assignment."""
+
+
+class CellProfilerSourceBindingOriginPolicy(SourceBindingOriginPolicy):
+    """CellProfiler source-origin policy for setup-module lowering."""
+
+    policy_key = CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY
+
+    def origin_for_selector(self, selector: SourceSelector) -> SourceBindingOrigin:
+        if selector.filters:
+            return SourceBindingOrigin.PIPELINE_START
+        if selector.metadata and not all(
+            source_metadata_component(metadata.field) is not None
+            for metadata in selector.metadata
+        ):
+            return SourceBindingOrigin.PIPELINE_START
+        return SourceBindingOrigin.STEP_INPUT
+
+    def origin_for_source_artifact(
+        self,
+        artifact_kind: ArtifactKind,
+        image_type: str,
+        selector: SourceSelector,
+    ) -> SourceBindingOrigin:
+        if (
+            artifact_kind is ArtifactKind.IMAGE
+            and not image_type_participates_in_image_stack(image_type)
+        ):
+            return SourceBindingOrigin.PIPELINE_START
+        return self.origin_for_selector(selector)
+
+
+def cellprofiler_source_binding_origin_policy() -> SourceBindingOriginPolicy:
+    """Return the registered origin policy for CellProfiler source bindings."""
+    return SourceBindingOriginPolicy.for_key(CELLPROFILER_SOURCE_SCHEMA_POLICY_KEY)
 
 
 _LOAD_IMAGES_ALIAS_SETTING = (
@@ -471,7 +630,10 @@ class LoadImagesModuleCompiler(SetupModuleCompiler):
                     alias=alias,
                     image_type="Grayscale image",
                     selector=selector,
-                    origin=_origin_for_selector(selector),
+                    origin=(
+                        cellprofiler_source_binding_origin_policy()
+                        .origin_for_selector(selector)
+                    ),
                 )
             )
             _compile_load_images_metadata_rules(block, filters, state)
@@ -530,10 +692,13 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
                         alias=alias,
                         kind=artifact_kind,
                         selector=selector,
-                        origin=_origin_for_source_artifact(
-                            artifact_kind,
-                            image_type,
-                            selector,
+                        origin=(
+                            cellprofiler_source_binding_origin_policy()
+                            .origin_for_source_artifact(
+                                artifact_kind,
+                                image_type,
+                                selector,
+                            )
                         ),
                         payload_type=image_type,
                     )
@@ -544,7 +709,10 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
                     alias=alias,
                     image_type=image_type,
                     selector=selector,
-                    origin=_origin_for_selector(selector),
+                    origin=(
+                        cellprofiler_source_binding_origin_policy()
+                        .origin_for_selector(selector)
+                    ),
                 )
             )
 
@@ -1110,30 +1278,6 @@ def _selector_from_rule_criteria(rule_criteria: str) -> SourceSelector:
     )
 
 
-def _origin_for_selector(selector: SourceSelector) -> SourceBindingOrigin:
-    if selector.filters:
-        return SourceBindingOrigin.PIPELINE_START
-    if selector.metadata and not all(
-        source_metadata_component(metadata.field) is not None
-        for metadata in selector.metadata
-    ):
-        return SourceBindingOrigin.PIPELINE_START
-    return SourceBindingOrigin.STEP_INPUT
-
-
-def _origin_for_source_artifact(
-    artifact_kind: ArtifactKind,
-    image_type: str,
-    selector: SourceSelector,
-) -> SourceBindingOrigin:
-    if (
-        artifact_kind is ArtifactKind.IMAGE
-        and not image_type_participates_in_image_stack(image_type)
-    ):
-        return SourceBindingOrigin.PIPELINE_START
-    return _origin_for_selector(selector)
-
-
 def _match_plan_from_names_and_types(
     module: ModuleBlock,
     blocks: Sequence[Sequence[ModuleSetting]],
@@ -1165,11 +1309,17 @@ def _match_plan_from_names_and_types(
     if len(raw_match_metadata_values) == 1:
         return SourceBindingMatchPlan(
             method=method,
-            dimensions=_match_dimensions(raw_match_metadata_values[0]),
+            dimensions=(
+                cellprofiler_source_binding_match_metadata_parser()
+                .match_dimensions(raw_match_metadata_values[0])
+            ),
         )
     return SourceBindingMatchPlan(
         method=method,
-        dimensions=_merge_match_dimensions_from_blocks(blocks),
+        dimensions=(
+            cellprofiler_source_binding_match_metadata_parser()
+            .merge_match_dimensions_from_blocks(blocks)
+        ),
     )
 
 
@@ -1181,59 +1331,3 @@ def _source_binding_match_method(value: str) -> SourceBindingMatchMethod:
             f"{type(resolver).__name__}."
         )
     return resolver.method
-
-
-def _match_dimensions(
-    raw_match_metadata: str,
-) -> tuple[SourceBindingMatchDimension, ...]:
-    try:
-        records = ast.literal_eval(
-            decode_cellprofiler_setting_literal(raw_match_metadata)
-        )
-    except (SyntaxError, ValueError) as exc:
-        raise ValueError(
-            f"Invalid NamesAndTypes 'Match metadata' value: {raw_match_metadata!r}."
-        ) from exc
-    if not isinstance(records, list):
-        raise TypeError(
-            "NamesAndTypes 'Match metadata' must parse to a list of alias-field maps."
-        )
-    dimensions: list[SourceBindingMatchDimension] = []
-    for record in records:
-        if not isinstance(record, dict):
-            raise TypeError(
-                "NamesAndTypes 'Match metadata' entries must be dictionaries."
-            )
-        fields = tuple(
-            SourceBindingMatchField(alias=str(alias), metadata_field=str(field))
-            for alias, field in record.items()
-            if field is not None
-        )
-        if fields:
-            dimensions.append(SourceBindingMatchDimension(fields=fields))
-    return tuple(dimensions)
-
-
-def _merge_match_dimensions_from_blocks(
-    blocks: Sequence[Sequence[ModuleSetting]],
-) -> tuple[SourceBindingMatchDimension, ...]:
-    merged_dimensions: list[list[SourceBindingMatchField]] = []
-    for block in blocks:
-        raw_match_metadata = block_setting_value(block, "Match metadata").strip()
-        if not raw_match_metadata:
-            continue
-        block_dimensions = _match_dimensions(raw_match_metadata)
-        if not merged_dimensions:
-            merged_dimensions = [[] for _ in block_dimensions]
-        if len(merged_dimensions) != len(block_dimensions):
-            raise ValueError(
-                "NamesAndTypes declared incompatible image-set match dimensions "
-                "across repeated image assignments."
-            )
-        for index, dimension in enumerate(block_dimensions):
-            merged_dimensions[index].extend(dimension.fields)
-    return tuple(
-        SourceBindingMatchDimension(fields=tuple(fields))
-        for fields in merged_dimensions
-        if fields
-    )
