@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
+from enum import Enum
+from typing import TypeVar
 import warnings
+
+
+CellProfilerEnumT = TypeVar("CellProfilerEnumT", bound=Enum)
 
 
 def decode_cellprofiler_setting_literal(value: str) -> str:
@@ -31,3 +36,21 @@ def _decode_utf16_text(value: str) -> str:
         return value.encode("latin-1").decode("utf-16")
     except UnicodeError:
         return value
+
+
+def cellprofiler_enum_from_literal(
+    enum_type: type[CellProfilerEnumT],
+    value: str,
+    *,
+    aliases: dict[str, CellProfilerEnumT] | None = None,
+) -> CellProfilerEnumT:
+    """Return an enum member matched by CellProfiler UI literal text."""
+    normalized = value.strip().lower()
+    if aliases is not None and normalized in aliases:
+        return aliases[normalized]
+    for member in enum_type:
+        if normalized == str(member.value).lower():
+            return member
+    raise ValueError(
+        f"Unsupported {enum_type.__name__} CellProfiler literal {value!r}."
+    )

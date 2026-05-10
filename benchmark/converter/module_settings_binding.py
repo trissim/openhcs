@@ -16,7 +16,7 @@ from openhcs.interop.cellprofiler.measurement_scope import (
 )
 from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
-from .align_settings import align_bound_kwargs
+from openhcs.interop.cellprofiler.align_settings import align_bound_kwargs
 from openhcs.interop.cellprofiler.area_occupied_settings import (
     area_occupied_bound_kwargs,
 )
