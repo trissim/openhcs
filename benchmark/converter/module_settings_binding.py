@@ -20,7 +20,9 @@ from openhcs.interop.cellprofiler.align_settings import align_bound_kwargs
 from openhcs.interop.cellprofiler.area_occupied_settings import (
     area_occupied_bound_kwargs,
 )
-from .calculate_math_settings import calculate_math_bound_kwargs
+from openhcs.interop.cellprofiler.calculate_math_settings import (
+    calculate_math_bound_kwargs,
+)
 from openhcs.interop.cellprofiler.classify_objects_settings import (
     classify_objects_bound_kwargs,
 )

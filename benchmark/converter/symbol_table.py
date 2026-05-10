@@ -65,7 +65,9 @@ from openhcs.interop.cellprofiler.area_occupied_settings import (
     AreaOccupiedOperand,
     area_occupied_rows,
 )
-from .calculate_math_settings import calculate_math_object_dependencies
+from openhcs.interop.cellprofiler.calculate_math_settings import (
+    calculate_math_object_dependencies,
+)
 from openhcs.interop.cellprofiler.color_to_gray_settings import (
     color_to_gray_input_name,
     color_to_gray_output_names,
