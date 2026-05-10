@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import Callable, Hashable, Mapping, MutableMapping, Sequence
+from collections.abc import Hashable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
+from inspect import isabstract
 import logging
 import os
 from pathlib import Path
@@ -16,6 +17,7 @@ from typing import Any, ClassVar
 from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.record_algebra import product_record
 import numpy as np
 
 from openhcs.constants.constants import Backend, FileFormat
@@ -42,7 +44,7 @@ from openhcs.core.source_matching import (
     metadata_from_rules,
     source_filters_match,
     source_component_metadata_values,
-    source_component_metadata_value,
+    semantic_source_metadata_value,
     source_metadata_component,
     source_metadata_values_equal,
     source_metadata_value,
@@ -126,21 +128,20 @@ _OBJECT_FEATURE_VALUE_PROCESS_CACHE: WeakKeyDictionary[
 ] = WeakKeyDictionary()
 
 
-@dataclass(frozen=True, slots=True)
-class ObjectMeasurementTableCacheKey:
-    """Semantic cache key for object-subject measurement table queries."""
+ObjectMeasurementTableCacheKey = product_record(
+    "ObjectMeasurementTableCacheKey",
+    "group_key: str | None; match_group: bool; object_name: str",
+    doc="Semantic cache key for object-subject measurement table queries.",
+    module_name=__name__,
+)
 
-    group_key: str | None
-    match_group: bool
-    object_name: str
 
-
-@dataclass(frozen=True, slots=True)
-class ObjectMeasurementTableIndexCacheKey:
-    """Semantic cache key for object-subject measurement table indexes."""
-
-    group_key: str | None
-    match_group: bool
+ObjectMeasurementTableIndexCacheKey = product_record(
+    "ObjectMeasurementTableIndexCacheKey",
+    "group_key: str | None; match_group: bool",
+    doc="Semantic cache key for object-subject measurement table indexes.",
+    module_name=__name__,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -317,7 +318,7 @@ class MeasurementTableCacheMutationPolicy(ABC, metaclass=AutoRegisterMeta):
         return tuple(
             policy_type()
             for policy_type in cls.__registry__.values()
-            if not getattr(policy_type, "__abstractmethods__", ())
+            if not isabstract(policy_type)
         )
 
     @abstractmethod
@@ -341,15 +342,19 @@ class MeasurementQueryCacheMutationPolicy(MeasurementTableCacheMutationPolicy):
 class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
     """Shared object/feature invalidation for measurement-query caches."""
 
-    cache_accessor: ClassVar[
-        Callable[["CellProfilerRuntimeAdapter"], MutableMapping[object, object]]
-    ]
     entry_type: ClassVar[type[object]]
     feature_scoped: ClassVar[bool] = False
 
+    @abstractmethod
+    def adapter_cache(
+        self,
+        adapter: "CellProfilerRuntimeAdapter",
+    ) -> MutableMapping[object, object]:
+        """Return the adapter cache owned by this invalidation policy."""
+
     def cache(self, mutation: MeasurementTableCacheMutation) -> MutableMapping[object, object]:
         """Return the cache owned by this invalidation policy."""
-        return type(self).cache_accessor(mutation.adapter)
+        return self.adapter_cache(mutation.adapter)
 
     def cache_entries(self, mutation: MeasurementTableCacheMutation) -> tuple[object, ...]:
         """Return cache entries considered for this mutation."""
@@ -395,26 +400,39 @@ class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolic
 class ObjectFeatureValueCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate object-feature vector cache entries touched by a table write."""
 
-    cache_accessor = staticmethod(lambda adapter: adapter.object_feature_value_cache())
     entry_type = RuntimeObjectMeasurementQuery
     feature_scoped = True
+
+    def adapter_cache(
+        self,
+        adapter: "CellProfilerRuntimeAdapter",
+    ) -> MutableMapping[object, object]:
+        return adapter.object_feature_value_cache()
 
 
 class ObjectLabelMeasurementValuesCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate label-aligned measurement vector cache entries touched by a write."""
 
-    cache_accessor = staticmethod(
-        lambda adapter: adapter.object_label_measurement_values_cache()
-    )
     entry_type = RuntimeObjectLabelMeasurementQuery
     feature_scoped = True
+
+    def adapter_cache(
+        self,
+        adapter: "CellProfilerRuntimeAdapter",
+    ) -> MutableMapping[object, object]:
+        return adapter.object_label_measurement_values_cache()
 
 
 class ObjectMeasurementTableCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate object-subject measurement table query cache entries."""
 
-    cache_accessor = staticmethod(lambda adapter: adapter.object_measurement_table_cache())
     entry_type = ObjectMeasurementTableCacheKey
+
+    def adapter_cache(
+        self,
+        adapter: "CellProfilerRuntimeAdapter",
+    ) -> MutableMapping[object, object]:
+        return adapter.object_measurement_table_cache()
 
 
 class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
@@ -2197,33 +2215,36 @@ class RelationshipRuntimeArtifactCacheInvalidationPolicy(
         return None
 
 
-@dataclass(frozen=True, slots=True)
-class SourceBindingRequestBase(ABC):
-    """Shared nominal fields for source-binding request records."""
-
-    alias: str
-    binding: NamedSourceBinding
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingResolutionRequest(SourceBindingRequestBase):
-    """Source-binding resolution inputs for one external image alias."""
-
-    adapter: CellProfilerRuntimeAdapter
-    current_image: Any
+SourceBindingRequestBase = product_record(
+    "SourceBindingRequestBase",
+    "alias: str; binding: NamedSourceBinding",
+    bases=(ABC,),
+    doc="Shared nominal fields for source-binding request records.",
+    module_name=__name__,
+)
 
 
-@dataclass(frozen=True, slots=True)
-class SourceBindingMatchPlanRequest:
-    """Typed request for deriving target metadata from an image-set match plan."""
+SourceBindingResolutionRequest = product_record(
+    "SourceBindingResolutionRequest",
+    "adapter: CellProfilerRuntimeAdapter; current_image: Any",
+    bases=(SourceBindingRequestBase,),
+    doc="Source-binding resolution inputs for one external image alias.",
+    module_name=__name__,
+)
 
-    alias: str
-    plan: SourceBindingMatchPlan
-    step_input_candidates: tuple["ParsedSourceCandidate", ...]
-    target_candidates: tuple["ParsedSourceCandidate", ...]
-    full_pipeline_candidates: tuple["ParsedSourceCandidate", ...]
-    source_binding_plan: CompiledSourceBindingPlan
-    group_key: str | None
+
+SourceBindingMatchPlanRequest = product_record(
+    "SourceBindingMatchPlanRequest",
+    (
+        "alias: str; plan: SourceBindingMatchPlan; "
+        "step_input_candidates: tuple[ParsedSourceCandidate, ...]; "
+        "target_candidates: tuple[ParsedSourceCandidate, ...]; "
+        "full_pipeline_candidates: tuple[ParsedSourceCandidate, ...]; "
+        "source_binding_plan: CompiledSourceBindingPlan; group_key: str | None"
+    ),
+    doc="Typed request for deriving target metadata from an image-set match plan.",
+    module_name=__name__,
+)
 
 
 class SourceBindingResolver(ABC, metaclass=AutoRegisterMeta):
@@ -2355,13 +2376,12 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
         return payload
 
 
-@dataclass(frozen=True, slots=True)
-class PipelineStartSourceLoadRequest:
-    """Typed request for loading pipeline-start source payloads."""
-
-    adapter: CellProfilerRuntimeAdapter
-    selected_paths: tuple[str, ...]
-    backend: str
+PipelineStartSourceLoadRequest = product_record(
+    "PipelineStartSourceLoadRequest",
+    "adapter: CellProfilerRuntimeAdapter; selected_paths: tuple[str, ...]; backend: str",
+    doc="Typed request for loading pipeline-start source payloads.",
+    module_name=__name__,
+)
 
 
 class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
@@ -2409,6 +2429,29 @@ class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
         """Load selected source files as stackable image-like payloads."""
+
+    def source_payload_with_metadata(
+        self,
+        payload: Any,
+        *,
+        source_path: str,
+        request: PipelineStartSourceLoadRequest,
+    ) -> Any:
+        """Attach loader-owned source metadata to an image-like payload."""
+
+        metadata = image_payload_metadata(payload)
+        if not metadata.has_values:
+            metadata = image_payload_metadata_from_source(
+                payload,
+                source_path=source_path,
+                read_backend=request.backend,
+                filemanager=_require_processing_context(request.adapter).filemanager,
+            )
+        return image_payload_with_context(
+            image_payload_data(payload),
+            mask=image_payload_mask(payload),
+            metadata=metadata,
+        )
 
 
 def prepare_cellprofiler_runtime_adapter() -> None:
@@ -2780,7 +2823,7 @@ class OpenHCSImageSourceFileLoader(PipelineStartSourceFileLoader):
             **load_kwargs,
         )
         return [
-            _source_payload_with_metadata(
+            self.source_payload_with_metadata(
                 _source_payload_for_declared_image_type(
                     payload,
                     source_path=source_path,
@@ -2803,7 +2846,7 @@ class MatlabMatrixSourceFileLoader(PipelineStartSourceFileLoader):
 
     def load_slices(self, request: PipelineStartSourceLoadRequest) -> list[Any]:
         return [
-            _source_payload_with_metadata(
+            self.source_payload_with_metadata(
                 self._load_matrix(path),
                 source_path=path,
                 request=request,
@@ -2892,28 +2935,6 @@ def _numpy_array_source_payload_with_metadata(
     )
 
 
-def _source_payload_with_metadata(
-    payload: Any,
-    *,
-    source_path: str,
-    request: PipelineStartSourceLoadRequest,
-) -> Any:
-    """Attach generic source metadata to a loaded image payload."""
-    metadata = image_payload_metadata(payload)
-    if not metadata.has_values:
-        metadata = image_payload_metadata_from_source(
-            payload,
-            source_path=source_path,
-            read_backend=request.backend,
-            filemanager=_require_processing_context(request.adapter).filemanager,
-        )
-    return image_payload_with_context(
-        image_payload_data(payload),
-        mask=image_payload_mask(payload),
-        metadata=metadata,
-    )
-
-
 def _source_payload_for_declared_image_type(
     payload: Any,
     *,
@@ -2935,14 +2956,12 @@ def _source_payload_for_declared_image_type(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class ParsedSourceCandidate:
-    """One parsed file candidate used for source-binding selector resolution."""
-
-    path: str
-    resolved_path: str
-    filename: str
-    metadata: Mapping[str, Any]
+ParsedSourceCandidate = product_record(
+    "ParsedSourceCandidate",
+    "path: str; resolved_path: str; filename: str; metadata: Mapping[str, Any]",
+    doc="One parsed file candidate used for source-binding selector resolution.",
+    module_name=__name__,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -3074,7 +3093,7 @@ def _candidate_metadata(
             file_path,
             adapter,
             parser,
-            strict=_step_input_source_path(file_path, context) is None,
+            strict=context.step_input_source_path(file_path) is None,
         )
     if virtual_path is not None and virtual_path not in {file_path, resolved_path}:
         _merge_candidate_path_metadata(
@@ -3120,11 +3139,7 @@ def _context_source_metadata(
     file_path: str,
     context: SourceBindingRuntimeContext,
 ) -> Mapping[str, str] | None:
-    for key in _source_path_lookup_keys(file_path, context.step_input_dir):
-        metadata = context.source_metadata_by_path.get(key)
-        if metadata is not None:
-            return metadata
-    return context.source_metadata_by_path.get(str(Path(file_path)))
+    return context.source_metadata_for_path(file_path)
 
 
 def _merge_candidate_path_metadata(
@@ -3161,7 +3176,7 @@ def _candidate_virtual_workspace_path(
     resolved_path: str,
     context: SourceBindingRuntimeContext,
 ) -> str | None:
-    for key in _source_path_lookup_keys(file_path, context.step_input_dir):
+    for key in context.source_path_lookup_keys(file_path):
         if key in context.step_input_source_paths:
             return key
     return _virtual_workspace_path_for_source(resolved_path, context)
@@ -3272,21 +3287,16 @@ def _candidate_matches_inherited_scope(
     inherited_scope: tuple[tuple[str, str], ...],
 ) -> bool:
     return all(
-        (metadata_value := _semantic_metadata_value(candidate.metadata, field_name))
+        (
+            metadata_value := semantic_source_metadata_value(
+                candidate.metadata,
+                field_name,
+            )
+        )
         is None
         or source_metadata_values_equal(metadata_value, value)
         for field_name, value in inherited_scope
     )
-
-
-def _semantic_metadata_value(
-    metadata: Mapping[str, Any],
-    field_name: str,
-) -> str | None:
-    component = source_metadata_component(field_name)
-    if component is not None:
-        return source_component_metadata_value(metadata, component)
-    return source_metadata_value(metadata, field_name)
 
 
 def _candidate_matches_metadata(
@@ -3306,7 +3316,12 @@ def _candidate_matches_image_set_metadata(
     image_set_metadata: Mapping[str, str],
 ) -> bool:
     return all(
-        (metadata_value := _semantic_metadata_value(candidate.metadata, field_name))
+        (
+            metadata_value := semantic_source_metadata_value(
+                candidate.metadata,
+                field_name,
+            )
+        )
         is not None
         and source_metadata_values_equal(metadata_value, value)
         for field_name, value in image_set_metadata.items()
@@ -3504,7 +3519,12 @@ def _inherited_scope_components(
             continue
         normalized_value = str(value)
         if all(
-            (candidate_value := _semantic_metadata_value(candidate.metadata, field_name))
+            (
+                candidate_value := semantic_source_metadata_value(
+                    candidate.metadata,
+                    field_name,
+                )
+            )
             is not None
             and source_metadata_values_equal(candidate_value, normalized_value)
             for candidate in candidates[1:]
@@ -3836,7 +3856,7 @@ def _resolved_source_path(
     file_path: str,
     adapter: CellProfilerRuntimeAdapter,
 ) -> str:
-    source_path = _step_input_source_path(file_path, adapter.source_binding_context)
+    source_path = adapter.source_binding_context.step_input_source_path(file_path)
     if source_path is not None:
         return source_path
     path = Path(file_path)
@@ -3846,30 +3866,3 @@ def _resolved_source_path(
     if step_input_dir is None:
         return str(path)
     return str(Path(step_input_dir) / path)
-
-
-def _step_input_source_path(
-    file_path: str,
-    context: SourceBindingRuntimeContext,
-) -> str | None:
-    for key in _source_path_lookup_keys(file_path, context.step_input_dir):
-        source_path = context.step_input_source_paths.get(key)
-        if source_path is not None:
-            return source_path
-    return None
-
-
-def _source_path_lookup_keys(
-    file_path: str,
-    step_input_dir: str | None,
-) -> tuple[str, ...]:
-    path = Path(file_path)
-    keys = dict.fromkeys((str(file_path), path.as_posix()))
-    if path.is_absolute() and step_input_dir is not None:
-        try:
-            relative_path = path.relative_to(step_input_dir)
-        except ValueError:
-            pass
-        else:
-            keys[relative_path.as_posix()] = None
-    return tuple(keys)

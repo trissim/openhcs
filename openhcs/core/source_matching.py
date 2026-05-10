@@ -420,6 +420,18 @@ def source_component_metadata_value(
     return None
 
 
+def semantic_source_metadata_value(
+    metadata: Mapping[str, Any],
+    field_name: str,
+) -> str | None:
+    """Return metadata by OpenHCS component semantics or literal field key."""
+
+    component = source_metadata_component(field_name)
+    if component is not None:
+        return source_component_metadata_value(metadata, component)
+    return source_metadata_value(metadata, field_name)
+
+
 def source_component_metadata_values(
     metadata: Mapping[str, Any],
     component: AllComponents,

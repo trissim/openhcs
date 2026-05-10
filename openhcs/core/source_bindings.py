@@ -6,6 +6,7 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -642,6 +643,38 @@ class SourceBindingRuntimeContext:
             (path, tuple(sorted(self.source_metadata_by_path.get(path, {}).items())))
             for path in paths
         )
+
+    def source_path_lookup_keys(self, file_path: str) -> tuple[str, ...]:
+        """Return all runtime-context keys that can identify a source path."""
+
+        path = Path(file_path)
+        keys = dict.fromkeys((str(file_path), path.as_posix()))
+        if path.is_absolute() and self.step_input_dir is not None:
+            try:
+                relative_path = path.relative_to(self.step_input_dir)
+            except ValueError:
+                pass
+            else:
+                keys[relative_path.as_posix()] = None
+        return tuple(keys)
+
+    def step_input_source_path(self, file_path: str) -> str | None:
+        """Return the original source path for a step-input workspace path."""
+
+        for key in self.source_path_lookup_keys(file_path):
+            source_path = self.step_input_source_paths.get(key)
+            if source_path is not None:
+                return source_path
+        return None
+
+    def source_metadata_for_path(self, file_path: str) -> Mapping[str, str] | None:
+        """Return context-declared source metadata for a path identity."""
+
+        for key in self.source_path_lookup_keys(file_path):
+            metadata = self.source_metadata_by_path.get(key)
+            if metadata is not None:
+                return metadata
+        return self.source_metadata_by_path.get(str(Path(file_path)))
 
     def __reduce__(
         self,
