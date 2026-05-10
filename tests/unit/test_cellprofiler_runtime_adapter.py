@@ -5,12 +5,12 @@ import pytest
 import numpy as np
 from scipy.io import savemat
 
-from benchmark.cellprofiler_compat import (
+from openhcs.interop.cellprofiler.runtime import (
     CellProfilerModuleExecutor,
     CellProfilerRelationshipPayload,
     CellProfilerRuntimeAdapter,
 )
-from benchmark.cellprofiler_compat.runtime_adapter import _single_spatial_grid
+from openhcs.interop.cellprofiler.runtime.adapter import _single_spatial_grid
 from openhcs.core.runtime_artifact_queries import (
     measurement_values_for_label_slices,
     measurement_values_for_feature,
@@ -326,7 +326,7 @@ def test_cellprofiler_adapter_records_dense_object_label_volume_lists_as_stacks(
 
 
 def test_cellprofiler_adapter_refuses_explosive_dense_object_label_sequences(monkeypatch):
-    import benchmark.cellprofiler_compat.runtime_adapter as runtime_adapter
+    import openhcs.interop.cellprofiler.runtime.adapter as runtime_adapter
 
     adapter, _filemanager = _adapter(
         {NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS)}

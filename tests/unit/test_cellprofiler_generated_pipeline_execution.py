@@ -5,7 +5,7 @@ import imageio.v3 as imageio
 import numpy as np
 import tifffile
 
-from benchmark.cellprofiler_compat import cellprofiler_runtime_adapter_factory
+from openhcs.interop.cellprofiler.runtime import cellprofiler_runtime_adapter_factory
 from benchmark.converter.parser import ModuleBlock
 from benchmark.converter.pipeline_generator import GeneratedPipeline, PipelineGenerator
 from openhcs.constants import Backend

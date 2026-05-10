@@ -24,7 +24,7 @@ from openhcs.interop.cellprofiler.runtime import (
     CellProfilerGridCycleScope,
     CellProfilerInvocationOptions,
 )
-from benchmark.cellprofiler_compat.module_execution import (
+from openhcs.interop.cellprofiler.runtime.module_execution import (
     AlignMeasurementFeature,
     CalculateMathInputPolicy,
     CellProfilerFunctionContractExecutor,

@@ -56,7 +56,7 @@ from benchmark.cellprofiler_library.functions.watershed import (
     WatershedSeedStrategy,
     WatershedRuntimeStrategy,
 )
-from benchmark.cellprofiler_compat.module_execution import (
+from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerObjectMeasurementLabelArgumentPolicy,
     CellProfilerObjectMeasurementLabelArgumentRequest,
     MeasurementLabelExecutionModeStrategy,

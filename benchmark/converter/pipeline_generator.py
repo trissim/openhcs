@@ -485,7 +485,7 @@ from openhcs.constants.input_source import InputSource
                 "require_cellprofiler_function\n\n"
             )
             imports += (
-                "from benchmark.cellprofiler_compat import (\n"
+                "from openhcs.interop.cellprofiler.runtime import (\n"
                 "    CellProfilerModuleExecutor,\n"
                 "    cellprofiler_runtime_adapter_factory,\n"
                 ")\n"
