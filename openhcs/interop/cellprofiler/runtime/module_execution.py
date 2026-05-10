@@ -3183,8 +3183,6 @@ class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
 class ObjectLabelDrivenPrimaryImageInputPolicy(DefaultPrimaryImageInputPolicy):
     """Treat declared images as carriers; object labels define the domain."""
 
-    module_names: ClassVar[frozenset[str]] = frozenset({"MaskObjects"})
-
     def primary_image_inputs(
         self,
         module_name: str,
@@ -3195,21 +3193,10 @@ class ObjectLabelDrivenPrimaryImageInputPolicy(DefaultPrimaryImageInputPolicy):
         return ()
 
 
-for (
-    _object_label_driven_module_name
-) in ObjectLabelDrivenPrimaryImageInputPolicy.module_names:
-    _object_label_driven_policy_name = (
-        f"{_object_label_driven_module_name}PrimaryImageInputPolicy"
-    )
-    globals()[_object_label_driven_policy_name] = type(
-        _object_label_driven_policy_name,
-        (ObjectLabelDrivenPrimaryImageInputPolicy,),
-        {
-            "__module__": __name__,
-            "module_name": _object_label_driven_module_name,
-        },
-    )
-del _object_label_driven_module_name, _object_label_driven_policy_name
+class MaskObjectsPrimaryImageInputPolicy(ObjectLabelDrivenPrimaryImageInputPolicy):
+    """MaskObjects is driven by object labels; declared images are carriers."""
+
+    module_name = "MaskObjects"
 
 
 class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
