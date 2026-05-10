@@ -6,6 +6,7 @@ import ast
 import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ClassVar, Mapping
 
@@ -734,44 +735,33 @@ class GroupsModuleCompiler(SetupModuleCompiler):
         state.grouping = GroupingPlan(metadata_fields=metadata_fields)
 
 
-class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
-    """Nominal family for CellProfiler NamesAndTypes assignment layouts."""
+@dataclass(frozen=True, slots=True)
+class NamesAndTypesAssignmentLayout:
+    """Declarative CellProfiler NamesAndTypes assignment layout variant."""
 
-    __registry_key__ = "strategy_name"
-    __skip_if_no_key__ = True
-    strategy_name: ClassVar[str | None] = None
-    match_setting: ClassVar[str | None] = None
-    block_start_name: ClassVar[str | None] = None
-    exact_count: ClassVar[int | None] = None
-    minimum_count: ClassVar[int | None] = None
-    require_block_source_alias: ClassVar[bool] = False
+    strategy_name: str
+    match_setting: str
+    block_start_name: str
+    exact_count: int | None = None
+    minimum_count: int | None = None
+    require_block_source_alias: bool = False
 
-    @classmethod
-    def blocks_for(
-        cls,
-        settings: Sequence[ModuleSetting],
-    ) -> ModuleSettingBlocks:
-        for strategy_type in cls.__registry__.values():
-            strategy = strategy_type()
-            if strategy.matches(settings):
-                return strategy.blocks(settings)
-        return ()
+    def __post_init__(self) -> None:
+        if (self.exact_count is None) == (self.minimum_count is None):
+            raise ValueError(
+                "NamesAndTypesAssignmentLayout must define exactly one of "
+                "exact_count or minimum_count."
+            )
 
     def matches(self, settings: Sequence[ModuleSetting]) -> bool:
         """Whether this layout applies to the ordered NamesAndTypes settings."""
         count = self.setting_count(
             settings,
-            self.required_match_setting,
+            self.match_setting,
         )
-        exact_count = type(self).exact_count
-        if exact_count is not None:
-            return self.matches_blocks(settings, count == exact_count)
-        minimum_count = type(self).minimum_count
-        if minimum_count is None:
-            raise TypeError(
-                f"{type(self).__name__} must define exact_count or minimum_count."
-            )
-        return self.matches_blocks(settings, count >= minimum_count)
+        if self.exact_count is not None:
+            return self.matches_blocks(settings, count == self.exact_count)
+        return self.matches_blocks(settings, count >= self.minimum_count)
 
     def matches_blocks(
         self,
@@ -780,7 +770,7 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
     ) -> bool:
         if not count_matches:
             return False
-        if not type(self).require_block_source_alias:
+        if not self.require_block_source_alias:
             return True
         return all(
             self.block_declares_source_alias(block)
@@ -794,28 +784,8 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
         """Return ordered assignment blocks for this layout."""
         return repeating_setting_blocks(
             settings,
-            start_name=self.required_block_start_name,
+            start_name=self.block_start_name,
         )
-
-    @property
-    def required_match_setting(self) -> str:
-        """Return the setting name that identifies this layout."""
-        value = type(self).match_setting
-        if value is None:
-            raise TypeError(
-                f"{type(self).__name__} must define match_setting."
-            )
-        return value
-
-    @property
-    def required_block_start_name(self) -> str:
-        """Return the setting name that starts one assignment block."""
-        value = type(self).block_start_name
-        if value is None:
-            raise TypeError(
-                f"{type(self).__name__} must define block_start_name."
-            )
-        return value
 
     @staticmethod
     def setting_count(
@@ -834,64 +804,52 @@ class NamesAndTypesAssignmentBlockStrategy(ABC, metaclass=AutoRegisterMeta):
         )
 
 
-for _names_and_types_assignment_strategy in (
-    GeneratedLeafClassSpec(
-        "RepeatedRuleCriteriaBlockStrategy",
-        NamesAndTypesAssignmentBlockStrategy,
-        attributes={
-            "strategy_name": "repeated_rule_criteria",
-            "match_setting": "Select the rule criteria",
-            "block_start_name": "Select the rule criteria",
-            "minimum_count": 2,
-            "require_block_source_alias": True,
-            "__doc__": (
-                "NamesAndTypes stores a global preamble followed by repeated "
-                "rule rows."
-            ),
-        },
+NAMES_AND_TYPES_ASSIGNMENT_LAYOUTS: tuple[NamesAndTypesAssignmentLayout, ...] = (
+    NamesAndTypesAssignmentLayout(
+        strategy_name="repeated_rule_criteria",
+        match_setting="Select the rule criteria",
+        block_start_name="Select the rule criteria",
+        minimum_count=2,
+        require_block_source_alias=True,
     ),
-    GeneratedLeafClassSpec(
-        "RepeatedAssignmentBlockStrategy",
-        NamesAndTypesAssignmentBlockStrategy,
-        attributes={
-            "strategy_name": "repeated_assignment",
-            "match_setting": "Assign a name to",
-            "block_start_name": "Assign a name to",
-            "minimum_count": 2,
-            "__doc__": (
-                "NamesAndTypes stores each assignment as a full repeated "
-                "setting block."
-            ),
-        },
+    NamesAndTypesAssignmentLayout(
+        strategy_name="repeated_assignment",
+        match_setting="Assign a name to",
+        block_start_name="Assign a name to",
+        minimum_count=2,
     ),
-    GeneratedLeafClassSpec(
-        "SingleRuleCriteriaBlockStrategy",
-        NamesAndTypesAssignmentBlockStrategy,
-        attributes={
-            "strategy_name": "single_rule_criteria",
-            "match_setting": "Select the rule criteria",
-            "block_start_name": "Select the rule criteria",
-            "exact_count": 1,
-            "require_block_source_alias": True,
-            "__doc__": (
-                "NamesAndTypes stores one assignment row starting at rule "
-                "criteria."
-            ),
-        },
+    NamesAndTypesAssignmentLayout(
+        strategy_name="single_rule_criteria",
+        match_setting="Select the rule criteria",
+        block_start_name="Select the rule criteria",
+        exact_count=1,
+        require_block_source_alias=True,
     ),
-    GeneratedLeafClassSpec(
-        "SingleAssignmentBlockStrategy",
-        NamesAndTypesAssignmentBlockStrategy,
-        attributes={
-            "strategy_name": "single_assignment",
-            "match_setting": "Assign a name to",
-            "block_start_name": "Assign a name to",
-            "exact_count": 1,
-            "__doc__": "NamesAndTypes stores one full assignment block.",
-        },
+    NamesAndTypesAssignmentLayout(
+        strategy_name="single_assignment",
+        match_setting="Assign a name to",
+        block_start_name="Assign a name to",
+        exact_count=1,
     ),
-):
-    _names_and_types_assignment_strategy.declare_in(globals())
+)
+
+
+class NamesAndTypesAssignmentBlockStrategy:
+    """Resolve CellProfiler NamesAndTypes assignment blocks from layout declarations."""
+
+    layouts: ClassVar[tuple[NamesAndTypesAssignmentLayout, ...]] = (
+        NAMES_AND_TYPES_ASSIGNMENT_LAYOUTS
+    )
+
+    @classmethod
+    def blocks_for(
+        cls,
+        settings: Sequence[ModuleSetting],
+    ) -> ModuleSettingBlocks:
+        for layout in cls.layouts:
+            if layout.matches(settings):
+                return layout.blocks(settings)
+        return ()
 
 
 def _load_images_blocks(
