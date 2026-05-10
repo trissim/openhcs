@@ -1469,7 +1469,9 @@ class CellProfilerModuleExecutor:
             rows=len(combined_rows),
         )
 
-        rows_declare_object_name = _measurement_rows_declare_object_name(combined_rows)
+        rows_declare_object_name = (
+            CellProfilerMeasurementFieldSchema.rows_declare_object_name(combined_rows)
+        )
         record_started_at = time.perf_counter()
         _record_measurements(
             cellprofiler_runtime,
@@ -4878,6 +4880,18 @@ class CellProfilerMeasurementFieldSchema:
         return bool(is_dataclass(row) or (isinstance(row, Mapping) and row))
 
     @staticmethod
+    def rows_declare_object_name(rows: Sequence[Any]) -> bool:
+        """Return whether rows carry explicit object ownership."""
+        return any(
+            measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD)
+            not in (
+                None,
+                "",
+            )
+            for row in rows
+        )
+
+    @staticmethod
     def from_row_mappings(
         rows: Sequence[Mapping[str, Any]],
     ) -> tuple[FieldSpec, ...]:
@@ -5319,7 +5333,9 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
             *_measurement_table_rows(request.value),
             *RelationshipMeasurementRows.for_request(request).rows(),
         ]
-        rows_declare_object_name = _measurement_rows_declare_object_name(rows)
+        rows_declare_object_name = (
+            CellProfilerMeasurementFieldSchema.rows_declare_object_name(rows)
+        )
         return CellProfilerMeasurementRecord(
             rows=rows,
             object_name=(
@@ -6627,17 +6643,6 @@ def _measurement_table_rows(rows: Any) -> list[Any]:
     if isinstance(rows, tuple):
         return list(rows)
     return [rows]
-
-
-def _measurement_rows_declare_object_name(rows: Sequence[Any]) -> bool:
-    return any(
-        measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD)
-        not in (
-            None,
-            "",
-        )
-        for row in rows
-    )
 
 
 @dataclass(frozen=True, slots=True)
