@@ -4,8 +4,12 @@ Performs low-level morphological operations on binary or grayscale images.
 """
 
 import numpy as np
-from typing import Tuple, Optional
+from abc import ABC
+from dataclasses import dataclass
+from typing import Any, Callable, ClassVar, Tuple, Optional
 from enum import Enum
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -38,14 +42,113 @@ class RepeatMode(Enum):
     CUSTOM = "custom"
 
 
-def _get_repeat_count(repeat_mode: RepeatMode, custom_repeats: int) -> int:
-    """Get the number of iterations based on repeat mode."""
-    if repeat_mode == RepeatMode.ONCE:
-        return 1
-    elif repeat_mode == RepeatMode.FOREVER:
-        return 10000
-    else:
-        return custom_repeats
+MORPH_CONVOLUTION_MODE = "constant"
+EIGHT_NEIGHBOR_KERNEL = np.array(
+    [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
+    dtype=np.uint8,
+)
+FOUR_CONNECTED_KERNEL = np.array(
+    [[0, 1, 0], [1, 0, 1], [0, 1, 0]],
+    dtype=np.uint8,
+)
+
+
+@dataclass(frozen=True)
+class MorphOperationRequest:
+    """Execution context shared by registered Morph operation strategies."""
+
+    image: np.ndarray
+    iterations: int
+    rescale_values: bool
+    line_length: int
+    backend_provider: CellProfilerBackendProvider | None
+
+
+MorphOperationImplementation = Callable[[MorphOperationRequest], np.ndarray]
+RepeatCountResolver = Callable[[int], int]
+NeighborConvolutionTransition = Callable[[np.ndarray, np.ndarray], np.ndarray]
+
+
+class RegisteredCallableStrategy(ABC):
+    """Shared callback substrate for registered Morph semantic families."""
+
+    callback: ClassVar[Callable[..., Any] | None] = None
+
+    @classmethod
+    def registered_type_for(cls, key: object, label: str) -> type:
+        strategy_type = cls.__registry__.get(key)
+        if strategy_type is None:
+            raise ValueError(f"Unknown {label}: {key}")
+        return strategy_type
+
+    def invoke(self, *args: object) -> Any:
+        callback = type(self).callback
+        if callback is None:
+            raise TypeError(f"{type(self).__name__} cannot invoke Morph callback")
+        return callback(*args)
+
+
+class MorphOperationStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+    """Registered implementation authority for Morph operations."""
+
+    __registry_key__ = "operation"
+    __skip_if_no_key__ = True
+    operation: ClassVar[MorphOperation | None] = None
+    callback: ClassVar[MorphOperationImplementation | None] = None
+
+    @classmethod
+    def for_operation(cls, operation: MorphOperation) -> "MorphOperationStrategy":
+        return cls.registered_type_for(operation, "Morph operation")()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if (
+            cls.operation is not None
+            and cls.callback is None
+            and cls.apply is MorphOperationStrategy.apply
+        ):
+            raise TypeError(
+                f"{cls.__name__} must declare implementation or apply() for Morph"
+            )
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return self.invoke(request)
+
+
+class RepeatModeStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+    """Registered iteration-count policy for Morph repeat modes."""
+
+    __registry_key__ = "repeat_mode"
+    __skip_if_no_key__ = True
+    repeat_mode: ClassVar[RepeatMode | None] = None
+    callback: ClassVar[RepeatCountResolver | None] = None
+
+    @classmethod
+    def for_repeat_mode(cls, repeat_mode: RepeatMode) -> "RepeatModeStrategy":
+        return cls.registered_type_for(repeat_mode, "Morph repeat mode")()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.repeat_mode is not None and cls.callback is None:
+            raise TypeError(f"{cls.__name__} must declare callback for RepeatMode")
+
+    def repeat_count(self, custom_repeats: int) -> int:
+        return self.invoke(custom_repeats)
+
+
+class OnceRepeatModeStrategy(RepeatModeStrategy):
+    repeat_mode = RepeatMode.ONCE
+    callback = staticmethod(lambda custom_repeats: 1)
+
+
+class ForeverRepeatModeStrategy(RepeatModeStrategy):
+    repeat_mode = RepeatMode.FOREVER
+    callback = staticmethod(lambda custom_repeats: 10000)
+
+
+class CustomRepeatModeStrategy(RepeatModeStrategy):
+    repeat_mode = RepeatMode.CUSTOM
+    callback = staticmethod(lambda custom_repeats: custom_repeats)
 
 
 def _ensure_binary(image: np.ndarray) -> np.ndarray:
@@ -55,13 +158,50 @@ def _ensure_binary(image: np.ndarray) -> np.ndarray:
     return image
 
 
+class IterativeConvolutionMorphOperationStrategy(MorphOperationStrategy):
+    """Template strategy for Morph operations driven by neighbor convolution."""
+
+    kernel: ClassVar[np.ndarray | None] = None
+    transition: ClassVar[NeighborConvolutionTransition | None] = None
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.operation is not None and (cls.kernel is None or cls.transition is None):
+            raise TypeError(
+                f"{cls.__name__} must declare kernel and transition for Morph"
+            )
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        from scipy.ndimage import convolve
+
+        kernel = type(self).kernel
+        transition = type(self).transition
+        if kernel is None or transition is None:
+            raise TypeError(f"{type(self).__name__} cannot run convolutional Morph")
+
+        result = _ensure_binary(request.image).astype(np.float32)
+        for _ in range(request.iterations):
+            neighbor_count = convolve(
+                result.astype(np.uint8),
+                kernel,
+                mode=MORPH_CONVOLUTION_MODE,
+                cval=0,
+            )
+            result = transition(result, neighbor_count)
+        return result
+
+
 def _branchpoints(image: np.ndarray) -> np.ndarray:
     """Find branchpoints in a skeleton image."""
     from scipy.ndimage import convolve
     binary = _ensure_binary(image)
     # Count 8-connected neighbors
-    kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
-    neighbor_count = convolve(binary.astype(np.uint8), kernel, mode='constant', cval=0)
+    neighbor_count = convolve(
+        binary.astype(np.uint8),
+        EIGHT_NEIGHBOR_KERNEL,
+        mode=MORPH_CONVOLUTION_MODE,
+        cval=0,
+    )
     # Branchpoints have more than 2 neighbors
     return (binary & (neighbor_count > 2)).astype(np.float32)
 
@@ -81,21 +221,8 @@ def _bridge(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     
     for _ in range(iterations):
         for pattern in patterns:
-            match = convolve(result, pattern, mode='constant', cval=0)
+            match = convolve(result, pattern, mode=MORPH_CONVOLUTION_MODE, cval=0)
             result = np.where(match == 2, 1.0, result)
-    
-    return result
-
-
-def _clean(image: np.ndarray, iterations: int = 1) -> np.ndarray:
-    """Remove isolated pixels (pixels with no neighbors)."""
-    from scipy.ndimage import convolve
-    result = _ensure_binary(image).astype(np.float32)
-    kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
-    
-    for _ in range(iterations):
-        neighbor_count = convolve(result.astype(np.uint8), kernel, mode='constant', cval=0)
-        result = np.where(neighbor_count == 0, 0.0, result)
     
     return result
 
@@ -146,23 +273,14 @@ def _endpoints(image: np.ndarray) -> np.ndarray:
     """Find endpoints in a skeleton image."""
     from scipy.ndimage import convolve
     binary = _ensure_binary(image)
-    kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
-    neighbor_count = convolve(binary.astype(np.uint8), kernel, mode='constant', cval=0)
+    neighbor_count = convolve(
+        binary.astype(np.uint8),
+        EIGHT_NEIGHBOR_KERNEL,
+        mode=MORPH_CONVOLUTION_MODE,
+        cval=0,
+    )
     # Endpoints have exactly 1 neighbor
     return (binary & (neighbor_count == 1)).astype(np.float32)
-
-
-def _fill(image: np.ndarray, iterations: int = 1) -> np.ndarray:
-    """Fill pixels surrounded by all 1s."""
-    from scipy.ndimage import convolve
-    result = _ensure_binary(image).astype(np.float32)
-    kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
-    
-    for _ in range(iterations):
-        neighbor_count = convolve(result.astype(np.uint8), kernel, mode='constant', cval=0)
-        result = np.where(neighbor_count == 8, 1.0, result)
-    
-    return result
 
 
 def _hbreak(image: np.ndarray, iterations: int = 1) -> np.ndarray:
@@ -174,7 +292,7 @@ def _hbreak(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     pattern = np.array([[1, 1, 1], [0, 1, 0], [1, 1, 1]], dtype=np.float32)
     
     for _ in range(iterations):
-        match = convolve(result, pattern, mode='constant', cval=0)
+        match = convolve(result, pattern, mode=MORPH_CONVOLUTION_MODE, cval=0)
         # Remove pixels that match the H-bridge pattern
         result = np.where((match >= 6) & (result > 0), 0.0, result)
     
@@ -188,53 +306,85 @@ def _majority(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     kernel = np.ones((3, 3), dtype=np.float32)
     
     for _ in range(iterations):
-        neighbor_sum = convolve(result, kernel, mode='constant', cval=0)
+        neighbor_sum = convolve(result, kernel, mode=MORPH_CONVOLUTION_MODE, cval=0)
         result = (neighbor_sum >= 5).astype(np.float32)  # 5 out of 9 (including center)
     
     return result
+
+
+OpenLineStructureBuilder = Callable[[int], np.ndarray]
+
+
+class OpenLineStructuringElement(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+    """Registered structuring-element authority for Morph OPENLINES angles."""
+
+    __registry_key__ = "angle"
+    __skip_if_no_key__ = True
+    angle: ClassVar[int | None] = None
+    callback: ClassVar[OpenLineStructureBuilder | None] = None
+
+    @classmethod
+    def registered_elements(cls) -> tuple["OpenLineStructuringElement", ...]:
+        return tuple(strategy_type() for strategy_type in cls.__registry__.values())
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.angle is not None and cls.callback is None:
+            raise TypeError(
+                f"{cls.__name__} must declare callback for Morph OPENLINES"
+            )
+
+    def structure(self, line_length: int) -> np.ndarray:
+        return self.invoke(line_length)
+
+
+class HorizontalOpenLineStructuringElement(OpenLineStructuringElement):
+    """Horizontal OPENLINES structuring element."""
+
+    angle = 0
+    callback = staticmethod(
+        lambda line_length: np.ones((1, line_length), dtype=bool)
+    )
+
+
+class RisingDiagonalOpenLineStructuringElement(OpenLineStructuringElement):
+    """Rising diagonal OPENLINES structuring element."""
+
+    angle = 45
+    callback = staticmethod(lambda line_length: np.eye(line_length, dtype=bool))
+
+
+class VerticalOpenLineStructuringElement(OpenLineStructuringElement):
+    """Vertical OPENLINES structuring element."""
+
+    angle = 90
+    callback = staticmethod(
+        lambda line_length: np.ones((line_length, 1), dtype=bool)
+    )
+
+
+class FallingDiagonalOpenLineStructuringElement(OpenLineStructuringElement):
+    """Falling diagonal OPENLINES structuring element."""
+
+    angle = 135
+    callback = staticmethod(
+        lambda line_length: np.fliplr(np.eye(line_length, dtype=bool))
+    )
 
 
 def _openlines(image: np.ndarray, line_length: int = 3) -> np.ndarray:
     """Erosion followed by dilation using rotating linear elements."""
     from scipy.ndimage import binary_erosion, binary_dilation
     binary = _ensure_binary(image)
-    
-    # Create linear structuring elements at different angles
+
     result = np.zeros_like(binary)
-    angles = [0, 45, 90, 135]
-    
-    for angle in angles:
-        if angle == 0:
-            struct = np.zeros((1, line_length), dtype=bool)
-            struct[0, :] = True
-        elif angle == 90:
-            struct = np.zeros((line_length, 1), dtype=bool)
-            struct[:, 0] = True
-        elif angle == 45:
-            struct = np.eye(line_length, dtype=bool)
-        else:  # 135
-            struct = np.fliplr(np.eye(line_length, dtype=bool))
-        
+    for element in OpenLineStructuringElement.registered_elements():
+        struct = element.structure(line_length)
         eroded = binary_erosion(binary, structure=struct)
         dilated = binary_dilation(eroded, structure=struct)
         result = result | dilated
     
     return result.astype(np.float32)
-
-
-def _remove(image: np.ndarray, iterations: int = 1) -> np.ndarray:
-    """Remove interior pixels (keep perimeter)."""
-    from scipy.ndimage import convolve
-    result = _ensure_binary(image).astype(np.float32)
-    # 4-connected kernel (cross pattern)
-    kernel = np.array([[0, 1, 0], [1, 0, 1], [0, 1, 0]], dtype=np.uint8)
-    
-    for _ in range(iterations):
-        neighbor_count = convolve(result.astype(np.uint8), kernel, mode='constant', cval=0)
-        # Remove pixels with all 4 neighbors
-        result = np.where(neighbor_count == 4, 0.0, result)
-    
-    return result
 
 
 def _shrink(image: np.ndarray, iterations: int = 1) -> np.ndarray:
@@ -251,20 +401,6 @@ def _skelpe(image: np.ndarray) -> np.ndarray:
     binary = _ensure_binary(image)
     # Simplified version using standard skeletonization
     return skeletonize(binary).astype(np.float32)
-
-
-def _spur(image: np.ndarray, iterations: int = 1) -> np.ndarray:
-    """Remove spur pixels (endpoints)."""
-    from scipy.ndimage import convolve
-    result = _ensure_binary(image).astype(np.float32)
-    kernel = np.array([[1, 1, 1], [1, 0, 1], [1, 1, 1]], dtype=np.uint8)
-    
-    for _ in range(iterations):
-        neighbor_count = convolve(result.astype(np.uint8), kernel, mode='constant', cval=0)
-        # Remove pixels with exactly 1 neighbor (spurs)
-        result = np.where((neighbor_count == 1) & (result > 0), 0.0, result)
-    
-    return result
 
 
 def _thicken(image: np.ndarray, iterations: int = 1) -> np.ndarray:
@@ -301,10 +437,149 @@ def _vbreak(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     pattern = np.array([[1, 0, 1], [1, 1, 1], [1, 0, 1]], dtype=np.float32)
     
     for _ in range(iterations):
-        match = convolve(result, pattern, mode='constant', cval=0)
+        match = convolve(result, pattern, mode=MORPH_CONVOLUTION_MODE, cval=0)
         result = np.where((match >= 6) & (result > 0), 0.0, result)
     
     return result
+
+
+def convex_hull_morph_operation(request: MorphOperationRequest) -> np.ndarray:
+    """Run Morph CONVEX_HULL through the configured morphology backend."""
+    from openhcs.processing.backends.cellprofiler.morphology import (
+        MorphologyBackendStrategy,
+    )
+
+    morphology = MorphologyBackendStrategy.for_callable(
+        morph,
+        backend_provider=request.backend_provider,
+    )
+    return _convex_hull(request.image, morphology)
+
+
+class BranchpointsMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.BRANCHPOINTS
+    callback = staticmethod(lambda request: _branchpoints(request.image))
+
+
+class BridgeMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.BRIDGE
+    callback = staticmethod(
+        lambda request: _bridge(request.image, request.iterations)
+    )
+
+
+class CleanMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
+    operation = MorphOperation.CLEAN
+    kernel = EIGHT_NEIGHBOR_KERNEL
+    transition = staticmethod(
+        lambda result, neighbor_count: np.where(neighbor_count == 0, 0.0, result)
+    )
+
+
+class ConvexHullMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.CONVEX_HULL
+    callback = staticmethod(convex_hull_morph_operation)
+
+
+class DiagMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.DIAG
+    callback = staticmethod(
+        lambda request: _diag(request.image, request.iterations)
+    )
+
+
+class DistanceMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.DISTANCE
+    callback = staticmethod(
+        lambda request: _distance(request.image, request.rescale_values)
+    )
+
+
+class EndpointsMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.ENDPOINTS
+    callback = staticmethod(lambda request: _endpoints(request.image))
+
+
+class FillMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
+    operation = MorphOperation.FILL
+    kernel = EIGHT_NEIGHBOR_KERNEL
+    transition = staticmethod(
+        lambda result, neighbor_count: np.where(neighbor_count == 8, 1.0, result)
+    )
+
+
+class HBreakMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.HBREAK
+    callback = staticmethod(
+        lambda request: _hbreak(request.image, request.iterations)
+    )
+
+
+class MajorityMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.MAJORITY
+    callback = staticmethod(
+        lambda request: _majority(request.image, request.iterations)
+    )
+
+
+class OpenLinesMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.OPENLINES
+    callback = staticmethod(
+        lambda request: _openlines(request.image, request.line_length)
+    )
+
+
+class RemoveMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
+    operation = MorphOperation.REMOVE
+    kernel = FOUR_CONNECTED_KERNEL
+    transition = staticmethod(
+        lambda result, neighbor_count: np.where(neighbor_count == 4, 0.0, result)
+    )
+
+
+class ShrinkMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.SHRINK
+    callback = staticmethod(
+        lambda request: _shrink(request.image, request.iterations)
+    )
+
+
+class SkelpeMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.SKELPE
+    callback = staticmethod(lambda request: _skelpe(request.image))
+
+
+class SpurMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
+    operation = MorphOperation.SPUR
+    kernel = EIGHT_NEIGHBOR_KERNEL
+    transition = staticmethod(
+        lambda result, neighbor_count: np.where(
+            (neighbor_count == 1) & (result > 0),
+            0.0,
+            result,
+        )
+    )
+
+
+class ThickenMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.THICKEN
+    callback = staticmethod(
+        lambda request: _thicken(request.image, request.iterations)
+    )
+
+
+class ThinMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.THIN
+    callback = staticmethod(
+        lambda request: _thin(request.image, request.iterations)
+    )
+
+
+class VBreakMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.VBREAK
+    callback = staticmethod(
+        lambda request: _vbreak(request.image, request.iterations)
+    )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -331,51 +606,15 @@ def morph(
     Returns:
         Processed image (H, W)
     """
-    iterations = _get_repeat_count(repeat_mode, custom_repeats)
-    
-    if operation == MorphOperation.BRANCHPOINTS:
-        return _branchpoints(image)
-    elif operation == MorphOperation.BRIDGE:
-        return _bridge(image, iterations)
-    elif operation == MorphOperation.CLEAN:
-        return _clean(image, iterations)
-    elif operation == MorphOperation.CONVEX_HULL:
-        from openhcs.processing.backends.cellprofiler.morphology import (
-            MorphologyBackendStrategy,
-        )
-
-        morphology = MorphologyBackendStrategy.for_callable(
-            morph,
+    iterations = RepeatModeStrategy.for_repeat_mode(repeat_mode).repeat_count(
+        custom_repeats
+    )
+    return MorphOperationStrategy.for_operation(operation).apply(
+        MorphOperationRequest(
+            image=image,
+            iterations=iterations,
+            rescale_values=rescale_values,
+            line_length=line_length,
             backend_provider=morphology_backend_provider,
         )
-        return _convex_hull(image, morphology)
-    elif operation == MorphOperation.DIAG:
-        return _diag(image, iterations)
-    elif operation == MorphOperation.DISTANCE:
-        return _distance(image, rescale_values)
-    elif operation == MorphOperation.ENDPOINTS:
-        return _endpoints(image)
-    elif operation == MorphOperation.FILL:
-        return _fill(image, iterations)
-    elif operation == MorphOperation.HBREAK:
-        return _hbreak(image, iterations)
-    elif operation == MorphOperation.MAJORITY:
-        return _majority(image, iterations)
-    elif operation == MorphOperation.OPENLINES:
-        return _openlines(image, line_length)
-    elif operation == MorphOperation.REMOVE:
-        return _remove(image, iterations)
-    elif operation == MorphOperation.SHRINK:
-        return _shrink(image, iterations)
-    elif operation == MorphOperation.SKELPE:
-        return _skelpe(image)
-    elif operation == MorphOperation.SPUR:
-        return _spur(image, iterations)
-    elif operation == MorphOperation.THICKEN:
-        return _thicken(image, iterations)
-    elif operation == MorphOperation.THIN:
-        return _thin(image, iterations)
-    elif operation == MorphOperation.VBREAK:
-        return _vbreak(image, iterations)
-    else:
-        raise ValueError(f"Unknown morphological operation: {operation}")
+    )
