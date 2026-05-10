@@ -55,13 +55,13 @@ class ModuleBlock:
     setting_records: list[ModuleSetting] = field(default_factory=list)
     metadata: dict[str, CellProfilerMetadataValue] = field(default_factory=dict)
     cppipe_path: Path | None = None
-    
+
     @property
     def library_module_name(self) -> str:
         """Convert module name to library module filename (lowercase with underscore prefix)."""
         # IdentifyPrimaryObjects -> _identifyprimaryobjects
         return f"_{self.name.lower()}"
-    
+
     def get_setting(self, key: str, default: str = "") -> str:
         """Get a setting value by key."""
         return self.settings.get(key, default)
@@ -101,42 +101,34 @@ class ModuleBlock:
 class CPPipeParser:
     """
     Parser for CellProfiler .cppipe pipeline files.
-    
+
     The .cppipe format is a custom text format (not XML) with:
     - Header lines (CellProfiler Pipeline, Version, etc.)
     - Module blocks starting with ModuleName:[metadata]
     - Indented setting lines: "    Setting Name:Value"
     """
-    
+
     # Pattern for module header line: ModuleName:[metadata]
     # The metadata can contain nested brackets like array([], dtype=uint8)
-    MODULE_HEADER_PATTERN = re.compile(
-        r'^\s*(\w+):\[(.+)\]$'
-    )
-    
+    MODULE_HEADER_PATTERN = re.compile(r"^\s*(\w+):\[(.+)\]$")
+
     # Pattern for module metadata parsing
-    METADATA_PATTERN = re.compile(
-        r'(\w+):([^|]+)'
-    )
-    
+    METADATA_PATTERN = re.compile(r"(\w+):([^|]+)")
+
     # Pattern for setting line (4 spaces + Setting Name:Value)
-    SETTING_PATTERN = re.compile(
-        r'^    ([^:]+):(.*)$'
-    )
+    SETTING_PATTERN = re.compile(r"^    ([^:]+):(.*)$")
 
     IMAGE_PLANE_DETAILS_PATTERN = re.compile(
         r'^"Version":"(?P<version>[^"]+)","PlaneCount":"(?P<count>\d+)"$'
     )
 
     # Older .pipeline resources store module settings without indentation.
-    UNINDENTED_SETTING_PATTERN = re.compile(
-        r'^([^:]+):(.*)$'
-    )
-    
+    UNINDENTED_SETTING_PATTERN = re.compile(r"^([^:]+):(.*)$")
+
     def __init__(self, cppipe_path: Path | None = None):
         """
         Initialize parser.
-        
+
         Args:
             cppipe_path: Path to .cppipe file (can also pass to parse())
         """
@@ -144,7 +136,7 @@ class CPPipeParser:
         self.modules: list[ModuleBlock] = []
         self.header: dict[str, str] = {}
         self.image_plane_sources: tuple[dict[str, str | None], ...] = ()
-    
+
     def parse(
         self,
         cppipe_path: Path | None = None,
@@ -154,17 +146,17 @@ class CPPipeParser:
     ) -> list[ModuleBlock]:
         """
         Parse a .cppipe file and return list of ModuleBlock.
-        
+
         Args:
             cppipe_path: Path to .cppipe file (uses self.cppipe_path if None)
-            
+
         Returns:
             List of ModuleBlock dataclasses
         """
         path = Path(cppipe_path) if cppipe_path else self.cppipe_path
         if not path:
             raise ValueError("No .cppipe path provided")
-        
+
         if not isinstance(backend, Backend):
             raise TypeError(
                 "CPPipeParser.parse backend must be an openhcs.constants.Backend, "
@@ -173,17 +165,17 @@ class CPPipeParser:
 
         if filemanager is None and not path.exists():
             raise FileNotFoundError(f".cppipe file not found: {path}")
-        
+
         logger.info(f"Parsing .cppipe file: {path}")
-        
+
         content = self._read_cppipe_text(path, filemanager=filemanager, backend=backend)
-        lines = content.split('\n')
-        
+        lines = content.split("\n")
+
         self.modules = []
         self.header = {}
         self.image_plane_sources = ()
         current_module: ModuleBlock | None = None
-        
+
         for line in lines:
             # Check for module header
             header_match = self.MODULE_HEADER_PATTERN.match(line)
@@ -191,60 +183,55 @@ class CPPipeParser:
                 # Save previous module
                 if current_module:
                     self.modules.append(current_module)
-                
+
                 # Parse new module
                 module_name = header_match.group(1)
                 metadata_str = header_match.group(2)
                 metadata = self._parse_metadata(metadata_str)
-                
+
                 current_module = ModuleBlock(
                     name=module_name,
-                    module_num=int(metadata.get('module_num', 0)),
-                    enabled=metadata.get('enabled', 'True') == 'True',
+                    module_num=int(metadata.get("module_num", 0)),
+                    enabled=metadata.get("enabled", "True") == "True",
                     metadata=metadata,
                     cppipe_path=path,
                 )
                 continue
 
-            # Indented module settings are authoritative even when the setting
-            # label itself starts with "#", e.g. CellProfiler's "# of deviations".
-            setting_match = self.SETTING_PATTERN.match(line)
-            if setting_match and current_module:
-                if self._has_setting_name(setting_match):
-                    setting = ModuleSetting(
-                        name=setting_match.group(1),
-                        value=setting_match.group(2),
-                    )
-                    current_module.setting_records.append(setting)
-                    current_module.settings[setting.name] = setting.value
+            setting = self.module_setting_from_line(
+                line,
+                current_module,
+                include_legacy_unindented=False,
+            )
+            if setting is not None and current_module is not None:
+                current_module.setting_records.append(setting)
+                current_module.settings[setting.name] = setting.value
                 continue
 
             # Skip comments
-            if line.strip().startswith('#'):
+            if line.strip().startswith("#"):
                 continue
 
             # Skip empty lines
             if not line.strip():
                 continue
-            
-            # Check for setting line. Real CellProfiler corpora include both
-            # indented .cppipe settings and unindented legacy .pipeline settings.
-            setting_match = self.UNINDENTED_SETTING_PATTERN.match(line)
-            if self._has_setting_name(setting_match) and current_module:
-                setting = ModuleSetting(
-                    name=setting_match.group(1),
-                    value=setting_match.group(2),
-                )
+
+            setting = self.module_setting_from_line(
+                line,
+                current_module,
+                include_legacy_unindented=True,
+            )
+            if setting is not None and current_module is not None:
                 current_module.setting_records.append(setting)
                 current_module.settings[setting.name] = setting.value
                 continue
-            
+
             # Header line (key:value without module bracket)
-            if ':' in line and not line.startswith(' '):
-                parts = line.split(':', 1)
+            if ":" in line and not line.startswith(" "):
+                parts = line.split(":", 1)
                 if len(parts) == 2:
                     self.header[parts[0].strip()] = parts[1].strip()
-        
+
         # Don't forget the last module
         if current_module:
             self.modules.append(current_module)
@@ -253,7 +240,7 @@ class CPPipeParser:
         if self.image_plane_sources:
             for module in self.modules:
                 module.metadata["image_plane_sources"] = self.image_plane_sources
-        
+
         logger.info(f"Parsed {len(self.modules)} modules from {path.name}")
         return self.modules
 
@@ -276,28 +263,31 @@ class CPPipeParser:
             )
         return content
 
-    def _setting_match(
+    def module_setting_from_line(
         self,
         line: str,
         current_module: ModuleBlock | None,
-    ) -> re.Match[str] | None:
+        *,
+        include_legacy_unindented: bool,
+    ) -> ModuleSetting | None:
+        """Parse one module setting line for the current CellProfiler module."""
         if current_module is None:
             return None
-        setting_match = self.SETTING_PATTERN.match(line)
-        if self._has_setting_name(setting_match):
-            return setting_match
-
-        setting_match = self.UNINDENTED_SETTING_PATTERN.match(line)
-        if self._has_setting_name(setting_match):
-            return setting_match
+        patterns = (self.SETTING_PATTERN,)
+        if include_legacy_unindented:
+            patterns = (*patterns, self.UNINDENTED_SETTING_PATTERN)
+        for pattern in patterns:
+            setting_match = pattern.match(line)
+            if setting_match is None:
+                continue
+            if not setting_match.group(1).strip():
+                continue
+            return ModuleSetting(
+                name=setting_match.group(1),
+                value=setting_match.group(2),
+            )
         return None
 
-    def _has_setting_name(
-        self,
-        setting_match: re.Match[str] | None,
-    ) -> bool:
-        return setting_match is not None and bool(setting_match.group(1).strip())
-    
     def _parse_metadata(self, metadata_str: str) -> dict[str, str]:
         """Parse module metadata from bracket content."""
         metadata = {}
@@ -355,7 +345,7 @@ class CPPipeParser:
         import csv
 
         return next(csv.reader([line]))
-    
+
     def get_module_by_name(self, name: str) -> ModuleBlock | None:
         """Get a module by name (case-insensitive)."""
         name_lower = name.lower()
@@ -363,7 +353,7 @@ class CPPipeParser:
             if module.name.lower() == name_lower:
                 return module
         return None
-    
+
     def get_enabled_modules(self) -> list[ModuleBlock]:
         """Get only enabled modules."""
         return [m for m in self.modules if m.enabled]
