@@ -8,7 +8,9 @@ All objects (e.g., speckles) within a parent object (e.g., nucleus) become its c
 
 import numpy as np
 from dataclasses import dataclass
-from enum import Enum
+from openhcs.interop.cellprofiler.relate_objects_settings import (
+    RelateObjectsDistanceMethod as DistanceMethod,
+)
 from openhcs.interop.cellprofiler.relationship_measurements import (
     RelationshipMeasurements,
 )
@@ -29,13 +31,6 @@ from openhcs.processing.backends.cellprofiler.relationships import (
 )
 from openhcs.processing.materialization import csv_dataclass_materializer
 from ._enum import _coerce_function_enum
-
-
-class DistanceMethod(Enum):
-    NONE = "none"
-    CENTROID = "centroid"
-    MINIMUM = "minimum"
-    BOTH = "both"
 
 
 @dataclass(frozen=True, slots=True)
