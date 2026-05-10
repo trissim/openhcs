@@ -21,6 +21,17 @@ from openhcs.interop.cellprofiler.import_service import (
     CellProfilerPipelineImporter,
     CellProfilerPipelineImportRequest,
 )
+from openhcs.interop.cellprofiler.illumination_settings import (
+    CORRECT_ILLUMINATION_APPLY_SETTINGS,
+    CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
+    IlluminationCalculationScope,
+    IlluminationCorrectionMethod,
+    IlluminationFilterSizeMethod,
+    IlluminationIntensityChoice,
+    IlluminationRescaleOption,
+    IlluminationSmoothingMethod,
+    IlluminationSplineBackgroundMode,
+)
 from openhcs.interop.cellprofiler.mask_objects_settings import (
     MASK_OBJECTS_SETTINGS,
     MaskObjectsNumberingChoice,
@@ -134,6 +145,14 @@ from openhcs.interop.cellprofiler.structuring_element_settings import (
     StructuringElementSettingBinding,
     structuring_element_bound_kwargs,
 )
+from openhcs.interop.cellprofiler.untangle_worms_settings import (
+    UNTANGLE_WORMS_INPUT_IMAGE_SETTING,
+    UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING,
+    UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING,
+    UNTANGLE_WORMS_TRAINING_FILE_NAME_SETTING,
+    UntangleWormsOverlapStyle,
+    untangle_worms_bound_kwargs,
+)
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
     CellProfilerMeasurementTargetScope,
@@ -147,6 +166,8 @@ __all__ = (
     "CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG",
     "CELLPROFILER_MODULE_SEMANTICS",
     "CELLPROFILER_MODULE_SEMANTICS_BY_KEY",
+    "CORRECT_ILLUMINATION_APPLY_SETTINGS",
+    "CORRECT_ILLUMINATION_CALCULATE_SETTINGS",
     "CPPipeParser",
     "ArtifactSettingClassifier",
     "ArtifactSettingDirection",
@@ -177,6 +198,13 @@ __all__ = (
     "FunctionSpecialOutput",
     "INFRASTRUCTURE_MODULE_NAMES",
     "INFRASTRUCTURE_MODULE_NAMES_BY_KEY",
+    "IlluminationCalculationScope",
+    "IlluminationCorrectionMethod",
+    "IlluminationFilterSizeMethod",
+    "IlluminationIntensityChoice",
+    "IlluminationRescaleOption",
+    "IlluminationSmoothingMethod",
+    "IlluminationSplineBackgroundMode",
     "MASK_OBJECTS_SETTINGS",
     "MaskObjectsNumberingChoice",
     "MaskObjectsOverlapHandling",
@@ -212,6 +240,11 @@ __all__ = (
     "StraightenWormsImageBinding",
     "StructuringElementSetting",
     "StructuringElementSettingBinding",
+    "UNTANGLE_WORMS_INPUT_IMAGE_SETTING",
+    "UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING",
+    "UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING",
+    "UNTANGLE_WORMS_TRAINING_FILE_NAME_SETTING",
+    "UntangleWormsOverlapStyle",
     "WatershedRuntimeSemanticsBinding",
     "artifact_setting_symbols",
     "cellprofiler_runtime_equivalence_policy",
@@ -234,4 +267,5 @@ __all__ = (
     "straighten_worms_input_objects_name",
     "straighten_worms_output_objects_name",
     "structuring_element_bound_kwargs",
+    "untangle_worms_bound_kwargs",
 )

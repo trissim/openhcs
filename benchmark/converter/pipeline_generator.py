@@ -39,10 +39,10 @@ from openhcs.interop.cellprofiler.runtime import (
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
-from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
-    CalculationScope,
+from openhcs.interop.cellprofiler.illumination_settings import (
+    IlluminationCalculationScope,
 )
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
 from .module_function_resolution import ModuleFunctionResolutionStrategy
@@ -175,11 +175,14 @@ class CorrectIlluminationCalculateProcessingComponentStrategy(
         bound_kwargs: Mapping[str, Any],
         category_defaults: Mapping[str, tuple[str, ...]],
     ) -> ModuleProcessingComponents:
-        raw_scope = bound_kwargs.get("calculation_scope", CalculationScope.EACH)
-        scope = _coerce_function_enum(CalculationScope, raw_scope)
+        raw_scope = bound_kwargs.get(
+            "calculation_scope",
+            IlluminationCalculationScope.EACH,
+        )
+        scope = coerce_cellprofiler_enum(IlluminationCalculationScope, raw_scope)
         if scope in {
-            CalculationScope.ALL_FIRST_CYCLE,
-            CalculationScope.ALL_ACROSS_CYCLES,
+            IlluminationCalculationScope.ALL_FIRST_CYCLE,
+            IlluminationCalculationScope.ALL_ACROSS_CYCLES,
         }:
             return ModuleProcessingComponents(
                 ("VariableComponents.SITE",),

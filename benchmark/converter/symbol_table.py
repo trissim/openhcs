@@ -112,7 +112,7 @@ from openhcs.interop.cellprofiler.straighten_worms_settings import (
     straighten_worms_input_objects_name,
     straighten_worms_output_objects_name,
 )
-from .untangle_worms_settings import (
+from openhcs.interop.cellprofiler.untangle_worms_settings import (
     UNTANGLE_WORMS_INPUT_IMAGE_SETTING,
     UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING,
     UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING,

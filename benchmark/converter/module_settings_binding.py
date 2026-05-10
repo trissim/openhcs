@@ -11,9 +11,6 @@ from typing import Any, ClassVar, final
 from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
-from benchmark.cellprofiler_library.functions.correctilluminationapply import (
-    IlluminationCorrectionMethod,
-)
 from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
 from benchmark.cellprofiler_library.functions.convertobjectstoimage import ImageMode
 from benchmark.cellprofiler_library.functions.rescaleintensity import (
@@ -66,9 +63,10 @@ from .gray_to_color_settings import (
     gray_to_color_stack_channels,
     is_blank_gray_to_color_source,
 )
-from .illumination_settings import (
+from openhcs.interop.cellprofiler.illumination_settings import (
     CORRECT_ILLUMINATION_APPLY_SETTINGS,
     CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
+    IlluminationCorrectionMethod,
 )
 from .image_math_settings import image_math_bound_kwargs
 from openhcs.interop.cellprofiler.mask_objects_settings import MASK_OBJECTS_SETTINGS
@@ -86,6 +84,7 @@ from openhcs.interop.cellprofiler.relate_objects_settings import (
     RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
     parse_relate_objects_distance_method,
 )
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from .settings_binder import (
     cellprofiler_enum_setting_parser,
     cellprofiler_enum_value_setting_parser,
@@ -119,7 +118,9 @@ from openhcs.interop.cellprofiler.structuring_element_settings import (
     StructuringElementSettingBinding,
     structuring_element_bound_kwargs,
 )
-from .untangle_worms_settings import untangle_worms_bound_kwargs
+from openhcs.interop.cellprofiler.untangle_worms_settings import (
+    untangle_worms_bound_kwargs,
+)
 from .unmix_colors_settings import unmix_colors_bound_kwargs
 from .watershed_settings import (
     WATERSHED_BORDER_EXCLUSION_SETTING,
@@ -2381,7 +2382,7 @@ def _bind_repeated_correct_illumination_apply_settings(
     )
     if len(method_values) > 1:
         kwargs["method"] = tuple(
-            _coerce_function_enum(IlluminationCorrectionMethod, value).value
+            coerce_cellprofiler_enum(IlluminationCorrectionMethod, value).value
             for value in method_values
         )
     _bind_repeated_bool_setting(
