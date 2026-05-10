@@ -13,7 +13,6 @@ from benchmark.converter.module_settings_binding import ModuleUnmappedSettingIgn
 from benchmark.converter.module_settings_binding import ModuleSettingsBindingStrategy
 from benchmark.converter.module_settings_binding import UnmappedModuleSettingsError
 from benchmark.converter.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
-from benchmark.cellprofiler_library.functions.imagemath import MathOperation
 from openhcs.interop.cellprofiler.setting_names import setting_names
 
 
@@ -1220,7 +1219,7 @@ def test_image_math_binds_operation_semantics():
     )
 
     assert bound.kwargs == {
-        "operation": MathOperation.INVERT,
+        "operation": "invert",
         "exponent": 1.0,
         "after_factor": 1.0,
         "addend": 0.0,

@@ -29,7 +29,7 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
 )
 from benchmark.converter.image_math_settings import ImageMathOperandFactorSettingResolver
 from benchmark.cellprofiler_library.functions.imagemath import ImageMathOperationStrategy
-from benchmark.converter.expand_or_shrink_settings import (
+from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     ExpandShrinkOperationModeBinding,
 )
 from benchmark.converter.module_runtime_semantics import ModuleRuntimeSemanticsBinding

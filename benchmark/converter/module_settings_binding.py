@@ -24,7 +24,9 @@ from .color_to_gray_settings import color_to_gray_bound_kwargs
 from .crop_settings import crop_bound_kwargs
 from .display_data_settings import display_data_on_image_bound_kwargs
 from .enhance_edges_settings import ENHANCE_EDGES_SETTINGS
-from .expand_or_shrink_settings import expand_or_shrink_bound_kwargs
+from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
+    expand_or_shrink_bound_kwargs,
+)
 from .filter_objects_settings import filter_objects_bound_kwargs
 from .grid_settings import (
     define_grid_bound_kwargs,
@@ -63,7 +65,7 @@ from openhcs.interop.cellprofiler.image_module_settings import (
     WatershedDeclumpMethod,
     WatershedMethod,
 )
-from .image_math_settings import image_math_bound_kwargs
+from openhcs.interop.cellprofiler.image_math_settings import image_math_bound_kwargs
 from openhcs.interop.cellprofiler.mask_objects_settings import MASK_OBJECTS_SETTINGS
 from .module_function_resolution import measurement_target_scope
 from openhcs.interop.cellprofiler.module_runtime_semantics import (
