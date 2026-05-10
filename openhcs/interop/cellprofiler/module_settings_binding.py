@@ -655,6 +655,63 @@ class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
             param_mapping,
         )
 
+    def bind_cellprofiler_threshold_settings(
+        self,
+        *,
+        module: ModuleBlock,
+        binder: SettingsBinder,
+        kwargs: dict[str, Any],
+        unmapped_kwargs: dict[str, Any],
+        include_advanced_setting: bool,
+    ) -> None:
+        """Bind CellProfiler threshold rows into absorbed threshold kwargs."""
+        if include_advanced_setting:
+            value = _last_optional_setting_value(module, "Use advanced settings?")
+            if value is not None:
+                kwargs["use_advanced_settings"] = binder.parse_value(
+                    "Use advanced settings?",
+                    value,
+                )
+            unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name("Use advanced settings?"),
+                None,
+            )
+
+        for setting_name, parameter_name in _CELLPROFILER_THRESHOLD_SETTINGS.items():
+            value = _active_threshold_setting_value(module, setting_name)
+            if value is not None:
+                kwargs[parameter_name] = _parse_cellprofiler_threshold_setting(
+                    binder,
+                    setting_name,
+                    value,
+                )
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+
+        _upgrade_legacy_cellprofiler_threshold_kwargs(module, kwargs)
+
+        bounds = _last_optional_setting_value(
+            module,
+            "Lower and upper bounds on threshold",
+        )
+        if bounds is not None:
+            parsed_bounds = binder.parse_value(
+                "Lower and upper bounds on threshold",
+                bounds,
+            )
+            if not isinstance(parsed_bounds, tuple) or len(parsed_bounds) != 2:
+                raise ValueError(
+                    f"{module.name} threshold bounds must contain two values, "
+                    f"got {bounds!r}."
+                )
+            kwargs["threshold_min"], kwargs["threshold_max"] = parsed_bounds
+        unmapped_kwargs.pop(
+            normalize_cellprofiler_setting_name("Lower and upper bounds on threshold"),
+            None,
+        )
+
+        for setting_name in _IGNORED_CELLPROFILER_THRESHOLD_SETTINGS:
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+
 
 _CELLPROFILER_THRESHOLD_SETTINGS: Mapping[str, str] = {
     "Threshold strategy": "threshold_scope",
@@ -863,59 +920,6 @@ def _upgrade_legacy_cellprofiler_threshold_kwargs(
             kwargs["log_transform"] = log_transform_default
 
 
-def _bind_cellprofiler_threshold_settings(
-    *,
-    module: ModuleBlock,
-    binder: SettingsBinder,
-    kwargs: dict[str, Any],
-    unmapped_kwargs: dict[str, Any],
-    include_advanced_setting: bool,
-) -> None:
-    if include_advanced_setting:
-        value = _last_optional_setting_value(module, "Use advanced settings?")
-        if value is not None:
-            kwargs["use_advanced_settings"] = binder.parse_value(
-                "Use advanced settings?",
-                value,
-            )
-        unmapped_kwargs.pop(
-            normalize_cellprofiler_setting_name("Use advanced settings?"),
-            None,
-        )
-
-    for setting_name, parameter_name in _CELLPROFILER_THRESHOLD_SETTINGS.items():
-        value = _active_threshold_setting_value(module, setting_name)
-        if value is not None:
-            kwargs[parameter_name] = _parse_cellprofiler_threshold_setting(
-                binder,
-                setting_name,
-                value,
-            )
-        unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
-
-    _upgrade_legacy_cellprofiler_threshold_kwargs(module, kwargs)
-
-    bounds = _last_optional_setting_value(module, "Lower and upper bounds on threshold")
-    if bounds is not None:
-        parsed_bounds = binder.parse_value(
-            "Lower and upper bounds on threshold",
-            bounds,
-        )
-        if not isinstance(parsed_bounds, tuple) or len(parsed_bounds) != 2:
-            raise ValueError(
-                f"{module.name} threshold bounds must contain two values, "
-                f"got {bounds!r}."
-            )
-        kwargs["threshold_min"], kwargs["threshold_max"] = parsed_bounds
-    unmapped_kwargs.pop(
-        normalize_cellprofiler_setting_name("Lower and upper bounds on threshold"),
-        None,
-    )
-
-    for setting_name in _IGNORED_CELLPROFILER_THRESHOLD_SETTINGS:
-        unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
-
-
 class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
     GenericModuleSettingsBindingStrategy
 ):
@@ -933,7 +937,7 @@ class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
         bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
-        _bind_cellprofiler_threshold_settings(
+        self.bind_cellprofiler_threshold_settings(
             module=module,
             binder=binder,
             kwargs=kwargs,
@@ -972,7 +976,7 @@ class ThresholdModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrateg
         bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
-        _bind_cellprofiler_threshold_settings(
+        self.bind_cellprofiler_threshold_settings(
             module=module,
             binder=binder,
             kwargs=kwargs,
@@ -1254,7 +1258,7 @@ class IdentifySecondaryObjectsModuleSettingsBindingStrategy(
                 kwargs[parameter_name] = binder.parse_value(setting_name, value)
             unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
 
-        _bind_cellprofiler_threshold_settings(
+        self.bind_cellprofiler_threshold_settings(
             module=module,
             binder=binder,
             kwargs=kwargs,
