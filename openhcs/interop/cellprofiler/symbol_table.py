@@ -1353,7 +1353,6 @@ class InferredModuleContractPattern(
     __registry_key__ = "pattern_name"
     __skip_if_no_key__ = True
     pattern_name: ClassVar[str | None] = None
-    priority: ClassVar[int] = 100
 
     @classmethod
     def first_match(
@@ -1361,41 +1360,80 @@ class InferredModuleContractPattern(
         builder: _SymbolTableBuilder,
         module: ModuleBlock,
     ) -> ModuleArtifactContracts | None:
-        for pattern_type in sorted(
-            cls.__registry__.values(),
-            key=lambda candidate: candidate.priority,
-        ):
-            contract = pattern_type().build_if_matched(builder, module)
-            if contract is not None:
-                return contract
-        return None
+        matching_pattern_types = tuple(
+            pattern_type
+            for pattern_type in cls.__registry__.values()
+            if pattern_type().matches(builder, module)
+        )
+        owning_pattern_types = tuple(
+            candidate_type
+            for candidate_type in matching_pattern_types
+            if not any(
+                other_type is not candidate_type
+                and issubclass(other_type, candidate_type)
+                for other_type in matching_pattern_types
+            )
+        )
+        if not owning_pattern_types:
+            return None
+        if len(owning_pattern_types) != 1:
+            names = tuple(pattern_type.__name__ for pattern_type in owning_pattern_types)
+            raise ValueError(
+                f"Module {module.name}({module.module_num}) has ambiguous "
+                f"inferred artifact contract patterns: {names!r}."
+            )
+        return owning_pattern_types[0]().build(builder, module)
 
     @abstractmethod
+    def matches(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> bool:
+        """Return whether this pattern owns inferred contracts for the module."""
+
+    @abstractmethod
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        """Build the contract after this pattern has matched the module."""
+
     def build_if_matched(
         self,
         builder: _SymbolTableBuilder,
         module: ModuleBlock,
     ) -> ModuleArtifactContracts | None:
         """Return a contract when this pattern fully matches the module."""
+        if not self.matches(builder, module):
+            return None
+        return self.build(builder, module)
 
 
-class SemanticSettingsContractPattern(InferredModuleContractPattern):
-    """Infer contracts from typed CellProfiler artifact-setting semantics."""
+@dataclass(frozen=True, slots=True)
+class SemanticSettingsContractCandidate:
+    """Typed carrier for semantic setting-derived contract inference."""
 
-    pattern_name = "semantic_settings"
-    priority = 10
+    inputs: tuple[CellProfilerSymbol, ...] = ()
+    outputs: tuple[CellProfilerSymbol, ...] = ()
 
-    def build_if_matched(
-        self,
+    def __bool__(self) -> bool:
+        return bool(self.inputs or self.outputs)
+
+    @classmethod
+    def from_module(
+        cls,
         builder: _SymbolTableBuilder,
         module: ModuleBlock,
-    ) -> ModuleArtifactContracts | None:
+    ) -> "SemanticSettingsContractCandidate":
+        """Resolve semantic setting symbols into a candidate contract payload."""
         setting_symbols = artifact_setting_symbols(module)
         special_outputs = function_special_outputs(module.name)
         if not setting_symbols and not special_outputs:
-            return None
+            return cls()
 
-        inputs = [
+        inputs = tuple(
             builder.require(
                 symbol.name,
                 CellProfilerSymbolKind.from_artifact_kind(symbol.role.artifact_kind),
@@ -1403,17 +1441,83 @@ class SemanticSettingsContractPattern(InferredModuleContractPattern):
             )
             for symbol in setting_symbols
             if symbol.role.is_input
-        ]
+        )
         outputs = _semantic_output_symbols(
             builder,
             module,
-            tuple(inputs),
+            inputs,
             tuple(symbol for symbol in setting_symbols if not symbol.role.is_input),
             special_outputs,
         )
-        if not inputs and not outputs:
+        return cls(inputs=inputs, outputs=outputs)
+
+    def assemble_with(
+        self,
+        pattern: CellProfilerContractAssemblyMixin,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts | None:
+        """Assemble the candidate when it carries real artifact flow."""
+        if not self.inputs and not self.outputs:
             return None
-        return self.assemble_contract(module, builder, inputs=inputs, outputs=outputs)
+        return pattern.assemble_contract(
+            module,
+            builder,
+            inputs=self.inputs,
+            outputs=self.outputs,
+        )
+
+
+class SemanticSettingsContractPattern(InferredModuleContractPattern):
+    """Infer contracts from typed CellProfiler artifact-setting semantics."""
+
+    pattern_name = "semantic_settings"
+
+    def matches(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> bool:
+        return bool(
+            SemanticSettingsContractCandidate.from_module(builder, module)
+        )
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        contract = SemanticSettingsContractCandidate.from_module(
+            builder, module
+        ).assemble_with(self, builder, module)
+        if contract is None:
+            raise ValueError(
+                f"Semantic settings pattern selected {module.name}({module.module_num}) "
+                "without semantic artifact flow."
+            )
+        return contract
+
+
+class FallbackInferredModuleContractPattern(InferredModuleContractPattern, ABC):
+    """Base for inference patterns used only when semantic settings do not own a module."""
+
+    def matches(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> bool:
+        return (
+            not SemanticSettingsContractPattern().matches(builder, module)
+            and self.matches_fallback(builder, module)
+        )
+
+    @abstractmethod
+    def matches_fallback(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> bool:
+        """Return whether this fallback pattern owns a non-semantic module."""
 
 
 class InfrastructureModuleContractBuilder(ModuleContractBuilder):
@@ -2453,30 +2557,45 @@ class MeasureImageAreaOccupiedContractBuilder(ModuleContractBuilder):
         )
 
 
-class _SingleInputSingleOutputContractPattern(InferredModuleContractPattern):
+class _SingleInputSingleOutputContractPattern(FallbackInferredModuleContractPattern):
     """Base for single-symbol input/output contract inference."""
 
-    priority = 50
     input_setting: ClassVar[str | SettingNameFamily]
     input_kind: ClassVar[CellProfilerSymbolKind]
     output_setting: ClassVar[str | SettingNameFamily]
     output_kind: ClassVar[CellProfilerSymbolKind]
     excluded_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
 
-    def build_if_matched(
+    def matches_fallback(
         self,
         builder: _SymbolTableBuilder,
         module: ModuleBlock,
-    ) -> ModuleArtifactContracts | None:
+    ) -> bool:
+        del builder
         if any(
             _optional_setting(module, setting) is not None
             for setting in type(self).excluded_settings
         ):
-            return None
+            return False
+        return (
+            self.normalized_setting_symbol(module, type(self).input_setting)
+            is not None
+            and self.normalized_setting_symbol(module, type(self).output_setting)
+            is not None
+        )
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
         input_name = self.normalized_setting_symbol(module, type(self).input_setting)
         output_name = self.normalized_setting_symbol(module, type(self).output_setting)
         if input_name is None or output_name is None:
-            return None
+            raise ValueError(
+                f"Single input/output pattern selected {module.name}({module.module_num}) "
+                "without both input and output setting symbols."
+            )
         input_symbol = builder.require(input_name, type(self).input_kind, module)
         output_symbol = builder.declare(output_name, type(self).output_kind, module)
         return self.assemble_contract(
