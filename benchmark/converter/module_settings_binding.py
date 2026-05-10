@@ -12,15 +12,6 @@ from metaclass_registry import AutoRegisterMeta
 
 from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
 from benchmark.cellprofiler_library.functions.convertobjectstoimage import ImageMode
-from benchmark.cellprofiler_library.functions.rescaleintensity import (
-    AutomaticHigh,
-    AutomaticLow,
-    RescaleMethod,
-)
-from benchmark.cellprofiler_library.functions.maskimage import MaskSource
-from benchmark.cellprofiler_library.functions.measureimagequality import (
-    ThresholdMethod as ImageQualityThresholdMethod,
-)
 from benchmark.cellprofiler_library.functions.watershed import (
     WatershedDeclumpMethod,
     WatershedMethod,
@@ -66,6 +57,13 @@ from openhcs.interop.cellprofiler.illumination_settings import (
 from openhcs.interop.cellprofiler.intensity_distribution_settings import (
     parse_intensity_distribution_center_choice,
     parse_intensity_distribution_zernike_mode,
+)
+from openhcs.interop.cellprofiler.image_module_settings import (
+    ImageQualityThresholdMethod,
+    MaskImageSource,
+    RescaleIntensityAutomaticHigh,
+    RescaleIntensityAutomaticLow,
+    RescaleIntensityMethod,
 )
 from .image_math_settings import image_math_bound_kwargs
 from openhcs.interop.cellprofiler.mask_objects_settings import MASK_OBJECTS_SETTINGS
@@ -968,17 +966,17 @@ class RescaleIntensityModuleSettingsBindingStrategy(GenericModuleSettingsBinding
         SettingToKeywordBinding(
             "Rescaling method",
             "rescale_method",
-            cellprofiler_enum_setting_parser(RescaleMethod),
+            cellprofiler_enum_value_setting_parser(RescaleIntensityMethod),
         ),
         SettingToKeywordBinding(
             "Method to calculate the minimum intensity",
             "automatic_low",
-            cellprofiler_enum_setting_parser(AutomaticLow),
+            cellprofiler_enum_value_setting_parser(RescaleIntensityAutomaticLow),
         ),
         SettingToKeywordBinding(
             "Method to calculate the maximum intensity",
             "automatic_high",
-            cellprofiler_enum_setting_parser(AutomaticHigh),
+            cellprofiler_enum_value_setting_parser(RescaleIntensityAutomaticHigh),
         ),
         SettingToKeywordBinding(
             "Lower intensity limit for the input image",
@@ -1068,7 +1066,7 @@ class MaskImageModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrateg
         SettingToKeywordBinding(
             "Use objects or an image as a mask?",
             "mask_source",
-            cellprofiler_enum_setting_parser(MaskSource),
+            cellprofiler_enum_value_setting_parser(MaskImageSource),
         ),
         SettingToKeywordBinding(
             "Invert the mask?",
@@ -1475,10 +1473,10 @@ class MeasureImageQualityModuleSettingsBindingStrategy(
         "Calculate intensity metrics?": ("calculate_intensity", parse_cellprofiler_bool),
         "Calculate thresholds?": ("calculate_threshold", parse_cellprofiler_bool),
         "Spatial scale for blur measurements": ("blur_scale", parse_cellprofiler_int),
-        "Select a thresholding method": (
-            "threshold_method",
-            cellprofiler_enum_setting_parser(ImageQualityThresholdMethod),
-        ),
+            "Select a thresholding method": (
+                "threshold_method",
+                cellprofiler_enum_value_setting_parser(ImageQualityThresholdMethod),
+            ),
     }
     unsupported_settings: ClassVar[tuple[str, ...]] = (
         "Image count",

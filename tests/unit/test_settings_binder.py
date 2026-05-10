@@ -13,12 +13,6 @@ from benchmark.converter.module_settings_binding import ModuleUnmappedSettingIgn
 from benchmark.converter.module_settings_binding import ModuleSettingsBindingStrategy
 from benchmark.converter.module_settings_binding import UnmappedModuleSettingsError
 from benchmark.converter.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
-from benchmark.cellprofiler_library.functions.rescaleintensity import (
-    AutomaticHigh,
-    AutomaticLow,
-    RescaleMethod,
-)
-from benchmark.cellprofiler_library.functions.maskimage import MaskSource
 from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
 from benchmark.cellprofiler_library.functions.imagemath import MathOperation
 from benchmark.cellprofiler_library.functions.watershed import (
@@ -1493,9 +1487,9 @@ def test_rescale_intensity_binds_source_range_and_nominal_modes():
     )
 
     assert bound.kwargs == {
-        "rescale_method": RescaleMethod.STRETCH,
-        "automatic_low": AutomaticLow.CUSTOM,
-        "automatic_high": AutomaticHigh.CUSTOM,
+        "rescale_method": "stretch",
+        "automatic_low": "custom",
+        "automatic_high": "custom",
         "source_low": 0.0,
         "source_high": 1.0,
         "dest_low": 0.0,
@@ -1526,7 +1520,7 @@ def test_mask_image_binds_mask_source_and_inversion():
     )
 
     assert bound.kwargs == {
-        "mask_source": MaskSource.IMAGE,
+        "mask_source": "image",
         "invert_mask": False,
     }
     assert not bound.unmapped_kwargs

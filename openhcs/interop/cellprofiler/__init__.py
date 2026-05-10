@@ -38,6 +38,13 @@ from openhcs.interop.cellprofiler.intensity_distribution_settings import (
     parse_intensity_distribution_center_choice,
     parse_intensity_distribution_zernike_mode,
 )
+from openhcs.interop.cellprofiler.image_module_settings import (
+    ImageQualityThresholdMethod,
+    MaskImageSource,
+    RescaleIntensityAutomaticHigh,
+    RescaleIntensityAutomaticLow,
+    RescaleIntensityMethod,
+)
 from openhcs.interop.cellprofiler.mask_objects_settings import (
     MASK_OBJECTS_SETTINGS,
     MaskObjectsNumberingChoice,
@@ -211,9 +218,11 @@ __all__ = (
     "IlluminationRescaleOption",
     "IlluminationSmoothingMethod",
     "IlluminationSplineBackgroundMode",
+    "ImageQualityThresholdMethod",
     "IntensityDistributionCenterChoice",
     "IntensityDistributionZernikeMode",
     "MASK_OBJECTS_SETTINGS",
+    "MaskImageSource",
     "MaskObjectsNumberingChoice",
     "MaskObjectsOverlapHandling",
     "ModuleBlock",
@@ -233,6 +242,9 @@ __all__ = (
     "RESIZE_METHOD_SETTING",
     "RESIZE_PLANES_SETTING",
     "RESIZE_WIDTH_SETTING",
+    "RescaleIntensityAutomaticHigh",
+    "RescaleIntensityAutomaticLow",
+    "RescaleIntensityMethod",
     "ResizeInterpolationMethod",
     "ResizeMethod",
     "SettingNameFamily",
