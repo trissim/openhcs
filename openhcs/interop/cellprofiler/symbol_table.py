@@ -37,7 +37,10 @@ from openhcs.core.artifacts import (
 )
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
-from openhcs.core.registry_strategies import GeneratedLeafClassSpec
+from openhcs.core.registry_strategies import (
+    GeneratedLeafClassSpec,
+    RegisteredLeafClassSpec,
+)
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from openhcs.core.source_bindings import (
     ComponentSelector,
@@ -2177,61 +2180,84 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
         return (*required, *optional)
 
 
-class MeasureObjectSizeShapeContractBuilder(MeasurementModuleContractBuilder):
-    """Compile MeasureObjectSizeShape object inputs into measurement contracts."""
+@dataclass(frozen=True, slots=True)
+class MeasurementModuleContractBuilderSpec(RegisteredLeafClassSpec):
+    """Typed declaration for measurement-module AutoRegisterMeta leaves."""
 
-    module_name = "MeasureObjectSizeShape"
-    object_setting = OBJECT_MEASUREMENT_SETTING
+    class_name: str
+    module_name: str
+    doc: str
+    image_setting: str | SettingNameFamily | None = None
+    object_setting: str | SettingNameFamily | None = None
+    optional_object_setting: str | SettingNameFamily | None = None
+    base_type: ClassVar[type[object]] = MeasurementModuleContractBuilder
+
+    def class_attributes(self) -> Mapping[str, object]:
+        """Return the class attributes consumed by AutoRegisterMeta."""
+        attributes: dict[str, object] = {
+            "__doc__": self.doc,
+            "module_name": self.module_name,
+        }
+        if self.image_setting is not None:
+            attributes["image_setting"] = self.image_setting
+        if self.object_setting is not None:
+            attributes["object_setting"] = self.object_setting
+        if self.optional_object_setting is not None:
+            attributes["optional_object_setting"] = self.optional_object_setting
+        return attributes
 
 
-class MeasureObjectIntensityContractBuilder(MeasurementModuleContractBuilder):
-    """Compile MeasureObjectIntensity image/object inputs into measurements."""
-
-    module_name = "MeasureObjectIntensity"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureObjectIntensityDistributionContractBuilder(
-    MeasurementModuleContractBuilder
+for _measurement_contract_builder in (
+    MeasurementModuleContractBuilderSpec(
+        "MeasureObjectSizeShapeContractBuilder",
+        "MeasureObjectSizeShape",
+        "Compile MeasureObjectSizeShape object inputs into measurement contracts.",
+        object_setting=OBJECT_MEASUREMENT_SETTING,
+    ),
+    MeasurementModuleContractBuilderSpec(
+        "MeasureObjectIntensityContractBuilder",
+        "MeasureObjectIntensity",
+        "Compile MeasureObjectIntensity image/object inputs into measurements.",
+        image_setting=IMAGE_MEASUREMENT_SETTING,
+        object_setting=OBJECT_MEASUREMENT_SETTING,
+    ),
+    MeasurementModuleContractBuilderSpec(
+        "MeasureObjectIntensityDistributionContractBuilder",
+        "MeasureObjectIntensityDistribution",
+        "Compile radial-distribution image/object inputs into measurements.",
+        image_setting=IMAGE_MEASUREMENT_SETTING,
+        object_setting=OBJECT_MEASUREMENT_SETTING,
+    ),
+    MeasurementModuleContractBuilderSpec(
+        "MeasureTextureContractBuilder",
+        "MeasureTexture",
+        "Compile MeasureTexture image inputs and optional object masks.",
+        image_setting=IMAGE_MEASUREMENT_SETTING,
+        optional_object_setting=OBJECT_MEASUREMENT_SETTING,
+    ),
+    MeasurementModuleContractBuilderSpec(
+        "MeasureColocalizationContractBuilder",
+        "MeasureColocalization",
+        "Compile MeasureColocalization image inputs and optional object masks.",
+        image_setting=IMAGE_MEASUREMENT_SETTING,
+        optional_object_setting=OBJECT_MEASUREMENT_SETTING,
+    ),
+    MeasurementModuleContractBuilderSpec(
+        "MeasureGranularityContractBuilder",
+        "MeasureGranularity",
+        "Compile MeasureGranularity image inputs and optional object masks.",
+        image_setting=IMAGE_MEASUREMENT_SETTING,
+        optional_object_setting=OBJECT_MEASUREMENT_SETTING,
+    ),
+    MeasurementModuleContractBuilderSpec(
+        "MeasureImageIntensityContractBuilder",
+        "MeasureImageIntensity",
+        "Compile MeasureImageIntensity image inputs and optional object masks.",
+        image_setting=IMAGE_MEASUREMENT_SETTING,
+        optional_object_setting=SettingNameFamily("Select input object sets"),
+    ),
 ):
-    """Compile radial-distribution image/object inputs into measurements."""
-
-    module_name = "MeasureObjectIntensityDistribution"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureTextureContractBuilder(MeasurementModuleContractBuilder):
-    """Compile MeasureTexture image inputs and optional object masks."""
-
-    module_name = "MeasureTexture"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureColocalizationContractBuilder(MeasurementModuleContractBuilder):
-    """Compile MeasureColocalization image inputs and optional object masks."""
-
-    module_name = "MeasureColocalization"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureGranularityContractBuilder(MeasurementModuleContractBuilder):
-    """Compile MeasureGranularity image inputs and optional object masks."""
-
-    module_name = "MeasureGranularity"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureImageIntensityContractBuilder(MeasurementModuleContractBuilder):
-    """Compile MeasureImageIntensity image inputs and optional object masks."""
-
-    module_name = "MeasureImageIntensity"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = SettingNameFamily("Select input object sets")
+    _measurement_contract_builder.declare_in(globals())
 
 
 class MeasureObjectNeighborsContractBuilder(ModuleContractBuilder):
