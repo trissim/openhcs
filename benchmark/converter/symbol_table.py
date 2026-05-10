@@ -22,6 +22,8 @@ from benchmark.cellprofiler_semantics.crop import (
     CropShape,
 )
 from openhcs.interop.cellprofiler.relate_objects_settings import (
+    RELATE_OBJECTS_CHILD_OBJECTS_SETTING,
+    RELATE_OBJECTS_PARENT_OBJECTS_SETTING,
     RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
 )
 from openhcs.core.artifact_materialization_policy import (
@@ -391,14 +393,8 @@ DISPLAY_OBJECTS_SETTING = SettingNameFamily(
     "Select objects to display",
     aliases=("Select object to display",),
 )
-PARENT_OBJECTS_SETTING = SettingNameFamily(
-    "Select the parent objects",
-    aliases=("Parent objects",),
-)
-CHILD_OBJECTS_SETTING = SettingNameFamily(
-    "Select the child objects",
-    aliases=("Child objects",),
-)
+PARENT_OBJECTS_SETTING = RELATE_OBJECTS_PARENT_OBJECTS_SETTING
+CHILD_OBJECTS_SETTING = RELATE_OBJECTS_CHILD_OBJECTS_SETTING
 class _SymbolTableBuilder:
     def __init__(self, source_schema: PipelineImageSchema) -> None:
         self._symbols: dict[CellProfilerSymbolKey, CellProfilerSymbol] = {}

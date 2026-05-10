@@ -76,7 +76,9 @@ from .parser import ModuleBlock
 from .resize_objects_settings import resize_objects_bound_kwargs
 from openhcs.interop.cellprofiler.resize_settings import resize_bound_kwargs
 from openhcs.interop.cellprofiler.relate_objects_settings import (
+    RELATE_OBJECTS_CHILD_OBJECTS_SETTING,
     RELATE_OBJECTS_DISTANCE_SETTING,
+    RELATE_OBJECTS_PARENT_OBJECTS_SETTING,
     RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
     RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
     parse_relate_objects_distance_method,
@@ -364,8 +366,8 @@ class RelateObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
 
     module_name = "RelateObjects"
     ignored_settings = (
-        "Parent objects",
-        "Child objects",
+        RELATE_OBJECTS_PARENT_OBJECTS_SETTING,
+        RELATE_OBJECTS_CHILD_OBJECTS_SETTING,
         RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
         "Calculate distances to other parents?",
         "Parent name",
@@ -2225,10 +2227,12 @@ class RelateObjectsModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindin
         SettingToKeywordBinding(
             RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
             "calculate_per_parent_means",
+            parse_cellprofiler_bool,
         ),
         SettingToKeywordBinding(
             RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
             "save_children_with_parents",
+            parse_cellprofiler_bool,
         ),
     )
 

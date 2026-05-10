@@ -18,6 +18,14 @@ class RelateObjectsDistanceMethod(Enum):
 
 
 RELATE_OBJECTS_DISTANCE_SETTING = SettingNameFamily("Calculate child-parent distances?")
+RELATE_OBJECTS_PARENT_OBJECTS_SETTING = SettingNameFamily(
+    "Select the parent objects",
+    aliases=("Parent objects",),
+)
+RELATE_OBJECTS_CHILD_OBJECTS_SETTING = SettingNameFamily(
+    "Select the child objects",
+    aliases=("Child objects",),
+)
 RELATE_OBJECTS_PER_PARENT_MEANS_SETTING = SettingNameFamily(
     "Calculate per-parent means for all child measurements?"
 )
