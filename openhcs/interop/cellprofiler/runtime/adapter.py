@@ -711,17 +711,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 self._source_order_cache[cache_key] = index
                 return index
 
-        parser = getattr(
-            getattr(self.processing_context, "microscope_handler", None),
-            "parser",
-            None,
-        )
-        if parser is not None:
-            for index, path in enumerate(sorted(pipeline_paths), start=1):
-                parsed = parser.parse_filename(Path(path).name) or {}
-                if any(str(value) == axis_id for value in parsed.values()):
-                    self._source_order_cache[cache_key] = index
-                    return index
+        parser = _require_processing_context(self).microscope_handler.parser
+        for index, path in enumerate(sorted(pipeline_paths), start=1):
+            parsed = parser.parse_filename(Path(path).name) or {}
+            if any(str(value) == axis_id for value in parsed.values()):
+                self._source_order_cache[cache_key] = index
+                return index
 
         self._source_order_cache[cache_key] = 1
         return 1
@@ -2264,6 +2259,22 @@ class SourceBindingResolver(ABC, metaclass=AutoRegisterMeta):
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
         """Resolve one named source image binding."""
 
+    def require_matched_candidates(
+        self,
+        request: MatchedSourceCandidatesRequest,
+    ) -> tuple["ParsedSourceCandidate", ...]:
+        """Return matched source candidates or raise with resolver context."""
+
+        if request.matched:
+            return request.matched
+        candidate_summary = _source_candidate_summary(request.candidates)
+        raise RuntimeError(
+            f"CellProfiler source alias '{request.alias}' with selector "
+            f"{request.binding.selector!r} matched no files in the "
+            f"{request.source_description} source universe. "
+            f"Candidate sample: {candidate_summary!r}."
+        )
+
 
 class StepInputSourceBindingResolver(SourceBindingResolver):
     """Resolve named images directly from the current FunctionStep input."""
@@ -2295,7 +2306,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
             source=SourceBindingOrigin.STEP_INPUT.value,
             count=len(matched),
         )
-        selected_files = _require_matched_candidates(
+        selected_files = self.require_matched_candidates(
             MatchedSourceCandidatesRequest.from_resolution(
                 request,
                 matched=matched,
@@ -2353,7 +2364,7 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             source=SourceBindingOrigin.PIPELINE_START.value,
             count=len(matched),
         )
-        selected_files = _require_matched_candidates(
+        selected_files = self.require_matched_candidates(
             MatchedSourceCandidatesRequest.from_resolution(
                 request,
                 matched=matched,
@@ -3325,20 +3336,6 @@ def _candidate_matches_image_set_metadata(
         is not None
         and source_metadata_values_equal(metadata_value, value)
         for field_name, value in image_set_metadata.items()
-    )
-
-
-def _require_matched_candidates(
-    request: MatchedSourceCandidatesRequest,
-) -> tuple[ParsedSourceCandidate, ...]:
-    if request.matched:
-        return request.matched
-    candidate_summary = _source_candidate_summary(request.candidates)
-    raise RuntimeError(
-        f"CellProfiler source alias '{request.alias}' with selector "
-        f"{request.binding.selector!r} matched no files in the "
-        f"{request.source_description} source universe. "
-        f"Candidate sample: {candidate_summary!r}."
     )
 
 
