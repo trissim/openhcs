@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
 from .cellprofiler_literals import decode_cellprofiler_setting_literal
@@ -22,6 +22,18 @@ class SettingNameFamily:
 
 
 @dataclass(frozen=True, slots=True)
+class SettingNameFamilySpec:
+    """Declarative source row for a CellProfiler setting-name family."""
+
+    canonical: str
+    aliases: tuple[str, ...] = ()
+
+    def materialize(self) -> SettingNameFamily:
+        """Build the runtime setting-name family from this declaration."""
+        return SettingNameFamily(self.canonical, aliases=self.aliases)
+
+
+@dataclass(frozen=True, slots=True)
 class OptionalSettingSymbol:
     """Optional CellProfiler artifact symbol selected by one setting family."""
 
@@ -34,6 +46,40 @@ class OptionalSettingSymbol:
         if setting_value is None:
             return None
         return normalized_symbol_name(setting_value)
+
+
+class CellProfilerSettingLiteralNormalizer:
+    """Normalize CellProfiler UI labels and blank-literal sentinels."""
+
+    @staticmethod
+    def label(value: str) -> str:
+        """Return the decoded label form used for setting-name comparisons."""
+        return decode_cellprofiler_setting_literal(value).strip().rstrip(":").strip()
+
+    @staticmethod
+    def blank_literal(value: str) -> str:
+        """Return the decoded lowercase token form used for blank sentinels."""
+        return "_".join(
+            decode_cellprofiler_setting_literal(value).strip().lower().split()
+        )
+
+
+class BlockSettingLookupPolicy:
+    """Shared lookup policy for ordered repeated CellProfiler setting blocks."""
+
+    @staticmethod
+    def value(
+        block: Sequence[ModuleSetting],
+        setting_name: str | SettingNameFamily,
+        matcher: Callable[[str, str | SettingNameFamily], bool],
+        *,
+        default: str = "",
+    ) -> str:
+        """Return the first value whose setting name satisfies the matcher."""
+        for setting in block:
+            if matcher(setting.name, setting_name):
+                return setting.value
+        return default
 
 
 IMAGE_MEASUREMENT_SETTING = SettingNameFamily(
@@ -115,7 +161,7 @@ def normalized_symbol_name(value: str) -> str | None:
 
 def is_blank_symbol_name(value: str) -> bool:
     """Return whether a CellProfiler setting value means no artifact symbol."""
-    return _normalized_setting_literal(value) in {
+    return CellProfilerSettingLiteralNormalizer.blank_literal(value) in {
         "leave_blank",
         "leave_this_black",
         "leave_this_blank",
@@ -138,19 +184,18 @@ def setting_name_matches(
     expected: str | SettingNameFamily,
 ) -> bool:
     """Return whether a parsed CellProfiler setting label matches a family."""
-    decoded_actual = _normalized_setting_label(actual)
+    decoded_actual = CellProfilerSettingLiteralNormalizer.label(actual)
     return any(
-        decoded_actual
-        == _normalized_setting_label(name)
+        decoded_actual == CellProfilerSettingLiteralNormalizer.label(name)
         for name in setting_names(expected)
     )
 
 
 def setting_name_startswith(actual: str, prefix: str | SettingNameFamily) -> bool:
     """Return whether a parsed CellProfiler setting label starts with a family."""
-    decoded_actual = _normalized_setting_label(actual)
+    decoded_actual = CellProfilerSettingLiteralNormalizer.label(actual)
     return any(
-        decoded_actual.startswith(_normalized_setting_label(name))
+        decoded_actual.startswith(CellProfilerSettingLiteralNormalizer.label(name))
         for name in setting_names(prefix)
     )
 
@@ -162,10 +207,12 @@ def block_setting_value(
     default: str = "",
 ) -> str:
     """Return a setting value from an ordered repeated setting block."""
-    for setting in block:
-        if setting_name_matches(setting.name, name):
-            return setting.value
-    return default
+    return BlockSettingLookupPolicy.value(
+        block,
+        name,
+        setting_name_matches,
+        default=default,
+    )
 
 
 def block_setting_value_by_prefix(
@@ -175,10 +222,12 @@ def block_setting_value_by_prefix(
     default: str = "",
 ) -> str:
     """Return a setting value by decoded CellProfiler label prefix."""
-    for setting in block:
-        if setting_name_startswith(setting.name, prefix):
-            return setting.value
-    return default
+    return BlockSettingLookupPolicy.value(
+        block,
+        prefix,
+        setting_name_startswith,
+        default=default,
+    )
 
 
 def repeating_setting_blocks(
@@ -202,12 +251,3 @@ def repeating_setting_blocks(
         blocks.append(current_block)
     return tuple(tuple(block) for block in blocks)
 
-
-def _normalized_setting_label(value: str) -> str:
-    return decode_cellprofiler_setting_literal(value).strip().rstrip(":").strip()
-
-
-def _normalized_setting_literal(value: str) -> str:
-    return "_".join(
-        decode_cellprofiler_setting_literal(value).strip().lower().split()
-    )

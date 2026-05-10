@@ -109,6 +109,7 @@ from openhcs.interop.cellprofiler.source_schema import compile_image_schema
 from openhcs.interop.cellprofiler.setting_names import (
     IMAGE_MEASUREMENT_SETTING,
     OBJECT_MEASUREMENT_SETTING,
+    SettingNameFamilySpec,
     SettingNameFamily,
     optional_setting_value,
     required_setting_value,
@@ -402,53 +403,142 @@ class CellProfilerSymbolTable:
         return builder.build()
 
 
-INPUT_IMAGE_SETTING = SettingNameFamily(
-    "Select the input image",
-    aliases=("Select an input image", "Select the input binary image", "Input"),
+class SymbolTableSettingRole(str, Enum):
+    """Semantic roles for common symbol-table CellProfiler setting families."""
+
+    INPUT_IMAGE = "input_image"
+    INPUT_OBJECTS = "input_objects"
+    OUTPUT_IMAGE = "output_image"
+    NEIGHBOR_COUNT_IMAGE = "neighbor_count_image"
+    PERCENT_TOUCHING_IMAGE = "percent_touching_image"
+    OUTPUT_OBJECTS = "output_objects"
+    IDENTIFY_PRIMARY_OUTPUT_OBJECTS = "identify_primary_output_objects"
+    IDENTIFY_SECONDARY_INPUT_OBJECTS = "identify_secondary_input_objects"
+    IDENTIFY_SECONDARY_OUTPUT_OBJECTS = "identify_secondary_output_objects"
+    IDENTIFY_TERTIARY_LARGER_OBJECTS = "identify_tertiary_larger_objects"
+    IDENTIFY_TERTIARY_SMALLER_OBJECTS = "identify_tertiary_smaller_objects"
+    IDENTIFY_TERTIARY_OUTPUT_OBJECTS = "identify_tertiary_output_objects"
+    CLASSIFY_OBJECTS_INPUT = "classify_objects_input"
+    DISPLAY_OBJECTS = "display_objects"
+
+
+class SymbolTableSettingNameCatalog:
+    """Authoritative CP setting-name families used by symbol-table contracts."""
+
+    _rows: ClassVar[Mapping[SymbolTableSettingRole, SettingNameFamilySpec]] = (
+        MappingProxyType(
+            {
+                SymbolTableSettingRole.INPUT_IMAGE: SettingNameFamilySpec(
+                    "Select the input image",
+                    aliases=(
+                        "Select an input image",
+                        "Select the input binary image",
+                        "Input",
+                    ),
+                ),
+                SymbolTableSettingRole.INPUT_OBJECTS: SettingNameFamilySpec(
+                    "Select the input objects",
+                    aliases=(
+                        "Select input objects",
+                        "Select input object sets",
+                        "Objects",
+                    ),
+                ),
+                SymbolTableSettingRole.OUTPUT_IMAGE: SettingNameFamilySpec(
+                    "Name the output image",
+                    aliases=("Name the output image file",),
+                ),
+                SymbolTableSettingRole.NEIGHBOR_COUNT_IMAGE: SettingNameFamilySpec(
+                    "Retain the image of objects colored by numbers of neighbors?"
+                ),
+                SymbolTableSettingRole.PERCENT_TOUCHING_IMAGE: SettingNameFamilySpec(
+                    "Retain the image of objects colored by percent of touching pixels?"
+                ),
+                SymbolTableSettingRole.OUTPUT_OBJECTS: SettingNameFamilySpec(
+                    "Name the output objects",
+                    aliases=(
+                        "Name the output object",
+                        "Name the objects to be identified",
+                        "Object",
+                    ),
+                ),
+                SymbolTableSettingRole.IDENTIFY_PRIMARY_OUTPUT_OBJECTS: SettingNameFamilySpec(
+                    "Name the primary objects to be identified",
+                    aliases=("Object",),
+                ),
+                SymbolTableSettingRole.IDENTIFY_SECONDARY_INPUT_OBJECTS: SettingNameFamilySpec(
+                    "Select the input objects"
+                ),
+                SymbolTableSettingRole.IDENTIFY_SECONDARY_OUTPUT_OBJECTS: SettingNameFamilySpec(
+                    "Name the objects to be identified"
+                ),
+                SymbolTableSettingRole.IDENTIFY_TERTIARY_LARGER_OBJECTS: SettingNameFamilySpec(
+                    "Select the larger identified objects"
+                ),
+                SymbolTableSettingRole.IDENTIFY_TERTIARY_SMALLER_OBJECTS: SettingNameFamilySpec(
+                    "Select the smaller identified objects"
+                ),
+                SymbolTableSettingRole.IDENTIFY_TERTIARY_OUTPUT_OBJECTS: SettingNameFamilySpec(
+                    "Name the tertiary objects to be identified"
+                ),
+                SymbolTableSettingRole.CLASSIFY_OBJECTS_INPUT: SettingNameFamilySpec(
+                    "Select the object to be classified"
+                ),
+                SymbolTableSettingRole.DISPLAY_OBJECTS: SettingNameFamilySpec(
+                    "Select objects to display",
+                    aliases=("Select object to display",),
+                ),
+            }
+        )
+    )
+
+    @classmethod
+    def family(cls, role: SymbolTableSettingRole) -> SettingNameFamily:
+        """Return the materialized setting-name family for a semantic role."""
+        return cls._rows[role].materialize()
+
+
+INPUT_IMAGE_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.INPUT_IMAGE
 )
-INPUT_OBJECTS_SETTING = SettingNameFamily(
-    "Select the input objects",
-    aliases=("Select input objects", "Select input object sets", "Objects"),
+INPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.INPUT_OBJECTS
 )
-OUTPUT_IMAGE_SETTING = SettingNameFamily(
-    "Name the output image",
-    aliases=("Name the output image file",),
+OUTPUT_IMAGE_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.OUTPUT_IMAGE
 )
-NEIGHBOR_COUNT_IMAGE_SETTING = SettingNameFamily(
-    "Retain the image of objects colored by numbers of neighbors?"
+NEIGHBOR_COUNT_IMAGE_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.NEIGHBOR_COUNT_IMAGE
 )
-PERCENT_TOUCHING_IMAGE_SETTING = SettingNameFamily(
-    "Retain the image of objects colored by percent of touching pixels?"
+PERCENT_TOUCHING_IMAGE_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.PERCENT_TOUCHING_IMAGE
 )
-OUTPUT_OBJECTS_SETTING = SettingNameFamily(
-    "Name the output objects",
-    aliases=("Name the output object", "Name the objects to be identified", "Object"),
+OUTPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.OUTPUT_OBJECTS
 )
-IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
-    "Name the primary objects to be identified",
-    aliases=("Object",),
+IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.IDENTIFY_PRIMARY_OUTPUT_OBJECTS
 )
-IDENTIFY_SECONDARY_INPUT_OBJECTS_SETTING = SettingNameFamily(
-    "Select the input objects",
+IDENTIFY_SECONDARY_INPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.IDENTIFY_SECONDARY_INPUT_OBJECTS
 )
-IDENTIFY_SECONDARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
-    "Name the objects to be identified",
+IDENTIFY_SECONDARY_OUTPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.IDENTIFY_SECONDARY_OUTPUT_OBJECTS
 )
-IDENTIFY_TERTIARY_LARGER_OBJECTS_SETTING = SettingNameFamily(
-    "Select the larger identified objects",
+IDENTIFY_TERTIARY_LARGER_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.IDENTIFY_TERTIARY_LARGER_OBJECTS
 )
-IDENTIFY_TERTIARY_SMALLER_OBJECTS_SETTING = SettingNameFamily(
-    "Select the smaller identified objects",
+IDENTIFY_TERTIARY_SMALLER_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.IDENTIFY_TERTIARY_SMALLER_OBJECTS
 )
-IDENTIFY_TERTIARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
-    "Name the tertiary objects to be identified",
+IDENTIFY_TERTIARY_OUTPUT_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.IDENTIFY_TERTIARY_OUTPUT_OBJECTS
 )
-CLASSIFY_OBJECTS_INPUT_SETTING = SettingNameFamily(
-    "Select the object to be classified",
+CLASSIFY_OBJECTS_INPUT_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.CLASSIFY_OBJECTS_INPUT
 )
-DISPLAY_OBJECTS_SETTING = SettingNameFamily(
-    "Select objects to display",
-    aliases=("Select object to display",),
+DISPLAY_OBJECTS_SETTING = SymbolTableSettingNameCatalog.family(
+    SymbolTableSettingRole.DISPLAY_OBJECTS
 )
 PARENT_OBJECTS_SETTING = RELATE_OBJECTS_PARENT_OBJECTS_SETTING
 CHILD_OBJECTS_SETTING = RELATE_OBJECTS_CHILD_OBJECTS_SETTING
@@ -2559,10 +2649,6 @@ def _optional_setting(
 
 def _split_names(value: str) -> tuple[str, ...]:
     return tuple(_normalize_symbol_name(part) for part in split_symbol_names(value))
-
-
-def _setting_names(name: str | SettingNameFamily) -> tuple[str, ...]:
-    return setting_names(name)
 
 
 def _normalize_symbol_name(name: str) -> str:
