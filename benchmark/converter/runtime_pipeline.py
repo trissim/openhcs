@@ -3,21 +3,16 @@
 from __future__ import annotations
 
 from abc import ABC
-import hashlib
-import importlib.util
-import inspect
 import multiprocessing
-import sys
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any
 
 from openhcs.constants import Backend, MULTIPROCESSING_AXIS
-from openhcs.core.callable_contract import CallableContract
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.progress import set_progress_queue
@@ -40,17 +35,14 @@ from openhcs.interop.cellprofiler.module_roles import (
     INFRASTRUCTURE_MODULE_NAMES,
 )
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
-from openhcs.processing.backends.lib_registry.openhcs_registry import (
-    OpenHCSRegistry,
+from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    generated_pipeline_module_name,
+    load_generated_pipeline_module,
+    load_generated_pipeline_module_from_source,
+    materialize_generated_pipeline_import_module,
+    pipeline_from_generated_module,
+    register_generated_pipeline_functions,
 )
-from openhcs.processing.backends.lib_registry.registry_service import (
-    RegistryService,
-)
-from openhcs.processing.backends.lib_registry.unified_registry import (
-    FunctionMetadata,
-    ProcessingContract,
-)
-from openhcs.processing.func_registry import register_function
 
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 
@@ -276,7 +268,7 @@ def prepare_generated_pipeline(
         backend=generated_pipeline_backend,
     )
 
-    module_name = _generated_module_name(
+    module_name = generated_pipeline_module_name(
         output_path,
         converted.generated_pipeline.code,
     )
@@ -290,7 +282,7 @@ def prepare_generated_pipeline(
         module_name=module_name,
         output_dir=output_path.parent,
     )
-    pipeline = _pipeline_from_generated_module(
+    pipeline = pipeline_from_generated_module(
         module,
         pipeline_name=converted.generated_pipeline.name,
     )
@@ -309,110 +301,6 @@ def prepare_generated_pipeline(
         provenance=converted.provenance,
         registered_functions=registered_functions,
     )
-
-
-def load_generated_pipeline_module(
-    module_path: Path,
-    *,
-    module_name: str,
-) -> ModuleType:
-    """Import generated pipeline code from disk under a deterministic module name."""
-    spec = importlib.util.spec_from_file_location(module_name, module_path)
-    if spec is None or spec.loader is None:
-        raise ImportError(f"Unable to create module spec for {module_path}.")
-
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-def load_generated_pipeline_module_from_source(
-    source: str,
-    *,
-    module_name: str,
-    filename: str,
-) -> ModuleType:
-    """Import generated pipeline code from source with a stable module name."""
-    module = ModuleType(module_name)
-    module.__file__ = filename
-    sys.modules[module_name] = module
-    exec(compile(source, filename, "exec"), module.__dict__)
-    return module
-
-
-def materialize_generated_pipeline_import_module(
-    source: str,
-    *,
-    module_name: str,
-    output_dir: Path,
-) -> Path:
-    """Write generated pipeline source under its importable module name.
-
-    OpenHCS multiprocessing resolves compiled FunctionReference values inside
-    spawned workers. Generated cppipe modules therefore need the same property
-    pycodify-generated OpenHCS code has: importing the module recreates the
-    runtime objects needed by the registry.
-    """
-    importable_path = output_dir / f"{module_name}.py"
-    importable_source = (
-        source
-        + "\n\n"
-        + "if __name__ != '__main__':\n"
-        + "    import sys as _openhcs_generated_sys\n"
-        + "    from benchmark.converter.runtime_pipeline import register_generated_pipeline_functions as _openhcs_register_generated\n"
-        + "    _openhcs_register_generated(_openhcs_generated_sys.modules[__name__])\n"
-    )
-    if (
-        not importable_path.exists()
-        or importable_path.read_text(encoding="utf-8") != importable_source
-    ):
-        importable_path.write_text(importable_source, encoding="utf-8")
-    output_dir_text = str(output_dir)
-    if output_dir_text not in sys.path:
-        sys.path.insert(0, output_dir_text)
-    return importable_path
-
-
-def register_generated_pipeline_functions(module: ModuleType) -> tuple[str, ...]:
-    """Register generated pipeline callables so the OpenHCS compiler can resolve them."""
-    registry = OpenHCSRegistry()
-    existing_references = {
-        (inspect.unwrap(metadata.func).__module__, inspect.unwrap(metadata.func).__name__)
-        for metadata in RegistryService.get_all_functions_with_metadata().values()
-    }
-    registered_names: list[str] = []
-    registered_new_function = False
-
-    for func in _generated_step_callables(module):
-        reference = (inspect.unwrap(func).__module__, inspect.unwrap(func).__name__)
-        metadata_name = _generated_metadata_name(func)
-        if reference in existing_references:
-            registered_names.append(metadata_name)
-            continue
-
-        contract = _processing_contract_for(func)
-        func.__processing_contract__ = contract
-        wrapped_func = registry.apply_contract_wrapper(func, contract)
-        wrapped_func.__processing_contract__ = contract
-        wrapped_func.__function_metadata__ = FunctionMetadata(
-            name=metadata_name,
-            func=wrapped_func,
-            contract=contract,
-            registry=registry,
-            module=wrapped_func.__module__ or "",
-            doc=wrapped_func.__doc__ or "",
-            tags=["openhcs", "generated", "cellprofiler"],
-            original_name=wrapped_func.__name__,
-        )
-        register_function(wrapped_func, backend="openhcs")
-        existing_references.add(reference)
-        registered_names.append(metadata_name)
-        registered_new_function = True
-
-    if registered_new_function:
-        RegistryService.clear_metadata_cache()
-    return tuple(registered_names)
 
 
 def execute_pipeline_direct(
@@ -484,23 +372,6 @@ def execute_pipeline_direct(
         progress_queue.join_thread()
 
 
-def _pipeline_from_generated_module(
-    module: ModuleType,
-    *,
-    pipeline_name: str,
-) -> Pipeline:
-    """Build a Pipeline object from generated module exports."""
-    pipeline_steps = _module_pipeline_steps(module)
-    if isinstance(pipeline_steps, Pipeline):
-        return pipeline_steps
-    if not isinstance(pipeline_steps, list):
-        raise TypeError(
-            f"Generated module {module.__name__}.pipeline_steps must be list or "
-            f"Pipeline, got {type(pipeline_steps).__name__}."
-        )
-    return Pipeline(steps=pipeline_steps, name=pipeline_name)
-
-
 def _provenance_from_partition(
     cppipe_path: Path,
     partition: CPPipeModulePartition,
@@ -533,80 +404,6 @@ def _provenance_from_partition(
             for module in partition.modules
         ),
     )
-
-
-def _generated_step_callables(module: ModuleType) -> tuple[Callable[..., Any], ...]:
-    """Extract unique callable objects referenced by generated pipeline steps."""
-    callables: list[Callable[..., Any]] = []
-    seen: set[int] = set()
-    for step in _module_pipeline_steps(module):
-        for func in _function_spec_callables(step.func):
-            func_id = id(func)
-            if func_id in seen:
-                continue
-            seen.add(func_id)
-            callables.append(func)
-    return tuple(callables)
-
-
-def _module_pipeline_steps(module: ModuleType) -> Any:
-    """Return validated generated pipeline steps exported by a module."""
-    try:
-        return module.pipeline_steps
-    except AttributeError as exc:
-        raise AttributeError(
-            f"Generated module {module.__name__} does not define pipeline_steps."
-        ) from exc
-
-
-def _function_spec_callables(func_spec: Any) -> tuple[Callable[..., Any], ...]:
-    """Extract callables from FunctionStep func specifications."""
-    if callable(func_spec):
-        return (func_spec,)
-    if (
-        isinstance(func_spec, tuple)
-        and len(func_spec) in {2, 3}
-        and callable(func_spec[0])
-    ):
-        return (func_spec[0],)
-    if isinstance(func_spec, list):
-        callables: list[Callable[..., Any]] = []
-        for item in func_spec:
-            callables.extend(_function_spec_callables(item))
-        return tuple(callables)
-    raise TypeError(
-        f"Unsupported generated FunctionStep func spec {type(func_spec).__name__}."
-    )
-
-
-def _processing_contract_for(func: Callable[..., Any]) -> ProcessingContract:
-    """Resolve the generated function processing contract from typed function metadata."""
-    contract = CallableContract.from_callable(func)
-    if isinstance(contract.processing_contract, ProcessingContract):
-        return contract.processing_contract
-    raise TypeError(
-        f"Generated function {contract.function_name!r} has no nominal "
-        "__processing_contract__ metadata. Coerce declared contracts during "
-        "callable metadata attachment before registry registration."
-    )
-
-
-def _generated_metadata_name(func: Callable[..., Any]) -> str:
-    """Build stable registry metadata name for a generated runtime wrapper."""
-    return f"{func.__module__}:{func.__name__}"
-
-
-def _generated_module_name(module_path: Path, code: str) -> str:
-    """Derive deterministic import name from module path and generated code."""
-    digest = hashlib.sha1(
-        f"{module_path.resolve()}::{code}".encode("utf-8")
-    ).hexdigest()[:12]
-    stem = "".join(
-        character if character.isalnum() else "_"
-        for character in module_path.stem
-    ).strip("_")
-    normalized_stem = stem or "pipeline"
-    return f"benchmark_generated_{normalized_stem}_{digest}"
 
 
 def _drain_progress_queue(queue: Any) -> None:

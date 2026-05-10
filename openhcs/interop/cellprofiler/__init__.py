@@ -98,8 +98,10 @@ from openhcs.interop.cellprofiler.compiler_registry import (
 from openhcs.interop.cellprofiler.module_roles import (
     INFRASTRUCTURE_MODULE_NAMES,
     INFRASTRUCTURE_MODULE_NAMES_BY_KEY,
+    CellProfilerInfrastructureImportNote,
     CellProfilerModuleRole,
     CellProfilerModuleRoleSpec,
+    cellprofiler_infrastructure_import_note,
     cellprofiler_module_role,
 )
 from openhcs.interop.cellprofiler.module_runtime_semantics import (
@@ -228,6 +230,7 @@ __all__ = (
     "ArtifactSettingSymbol",
     "CellProfilerModuleCategory",
     "CellProfilerModuleDimensionality",
+    "CellProfilerInfrastructureImportNote",
     "CellProfilerModuleReference",
     "CellProfilerModuleRole",
     "CellProfilerModuleRoleSpec",
@@ -331,6 +334,7 @@ __all__ = (
     "WormControlPointMeasurementSchema",
     "artifact_setting_symbols",
     "cellprofiler_runtime_equivalence_policy",
+    "cellprofiler_infrastructure_import_note",
     "cellprofiler_module_role",
     "cellprofiler_module_semantics",
     "child_count_feature_child_name",

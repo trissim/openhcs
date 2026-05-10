@@ -37,6 +37,9 @@ from openhcs.interop.cellprofiler.runtime import (
     CellProfilerGridCycleScope,
     CellProfilerInvocationOptions,
 )
+from openhcs.interop.cellprofiler.module_roles import (
+    cellprofiler_infrastructure_import_note,
+)
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 from openhcs.interop.cellprofiler.illumination_settings import (
@@ -426,12 +429,9 @@ from openhcs.constants.input_source import InputSource
         if skipped_modules:
             skip_note = "\n# Skipped infrastructure modules (handled by OpenHCS):\n"
             for module in skipped_modules:
-                if module.name == "LoadData":
-                    skip_note += "#   - LoadData -> handled by plate_path + openhcs_metadata.json\n"
-                elif module.name == "ExportToSpreadsheet":
-                    skip_note += "#   - ExportToSpreadsheet -> handled by @special_outputs(csv_materializer(...))\n"
-                else:
-                    skip_note += f"#   - {module.name}\n"
+                skip_note += (
+                    f"#   - {cellprofiler_infrastructure_import_note(module.name)}\n"
+                )
             imports += skip_note + "\n"
 
         # Fail-loud if any modules are missing (no LLM fallback)
