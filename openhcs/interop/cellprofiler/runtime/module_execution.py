@@ -250,10 +250,43 @@ _INVOCATION_CONTROL_KWARGS = frozenset(
 def _cellprofiler_module_policy_registry_key(name: str, cls: type) -> str | None:
     """Derive the canonical registry key from a policy leaf's module name."""
     del name
-    module_name = getattr(cls, _MODULE_NAME_REGISTRY_KEY, None)
+    module_name = cls.module_name  # type: ignore[attr-defined]
     if module_name is None:
         return None
     return canonical_module_name(str(module_name))
+
+
+def _mro_declares_registry(cls: type) -> bool:
+    """Return whether a class already belongs to an AutoRegisterMeta family."""
+    return any("__registry__" in vars(mro_type) for mro_type in cls.__mro__)
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerModulePolicyRegistryDefaults:
+    """Registry defaults shared by CellProfiler module-name policy roots."""
+
+    registry_key_attr: str = "registry_key"
+    module_name_attr: str = _MODULE_NAME_REGISTRY_KEY
+
+    def applies_to_root_bases(self, bases: tuple[type, ...]) -> bool:
+        """Return whether a class declaration starts a new policy registry."""
+        return not any(_mro_declares_registry(base) for base in bases)
+
+    def apply_to(self, attrs: dict[str, Any]) -> None:
+        """Install AutoRegisterMeta attributes for one policy root."""
+        attrs.setdefault("__registry_key__", self.registry_key_attr)
+        attrs.setdefault("__skip_if_no_key__", True)
+        attrs.setdefault(
+            "__key_extractor__",
+            staticmethod(_cellprofiler_module_policy_registry_key),
+        )
+        attrs.setdefault(self.registry_key_attr, None)
+        attrs.setdefault(self.module_name_attr, None)
+
+
+CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS = (
+    CellProfilerModulePolicyRegistryDefaults()
+)
 
 
 class CellProfilerModulePolicyMeta(AutoRegisterMeta):
@@ -266,17 +299,13 @@ class CellProfilerModulePolicyMeta(AutoRegisterMeta):
         attrs: dict[str, Any],
         registry_config: Any | None = None,
     ):
-        if registry_config is None and not any(
-            hasattr(base, "__registry__") for base in bases
-        ):
-            attrs.setdefault("__registry_key__", "registry_key")
-            attrs.setdefault("__skip_if_no_key__", True)
-            attrs.setdefault(
-                "__key_extractor__",
-                staticmethod(_cellprofiler_module_policy_registry_key),
+        if (
+            registry_config is None
+            and CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.applies_to_root_bases(
+                bases
             )
-            attrs.setdefault("registry_key", None)
-            attrs.setdefault(_MODULE_NAME_REGISTRY_KEY, None)
+        ):
+            CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.apply_to(attrs)
         return super().__new__(mcs, name, bases, attrs, registry_config)
 
 
