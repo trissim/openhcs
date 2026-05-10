@@ -35,7 +35,6 @@ from openhcs.core.aligned_image_payload import (
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
 from openhcs.core.callable_contract import (
     CallableContract,
-    RAW_PROCESSING_FUNCTION_ATTR,
 )
 from openhcs.core.config import DtypeConfig
 from openhcs.core.memory import (
@@ -5973,8 +5972,9 @@ class CellProfilerCallableOutputSpecs:
 
     @staticmethod
     def callable_special_outputs(func: Callable[..., Any]) -> tuple[object, ...]:
+        contract = CallableContract.from_callable(func)
         candidates: list[Any] = [func]
-        raw_func = getattr(func, RAW_PROCESSING_FUNCTION_ATTR, None)
+        raw_func = contract.raw_processing_function
         if callable(raw_func):
             candidates.append(raw_func)
         unwrapped = unwrap(func)
