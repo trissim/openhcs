@@ -3231,20 +3231,6 @@ class IdentifySecondaryObjectsInputPolicy(CellProfilerObjectInputPolicy):
         return {"primary_labels": request.label_payload_for(request.object_inputs[0])}
 
 
-@dataclass(frozen=True, slots=True)
-class SingleObjectLabelInputPolicySpec(GeneratedLeafClassSpec):
-    """Declarative leaf spec for one object-label binding policy."""
-
-    module_name: str
-    label_kwarg: str
-
-    def class_attributes(self) -> Mapping[str, object]:
-        return {
-            "module_name": self.module_name,
-            "label_kwarg": self.label_kwarg,
-        }
-
-
 class IdentifyTertiaryObjectInputPolicy(CellProfilerObjectInputPolicy):
     """Bind smaller/larger labels to the absorbed tertiary-object signature."""
 
@@ -3754,24 +3740,6 @@ class DefaultObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
     registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
 
-@dataclass(frozen=True, slots=True)
-class ObjectMeasurementRowPolicySpec(GeneratedLeafClassSpec):
-    """Declarative leaf spec for one object measurement row policy."""
-
-    module_name: str
-    row_identity: MeasurementObjectRowIdentity = MeasurementObjectRowIdentity.LABEL_ID
-    missing_value_policy: MissingObjectMeasurementValuePolicy = (
-        MissingObjectMeasurementValuePolicy.NAN
-    )
-
-    def class_attributes(self) -> Mapping[str, object]:
-        return {
-            "module_name": self.module_name,
-            "row_identity": self.row_identity,
-            "missing_value_policy": self.missing_value_policy,
-        }
-
-
 class DeclaredObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
     """Generated base for modules with declared measurement-row identity."""
 
@@ -4030,13 +3998,15 @@ class TrackObjectsObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPol
 
 
 for _row_policy_spec in (
-    ObjectMeasurementRowPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name=f"{_MEASURE_OBJECT_INTENSITY_MODULE}ObjectMeasurementRowPolicy",
         base_type=DeclaredObjectMeasurementRowPolicy,
         module_name=_MEASURE_OBJECT_INTENSITY_MODULE,
-        missing_value_policy=(
-            MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT
-        ),
+        attributes={
+            "missing_value_policy": (
+                MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT
+            ),
+        },
     ),
 ):
     _row_policy_spec.declare_in(globals())
@@ -4047,47 +4017,47 @@ class DeclaredSingleObjectLabelInputPolicy(SingleObjectLabelInputPolicy):
 
 
 _SINGLE_OBJECT_LABEL_INPUT_POLICY_SPECS = (
-    SingleObjectLabelInputPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name="CropInputPolicy",
         base_type=DeclaredSingleObjectLabelInputPolicy,
         module_name=_CROP_MODULE,
-        label_kwarg="cropping_labels",
+        attributes={"label_kwarg": "cropping_labels"},
     ),
-    SingleObjectLabelInputPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name=f"{_MEASURE_OBJECT_SIZE_SHAPE_MODULE}InputPolicy",
         base_type=DeclaredSingleObjectLabelInputPolicy,
         module_name=_MEASURE_OBJECT_SIZE_SHAPE_MODULE,
-        label_kwarg="labels",
+        attributes={"label_kwarg": "labels"},
     ),
-    SingleObjectLabelInputPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name=f"{_MEASURE_OBJECT_INTENSITY_MODULE}InputPolicy",
         base_type=DeclaredSingleObjectLabelInputPolicy,
         module_name=_MEASURE_OBJECT_INTENSITY_MODULE,
-        label_kwarg="labels",
+        attributes={"label_kwarg": "labels"},
     ),
-    SingleObjectLabelInputPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name=f"{_MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE}InputPolicy",
         base_type=DeclaredSingleObjectLabelInputPolicy,
         module_name=_MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE,
-        label_kwarg="labels",
+        attributes={"label_kwarg": "labels"},
     ),
-    SingleObjectLabelInputPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name=f"{_MEASURE_TEXTURE_MODULE}InputPolicy",
         base_type=DeclaredSingleObjectLabelInputPolicy,
         module_name=_MEASURE_TEXTURE_MODULE,
-        label_kwarg="labels",
+        attributes={"label_kwarg": "labels"},
     ),
-    SingleObjectLabelInputPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name=f"{_MEASURE_COLOCALIZATION_MODULE}InputPolicy",
         base_type=DeclaredSingleObjectLabelInputPolicy,
         module_name=_MEASURE_COLOCALIZATION_MODULE,
-        label_kwarg="labels",
+        attributes={"label_kwarg": "labels"},
     ),
-    SingleObjectLabelInputPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name=f"{_MEASURE_GRANULARITY_MODULE}InputPolicy",
         base_type=DeclaredSingleObjectLabelInputPolicy,
         module_name=_MEASURE_GRANULARITY_MODULE,
-        label_kwarg="labels",
+        attributes={"label_kwarg": "labels"},
     ),
 )
 
