@@ -38,7 +38,7 @@ from benchmark.cellprofiler_library.functions.thresholding import (
     normalize_cellprofiler_image,
     unit_interval_scale_for_threshold_diagnostics,
 )
-from benchmark.cellprofiler_compat.perf_fixtures import capture_array_fixture
+from openhcs.processing.backends.cellprofiler.perf_fixtures import capture_array_fixture
 from benchmark.cellprofiler_library.functions.watershed import (
     cellprofiler_legacy_watershed,
 )

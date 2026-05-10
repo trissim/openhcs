@@ -13,7 +13,7 @@ import numpy as np
 import scipy.interpolate
 
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
-from benchmark.cellprofiler_compat.perf_fixtures import (
+from openhcs.processing.backends.cellprofiler.perf_fixtures import (
     capture_array_fixture,
     capture_enabled,
 )
