@@ -26,24 +26,38 @@ ImageMathBinaryOperator = Callable[[np.ndarray, np.ndarray], np.ndarray]
 
 
 class MathOperation(Enum):
-    ADD = "add"
-    SUBTRACT = "subtract"
-    DIFFERENCE = "absolute_difference"
-    MULTIPLY = "multiply"
-    DIVIDE = "divide"
-    AVERAGE = "average"
-    MINIMUM = "minimum"
-    MAXIMUM = "maximum"
-    STDEV = "standard_deviation"
-    INVERT = "invert"
-    COMPLEMENT = "complement"
-    LOG_TRANSFORM = "log_transform_base2"
-    LOG_TRANSFORM_LEGACY = "log_transform_legacy"
-    NONE = "none"
-    OR = "or"
-    AND = "and"
-    NOT = "not"
-    EQUALS = "equals"
+    def __new__(
+        cls,
+        absorbed_value: str,
+        *cellprofiler_literals: str,
+    ) -> "MathOperation":
+        obj = object.__new__(cls)
+        obj._value_ = absorbed_value
+        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
+        return obj
+
+    ADD = ("add",)
+    SUBTRACT = ("subtract",)
+    DIFFERENCE = ("absolute_difference", "difference")
+    MULTIPLY = ("multiply",)
+    DIVIDE = ("divide",)
+    AVERAGE = ("average",)
+    MINIMUM = ("minimum",)
+    MAXIMUM = ("maximum",)
+    STDEV = ("standard_deviation", "stdev")
+    INVERT = ("invert",)
+    COMPLEMENT = ("complement",)
+    LOG_TRANSFORM = (
+        "log_transform_base2",
+        "log_transform",
+        "log_transform_base_2",
+    )
+    LOG_TRANSFORM_LEGACY = ("log_transform_legacy",)
+    NONE = ("none",)
+    OR = ("or",)
+    AND = ("and",)
+    NOT = ("not",)
+    EQUALS = ("equals",)
 
 
 class ImageMathOperationStrategy(
@@ -60,7 +74,6 @@ class ImageMathOperationStrategy(
 
     operation: ClassVar[MathOperation | None] = None
     operation_label: ClassVar[str | None] = None
-    cellprofiler_literals: ClassVar[tuple[str, ...]] = ()
     single_image: ClassVar[bool] = False
     binary_output: ClassVar[bool] = False
     implementation_namespace_key: ClassVar[str | None] = None
@@ -102,7 +115,7 @@ class ImageMathOperationStrategy(
         operation = cls.operation
         if not isinstance(operation, MathOperation):
             raise TypeError(f"{cls.__name__} must declare a MathOperation.")
-        literals = (operation.name, operation.value, *cls.cellprofiler_literals)
+        literals = (operation.name, *operation.cellprofiler_literals)
         return frozenset(cls.normalized_cellprofiler_literal(literal) for literal in literals)
 
     def prepare_initial_output(
@@ -170,7 +183,6 @@ class SubtractImageMathOperationStrategy(ImageMathOperationStrategy):
 
 class DifferenceImageMathOperationStrategy(ImageMathOperationStrategy):
     operation = MathOperation.DIFFERENCE
-    cellprofiler_literals = ("difference",)
 
     def apply(
         self,
@@ -225,7 +237,6 @@ class AverageImageMathOperationStrategy(ImageMathOperationStrategy):
 
 class StandardDeviationImageMathOperationStrategy(ImageMathOperationStrategy):
     operation = MathOperation.STDEV
-    cellprofiler_literals = ("stdev",)
 
     def apply(
         self,
@@ -256,7 +267,6 @@ class InvertingImageMathOperationStrategy(ImageMathOperationStrategy):
 
 class LogTransformImageMathOperationStrategy(ImageMathOperationStrategy):
     operation = MathOperation.LOG_TRANSFORM
-    cellprofiler_literals = ("log_transform", "log_transform_base_2")
     single_image = True
 
     def apply(
