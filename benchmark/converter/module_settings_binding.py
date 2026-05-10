@@ -31,8 +31,12 @@ from openhcs.interop.cellprofiler.color_to_gray_settings import (
     color_to_gray_bound_kwargs,
 )
 from .crop_settings import crop_bound_kwargs
-from .display_data_settings import display_data_on_image_bound_kwargs
-from .enhance_edges_settings import ENHANCE_EDGES_SETTINGS
+from openhcs.interop.cellprofiler.display_data_settings import (
+    display_data_on_image_bound_kwargs,
+)
+from openhcs.interop.cellprofiler.enhance_edges_settings import (
+    ENHANCE_EDGES_SETTINGS,
+)
 from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     expand_or_shrink_bound_kwargs,
 )
@@ -123,7 +127,7 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_names,
     setting_values,
 )
-from .smooth_settings import SMOOTH_SETTINGS
+from openhcs.interop.cellprofiler.smooth_settings import SMOOTH_SETTINGS
 from openhcs.interop.cellprofiler.straighten_worms_settings import (
     straighten_worms_bound_kwargs,
 )
