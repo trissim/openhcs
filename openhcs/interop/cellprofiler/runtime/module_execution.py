@@ -2681,6 +2681,11 @@ def _member_string_literals(member: Enum) -> tuple[str, ...]:
         literals.append(member.value)
     elif isinstance(member.value, tuple):
         literals.extend(item for item in member.value if isinstance(item, str))
+    literals.extend(
+        literal
+        for literal in getattr(member, "cellprofiler_literals", ())
+        if isinstance(literal, str)
+    )
     return tuple(literals)
 
 

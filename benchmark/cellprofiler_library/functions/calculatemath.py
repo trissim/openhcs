@@ -9,7 +9,6 @@ not on image data directly.
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from enum import Enum
 from functools import lru_cache
 from typing import Any, ClassVar, Optional, Tuple
 
@@ -23,18 +22,14 @@ from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.interop.cellprofiler.image_math_settings import (
     ImageMathOperation as MathOperation,
 )
+from openhcs.interop.cellprofiler.calculate_math_settings import (
+    CalculateMathRoundingMethod as RoundingMethod,
+)
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerSliceAlignedValues,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
-
-
-class RoundingMethod(Enum):
-    NOT_ROUNDED = "not_rounded"
-    DECIMAL_PLACES = "decimal_places"
-    FLOOR = "floor"
-    CEILING = "ceiling"
 
 
 @dataclass

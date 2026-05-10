@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from .measurement_lookup import count_feature_object_name
@@ -12,7 +13,7 @@ from .setting_names import (
     SettingNameFamily,
     optional_setting_value,
 )
-from .settings_binder import SettingsBinder
+from .settings_binder import SettingsBinder, coerce_cellprofiler_enum
 
 
 OUTPUT_MEASUREMENT_SETTING = SettingNameFamily("Name the output measurement")
@@ -23,6 +24,36 @@ DENOMINATOR_OBJECTS_SETTING = SettingNameFamily("Select the denominator objects"
 DENOMINATOR_MEASUREMENT_SETTING = SettingNameFamily(
     "Select the denominator measurement"
 )
+
+
+class CalculateMathRoundingMethod(Enum):
+    """CalculateMath rounding modes and their CellProfiler UI literals."""
+
+    def __new__(
+        cls,
+        absorbed_value: str,
+        *cellprofiler_literals: str,
+    ) -> "CalculateMathRoundingMethod":
+        obj = object.__new__(cls)
+        obj._value_ = absorbed_value
+        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
+        return obj
+
+    NOT_ROUNDED = ("not_rounded", "Not rounded")
+    DECIMAL_PLACES = (
+        "decimal_places",
+        "Rounded to a specified number of decimal places",
+    )
+    FLOOR = ("floor", "Rounded down to the next-lowest integer")
+    CEILING = ("ceiling", "Rounded up to the next-highest integer")
+
+    @classmethod
+    def from_cellprofiler_literal(
+        cls,
+        value: "CalculateMathRoundingMethod | str",
+    ) -> "CalculateMathRoundingMethod":
+        """Return the rounding mode named by a CellProfiler setting literal."""
+        return coerce_cellprofiler_enum(cls, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -203,11 +234,13 @@ class CalculateMathBoundSettings:
                 "1.0",
             ),
             "final_addend": self.typed_setting("Add to the result", "0.0"),
-            "rounding": CalculateMathSettingValue(
-                self.module,
-                "How should the output value be rounded?",
-                default="Not rounded",
-            ).value,
+            "rounding": CalculateMathRoundingMethod.from_cellprofiler_literal(
+                CalculateMathSettingValue(
+                    self.module,
+                    "How should the output value be rounded?",
+                    default="Not rounded",
+                ).value
+            ),
             "rounding_digits": self.typed_setting(
                 "Enter how many decimal places the value should be rounded to",
                 "0",
