@@ -24,7 +24,9 @@ from .calculate_math_settings import calculate_math_bound_kwargs
 from openhcs.interop.cellprofiler.classify_objects_settings import (
     classify_objects_bound_kwargs,
 )
-from .color_to_gray_settings import color_to_gray_bound_kwargs
+from openhcs.interop.cellprofiler.color_to_gray_settings import (
+    color_to_gray_bound_kwargs,
+)
 from .crop_settings import crop_bound_kwargs
 from .display_data_settings import display_data_on_image_bound_kwargs
 from .enhance_edges_settings import ENHANCE_EDGES_SETTINGS
