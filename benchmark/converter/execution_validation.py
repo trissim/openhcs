@@ -14,9 +14,13 @@ from openhcs.core.runtime_execution_validation import (
 )
 from openhcs.core.runtime_exports import (
     RuntimeExportExpectation,
-    RuntimeImageExportBitDepth,
     RuntimeImageExportSpec,
     artifact_kind_exports_as_table,
+)
+from openhcs.interop.cellprofiler.save_images_settings import (
+    SAVE_IMAGES_FILE_FORMAT_SETTING,
+    SAVE_IMAGES_SOURCE_IMAGE_SETTING,
+    save_images_bit_depth,
 )
 
 from benchmark.converter.runtime_pipeline import (
@@ -24,7 +28,6 @@ from benchmark.converter.runtime_pipeline import (
     PreparedGeneratedPipeline,
 )
 from benchmark.converter.setting_names import (
-    SettingNameFamily,
     optional_setting_value,
     setting_values,
     split_symbol_names,
@@ -36,18 +39,6 @@ class CPPipeInfrastructureFeature(Enum):
 
     EXPORT_TO_SPREADSHEET = "ExportToSpreadsheet"
     SAVE_IMAGES = "SaveImages"
-
-
-SAVE_IMAGES_SOURCE_IMAGE_SETTING = SettingNameFamily("Select the image to save")
-SAVE_IMAGES_BIT_DEPTH_SETTING = SettingNameFamily("Image bit depth")
-SAVE_IMAGES_FILE_FORMAT_SETTING = SettingNameFamily("Saved file format")
-
-SAVE_IMAGES_BIT_DEPTHS = {
-    "8-bit integer": RuntimeImageExportBitDepth.UINT8,
-    "16-bit integer": RuntimeImageExportBitDepth.UINT16,
-    "32-bit floating point": RuntimeImageExportBitDepth.FLOAT32,
-    "raw": RuntimeImageExportBitDepth.NATIVE,
-}
 
 
 class CPPipeExecutionValidationError(RuntimeError):
@@ -142,7 +133,7 @@ def _image_export_specs(
     return tuple(
         RuntimeImageExportSpec(
             artifact_name=image_name,
-            bit_depth=_save_images_bit_depth(module),
+            bit_depth=save_images_bit_depth(module),
             file_format=optional_setting_value(module, SAVE_IMAGES_FILE_FORMAT_SETTING),
         )
         for module in prepared.infrastructure_modules
@@ -178,20 +169,6 @@ def _runtime_exports(
         ),
         image_export_specs=image_export_specs,
     )
-
-
-def _save_images_bit_depth(module: object) -> RuntimeImageExportBitDepth:
-    value = optional_setting_value(module, SAVE_IMAGES_BIT_DEPTH_SETTING)
-    if value is None:
-        return RuntimeImageExportBitDepth.NATIVE
-    try:
-        return SAVE_IMAGES_BIT_DEPTHS[value.strip().lower()]
-    except KeyError as exc:
-        raise ValueError(
-            f"Unsupported SaveImages bit depth {value!r} in module "
-            f"{getattr(module, 'module_num', '?')}."
-        ) from exc
-
 
 def _execution_failures(
     execution: DirectPipelineExecution,
