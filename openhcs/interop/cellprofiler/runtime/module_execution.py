@@ -642,7 +642,7 @@ class CellProfilerModuleExecutor:
             RuntimeArtifactKindStrategy.for_kind(kind)
         self.declared_input_specs
         self.primary_image_inputs(func)
-        self._object_input_specs()
+        self.object_input_specs
         CellProfilerObjectInputPolicy.for_module(self.module_name)
         CellProfilerSpecialInputPolicy.for_module(self.module_name)
         CellProfilerInvocationExecutionModePolicy.for_module(self.module_name)
@@ -842,7 +842,7 @@ class CellProfilerModuleExecutor:
     def _runs_per_object_measurement(self) -> bool:
         return CellProfilerPerObjectMeasurementPolicy.matches(
             self.module_name,
-            self._object_input_specs(),
+            self.object_input_specs,
         )
 
     def _runs_per_image_measurement(self, func: Callable[..., Any]) -> bool:
@@ -851,7 +851,7 @@ class CellProfilerModuleExecutor:
                 module_name=self.module_name,
                 func=func,
                 image_inputs=self.primary_image_inputs(func),
-                object_inputs=self._object_input_specs(),
+                object_inputs=self.object_input_specs,
                 outputs=self.outputs,
             )
         )
@@ -884,7 +884,7 @@ class CellProfilerModuleExecutor:
         **kwargs: Any,
     ) -> Any:
         function_name = CallableContract.from_callable(func).function_name
-        object_inputs = self._object_input_specs()
+        object_inputs = self.object_input_specs
         measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(
             ArtifactKind.MEASUREMENTS
         )
@@ -1633,9 +1633,6 @@ class CellProfilerModuleExecutor:
             reference_domain=reference_domain,
         )
 
-    def _object_input_specs(self) -> tuple[ArtifactSpec, ...]:
-        return self._object_inputs
-
     def _object_labels(
         self,
         spec: ArtifactSpec,
@@ -1652,7 +1649,7 @@ class CellProfilerModuleExecutor:
         adapter: CellProfilerRuntimeAdapter,
         current_image: Any,
     ) -> Any:
-        if spec.name in self._external_source_object_names():
+        if spec.name in self.external_source_object_names:
             return adapter.resolve_source_objects(
                 spec.name,
                 current_image,
@@ -1831,7 +1828,7 @@ class CellProfilerModuleExecutor:
         if not image_inputs:
             payload = (
                 _object_only_reference_image(current_image)
-                if self._object_input_specs() or self._spatial_grid_inputs
+                if self.object_input_specs or self._spatial_grid_inputs
                 else _cellprofiler_image_payload(current_image)
             )
             return CellProfilerImageRequest(
@@ -1897,9 +1894,7 @@ class CellProfilerModuleExecutor:
                     spec=spec,
                     adapter=adapter,
                     external_image_names=external_image_names,
-                    external_object_names=frozenset(
-                        self._external_source_object_names()
-                    ),
+                    external_object_names=frozenset(self.external_source_object_names),
                     runtime_image_names=runtime_image_names,
                 )
             )
@@ -1960,7 +1955,7 @@ class CellProfilerModuleExecutor:
             )
         runtime_kwargs.pop(CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG, None)
         if _should_slice_flexible_object_invocation(
-            self._object_input_specs(),
+            self.object_input_specs,
             func,
             runtime_kwargs,
         ):
@@ -1989,25 +1984,36 @@ class CellProfilerModuleExecutor:
             execution_mode=execution_mode_override or execution_mode,
         )
 
-    def _external_source_image_names(self) -> tuple[str, ...]:
-        return self._external_source_image_names_cache
-
     def _object_input_source_image_name(
         self,
         adapter: CellProfilerRuntimeAdapter,
     ) -> str | None:
         source_names = tuple(
             adapter.get_objects(spec.name).source_image_name
-            for spec in self._object_input_specs()
+            for spec in self.object_input_specs
         )
         return _single_source_name(
             tuple(source_name for source_name in source_names if source_name)
         )
 
-    def _external_source_object_names(self) -> tuple[str, ...]:
+    @property
+    def object_input_specs(self) -> tuple[ArtifactSpec, ...]:
+        """Return declared object-label inputs for this module contract."""
+        return self._object_inputs
+
+    @property
+    def external_source_image_names(self) -> tuple[str, ...]:
+        """Return source-bound image aliases not provided by runtime storage."""
+        return self._external_source_image_names_cache
+
+    @property
+    def external_source_object_names(self) -> tuple[str, ...]:
+        """Return source-bound object aliases not provided by runtime storage."""
         return self._external_source_object_names_cache
 
-    def _runtime_image_names(self) -> tuple[str, ...]:
+    @property
+    def runtime_image_names(self) -> tuple[str, ...]:
+        """Return runtime image artifact names available from the adapter."""
         return self._runtime_image_names_cache
 
     @property
