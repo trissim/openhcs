@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, TypeVar
+from typing import Any
 
 import numpy as np
 import skimage.color
@@ -25,9 +25,7 @@ from openhcs.processing.backends.cellprofiler.image_geometry import (
     align_label_plane_to_shape,
     collapse_singleton_plane_stack,
 )
-
-EnumT = TypeVar("EnumT", bound=Enum)
-
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 class LineMode(Enum):
     """Closed CellProfiler outline boundary modes."""
@@ -76,7 +74,7 @@ class OverlayOutlineRuntimeRow:
         color: str | Sequence[float],
     ) -> "OverlayOutlineRuntimeRow":
         return cls(
-            source_kind=_coerce_source_kind(source_kind),
+            source_kind=coerce_cellprofiler_enum(OutlineSourceKind, source_kind),
             color=coerce_rgb_color(color),
         )
 
@@ -143,9 +141,9 @@ def overlay_outlines(
         rows=_runtime_rows(outline_source_kinds, outline_colors),
         object_labels=tuple(object_labels),
         blank_image=blank_image,
-        display_mode=_coerce_enum(OutlineDisplayMode, display_mode),
-        line_mode=_coerce_enum(LineMode, line_mode),
-        max_type=_coerce_enum(MaxType, max_type),
+        display_mode=coerce_cellprofiler_enum(OutlineDisplayMode, display_mode),
+        line_mode=coerce_cellprofiler_enum(LineMode, line_mode),
+        max_type=coerce_cellprofiler_enum(MaxType, max_type),
     )
     image_sources = _image_sources_from_payload(
         image,
@@ -399,35 +397,6 @@ def _outline_image_mask(outline_image: np.ndarray) -> np.ndarray:
     if is_color_image_slice(mask):
         return np.any(mask, axis=-1)
     return mask
-
-
-def _coerce_source_kind(value: OutlineSourceKind | str) -> OutlineSourceKind:
-    if isinstance(value, OutlineSourceKind):
-        return value
-    normalized = str(value).strip().lower()
-    return OutlineSourceKind(normalized)
-
-
-def _coerce_enum(enum_type: type[EnumT], value: EnumT | str) -> EnumT:
-    if isinstance(value, enum_type):
-        return value
-    normalized = str(value).strip().lower().replace(" ", "_")
-    for member in enum_type:
-        if normalized in _enum_member_literals(member):
-            return member
-    raise ValueError(f"{enum_type.__name__} does not support {value!r}.")
-
-
-def _enum_member_literals(member: Enum) -> frozenset[str]:
-    literals = [member.name]
-    if isinstance(member.value, tuple):
-        literals.extend(str(value) for value in member.value)
-    else:
-        literals.append(str(member.value))
-    return frozenset(
-        str(literal).strip().lower().replace(" ", "_")
-        for literal in literals
-    )
 
 
 def _indexed_value(

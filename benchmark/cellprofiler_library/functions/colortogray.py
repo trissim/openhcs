@@ -18,6 +18,7 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     with_image_payload_data,
 )
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class ImageChannelType(Enum):
@@ -47,8 +48,8 @@ def color_to_gray(
     that outer stack axis while applying CellProfiler's channel semantics.
     """
 
-    resolved_mode = _coerce_enum(ColorToGrayMode, mode, "mode")
-    resolved_image_type = _coerce_enum(ImageChannelType, image_type, "image_type")
+    resolved_mode = coerce_cellprofiler_enum(ColorToGrayMode, mode)
+    resolved_image_type = coerce_cellprofiler_enum(ImageChannelType, image_type)
     if resolved_mode is ColorToGrayMode.COMBINE:
         output = _combine_colortogray(image, channel_indices, contributions)
         return with_image_payload_data(
@@ -171,16 +172,3 @@ def _rgb_to_hsv(rgb_stack: np.ndarray) -> np.ndarray:
     hue = hue / 6.0
     return np.stack((hue, saturation, value), axis=-1).astype(np.float32)
 
-
-def _coerce_enum[T: Enum](
-    enum_type: type[T],
-    value: T | str,
-    parameter_name: str,
-) -> T:
-    if isinstance(value, enum_type):
-        return value
-    normalized = str(value).strip().lower()
-    for option in enum_type:
-        if normalized in {option.name.lower(), str(option.value).lower()}:
-            return option
-    raise ValueError(f"Unsupported ColorToGray {parameter_name}: {value!r}")

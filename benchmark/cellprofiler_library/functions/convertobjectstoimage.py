@@ -14,6 +14,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class ImageMode(Enum):
@@ -123,7 +124,7 @@ def _get_colormap(colormap_name: str, num_labels: int) -> np.ndarray:
 
 
 def _coerce_image_mode(image_mode: ImageMode | str) -> ImageMode:
-    return image_mode if isinstance(image_mode, ImageMode) else ImageMode(image_mode)
+    return coerce_cellprofiler_enum(ImageMode, image_mode)
 
 
 @numpy

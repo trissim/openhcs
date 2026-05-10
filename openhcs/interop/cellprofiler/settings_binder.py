@@ -126,6 +126,10 @@ def _member_literals(enum_type: type[Enum], member: Enum) -> frozenset[str]:
     literals = [member.name]
     if isinstance(member.value, str):
         literals.append(member.value)
+    elif isinstance(member.value, tuple):
+        literals.extend(
+            literal for literal in member.value if isinstance(literal, str)
+        )
     literals.extend(
         literal
         for literal in getattr(member, "cellprofiler_literals", ())
