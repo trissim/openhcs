@@ -5,7 +5,9 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Generic, TypeVar
+from typing import ClassVar, Generic, TypeVar
+
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
@@ -27,8 +29,13 @@ class RuntimeOutputBundle(ABC):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class RuntimeImageExecutionContext(ABC):
+class RuntimeImageExecutionContext(ABC, metaclass=AutoRegisterMeta):
     """Source provenance and execution mode for an image-like invocation."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
 
     source_image_name: str | None
     execution_mode: ImagePayloadExecutionMode = ImagePayloadExecutionMode.NATURAL
@@ -38,12 +45,16 @@ class RuntimeImageExecutionContext(ABC):
 class ResolvedRuntimeInputRequest(RuntimeImageExecutionContext):
     """Shared provenance for resolved image-like runtime inputs."""
 
+    registry_key: ClassVar[str] = "resolved_input"
+
     image_count: int
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RuntimeImageRequest(ResolvedRuntimeInputRequest, Generic[PayloadT]):
     """Resolved image payload and source metadata for one runtime invocation."""
+
+    registry_key: ClassVar[str] = "image_request"
 
     payload: PayloadT
 
@@ -55,6 +66,8 @@ class RuntimeFunctionInvocationRequest(
 ):
     """Resolved callable inputs for one runtime function invocation."""
 
+    registry_key: ClassVar[str] = "function_invocation"
+
     image: PayloadT
     kwargs: Mapping[str, object]
 
@@ -62,6 +75,8 @@ class RuntimeFunctionInvocationRequest(
 @dataclass(frozen=True, slots=True, kw_only=True)
 class RuntimeBatchInvocationRequest(RuntimeImageExecutionContext):
     """One invocation inside a nominal runtime batch."""
+
+    registry_key: ClassVar[str] = "batch_invocation"
 
     image: object
     kwargs: Mapping[str, object]

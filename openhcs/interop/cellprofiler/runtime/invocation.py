@@ -53,10 +53,14 @@ class CellProfilerInvocationOptions(RuntimeInvocationOptions):
 class CellProfilerImageExecutionContext(RuntimeImageExecutionContext):
     """Shared source provenance for CellProfiler image execution records."""
 
+    registry_key: ClassVar[str] = "cellprofiler_image_execution"
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CellProfilerResolvedInputRequest(CellProfilerImageExecutionContext):
     """Shared source provenance for resolved CellProfiler invocation inputs."""
+
+    registry_key: ClassVar[str] = "cellprofiler_resolved_input"
 
     image_count: int
 
@@ -64,6 +68,8 @@ class CellProfilerResolvedInputRequest(CellProfilerImageExecutionContext):
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CellProfilerImageRequest(CellProfilerResolvedInputRequest):
     """Resolved image payload and source metadata for one module invocation."""
+
+    registry_key: ClassVar[str] = "cellprofiler_image_request"
 
     payload: object
 
@@ -305,6 +311,8 @@ class CellProfilerCostesM2Feature(SecondFirstCellProfilerSourcePairFeature):
 class CellProfilerInvocationRequest(CellProfilerResolvedInputRequest):
     """Resolved invocation inputs for one CellProfiler function call."""
 
+    registry_key: ClassVar[str] = "cellprofiler_invocation"
+
     image: object
     kwargs: Mapping[str, object]
 
@@ -315,6 +323,8 @@ CellProfilerMeasurementImageDomain = MeasurementImageReferenceDomain
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
     """One resolved image payload used by object measurement modules."""
+
+    registry_key: ClassVar[str] = "cellprofiler_measurement_image"
 
     payload: object
     source_image_names: tuple[str, ...] = ()
