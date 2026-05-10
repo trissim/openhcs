@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from openhcs.core.registry_strategies import RegisteredEnumMeta
 from .parser import ModuleBlock
 from .setting_names import is_blank_symbol_name, optional_setting_value
 from .settings_binder import SettingsBinder
@@ -14,8 +16,10 @@ from openhcs.interop.cellprofiler.runtime import (
 )
 
 
-class FunctionNameVariant(Enum):
+class FunctionNameVariant(str, Enum, metaclass=RegisteredEnumMeta):
     """Enum variant whose value is the absorbed function name."""
+
+    __registry_key__ = "__name__"
 
     @property
     def function_name(self) -> str:
@@ -67,18 +71,18 @@ def define_grid_bound_kwargs(
     """Return kwargs for the absorbed DefineGrid variant."""
 
     kwargs = {
-        "grid_rows": _typed_setting_value(
+        "grid_rows": TypedGridSetting(
             module,
             binder,
             "Number of rows",
             default="8",
-        ),
-        "grid_columns": _typed_setting_value(
+        ).value,
+        "grid_columns": TypedGridSetting(
             module,
             binder,
             "Number of columns",
             default="12",
-        ),
+        ).value,
         "origin": _grid_origin(
             _setting_value(
                 module,
@@ -113,32 +117,32 @@ def define_grid_bound_kwargs(
             {
                 "first_spot_x": first_x,
                 "first_spot_y": first_y,
-                "first_spot_row": _typed_setting_value(
+                "first_spot_row": TypedGridSetting(
                     module,
                     binder,
                     "Row number of the first cell",
                     default="1",
-                ),
-                "first_spot_col": _typed_setting_value(
+                ).value,
+                "first_spot_col": TypedGridSetting(
                     module,
                     binder,
                     "Column number of the first cell",
                     default="1",
-                ),
+                ).value,
                 "second_spot_x": second_x,
                 "second_spot_y": second_y,
-                "second_spot_row": _typed_setting_value(
+                "second_spot_row": TypedGridSetting(
                     module,
                     binder,
                     "Row number of the second cell",
                     default="8",
-                ),
-                "second_spot_col": _typed_setting_value(
+                ).value,
+                "second_spot_col": TypedGridSetting(
                     module,
                     binder,
                     "Column number of the second cell",
                     default="12",
-                ),
+                ).value,
             }
         )
     return kwargs
@@ -178,27 +182,30 @@ def identify_objects_in_grid_bound_kwargs(
                 default="Manual",
             )
         ),
-        "circle_diameter": _typed_setting_value(
+        "circle_diameter": TypedGridSetting(
             module,
             binder,
             "Circle diameter",
             default="20",
-        ),
+        ).value,
     }
 
 
-def _typed_setting_value(
-    module: ModuleBlock,
-    binder: SettingsBinder,
-    setting_name: str,
-    *,
-    default: str,
-) -> Any:
-    return binder.parse_value(
-        setting_name,
-        _setting_value(module, setting_name, default=default),
-    )
+@dataclass(frozen=True, slots=True)
+class TypedGridSetting:
+    """Nominal parser request for one typed grid setting."""
 
+    module: ModuleBlock
+    binder: SettingsBinder
+    setting_name: str
+    default: str
+
+    @property
+    def value(self) -> Any:
+        return self.binder.parse_value(
+            self.setting_name,
+            _setting_value(self.module, self.setting_name, default=self.default),
+        )
 
 def _setting_value(
     module: ModuleBlock,
@@ -217,49 +224,49 @@ def _coordinate_pair(value: str) -> tuple[int, int]:
 
 
 def _grid_origin(value: str) -> str:
-    return _literal_from_fragments(
-        value,
-        {
+    return FragmentMatchedLiteral(
+        value=value,
+        fragments_to_literal={
             ("top", "left"): "top_left",
             ("bottom", "left"): "bottom_left",
             ("top", "right"): "top_right",
             ("bottom", "right"): "bottom_right",
         },
-    )
+    ).literal
 
 
 def _grid_ordering(value: str) -> str:
-    return _literal_from_fragments(
-        value,
-        {
+    return FragmentMatchedLiteral(
+        value=value,
+        fragments_to_literal={
             ("row",): "rows",
             ("column",): "columns",
         },
-    )
+    ).literal
 
 
 def _grid_cycle_scope(value: str) -> str:
     return CellProfilerGridCycleScope(
-        _literal_from_fragments(
-            value,
-            {
+        FragmentMatchedLiteral(
+            value=value,
+            fragments_to_literal={
                 ("once",): "once",
                 ("each",): "each_cycle",
             },
-        )
+        ).literal
     ).value
 
 
 def _shape_choice(value: str) -> str:
-    return _literal_from_fragments(
-        value,
-        {
+    return FragmentMatchedLiteral(
+        value=value,
+        fragments_to_literal={
             ("rectangle",): "rectangle_forced_location",
             ("circle", "forced"): "circle_forced_location",
             ("circle", "natural"): "circle_natural_location",
             ("natural",): "natural_shape_and_location",
         },
-    )
+    ).literal
 
 
 def _diameter_choice(value: str) -> str:
@@ -271,15 +278,25 @@ def _diameter_choice(value: str) -> str:
     raise ValueError(f"Unsupported grid diameter choice: {value!r}.")
 
 
-def _literal_from_fragments(
-    value: str,
-    fragments_to_literal: dict[tuple[str, ...], str],
-) -> str:
-    normalized = value.strip().lower()
-    for fragments, literal in fragments_to_literal.items():
-        if all(fragment in normalized for fragment in fragments):
-            return literal
-    raise ValueError(f"Unsupported grid setting value: {value!r}.")
+class FragmentMatchedLiteral:
+    """Nominal owner for CP grid literal matching by normalized word fragments."""
+
+    def __init__(
+        self,
+        *,
+        value: str,
+        fragments_to_literal: dict[tuple[str, ...], str],
+    ) -> None:
+        self._value = value
+        self._fragments_to_literal = fragments_to_literal
+
+    @property
+    def literal(self) -> str:
+        normalized = self._value.strip().lower()
+        for fragments, literal in self._fragments_to_literal.items():
+            if all(fragment in normalized for fragment in fragments):
+                return literal
+        raise ValueError(f"Unsupported grid setting value: {self._value!r}.")
 
 
 def _is_blank_symbol(value: str) -> bool:
