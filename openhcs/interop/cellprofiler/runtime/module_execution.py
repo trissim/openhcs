@@ -376,6 +376,23 @@ class CellProfilerModulePolicyMeta(AutoRegisterMeta):
         return policy_type()
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerModulePolicyLeafSpec(RegisteredLeafClassSpec):
+    """Generated leaf declaration for module-name keyed CellProfiler policies."""
+
+    class_name: str
+    base_type: type[object]
+    module_name: str
+    attributes: Mapping[str, object] = field(default_factory=dict, kw_only=True)
+
+    def class_attributes(self) -> Mapping[str, object]:
+        """Return generated policy attributes including module identity."""
+        return {
+            _MODULE_NAME_REGISTRY_KEY: self.module_name,
+            **dict(self.attributes),
+        }
+
+
 class CellProfilerSpecialInputPayloadSemantics(str, Enum):
     """Runtime value semantics for declared CellProfiler special inputs."""
 
@@ -4299,10 +4316,11 @@ class FilterObjectsMeasurementVectorPlan:
         )
 
 
-class MeasureImageAreaOccupiedInputPolicy(ObjectRowsInputPolicy):
-    """Bind ordered object rows for the generic area-occupied runner."""
-
-    module_name = "MeasureImageAreaOccupiedBinary"
+CellProfilerModulePolicyLeafSpec(
+    class_name="MeasureImageAreaOccupiedInputPolicy",
+    base_type=ObjectRowsInputPolicy,
+    module_name="MeasureImageAreaOccupiedBinary",
+).declare_in(globals())
 
 
 class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
@@ -5332,10 +5350,11 @@ class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
         return projected
 
 
-class MeasureColocalizationMeasurementRecordBuilder(SourcePairMeasurementRecordBuilder):
-    """CellProfiler MeasureColocalization emits source-pair measurement fields."""
-
-    module_name = _MEASURE_COLOCALIZATION_MODULE
+CellProfilerModulePolicyLeafSpec(
+    class_name="MeasureColocalizationMeasurementRecordBuilder",
+    base_type=SourcePairMeasurementRecordBuilder,
+    module_name=_MEASURE_COLOCALIZATION_MODULE,
+).declare_in(globals())
 
 
 class ObjectTopologyMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
@@ -5412,10 +5431,11 @@ class ProducedImageMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
         ).require_produced_artifact()
 
 
-class CropMeasurementRecordBuilder(ProducedImageMeasurementRecordBuilder):
-    """Crop measurements describe the produced crop image artifact."""
-
-    module_name = "Crop"
+CellProfilerModulePolicyLeafSpec(
+    class_name="CropMeasurementRecordBuilder",
+    base_type=ProducedImageMeasurementRecordBuilder,
+    module_name="Crop",
+).declare_in(globals())
 
 
 class ThresholdMeasurementRecordBuilder(ProducedImageMeasurementRecordBuilder):
@@ -5536,16 +5556,20 @@ class ClassifyObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuild
         )
 
 
-class ClassifyObjectsSingleMeasurementRecordBuilder(
-    ClassifyObjectsMeasurementRecordBuilder
+for _record_builder_spec in (
+    CellProfilerModulePolicyLeafSpec(
+        class_name="ClassifyObjectsSingleMeasurementRecordBuilder",
+        base_type=ClassifyObjectsMeasurementRecordBuilder,
+        module_name="ClassifyObjectsSingleMeasurement",
+    ),
+    CellProfilerModulePolicyLeafSpec(
+        class_name="ClassifyObjectsTwoMeasurementsRecordBuilder",
+        base_type=ClassifyObjectsMeasurementRecordBuilder,
+        module_name="ClassifyObjectsTwoMeasurements",
+    ),
 ):
-    module_name = "ClassifyObjectsSingleMeasurement"
-
-
-class ClassifyObjectsTwoMeasurementsRecordBuilder(
-    ClassifyObjectsMeasurementRecordBuilder
-):
-    module_name = "ClassifyObjectsTwoMeasurements"
+    _record_builder_spec.declare_in(globals())
+del _record_builder_spec
 
 
 class CalculateMathMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
@@ -5613,16 +5637,20 @@ class IdentifyObjectsInGridMeasurementRecordBuilder(
         )
 
 
-class IdentifyPrimaryObjectsMeasurementRecordBuilder(
-    IdentifyObjectsMeasurementRecordBuilder
+for _record_builder_spec in (
+    CellProfilerModulePolicyLeafSpec(
+        class_name="IdentifyPrimaryObjectsMeasurementRecordBuilder",
+        base_type=IdentifyObjectsMeasurementRecordBuilder,
+        module_name="IdentifyPrimaryObjects",
+    ),
+    CellProfilerModulePolicyLeafSpec(
+        class_name="IdentifySecondaryObjectsMeasurementRecordBuilder",
+        base_type=IdentifyObjectRelationshipsMeasurementRecordBuilder,
+        module_name="IdentifySecondaryObjects",
+    ),
 ):
-    module_name = "IdentifyPrimaryObjects"
-
-
-class IdentifySecondaryObjectsMeasurementRecordBuilder(
-    IdentifyObjectRelationshipsMeasurementRecordBuilder
-):
-    module_name = "IdentifySecondaryObjects"
+    _record_builder_spec.declare_in(globals())
+del _record_builder_spec
 
 
 class IdentifyTertiaryObjectsMeasurementRecordBuilder(
@@ -8547,14 +8575,20 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
         }
 
 
-class ClassifyObjectsSingleMeasurementInputPolicy(
-    ClassifyObjectsMeasurementInputPolicy
+for _input_policy_spec in (
+    CellProfilerModulePolicyLeafSpec(
+        class_name="ClassifyObjectsSingleMeasurementInputPolicy",
+        base_type=ClassifyObjectsMeasurementInputPolicy,
+        module_name="ClassifyObjectsSingleMeasurement",
+    ),
+    CellProfilerModulePolicyLeafSpec(
+        class_name="ClassifyObjectsTwoMeasurementsInputPolicy",
+        base_type=ClassifyObjectsMeasurementInputPolicy,
+        module_name="ClassifyObjectsTwoMeasurements",
+    ),
 ):
-    module_name = "ClassifyObjectsSingleMeasurement"
-
-
-class ClassifyObjectsTwoMeasurementsInputPolicy(ClassifyObjectsMeasurementInputPolicy):
-    module_name = "ClassifyObjectsTwoMeasurements"
+    _input_policy_spec.declare_in(globals())
+del _input_policy_spec
 
 
 def _classification_rule_measurement_feature(
