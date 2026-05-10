@@ -8781,36 +8781,22 @@ class CellProfilerDualScopeMeasurementPolicy(
         )
 
 
-@dataclass(frozen=True, slots=True)
-class DualScopeMeasurementPolicySpec(GeneratedLeafClassSpec):
-    """Declarative leaf spec for one dual-scope measurement module."""
-
-    module_name: str
-    image_function_name: str
-
-    def class_attributes(self) -> Mapping[str, object]:
-        return {
-            "module_name": self.module_name,
-            "image_function_name": self.image_function_name,
-        }
-
-
 class DeclaredDualScopeMeasurementPolicy(CellProfilerDualScopeMeasurementPolicy):
     """Generated base for modules with image+object measurement scope."""
 
 
 for _dual_scope_policy_spec in (
-    DualScopeMeasurementPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name="MeasureTextureDualScopeMeasurementPolicy",
         base_type=DeclaredDualScopeMeasurementPolicy,
-        module_name="MeasureTexture",
-        image_function_name="measure_texture",
+        module_name=_MEASURE_TEXTURE_MODULE,
+        attributes={"image_function_name": "measure_texture"},
     ),
-    DualScopeMeasurementPolicySpec(
+    CellProfilerModulePolicyLeafSpec(
         class_name="MeasureColocalizationDualScopeMeasurementPolicy",
         base_type=DeclaredDualScopeMeasurementPolicy,
-        module_name="MeasureColocalization",
-        image_function_name="measure_colocalization",
+        module_name=_MEASURE_COLOCALIZATION_MODULE,
+        attributes={"image_function_name": "measure_colocalization"},
     ),
 ):
     _dual_scope_policy_spec.declare_in(globals())
