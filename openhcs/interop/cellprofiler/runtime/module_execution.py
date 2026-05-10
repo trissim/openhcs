@@ -5422,14 +5422,6 @@ class ProducedImageMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
             f"output spec, got {[spec.name for spec in image_specs]!r}."
         )
 
-    def _required_primary_image_measurement_source(
-        self,
-        request: CellProfilerOutputRecordRequest,
-    ) -> ProducedArtifactImageMeasurementSource:
-        return self._primary_image_measurement_source(
-            request
-        ).require_produced_artifact()
-
 
 CellProfilerModulePolicyLeafSpec(
     class_name="CropMeasurementRecordBuilder",
@@ -5447,7 +5439,9 @@ class ThresholdMeasurementRecordBuilder(ProducedImageMeasurementRecordBuilder):
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        source_image = self._required_primary_image_measurement_source(request)
+        source_image = self._primary_image_measurement_source(
+            request
+        ).require_produced_artifact()
         return CellProfilerMeasurementRecord(
             rows=ThresholdMeasurementRows(
                 request.value,
