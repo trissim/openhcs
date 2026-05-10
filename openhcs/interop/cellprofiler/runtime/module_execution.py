@@ -608,7 +608,7 @@ class CellProfilerModuleExecutor:
         **kwargs: Any,
     ) -> Any:
         """Call the absorbed function and record declared outputs through the adapter."""
-        function_name = getattr(func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(func).function_name
         run_started_at = time.perf_counter()
         mode_started_at = time.perf_counter()
         if self._runs_per_image_measurement(func):
@@ -826,7 +826,7 @@ class CellProfilerModuleExecutor:
         source_image_name: str | None,
         **kwargs: Any,
     ) -> Any:
-        function_name = getattr(func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(func).function_name
         object_inputs = self._object_input_specs()
         measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(
             ArtifactKind.MEASUREMENTS
@@ -1243,7 +1243,7 @@ class CellProfilerModuleExecutor:
         kwargs: Mapping[str, Any],
         target_scope: CellProfilerMeasurementTargetScope,
     ) -> list[Any]:
-        function_name = getattr(object_func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(object_func).function_name
         if target_scope is not CellProfilerMeasurementTargetScope.BOTH:
             return []
         policy = CellProfilerDualScopeMeasurementPolicy.for_module(self.module_name)
@@ -1303,7 +1303,7 @@ class CellProfilerModuleExecutor:
         cellprofiler_runtime: CellProfilerRuntimeAdapter,
         **kwargs: Any,
     ) -> Any:
-        function_name = getattr(func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(func).function_name
         measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(
             ArtifactKind.MEASUREMENTS
         )
@@ -1710,7 +1710,7 @@ class CellProfilerModuleExecutor:
         if not self.outputs:
             return
 
-        function_name = getattr(func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(func).function_name
         values_started_at = time.perf_counter()
         output_values = CellProfilerOutputValueResolution.from_returned_values(
             self.outputs,
@@ -2348,7 +2348,7 @@ class NaturalImageExecutionStrategy(CellProfilerImageExecutionStrategy):
         image: Any,
         kwargs: Mapping[str, Any],
     ) -> Any:
-        function_name = getattr(func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(func).function_name
         contract_started_at = time.perf_counter()
         contract = _processing_contract_for_callable(func)
         _log_module_profile(
@@ -9280,7 +9280,7 @@ class CellProfilerFunctionContractExecutor:
         force_full_stack: bool = False,
         execution_mode: ImagePayloadExecutionMode | None = None,
     ) -> Any:
-        function_name = getattr(func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(func).function_name
         mode_started_at = time.perf_counter()
         mode = requested_image_execution_mode(
             force_full_stack=force_full_stack,
@@ -9324,7 +9324,7 @@ class CellProfilerFunctionContractExecutor:
         image: Any,
         **kwargs: Any,
     ) -> Any:
-        function_name = getattr(func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(func).function_name
         projection_started_at = time.perf_counter()
         projected_image = project_singleton_stack_image_domain(image)
         projected_kwargs = {
@@ -9402,7 +9402,7 @@ class CellProfilerFunctionContractExecutor:
         image: Any,
         **kwargs: Any,
     ) -> Any:
-        function_name = getattr(func, "__name__", "<unknown>")
+        function_name = CallableContract.from_callable(func).function_name
         image_data = image_payload_data(image)
         if not isinstance(image_data, np.ndarray):
             return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
