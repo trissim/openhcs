@@ -15,6 +15,7 @@ from openhcs.core.aligned_image_payload import (
     payload_slices_for_alignment,
 )
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.runtime_artifact_queries import measurement_values_for_label_slices
 from openhcs.constants.constants import MemoryType
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerMeasurementImage,
@@ -262,6 +263,22 @@ class _FakeCellProfilerRuntime:
 
     def measurement_tables_for_object(self, name: str) -> tuple[object, ...]:
         return self.runtime_measurement_tables.get(name, ())
+
+    def measurement_values_for_label_slices(
+        self,
+        object_name: str,
+        feature_name: str,
+        labels: object,
+        *,
+        group_key: str | None = None,
+    ) -> tuple[object, ...]:
+        del group_key
+        return measurement_values_for_label_slices(
+            self.runtime_measurement_tables.get(object_name, ()),
+            feature_name,
+            labels,
+            object_name=object_name,
+        )
 
     def add_measurements(
         self,
@@ -4121,6 +4138,72 @@ def test_flexible_object_module_slices_measurement_tables_with_label_stack() -> 
     executor.run(filter_like, image, cellprofiler_runtime=runtime)
 
     assert seen_areas == [(4.0,), (9.0,)]
+
+
+def test_filterobjects_binds_selection_measurement_values_to_label_slices() -> None:
+    image = np.zeros((2, 6, 6), dtype=np.float32)
+    children = np.zeros((2, 6, 6), dtype=np.int32)
+    children[:, 0:2, 0:2] = 1
+    children[:, 3:5, 3:5] = 2
+    parents = np.ones_like(children)
+    measurements = MeasurementTable(
+        name="ChildMeasurements",
+        object_name="Cells",
+        object_id_field="object_label",
+        rows=[
+            {"slice_index": 0, "object_label": 1, "AreaShape_Area": 10.0},
+            {"slice_index": 0, "object_label": 2, "AreaShape_Area": 20.0},
+            {"slice_index": 1, "object_label": 1, "AreaShape_Area": 30.0},
+            {"slice_index": 1, "object_label": 2, "AreaShape_Area": 5.0},
+        ],
+    )
+    runtime = _FakeCellProfilerRuntime(
+        {"Carrier": _FakeRuntimeImage(image)},
+        objects={
+            "Cells": ObjectLabelSet(name="Cells", labels=children),
+            "Tiles": ObjectLabelSet(name="Tiles", labels=parents),
+        },
+        measurement_tables={"Cells": (measurements,)},
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="FilterObjects",
+            inputs=(
+                ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Tiles", ArtifactKind.OBJECT_LABELS),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Cells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Tiles", ArtifactKind.OBJECT_LABELS),
+            ),
+            outputs=(
+                ArtifactSpec("FilterObjects_measurements", ArtifactKind.MEASUREMENTS),
+                ArtifactSpec("FilteredCells", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec(
+                    "Cells_FilteredCells_relationships",
+                    ArtifactKind.RELATIONSHIPS,
+                ),
+            ),
+        )
+    )
+
+    executor.run(
+        filter_objects,
+        image,
+        cellprofiler_runtime=runtime,
+        mode=FilterMode.MEASUREMENTS,
+        filter_method=FilterMethod.MAXIMAL_PER_OBJECT,
+        measurement_features=("AreaShape_Area",),
+        enclosing_object_name="Tiles",
+        per_object_assignment=PerObjectAssignment.BOTH_PARENTS,
+    )
+
+    filtered = next(value for name, value, _kwargs in runtime.objects if name == "FilteredCells")
+    assert filtered.shape == (2, 6, 6)
+    assert filtered[0, 0, 0] == 0
+    assert filtered[0, 3, 3] == 1
+    assert filtered[1, 0, 0] == 1
+    assert filtered[1, 3, 3] == 0
 
 
 def test_flexible_object_module_slices_measurement_tables_with_2d_labels() -> None:

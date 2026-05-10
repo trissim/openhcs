@@ -1867,6 +1867,56 @@ def object_label_dense_array(
     return np.array(dense_data, dtype=dtype, copy=copy)
 
 
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelAggregation:
+    """Vectorized reductions over dense object-label IDs."""
+
+    labels: np.ndarray
+    object_count: int
+
+    @classmethod
+    def from_payload(
+        cls,
+        payload: object,
+        *,
+        dtype: object = np.int32,
+    ) -> "DenseObjectLabelAggregation":
+        """Build reductions from any nominal object-label payload."""
+        labels = object_label_dense_array(payload, dtype=dtype)
+        return cls(
+            labels=labels,
+            object_count=int(np.max(labels)) if labels.size else 0,
+        )
+
+    def counts(self) -> np.ndarray:
+        """Return per-object pixel counts excluding the background label."""
+        return np.bincount(
+            self.labels,
+            minlength=self.object_count + 1,
+        )[1:].astype(float, copy=False)
+
+    def sum(self, values: object) -> np.ndarray:
+        """Return per-object sums for values aligned with ``labels``."""
+        return np.bincount(
+            self.labels,
+            weights=np.asarray(values, dtype=float),
+            minlength=self.object_count + 1,
+        )[1:].astype(float, copy=False)
+
+    def maximum(self, values: object) -> np.ndarray:
+        """Return per-object maxima for values aligned with ``labels``."""
+        maxima = np.zeros(self.object_count + 1, dtype=float)
+        np.maximum.at(maxima, self.labels, np.asarray(values, dtype=float))
+        return maxima[1:]
+
+    def subset(self, mask: object) -> "DenseObjectLabelAggregation":
+        """Return reductions over a masked subset of the same object ID domain."""
+        return DenseObjectLabelAggregation(
+            labels=self.labels[np.asarray(mask, dtype=bool)],
+            object_count=self.object_count,
+        )
+
+
 class ObjectLabelDataRuntimeSliceStackContract(
     NominalTypeKeyedStrategyMixin,
     ABC,

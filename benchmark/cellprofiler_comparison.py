@@ -27,6 +27,7 @@ from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
 from benchmark.runner import CellProfilerCompatibilityResult
 from benchmark.runner import run_cellprofiler_cppipe_parity
+from benchmark.contracts.metric import MetricCollector
 
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"harness"})
@@ -86,6 +87,19 @@ CsvTableSpec = product_record(
     doc="Authoritative CSV table projection.",
     module_name=__name__,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonMetricPolicy:
+    """Metric collection policy for parity-vs-speed benchmark runs."""
+
+    collect_memory: bool = True
+
+    def collectors(self) -> list[MetricCollector]:
+        collectors: list[MetricCollector] = [TimeMetric()]
+        if self.collect_memory:
+            collectors.append(MemoryMetric())
+        return collectors
 
 
 @dataclass(frozen=True, slots=True)
@@ -284,6 +298,7 @@ def run_comparison_suite(
     continue_on_error: bool = False,
     openhcs_axis_filter: Sequence[str] = (),
     openhcs_max_axis_count: int | None = None,
+    metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
 ) -> tuple[CellProfilerComparisonObservation, ...]:
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
@@ -307,6 +322,7 @@ def run_comparison_suite(
                     discard_openhcs_outputs=discard_openhcs_outputs,
                     openhcs_axis_filter=tuple(openhcs_axis_filter),
                     openhcs_max_axis_count=openhcs_max_axis_count,
+                    metric_policy=metric_policy,
                 )
             except Exception as exc:
                 if not continue_on_error:
@@ -338,6 +354,7 @@ def run_comparison_suite(
                 continue_on_error=continue_on_error,
                 openhcs_axis_filter=tuple(openhcs_axis_filter),
                 openhcs_max_axis_count=openhcs_max_axis_count,
+                metric_policy=metric_policy,
             )
     return tuple(observations)
 
@@ -583,6 +600,7 @@ def write_suite_metadata(
     continue_on_error: bool = False,
     openhcs_axis_filter: Sequence[str] = (),
     openhcs_max_axis_count: int | None = None,
+    metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
 ) -> None:
     """Write reproducibility metadata for the benchmark suite."""
     payload = {
@@ -597,6 +615,7 @@ def write_suite_metadata(
         ),
         "discard_openhcs_outputs": discard_openhcs_outputs,
         "continue_on_error": continue_on_error,
+        "collect_memory_metric": metric_policy.collect_memory,
         OPENHCS_AXIS_FILTER_PARAM: tuple(openhcs_axis_filter),
         OPENHCS_MAX_AXIS_COUNT_PARAM: openhcs_max_axis_count,
     }
@@ -615,6 +634,7 @@ def _run_comparison_case(
     discard_openhcs_outputs: bool,
     openhcs_axis_filter: Sequence[str],
     openhcs_max_axis_count: int | None,
+    metric_policy: ComparisonMetricPolicy,
 ) -> CellProfilerComparisonObservation:
     native_reference = _native_reference_location(case, native_reference_root)
     pipeline_params: dict[str, object] = {
@@ -634,7 +654,7 @@ def _run_comparison_case(
     result = run_cellprofiler_cppipe_parity(
         case.dataset_path,
         case.cppipe_path,
-        metrics=[TimeMetric(), MemoryMetric()],
+        metrics=metric_policy.collectors(),
         dataset_id=case.dataset_id,
         pipeline_name=case.name,
         microscope_type=case.microscope_type,

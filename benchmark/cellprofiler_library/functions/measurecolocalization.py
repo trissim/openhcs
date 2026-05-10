@@ -10,12 +10,19 @@ import numpy as np
 import logging
 import os
 import time
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from typing import Tuple, Optional
-from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory import numpy
-from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
+from openhcs.core.pipeline.function_contracts import (
+    measurement_image_batch_executor,
+    special_outputs,
+    special_inputs,
+)
+from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_values import (
+    DenseObjectLabelAggregation,
     image_intensity_scale_for_dtype,
     image_payload_data,
     image_payload_metadata,
@@ -54,7 +61,7 @@ class CostesMethod(Enum):
     ACCURATE = "accurate"
 
 
-@dataclass
+@dataclass(slots=True)
 class ColocalizationMeasurements:
     """Colocalization measurements between two channels."""
     slice_index: int
@@ -74,7 +81,7 @@ class ColocalizationMeasurements:
     costes_threshold_2: float
 
 
-@dataclass
+@dataclass(slots=True)
 class ObjectColocalizationMeasurements:
     """Colocalization measurements scoped to one labeled object."""
 
@@ -121,6 +128,56 @@ class ObjectColocalizationMeasurements:
             costes_threshold_2=measurement.costes_threshold_2,
         )
 
+    @classmethod
+    def from_values(
+        cls,
+        object_label: int,
+        *,
+        correlation: float = 0.0,
+        slope: float = 0.0,
+        slope_reverse: float = 0.0,
+        overlap: float = 0.0,
+        k1: float = 0.0,
+        k2: float = 0.0,
+        manders_m1: float = 0.0,
+        manders_m2: float = 0.0,
+        rwc1: float = 0.0,
+        rwc2: float = 0.0,
+        costes_m1: float = 0.0,
+        costes_m2: float = 0.0,
+        costes_threshold_1: float = 0.0,
+        costes_threshold_2: float = 0.0,
+    ) -> "ObjectColocalizationMeasurements":
+        """Build one object-row record using CellProfiler finite-value semantics."""
+        return cls(
+            slice_index=0,
+            object_label=object_label,
+            correlation=float(correlation) if np.isfinite(correlation) else 0.0,
+            slope=float(slope) if np.isfinite(slope) else 0.0,
+            slope_reverse=(
+                float(slope_reverse) if np.isfinite(slope_reverse) else 0.0
+            ),
+            overlap=float(overlap) if np.isfinite(overlap) else 0.0,
+            k1=float(k1) if np.isfinite(k1) else 0.0,
+            k2=float(k2) if np.isfinite(k2) else 0.0,
+            manders_m1=float(manders_m1) if np.isfinite(manders_m1) else 0.0,
+            manders_m2=float(manders_m2) if np.isfinite(manders_m2) else 0.0,
+            rwc1=float(rwc1) if np.isfinite(rwc1) else 0.0,
+            rwc2=float(rwc2) if np.isfinite(rwc2) else 0.0,
+            costes_m1=float(costes_m1),
+            costes_m2=float(costes_m2),
+            costes_threshold_1=(
+                float(costes_threshold_1)
+                if np.isfinite(costes_threshold_1)
+                else 0.0
+            ),
+            costes_threshold_2=(
+                float(costes_threshold_2)
+                if np.isfinite(costes_threshold_2)
+                else 0.0
+            ),
+        )
+
 
 @dataclass(frozen=True)
 class ColocalizationMeasurementOptions:
@@ -150,6 +207,114 @@ class CostesRegressionLine:
 
     def second_threshold(self, first_threshold: float) -> float:
         return (self.slope * first_threshold) + self.intercept
+
+
+@dataclass(frozen=True)
+class ColocalizationCostesThresholds:
+    """Precomputed Costes thresholds for one resolved image source pair."""
+
+    first: float
+    second: float
+
+
+@dataclass(frozen=True, slots=True)
+class ColocalizationImagePairContext:
+    """Resolved image-pair pixels shared by batched object colocalization calls."""
+
+    image_data: np.ndarray
+    image_float: np.ndarray
+    first_image: np.ndarray
+    second_image: np.ndarray
+    pair_valid_mask: np.ndarray | None
+    full_first_pixels: np.ndarray
+    full_second_pixels: np.ndarray
+
+    @classmethod
+    def from_request(
+        cls,
+        image: object,
+        *,
+        channel_1: int,
+        channel_2: int,
+    ) -> "ColocalizationImagePairContext":
+        image_data = image_payload_data(image)
+        image_float = _cellprofiler_float_pixels(image_data)
+        first_image = image_float[channel_1]
+        second_image = image_float[channel_2]
+        pair_valid_mask = _channel_pair_valid_mask(
+            image,
+            image_float,
+            channel_1,
+            channel_2,
+        )
+        if pair_valid_mask is None:
+            full_first_pixels = first_image.ravel()
+            full_second_pixels = second_image.ravel()
+        else:
+            full_first_pixels = first_image[pair_valid_mask]
+            full_second_pixels = second_image[pair_valid_mask]
+        return cls(
+            image_data=image_data,
+            image_float=image_float,
+            first_image=first_image,
+            second_image=second_image,
+            pair_valid_mask=pair_valid_mask,
+            full_first_pixels=full_first_pixels,
+            full_second_pixels=full_second_pixels,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ColocalizationObjectLabelContext:
+    """Resolved object-label reductions shared by batched image-pair calls."""
+
+    labels: np.ndarray
+    max_label: int
+    label_range: np.ndarray
+    object_mask: np.ndarray
+    object_labels: np.ndarray
+    aggregation: DenseObjectLabelAggregation
+    object_counts: np.ndarray
+
+    @classmethod
+    def from_labels(
+        cls,
+        labels: object,
+        *,
+        pair_valid_mask: np.ndarray | None,
+    ) -> "ColocalizationObjectLabelContext":
+        return cls.from_dense_labels(
+            object_label_dense_array(labels, dtype=np.int32),
+            pair_valid_mask=pair_valid_mask,
+        )
+
+    @classmethod
+    def from_dense_labels(
+        cls,
+        label_array: np.ndarray,
+        *,
+        pair_valid_mask: np.ndarray | None,
+    ) -> "ColocalizationObjectLabelContext":
+        """Build reductions from an already-resolved dense label array."""
+        max_label = int(np.max(label_array)) if label_array.size else 0
+        label_range = np.arange(1, max_label + 1, dtype=np.int32)
+        object_mask = label_array > 0
+        if pair_valid_mask is not None:
+            object_mask = object_mask & pair_valid_mask
+        object_labels = label_array[object_mask].astype(np.int32, copy=False)
+        aggregation = DenseObjectLabelAggregation(
+            labels=object_labels,
+            object_count=max_label,
+        )
+        return cls(
+            labels=label_array,
+            max_label=max_label,
+            label_range=label_range,
+            object_mask=object_mask,
+            object_labels=object_labels,
+            aggregation=aggregation,
+            object_counts=aggregation.counts(),
+        )
 
 
 def _costes_regression_line(
@@ -201,6 +366,109 @@ def _costes_minimum_scale_index(scale_max: int) -> int:
     if scale_max <= 0:
         raise ValueError("scale_max must be positive.")
     return min(scale_max, 5)
+
+
+@njit(cache=True)
+def _object_colocalization_base_reductions(
+    first_pixels: np.ndarray,
+    second_pixels: np.ndarray,
+    object_labels: np.ndarray,
+    object_count: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    counts = np.zeros(object_count, dtype=np.float64)
+    sum1 = np.zeros(object_count, dtype=np.float64)
+    sum2 = np.zeros(object_count, dtype=np.float64)
+    sum1_sq = np.zeros(object_count, dtype=np.float64)
+    sum2_sq = np.zeros(object_count, dtype=np.float64)
+    product_sum = np.zeros(object_count, dtype=np.float64)
+    max1 = np.zeros(object_count, dtype=np.float64)
+    max2 = np.zeros(object_count, dtype=np.float64)
+    for index in range(object_labels.size):
+        label_index = int(object_labels[index]) - 1
+        first_value = float(first_pixels[index])
+        second_value = float(second_pixels[index])
+        counts[label_index] += 1.0
+        sum1[label_index] += first_value
+        sum2[label_index] += second_value
+        sum1_sq[label_index] += first_value * first_value
+        sum2_sq[label_index] += second_value * second_value
+        product_sum[label_index] += first_value * second_value
+        if first_value > max1[label_index]:
+            max1[label_index] = first_value
+        if second_value > max2[label_index]:
+            max2[label_index] = second_value
+    return counts, sum1, sum2, sum1_sq, sum2_sq, product_sum, max1, max2
+
+
+@njit(cache=True)
+def _object_colocalization_threshold_reductions(
+    first_pixels: np.ndarray,
+    second_pixels: np.ndarray,
+    object_labels: np.ndarray,
+    threshold_1: np.ndarray,
+    threshold_2: np.ndarray,
+    costes_threshold_1: float,
+    costes_threshold_2: float,
+    first_costes_denominator_threshold: float,
+    object_count: int,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    total_first_threshold = np.zeros(object_count, dtype=np.float64)
+    total_second_threshold = np.zeros(object_count, dtype=np.float64)
+    threshold_sum1 = np.zeros(object_count, dtype=np.float64)
+    threshold_sum2 = np.zeros(object_count, dtype=np.float64)
+    threshold_sum1_sq = np.zeros(object_count, dtype=np.float64)
+    threshold_sum2_sq = np.zeros(object_count, dtype=np.float64)
+    threshold_product_sum = np.zeros(object_count, dtype=np.float64)
+    total_first_costes = np.zeros(object_count, dtype=np.float64)
+    total_second_costes = np.zeros(object_count, dtype=np.float64)
+    costes_sum1 = np.zeros(object_count, dtype=np.float64)
+    costes_sum2 = np.zeros(object_count, dtype=np.float64)
+    for index in range(object_labels.size):
+        label_index = int(object_labels[index]) - 1
+        first_value = float(first_pixels[index])
+        second_value = float(second_pixels[index])
+        first_above = first_value >= threshold_1[label_index]
+        second_above = second_value >= threshold_2[label_index]
+        if first_above:
+            total_first_threshold[label_index] += first_value
+        if second_above:
+            total_second_threshold[label_index] += second_value
+        if first_above and second_above:
+            threshold_sum1[label_index] += first_value
+            threshold_sum2[label_index] += second_value
+            threshold_sum1_sq[label_index] += first_value * first_value
+            threshold_sum2_sq[label_index] += second_value * second_value
+            threshold_product_sum[label_index] += first_value * second_value
+        first_above_costes = (
+            first_value >= costes_threshold_1
+            if costes_threshold_1 <= 0.0
+            else first_value > costes_threshold_1
+        )
+        second_above_costes = (
+            second_value >= costes_threshold_2
+            if costes_threshold_2 <= 0.0
+            else second_value > costes_threshold_2
+        )
+        if first_value >= first_costes_denominator_threshold:
+            total_first_costes[label_index] += first_value
+        if second_above_costes:
+            total_second_costes[label_index] += second_value
+        if first_above_costes and second_above_costes:
+            costes_sum1[label_index] += first_value
+            costes_sum2[label_index] += second_value
+    return (
+        total_first_threshold,
+        total_second_threshold,
+        threshold_sum1,
+        threshold_sum2,
+        threshold_sum1_sq,
+        threshold_sum2_sq,
+        threshold_product_sum,
+        total_first_costes,
+        total_second_costes,
+        costes_sum1,
+        costes_sum2,
+    )
 
 
 def _costes_scale_threshold(scale_index: int, scale_max: int) -> float:
@@ -1165,16 +1433,28 @@ def measure_colocalization_objects(
     costes_method: CostesMethod = CostesMethod.FASTER,
     scale_max: int | None = None,
     costes_backend_provider: BackendProviderInput | None = None,
+    costes_thresholds: ColocalizationCostesThresholds | None = None,
+    image_pair_context: ColocalizationImagePairContext | None = None,
+    object_label_context: ColocalizationObjectLabelContext | None = None,
 ) -> Tuple[np.ndarray, list[ObjectColocalizationMeasurements]]:
     """Measure colocalization between two channels within labeled objects."""
-    image_data = image_payload_data(image)
-    labels = object_label_dense_array(labels, dtype=np.int32)
-    max_label = int(np.max(labels)) if labels.size else 0
+    if image_pair_context is None:
+        image_pair_context = ColocalizationImagePairContext.from_request(
+            image,
+            channel_1=channel_1,
+            channel_2=channel_2,
+        )
+    image_data = image_pair_context.image_data
+    if object_label_context is None:
+        object_label_context = ColocalizationObjectLabelContext.from_labels(
+            labels,
+            pair_valid_mask=image_pair_context.pair_valid_mask,
+        )
+    max_label = object_label_context.max_label
     if max_label <= 0:
         return _channel_output_payload(image, image_data, channel_1), []
 
-    label_range = np.arange(1, max_label + 1, dtype=np.int32)
-    image_float = _cellprofiler_float_pixels(image_data)
+    label_range = object_label_context.label_range
     options = ColocalizationMeasurementOptions(
         threshold_percent=threshold_percent,
         do_correlation=do_correlation,
@@ -1193,39 +1473,38 @@ def measure_colocalization_objects(
         costes_backend_provider=costes_backend_provider,
     )
 
-    first_image = image_float[channel_1]
-    second_image = image_float[channel_2]
-    pair_valid_mask = _channel_pair_valid_mask(
-        image,
-        image_float,
-        channel_1,
-        channel_2,
-    )
-    object_mask = labels > 0
-    if pair_valid_mask is not None:
-        object_mask = object_mask & pair_valid_mask
-    if not np.any(object_mask):
+    first_image = image_pair_context.first_image
+    second_image = image_pair_context.second_image
+    object_mask = object_label_context.object_mask
+    if not object_label_context.object_labels.size:
         return (
             _channel_output_payload(image, image_data, channel_1),
             [
-                _object_colocalization_row(int(object_label))
+                ObjectColocalizationMeasurements.from_values(int(object_label))
                 for object_label in label_range
             ],
         )
 
     first_pixels = first_image[object_mask]
     second_pixels = second_image[object_mask]
-    object_labels = labels[object_mask].astype(np.int32, copy=False)
-    if pair_valid_mask is None:
-        full_fi = first_image.ravel()
-        full_si = second_image.ravel()
-    else:
-        full_fi = first_image[pair_valid_mask]
-        full_si = second_image[pair_valid_mask]
-    object_counts = scipy.ndimage.sum(
-        np.ones(len(first_pixels)),
+    object_labels = object_label_context.object_labels
+    label_aggregation = object_label_context.aggregation
+    full_fi = image_pair_context.full_first_pixels
+    full_si = image_pair_context.full_second_pixels
+    (
+        object_counts,
+        sum1,
+        sum2,
+        sum1_sq,
+        sum2_sq,
+        product_sum,
+        max1,
+        max2,
+    ) = _object_colocalization_base_reductions(
+        first_pixels,
+        second_pixels,
         object_labels,
-        label_range,
+        max_label,
     )
 
     corr = np.zeros(max_label, dtype=float)
@@ -1244,78 +1523,81 @@ def measure_colocalization_objects(
     costes_threshold_2 = np.zeros(max_label, dtype=float)
 
     if options.do_correlation:
-        mean1 = scipy.ndimage.mean(first_pixels, object_labels, label_range)
-        mean2 = scipy.ndimage.mean(second_pixels, object_labels, label_range)
-        std1 = np.sqrt(
-            scipy.ndimage.sum(
-                (first_pixels - mean1[object_labels - 1]) ** 2,
-                object_labels,
-                label_range,
-            )
-        )
-        std2 = np.sqrt(
-            scipy.ndimage.sum(
-                (second_pixels - mean2[object_labels - 1]) ** 2,
-                object_labels,
-                label_range,
-            )
-        )
-        denominator = std1[object_labels - 1] * std2[object_labels - 1]
         with np.errstate(divide="ignore", invalid="ignore"):
-            per_pixel_corr = (
-                (first_pixels - mean1[object_labels - 1])
-                * (second_pixels - mean2[object_labels - 1])
-                / denominator
-            )
-        corr = np.asarray(
-            scipy.ndimage.sum(per_pixel_corr, object_labels, label_range),
-            dtype=float,
-        )
-        corr[np.asarray(object_counts) == 0] = np.nan
+            centered_product = product_sum - ((sum1 * sum2) / object_counts)
+            centered_first = sum1_sq - ((sum1 * sum1) / object_counts)
+            centered_second = sum2_sq - ((sum2 * sum2) / object_counts)
+            corr = centered_product / np.sqrt(centered_first * centered_second)
+        corr[~np.isfinite(corr)] = np.nan
 
     if any((options.do_manders, options.do_rwc, options.do_overlap)):
-        threshold_1 = options.threshold_percent / 100 * scipy.ndimage.maximum(
-            first_pixels,
-            object_labels,
-            label_range,
+        threshold_1 = (
+            options.threshold_percent / 100 * max1
         )
-        threshold_2 = options.threshold_percent / 100 * scipy.ndimage.maximum(
-            second_pixels,
-            object_labels,
-            label_range,
+        threshold_2 = (
+            options.threshold_percent / 100 * max2
         )
         first_above_threshold = first_pixels >= threshold_1[object_labels - 1]
         second_above_threshold = second_pixels >= threshold_2[object_labels - 1]
         combined_threshold = first_above_threshold & second_above_threshold
+        combined_threshold_has_values = bool(np.any(combined_threshold))
         fi_thresh = first_pixels[combined_threshold]
         si_thresh = second_pixels[combined_threshold]
-        labels_thresh = object_labels[combined_threshold]
-        total_first_threshold = np.asarray(
-            scipy.ndimage.sum(
-                first_pixels[first_above_threshold],
-                object_labels[first_above_threshold],
-                label_range,
-            ),
-            dtype=float,
+        threshold_aggregation = label_aggregation.subset(combined_threshold)
+
+    if options.do_costes and full_fi.size:
+        if costes_thresholds is not None:
+            threshold_c1 = costes_thresholds.first
+            threshold_c2 = costes_thresholds.second
+        elif options.costes_method == CostesMethod.FASTER:
+            threshold_c1, threshold_c2 = _bisection_costes(
+                full_fi,
+                full_si,
+                options.scale_max,
+                backend_provider=options.costes_backend_provider,
+            )
+        else:
+            threshold_c1, threshold_c2 = _linear_costes(
+                full_fi,
+                full_si,
+                options.scale_max,
+                options.costes_method == CostesMethod.FAST,
+                backend_provider=options.costes_backend_provider,
+            )
+        costes_threshold_1.fill(threshold_c1)
+        costes_threshold_2.fill(threshold_c2)
+        first_costes_denominator_threshold = _costes_first_channel_bin_threshold(
+            threshold_c1,
+            options.scale_max,
         )
-        total_second_threshold = np.asarray(
-            scipy.ndimage.sum(
-                second_pixels[second_above_threshold],
-                object_labels[second_above_threshold],
-                label_range,
-            ),
-            dtype=float,
+    if any((options.do_manders, options.do_rwc, options.do_overlap)):
+        (
+            total_first_threshold,
+            total_second_threshold,
+            threshold_sum1,
+            threshold_sum2,
+            threshold_sum1_sq,
+            threshold_sum2_sq,
+            threshold_product_sum,
+            _total_first_costes,
+            _total_second_costes,
+            _costes_sum1,
+            _costes_sum2,
+        ) = _object_colocalization_threshold_reductions(
+            first_pixels,
+            second_pixels,
+            object_labels,
+            threshold_1,
+            threshold_2,
+            0.0,
+            0.0,
+            0.0,
+            max_label,
         )
 
-    if options.do_manders and np.any(combined_threshold):
-        manders_m1 = _divide_measurements(
-            scipy.ndimage.sum(fi_thresh, labels_thresh, label_range),
-            total_first_threshold,
-        )
-        manders_m2 = _divide_measurements(
-            scipy.ndimage.sum(si_thresh, labels_thresh, label_range),
-            total_second_threshold,
-        )
+    if options.do_manders and combined_threshold_has_values:
+        manders_m1 = _divide_measurements(threshold_sum1, total_first_threshold)
+        manders_m2 = _divide_measurements(threshold_sum2, total_second_threshold)
 
     if options.do_rwc:
         rank1 = np.lexsort((object_labels, first_pixels))
@@ -1337,128 +1619,57 @@ def measure_colocalization_objects(
         rank_delta = abs(rank_image_1 - rank_image_2)
         weight = (max_rank - rank_delta) * 1.0 / max_rank
         weight_threshold = weight[combined_threshold]
-        if np.any(combined_threshold):
+        if combined_threshold_has_values:
             rwc1 = _divide_measurements(
-                scipy.ndimage.sum(
-                    fi_thresh * weight_threshold,
-                    labels_thresh,
-                    label_range,
-                ),
+                threshold_aggregation.sum(fi_thresh * weight_threshold),
                 total_first_threshold,
             )
             rwc2 = _divide_measurements(
-                scipy.ndimage.sum(
-                    si_thresh * weight_threshold,
-                    labels_thresh,
-                    label_range,
-                ),
+                threshold_aggregation.sum(si_thresh * weight_threshold),
                 total_second_threshold,
             )
 
-    if options.do_overlap:
-        if np.any(combined_threshold):
-            first_sq = np.asarray(
-                scipy.ndimage.sum(
-                    first_pixels[combined_threshold] ** 2,
-                    labels_thresh,
-                    label_range,
-                ),
-                dtype=float,
-            )
-            second_sq = np.asarray(
-                scipy.ndimage.sum(
-                    second_pixels[combined_threshold] ** 2,
-                    labels_thresh,
-                    label_range,
-                ),
-                dtype=float,
-            )
-            product_sum = np.asarray(
-                scipy.ndimage.sum(
-                    fi_thresh * si_thresh,
-                    labels_thresh,
-                    label_range,
-                ),
-                dtype=float,
-            )
-            overlap = _divide_measurements(
-                product_sum,
-                np.sqrt(first_sq * second_sq),
-            )
-            k1 = _divide_measurements(product_sum, first_sq)
-            k2 = _divide_measurements(product_sum, second_sq)
+    if options.do_overlap and combined_threshold_has_values:
+        overlap = _divide_measurements(
+            threshold_product_sum,
+            np.sqrt(threshold_sum1_sq * threshold_sum2_sq),
+        )
+        k1 = _divide_measurements(threshold_product_sum, threshold_sum1_sq)
+        k2 = _divide_measurements(threshold_product_sum, threshold_sum2_sq)
 
     if options.do_costes and full_fi.size:
-        if options.costes_method == CostesMethod.FASTER:
-            threshold_c1, threshold_c2 = _bisection_costes(
-                full_fi,
-                full_si,
-                options.scale_max,
-                backend_provider=options.costes_backend_provider,
-            )
-        else:
-            threshold_c1, threshold_c2 = _linear_costes(
-                full_fi,
-                full_si,
-                options.scale_max,
-                options.costes_method == CostesMethod.FAST,
-                backend_provider=options.costes_backend_provider,
-            )
-        costes_threshold_1.fill(threshold_c1)
-        costes_threshold_2.fill(threshold_c2)
         first_above_costes = _costes_above_threshold(first_pixels, threshold_c1)
         second_above_costes = _costes_above_threshold(second_pixels, threshold_c2)
         combined_costes = first_above_costes & second_above_costes
-        first_costes_denominator_threshold = _costes_first_channel_bin_threshold(
-            threshold_c1,
-            options.scale_max,
-        )
         total_first_costes = (
-            np.asarray(
-                scipy.ndimage.sum(
-                    first_pixels[first_pixels >= first_costes_denominator_threshold],
-                    object_labels[first_pixels >= first_costes_denominator_threshold],
-                    label_range,
-                ),
-                dtype=float,
-            )
+            label_aggregation.subset(
+                first_pixels >= first_costes_denominator_threshold
+            ).sum(first_pixels[first_pixels >= first_costes_denominator_threshold])
             if np.any(first_above_costes)
             else np.zeros(max_label, dtype=float)
         )
         total_second_costes = (
-            np.asarray(
-                scipy.ndimage.sum(
-                    second_pixels[second_pixels >= threshold_c2],
-                    object_labels[second_pixels >= threshold_c2],
-                    label_range,
-                ),
-                dtype=float,
+            label_aggregation.subset(second_pixels >= threshold_c2).sum(
+                second_pixels[second_pixels >= threshold_c2]
             )
             if np.any(second_above_costes)
             else np.zeros(max_label, dtype=float)
         )
         if np.any(combined_costes):
+            costes_aggregation = label_aggregation.subset(combined_costes)
             costes_m1 = _divide_costes_measurements(
-                scipy.ndimage.sum(
-                    first_pixels[combined_costes],
-                    object_labels[combined_costes],
-                    label_range,
-                ),
+                costes_aggregation.sum(first_pixels[combined_costes]),
                 total_first_costes,
             )
             costes_m2 = _divide_costes_measurements(
-                scipy.ndimage.sum(
-                    second_pixels[combined_costes],
-                    object_labels[combined_costes],
-                    label_range,
-                ),
+                costes_aggregation.sum(second_pixels[combined_costes]),
                 total_second_costes,
             )
 
     return (
         _channel_output_payload(image, image_data, channel_1),
         [
-            _object_colocalization_row(
+            ObjectColocalizationMeasurements.from_values(
                 int(object_label),
                 correlation=corr[index],
                 slope=slope[index],
@@ -1478,6 +1689,230 @@ def measure_colocalization_objects(
             for index, object_label in enumerate(label_range)
         ],
     )
+
+
+@dataclass(frozen=True)
+class ColocalizationCostesThresholdRequest:
+    """Resolved inputs needed to compute one image-pair Costes threshold."""
+
+    image: object
+    image_data: np.ndarray
+    channel_1: int
+    channel_2: int
+    method: CostesMethod
+    scale_max: int
+    backend_provider: BackendProviderInput | None
+    image_pair_context: ColocalizationImagePairContext | None = None
+
+    @property
+    def cache_key(self) -> tuple[object, ...]:
+        """Return the batch-local identity for this resolved source pair."""
+        return (
+            id(self.image_data),
+            self.channel_1,
+            self.channel_2,
+            self.method,
+            self.scale_max,
+            self.backend_provider,
+        )
+
+    @classmethod
+    def from_batch_request(
+        cls,
+        request: RuntimeBatchInvocationRequest,
+        image_pair_context: ColocalizationImagePairContext | None = None,
+    ) -> "ColocalizationCostesThresholdRequest | None":
+        """Build a Costes request from runtime invocation metadata."""
+        kwargs = request.kwargs
+        if not bool(kwargs.get("do_costes", True)):
+            return None
+        image_data = (
+            image_pair_context.image_data
+            if image_pair_context is not None
+            else image_payload_data(request.image)
+        )
+        channel_1 = int(kwargs.get("channel_1", 0))
+        channel_2 = int(kwargs.get("channel_2", 1))
+        return cls(
+            image=request.image,
+            image_data=image_data,
+            channel_1=channel_1,
+            channel_2=channel_2,
+            method=CostesMethod(kwargs.get("costes_method", CostesMethod.FASTER)),
+            scale_max=_costes_scale_max(
+                request.image,
+                image_data,
+                channel_1,
+                channel_2,
+                kwargs.get("scale_max"),
+            ),
+            backend_provider=kwargs.get("costes_backend_provider"),
+            image_pair_context=image_pair_context,
+        )
+
+    def thresholds(self) -> ColocalizationCostesThresholds:
+        """Compute Costes thresholds for this resolved image source pair."""
+        if self.image_pair_context is None:
+            image_pair_context = ColocalizationImagePairContext.from_request(
+                self.image,
+                channel_1=self.channel_1,
+                channel_2=self.channel_2,
+            )
+        else:
+            image_pair_context = self.image_pair_context
+        first_pixels = image_pair_context.full_first_pixels
+        second_pixels = image_pair_context.full_second_pixels
+        if not first_pixels.size:
+            return ColocalizationCostesThresholds(0.0, 0.0)
+        if self.method is CostesMethod.FASTER:
+            first, second = _bisection_costes(
+                first_pixels,
+                second_pixels,
+                self.scale_max,
+                backend_provider=self.backend_provider,
+            )
+        else:
+            first, second = _linear_costes(
+                first_pixels,
+                second_pixels,
+                self.scale_max,
+                self.method is CostesMethod.FAST,
+                backend_provider=self.backend_provider,
+            )
+        return ColocalizationCostesThresholds(first, second)
+
+
+class ColocalizationCostesThresholdBatch:
+    """Batch-local Costes threshold cache keyed by resolved image-pair identity."""
+
+    def __init__(self) -> None:
+        self._thresholds: dict[tuple[object, ...], ColocalizationCostesThresholds] = {}
+        self._image_pairs: dict[tuple[object, ...], ColocalizationImagePairContext] = {}
+        self._label_contexts: dict[
+            tuple[object, ...],
+            ColocalizationObjectLabelContext,
+        ] = {}
+
+    def image_pair_context(
+        self,
+        request: RuntimeBatchInvocationRequest,
+    ) -> ColocalizationImagePairContext:
+        """Return the batch-local resolved image-pair context."""
+        kwargs = request.kwargs
+        image_data = image_payload_data(request.image)
+        channel_1 = int(kwargs.get("channel_1", 0))
+        channel_2 = int(kwargs.get("channel_2", 1))
+        key = (id(image_data), channel_1, channel_2)
+        context = self._image_pairs.get(key)
+        if context is None:
+            context = ColocalizationImagePairContext.from_request(
+                request.image,
+                channel_1=channel_1,
+                channel_2=channel_2,
+            )
+            self._image_pairs[key] = context
+        return context
+
+    def object_label_context(
+        self,
+        request: RuntimeBatchInvocationRequest,
+        image_pair_context: ColocalizationImagePairContext,
+    ) -> ColocalizationObjectLabelContext:
+        """Return the batch-local resolved object-label context."""
+        labels = request.kwargs["labels"]
+        label_array = object_label_dense_array(labels, dtype=np.int32)
+        key = (id(label_array), id(image_pair_context.pair_valid_mask))
+        context = self._label_contexts.get(key)
+        if context is None:
+            context = ColocalizationObjectLabelContext.from_dense_labels(
+                label_array,
+                pair_valid_mask=image_pair_context.pair_valid_mask,
+            )
+            self._label_contexts[key] = context
+        return context
+
+    def request_kwargs(
+        self,
+        request: RuntimeBatchInvocationRequest,
+    ) -> dict[str, object]:
+        """Return request kwargs with source-pair thresholds materialized once."""
+        image_pair_context = self.image_pair_context(request)
+        object_label_context = self.object_label_context(request, image_pair_context)
+        threshold_request = ColocalizationCostesThresholdRequest.from_batch_request(
+            request,
+            image_pair_context,
+        )
+        thresholds = None
+        if threshold_request is not None:
+            key = threshold_request.cache_key
+            thresholds = self._thresholds.get(key)
+            if thresholds is None:
+                thresholds = threshold_request.thresholds()
+                self._thresholds[key] = thresholds
+        kwargs = {
+            **request.kwargs,
+            "image_pair_context": image_pair_context,
+            "object_label_context": object_label_context,
+        }
+        if thresholds is not None:
+            kwargs["costes_thresholds"] = thresholds
+        return kwargs
+
+
+def measure_colocalization_objects_batch(
+    func: Callable[..., object],
+    requests: tuple[RuntimeBatchInvocationRequest, ...],
+    execute_request: Callable[
+        [Callable[..., object], RuntimeBatchInvocationRequest],
+        object,
+    ],
+) -> list[object]:
+    """Batch object colocalization invocations over shared image-pair thresholds."""
+    threshold_batch = ColocalizationCostesThresholdBatch()
+    return [
+        execute_request(
+            func,
+            replace(request, kwargs=threshold_batch.request_kwargs(request)),
+        )
+        for request in requests
+    ]
+
+
+measurement_image_batch_executor(measure_colocalization_objects_batch)(
+    measure_colocalization_objects
+)
+
+
+def _prepare_measure_colocalization_objects() -> None:
+    """Compile object-colocalization reduction kernels before measured execution."""
+    first_pixels = np.linspace(0.0, 1.0, 16, dtype=np.float64)
+    second_pixels = np.linspace(1.0, 0.0, 16, dtype=np.float64)
+    object_labels = np.repeat(np.arange(1, 5, dtype=np.int32), 4)
+    object_count = 4
+    reductions = _object_colocalization_base_reductions(
+        first_pixels,
+        second_pixels,
+        object_labels,
+        object_count,
+    )
+    threshold_1 = 0.15 * reductions[6]
+    threshold_2 = 0.15 * reductions[7]
+    _object_colocalization_threshold_reductions(
+        first_pixels,
+        second_pixels,
+        object_labels,
+        threshold_1,
+        threshold_2,
+        0.1,
+        0.1,
+        0.1,
+        object_count,
+    )
+
+
+measure_colocalization_objects.__openhcs_prepare__ = (
+    _prepare_measure_colocalization_objects
+)
 
 
 def _divide_measurements(numerator: object, denominator: object) -> np.ndarray:
@@ -1504,47 +1939,3 @@ def _costes_first_channel_bin_threshold(threshold: float, scale_max: int) -> flo
     if np.isclose(scaled_threshold, nearest_bin, rtol=0.0, atol=1e-3):
         return nearest_bin / scale_max
     return float(threshold)
-
-
-def _object_colocalization_row(
-    object_label: int,
-    *,
-    correlation: float = 0.0,
-    slope: float = 0.0,
-    slope_reverse: float = 0.0,
-    overlap: float = 0.0,
-    k1: float = 0.0,
-    k2: float = 0.0,
-    manders_m1: float = 0.0,
-    manders_m2: float = 0.0,
-    rwc1: float = 0.0,
-    rwc2: float = 0.0,
-    costes_m1: float = 0.0,
-    costes_m2: float = 0.0,
-    costes_threshold_1: float = 0.0,
-    costes_threshold_2: float = 0.0,
-) -> ObjectColocalizationMeasurements:
-    return ObjectColocalizationMeasurements(
-        slice_index=0,
-        object_label=object_label,
-        correlation=float(correlation) if np.isfinite(correlation) else 0.0,
-        slope=float(slope) if np.isfinite(slope) else 0.0,
-        slope_reverse=(
-            float(slope_reverse) if np.isfinite(slope_reverse) else 0.0
-        ),
-        overlap=float(overlap) if np.isfinite(overlap) else 0.0,
-        k1=float(k1) if np.isfinite(k1) else 0.0,
-        k2=float(k2) if np.isfinite(k2) else 0.0,
-        manders_m1=float(manders_m1) if np.isfinite(manders_m1) else 0.0,
-        manders_m2=float(manders_m2) if np.isfinite(manders_m2) else 0.0,
-        rwc1=float(rwc1) if np.isfinite(rwc1) else 0.0,
-        rwc2=float(rwc2) if np.isfinite(rwc2) else 0.0,
-        costes_m1=float(costes_m1),
-        costes_m2=float(costes_m2),
-        costes_threshold_1=(
-            float(costes_threshold_1) if np.isfinite(costes_threshold_1) else 0.0
-        ),
-        costes_threshold_2=(
-            float(costes_threshold_2) if np.isfinite(costes_threshold_2) else 0.0
-        ),
-    )

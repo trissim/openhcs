@@ -42,12 +42,12 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
 )
 import benchmark.cellprofiler_library.functions.identifyprimaryobjects as identifyprimaryobjects_module
 from benchmark.cellprofiler_library.functions.measurecolocalization import (
+    ObjectColocalizationMeasurements,
     measure_colocalization,
     measure_colocalization_objects,
     _bisection_costes,
     _costes_first_channel_bin_threshold,
     _divide_costes_measurements,
-    _object_colocalization_row,
     _thresholded_colocalization_metrics_numba,
 )
 from benchmark.cellprofiler_library.functions.opening import opening
@@ -626,7 +626,7 @@ def test_examplefly_absorbed_functions_import_cleanly():
 
 def test_measure_colocalization_object_costes_preserves_undefined_ratios():
     ratios = _divide_costes_measurements([0.0, 2.0], [0.0, 4.0])
-    row = _object_colocalization_row(
+    row = ObjectColocalizationMeasurements.from_values(
         1,
         costes_m1=ratios[0],
         costes_m2=ratios[1],
@@ -2388,6 +2388,27 @@ def test_medianfilter_honors_explicit_reflect_mode():
     )
     expected = scipy_median_filter(image, size=3, mode="reflect").astype(image.dtype)
 
+    np.testing.assert_array_equal(observed, expected)
+
+
+def test_medianfilter_vectorized_volume_path_matches_scipy_constant():
+    from scipy.ndimage import median_filter as scipy_median_filter
+
+    from openhcs.processing.backends.cellprofiler.median_filter import median_filter_backend
+
+    rng = np.random.default_rng(123)
+    image = rng.random((5, 9, 7), dtype=np.float32)
+    image[0, 0, 0] = 0.0
+    image[-1, -1, -1] = 1.0
+
+    observed = median_filter_backend().vectorized_window_filter(
+        image,
+        window_size=5,
+        mode="constant",
+    )
+    expected = scipy_median_filter(image, size=5, mode="constant").astype(image.dtype)
+
+    assert observed is not None
     np.testing.assert_array_equal(observed, expected)
 
 

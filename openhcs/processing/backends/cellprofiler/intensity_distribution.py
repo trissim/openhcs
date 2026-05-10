@@ -23,6 +23,10 @@ from openhcs.processing.backends.cellprofiler._backend import (
     cellprofiler_backend_key,
 )
 from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
+from openhcs.processing.backends.cellprofiler.secondary import (
+    SecondaryPropagationBackendStrategy,
+    secondary_propagation_backend,
+)
 
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
@@ -67,6 +71,38 @@ class RadialCenterDistanceFields:
 
 
 @dataclass(frozen=True, slots=True)
+class RadialCenterPropagationRequest:
+    """Nearest-center propagation for radial intensity-distribution geometry."""
+
+    center_labels: np.ndarray
+    colors: np.ndarray
+    propagation_backend: SecondaryPropagationBackendStrategy
+
+    def fields(self) -> tuple[np.ndarray, np.ndarray]:
+        """Return center distances and propagated center labels by color mask."""
+        d_from_center = np.zeros(self.center_labels.shape, dtype=float)
+        propagated_center_labels = np.zeros(self.center_labels.shape, dtype=int)
+        max_color = int(np.max(self.colors)) if self.colors.size else 0
+        seed_labels = np.asarray(self.center_labels, dtype=np.int32)
+        for color in range(1, max_color + 1):
+            mask = self.colors == color
+            seed_mask = mask & (seed_labels > 0)
+            if not np.any(seed_mask):
+                continue
+            propagation = self.propagation_backend.propagate_result(
+                np.zeros(seed_labels.shape, dtype=float),
+                seed_labels,
+                mask,
+                1,
+            )
+            propagated_labels = propagation.labels
+            distances = propagation.distances
+            d_from_center[mask] = distances[mask]
+            propagated_center_labels[mask] = propagated_labels[mask]
+        return d_from_center, propagated_center_labels
+
+
+@dataclass(frozen=True, slots=True)
 class RadialLabelGeometryCacheKey:
     """Content identity for radial geometry derived only from object labels."""
 
@@ -102,6 +138,13 @@ class RadialDistributionBackendStrategy(
 
     __registry_key__ = "backend_key"
     __skip_if_no_key__ = True
+    center_propagation_backend_provider = CellProfilerBackendProvider.NUMBA
+
+    def center_propagation_backend(self) -> SecondaryPropagationBackendStrategy:
+        """Return the propagation backend used for center-distance geometry."""
+        return secondary_propagation_backend(
+            backend_provider=self.center_propagation_backend_provider,
+        )
 
     @abstractmethod
     def measure(
@@ -191,19 +234,12 @@ class RadialDistributionBackendStrategy(
             objects=object_count,
             colors=int(np.max(colors)) if colors.size else 0,
         )
-        d_from_center = np.zeros(labels_array.shape, dtype=float)
-        propagated_center_labels = np.zeros(labels_array.shape, dtype=int)
         phase_started_at = time.perf_counter()
-        for color in range(1, int(np.max(colors)) + 1):
-            mask = colors == color
-            propagated_labels, propagated_distances = shape_backend.propagate(
-                np.zeros(center_labels.shape),
-                center_labels,
-                mask,
-                1,
-            )
-            d_from_center[mask] = propagated_distances[mask]
-            propagated_center_labels[mask] = propagated_labels[mask]
+        d_from_center, propagated_center_labels = RadialCenterPropagationRequest(
+            center_labels=center_labels,
+            colors=colors,
+            propagation_backend=self.center_propagation_backend(),
+        ).fields()
         _log_profile(
             "idist_center_propagate",
             time.perf_counter() - phase_started_at,

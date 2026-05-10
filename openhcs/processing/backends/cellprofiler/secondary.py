@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -15,6 +16,14 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class LabelPropagationResult:
+    """Regularized propagation labels and cumulative distances."""
+
+    labels: np.ndarray
+    distances: np.ndarray
 
 
 class SecondaryDistanceTransformBackendStrategy(
@@ -120,6 +129,15 @@ class SecondaryPropagationBackendStrategy(
     __skip_if_no_key__ = True
 
     @abstractmethod
+    def propagate_result(
+        self,
+        image: np.ndarray,
+        labels: np.ndarray,
+        mask: np.ndarray,
+        regularization: float,
+    ) -> LabelPropagationResult:
+        """Propagate seed labels through a mask and retain cumulative distances."""
+
     def propagate(
         self,
         image: np.ndarray,
@@ -130,6 +148,15 @@ class SecondaryPropagationBackendStrategy(
         max_distance: float | None = None,
     ) -> np.ndarray:
         """Propagate seed labels through a mask."""
+        result = self.propagate_result(image, labels, mask, regularization)
+        propagated = np.asarray(result.labels, dtype=np.int32)
+        if max_distance is None:
+            return propagated
+        filtered = propagated.copy()
+        source_labels = np.asarray(labels, dtype=np.int32)
+        filtered[np.asarray(result.distances, dtype=np.float64) > float(max_distance)] = 0
+        filtered[source_labels > 0] = source_labels[source_labels > 0]
+        return filtered
 
 
 class CentrosomeSecondaryPropagationBackendStrategy(
@@ -145,30 +172,31 @@ class CentrosomeSecondaryPropagationBackendStrategy(
     backend_provider = CellProfilerBackendProvider.CENTROSOME
     is_default_backend = False
 
-    def propagate(
+    def propagate_result(
         self,
         image: np.ndarray,
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
-        *,
-        max_distance: float | None = None,
-    ) -> np.ndarray:
+    ) -> LabelPropagationResult:
         import centrosome.propagate
 
         if np.max(labels) == 0:
-            return np.asarray(labels, dtype=np.int32).copy()
-        result, _distance = centrosome.propagate.propagate(
+            label_array = np.asarray(labels, dtype=np.int32).copy()
+            return LabelPropagationResult(
+                labels=label_array,
+                distances=np.zeros(label_array.shape, dtype=np.float64),
+            )
+        result, distance = centrosome.propagate.propagate(
             image,
             labels,
             mask,
             regularization,
         )
-        if max_distance is not None:
-            result = np.asarray(result).copy()
-            result[_distance > float(max_distance)] = 0
-            result[labels > 0] = labels[labels > 0]
-        return np.asarray(result, dtype=np.int32)
+        return LabelPropagationResult(
+            labels=np.asarray(result, dtype=np.int32),
+            distances=np.asarray(distance, dtype=np.float64),
+        )
 
 
 class NumbaSecondaryPropagationBackendStrategy(
@@ -184,15 +212,13 @@ class NumbaSecondaryPropagationBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
-    def propagate(
+    def propagate_result(
         self,
         image: np.ndarray,
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
-        *,
-        max_distance: float | None = None,
-    ) -> np.ndarray:
+    ) -> LabelPropagationResult:
         image_array = np.asarray(image, dtype=np.float64)
         label_array = np.asarray(labels, dtype=np.int32)
         mask_array = np.asarray(mask, dtype=np.bool_)
@@ -203,14 +229,28 @@ class NumbaSecondaryPropagationBackendStrategy(
         if image_array.shape != label_array.shape or image_array.shape != mask_array.shape:
             raise ValueError("image, labels, and mask must have the same shape.")
         if np.max(label_array) == 0:
-            return label_array.copy()
-        return _propagate_labels_numba(
+            return LabelPropagationResult(
+                labels=label_array.copy(),
+                distances=np.zeros(label_array.shape, dtype=np.float64),
+            )
+        propagated, distances = _propagate_labels_and_distances_numba(
             np.ascontiguousarray(image_array),
             np.ascontiguousarray(label_array),
             np.ascontiguousarray(mask_array),
             float(regularization),
-            -1.0 if max_distance is None else float(max_distance),
         )
+        return LabelPropagationResult(labels=propagated, distances=distances)
+
+
+def secondary_propagation_backend(
+    *,
+    backend_provider: BackendProviderInput | None = None,
+) -> SecondaryPropagationBackendStrategy:
+    """Return the selected secondary propagation backend."""
+    return SecondaryPropagationBackendStrategy.for_memory_type(
+        MemoryType.NUMPY,
+        backend_provider=backend_provider,
+    )
 
 
 @njit(cache=True, parallel=True)
@@ -498,6 +538,28 @@ def _propagate_labels_numba(
     weight: float,
     max_distance: float,
 ) -> np.ndarray:
+    output, distances = _propagate_labels_and_distances_numba(
+        image,
+        seed_labels,
+        mask,
+        weight,
+    )
+    if max_distance >= 0.0:
+        height, width = output.shape
+        for y in range(height):
+            for x in range(width):
+                if distances[y, x] > max_distance and seed_labels[y, x] <= 0:
+                    output[y, x] = 0
+    return output
+
+
+@njit(cache=True)
+def _propagate_labels_and_distances_numba(
+    image: np.ndarray,
+    seed_labels: np.ndarray,
+    mask: np.ndarray,
+    weight: float,
+) -> tuple[np.ndarray, np.ndarray]:
     height, width = image.shape
     output = np.zeros((height, width), dtype=np.int32)
     distances = np.empty((height, width), dtype=np.float64)
@@ -544,8 +606,6 @@ def _propagate_labels_numba(
             heap_xs,
             heap_size,
         )
-        if max_distance >= 0.0 and _value > max_distance:
-            break
         if output[y1, x1] != 0:
             continue
         output[y1, x1] = label
@@ -582,7 +642,7 @@ def _propagate_labels_numba(
         for x in range(width):
             if seed_labels[y, x] > 0:
                 output[y, x] = seed_labels[y, x]
-    return output
+    return output, distances
 
 
 @njit(cache=True)
@@ -610,9 +670,11 @@ def _propagation_seed_frontier_pixel(
 
 __all__ = [
     "CentrosomeSecondaryPropagationBackendStrategy",
+    "LabelPropagationResult",
     "NumbaSecondaryPropagationBackendStrategy",
     "NumbaSecondaryDistanceTransformBackendStrategy",
     "NumpySecondaryDistanceTransformBackendStrategy",
     "SecondaryDistanceTransformBackendStrategy",
     "SecondaryPropagationBackendStrategy",
+    "secondary_propagation_backend",
 ]

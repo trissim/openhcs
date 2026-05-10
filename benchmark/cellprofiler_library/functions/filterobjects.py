@@ -1207,7 +1207,7 @@ def _derived_measurement_values(
     labels: np.ndarray,
     object_ids: tuple[int, ...],
 ) -> ObjectLabelMeasurementValues | None:
-    """Return derived values when an upstream measurement table is unavailable."""
+    """Return values for label-intrinsic features from current geometry."""
     strategy = DerivedMeasurementValuesStrategy.for_feature_name(feature_name)
     if strategy is None:
         return None

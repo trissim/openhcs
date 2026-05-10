@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from functools import lru_cache
 from dataclasses import dataclass
 from enum import Enum
 from collections.abc import Mapping
@@ -138,6 +139,7 @@ class CellProfilerSourcePairFeature(ABC, metaclass=AutoRegisterMeta):
     feature_family: ClassVar[str | None] = None
 
     @classmethod
+    @lru_cache(maxsize=None)
     def all(cls) -> tuple["CellProfilerSourcePairFeature", ...]:
         """Return registered source-pair feature policies in declaration order."""
         return tuple(
@@ -147,9 +149,22 @@ class CellProfilerSourcePairFeature(ABC, metaclass=AutoRegisterMeta):
         )
 
     @classmethod
+    @lru_cache(maxsize=None)
     def source_field_names(cls) -> frozenset[str]:
         """Return raw result fields owned by source-pair feature policies."""
         return frozenset(feature.source_field_name for feature in cls.all())
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def runtime_feature_names_for_pair(
+        cls,
+        source_pair: CellProfilerSourceImagePair,
+    ) -> Mapping[str, str]:
+        """Return raw-field to runtime-feature names for one source pair."""
+        return {
+            feature.source_field_name: feature.runtime_feature_name(source_pair)
+            for feature in cls.all()
+        }
 
     @property
     def source_field_name(self) -> str:

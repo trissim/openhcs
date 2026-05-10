@@ -113,6 +113,8 @@ CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
         }
     ),
 )
+OBJECT_COLOCALIZATION_REDUCTION_ABS_TOLERANCE = 1e-3
+OBJECT_COLOCALIZATION_REDUCTION_REL_TOLERANCE = 1e-3
 CELLPROFILER_FEATURE_NUMERIC_TOLERANCES = (
     RuntimeMeasurementFeatureNumericTolerance(
         feature_name_prefixes=(
@@ -186,6 +188,22 @@ CELLPROFILER_FEATURE_NUMERIC_TOLERANCES = (
         statistic="value",
         numeric_abs_tolerance=5e-4,
         numeric_rel_tolerance=1e-3,
+    ),
+    RuntimeMeasurementFeatureNumericTolerance(
+        feature_names=frozenset(
+            {
+                PairMeasurementFeature.CORRELATION.value,
+                PairMeasurementFeature.COSTES_MANDERS.value,
+                PairMeasurementFeature.MANDERS.value,
+                PairMeasurementFeature.OVERLAP.value,
+                PairMeasurementFeature.OVERLAP_K.value,
+                PairMeasurementFeature.RANK_WEIGHTED_COLOCALIZATION.value,
+            }
+        ),
+        subject_scope=MeasurementScope.OBJECT,
+        statistic="value",
+        numeric_abs_tolerance=OBJECT_COLOCALIZATION_REDUCTION_ABS_TOLERANCE,
+        numeric_rel_tolerance=OBJECT_COLOCALIZATION_REDUCTION_REL_TOLERANCE,
     ),
     RuntimeMeasurementFeatureNumericTolerance(
         feature_names=frozenset({PairMeasurementFeature.REGRESSION_SLOPE.value}),

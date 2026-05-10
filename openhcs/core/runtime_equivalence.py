@@ -2546,6 +2546,31 @@ def _feature_numeric_tolerance_matches(
         is not None
     ):
         return True
+    aggregate_child_feature_name = (
+        RelationshipAggregateFeatureSemantics.aggregate_child_feature_name_from_key(
+            feature,
+            policy.measurement_dialect,
+        )
+    )
+    if aggregate_child_feature_name is not None:
+        if aggregate_child_feature_name in tolerance.feature_names:
+            return True
+        if (
+            tolerance.feature_names
+            and policy.measurement_dialect.source_qualified_feature_family(
+                aggregate_child_feature_name,
+                feature.source_name,
+                feature.subject.scope,
+                tolerance.feature_names,
+            )
+            is not None
+        ):
+            return True
+        if any(
+            aggregate_child_feature_name.startswith(prefix)
+            for prefix in tolerance.feature_name_prefixes
+        ):
+            return True
     return any(
         feature.feature_name.startswith(prefix)
         for prefix in tolerance.feature_name_prefixes

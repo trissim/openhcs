@@ -12,6 +12,9 @@ from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     NumbaNumpyRadialDistributionBackendStrategy,
     radial_distribution_backend,
 )
+from openhcs.processing.backends.cellprofiler.secondary import (
+    secondary_propagation_backend,
+)
 
 
 def test_native_radial_distribution_excludes_pixels_without_valid_center():
@@ -156,6 +159,26 @@ def test_explicit_numba_radial_provider_remains_available():
     )
 
     assert selected.backend_provider is CellProfilerBackendProvider.NUMBA
+
+
+def test_numba_propagation_result_matches_centrosome_distances():
+    image = np.arange(64, dtype=np.float64).reshape((8, 8)) / 64.0
+    labels = np.zeros((8, 8), dtype=np.int32)
+    labels[2, 2] = 1
+    labels[2, 5] = 2
+    labels[6, 4] = 3
+    mask = np.ones((8, 8), dtype=bool)
+    mask[4, 1:6] = False
+
+    reference = secondary_propagation_backend(
+        backend_provider=CellProfilerBackendProvider.CENTROSOME,
+    ).propagate_result(image, labels, mask, 1)
+    accelerated = secondary_propagation_backend(
+        backend_provider=CellProfilerBackendProvider.NUMBA,
+    ).propagate_result(image, labels, mask, 1)
+
+    np.testing.assert_array_equal(accelerated.labels, reference.labels)
+    np.testing.assert_allclose(accelerated.distances, reference.distances)
 
 
 def test_numba_self_centered_radial_distribution_matches_native_reference():

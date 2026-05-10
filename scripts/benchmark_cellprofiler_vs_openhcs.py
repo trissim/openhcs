@@ -32,6 +32,14 @@ def main() -> int:
     run_parser.add_argument("--native-reference-root", type=Path)
     run_parser.add_argument("--discard-openhcs-outputs", action="store_true")
     run_parser.add_argument("--continue-on-error", action="store_true")
+    run_parser.add_argument(
+        "--no-memory-metric",
+        action="store_true",
+        help=(
+            "Collect execution-time metrics only. Use this for speed target "
+            "runs where background RSS sampling would perturb Python runtime."
+        ),
+    )
     run_parser.add_argument("--suite-id")
     run_parser.add_argument("--repeats", type=int, default=1)
     run_parser.add_argument(
@@ -123,6 +131,7 @@ def main() -> int:
 def _run_command(args: argparse.Namespace) -> int:
     configure_headless_cpu_benchmark_runtime(args.log_level)
     from benchmark.cellprofiler_comparison import (
+        ComparisonMetricPolicy,
         load_comparison_cases,
         run_comparison_suite,
     )
@@ -140,6 +149,9 @@ def _run_command(args: argparse.Namespace) -> int:
         continue_on_error=args.continue_on_error,
         openhcs_axis_filter=tuple(args.openhcs_axis_filter or ()),
         openhcs_max_axis_count=args.openhcs_max_axis_count,
+        metric_policy=ComparisonMetricPolicy(
+            collect_memory=not args.no_memory_metric,
+        ),
     )
     print(f"suite_id={suite_id}")
     print(f"observations={len(observations)}")
