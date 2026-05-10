@@ -16,6 +16,7 @@ from openhcs.interop.cellprofiler.measurement_scope import (
 )
 from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.interop.cellprofiler.align_settings import align_bound_kwargs
 from openhcs.interop.cellprofiler.area_occupied_settings import (
     area_occupied_bound_kwargs,
@@ -748,6 +749,44 @@ class CellProfilerThresholdScope(Enum):
     ADAPTIVE = "adaptive"
 
 
+class ThresholdMethodRowSelectionPolicy(
+    EnumKeyedStrategyMixin[CellProfilerThresholdScope],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Select the active threshold-method row for one threshold scope."""
+
+    __registry_key__ = "scope_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "scope"
+    __enum_label_attr__ = "scope_label"
+
+    scope: ClassVar[CellProfilerThresholdScope | None] = None
+    scope_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def selected_value(self, values: tuple[str, ...]) -> str:
+        """Return the CellProfiler threshold-method value active for this scope."""
+
+
+class GlobalThresholdMethodRowSelectionPolicy(ThresholdMethodRowSelectionPolicy):
+    """Global thresholding uses the first method row in upgraded CP settings."""
+
+    scope = CellProfilerThresholdScope.GLOBAL
+
+    def selected_value(self, values: tuple[str, ...]) -> str:
+        return values[0]
+
+
+class AdaptiveThresholdMethodRowSelectionPolicy(ThresholdMethodRowSelectionPolicy):
+    """Adaptive thresholding uses the local-method row in upgraded CP settings."""
+
+    scope = CellProfilerThresholdScope.ADAPTIVE
+
+    def selected_value(self, values: tuple[str, ...]) -> str:
+        return values[-1]
+
+
 class ThresholdMethodRepeatedSettingValuePolicy(RepeatedSettingValuePolicy):
     """Resolve CP's global/local threshold method rows from threshold scope."""
 
@@ -760,10 +799,10 @@ class ThresholdMethodRepeatedSettingValuePolicy(RepeatedSettingValuePolicy):
         values: tuple[str, ...],
     ) -> str:
         scope = _threshold_scope(module)
-        if scope is CellProfilerThresholdScope.GLOBAL:
-            return values[0]
-        if scope is CellProfilerThresholdScope.ADAPTIVE:
-            return values[-1]
+        if scope is not None:
+            return ThresholdMethodRowSelectionPolicy.for_enum_member(
+                scope
+            ).selected_value(values)
         raise ValueError(
             f"{module.name}({module.module_num}) has repeated "
             f"{setting_name!r} rows but no supported threshold strategy."
