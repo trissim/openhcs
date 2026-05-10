@@ -92,7 +92,9 @@ from .filter_objects_settings import (
     filter_objects_child_count_object_names,
     filter_objects_plan,
 )
-from .gray_to_color_settings import GrayToColorInputNameResolver
+from openhcs.interop.cellprofiler.gray_to_color_settings import (
+    GrayToColorInputNameResolver,
+)
 from openhcs.interop.cellprofiler.overlay_outlines_settings import (
     OverlayOutlineSourceKind,
     overlay_outline_rows,
@@ -942,28 +944,62 @@ class EllipseCropMaskInputStrategy(CropMaskInputStrategy):
         return ()
 
 
+@dataclass(frozen=True, slots=True)
+class ModuleArtifactNamePolicy:
+    """CellProfiler module-scoped generated artifact naming policy."""
+
+    module: ModuleBlock
+
+    @property
+    def measurement_name(self) -> str:
+        return f"{self.module.name}_{self.module.module_num}_measurements"
+
+    def indexed_output_image_name(
+        self,
+        output_names: tuple[str, ...],
+        index: int,
+    ) -> str:
+        try:
+            return _normalize_symbol_name(output_names[index])
+        except IndexError as exc:
+            raise ValueError(
+                f"Module {self.module.name}({self.module.module_num}) requested "
+                f"retained neighbor image {index + 1} but did not provide an "
+                "output image name."
+            ) from exc
+
+    def special_output_name(
+        self,
+        special: FunctionSpecialOutput,
+        output_names: dict[ArtifactKind, list[str]],
+        inputs: tuple[CellProfilerSymbol, ...],
+        setting_outputs: tuple[ArtifactSettingSymbol, ...],
+        *,
+        measurement_output_count: int,
+    ) -> str:
+        if special.kind is ArtifactKind.RELATIONSHIPS:
+            relationship_name = _relationship_output_name(inputs, setting_outputs)
+            if relationship_name is not None:
+                return relationship_name
+        names = output_names.get(special.kind)
+        if names:
+            return names.pop(0)
+        if special.kind is ArtifactKind.MEASUREMENTS:
+            if measurement_output_count == 1:
+                return self.measurement_name
+            return f"{self.module.name}_{self.module.module_num}_{special.name}"
+        return special.name
+
+
 def _measure_object_neighbors_output_image_names(module: ModuleBlock) -> tuple[str, ...]:
     output_names = module.get_setting_values("Name the output image")
+    name_policy = ModuleArtifactNamePolicy(module)
     outputs: list[str] = []
     if _setting_bool(module, NEIGHBOR_COUNT_IMAGE_SETTING):
-        outputs.append(_indexed_output_image_name(module, output_names, 0))
+        outputs.append(name_policy.indexed_output_image_name(output_names, 0))
     if _setting_bool(module, PERCENT_TOUCHING_IMAGE_SETTING):
-        outputs.append(_indexed_output_image_name(module, output_names, 1))
+        outputs.append(name_policy.indexed_output_image_name(output_names, 1))
     return tuple(outputs)
-
-
-def _indexed_output_image_name(
-    module: ModuleBlock,
-    output_names: tuple[str, ...],
-    index: int,
-) -> str:
-    try:
-        return _normalize_symbol_name(output_names[index])
-    except IndexError as exc:
-        raise ValueError(
-            f"Module {module.name}({module.module_num}) requested retained "
-            f"neighbor image {index + 1} but did not provide an output image name."
-        ) from exc
 
 
 def _setting_bool(
@@ -1216,7 +1252,7 @@ class WatershedContractBuilder(ModuleContractBuilder):
                 )
 
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1256,7 +1292,7 @@ class CropContractBuilder(ModuleContractBuilder):
             sidecar_role=CROP_MASK_ARTIFACT_SIDECAR.role,
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1306,7 +1342,7 @@ class FilterObjectsContractBuilder(ModuleContractBuilder):
             if output.role is FilterObjectsOutputRole.MEASUREMENTS:
                 outputs.append(
                     builder.declare(
-                        _measurement_name(module),
+                        ModuleArtifactNamePolicy(module).measurement_name,
                         CellProfilerSymbolKind.MEASUREMENTS,
                         module,
                     )
@@ -1487,7 +1523,7 @@ class AlignContractBuilder(ModuleContractBuilder):
         ]
         outputs.append(
             builder.declare(
-                _measurement_name(module),
+                ModuleArtifactNamePolicy(module).measurement_name,
                 CellProfilerSymbolKind.MEASUREMENTS,
                 module,
             )
@@ -1533,7 +1569,7 @@ class CalculateMathContractBuilder(ModuleContractBuilder):
             for name in calculate_math_object_dependencies(module)
         ]
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1556,7 +1592,7 @@ class UntangleWormsContractBuilder(ModuleContractBuilder):
             module,
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1611,7 +1647,7 @@ class StraightenWormsContractBuilder(ModuleContractBuilder):
             input_objects.producer_module_num
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1647,7 +1683,7 @@ class IdentifyPrimaryObjectsContractBuilder(ModuleContractBuilder):
             module,
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1685,7 +1721,7 @@ class IdentifySecondaryObjectsContractBuilder(ModuleContractBuilder):
             module,
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1738,7 +1774,7 @@ class IdentifyTertiaryObjectsContractBuilder(ModuleContractBuilder):
             module,
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1771,7 +1807,7 @@ class ClassifyObjectsContractBuilder(ModuleContractBuilder):
             output_setting=OUTPUT_IMAGE_SETTING,
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1809,7 +1845,7 @@ class RelateObjectsContractBuilder(ModuleContractBuilder):
             module,
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -1972,7 +2008,7 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
             for name in self.object_names(module)
         ]
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -2003,47 +2039,119 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
         return (*required, *optional)
 
 
-class MeasureObjectSizeShapeContractBuilder(MeasurementModuleContractBuilder):
-    module_name = "MeasureObjectSizeShape"
-    object_setting = OBJECT_MEASUREMENT_SETTING
+@dataclass(frozen=True, slots=True)
+class MeasurementModuleContractBuilderDeclaration:
+    """Authoritative declaration for measurement-table contract builders."""
+
+    class_name: str
+    module_name: str
+    image_setting: str | SettingNameFamily | None = None
+    object_setting: str | SettingNameFamily | None = None
+    optional_object_setting: str | SettingNameFamily | None = None
+
+    def contract_builder_type(
+        self,
+        base_type: type[MeasurementModuleContractBuilder],
+    ) -> type[MeasurementModuleContractBuilder]:
+        return type(
+            self.class_name,
+            (base_type,),
+            {
+                "__module__": __name__,
+                "module_name": self.module_name,
+                "image_setting": self.image_setting,
+                "object_setting": self.object_setting,
+                "optional_object_setting": self.optional_object_setting,
+            },
+        )
 
 
-class MeasureObjectIntensityContractBuilder(MeasurementModuleContractBuilder):
-    module_name = "MeasureObjectIntensity"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    object_setting = OBJECT_MEASUREMENT_SETTING
+@dataclass(frozen=True, slots=True)
+class MeasurementModuleContractBuilderFamily:
+    """Generated contract-builder family with explicit type lineage."""
+
+    base_type: type[MeasurementModuleContractBuilder]
+    declarations: tuple[MeasurementModuleContractBuilderDeclaration, ...]
+
+    def contract_builder_types(
+        self,
+    ) -> Mapping[str, type[MeasurementModuleContractBuilder]]:
+        return MappingProxyType(
+            {
+                declaration.class_name: declaration.contract_builder_type(
+                    self.base_type
+                )
+                for declaration in self.declarations
+            }
+        )
+
+    def generated_lineage(
+        self,
+        generated_types: Mapping[str, type[MeasurementModuleContractBuilder]],
+    ) -> Mapping[type[MeasurementModuleContractBuilder], type[MeasurementModuleContractBuilder]]:
+        return MappingProxyType(
+            {
+                generated_type: self.base_type
+                for generated_type in generated_types.values()
+            }
+        )
 
 
-class MeasureObjectIntensityDistributionContractBuilder(
-    MeasurementModuleContractBuilder
-):
-    module_name = "MeasureObjectIntensityDistribution"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureTextureContractBuilder(MeasurementModuleContractBuilder):
-    module_name = "MeasureTexture"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureColocalizationContractBuilder(MeasurementModuleContractBuilder):
-    module_name = "MeasureColocalization"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureGranularityContractBuilder(MeasurementModuleContractBuilder):
-    module_name = "MeasureGranularity"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = OBJECT_MEASUREMENT_SETTING
-
-
-class MeasureImageIntensityContractBuilder(MeasurementModuleContractBuilder):
-    module_name = "MeasureImageIntensity"
-    image_setting = IMAGE_MEASUREMENT_SETTING
-    optional_object_setting = SettingNameFamily("Select input object sets")
+MEASUREMENT_MODULE_CONTRACT_BUILDER_FAMILY = MeasurementModuleContractBuilderFamily(
+    base_type=MeasurementModuleContractBuilder,
+    declarations=(
+        MeasurementModuleContractBuilderDeclaration(
+            class_name="MeasureObjectSizeShapeContractBuilder",
+            module_name="MeasureObjectSizeShape",
+            object_setting=OBJECT_MEASUREMENT_SETTING,
+        ),
+        MeasurementModuleContractBuilderDeclaration(
+            class_name="MeasureObjectIntensityContractBuilder",
+            module_name="MeasureObjectIntensity",
+            image_setting=IMAGE_MEASUREMENT_SETTING,
+            object_setting=OBJECT_MEASUREMENT_SETTING,
+        ),
+        MeasurementModuleContractBuilderDeclaration(
+            class_name="MeasureObjectIntensityDistributionContractBuilder",
+            module_name="MeasureObjectIntensityDistribution",
+            image_setting=IMAGE_MEASUREMENT_SETTING,
+            object_setting=OBJECT_MEASUREMENT_SETTING,
+        ),
+        MeasurementModuleContractBuilderDeclaration(
+            class_name="MeasureTextureContractBuilder",
+            module_name="MeasureTexture",
+            image_setting=IMAGE_MEASUREMENT_SETTING,
+            optional_object_setting=OBJECT_MEASUREMENT_SETTING,
+        ),
+        MeasurementModuleContractBuilderDeclaration(
+            class_name="MeasureColocalizationContractBuilder",
+            module_name="MeasureColocalization",
+            image_setting=IMAGE_MEASUREMENT_SETTING,
+            optional_object_setting=OBJECT_MEASUREMENT_SETTING,
+        ),
+        MeasurementModuleContractBuilderDeclaration(
+            class_name="MeasureGranularityContractBuilder",
+            module_name="MeasureGranularity",
+            image_setting=IMAGE_MEASUREMENT_SETTING,
+            optional_object_setting=OBJECT_MEASUREMENT_SETTING,
+        ),
+        MeasurementModuleContractBuilderDeclaration(
+            class_name="MeasureImageIntensityContractBuilder",
+            module_name="MeasureImageIntensity",
+            image_setting=IMAGE_MEASUREMENT_SETTING,
+            optional_object_setting=SettingNameFamily("Select input object sets"),
+        ),
+    ),
+)
+MEASUREMENT_MODULE_CONTRACT_BUILDER_TYPES = (
+    MEASUREMENT_MODULE_CONTRACT_BUILDER_FAMILY.contract_builder_types()
+)
+MEASUREMENT_MODULE_CONTRACT_BUILDER_LINEAGE = (
+    MEASUREMENT_MODULE_CONTRACT_BUILDER_FAMILY.generated_lineage(
+        MEASUREMENT_MODULE_CONTRACT_BUILDER_TYPES
+    )
+)
+globals().update(MEASUREMENT_MODULE_CONTRACT_BUILDER_TYPES)
 
 
 class MeasureObjectNeighborsContractBuilder(ModuleContractBuilder):
@@ -2067,7 +2175,7 @@ class MeasureObjectNeighborsContractBuilder(ModuleContractBuilder):
             module,
         )
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -2123,7 +2231,7 @@ class MeasureImageAreaOccupiedContractBuilder(ModuleContractBuilder):
             if row.retained_image_name is not None
         ]
         measurements = builder.declare(
-            _measurement_name(module),
+            ModuleArtifactNamePolicy(module).measurement_name,
             CellProfilerSymbolKind.MEASUREMENTS,
             module,
         )
@@ -2243,8 +2351,7 @@ def _semantic_output_symbols(
             for output in outputs
         ):
             continue
-        name = _special_output_name(
-            module,
+        name = ModuleArtifactNamePolicy(module).special_output_name(
             special,
             output_names,
             inputs,
@@ -2306,29 +2413,6 @@ def _declare_outputs(
 ) -> tuple[CellProfilerSymbol, ...]:
     symbol_kind = _symbol_kind_for_artifact_kind(kind)
     return tuple(builder.declare(name, symbol_kind, module) for name in names)
-
-
-def _special_output_name(
-    module: ModuleBlock,
-    special: FunctionSpecialOutput,
-    output_names: dict[ArtifactKind, list[str]],
-    inputs: tuple[CellProfilerSymbol, ...],
-    setting_outputs: tuple[ArtifactSettingSymbol, ...],
-    *,
-    measurement_output_count: int,
-) -> str:
-    if special.kind is ArtifactKind.RELATIONSHIPS:
-        relationship_name = _relationship_output_name(inputs, setting_outputs)
-        if relationship_name is not None:
-            return relationship_name
-    names = output_names.get(special.kind)
-    if names:
-        return names.pop(0)
-    if special.kind is ArtifactKind.MEASUREMENTS:
-        if measurement_output_count == 1:
-            return _measurement_name(module)
-        return f"{module.name}_{module.module_num}_{special.name}"
-    return special.name
 
 
 def _relationship_output_name(
@@ -2462,10 +2546,6 @@ def _unique_symbols(
             unique.append(symbol)
             seen.add(key)
     return tuple(unique)
-
-
-def _measurement_name(module: ModuleBlock) -> str:
-    return f"{module.name}_{module.module_num}_measurements"
 
 
 def _relationship_name(parent: str, child: str) -> str:

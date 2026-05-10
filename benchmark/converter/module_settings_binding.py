@@ -41,7 +41,7 @@ from openhcs.interop.cellprofiler.grid_settings import (
     define_grid_invocation_options,
     identify_objects_in_grid_bound_kwargs,
 )
-from .gray_to_color_settings import (
+from openhcs.interop.cellprofiler.gray_to_color_settings import (
     GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
     GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
     GRAY_TO_COLOR_RGB_IMAGE_SETTINGS,
