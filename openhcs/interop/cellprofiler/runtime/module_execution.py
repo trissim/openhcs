@@ -1274,7 +1274,7 @@ class CellProfilerModuleExecutor:
             cellprofiler_runtime,
             measurement_outputs[0].name,
             combined_rows,
-            fields=_measurement_record_fields(
+            fields=CellProfilerMeasurementFieldSchema.for_record(
                 measurement_outputs[0], combined_rows, func
             ),
             object_name=(
@@ -1475,7 +1475,7 @@ class CellProfilerModuleExecutor:
             cellprofiler_runtime,
             measurement_outputs[0].name,
             combined_rows,
-            fields=_measurement_record_fields(
+            fields=CellProfilerMeasurementFieldSchema.for_record(
                 measurement_outputs[0], combined_rows, func
             ),
             object_name=(
@@ -4848,6 +4848,110 @@ class CellProfilerOutputRecordRequest:
         return object_outputs[0].name
 
 
+class CellProfilerMeasurementFieldSchema:
+    """Authoritative field inference for CellProfiler measurement records."""
+
+    @classmethod
+    def for_record(
+        cls,
+        spec: ArtifactSpec,
+        rows: Sequence[Any],
+        func: Callable[..., Any],
+    ) -> tuple[FieldSpec, ...]:
+        fields = cls.from_materialization(spec)
+        if fields:
+            return fields
+        fields = cls.from_callable_materialization(func)
+        if fields:
+            return fields
+        if cls.rows_have_inferable_fields(rows):
+            return cls.from_row_mappings(
+                tuple(measurement_row_mapping(row) for row in rows)
+            )
+        return cls.from_callable(func)
+
+    @staticmethod
+    def from_materialization(spec: ArtifactSpec) -> tuple[FieldSpec, ...]:
+        field_names = tabular_field_names_from_materialization(spec.materialization)
+        return tuple(FieldSpec(name) for name in field_names)
+
+    @staticmethod
+    def from_callable_materialization(
+        func: Callable[..., Any],
+    ) -> tuple[FieldSpec, ...]:
+        raw_outputs = vars(unwrap(func)).get("__special_outputs__", ())
+        if not isinstance(raw_outputs, tuple):
+            return ()
+        field_sets = tuple(
+            field_names
+            for output_spec in raw_outputs
+            if (
+                isinstance(output_spec, tuple)
+                and len(output_spec) == 2
+                and (
+                    field_names := tabular_field_names_from_materialization(
+                        output_spec[1]
+                    )
+                )
+            )
+        )
+        if len(field_sets) != 1:
+            return ()
+        return tuple(FieldSpec(name) for name in field_sets[0])
+
+    @staticmethod
+    def rows_have_inferable_fields(rows: Sequence[Any]) -> bool:
+        if not rows:
+            return False
+        row = rows[0]
+        return bool(is_dataclass(row) or (isinstance(row, Mapping) and row))
+
+    @staticmethod
+    def from_row_mappings(
+        rows: Sequence[Mapping[str, Any]],
+    ) -> tuple[FieldSpec, ...]:
+        field_names: list[str] = []
+        seen: set[str] = set()
+        for row in rows:
+            for field_name in row:
+                if field_name in seen:
+                    continue
+                seen.add(field_name)
+                field_names.append(str(field_name))
+        return tuple(FieldSpec(field_name) for field_name in field_names)
+
+    @classmethod
+    def from_callable(cls, func: Callable[..., Any]) -> tuple[FieldSpec, ...]:
+        return_type = _callable_type_hints(unwrap(func)).get("return")
+        row_type = cls.row_type_from_annotation(return_type)
+        if row_type is None:
+            return ()
+        return tuple(FieldSpec(field.name) for field in dataclass_fields(row_type))
+
+    @classmethod
+    def row_type_from_annotation(cls, annotation: Any) -> type[Any] | None:
+        if isinstance(annotation, type) and is_dataclass(annotation):
+            return annotation
+        origin = get_origin(annotation)
+        args = get_args(annotation)
+        if origin in (list, tuple):
+            return cls.row_type_from_sequence_args(args)
+        return None
+
+    @classmethod
+    def row_type_from_sequence_args(
+        cls,
+        args: tuple[Any, ...],
+    ) -> type[Any] | None:
+        for arg in args:
+            if arg is Ellipsis:
+                continue
+            row_type = cls.row_type_from_annotation(arg)
+            if row_type is not None:
+                return row_type
+        return None
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerMeasurementRecord:
     """Rows and semantic owner for one CellProfiler measurement output."""
@@ -4860,12 +4964,14 @@ class CellProfilerMeasurementRecord:
     owns_source_qualified_features: bool = False
 
     def __post_init__(self) -> None:
-        if self.fields or not _rows_have_inferable_fields(self.rows):
+        if self.fields or not CellProfilerMeasurementFieldSchema.rows_have_inferable_fields(
+            self.rows
+        ):
             return
         object.__setattr__(
             self,
             "fields",
-            _field_specs_for_rows(
+            CellProfilerMeasurementFieldSchema.from_row_mappings(
                 tuple(measurement_row_mapping(row) for row in self.rows)
             ),
         )
@@ -4901,12 +5007,14 @@ class CellProfilerMeasurementRecordPartition:
     fields: tuple[FieldSpec, ...] = ()
 
     def __post_init__(self) -> None:
-        if self.fields or not _rows_have_inferable_fields(self.rows):
+        if self.fields or not CellProfilerMeasurementFieldSchema.rows_have_inferable_fields(
+            self.rows
+        ):
             return
         object.__setattr__(
             self,
             "fields",
-            _field_specs_for_rows(
+            CellProfilerMeasurementFieldSchema.from_row_mappings(
                 tuple(measurement_row_mapping(row) for row in self.rows)
             ),
         )
@@ -5258,7 +5366,9 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
                     )
                 )
             ),
-            fields=_measurement_record_fields(request.spec, rows, request.func),
+            fields=CellProfilerMeasurementFieldSchema.for_record(
+                request.spec, rows, request.func
+            ),
         )
 
 
@@ -5280,7 +5390,9 @@ class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
             source_image_name=(
                 None if owns_source_qualified_features else request.source_image_name
             ),
-            fields=_measurement_record_fields(request.spec, rows, request.func),
+            fields=CellProfilerMeasurementFieldSchema.for_record(
+                request.spec, rows, request.func
+            ),
             owns_source_qualified_features=owns_source_qualified_features,
         )
 
@@ -5373,7 +5485,9 @@ class ObjectTopologyMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilde
                 request.executor._declared_input_specs()
             ),
             source_image_name=None,
-            fields=_measurement_record_fields(request.spec, rows, request.func),
+            fields=CellProfilerMeasurementFieldSchema.for_record(
+                request.spec, rows, request.func
+            ),
         )
 
 
@@ -5391,7 +5505,9 @@ class ProducedImageMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
             object_name=None,
             source_image_name=source_image.source_image_name(request),
             source_image_payload=source_image.source_image_payload(request),
-            fields=_measurement_record_fields(request.spec, rows, request.func),
+            fields=CellProfilerMeasurementFieldSchema.for_record(
+                request.spec, rows, request.func
+            ),
         )
 
     def _primary_image_measurement_source(
@@ -5582,7 +5698,9 @@ class CalculateMathMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
                 request.executor._declared_input_specs()
             ),
             source_image_name=None,
-            fields=_measurement_record_fields(request.spec, rows, request.func),
+            fields=CellProfilerMeasurementFieldSchema.for_record(
+                request.spec, rows, request.func
+            ),
         )
 
 
@@ -5627,7 +5745,9 @@ class IdentifyObjectsInGridMeasurementRecordBuilder(
             rows=rows,
             object_name=None,
             source_image_name=None,
-            fields=_measurement_record_fields(request.spec, rows, request.func),
+            fields=CellProfilerMeasurementFieldSchema.for_record(
+                request.spec, rows, request.func
+            ),
         )
 
 
@@ -5688,7 +5808,7 @@ class TrackObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder)
             rows=rows,
             object_name=None,
             source_image_name=None,
-            fields=_field_specs_for_rows(rows),
+            fields=CellProfilerMeasurementFieldSchema.from_row_mappings(rows),
         )
 
 
@@ -6549,18 +6669,6 @@ def _measurement_rows_declare_object_name(rows: Sequence[Any]) -> bool:
     )
 
 
-def _field_specs_for_rows(rows: Sequence[Mapping[str, Any]]) -> tuple[FieldSpec, ...]:
-    field_names: list[str] = []
-    seen: set[str] = set()
-    for row in rows:
-        for field_name in row:
-            if field_name in seen:
-                continue
-            seen.add(field_name)
-            field_names.append(str(field_name))
-    return tuple(FieldSpec(field_name) for field_name in field_names)
-
-
 @dataclass(frozen=True, slots=True)
 class ObjectMeasurementRowIdentityProjectionRequest:
     """Typed context for projecting source rows into CellProfiler row identity."""
@@ -6640,7 +6748,9 @@ class ObjectMeasurementRowCompletionSchema:
     ) -> tuple[str, ...]:
         if rows:
             return tuple(str(key) for key in measurement_row_mapping(rows[0]).keys())
-        return tuple(field.name for field in _measurement_fields_from_callable(func))
+        return tuple(
+            field.name for field in CellProfilerMeasurementFieldSchema.from_callable(func)
+        )
 
     @staticmethod
     def object_id_field_from_fields(field_names: Sequence[str]) -> str:
@@ -7210,91 +7320,6 @@ def _coerce_spatial_grid(
         f"Spatial grid output '{name}' must be SpatialGrid or mapping-backed, "
         f"got {type(value).__name__}."
     )
-
-
-def _measurement_record_fields(
-    spec: ArtifactSpec,
-    rows: Sequence[Any],
-    func: Callable[..., Any],
-) -> tuple[FieldSpec, ...]:
-    fields = _measurement_fields_from_materialization(spec)
-    if fields:
-        return fields
-    fields = _measurement_fields_from_callable_materialization(func)
-    if fields:
-        return fields
-    if _rows_have_inferable_fields(rows):
-        return _field_specs_for_rows([measurement_row_mapping(row) for row in rows])
-    return _measurement_fields_from_callable(func)
-
-
-def _measurement_fields_from_materialization(
-    spec: ArtifactSpec,
-) -> tuple[FieldSpec, ...]:
-    field_names = tabular_field_names_from_materialization(spec.materialization)
-    return tuple(FieldSpec(name) for name in field_names)
-
-
-def _measurement_fields_from_callable_materialization(
-    func: Callable[..., Any],
-) -> tuple[FieldSpec, ...]:
-    raw_outputs = vars(unwrap(func)).get("__special_outputs__", ())
-    if not isinstance(raw_outputs, tuple):
-        return ()
-    field_sets = tuple(
-        field_names
-        for output_spec in raw_outputs
-        if (
-            isinstance(output_spec, tuple)
-            and len(output_spec) == 2
-            and (
-                field_names := tabular_field_names_from_materialization(output_spec[1])
-            )
-        )
-    )
-    if len(field_sets) != 1:
-        return ()
-    return tuple(FieldSpec(name) for name in field_sets[0])
-
-
-def _rows_have_inferable_fields(rows: Sequence[Any]) -> bool:
-    if not rows:
-        return False
-    row = rows[0]
-    return bool(is_dataclass(row) or (isinstance(row, Mapping) and row))
-
-
-def _measurement_fields_from_callable(
-    func: Callable[..., Any],
-) -> tuple[FieldSpec, ...]:
-    return_type = _callable_type_hints(unwrap(func)).get("return")
-    row_type = _measurement_row_type_from_annotation(return_type)
-    if row_type is None:
-        return ()
-    return tuple(FieldSpec(field.name) for field in dataclass_fields(row_type))
-
-
-def _measurement_row_type_from_annotation(annotation: Any) -> type[Any] | None:
-    if isinstance(annotation, type) and is_dataclass(annotation):
-        return annotation
-
-    origin = get_origin(annotation)
-    args = get_args(annotation)
-    if origin in (list, tuple):
-        return _measurement_row_type_from_sequence_args(args)
-    return None
-
-
-def _measurement_row_type_from_sequence_args(
-    args: tuple[Any, ...],
-) -> type[Any] | None:
-    for arg in args:
-        if arg is Ellipsis:
-            continue
-        row_type = _measurement_row_type_from_annotation(arg)
-        if row_type is not None:
-            return row_type
-    return None
 
 
 def _object_only_reference_image(image: Any) -> Any:

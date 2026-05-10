@@ -30,6 +30,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CalculateMathInputPolicy,
     CellProfilerFunctionContractExecutor,
     CellProfilerInvocationExecutionModePolicy,
+    CellProfilerMeasurementFieldSchema,
     CellProfilerMeasurementRecordBuilder,
     ClassifyObjectsMeasurementFeatureTemplate,
     MeasurementLabelSourceAlignmentStrategy,
@@ -52,7 +53,6 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_measurement_image,
-    _measurement_record_fields,
     _measurement_table_rows,
     _object_only_reference_image,
     _output_values_by_kind,
@@ -997,7 +997,9 @@ def test_measurement_record_fields_prefers_artifact_materialization_schema() -> 
         materialization=csv_materializer(fields=["object_label", "area"]),
     )
 
-    fields = _measurement_record_fields(spec, [], measure_object_size_shape)
+    fields = CellProfilerMeasurementFieldSchema.for_record(
+        spec, [], measure_object_size_shape
+    )
 
     assert tuple(field.name for field in fields) == ("object_label", "area")
 
@@ -1005,7 +1007,9 @@ def test_measurement_record_fields_prefers_artifact_materialization_schema() -> 
 def test_measure_object_size_shape_declares_schema_on_special_output() -> None:
     spec = ArtifactSpec(name="measurements", kind=ArtifactKind.MEASUREMENTS)
 
-    fields = _measurement_record_fields(spec, [], measure_object_size_shape)
+    fields = CellProfilerMeasurementFieldSchema.for_record(
+        spec, [], measure_object_size_shape
+    )
 
     assert tuple(field.name for field in fields) == object_shape_measurement_all_field_names()
 
