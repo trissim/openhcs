@@ -7,7 +7,6 @@ Supports RGB, CMYK, Stack, and Composite color schemes.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar, Sequence
@@ -57,195 +56,6 @@ class GrayToColorRequest:
         object.__setattr__(self, "channel_weights", tuple(self.channel_weights))
 
 
-def _gray_to_color_rgb(request: GrayToColorRequest) -> np.ndarray:
-    """
-    Combine grayscale images into an RGB color image.
-
-    Args:
-        image: Shape (N, H, W) - N grayscale images stacked along dim 0
-        red_channel: Index of channel to use for red (default 0, use -1 for black)
-        green_channel: Index of channel to use for green (default 1, use -1 for black)
-        blue_channel: Index of channel to use for blue (default 2, use -1 for black)
-        red_weight: Relative weight for the red image.
-        green_weight: Relative weight for the green image.
-        blue_weight: Relative weight for the blue image.
-        rescale_intensity: Whether to rescale each channel to 0-1 range.
-
-    Returns:
-        Shape (H, W, 3) RGB color image.
-
-    CellProfiler Parameter Mapping:
-    (CellProfiler setting -> Python parameter)
-        'Select the image to be colored red' -> red_channel
-        'Select the image to be colored green' -> green_channel
-        'Select the image to be colored blue' -> blue_channel
-        'Relative weight for the red image' -> red_weight
-        'Relative weight for the green image' -> green_weight
-        'Relative weight for the blue image' -> blue_weight
-    """
-    image = request.image
-    h, w = image.shape[1], image.shape[2]
-
-    # Get channels (use zeros if -1)
-    red_img = image[request.red_channel].astype(np.float64) if request.red_channel >= 0 else np.zeros((h, w), dtype=np.float64)
-    green_img = image[request.green_channel].astype(np.float64) if request.green_channel >= 0 else np.zeros((h, w), dtype=np.float64)
-    blue_img = image[request.blue_channel].astype(np.float64) if request.blue_channel >= 0 else np.zeros((h, w), dtype=np.float64)
-    
-    if request.rescale_intensity:
-        if np.max(red_img) > 0:
-            red_img = red_img / np.max(red_img)
-        if np.max(green_img) > 0:
-            green_img = green_img / np.max(green_img)
-        if np.max(blue_img) > 0:
-            blue_img = blue_img / np.max(blue_img)
-    
-    # Apply weights
-    red_img = red_img * request.red_weight
-    green_img = green_img * request.green_weight
-    blue_img = blue_img * request.blue_weight
-    
-    # Stack into RGB image (H, W, 3)
-    rgb_image = np.dstack([red_img, green_img, blue_img])
-    
-    # Clip values that went out of range after multiplication
-    if request.rescale_intensity:
-        rgb_image = np.clip(rgb_image, 0, 1)
-    
-    return rgb_image.astype(np.float32)
-
-
-
-def _gray_to_color_cmyk(request: GrayToColorRequest) -> np.ndarray:
-    """
-    Combine grayscale images into a color image using CMYK scheme.
-
-    Args:
-        request: Typed CMYK request.
-
-    Returns:
-        Shape (H, W, 3) RGB color image.
-    """
-    image = request.image
-    h, w = image.shape[1], image.shape[2]
-
-    # Get channels (use zeros if -1)
-    cyan_img = image[request.cyan_channel].astype(np.float64) if request.cyan_channel >= 0 else np.zeros((h, w), dtype=np.float64)
-    magenta_img = image[request.magenta_channel].astype(np.float64) if request.magenta_channel >= 0 else np.zeros((h, w), dtype=np.float64)
-    yellow_img = image[request.yellow_channel].astype(np.float64) if request.yellow_channel >= 0 else np.zeros((h, w), dtype=np.float64)
-    gray_img = image[request.gray_channel].astype(np.float64) if request.gray_channel >= 0 else np.zeros((h, w), dtype=np.float64)
-    
-    if request.rescale_intensity:
-        if np.max(cyan_img) > 0:
-            cyan_img = cyan_img / np.max(cyan_img)
-        if np.max(magenta_img) > 0:
-            magenta_img = magenta_img / np.max(magenta_img)
-        if np.max(yellow_img) > 0:
-            yellow_img = yellow_img / np.max(yellow_img)
-        if np.max(gray_img) > 0:
-            gray_img = gray_img / np.max(gray_img)
-    
-    # CMYK to RGB conversion with weights
-    # Cyan adds to green and blue (0, 0.5, 0.5)
-    # Magenta adds to red and blue (0.5, 0, 0.5)
-    # Yellow adds to red and green (0.5, 0.5, 0)
-    # Gray adds equally to all (1/3, 1/3, 1/3)
-    
-    rgb_image = np.zeros((h, w, 3), dtype=np.float64)
-    
-    # Cyan contribution
-    rgb_image[:, :, 1] += cyan_img * request.cyan_weight * 0.5  # green
-    rgb_image[:, :, 2] += cyan_img * request.cyan_weight * 0.5  # blue
-    
-    # Magenta contribution
-    rgb_image[:, :, 0] += magenta_img * request.magenta_weight * 0.5  # red
-    rgb_image[:, :, 2] += magenta_img * request.magenta_weight * 0.5  # blue
-    
-    # Yellow contribution
-    rgb_image[:, :, 0] += yellow_img * request.yellow_weight * 0.5  # red
-    rgb_image[:, :, 1] += yellow_img * request.yellow_weight * 0.5  # green
-    
-    # Gray contribution
-    rgb_image[:, :, 0] += gray_img * request.gray_weight * (1.0 / 3.0)  # red
-    rgb_image[:, :, 1] += gray_img * request.gray_weight * (1.0 / 3.0)  # green
-    rgb_image[:, :, 2] += gray_img * request.gray_weight * (1.0 / 3.0)  # blue
-    
-    # Clip values
-    if request.rescale_intensity:
-        rgb_image = np.clip(rgb_image, 0, 1)
-    
-    return rgb_image.astype(np.float32)
-
-
-def _gray_to_color_stack(request: GrayToColorRequest) -> np.ndarray:
-    """
-    Stack grayscale images into a multi-channel image.
-    
-    Args:
-        image: Shape (N, H, W) - N grayscale images stacked.
-    
-    Returns:
-        Shape (H, W, N) multi-channel image.
-    """
-    # Transpose from (N, H, W) to (H, W, N)
-    return np.transpose(request.image, (1, 2, 0)).astype(np.float32)
-
-
-def _gray_to_color_composite(request: GrayToColorRequest) -> np.ndarray:
-    """
-    Combine grayscale images into a composite color image.
-    
-    Each grayscale image is assigned a color and weighted, then
-    all colored images are added together.
-    
-    Args:
-        image: Shape (N, H, W) - N grayscale images stacked.
-        colors: List of N hex color strings (e.g., ['#ff0000', '#00ff00']).
-                Defaults to cycling through red, green, blue, yellow, magenta, cyan.
-        weights: List of N weights for each image. Defaults to 1.0 for all.
-        rescale_intensity: Whether to rescale each channel to 0-1 range.
-    
-    Returns:
-        Shape (H, W, 3) RGB color image.
-    """
-    image = request.image
-    colors = list(request.channel_colors) or None
-    weights = list(request.channel_weights) or None
-    n_channels = image.shape[0]
-    h, w = image.shape[1], image.shape[2]
-    
-    # Default colors
-    default_colors = ["#ff0000", "#00ff00", "#0000ff", "#808000", "#800080", "#008080"]
-    if colors is None:
-        colors = [default_colors[i % len(default_colors)] for i in range(n_channels)]
-    
-    # Default weights
-    if weights is None:
-        weights = [1.0] * n_channels
-    
-    rgb_image = np.zeros((h, w, 3), dtype=np.float64)
-    
-    for i in range(n_channels):
-        channel_img = image[i].astype(np.float64)
-        
-        if request.rescale_intensity and np.max(channel_img) > 0:
-            channel_img = channel_img / np.max(channel_img)
-        
-        # Get RGB color
-        r, g, b = coerce_rgb_color(colors[i])
-        weight = weights[i]
-        
-        # Add weighted colored image
-        rgb_image[:, :, 0] += channel_img * r * weight
-        rgb_image[:, :, 1] += channel_img * g * weight
-        rgb_image[:, :, 2] += channel_img * b * weight
-    
-    # Clip values
-    if request.rescale_intensity:
-        rgb_image = np.clip(rgb_image, 0, 1)
-    
-    return rgb_image.astype(np.float32)
-
-
 class GrayToColorSchemeRunner(ABC, metaclass=AutoRegisterMeta):
     """Nominal closed family for GrayToColor scheme dispatch."""
 
@@ -267,59 +77,134 @@ class GrayToColorSchemeRunner(ABC, metaclass=AutoRegisterMeta):
     def run(self, request: GrayToColorRequest) -> np.ndarray:
         """Execute one GrayToColor request for the scheme owned by this runner."""
 
+    def channel_or_black(
+        self,
+        image: np.ndarray,
+        channel_index: int,
+        height: int,
+        width: int,
+    ) -> np.ndarray:
+        if channel_index < 0:
+            return np.zeros((height, width), dtype=np.float64)
+        return image[channel_index].astype(np.float64)
 
-class HelperBackedGrayToColorSchemeRunner(GrayToColorSchemeRunner):
-    """Shared declarative substrate for helper-backed scheme dispatch."""
+    def rescale_positive_channel(self, channel: np.ndarray) -> np.ndarray:
+        maximum = np.max(channel)
+        if maximum > 0:
+            return channel / maximum
+        return channel
 
-    helper: ClassVar[Callable[..., np.ndarray] | None] = None
+    def final_rgb(
+        self,
+        rgb_image: np.ndarray,
+        request: GrayToColorRequest,
+    ) -> np.ndarray:
+        if request.rescale_intensity:
+            rgb_image = np.clip(rgb_image, 0, 1)
+        return rgb_image.astype(np.float32)
+
+
+class RGBGrayToColorRunner(GrayToColorSchemeRunner):
+    scheme_literal = GrayToColorScheme.RGB.value
 
     def run(self, request: GrayToColorRequest) -> np.ndarray:
-        helper = type(self).helper
-        if helper is None:
-            raise TypeError(f"{type(self).__name__} must define helper.")
-        return helper(**self._helper_kwargs(request))
+        image = request.image
+        height, width = image.shape[1], image.shape[2]
 
-    @abstractmethod
-    def _helper_kwargs(self, request: GrayToColorRequest) -> Mapping[str, object]:
-        """Return helper kwargs for this scheme."""
+        red_img = self.channel_or_black(image, request.red_channel, height, width)
+        green_img = self.channel_or_black(image, request.green_channel, height, width)
+        blue_img = self.channel_or_black(image, request.blue_channel, height, width)
 
+        if request.rescale_intensity:
+            red_img = self.rescale_positive_channel(red_img)
+            green_img = self.rescale_positive_channel(green_img)
+            blue_img = self.rescale_positive_channel(blue_img)
 
-class _RequestBackedGrayToColorSchemeRunner(HelperBackedGrayToColorSchemeRunner):
-    """Scheme runner whose helper directly consumes the authoritative request."""
-
-    def _helper_kwargs(self, request: GrayToColorRequest) -> Mapping[str, object]:
-        return {"request": request}
-
-
-_REQUEST_BACKED_GRAY_TO_COLOR_RUNNER_SPECS: tuple[
-    tuple[str, Callable[..., np.ndarray]],
-    ...,
-] = (
-    (GrayToColorScheme.RGB.value, _gray_to_color_rgb),
-    (GrayToColorScheme.CMYK.value, _gray_to_color_cmyk),
-    (GrayToColorScheme.STACK.value, _gray_to_color_stack),
-    (GrayToColorScheme.COMPOSITE.value, _gray_to_color_composite),
-)
+        rgb_image = np.dstack(
+            [
+                red_img * request.red_weight,
+                green_img * request.green_weight,
+                blue_img * request.blue_weight,
+            ]
+        )
+        return self.final_rgb(rgb_image, request)
 
 
-def _declare_request_backed_gray_to_color_runner(
-    scheme_literal: str,
-    helper: Callable[..., np.ndarray],
-) -> None:
-    class_name = f"{scheme_literal.replace(' ', '')}GrayToColorRunner"
-    globals()[class_name] = type(
-        class_name,
-        (_RequestBackedGrayToColorSchemeRunner,),
-        {
-            "__module__": __name__,
-            "scheme_literal": scheme_literal,
-            "helper": helper,
-        },
+class CMYKGrayToColorRunner(GrayToColorSchemeRunner):
+    scheme_literal = GrayToColorScheme.CMYK.value
+
+    def run(self, request: GrayToColorRequest) -> np.ndarray:
+        image = request.image
+        height, width = image.shape[1], image.shape[2]
+
+        cyan_img = self.channel_or_black(image, request.cyan_channel, height, width)
+        magenta_img = self.channel_or_black(
+            image,
+            request.magenta_channel,
+            height,
+            width,
+        )
+        yellow_img = self.channel_or_black(image, request.yellow_channel, height, width)
+        gray_img = self.channel_or_black(image, request.gray_channel, height, width)
+
+        if request.rescale_intensity:
+            cyan_img = self.rescale_positive_channel(cyan_img)
+            magenta_img = self.rescale_positive_channel(magenta_img)
+            yellow_img = self.rescale_positive_channel(yellow_img)
+            gray_img = self.rescale_positive_channel(gray_img)
+
+        rgb_image = np.zeros((height, width, 3), dtype=np.float64)
+        rgb_image[:, :, 1] += cyan_img * request.cyan_weight * 0.5
+        rgb_image[:, :, 2] += cyan_img * request.cyan_weight * 0.5
+        rgb_image[:, :, 0] += magenta_img * request.magenta_weight * 0.5
+        rgb_image[:, :, 2] += magenta_img * request.magenta_weight * 0.5
+        rgb_image[:, :, 0] += yellow_img * request.yellow_weight * 0.5
+        rgb_image[:, :, 1] += yellow_img * request.yellow_weight * 0.5
+        rgb_image[:, :, 0] += gray_img * request.gray_weight * (1.0 / 3.0)
+        rgb_image[:, :, 1] += gray_img * request.gray_weight * (1.0 / 3.0)
+        rgb_image[:, :, 2] += gray_img * request.gray_weight * (1.0 / 3.0)
+        return self.final_rgb(rgb_image, request)
+
+
+class StackGrayToColorRunner(GrayToColorSchemeRunner):
+    scheme_literal = GrayToColorScheme.STACK.value
+
+    def run(self, request: GrayToColorRequest) -> np.ndarray:
+        return np.transpose(request.image, (1, 2, 0)).astype(np.float32)
+
+
+class CompositeGrayToColorRunner(GrayToColorSchemeRunner):
+    scheme_literal = GrayToColorScheme.COMPOSITE.value
+    default_colors: ClassVar[tuple[str, ...]] = (
+        "#ff0000",
+        "#00ff00",
+        "#0000ff",
+        "#808000",
+        "#800080",
+        "#008080",
     )
 
+    def run(self, request: GrayToColorRequest) -> np.ndarray:
+        image = request.image
+        colors = list(request.channel_colors) or [
+            self.default_colors[index % len(self.default_colors)]
+            for index in range(image.shape[0])
+        ]
+        weights = list(request.channel_weights) or [1.0] * image.shape[0]
+        height, width = image.shape[1], image.shape[2]
+        rgb_image = np.zeros((height, width, 3), dtype=np.float64)
 
-for _scheme_literal, _helper in _REQUEST_BACKED_GRAY_TO_COLOR_RUNNER_SPECS:
-    _declare_request_backed_gray_to_color_runner(_scheme_literal, _helper)
+        for index in range(image.shape[0]):
+            channel_img = image[index].astype(np.float64)
+            if request.rescale_intensity:
+                channel_img = self.rescale_positive_channel(channel_img)
+            red, green, blue = coerce_rgb_color(colors[index])
+            weight = weights[index]
+            rgb_image[:, :, 0] += channel_img * red * weight
+            rgb_image[:, :, 1] += channel_img * green * weight
+            rgb_image[:, :, 2] += channel_img * blue * weight
+
+        return self.final_rgb(rgb_image, request)
 
 
 @numpy
