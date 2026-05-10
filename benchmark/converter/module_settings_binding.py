@@ -139,7 +139,7 @@ from openhcs.interop.cellprofiler.untangle_worms_settings import (
     untangle_worms_bound_kwargs,
 )
 from .unmix_colors_settings import unmix_colors_bound_kwargs
-from .watershed_settings import (
+from openhcs.interop.cellprofiler.watershed_settings import (
     WATERSHED_BORDER_EXCLUSION_SETTING,
     WATERSHED_COMPACTNESS_SETTING,
     WATERSHED_CONNECTIVITY_SETTING,

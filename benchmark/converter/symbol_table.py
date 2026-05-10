@@ -127,7 +127,10 @@ from .unmix_colors_settings import (
     unmix_colors_input_name,
     unmix_colors_output_rows,
 )
-from .watershed_settings import WATERSHED_MARKERS_SETTING, WATERSHED_MASK_SETTING
+from openhcs.interop.cellprofiler.watershed_settings import (
+    WATERSHED_MARKERS_SETTING,
+    WATERSHED_MASK_SETTING,
+)
 
 
 class CellProfilerSymbolKind(str, Enum):
