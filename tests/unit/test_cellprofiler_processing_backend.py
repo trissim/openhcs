@@ -46,6 +46,34 @@ def test_generated_cellprofiler_pipelines_import_product_library() -> None:
     assert offenders == []
 
 
+def test_cellprofiler_converter_does_not_import_absorbed_runtime_packages() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    banned_modules = (
+        "benchmark.cellprofiler_library.functions",
+        "benchmark.cellprofiler_compat.measurement_lookup",
+        "benchmark.cellprofiler_compat.perf_fixtures",
+    )
+    offenders: list[tuple[str, int, str]] = []
+    for file_path in sorted((repo_root / "benchmark" / "converter").rglob("*.py")):
+        tree = ast.parse(file_path.read_text(), filename=str(file_path))
+        for node in ast.walk(tree):
+            module_names: list[str] = []
+            if isinstance(node, ast.Import):
+                module_names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                module_names = [node.module or ""]
+            for module_name in module_names:
+                if any(
+                    module_name == banned or module_name.startswith(f"{banned}.")
+                    for banned in banned_modules
+                ):
+                    offenders.append(
+                        (str(file_path.relative_to(repo_root)), node.lineno, module_name)
+                    )
+
+    assert offenders == []
+
+
 def test_cellprofiler_processing_backend_exports_absorbed_function() -> None:
     from openhcs.processing.backends import cellprofiler
 
