@@ -2163,129 +2163,61 @@ class MeasurementModuleContractBuilder(ModuleContractBuilder):
         return (*required, *optional)
 
 
-MeasurementModuleContractBuilderTypes = Mapping[
-    str,
-    type[MeasurementModuleContractBuilder],
-]
-MeasurementModuleContractBuilderLineage = Mapping[
-    type[MeasurementModuleContractBuilder],
-    type[MeasurementModuleContractBuilder],
-]
+class MeasureObjectSizeShapeContractBuilder(MeasurementModuleContractBuilder):
+    """Compile MeasureObjectSizeShape object inputs into measurement contracts."""
+
+    module_name = "MeasureObjectSizeShape"
+    object_setting = OBJECT_MEASUREMENT_SETTING
 
 
-@dataclass(frozen=True, slots=True)
-class MeasurementModuleContractBuilderDeclaration:
-    """Authoritative declaration for measurement-table contract builders."""
+class MeasureObjectIntensityContractBuilder(MeasurementModuleContractBuilder):
+    """Compile MeasureObjectIntensity image/object inputs into measurements."""
 
-    class_name: str
-    module_name: str
-    image_setting: str | SettingNameFamily | None = None
-    object_setting: str | SettingNameFamily | None = None
-    optional_object_setting: str | SettingNameFamily | None = None
-
-    def contract_builder_type(
-        self,
-        base_type: type[MeasurementModuleContractBuilder],
-    ) -> type[MeasurementModuleContractBuilder]:
-        return type(
-            self.class_name,
-            (base_type,),
-            {
-                "__module__": __name__,
-                "module_name": self.module_name,
-                "image_setting": self.image_setting,
-                "object_setting": self.object_setting,
-                "optional_object_setting": self.optional_object_setting,
-            },
-        )
+    module_name = "MeasureObjectIntensity"
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    object_setting = OBJECT_MEASUREMENT_SETTING
 
 
-@dataclass(frozen=True, slots=True)
-class MeasurementModuleContractBuilderFamily:
-    """Generated contract-builder family with explicit type lineage."""
+class MeasureObjectIntensityDistributionContractBuilder(
+    MeasurementModuleContractBuilder
+):
+    """Compile radial-distribution image/object inputs into measurements."""
 
-    base_type: type[MeasurementModuleContractBuilder]
-    declarations: tuple[MeasurementModuleContractBuilderDeclaration, ...]
-
-    def contract_builder_types(
-        self,
-    ) -> MeasurementModuleContractBuilderTypes:
-        return MappingProxyType(
-            {
-                declaration.class_name: declaration.contract_builder_type(
-                    self.base_type
-                )
-                for declaration in self.declarations
-            }
-        )
-
-    def generated_lineage(
-        self,
-        generated_types: MeasurementModuleContractBuilderTypes,
-    ) -> MeasurementModuleContractBuilderLineage:
-        return MappingProxyType(
-            {
-                generated_type: self.base_type
-                for generated_type in generated_types.values()
-            }
-        )
+    module_name = "MeasureObjectIntensityDistribution"
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    object_setting = OBJECT_MEASUREMENT_SETTING
 
 
-MEASUREMENT_MODULE_CONTRACT_BUILDER_FAMILY = MeasurementModuleContractBuilderFamily(
-    base_type=MeasurementModuleContractBuilder,
-    declarations=(
-        MeasurementModuleContractBuilderDeclaration(
-            class_name="MeasureObjectSizeShapeContractBuilder",
-            module_name="MeasureObjectSizeShape",
-            object_setting=OBJECT_MEASUREMENT_SETTING,
-        ),
-        MeasurementModuleContractBuilderDeclaration(
-            class_name="MeasureObjectIntensityContractBuilder",
-            module_name="MeasureObjectIntensity",
-            image_setting=IMAGE_MEASUREMENT_SETTING,
-            object_setting=OBJECT_MEASUREMENT_SETTING,
-        ),
-        MeasurementModuleContractBuilderDeclaration(
-            class_name="MeasureObjectIntensityDistributionContractBuilder",
-            module_name="MeasureObjectIntensityDistribution",
-            image_setting=IMAGE_MEASUREMENT_SETTING,
-            object_setting=OBJECT_MEASUREMENT_SETTING,
-        ),
-        MeasurementModuleContractBuilderDeclaration(
-            class_name="MeasureTextureContractBuilder",
-            module_name="MeasureTexture",
-            image_setting=IMAGE_MEASUREMENT_SETTING,
-            optional_object_setting=OBJECT_MEASUREMENT_SETTING,
-        ),
-        MeasurementModuleContractBuilderDeclaration(
-            class_name="MeasureColocalizationContractBuilder",
-            module_name="MeasureColocalization",
-            image_setting=IMAGE_MEASUREMENT_SETTING,
-            optional_object_setting=OBJECT_MEASUREMENT_SETTING,
-        ),
-        MeasurementModuleContractBuilderDeclaration(
-            class_name="MeasureGranularityContractBuilder",
-            module_name="MeasureGranularity",
-            image_setting=IMAGE_MEASUREMENT_SETTING,
-            optional_object_setting=OBJECT_MEASUREMENT_SETTING,
-        ),
-        MeasurementModuleContractBuilderDeclaration(
-            class_name="MeasureImageIntensityContractBuilder",
-            module_name="MeasureImageIntensity",
-            image_setting=IMAGE_MEASUREMENT_SETTING,
-            optional_object_setting=SettingNameFamily("Select input object sets"),
-        ),
-    ),
-)
-MEASUREMENT_MODULE_CONTRACT_BUILDER_TYPES = (
-    MEASUREMENT_MODULE_CONTRACT_BUILDER_FAMILY.contract_builder_types()
-)
-MEASUREMENT_MODULE_CONTRACT_BUILDER_LINEAGE = (
-    MEASUREMENT_MODULE_CONTRACT_BUILDER_FAMILY.generated_lineage(
-        MEASUREMENT_MODULE_CONTRACT_BUILDER_TYPES
-    )
-)
-globals().update(MEASUREMENT_MODULE_CONTRACT_BUILDER_TYPES)
+class MeasureTextureContractBuilder(MeasurementModuleContractBuilder):
+    """Compile MeasureTexture image inputs and optional object masks."""
+
+    module_name = "MeasureTexture"
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    optional_object_setting = OBJECT_MEASUREMENT_SETTING
+
+
+class MeasureColocalizationContractBuilder(MeasurementModuleContractBuilder):
+    """Compile MeasureColocalization image inputs and optional object masks."""
+
+    module_name = "MeasureColocalization"
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    optional_object_setting = OBJECT_MEASUREMENT_SETTING
+
+
+class MeasureGranularityContractBuilder(MeasurementModuleContractBuilder):
+    """Compile MeasureGranularity image inputs and optional object masks."""
+
+    module_name = "MeasureGranularity"
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    optional_object_setting = OBJECT_MEASUREMENT_SETTING
+
+
+class MeasureImageIntensityContractBuilder(MeasurementModuleContractBuilder):
+    """Compile MeasureImageIntensity image inputs and optional object masks."""
+
+    module_name = "MeasureImageIntensity"
+    image_setting = IMAGE_MEASUREMENT_SETTING
+    optional_object_setting = SettingNameFamily("Select input object sets")
 
 
 class MeasureObjectNeighborsContractBuilder(ModuleContractBuilder):
