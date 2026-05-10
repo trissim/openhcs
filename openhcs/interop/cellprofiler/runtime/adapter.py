@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections import OrderedDict
-from collections.abc import Hashable, Mapping, Sequence
+from collections.abc import Callable, Hashable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field
 from functools import lru_cache
 import logging
@@ -341,26 +341,41 @@ class MeasurementQueryCacheMutationPolicy(MeasurementTableCacheMutationPolicy):
 class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
     """Shared object/feature invalidation for measurement-query caches."""
 
-    @abstractmethod
+    cache_accessor: ClassVar[
+        Callable[["CellProfilerRuntimeAdapter"], MutableMapping[object, object]]
+    ]
+    entry_type: ClassVar[type[object]]
+    feature_scoped: ClassVar[bool] = False
+
+    def cache(self, mutation: MeasurementTableCacheMutation) -> MutableMapping[object, object]:
+        """Return the cache owned by this invalidation policy."""
+        return type(self).cache_accessor(mutation.adapter)
+
     def cache_entries(self, mutation: MeasurementTableCacheMutation) -> tuple[object, ...]:
         """Return cache entries considered for this mutation."""
+        return tuple(self.cache(mutation))
 
-    @abstractmethod
     def delete_entry(
         self,
         mutation: MeasurementTableCacheMutation,
         entry: object,
     ) -> None:
         """Delete one cache entry."""
+        del self.cache(mutation)[entry]
 
-    @abstractmethod
     def entry_object_name(self, entry: object) -> str | None:
         """Return the object domain addressed by one cache entry."""
+        if not isinstance(entry, type(self).entry_type):
+            return None
+        return entry.object_name
 
     def entry_feature_name(self, entry: object) -> str | None:
         """Return the feature addressed by one cache entry, when feature-scoped."""
-        del entry
-        return None
+        if not type(self).feature_scoped:
+            return None
+        if not isinstance(entry, type(self).entry_type):
+            return None
+        return entry.feature_name
 
     def apply_query_cache_mutation(self, mutation: MeasurementTableCacheMutation) -> None:
         for entry in self.cache_entries(mutation):
@@ -380,68 +395,26 @@ class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolic
 class ObjectFeatureValueCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate object-feature vector cache entries touched by a table write."""
 
-    def cache_entries(self, mutation: MeasurementTableCacheMutation) -> tuple[object, ...]:
-        return tuple(mutation.adapter.object_feature_value_cache())
-
-    def delete_entry(
-        self,
-        mutation: MeasurementTableCacheMutation,
-        entry: object,
-    ) -> None:
-        del mutation.adapter.object_feature_value_cache()[entry]
-
-    def entry_object_name(self, entry: object) -> str | None:
-        if not isinstance(entry, RuntimeObjectMeasurementQuery):
-            return None
-        return entry.object_name
-
-    def entry_feature_name(self, entry: object) -> str | None:
-        if not isinstance(entry, RuntimeObjectMeasurementQuery):
-            return None
-        return entry.feature_name
+    cache_accessor = staticmethod(lambda adapter: adapter.object_feature_value_cache())
+    entry_type = RuntimeObjectMeasurementQuery
+    feature_scoped = True
 
 
 class ObjectLabelMeasurementValuesCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate label-aligned measurement vector cache entries touched by a write."""
 
-    def cache_entries(self, mutation: MeasurementTableCacheMutation) -> tuple[object, ...]:
-        return tuple(mutation.adapter.object_label_measurement_values_cache())
-
-    def delete_entry(
-        self,
-        mutation: MeasurementTableCacheMutation,
-        entry: object,
-    ) -> None:
-        del mutation.adapter.object_label_measurement_values_cache()[entry]
-
-    def entry_object_name(self, entry: object) -> str | None:
-        if not isinstance(entry, RuntimeObjectLabelMeasurementQuery):
-            return None
-        return entry.object_name
-
-    def entry_feature_name(self, entry: object) -> str | None:
-        if not isinstance(entry, RuntimeObjectLabelMeasurementQuery):
-            return None
-        return entry.feature_name
+    cache_accessor = staticmethod(
+        lambda adapter: adapter.object_label_measurement_values_cache()
+    )
+    entry_type = RuntimeObjectLabelMeasurementQuery
+    feature_scoped = True
 
 
 class ObjectMeasurementTableCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate object-subject measurement table query cache entries."""
 
-    def cache_entries(self, mutation: MeasurementTableCacheMutation) -> tuple[object, ...]:
-        return tuple(mutation.adapter.object_measurement_table_cache())
-
-    def delete_entry(
-        self,
-        mutation: MeasurementTableCacheMutation,
-        entry: object,
-    ) -> None:
-        del mutation.adapter.object_measurement_table_cache()[entry]
-
-    def entry_object_name(self, entry: object) -> str | None:
-        if not isinstance(entry, ObjectMeasurementTableCacheKey):
-            return None
-        return entry.object_name
+    cache_accessor = staticmethod(lambda adapter: adapter.object_measurement_table_cache())
+    entry_type = ObjectMeasurementTableCacheKey
 
 
 class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
