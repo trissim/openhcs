@@ -18,7 +18,7 @@ from typing import ClassVar, Iterable, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
-from benchmark.cellprofiler_semantics.crop import (
+from openhcs.interop.cellprofiler.crop_settings import (
     CropShape,
 )
 from openhcs.interop.cellprofiler.relate_objects_settings import (
@@ -72,7 +72,7 @@ from openhcs.interop.cellprofiler.color_to_gray_settings import (
     color_to_gray_input_name,
     color_to_gray_output_names,
 )
-from .crop_settings import (
+from openhcs.interop.cellprofiler.crop_settings import (
     crop_input_image_name,
     crop_mask_image_name,
     crop_objects_name,

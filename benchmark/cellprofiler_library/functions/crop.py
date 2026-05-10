@@ -12,7 +12,7 @@ from typing import Any, ClassVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
-from benchmark.cellprofiler_semantics.crop import (
+from openhcs.interop.cellprofiler.crop_settings import (
     CropShape,
     CroppingMethod,
     RemovalMethod,

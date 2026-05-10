@@ -30,7 +30,7 @@ from openhcs.interop.cellprofiler.classify_objects_settings import (
 from openhcs.interop.cellprofiler.color_to_gray_settings import (
     color_to_gray_bound_kwargs,
 )
-from .crop_settings import crop_bound_kwargs
+from openhcs.interop.cellprofiler.crop_settings import crop_bound_kwargs
 from openhcs.interop.cellprofiler.display_data_settings import (
     display_data_on_image_bound_kwargs,
 )

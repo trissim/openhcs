@@ -21,6 +21,21 @@ class SettingNameFamily:
         return (self.canonical, *self.aliases)
 
 
+@dataclass(frozen=True, slots=True)
+class OptionalSettingSymbol:
+    """Optional CellProfiler artifact symbol selected by one setting family."""
+
+    module: ModuleBlock
+    setting_name: str | SettingNameFamily
+
+    @property
+    def value(self) -> str | None:
+        setting_value = optional_setting_value(self.module, self.setting_name)
+        if setting_value is None:
+            return None
+        return normalized_symbol_name(setting_value)
+
+
 IMAGE_MEASUREMENT_SETTING = SettingNameFamily(
     "Select images to measure",
     aliases=("Select an image to measure", "Select the image to measure"),

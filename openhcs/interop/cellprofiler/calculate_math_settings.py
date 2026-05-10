@@ -8,8 +8,8 @@ from typing import Any
 from .measurement_lookup import count_feature_object_name
 from .parser import ModuleBlock
 from .setting_names import (
+    OptionalSettingSymbol,
     SettingNameFamily,
-    normalized_symbol_name,
     optional_setting_value,
 )
 from .settings_binder import SettingsBinder
@@ -92,10 +92,7 @@ class CalculateMathObjectSetting:
 
     @property
     def object_name(self) -> str | None:
-        value = optional_setting_value(self.module, self.setting_name)
-        if value is None:
-            return None
-        return normalized_symbol_name(value)
+        return OptionalSettingSymbol(self.module, self.setting_name).value
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,4 +263,3 @@ def calculate_math_bound_kwargs(
 def calculate_math_object_dependencies(module: ModuleBlock) -> tuple[str, ...]:
     """Return object names referenced by CalculateMath measurement operands."""
     return CalculateMathObjectDependencies(module).object_names
-
