@@ -11,7 +11,9 @@ from typing import Any
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
 
-from benchmark.cellprofiler_compat.measurement_lookup import child_count_feature_child_name
+from openhcs.interop.cellprofiler.measurement_lookup import (
+    child_count_feature_child_name,
+)
 
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (

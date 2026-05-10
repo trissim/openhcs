@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from benchmark.cellprofiler_compat.measurement_lookup import count_feature_object_name
+from openhcs.interop.cellprofiler.measurement_lookup import count_feature_object_name
 
 from .parser import ModuleBlock
 from .setting_names import (

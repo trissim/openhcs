@@ -215,7 +215,7 @@ from openhcs.interop.cellprofiler.runtime.invocation import (
     illumination_scope_uses_all_images,
     requested_image_execution_mode,
 )
-from benchmark.cellprofiler_compat.measurement_lookup import (
+from openhcs.interop.cellprofiler.measurement_lookup import (
     CellProfilerMeasurementFeature,
     CellProfilerMeasurementFeatureKind,
     count_feature_object_name,

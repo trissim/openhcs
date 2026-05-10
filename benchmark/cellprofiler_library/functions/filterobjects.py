@@ -15,7 +15,9 @@ from typing import ClassVar, Optional, Tuple
 
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-from benchmark.cellprofiler_compat.measurement_lookup import child_count_feature_child_name
+from openhcs.interop.cellprofiler.measurement_lookup import (
+    child_count_feature_child_name,
+)
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
