@@ -39,11 +39,15 @@ from openhcs.interop.cellprofiler.intensity_distribution_settings import (
     parse_intensity_distribution_zernike_mode,
 )
 from openhcs.interop.cellprofiler.image_module_settings import (
+    CombineObjectsMethod,
+    ConvertObjectsToImageMode,
     ImageQualityThresholdMethod,
     MaskImageSource,
     RescaleIntensityAutomaticHigh,
     RescaleIntensityAutomaticLow,
     RescaleIntensityMethod,
+    WatershedDeclumpMethod,
+    WatershedMethod,
 )
 from openhcs.interop.cellprofiler.mask_objects_settings import (
     MASK_OBJECTS_SETTINGS,
@@ -206,6 +210,8 @@ __all__ = (
     "CellProfilerSliceAlignedValues",
     "CellProfilerStructuringElement",
     "CellProfilerMeasurementTargetScope",
+    "CombineObjectsMethod",
+    "ConvertObjectsToImageMode",
     "DEFAULT_STRUCTURING_ELEMENT_SETTING",
     "CellProfilerDialectCompiler",
     "FunctionSpecialOutput",
@@ -265,6 +271,8 @@ __all__ = (
     "UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING",
     "UNTANGLE_WORMS_TRAINING_FILE_NAME_SETTING",
     "UntangleWormsOverlapStyle",
+    "WatershedDeclumpMethod",
+    "WatershedMethod",
     "WatershedRuntimeSemanticsBinding",
     "artifact_setting_symbols",
     "cellprofiler_runtime_equivalence_policy",

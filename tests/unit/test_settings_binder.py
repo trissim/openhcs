@@ -13,13 +13,7 @@ from benchmark.converter.module_settings_binding import ModuleUnmappedSettingIgn
 from benchmark.converter.module_settings_binding import ModuleSettingsBindingStrategy
 from benchmark.converter.module_settings_binding import UnmappedModuleSettingsError
 from benchmark.converter.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
-from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
 from benchmark.cellprofiler_library.functions.imagemath import MathOperation
-from benchmark.cellprofiler_library.functions.watershed import (
-    WatershedDeclumpMethod,
-    WatershedMethod,
-    WatershedRuntimeFamily,
-)
 from openhcs.interop.cellprofiler.setting_names import setting_names
 
 
@@ -126,8 +120,8 @@ def test_watershed_settings_bind_nominal_method_enums():
     )
 
     assert bound.kwargs["use_advanced_settings"] is False
-    assert bound.kwargs["watershed_method"] == WatershedMethod.MARKERS.value
-    assert bound.kwargs["declump_method"] == WatershedDeclumpMethod.INTENSITY.value
+    assert bound.kwargs["watershed_method"] == "markers"
+    assert bound.kwargs["declump_method"] == "intensity"
     assert bound.kwargs["connectivity"] == 2
     assert bound.kwargs["compactness"] == 0.25
     assert bound.kwargs["max_seeds"] == 15
@@ -175,7 +169,7 @@ def test_combine_objects_binds_overlap_policy_nominally():
         param_mapping={},
     )
 
-    assert bound.kwargs["method"] is CombineMethod.MERGE
+    assert bound.kwargs["method"] == "merge"
     assert not bound.unmapped_kwargs
 
 
@@ -199,12 +193,12 @@ def test_watershed_runtime_family_follows_module_revision():
         legacy_module,
         binder=SettingsBinder(),
         param_mapping={},
-    ).kwargs["runtime_family"] == WatershedRuntimeFamily.CELLPROFILER4.value
+    ).kwargs["runtime_family"] == "cellprofiler4"
     assert strategy.bind(
         current_module,
         binder=SettingsBinder(),
         param_mapping={},
-    ).kwargs["runtime_family"] == WatershedRuntimeFamily.LIBRARY.value
+    ).kwargs["runtime_family"] == "library"
 
 
 def test_erode_objects_binds_preservation_settings():

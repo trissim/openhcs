@@ -10,12 +10,6 @@ from typing import Any, ClassVar, final
 
 from metaclass_registry import AutoRegisterMeta
 
-from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
-from benchmark.cellprofiler_library.functions.convertobjectstoimage import ImageMode
-from benchmark.cellprofiler_library.functions.watershed import (
-    WatershedDeclumpMethod,
-    WatershedMethod,
-)
 from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
@@ -59,11 +53,15 @@ from openhcs.interop.cellprofiler.intensity_distribution_settings import (
     parse_intensity_distribution_zernike_mode,
 )
 from openhcs.interop.cellprofiler.image_module_settings import (
+    CombineObjectsMethod,
+    ConvertObjectsToImageMode,
     ImageQualityThresholdMethod,
     MaskImageSource,
     RescaleIntensityAutomaticHigh,
     RescaleIntensityAutomaticLow,
     RescaleIntensityMethod,
+    WatershedDeclumpMethod,
+    WatershedMethod,
 )
 from .image_math_settings import image_math_bound_kwargs
 from openhcs.interop.cellprofiler.mask_objects_settings import MASK_OBJECTS_SETTINGS
@@ -83,7 +81,6 @@ from openhcs.interop.cellprofiler.relate_objects_settings import (
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from .settings_binder import (
-    cellprofiler_enum_setting_parser,
     cellprofiler_enum_value_setting_parser,
     parse_cellprofiler_bool,
     parse_cellprofiler_float,
@@ -1689,7 +1686,7 @@ class ConvertObjectsToImageModuleSettingsBindingStrategy(
         SettingToKeywordBinding(
             "Select the color format",
             "image_mode",
-            cellprofiler_enum_value_setting_parser(ImageMode),
+            cellprofiler_enum_value_setting_parser(ConvertObjectsToImageMode),
         ),
         SettingToKeywordBinding("Select the colormap", "colormap_value"),
     )
@@ -1703,7 +1700,7 @@ class CombineObjectsModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindi
         SettingToKeywordBinding(
             "Select how to handle overlapping objects",
             "method",
-            cellprofiler_enum_setting_parser(CombineMethod),
+            cellprofiler_enum_value_setting_parser(CombineObjectsMethod),
         ),
     )
 

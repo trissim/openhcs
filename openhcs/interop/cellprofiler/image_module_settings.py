@@ -5,6 +5,24 @@ from __future__ import annotations
 from enum import Enum
 
 
+class CombineObjectsMethod(Enum):
+    """Overlap policies exposed by CombineObjects settings."""
+
+    MERGE = "merge"
+    PRESERVE = "preserve"
+    DISCARD = "discard"
+    SEGMENT = "segment"
+
+
+class ConvertObjectsToImageMode(Enum):
+    """Object-label rendering modes exposed by ConvertObjectsToImage settings."""
+
+    BINARY = "binary"
+    GRAYSCALE = "grayscale"
+    COLOR = "color"
+    UINT16 = "uint16"
+
+
 class ImageQualityThresholdMethod(Enum):
     """Threshold algorithms exposed by MeasureImageQuality settings."""
 
@@ -47,3 +65,19 @@ class RescaleIntensityMethod(Enum):
     DIVIDE_BY_IMAGE_MINIMUM = "divide_by_image_minimum"
     DIVIDE_BY_IMAGE_MAXIMUM = "divide_by_image_maximum"
     DIVIDE_BY_VALUE = "divide_by_value"
+
+
+class WatershedDeclumpMethod(Enum):
+    """Declump priority families exposed by Watershed settings."""
+
+    SHAPE = "shape"
+    INTENSITY = "intensity"
+    NONE = "none"
+
+
+class WatershedMethod(Enum):
+    """Watershed surface sources exposed by CellProfiler settings."""
+
+    DISTANCE = "distance"
+    INTENSITY = "intensity"
+    MARKERS = "markers"

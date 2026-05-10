@@ -10,6 +10,7 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
@@ -128,7 +129,7 @@ def _segment_objects(labels_x: np.ndarray, labels_y: np.ndarray) -> np.ndarray:
 )
 def combineobjects(
     image: np.ndarray,
-    method: CombineMethod = CombineMethod.MERGE,
+    method: CombineMethod | str = CombineMethod.MERGE,
 ) -> Tuple[np.ndarray, CombineObjectsStats, np.ndarray]:
     """
     Combine objects from two label images using various methods.
@@ -153,6 +154,7 @@ def combineobjects(
     # Count input objects
     num_objects_x = len(np.unique(labels_x)) - (1 if 0 in labels_x else 0)
     num_objects_y = len(np.unique(labels_y)) - (1 if 0 in labels_y else 0)
+    method = coerce_cellprofiler_enum(CombineMethod, method)
     
     # Apply the selected method
     if method == CombineMethod.MERGE:
