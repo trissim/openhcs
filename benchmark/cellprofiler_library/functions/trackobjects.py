@@ -8,9 +8,12 @@ The function processes frame-by-frame and maintains tracking state.
 """
 
 import numpy as np
-from typing import Tuple, Optional, Dict, Any, List
+from abc import ABC
+from typing import Tuple, Optional, Dict, Any, List, ClassVar, Callable
 from dataclasses import dataclass, field
 from enum import Enum
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_values import object_label_dense_array
@@ -65,46 +68,100 @@ class ObjectTrackingData:
     lifetime: np.ndarray
 
 
-def _centers_of_labels(labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-    """Calculate centers of labeled objects"""
-    return ObjectTrackingBackendStrategy.for_memory_type().label_centers(labels)
+TrackingBackendCall = Callable[
+    [
+        ObjectTrackingBackendStrategy,
+        np.ndarray,
+        Optional[np.ndarray],
+        np.ndarray,
+        int,
+        int,
+    ],
+    Tuple[np.ndarray, np.ndarray, np.ndarray, int],
+]
+TrackingFrameResult = tuple[int, list[dict[str, Any]], int, int, int, int]
+TrackingFrameResults = list[TrackingFrameResult]
+TrackingObjectFrameKey = tuple[int, int]
+TrackingObjectFeatureValues = dict[str, Any]
+TrackingObjectValueTable = dict[TrackingObjectFrameKey, TrackingObjectFeatureValues]
 
 
-def _track_by_overlap(
-    current_labels: np.ndarray,
-    old_labels: Optional[np.ndarray],
-    old_object_numbers: np.ndarray,
-    max_object_number: int,
-    backend_provider: CellProfilerBackendProvider | None = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """Track objects by maximum overlap between frames"""
-    return ObjectTrackingBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    ).track_by_overlap(
-        current_labels,
-        old_labels,
-        old_object_numbers,
-        max_object_number,
+class TrackObjectsMethodStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Registered tracking method behavior for TrackObjects."""
+
+    __registry_key__ = "method"
+    __skip_if_no_key__ = True
+    method: ClassVar[str | None] = None
+    backend_tracking: ClassVar[TrackingBackendCall | None] = None
+
+    @classmethod
+    def for_method(cls, method: str) -> "TrackObjectsMethodStrategy":
+        method_key = method.lower()
+        strategy_type = cls.__registry__.get(method_key)
+        if strategy_type is None:
+            raise NotImplementedError(
+                f"TrackObjects tracking method {method!r} is not implemented."
+        )
+        return strategy_type()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.method is not None and cls.backend_tracking is None:
+            raise TypeError(
+                f"{cls.__name__} must declare backend_tracking for TrackObjects"
+            )
+
+    def track(
+        self,
+        current_labels: np.ndarray,
+        old_labels: Optional[np.ndarray],
+        old_object_numbers: np.ndarray,
+        max_object_number: int,
+        pixel_radius: int,
+        backend_provider: CellProfilerBackendProvider | None,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+        """Assign stable object identities for the current frame."""
+        backend_tracking = type(self).backend_tracking
+        if backend_tracking is None:
+            raise TypeError(f"{type(self).__name__} cannot track objects")
+        return backend_tracking(
+            ObjectTrackingBackendStrategy.for_memory_type(
+                backend_provider=backend_provider,
+            ),
+            current_labels,
+            old_labels,
+            old_object_numbers,
+            max_object_number,
+            pixel_radius,
+        )
+
+
+class OverlapTrackObjectsMethodStrategy(TrackObjectsMethodStrategy):
+    """Track objects by maximum overlap between frames."""
+
+    method = TrackingMethod.OVERLAP.value
+    backend_tracking = staticmethod(
+        lambda backend, current_labels, old_labels, old_object_numbers, max_object_number, pixel_radius: backend.track_by_overlap(
+            current_labels,
+            old_labels,
+            old_object_numbers,
+            max_object_number,
+        )
     )
 
 
-def _track_by_distance(
-    current_labels: np.ndarray,
-    old_labels: Optional[np.ndarray],
-    old_object_numbers: np.ndarray,
-    max_object_number: int,
-    pixel_radius: int,
-    backend_provider: CellProfilerBackendProvider | None = None,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    """Track objects by minimum distance between centroids"""
-    return ObjectTrackingBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    ).track_by_distance(
-        current_labels,
-        old_labels,
-        old_object_numbers,
-        max_object_number,
-        pixel_radius,
+class DistanceTrackObjectsMethodStrategy(TrackObjectsMethodStrategy):
+    """Track objects by minimum distance between centroids."""
+
+    method = TrackingMethod.DISTANCE.value
+    backend_tracking = staticmethod(
+        lambda backend, current_labels, old_labels, old_object_numbers, max_object_number, pixel_radius: backend.track_by_distance(
+            current_labels,
+            old_labels,
+            old_object_numbers,
+            max_object_number,
+            pixel_radius,
+        )
     )
 
 
@@ -189,10 +246,8 @@ def track_objects(
     if _tracking_state is None:
         _tracking_state = _initial_tracking_state()
 
-    method = tracking_method.lower()
-    frame_results: list[
-        tuple[int, list[dict[str, Any]], int, int, int, int]
-    ] = []
+    tracking_strategy = TrackObjectsMethodStrategy.for_method(tracking_method)
+    frame_results: TrackingFrameResults = []
 
     for frame_index, current_labels in enumerate(label_frames):
         image_number = int(image_number_start) + frame_index
@@ -203,31 +258,16 @@ def track_objects(
         )
         max_object_number = int(_tracking_state.get("max_object_number", 0))
 
-        if method == "overlap":
-            new_labels, parent_obj_nums, parent_img_nums, max_object_number = (
-                _track_by_overlap(
-                    current_labels,
-                    old_labels,
-                    old_object_numbers,
-                    max_object_number,
-                    tracking_backend_provider,
-                )
+        new_labels, parent_obj_nums, parent_img_nums, max_object_number = (
+            tracking_strategy.track(
+                current_labels,
+                old_labels,
+                old_object_numbers,
+                max_object_number,
+                pixel_radius,
+                tracking_backend_provider,
             )
-        elif method == "distance":
-            new_labels, parent_obj_nums, parent_img_nums, max_object_number = (
-                _track_by_distance(
-                    current_labels,
-                    old_labels,
-                    old_object_numbers,
-                    max_object_number,
-                    pixel_radius,
-                    tracking_backend_provider,
-                )
-            )
-        else:
-            raise NotImplementedError(
-                f"TrackObjects tracking method {tracking_method!r} is not implemented."
-            )
+        )
 
         parent_img_nums = np.where(parent_obj_nums > 0, image_number - 1, 0)
         object_rows = _tracking_object_rows(
@@ -496,7 +536,7 @@ def _positive_value_counts(values: np.ndarray) -> dict[int, int]:
 
 
 def _apply_final_age_measurements(
-    frame_results: list[tuple[int, list[dict[str, Any]], int, int, int, int]],
+    frame_results: TrackingFrameResults,
     *,
     feature_suffix: str,
 ) -> None:
@@ -505,8 +545,8 @@ def _apply_final_age_measurements(
     final_age_feature = f"TrackObjects_FinalAge_{feature_suffix}"
 
     labels_by_frame: dict[int, set[int]] = {}
-    object_values: dict[tuple[int, int], dict[str, Any]] = {}
-    final_age_rows: dict[tuple[int, int], dict[str, Any]] = {}
+    object_values: TrackingObjectValueTable = {}
+    final_age_rows: TrackingObjectValueTable = {}
     for image_number, object_rows, *_counts in frame_results:
         for row in object_rows:
             object_label = int(row[MEASUREMENT_OBJECT_LABEL_FIELD])
