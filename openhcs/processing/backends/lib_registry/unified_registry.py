@@ -1322,7 +1322,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                     self.library_name,
                     exc,
                 )
-                self._cache_path.unlink(missing_ok=True)
+                self._discard_stale_cache()
                 return None
             if not callable(func):
                 logger.warning(
@@ -1333,7 +1333,7 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
                     type(func).__name__,
                     self.library_name,
                 )
-                self._cache_path.unlink(missing_ok=True)
+                self._discard_stale_cache()
                 return None
             contract = ProcessingContract[cached_data['contract']]
 
@@ -1403,6 +1403,19 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             json.dump(cache_data, f, indent=2)
 
         logger.info(f"💾 Saved {len(functions)} {self.library_name} functions to cache")
+
+    def _discard_stale_cache(self) -> None:
+        """Best-effort stale-cache deletion without blocking fresh discovery."""
+        try:
+            self._cache_path.unlink(missing_ok=True)
+        except OSError as exc:
+            logger.warning(
+                "Registry cache path %s could not be invalidated; using fresh "
+                "%s discovery without refreshing the disk cache: %s",
+                self._cache_path,
+                self.library_name,
+                exc,
+            )
 
     def _writable_cache_parent(self) -> Optional[str]:
         """Return the nearest existing writable cache parent, or None."""

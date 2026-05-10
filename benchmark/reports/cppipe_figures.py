@@ -5,7 +5,9 @@ from __future__ import annotations
 import csv
 import math
 import re
+from dataclasses import dataclass
 from collections.abc import Iterable, Sequence
+from contextlib import contextmanager
 from pathlib import Path
 
 import matplotlib
@@ -37,15 +39,17 @@ CELLPROFILER_LABEL = "CP"
 DEFAULT_OPENHCS_LABEL = "OH1"
 DEFAULT_FORMATS = ("png", "svg")
 DEFAULT_WRAP_AFTER = 14
-DEFAULT_GROUP_WIDTH_INCHES = 0.82
-SINGLE_PANEL_HEIGHT_INCHES = 3.6
-MULTI_PANEL_HEIGHT_INCHES = 5.6
-ACCURACY_ZOOM_PANEL_HEIGHT_INCHES = 3.8
+DEFAULT_GROUP_WIDTH_INCHES = 0.98
+SINGLE_PANEL_HEIGHT_INCHES = 4.4
+MULTI_PANEL_HEIGHT_INCHES = 7.2
+ACCURACY_ZOOM_PANEL_HEIGHT_INCHES = 4.5
 GROUPED_BAR_MAX_WIDTH = 0.22
 GROUPED_BAR_FRACTION = 0.9
-PIPELINE_LABEL_FONT_SIZE = 6.4
+PIPELINE_LABEL_FONT_SIZE = 7.2
 PIPELINE_LABEL_WRAP_THRESHOLD = 29
 ACCURACY_ZOOM_HALF_RANGE_PERCENT = 0.001
+SPEEDUP_TARGET = 4.0
+FIGURE_DPI = 360
 PIPELINE_NAME_FIELD = "pipeline_name"
 METHOD_FIELD = "method"
 AGGREGATE_LABEL = "Aggregate"
@@ -79,17 +83,83 @@ FigureMetricSpec = product_record(
     (
         "key: str; filename_stem: str; title: str; ylabel: str; "
         "percentage: bool; baseline_line: float | None; "
-        "minimum_ylim: float | None; log_variant: bool"
+        "target_line: float | None; minimum_ylim: float | None; log_variant: bool"
     ),
     defaults={
         "percentage": False,
         "baseline_line": None,
+        "target_line": None,
         "minimum_ylim": None,
         "log_variant": False,
     },
     doc="One grouped-bar chart projection.",
     module_name=__name__,
 )
+
+
+@dataclass(frozen=True)
+class BenchmarkFigureStyle:
+    """Publication-oriented styling for CellProfiler benchmark figures."""
+
+    method_colors: tuple[str, ...] = (
+        "#252525",
+        "#007f7f",
+        "#d95f02",
+        "#1b9e77",
+        "#7570b3",
+    )
+    background: str = "#fbfaf7"
+    grid_color: str = "#dad4c7"
+    spine_color: str = "#5c554b"
+    text_color: str = "#252525"
+    target_color: str = "#b2182b"
+    baseline_color: str = "#5c554b"
+
+    @contextmanager
+    def context(self):
+        with plt.rc_context(self.rc_params):
+            yield
+
+    @property
+    def rc_params(self) -> dict[str, object]:
+        return {
+            "figure.facecolor": self.background,
+            "axes.facecolor": self.background,
+            "axes.edgecolor": self.spine_color,
+            "axes.labelcolor": self.text_color,
+            "axes.titlecolor": self.text_color,
+            "xtick.color": self.text_color,
+            "ytick.color": self.text_color,
+            "text.color": self.text_color,
+            "font.family": "DejaVu Sans",
+            "axes.titleweight": "bold",
+            "axes.titlesize": 12,
+            "axes.labelsize": 9.5,
+            "legend.fontsize": 8.5,
+            "xtick.labelsize": PIPELINE_LABEL_FONT_SIZE,
+            "ytick.labelsize": 8.5,
+            "savefig.facecolor": self.background,
+            "savefig.edgecolor": self.background,
+        }
+
+    def color_for_method(self, method_index: int) -> str:
+        return self.method_colors[method_index % len(self.method_colors)]
+
+    def decorate_axis(self, axis, *, metric: FigureMetricSpec, panel_index: int) -> None:
+        axis.grid(axis="y", color=self.grid_color, linewidth=0.8, alpha=0.8)
+        axis.set_axisbelow(True)
+        axis.spines["top"].set_visible(False)
+        axis.spines["right"].set_visible(False)
+        axis.spines["left"].set_color(self.spine_color)
+        axis.spines["bottom"].set_color(self.spine_color)
+        if panel_index == 0:
+            axis.set_title(metric.title, loc="left", pad=10)
+
+    def save(self, fig, output_path: Path) -> None:
+        fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
+
+
+FIGURE_STYLE = BenchmarkFigureStyle()
 
 
 FIGURE_METRICS = (
@@ -99,6 +169,7 @@ FIGURE_METRICS = (
         "Semantic parity accuracy",
         "Parity accuracy (%)",
         percentage=True,
+        target_line=100.0,
         minimum_ylim=0.0,
     ),
     FigureMetricSpec(
@@ -115,6 +186,7 @@ FIGURE_METRICS = (
         "Execution speedup versus native CellProfiler",
         "Speedup (x)",
         baseline_line=1.0,
+        target_line=SPEEDUP_TARGET,
         minimum_ylim=0.0,
         log_variant=True,
     ),
@@ -126,14 +198,6 @@ FIGURE_METRICS = (
         minimum_ylim=0.0,
         log_variant=True,
     ),
-)
-
-METHOD_COLORS = (
-    "#262626",
-    "#0f8b8d",
-    "#d95f02",
-    "#1b9e77",
-    "#7570b3",
 )
 
 
@@ -233,6 +297,9 @@ def generate_cppipe_benchmark_figures(
                     group_width_inches=group_width_inches,
                 )
             )
+    figure_index_path = output_dir / "benchmark_figure_index.md"
+    _write_benchmark_figure_index(figure_index_path, outputs)
+    outputs.append(figure_index_path)
     return tuple(outputs)
 
 
@@ -476,6 +543,7 @@ def _category_metrics(category_key: str) -> tuple[FigureMetricSpec, ...]:
             ylabel=metric.ylabel,
             percentage=metric.percentage,
             baseline_line=metric.baseline_line,
+            target_line=metric.target_line,
             minimum_ylim=metric.minimum_ylim,
             log_variant=metric.log_variant,
         )
@@ -506,71 +574,70 @@ def _plot_grouped_metric(
         if len(panels) == 1
         else MULTI_PANEL_HEIGHT_INCHES
     )
-    fig, axes = plt.subplots(
-        len(panels),
-        1,
-        figsize=(fig_width, fig_height),
-        layout="constrained",
-    )
-    panel_axes = (axes,) if len(panels) == 1 else tuple(axes)
-    width = _bar_width(len(methods))
-    offsets = _bar_offsets(len(methods), width)
-    row_index = {(row.pipeline_name, row.method): row for row in rows}
-
-    for panel_index, (axis, panel_names) in enumerate(zip(panel_axes, panels, strict=True)):
-        x_positions = tuple(range(len(panel_names)))
-        for method_index, method in enumerate(methods):
-            values = [
-                _plot_value(
-                    _metric_value(row_index.get((pipeline_name, method)), metric)
-                )
-                for pipeline_name in panel_names
-            ]
-            axis.bar(
-                [x + offsets[method_index] for x in x_positions],
-                values,
-                width=width,
-                label=method if panel_index == 0 else None,
-                color=METHOD_COLORS[method_index % len(METHOD_COLORS)],
-            )
-
-        if metric.baseline_line is not None:
-            axis.axhline(
-                metric.baseline_line,
-                color="#333333",
-                linewidth=1.0,
-                alpha=0.8,
-            )
-        axis.set_ylabel(metric.ylabel)
-        axis.set_xticks(list(x_positions))
-        axis.set_xticklabels(
-            [_split_pipeline_label(name) for name in panel_names],
-            rotation=45,
-            ha="right",
-            fontsize=PIPELINE_LABEL_FONT_SIZE,
+    with FIGURE_STYLE.context():
+        fig, axes = plt.subplots(
+            len(panels),
+            1,
+            figsize=(fig_width, fig_height),
+            layout="constrained",
         )
-        axis.margins(x=0.01)
-        axis.grid(axis="y", alpha=0.25)
-        if metric.minimum_ylim is not None and not log_y:
-            axis.set_ylim(bottom=metric.minimum_ylim)
-        if metric.percentage:
-            axis.set_ylim(0.0, 105.0)
-        if log_y:
-            axis.set_yscale("log")
-            axis.yaxis.set_major_locator(LogLocator(base=10.0, numticks=6))
-            axis.yaxis.set_minor_locator(NullLocator())
-            axis.yaxis.set_major_formatter(FuncFormatter(_plain_log_tick_label))
-            axis.yaxis.set_minor_formatter(NullFormatter())
+        panel_axes = (axes,) if len(panels) == 1 else tuple(axes)
+        width = _bar_width(len(methods))
+        offsets = _bar_offsets(len(methods), width)
+        row_index = {(row.pipeline_name, row.method): row for row in rows}
 
-    panel_axes[0].legend(frameon=False, ncol=min(len(methods), 5), loc="upper left")
-    outputs: list[Path] = []
-    filename_stem = f"{metric.filename_stem}_log" if log_y else metric.filename_stem
-    for output_format in output_formats:
-        output_path = output_dir / f"{filename_stem}.{output_format}"
-        fig.savefig(output_path, dpi=300, bbox_inches="tight")
-        outputs.append(output_path)
-    plt.close(fig)
-    return tuple(outputs)
+        for panel_index, (axis, panel_names) in enumerate(
+            zip(panel_axes, panels, strict=True)
+        ):
+            x_positions = tuple(range(len(panel_names)))
+            for method_index, method in enumerate(methods):
+                values = [
+                    _plot_value(
+                        _metric_value(row_index.get((pipeline_name, method)), metric)
+                    )
+                    for pipeline_name in panel_names
+                ]
+                axis.bar(
+                    [x + offsets[method_index] for x in x_positions],
+                    values,
+                    width=width,
+                    label=method if panel_index == 0 else None,
+                    color=FIGURE_STYLE.color_for_method(method_index),
+                    edgecolor=FIGURE_STYLE.background,
+                    linewidth=0.55,
+                )
+
+            _draw_reference_lines(axis, metric=metric, log_y=log_y)
+            FIGURE_STYLE.decorate_axis(axis, metric=metric, panel_index=panel_index)
+            axis.set_ylabel(metric.ylabel)
+            axis.set_xticks(list(x_positions))
+            axis.set_xticklabels(
+                [_split_pipeline_label(name) for name in panel_names],
+                rotation=42,
+                ha="right",
+                fontsize=PIPELINE_LABEL_FONT_SIZE,
+            )
+            axis.margins(x=0.01)
+            if metric.minimum_ylim is not None and not log_y:
+                axis.set_ylim(bottom=metric.minimum_ylim)
+            if metric.percentage:
+                axis.set_ylim(0.0, 105.0)
+            if log_y:
+                axis.set_yscale("log")
+                axis.yaxis.set_major_locator(LogLocator(base=10.0, numticks=6))
+                axis.yaxis.set_minor_locator(NullLocator())
+                axis.yaxis.set_major_formatter(FuncFormatter(_plain_log_tick_label))
+                axis.yaxis.set_minor_formatter(NullFormatter())
+
+        panel_axes[0].legend(frameon=False, ncol=min(len(methods), 5), loc="upper left")
+        outputs: list[Path] = []
+        filename_stem = f"{metric.filename_stem}_log" if log_y else metric.filename_stem
+        for output_format in output_formats:
+            output_path = output_dir / f"{filename_stem}.{output_format}"
+            FIGURE_STYLE.save(fig, output_path)
+            outputs.append(output_path)
+        plt.close(fig)
+        return tuple(outputs)
 
 
 def _plot_accuracy_zoom(
@@ -587,70 +654,112 @@ def _plot_accuracy_zoom(
     panels = _pipeline_panels(pipeline_names, wrap_after)
     panel_count = len(panels)
     fig_width = max(8.0, max(len(panel) for panel in panels) * group_width_inches)
-    fig, axes = plt.subplots(
-        panel_count * 2,
-        1,
-        figsize=(fig_width, ACCURACY_ZOOM_PANEL_HEIGHT_INCHES * panel_count),
-        gridspec_kw={"height_ratios": tuple((2.7, 1.0) * panel_count)},
-        layout="constrained",
-    )
-    all_axes = tuple(axes.flat)
-    width = _bar_width(len(methods))
-    offsets = _bar_offsets(len(methods), width)
-    row_index = {(row.pipeline_name, row.method): row for row in rows}
-    metric = FIGURE_METRICS[0]
+    with FIGURE_STYLE.context():
+        fig, axes = plt.subplots(
+            panel_count * 2,
+            1,
+            figsize=(fig_width, ACCURACY_ZOOM_PANEL_HEIGHT_INCHES * panel_count),
+            gridspec_kw={"height_ratios": tuple((2.7, 1.0) * panel_count)},
+            layout="constrained",
+        )
+        all_axes = tuple(axes.flat)
+        width = _bar_width(len(methods))
+        offsets = _bar_offsets(len(methods), width)
+        row_index = {(row.pipeline_name, row.method): row for row in rows}
+        metric = FIGURE_METRICS[0]
 
-    for panel_index, panel_names in enumerate(panels):
-        zoom_axis = all_axes[panel_index * 2]
-        context_axis = all_axes[panel_index * 2 + 1]
-        x_positions = tuple(range(len(panel_names)))
-        for axis in (zoom_axis, context_axis):
-            for method_index, method in enumerate(methods):
-                values = [
-                    _plot_value(
-                        _metric_value(row_index.get((pipeline_name, method)), metric)
+        for panel_index, panel_names in enumerate(panels):
+            zoom_axis = all_axes[panel_index * 2]
+            context_axis = all_axes[panel_index * 2 + 1]
+            x_positions = tuple(range(len(panel_names)))
+            for axis in (zoom_axis, context_axis):
+                for method_index, method in enumerate(methods):
+                    values = [
+                        _plot_value(
+                            _metric_value(row_index.get((pipeline_name, method)), metric)
+                        )
+                        for pipeline_name in panel_names
+                    ]
+                    axis.bar(
+                        [x + offsets[method_index] for x in x_positions],
+                        values,
+                        width=width,
+                        label=method if panel_index == 0 and axis is zoom_axis else None,
+                        color=FIGURE_STYLE.color_for_method(method_index),
+                        edgecolor=FIGURE_STYLE.background,
+                        linewidth=0.55,
                     )
-                    for pipeline_name in panel_names
-                ]
-                axis.bar(
-                    [x + offsets[method_index] for x in x_positions],
-                    values,
-                    width=width,
-                    label=method if panel_index == 0 and axis is zoom_axis else None,
-                    color=METHOD_COLORS[method_index % len(METHOD_COLORS)],
-                )
-            axis.grid(axis="y", alpha=0.25)
-            axis.set_xticks(list(x_positions))
+                FIGURE_STYLE.decorate_axis(axis, metric=metric, panel_index=panel_index)
+                axis.set_xticks(list(x_positions))
 
-        zoom_axis.set_ylim(
-            100.0 - ACCURACY_ZOOM_HALF_RANGE_PERCENT,
-            100.0 + ACCURACY_ZOOM_HALF_RANGE_PERCENT,
-        )
-        zoom_axis.axhline(100.0, color="#333333", linewidth=0.9, alpha=0.7)
-        zoom_axis.yaxis.set_major_formatter(FuncFormatter(_percent_tick_label))
-        zoom_axis.yaxis.get_offset_text().set_visible(False)
-        zoom_axis.set_ylabel("Accuracy (%)")
-        zoom_axis.set_xticklabels(())
-        context_axis.set_ylim(0.0, 5.0)
-        context_axis.set_ylabel("0-5%")
-        context_axis.set_xticklabels(
-            [_split_pipeline_label(name) for name in panel_names],
-            rotation=45,
-            ha="right",
-            fontsize=PIPELINE_LABEL_FONT_SIZE,
-        )
-        zoom_axis.margins(x=0.01)
-        context_axis.margins(x=0.01)
-        _mark_axis_break(zoom_axis, context_axis)
+            zoom_axis.set_ylim(
+                100.0 - ACCURACY_ZOOM_HALF_RANGE_PERCENT,
+                100.0 + ACCURACY_ZOOM_HALF_RANGE_PERCENT,
+            )
+            zoom_axis.axhline(
+                100.0,
+                color=FIGURE_STYLE.target_color,
+                linewidth=1.15,
+                linestyle="--",
+                alpha=0.85,
+            )
+            zoom_axis.yaxis.set_major_formatter(FuncFormatter(_percent_tick_label))
+            zoom_axis.yaxis.get_offset_text().set_visible(False)
+            zoom_axis.set_ylabel("Accuracy (%)")
+            zoom_axis.set_xticklabels(())
+            context_axis.set_ylim(0.0, 5.0)
+            context_axis.set_ylabel("0-5%")
+            context_axis.set_xticklabels(
+                [_split_pipeline_label(name) for name in panel_names],
+                rotation=42,
+                ha="right",
+                fontsize=PIPELINE_LABEL_FONT_SIZE,
+            )
+            zoom_axis.margins(x=0.01)
+            context_axis.margins(x=0.01)
+            _mark_axis_break(zoom_axis, context_axis)
 
-    all_axes[0].legend(frameon=False, ncol=min(len(methods), 5), loc="upper left")
-    outputs: list[Path] = []
-    for output_format in output_formats:
-        output_path = output_dir / f"cppipe_accuracy_zoom.{output_format}"
-        fig.savefig(output_path, dpi=300, bbox_inches="tight")
-        outputs.append(output_path)
-    plt.close(fig)
-    return tuple(outputs)
+        all_axes[0].legend(frameon=False, ncol=min(len(methods), 5), loc="upper left")
+        outputs: list[Path] = []
+        for output_format in output_formats:
+            output_path = output_dir / f"cppipe_accuracy_zoom.{output_format}"
+            FIGURE_STYLE.save(fig, output_path)
+            outputs.append(output_path)
+        plt.close(fig)
+        return tuple(outputs)
+
+
+def _draw_reference_lines(axis, *, metric: FigureMetricSpec, log_y: bool) -> None:
+    if metric.baseline_line is not None:
+        axis.axhline(
+            metric.baseline_line,
+            color=FIGURE_STYLE.baseline_color,
+            linewidth=1.0,
+            alpha=0.72,
+        )
+    if metric.target_line is None:
+        return
+    if log_y and metric.target_line <= 0.0:
+        return
+    axis.axhline(
+        metric.target_line,
+        color=FIGURE_STYLE.target_color,
+        linewidth=1.15,
+        linestyle="--",
+        alpha=0.86,
+    )
+    label = "4x target" if metric.key == "speedup" else "target"
+    axis.annotate(
+        label,
+        xy=(0.995, metric.target_line),
+        xycoords=("axes fraction", "data"),
+        xytext=(-2, 3),
+        textcoords="offset points",
+        ha="right",
+        va="bottom",
+        fontsize=7.8,
+        color=FIGURE_STYLE.target_color,
+    )
 
 
 def _mark_axis_break(top_axis, bottom_axis) -> None:
@@ -797,3 +906,31 @@ def _mean_present(values: Iterable[float | None]) -> float | None:
     if not present:
         return None
     return sum(present) / len(present)
+
+
+def _write_benchmark_figure_index(path: Path, outputs: Sequence[Path]) -> None:
+    figure_names = {output.name for output in outputs}
+    lines = [
+        "# CellProfiler Benchmark Figure Index",
+        "",
+        "Autogenerated benchmark figures for the OpenHCS paper draft.",
+        "",
+        "## Manuscript Benchmark Panels",
+        "",
+        "- `cppipe_accuracy.*`: semantic parity across imported `.cppipe` workflows.",
+        "- `cppipe_accuracy_zoom.*`: broken-axis parity view for tiny numeric drift near 100%.",
+        "- `cppipe_raw_seconds.*`: single-thread execution runtime in seconds.",
+        "- `cppipe_raw_seconds_log.*`: runtime on a log scale for mixed short and long pipelines.",
+        "- `cppipe_speedup.*`: execution speedup versus native CellProfiler with the 4x target line.",
+        "- `cppipe_speedup_log.*`: speedup on a log scale for wide dynamic range.",
+        "- `cppipe_peak_memory*`: peak RSS figures when memory metrics are present.",
+        "- `cppipe_assay_category_*`: manifest-declared assay category summaries.",
+        "- `cppipe_module_category_*`: manifest-declared module category summaries.",
+        "- `cppipe_comparison_metrics_long.csv`: long-form per-pipeline plotting table.",
+        "- `cppipe_comparison_category_metrics_long.csv`: long-form category plotting table.",
+        "",
+        "## Files Present",
+        "",
+    ]
+    lines.extend(f"- `{name}`" for name in sorted(figure_names))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
