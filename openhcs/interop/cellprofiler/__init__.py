@@ -32,6 +32,12 @@ from openhcs.interop.cellprofiler.illumination_settings import (
     IlluminationSmoothingMethod,
     IlluminationSplineBackgroundMode,
 )
+from openhcs.interop.cellprofiler.intensity_distribution_settings import (
+    IntensityDistributionCenterChoice,
+    IntensityDistributionZernikeMode,
+    parse_intensity_distribution_center_choice,
+    parse_intensity_distribution_zernike_mode,
+)
 from openhcs.interop.cellprofiler.mask_objects_settings import (
     MASK_OBJECTS_SETTINGS,
     MaskObjectsNumberingChoice,
@@ -205,6 +211,8 @@ __all__ = (
     "IlluminationRescaleOption",
     "IlluminationSmoothingMethod",
     "IlluminationSplineBackgroundMode",
+    "IntensityDistributionCenterChoice",
+    "IntensityDistributionZernikeMode",
     "MASK_OBJECTS_SETTINGS",
     "MaskObjectsNumberingChoice",
     "MaskObjectsOverlapHandling",
@@ -257,6 +265,8 @@ __all__ = (
     "get_cellprofiler_dialect_compiler",
     "normalize_cellprofiler_setting_name",
     "optional_setting_value",
+    "parse_intensity_distribution_center_choice",
+    "parse_intensity_distribution_zernike_mode",
     "parse_relate_objects_distance_method",
     "register_cellprofiler_dialect_compiler",
     "required_setting_value",

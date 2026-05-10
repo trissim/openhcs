@@ -10,7 +10,6 @@ from typing import Any, ClassVar, final
 
 from metaclass_registry import AutoRegisterMeta
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
 from benchmark.cellprofiler_library.functions.combineobjects import CombineMethod
 from benchmark.cellprofiler_library.functions.convertobjectstoimage import ImageMode
 from benchmark.cellprofiler_library.functions.rescaleintensity import (
@@ -19,10 +18,6 @@ from benchmark.cellprofiler_library.functions.rescaleintensity import (
     RescaleMethod,
 )
 from benchmark.cellprofiler_library.functions.maskimage import MaskSource
-from benchmark.cellprofiler_library.functions.measureobjectintensitydistribution import (
-    CenterChoice,
-    ZernikeMode,
-)
 from benchmark.cellprofiler_library.functions.measureimagequality import (
     ThresholdMethod as ImageQualityThresholdMethod,
 )
@@ -67,6 +62,10 @@ from openhcs.interop.cellprofiler.illumination_settings import (
     CORRECT_ILLUMINATION_APPLY_SETTINGS,
     CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
     IlluminationCorrectionMethod,
+)
+from openhcs.interop.cellprofiler.intensity_distribution_settings import (
+    parse_intensity_distribution_center_choice,
+    parse_intensity_distribution_zernike_mode,
 )
 from .image_math_settings import image_math_bound_kwargs
 from openhcs.interop.cellprofiler.mask_objects_settings import MASK_OBJECTS_SETTINGS
@@ -1417,7 +1416,9 @@ class MeasureObjectIntensityDistributionModuleSettingsBindingStrategy(
 
         zernike_value = optional_setting_value(module, type(self).zernike_setting_name)
         if zernike_value is not None:
-            kwargs["wants_zernikes"] = _parse_zernike_mode_setting(zernike_value)
+            kwargs["wants_zernikes"] = parse_intensity_distribution_zernike_mode(
+                zernike_value
+            )
             unmapped_kwargs.pop(
                 normalize_cellprofiler_setting_name(type(self).zernike_setting_name),
                 None,
@@ -1445,7 +1446,9 @@ class MeasureObjectIntensityDistributionModuleSettingsBindingStrategy(
 
         center_choice = optional_setting_value(module, "Object to use as center?")
         if center_choice is not None:
-            kwargs["center_choice"] = _parse_radial_center_choice_setting(center_choice)
+            kwargs["center_choice"] = parse_intensity_distribution_center_choice(
+                center_choice
+            )
             unmapped_kwargs.pop(
                 normalize_cellprofiler_setting_name("Object to use as center?"),
                 None,
@@ -1512,27 +1515,6 @@ class MeasureImageQualityModuleSettingsBindingStrategy(
             unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
 
         return BoundModuleSettings(kwargs, unmapped_kwargs)
-
-
-def _parse_zernike_mode_setting(value: str) -> str:
-    """Return the absorbed-function Zernike mode literal for a CP setting."""
-    normalized = normalize_cellprofiler_setting_name(value)
-    if normalized == "magnitudes_only":
-        return ZernikeMode.MAGNITUDES.value
-    return _coerce_function_enum(ZernikeMode, value).value
-
-
-def _parse_radial_center_choice_setting(value: str) -> str:
-    """Return the absorbed-function center-choice literal for a CP setting."""
-    normalized = normalize_cellprofiler_setting_name(value)
-    if normalized in {"these_objects", "self"}:
-        return CenterChoice.SELF.value
-    if normalized in {"centers_of_other_objects", "centers_of_other"}:
-        return CenterChoice.CENTERS_OF_OTHER.value
-    if normalized in {"edges_of_other_objects", "edges_of_other"}:
-        return CenterChoice.EDGES_OF_OTHER.value
-    return _coerce_function_enum(CenterChoice, value).value
-
 
 class MeasureGranularityModuleSettingsBindingStrategy(
     GenericModuleSettingsBindingStrategy
