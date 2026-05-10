@@ -19,6 +19,7 @@ from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 from benchmark.cellprofiler_library.functions.spatial_axes import (
     trailing_spatial_factors,
@@ -27,8 +28,14 @@ from benchmark.cellprofiler_library.functions.spatial_axes import (
 
 
 class ResizeMethod(Enum):
-    DIMENSIONS = "dimensions"
-    FACTOR = "factor"
+    DIMENSIONS = ("dimensions", "to_size", "manual")
+    FACTOR = ("factor", "by_factor")
+
+    def __new__(cls, value: str, *cellprofiler_literals: str):
+        member = object.__new__(cls)
+        member._value_ = value
+        member.cellprofiler_literals = cellprofiler_literals
+        return member
 
 
 @dataclass
@@ -86,7 +93,7 @@ def resize_objects(
     
     original_shape = labels.shape
     
-    method = _coerce_resize_method(method)
+    method = coerce_cellprofiler_enum(ResizeMethod, method)
 
     if method == ResizeMethod.DIMENSIONS:
         target_size = _resize_objects_target_shape(
@@ -123,18 +130,6 @@ def resize_objects(
     
     relationship = object_label_lineage_payload(labels, resized_labels)
     return image, stats, relationship, resized_labels
-
-
-def _coerce_resize_method(value: ResizeMethod | str) -> ResizeMethod:
-    if isinstance(value, ResizeMethod):
-        return value
-    normalized = str(value).strip().lower()
-    if normalized in {"factor", "by_factor"}:
-        return ResizeMethod.FACTOR
-    if normalized in {"dimensions", "to_size", "manual"}:
-        return ResizeMethod.DIMENSIONS
-    return ResizeMethod(value)
-
 
 def _resize_objects_target_shape(
     shape: tuple[int, ...],

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
@@ -13,9 +12,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
-
-
-_STAIN_LITERAL_TOKEN_PATTERN = re.compile(r"[^a-z0-9]+")
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class StainType(Enum):
@@ -50,16 +47,6 @@ class StainType(Enum):
         if absorbance is None:
             raise ValueError("Custom stains require explicit absorbance values.")
         return absorbance
-
-    @property
-    def normalized_literals(self) -> frozenset[str]:
-        return frozenset(
-            _STAIN_LITERAL_TOKEN_PATTERN.sub(
-                "_",
-                literal.strip().lower(),
-            ).strip("_")
-            for literal in (self.name, self.display_name)
-        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -160,7 +147,7 @@ def _stain_definitions(
         )
     return tuple(
         StainDefinition(
-            stain=_coerce_stain_type(stain_name),
+            stain=coerce_cellprofiler_enum(StainType, stain_name),
             custom_absorbance=_coerce_custom_absorbance(custom_absorbance),
         )
         for stain_name, custom_absorbance in zip(
@@ -185,7 +172,7 @@ def _legacy_stain_definitions(
     stains = (stain1, stain2, stain3)
     return tuple(
         StainDefinition(
-            stain=_coerce_stain_type(stain),
+            stain=coerce_cellprofiler_enum(StainType, stain),
             custom_absorbance=custom_absorbances[index],
         )
         for index, stain in enumerate(stains)
@@ -255,20 +242,3 @@ def _coerce_custom_absorbance(
         return None
     red, green, blue = absorbance
     return float(red), float(green), float(blue)
-
-
-def _coerce_stain_type(stain: StainType | str) -> StainType:
-    if isinstance(stain, StainType):
-        return stain
-    normalized = _STAIN_LITERAL_TOKEN_PATTERN.sub(
-        "_",
-        stain.strip().lower(),
-    ).strip("_")
-    matches = [
-        stain_type
-        for stain_type in StainType
-        if normalized in stain_type.normalized_literals
-    ]
-    if len(matches) == 1:
-        return matches[0]
-    raise ValueError(f"Unsupported UnmixColors stain: {stain!r}.")

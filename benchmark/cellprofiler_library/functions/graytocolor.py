@@ -16,6 +16,7 @@ from metaclass_registry import AutoRegisterMeta
 import numpy as np
 from openhcs.core.memory import numpy
 
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.color import coerce_rgb_color
 
 
@@ -26,18 +27,6 @@ class GrayToColorScheme(str, Enum):
     CMYK = "CMYK"
     STACK = "Stack"
     COMPOSITE = "Composite"
-
-
-def _coerce_gray_to_color_scheme(
-    value: GrayToColorScheme | str,
-) -> GrayToColorScheme:
-    if isinstance(value, GrayToColorScheme):
-        return value
-    normalized = value.strip()
-    for scheme in GrayToColorScheme:
-        if scheme.value == normalized:
-            return scheme
-    raise ValueError(f"Unsupported GrayToColor scheme: {value!r}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -380,7 +369,7 @@ def gray_to_color(
         'Weight' -> channel_weights
         'Name the output image' -> (pipeline-handled)
     """
-    scheme = _coerce_gray_to_color_scheme(color_scheme)
+    scheme = coerce_cellprofiler_enum(GrayToColorScheme, color_scheme)
     request = GrayToColorRequest(
         image=image,
         rescale_intensity=rescale_intensity,
