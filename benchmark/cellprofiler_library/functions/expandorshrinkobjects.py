@@ -10,7 +10,7 @@ from typing import ClassVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 from numba import njit
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import (
@@ -75,7 +75,7 @@ class ExpandShrinkOperationStrategy(
         cls,
         mode: ExpandShrinkMode | str,
     ) -> "ExpandShrinkOperationStrategy":
-        resolved = _coerce_function_enum(ExpandShrinkMode, mode)
+        resolved = coerce_cellprofiler_enum(ExpandShrinkMode, mode)
         return cls.for_enum_member(resolved)
 
     @abstractmethod

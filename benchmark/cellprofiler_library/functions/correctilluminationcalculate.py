@@ -31,7 +31,7 @@ from openhcs.processing.backends.cellprofiler._backend import CellProfilerBacken
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
@@ -870,12 +870,12 @@ def correct_illumination_calculate(
     Returns:
         Tuple of (illumination_function, stats)
     """
-    intensity_choice = _coerce_function_enum(IntensityChoice, intensity_choice)
-    rescale_option = _coerce_function_enum(RescaleOption, rescale_option)
-    smoothing_method = _coerce_function_enum(SmoothingMethod, smoothing_method)
-    filter_size_method = _coerce_function_enum(FilterSizeMethod, filter_size_method)
-    spline_bg_mode = _coerce_function_enum(SplineBgMode, spline_bg_mode)
-    calculation_scope = _coerce_function_enum(CalculationScope, calculation_scope)
+    intensity_choice = coerce_cellprofiler_enum(IntensityChoice, intensity_choice)
+    rescale_option = coerce_cellprofiler_enum(RescaleOption, rescale_option)
+    smoothing_method = coerce_cellprofiler_enum(SmoothingMethod, smoothing_method)
+    filter_size_method = coerce_cellprofiler_enum(FilterSizeMethod, filter_size_method)
+    spline_bg_mode = coerce_cellprofiler_enum(SplineBgMode, spline_bg_mode)
+    calculation_scope = coerce_cellprofiler_enum(CalculationScope, calculation_scope)
     from openhcs.processing.backends.cellprofiler.morphology import (
         MorphologyBackendStrategy,
     )

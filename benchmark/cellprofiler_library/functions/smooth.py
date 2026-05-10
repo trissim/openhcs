@@ -32,7 +32,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     normalize_cellprofiler_backend_provider,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class SmoothingMethod(Enum):
@@ -610,7 +610,7 @@ def smooth(
     Returns:
         Smoothed image (H, W)
     """
-    smoothing_method = _coerce_function_enum(SmoothingMethod, smoothing_method)
+    smoothing_method = coerce_cellprofiler_enum(SmoothingMethod, smoothing_method)
     pixel_data = np.asarray(image_payload_data(image), dtype=np.float32)
     backend_provider = SmoothingBackendProviderPolicy.resolve(
         smoothing_method,
@@ -658,7 +658,7 @@ def smooth(
 def _smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
     slices_2d = request.slices_2d
     kwargs = request.kwargs
-    smoothing_method = _coerce_function_enum(
+    smoothing_method = coerce_cellprofiler_enum(
         SmoothingMethod,
         kwargs.get("smoothing_method", SmoothingMethod.GAUSSIAN_FILTER),
     )

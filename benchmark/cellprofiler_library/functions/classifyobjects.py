@@ -20,7 +20,7 @@ from openhcs.processing.backends.cellprofiler.classification import (
 )
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class ClassificationMethod(Enum):
@@ -159,7 +159,7 @@ def _classify_objects_single_measurement_impl(
 ) -> Tuple[np.ndarray, ClassificationResult]:
     import json
 
-    bin_choice = _coerce_function_enum(BinChoice, bin_choice)
+    bin_choice = coerce_cellprofiler_enum(BinChoice, bin_choice)
     classification_backend = ObjectClassificationBackendStrategy.for_memory_type(
         backend_provider=classification_backend_provider,
     )
@@ -305,8 +305,8 @@ def classify_objects_two_measurements(
     import json
 
     labels = object_label_dense_array(labels, dtype=np.int32)
-    threshold1_method = _coerce_function_enum(ThresholdMethod, threshold1_method)
-    threshold2_method = _coerce_function_enum(ThresholdMethod, threshold2_method)
+    threshold1_method = coerce_cellprofiler_enum(ThresholdMethod, threshold1_method)
+    threshold2_method = coerce_cellprofiler_enum(ThresholdMethod, threshold2_method)
     classification_backend = ObjectClassificationBackendStrategy.for_memory_type(
         backend_provider=classification_backend_provider,
     )

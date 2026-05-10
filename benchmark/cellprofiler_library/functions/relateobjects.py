@@ -30,7 +30,7 @@ from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
 from openhcs.processing.materialization import csv_dataclass_materializer
-from ._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,7 +109,7 @@ def relate_objects(
     """
     raw_parent_labels = parent_labels
     raw_child_labels = child_labels
-    calculate_distances = _coerce_function_enum(
+    calculate_distances = coerce_cellprofiler_enum(
         DistanceMethod,
         calculate_distances,
     )

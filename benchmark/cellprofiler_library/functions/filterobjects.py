@@ -18,7 +18,7 @@ from numba import njit
 from openhcs.interop.cellprofiler.measurement_lookup import (
     child_count_feature_child_name,
 )
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_artifact_queries import (
@@ -550,9 +550,9 @@ def filter_objects(
         object_labels = (object_labels,)
     if len(object_labels) == 0:
         raise ValueError("FilterObjects requires at least one object label input.")
-    mode = _coerce_function_enum(FilterMode, mode)
-    filter_method = _coerce_function_enum(FilterMethod, filter_method)
-    per_object_assignment = _coerce_function_enum(
+    mode = coerce_cellprofiler_enum(FilterMode, mode)
+    filter_method = coerce_cellprofiler_enum(FilterMethod, filter_method)
+    per_object_assignment = coerce_cellprofiler_enum(
         PerObjectAssignment,
         per_object_assignment,
     )

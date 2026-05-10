@@ -25,7 +25,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler.image_geometry import CellProfilerPlaneGeometry
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class EdgeMethod(Enum):
@@ -509,8 +509,8 @@ def enhance_edges(
     """
     import warnings
 
-    method = _coerce_function_enum(EdgeMethod, method)
-    direction = _coerce_function_enum(EdgeDirection, direction)
+    method = coerce_cellprofiler_enum(EdgeMethod, method)
+    direction = coerce_cellprofiler_enum(EdgeDirection, direction)
     backend_provider = _default_edge_backend_provider(method, edge_backend_provider)
     
     # Validate low_threshold

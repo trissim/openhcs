@@ -14,7 +14,7 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
-from ._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class ResizeMethod(Enum):
@@ -135,8 +135,8 @@ def resize(
     Returns:
         Resized image with shape (new_H, new_W)
     """
-    resize_method = _coerce_function_enum(ResizeMethod, resize_method)
-    interpolation = _coerce_function_enum(InterpolationMethod, interpolation)
+    resize_method = coerce_cellprofiler_enum(ResizeMethod, resize_method)
+    interpolation = coerce_cellprofiler_enum(InterpolationMethod, interpolation)
 
     pixels = image_payload_data(image)
     geometry = ResizeGeometry.from_parameters(
@@ -178,8 +178,8 @@ def resize_volumetric(
     Returns:
         Resized volumetric image with shape (new_D, new_H, new_W)
     """
-    resize_method = _coerce_function_enum(ResizeMethod, resize_method)
-    interpolation = _coerce_function_enum(InterpolationMethod, interpolation)
+    resize_method = coerce_cellprofiler_enum(ResizeMethod, resize_method)
+    interpolation = coerce_cellprofiler_enum(InterpolationMethod, interpolation)
 
     pixels = image_payload_data(image)
     geometry = ResizeGeometry.from_parameters(

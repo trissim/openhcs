@@ -20,7 +20,7 @@ from openhcs.processing.backends.cellprofiler.image_quality import image_quality
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
 from openhcs.processing.materialization import csv_materializer
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 
@@ -338,7 +338,7 @@ def _calculate_threshold(pixel_data: np.ndarray, method: ThresholdMethod) -> flo
     if pixel_data.size == 0 or not _has_multiple_unique_values(pixel_data):
         return 0.0
 
-    method = _coerce_function_enum(ThresholdMethod, method)
+    method = coerce_cellprofiler_enum(ThresholdMethod, method)
     primitives = threshold_primitives()
     values = pixel_data.astype(np.float32, copy=False)
 

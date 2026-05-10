@@ -22,7 +22,7 @@ from openhcs.core.runtime_values import (
     object_label_payload_from_source_image,
 )
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class ShapeChoice(Enum):
@@ -167,7 +167,7 @@ def _grid_definition(
             y_spacing=y_spacing,
             x_origin=x_origin,
             y_origin=y_origin,
-            ordering=_coerce_function_enum(SpatialGridOrdering, ordering),
+            ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
             source_spatial_shape_yx=tuple(int(value) for value in image_shape),
         )
     )
@@ -508,7 +508,7 @@ class GridShapeStrategy(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def for_shape_choice(cls, shape_choice: ShapeChoice | str) -> "GridShapeStrategy":
-        resolved = _coerce_function_enum(ShapeChoice, shape_choice)
+        resolved = coerce_cellprofiler_enum(ShapeChoice, shape_choice)
         strategy_type = cls.__registry__.get(
             resolved.value,
             RectangleGridShapeStrategy,
@@ -661,8 +661,8 @@ def identify_objects_in_grid(
     Returns:
         Tuple of (image, stats, labels)
     """
-    shape_choice = _coerce_function_enum(ShapeChoice, shape_choice)
-    diameter_choice = _coerce_function_enum(DiameterChoice, diameter_choice)
+    shape_choice = coerce_cellprofiler_enum(ShapeChoice, shape_choice)
+    diameter_choice = coerce_cellprofiler_enum(DiameterChoice, diameter_choice)
 
     grid_definition = _grid_definition(
         image_shape=image.shape,
@@ -745,8 +745,8 @@ def identify_objects_in_grid_with_guides(
     Returns:
         Tuple of (image, stats, labels)
     """
-    shape_choice = _coerce_function_enum(ShapeChoice, shape_choice)
-    diameter_choice = _coerce_function_enum(DiameterChoice, diameter_choice)
+    shape_choice = coerce_cellprofiler_enum(ShapeChoice, shape_choice)
+    diameter_choice = coerce_cellprofiler_enum(DiameterChoice, diameter_choice)
 
     grid_definition = _grid_definition(
         image_shape=image.shape,

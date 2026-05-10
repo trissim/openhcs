@@ -30,7 +30,7 @@ from openhcs.core.runtime_semantics import (
     ParentChildRelationshipPayload,
     object_label_parent_child_payload,
 )
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from benchmark.cellprofiler_library.functions.thresholding import (
     CellProfilerAveragingMethod,
     CellProfilerOtsuMethod,
@@ -610,7 +610,7 @@ def _coerce_threshold_method(
     if isinstance(threshold_method, CellProfilerThresholdMethod):
         return threshold_method
     if isinstance(threshold_method, str):
-        return _coerce_function_enum(CellProfilerThresholdMethod, threshold_method)
+        return coerce_cellprofiler_enum(CellProfilerThresholdMethod, threshold_method)
     return {
         ThresholdMethod.OTSU: CellProfilerThresholdMethod.OTSU,
         ThresholdMethod.LI: CellProfilerThresholdMethod.LI,
@@ -788,7 +788,7 @@ def identify_secondary_objects(
     """
     profile_total_started_at = time.perf_counter()
     phase_started_at = time.perf_counter()
-    method = _coerce_function_enum(SecondaryMethod, method)
+    method = coerce_cellprofiler_enum(SecondaryMethod, method)
     morphology = MorphologyBackendStrategy.for_callable(
         identify_secondary_objects,
         backend_provider=morphology_backend_provider,

@@ -20,7 +20,7 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
 )
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class IlluminationCorrectionMethod(Enum):
@@ -217,10 +217,10 @@ def _repeat_illumination_methods(
                 f"pair count; got {len(value)} methods for {pair_count} pairs."
             )
         return tuple(
-            _coerce_function_enum(IlluminationCorrectionMethod, method)
+            coerce_cellprofiler_enum(IlluminationCorrectionMethod, method)
             for method in value
         )
-    method = _coerce_function_enum(IlluminationCorrectionMethod, value)
+    method = coerce_cellprofiler_enum(IlluminationCorrectionMethod, value)
     return (method,) * pair_count
 
 

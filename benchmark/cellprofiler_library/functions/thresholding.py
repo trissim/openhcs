@@ -12,7 +12,7 @@ import time
 import numpy as np
 import scipy.interpolate
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.perf_fixtures import (
     capture_array_fixture,
     capture_enabled,
@@ -130,8 +130,8 @@ def cellprofiler_get_global_threshold(
 ) -> float:
     """Compute one global threshold using independent CP-compatible semantics."""
     primitives = threshold_primitives()
-    method = _coerce_function_enum(CellProfilerThresholdMethod, threshold_method)
-    assignment = _coerce_function_enum(
+    method = coerce_cellprofiler_enum(CellProfilerThresholdMethod, threshold_method)
+    assignment = coerce_cellprofiler_enum(
         CellProfilerThresholdAssignment,
         assign_middle_to_foreground,
     )
@@ -222,8 +222,8 @@ def cellprofiler_get_adaptive_threshold(
 ) -> np.ndarray:
     """Compute CP-style adaptive thresholds without depending on CP packages."""
     primitives = threshold_primitives()
-    method = _coerce_function_enum(CellProfilerThresholdMethod, threshold_method)
-    assignment = _coerce_function_enum(
+    method = coerce_cellprofiler_enum(CellProfilerThresholdMethod, threshold_method)
+    assignment = coerce_cellprofiler_enum(
         CellProfilerThresholdAssignment,
         assign_middle_to_foreground,
     )
@@ -439,11 +439,11 @@ def _get_threshold_robust_background(
     **_ignored: object,
 ) -> float:
     primitives = threshold_primitives()
-    averaging_method = _coerce_function_enum(
+    averaging_method = coerce_cellprofiler_enum(
         CellProfilerAveragingMethod,
         averaging_method,
     )
-    variance_method = _coerce_function_enum(
+    variance_method = coerce_cellprofiler_enum(
         CellProfilerVarianceMethod,
         variance_method,
     )
@@ -660,27 +660,27 @@ def cellprofiler_threshold(
     total_started_at = time.perf_counter()
     phase_started_at = time.perf_counter()
     threshold_mask = None if mask is None else np.asarray(mask, dtype=bool)
-    threshold_scope = _coerce_function_enum(
+    threshold_scope = coerce_cellprofiler_enum(
         CellProfilerThresholdScope,
         threshold_scope,
     )
-    threshold_method = _coerce_function_enum(
+    threshold_method = coerce_cellprofiler_enum(
         CellProfilerThresholdMethod,
         threshold_method,
     )
-    otsu_class_count = _coerce_function_enum(
+    otsu_class_count = coerce_cellprofiler_enum(
         CellProfilerOtsuMethod,
         otsu_class_count,
     )
-    assign_middle_to_foreground = _coerce_function_enum(
+    assign_middle_to_foreground = coerce_cellprofiler_enum(
         CellProfilerThresholdAssignment,
         assign_middle_to_foreground,
     )
-    averaging_method = _coerce_function_enum(
+    averaging_method = coerce_cellprofiler_enum(
         CellProfilerAveragingMethod,
         averaging_method,
     )
-    variance_method = _coerce_function_enum(
+    variance_method = coerce_cellprofiler_enum(
         CellProfilerVarianceMethod,
         variance_method,
     )

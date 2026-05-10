@@ -10,7 +10,7 @@ import skimage.morphology
 import skimage.transform
 from numba import njit
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import (
@@ -63,10 +63,10 @@ def enhance_or_suppress_features(
     dic_decay: float = 0.95,
 ) -> np.ndarray:
     """Enhance or suppress image features using independent CP-compatible semantics."""
-    method = _coerce_function_enum(OperationMethod, method)
-    enhance_method = _coerce_function_enum(EnhanceMethod, enhance_method)
-    speckle_accuracy = _coerce_function_enum(SpeckleAccuracy, speckle_accuracy)
-    neurite_method = _coerce_function_enum(NeuriteMethod, neurite_method)
+    method = coerce_cellprofiler_enum(OperationMethod, method)
+    enhance_method = coerce_cellprofiler_enum(EnhanceMethod, enhance_method)
+    speckle_accuracy = coerce_cellprofiler_enum(SpeckleAccuracy, speckle_accuracy)
+    neurite_method = coerce_cellprofiler_enum(NeuriteMethod, neurite_method)
     image_data = cellprofiler_grayscale_plane(
         image_payload_data(image),
         "enhancement image",

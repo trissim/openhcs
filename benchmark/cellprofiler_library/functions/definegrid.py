@@ -14,7 +14,7 @@ from openhcs.core.pipeline.function_contracts import special_outputs, special_in
 from openhcs.core.runtime_semantics import SpatialGridOrdering, SpatialGridOrigin
 from openhcs.core.runtime_values import SpatialGrid, object_label_dense_array
 from openhcs.processing.materialization import csv_materializer
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 GridInfo = SpatialGrid
@@ -64,8 +64,8 @@ def define_grid_manual(
     Returns:
         Tuple of (image, GridInfo)
     """
-    origin = _coerce_function_enum(SpatialGridOrigin, origin)
-    ordering = _coerce_function_enum(SpatialGridOrdering, ordering)
+    origin = coerce_cellprofiler_enum(SpatialGridOrigin, origin)
+    ordering = coerce_cellprofiler_enum(SpatialGridOrdering, ordering)
 
     # Convert to canonical row/column (0-indexed from top-left)
     def canonical_row_col(row, col):
@@ -161,8 +161,8 @@ def define_grid_automatic(
     Returns:
         Tuple of (image, GridInfo)
     """
-    origin = _coerce_function_enum(SpatialGridOrigin, origin)
-    ordering = _coerce_function_enum(SpatialGridOrdering, ordering)
+    origin = coerce_cellprofiler_enum(SpatialGridOrigin, origin)
+    ordering = coerce_cellprofiler_enum(SpatialGridOrdering, ordering)
 
     object_count, first_y, first_x, second_y, second_x = _label_centroid_extremes(
         object_label_dense_array(labels, dtype=np.int32)

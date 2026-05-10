@@ -7,7 +7,7 @@ import numpy as np
 from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
@@ -295,14 +295,14 @@ def threshold(
         mask = image_payload_mask(source_payload)
     if mask is not None:
         mask = np.asarray(mask, dtype=bool)
-    threshold_scope = _coerce_function_enum(ThresholdScope, threshold_scope)
-    threshold_method = _coerce_function_enum(ThresholdMethod, threshold_method)
-    assign_middle_to_foreground = _coerce_function_enum(
+    threshold_scope = coerce_cellprofiler_enum(ThresholdScope, threshold_scope)
+    threshold_method = coerce_cellprofiler_enum(ThresholdMethod, threshold_method)
+    assign_middle_to_foreground = coerce_cellprofiler_enum(
         Assignment,
         assign_middle_to_foreground,
     )
-    averaging_method = _coerce_function_enum(AveragingMethod, averaging_method)
-    variance_method = _coerce_function_enum(VarianceMethod, variance_method)
+    averaging_method = coerce_cellprofiler_enum(AveragingMethod, averaging_method)
+    variance_method = coerce_cellprofiler_enum(VarianceMethod, variance_method)
 
     guide_threshold = 0.0
 

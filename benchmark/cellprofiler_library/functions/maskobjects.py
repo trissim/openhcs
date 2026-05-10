@@ -34,7 +34,7 @@ from openhcs.processing.backends.cellprofiler.relationships import (
 )
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class MaskChoice(Enum):
@@ -247,8 +247,8 @@ def mask_objects(
     Returns:
         Tuple of (image, stats, parent-child relationship, masked_labels)
     """
-    overlap_handling = _coerce_function_enum(OverlapHandling, overlap_handling)
-    numbering = _coerce_function_enum(NumberingChoice, numbering)
+    overlap_handling = coerce_cellprofiler_enum(OverlapHandling, overlap_handling)
+    numbering = coerce_cellprofiler_enum(NumberingChoice, numbering)
     label_array = object_label_dense_array(labels, dtype=np.int32)
     relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
         backend_provider=relationship_backend_provider,

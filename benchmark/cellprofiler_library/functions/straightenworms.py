@@ -13,7 +13,7 @@ from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.materialization import csv_materializer
 import scipy.ndimage
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from benchmark.cellprofiler_library.functions.worm_geometry import (
     calculate_cumulative_lengths,
     control_points_for_label_image,
@@ -95,7 +95,7 @@ def straighten_worms(
     Returns:
         Tuple of (straightened_image, straightened_labels, measurements)
     """
-    flip_mode = _coerce_function_enum(FlipMode, flip_mode)
+    flip_mode = coerce_cellprofiler_enum(FlipMode, flip_mode)
     if flip_mode is FlipMode.MANUAL:
         raise NotImplementedError("StraightenWorms manual flipping is interactive.")
 

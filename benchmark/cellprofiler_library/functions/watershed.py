@@ -15,7 +15,7 @@ from typing import ClassVar, Literal, Tuple
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
     adapt_structuring_element_rank,
@@ -117,23 +117,23 @@ CELLPROFILER_WATERSHED_BASIC_DEFAULTS = WatershedBasicDefaults()
 def coerce_watershed_method(value: WatershedMethod | str | None) -> WatershedMethod:
     if value is None:
         return WatershedMethod.DISTANCE
-    return _coerce_function_enum(WatershedMethod, value)
+    return coerce_cellprofiler_enum(WatershedMethod, value)
 
 
 def coerce_watershed_declump_method(
     value: WatershedDeclumpMethod | str,
 ) -> WatershedDeclumpMethod:
-    return _coerce_function_enum(WatershedDeclumpMethod, value)
+    return coerce_cellprofiler_enum(WatershedDeclumpMethod, value)
 
 
 def coerce_watershed_seed_method(value: WatershedSeedMethod | str) -> WatershedSeedMethod:
-    return _coerce_function_enum(WatershedSeedMethod, value)
+    return coerce_cellprofiler_enum(WatershedSeedMethod, value)
 
 
 def coerce_watershed_runtime_family(
     value: WatershedRuntimeFamily | str,
 ) -> WatershedRuntimeFamily:
-    return _coerce_function_enum(WatershedRuntimeFamily, value)
+    return coerce_cellprofiler_enum(WatershedRuntimeFamily, value)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1184,7 +1184,7 @@ def watershed(
         raise ValueError("Watershed expects a thresholded image as input.")
     structuring_element_array = adapt_structuring_element_rank(
         build_structuring_element(
-            _coerce_function_enum(StructuringElement, structuring_element),
+            coerce_cellprofiler_enum(StructuringElement, structuring_element),
             structuring_element_size,
         ),
         image.ndim,

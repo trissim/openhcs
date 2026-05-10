@@ -25,7 +25,7 @@ from openhcs.core.runtime_values import (
     object_label_payload_from_source_image,
 )
 
-from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from benchmark.cellprofiler_library.functions.thresholding import (
     CellProfilerAveragingMethod,
     CellProfilerOtsuMethod,
@@ -322,11 +322,11 @@ def identify_primary_objects(
         identify_primary_objects,
         backend_provider=morphology_backend_provider,
     )
-    unclump_method = _coerce_function_enum(UnclumpMethod, unclump_method)
-    watershed_method = _coerce_function_enum(WatershedMethod, watershed_method)
-    fill_holes = _coerce_function_enum(FillHolesOption, fill_holes)
-    limit_erase = _coerce_function_enum(ExcessObjectHandling, limit_erase)
-    threshold_method = _coerce_function_enum(
+    unclump_method = coerce_cellprofiler_enum(UnclumpMethod, unclump_method)
+    watershed_method = coerce_cellprofiler_enum(WatershedMethod, watershed_method)
+    fill_holes = coerce_cellprofiler_enum(FillHolesOption, fill_holes)
+    limit_erase = coerce_cellprofiler_enum(ExcessObjectHandling, limit_erase)
+    threshold_method = coerce_cellprofiler_enum(
         CellProfilerThresholdMethod,
         threshold_method,
     )
