@@ -98,6 +98,10 @@ from openhcs.core.runtime_artifact_queries import (
     measurement_values_for_feature,
 )
 from openhcs.core.measurement_lookup_dialect import runtime_measurement_lookup_dialect
+from openhcs.core.special_outputs import (
+    SpecialOutputKindClassifier,
+    special_output_name,
+)
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
     FieldSpec,
@@ -175,7 +179,6 @@ from openhcs.processing.backends.cellprofiler.library import (
     require_function,
 )
 
-from benchmark.converter.artifact_semantics import SpecialOutputKindClassifier
 from benchmark.cellprofiler_library.functions.relateobjects import (
     RelationshipMeasurements,
 )
@@ -5776,7 +5779,7 @@ class CellProfilerCallableOutputSpecs:
         raw_outputs = self.callable_special_outputs(self.func)
         return tuple(
             ArtifactSpec(
-                self.special_output_name(output_spec),
+                special_output_name(output_spec),
                 SpecialOutputKindClassifier.kind_for(output_spec),
             )
             for output_spec in raw_outputs
@@ -5803,15 +5806,6 @@ class CellProfilerCallableOutputSpecs:
             if isinstance(raw_outputs, tuple) and raw_outputs:
                 return raw_outputs
         return ()
-
-    @staticmethod
-    def special_output_name(spec: object) -> str:
-        if isinstance(spec, str):
-            return spec
-        if isinstance(spec, tuple) and len(spec) == 2 and isinstance(spec[0], str):
-            return spec[0]
-        raise ValueError(f"Unsupported special output spec {spec!r}.")
-
 
 def _single_output_object_name(request: CellProfilerOutputRecordRequest) -> str:
     object_outputs = ArtifactSpecCollection(request.executor.outputs).of_kind(ArtifactKind.OBJECT_LABELS)
