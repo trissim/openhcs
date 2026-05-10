@@ -7,10 +7,14 @@ measurements. In OpenHCS, this is converted to a measurement aggregation functio
 that computes 2D histogram data from measurement arrays.
 """
 
-import numpy as np
-from typing import Tuple
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from typing import ClassVar, Tuple
+
+import numpy as np
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer
@@ -54,6 +58,51 @@ class DensityPlotData:
     colorbar_scale: str
 
 
+class DensityPlotMeasurementPairExtractor(ABC, metaclass=AutoRegisterMeta):
+    """Nominal policy for extracting X/Y measurement pairs by array dimensionality."""
+
+    __registry_key__ = "ndim"
+    __skip_if_no_key__ = True
+    ndim: ClassVar[int | None] = None
+
+    @classmethod
+    def for_image(cls, image: np.ndarray) -> "DensityPlotMeasurementPairExtractor":
+        extractor_type = cls.__registry__.get(
+            int(image.ndim),
+            ScalarDensityPlotMeasurementPairExtractor,
+        )
+        return extractor_type()
+
+    @abstractmethod
+    def extract(self, image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Return aligned X/Y measurement arrays for histogramming."""
+
+
+class SpatialStackDensityPlotMeasurementPairExtractor(DensityPlotMeasurementPairExtractor):
+    """Extract measurement pairs from a two-channel spatial stack."""
+
+    ndim = 3
+
+    def extract(self, image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return image[0].ravel(), image[1].ravel()
+
+
+class VectorStackDensityPlotMeasurementPairExtractor(DensityPlotMeasurementPairExtractor):
+    """Extract measurement pairs from a two-row measurement matrix."""
+
+    ndim = 2
+
+    def extract(self, image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return image[0], image[1]
+
+
+class ScalarDensityPlotMeasurementPairExtractor(DensityPlotMeasurementPairExtractor):
+    """Extract a single measurement pair from scalar/vector input."""
+
+    def extract(self, image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        return np.array([image[0]]), np.array([image[1]])
+
+
 @numpy
 @special_outputs(("density_plot_data", csv_materializer(
     fields=["slice_index", "x_min", "x_max", "y_min", "y_max", "gridsize", 
@@ -91,20 +140,7 @@ def display_density_plot(
         - 2D histogram array of shape (gridsize, gridsize) representing density
         - DensityPlotData with metadata about the plot
     """
-    # Extract X and Y measurement arrays from stacked input
-    # image shape: (2, N) where N is number of measurements
-    if image.ndim == 3:
-        # Shape (2, H, W) - flatten spatial dimensions
-        x_data = image[0].ravel()
-        y_data = image[1].ravel()
-    elif image.ndim == 2:
-        # Shape (2, N)
-        x_data = image[0]
-        y_data = image[1]
-    else:
-        # Shape (2,) - single point
-        x_data = np.array([image[0]])
-        y_data = np.array([image[1]])
+    x_data, y_data = DensityPlotMeasurementPairExtractor.for_image(image).extract(image)
     
     # Remove NaN and infinite values
     valid_mask = np.isfinite(x_data) & np.isfinite(y_data)
