@@ -19,7 +19,9 @@ from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from .align_settings import align_bound_kwargs
 from .area_occupied_settings import area_occupied_bound_kwargs
 from .calculate_math_settings import calculate_math_bound_kwargs
-from .classify_objects_settings import classify_objects_bound_kwargs
+from openhcs.interop.cellprofiler.classify_objects_settings import (
+    classify_objects_bound_kwargs,
+)
 from .color_to_gray_settings import color_to_gray_bound_kwargs
 from .crop_settings import crop_bound_kwargs
 from .display_data_settings import display_data_on_image_bound_kwargs
@@ -28,7 +30,7 @@ from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     expand_or_shrink_bound_kwargs,
 )
 from .filter_objects_settings import filter_objects_bound_kwargs
-from .grid_settings import (
+from openhcs.interop.cellprofiler.grid_settings import (
     define_grid_bound_kwargs,
     define_grid_invocation_options,
     identify_objects_in_grid_bound_kwargs,
@@ -67,13 +69,17 @@ from openhcs.interop.cellprofiler.image_module_settings import (
 )
 from openhcs.interop.cellprofiler.image_math_settings import image_math_bound_kwargs
 from openhcs.interop.cellprofiler.mask_objects_settings import MASK_OBJECTS_SETTINGS
-from .module_function_resolution import measurement_target_scope
+from openhcs.interop.cellprofiler.module_function_resolution import (
+    measurement_target_scope,
+)
 from openhcs.interop.cellprofiler.module_runtime_semantics import (
     ModuleRuntimeSemanticsBinding,
 )
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
-from .resize_objects_settings import resize_objects_bound_kwargs
+from openhcs.interop.cellprofiler.resize_objects_settings import (
+    resize_objects_bound_kwargs,
+)
 from openhcs.interop.cellprofiler.resize_settings import resize_bound_kwargs
 from openhcs.interop.cellprofiler.relate_objects_settings import (
     RELATE_OBJECTS_CHILD_OBJECTS_SETTING,

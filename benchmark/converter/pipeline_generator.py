@@ -48,7 +48,9 @@ from openhcs.interop.cellprofiler.illumination_settings import (
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
-from .module_function_resolution import ModuleFunctionResolutionStrategy
+from openhcs.interop.cellprofiler.module_function_resolution import (
+    ModuleFunctionResolutionStrategy,
+)
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .processing_contract_resolution import resolve_processing_contract
 from .settings_binder import SettingsBinder, normalize_cellprofiler_setting_name
