@@ -310,8 +310,10 @@ class MeasurementTableCacheMutation:
 class MeasurementTableCacheMutationPolicy(ABC, metaclass=AutoRegisterMeta):
     """Registered policy for measurement-table cache mutation side effects."""
 
-    __registry_key__ = "__name__"
-    policy_template: ClassVar[bool] = False
+    __registry_key__ = "policy_name"
+    __skip_if_no_key__ = True
+
+    policy_name: ClassVar[str | None] = None
 
     @classmethod
     def registered_policies(cls) -> tuple["MeasurementTableCacheMutationPolicy", ...]:
@@ -320,7 +322,6 @@ class MeasurementTableCacheMutationPolicy(ABC, metaclass=AutoRegisterMeta):
             policy_type()
             for policy_type in cls.__registry__.values()
             if not isabstract(policy_type)
-            and not getattr(policy_type, "policy_template", False)
         )
 
     @abstractmethod
@@ -330,8 +331,6 @@ class MeasurementTableCacheMutationPolicy(ABC, metaclass=AutoRegisterMeta):
 
 class MeasurementQueryCacheMutationPolicy(MeasurementTableCacheMutationPolicy):
     """Shared mutation contract for measurement-query caches."""
-
-    policy_template: ClassVar[bool] = True
 
     def apply(self, mutation: MeasurementTableCacheMutation) -> None:
         if not mutation.object_names:
@@ -346,7 +345,6 @@ class MeasurementQueryCacheMutationPolicy(MeasurementTableCacheMutationPolicy):
 class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
     """Shared object/feature invalidation for measurement-query caches."""
 
-    policy_template: ClassVar[bool] = True
     entry_type: ClassVar[type[object]]
     feature_scoped: ClassVar[bool] = False
     adapter_cache_accessor: ClassVar[
@@ -407,7 +405,7 @@ class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolic
 class ObjectFeatureValueCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate object-feature vector cache entries touched by a table write."""
 
-    policy_template = False
+    policy_name = "object_feature_value"
     entry_type = RuntimeObjectMeasurementQuery
     feature_scoped = True
 
@@ -415,7 +413,7 @@ class ObjectFeatureValueCacheInvalidationPolicy(MeasurementQueryCacheInvalidatio
 class ObjectLabelMeasurementValuesCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate label-aligned measurement vector cache entries touched by a write."""
 
-    policy_template = False
+    policy_name = "object_label_measurement_values"
     entry_type = RuntimeObjectLabelMeasurementQuery
     feature_scoped = True
 
@@ -423,14 +421,14 @@ class ObjectLabelMeasurementValuesCacheInvalidationPolicy(MeasurementQueryCacheI
 class ObjectMeasurementTableCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate object-subject measurement table query cache entries."""
 
-    policy_template = False
+    policy_name = "object_measurement_table"
     entry_type = ObjectMeasurementTableCacheKey
 
 
 class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
     """Invalidate object-subject indexes touched by measurement-table writes."""
 
-    policy_template = False
+    policy_name = "object_measurement_table_index"
 
     def apply_query_cache_mutation(self, mutation: MeasurementTableCacheMutation) -> None:
         object_table_index_cache = mutation.adapter.object_measurement_table_index_cache()
