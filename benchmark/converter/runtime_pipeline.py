@@ -46,7 +46,10 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
 
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 
-from .pipeline_generator import GeneratedPipeline, PipelineGenerator
+from openhcs.interop.cellprofiler.pipeline_generator import (
+    GeneratedPipeline,
+    PipelineGenerator,
+)
 
 
 @dataclass(frozen=True, slots=True)

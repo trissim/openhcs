@@ -225,6 +225,15 @@ class CanonicalModuleNameRegistrationMixin:
             cls.module_name = canonical_module_name(module_name)
 
 
+def canonical_module_name_registry_key(name: str, cls: type) -> str | None:
+    """Return the canonical CellProfiler module-name registry key for a class."""
+    del name
+    module_name = vars(cls).get("module_name")
+    if not isinstance(module_name, str):
+        return None
+    return canonical_module_name(module_name)
+
+
 class ModuleUnmappedSettingIgnore(
     CanonicalModuleNameRegistrationMixin,
     ABC,
@@ -232,8 +241,10 @@ class ModuleUnmappedSettingIgnore(
 ):
     """Auto-registered typed ignore list for semantically dead CP settings."""
 
-    __registry_key__ = "module_name"
+    __registry_key__ = "registry_key"
     __skip_if_no_key__ = True
+    __key_extractor__ = staticmethod(canonical_module_name_registry_key)
+    registry_key: ClassVar[str | None] = None
 
     ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
 
@@ -614,8 +625,10 @@ class ModuleSettingsBindingStrategy(
 ):
     """Nominal family for converting one module's settings into function kwargs."""
 
-    __registry_key__ = "module_name"
+    __registry_key__ = "registry_key"
     __skip_if_no_key__ = True
+    __key_extractor__ = staticmethod(canonical_module_name_registry_key)
+    registry_key: ClassVar[str | None] = None
 
     @classmethod
     def for_module(cls, module_name: str) -> "ModuleSettingsBindingStrategy":

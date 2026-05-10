@@ -109,6 +109,11 @@ class AbsorbedFunctionLocation:
     def module_name(self) -> str:
         return f"{_FUNCTIONS_PACKAGE}.{self.module_stem}"
 
+    @property
+    def source_path(self) -> Path:
+        """Return the source file that declares this absorbed function."""
+        return _FUNCTIONS_ROOT / f"{self.module_stem}.py"
+
 
 _contracts: Mapping[str, AbsorbedFunctionMetadata] = MappingProxyType({})
 _canonical_module_names: Mapping[str, str] = MappingProxyType({})
@@ -208,6 +213,14 @@ def validated_contracts() -> Mapping[str, dict[str, Any]]:
 def function_inventory() -> Mapping[str, AbsorbedFunctionLocation]:
     """Return the derived absorbed function location index."""
     return _function_locations
+
+
+def function_source_path(function_name: str) -> Path | None:
+    """Return the source file for an absorbed function, if registered."""
+    location = _function_locations.get(function_name)
+    if location is None:
+        return None
+    return location.source_path
 
 
 def coerce_absorbed_processing_contract(
