@@ -11,7 +11,6 @@ import numpy as np
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Tuple
-from enum import Enum
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
@@ -21,43 +20,11 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     image_payload_with_context,
 )
+from openhcs.interop.cellprofiler.image_math_settings import (
+    ImageMathOperation as MathOperation,
+)
 
 ImageMathBinaryOperator = Callable[[np.ndarray, np.ndarray], np.ndarray]
-
-
-class MathOperation(Enum):
-    def __new__(
-        cls,
-        absorbed_value: str,
-        *cellprofiler_literals: str,
-    ) -> "MathOperation":
-        obj = object.__new__(cls)
-        obj._value_ = absorbed_value
-        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
-        return obj
-
-    ADD = ("add",)
-    SUBTRACT = ("subtract",)
-    DIFFERENCE = ("absolute_difference", "difference")
-    MULTIPLY = ("multiply",)
-    DIVIDE = ("divide",)
-    AVERAGE = ("average",)
-    MINIMUM = ("minimum",)
-    MAXIMUM = ("maximum",)
-    STDEV = ("standard_deviation", "stdev")
-    INVERT = ("invert",)
-    COMPLEMENT = ("complement",)
-    LOG_TRANSFORM = (
-        "log_transform_base2",
-        "log_transform",
-        "log_transform_base_2",
-    )
-    LOG_TRANSFORM_LEGACY = ("log_transform_legacy",)
-    NONE = ("none",)
-    OR = ("or",)
-    AND = ("and",)
-    NOT = ("not",)
-    EQUALS = ("equals",)
 
 
 class ImageMathOperationStrategy(
