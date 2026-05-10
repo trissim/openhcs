@@ -126,6 +126,7 @@ from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectLabelDenseDataStrategy,
     ObjectLabelPayload,
+    ObjectLabelPure2DSliceAggregator,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
     ObjectRelationship,
@@ -168,9 +169,13 @@ from openhcs.processing.materialization import tabular_field_names_from_material
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
+from openhcs.processing.backends.cellprofiler.library import (
+    canonical_module_name,
+    coerce_registered_absorbed_processing_contract,
+    require_function,
+)
 
 from benchmark.converter.artifact_semantics import SpecialOutputKindClassifier
-from benchmark.cellprofiler_library import canonical_module_name, require_function
 from benchmark.cellprofiler_library.functions.relateobjects import (
     RelationshipMeasurements,
 )
@@ -9370,10 +9375,6 @@ def _processing_contract_for_callable(func: Callable[..., Any]) -> ProcessingCon
     contract = CallableContract.from_callable(func)
     if isinstance(contract.processing_contract, ProcessingContract):
         return _cache_processing_contract(func, contract.processing_contract)
-    from benchmark.cellprofiler_library import (
-        coerce_registered_absorbed_processing_contract,
-    )
-
     absorbed_contract = coerce_registered_absorbed_processing_contract(
         contract.function_name,
         func,
@@ -9408,300 +9409,10 @@ def _slice_pure_2d_kwargs(
     )
 
 
-class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
-    """Aggregate object-label slices while preserving label-domain semantics."""
-
-    __registry_key__ = "label_type"
-    __registry__: ClassVar[dict[Any, type["ObjectLabelPure2DSliceAggregator"]]] = {}
-    label_type: ClassVar[type[Any] | None] = None
-
-    def __init__(self, values: Sequence[Any], memory_type: str) -> None:
-        self.values = tuple(values)
-        self.memory_type = memory_type
-
-    @classmethod
-    def aggregate(
-        cls,
-        values: Sequence[Any],
-        memory_type: str,
-    ) -> Any:
-        for aggregator_type in cls.__registry__.values():
-            if aggregator_type.supports(values):
-                return aggregator_type(values, memory_type).aggregate_values()
-        raise TypeError("No object-label slice aggregator owns these values.")
-
-    @classmethod
-    def supports(cls, values: Sequence[Any]) -> bool:
-        return cls.label_type is not None and bool(values) and all(
-            isinstance(value, cls.label_type) for value in values
-        )
-
-    @property
-    def first(self) -> Any:
-        return self.values[0]
-
-    @property
-    def declared_object_count(self) -> int | None:
-        return self.common_value(value.declared_object_count for value in self.values)
-
-    @property
-    def declared_object_ids(self) -> tuple[int, ...]:
-        return self.common_value(value.declared_object_ids for value in self.values) or ()
-
-    @property
-    def declared_object_id_domains(self) -> tuple[tuple[int, ...], ...]:
-        if len(self.values) == 1:
-            return ObjectLabelDomain.explicit_plane_id_domains(
-                value.object_label_domain() for value in self.values
-            )
-        return tuple(
-            plane_domain
-            for value in self.values
-            for plane_domain in self.value_plane_id_domains(value)
-        )
-
-    def value_plane_id_domains(self, value: Any) -> tuple[tuple[int, ...], ...]:
-        """Return the object-id domain represented by one PURE_2D output slice."""
-        return ObjectLabelPlaneDomainStrategy.for_enum_member(
-            value.domain_scope
-        ).identity_domains(
-            value.labels_for_variant(ObjectLabelVariant.FINAL),
-            declared_object_count=value.declared_object_count,
-            declared_object_ids=value.declared_object_ids,
-            declared_object_id_domains=value.declared_object_id_domains,
-        )
-
-    @property
-    def domain_scope(self) -> ObjectLabelDomainScope:
-        if len(self.values) > 1:
-            return ObjectLabelDomainScope.PLANE
-        return ObjectLabelDomainScope.common(value.domain_scope for value in self.values)
-
-    @property
-    def source_spatial_shape_yx(self) -> tuple[int, int] | None:
-        return self.common_value(value.source_spatial_shape_yx for value in self.values)
-
-    @property
-    def spatial_origin_yx(self) -> tuple[int, int] | None:
-        if self.expands_to_source_domain:
-            return None
-        return self.common_value(value.spatial_origin_yx for value in self.values)
-
-    @property
-    def expands_to_source_domain(self) -> bool:
-        if len(self.values) <= 1:
-            return False
-        domains = tuple(
-            (value.spatial_origin_yx, value.source_spatial_shape_yx)
-            for value in self.values
-        )
-        if any(origin is None or source_shape is None for origin, source_shape in domains):
-            return False
-        return len(set(domains)) > 1
-
-    @staticmethod
-    def common_value(values: Any) -> Any | None:
-        unique_values = tuple(dict.fromkeys(values))
-        if len(unique_values) == 1:
-            return unique_values[0]
-        return None
-
-    def aggregate_values(self) -> Any:
-        return self.output_value(
-            labels=self.aggregate_variant(ObjectLabelVariant.FINAL),
-            unedited_labels=(
-                self.aggregate_variant(ObjectLabelVariant.UNEDITED)
-                if self.has_variant(ObjectLabelVariant.UNEDITED)
-                else None
-            ),
-            small_removed_labels=(
-                self.aggregate_variant(ObjectLabelVariant.SMALL_REMOVED)
-                if self.has_variant(ObjectLabelVariant.SMALL_REMOVED)
-                else None
-            ),
-        )
-
-    def has_variant(self, variant: ObjectLabelVariant) -> bool:
-        if variant is ObjectLabelVariant.UNEDITED:
-            return any(value.unedited_labels is not None for value in self.values)
-        if variant is ObjectLabelVariant.SMALL_REMOVED:
-            return any(value.small_removed_labels is not None for value in self.values)
-        return True
-
-    def aggregate_variant(self, variant: ObjectLabelVariant) -> Any:
-        return _stack_runtime_object_label_slices(
-            [self.slice_labels(value, variant) for value in self.values],
-            self.memory_type,
-        )
-
-    def slice_labels(self, value: Any, variant: ObjectLabelVariant) -> Any:
-        if not self.expands_to_source_domain:
-            return value.labels_for_variant(variant)
-        domain_value = self.domain_value_for_variant(value, variant)
-        aligned, _ = aligned_dense_object_label_arrays(domain_value, domain_value)
-        return aligned
-
-    @abstractmethod
-    def domain_value_for_variant(
-        self,
-        value: Any,
-        variant: ObjectLabelVariant,
-    ) -> Any:
-        """Return a typed label value carrying the selected variant and domain."""
-
-    @abstractmethod
-    def output_value(
-        self,
-        *,
-        labels: Any,
-        unedited_labels: Any | None,
-        small_removed_labels: Any | None,
-    ) -> Any:
-        """Build the aggregated object-label value."""
-
-
-class ObjectLabelPayloadPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
-    """Aggregate dense object-label payload slices."""
-
-    label_type = ObjectLabelPayload
-
-    def domain_value_for_variant(
-        self,
-        value: ObjectLabelPayload,
-        variant: ObjectLabelVariant,
-    ) -> ObjectLabelPayload:
-        return ObjectLabelPayload(
-            labels=value.labels_for_variant(variant),
-            declared_object_count=value.declared_object_count,
-            declared_object_ids=value.declared_object_ids,
-            declared_object_id_domains=value.declared_object_id_domains,
-            domain_scope=value.domain_scope,
-            plane_axis=value.plane_axis,
-            spatial_origin_yx=value.spatial_origin_yx,
-            source_spatial_shape_yx=value.source_spatial_shape_yx,
-        )
-
-    def output_value(
-        self,
-        *,
-        labels: Any,
-        unedited_labels: Any | None,
-        small_removed_labels: Any | None,
-    ) -> ObjectLabelPayload:
-        return ObjectLabelPayload(
-            labels=labels,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            spatial_origin_yx=self.spatial_origin_yx,
-            source_spatial_shape_yx=self.source_spatial_shape_yx,
-        )
-
-
-class ObjectLabelSetPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
-    """Aggregate native object-label set slices."""
-
-    label_type = ObjectLabelSet
-
-    @property
-    def representation(self) -> ObjectLabelRepresentation:
-        representations = {value.representation for value in self.values}
-        if len(representations) != 1:
-            raise ValueError(
-                "Cannot aggregate mixed object-label representations across PURE_2D slices."
-            )
-        return representations.pop()
-
-    def aggregate_values(self) -> ObjectLabelSet:
-        if self.representation is ObjectLabelRepresentation.SPARSE_IJV:
-            return self.aggregate_sparse_ijv()
-        return super().aggregate_values()
-
-    def aggregate_sparse_ijv(self) -> ObjectLabelSet:
-        return ObjectLabelSet(
-            name=self.first.name,
-            labels=SparseIJVLabelRows.from_slices(
-                tuple(
-                    value.labels
-                    if isinstance(value.labels, SparseIJVLabelRows)
-                    else SparseIJVLabelRows.from_yx_label(value.labels)
-                    for value in self.values
-                )
-            ),
-            representation=self.representation,
-            dimensions=self.first.dimensions,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            source_image_name=self.first.source_image_name,
-        )
-
-    def domain_value_for_variant(
-        self,
-        value: ObjectLabelSet,
-        variant: ObjectLabelVariant,
-    ) -> ObjectLabelSet:
-        return ObjectLabelSet(
-            name=value.name,
-            labels=value.labels_for_variant(variant),
-            representation=value.representation,
-            declared_object_count=value.declared_object_count,
-            declared_object_ids=value.declared_object_ids,
-            declared_object_id_domains=value.declared_object_id_domains,
-            domain_scope=value.domain_scope,
-            plane_axis=value.plane_axis,
-            spatial_origin_yx=value.spatial_origin_yx,
-            source_spatial_shape_yx=value.source_spatial_shape_yx,
-            dimensions=value.dimensions,
-            source_image_name=value.source_image_name,
-        )
-
-    def output_value(
-        self,
-        *,
-        labels: Any,
-        unedited_labels: Any | None,
-        small_removed_labels: Any | None,
-    ) -> ObjectLabelSet:
-        return ObjectLabelSet(
-            name=self.first.name,
-            labels=labels,
-            unedited_labels=unedited_labels,
-            small_removed_labels=small_removed_labels,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            representation=self.representation,
-            dimensions=self.first.dimensions,
-            source_image_name=self.first.source_image_name,
-            spatial_origin_yx=self.spatial_origin_yx,
-            source_spatial_shape_yx=self.source_spatial_shape_yx,
-        )
-
-
 def _sparse_ijv_array(value: Any) -> np.ndarray:
     if not isinstance(value, SparseIJVLabelRows):
         return np.asarray(value, dtype=np.int32)
     return np.asarray(value.as_array(), dtype=np.int32)
-
-
-def _stack_runtime_object_label_slices(values: list[Any], memory_type: str) -> Any:
-    try:
-        return ImageStackLayout.for_slices(values).stack(
-            slices=values,
-            memory_type=memory_type,
-            gpu_id=0,
-        )
-    except ValueError:
-        return np.stack(tuple(np.asarray(value) for value in values), axis=0)
 
 
 def _slice_count_from_pure_2d_kwargs(

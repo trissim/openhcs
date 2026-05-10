@@ -21,6 +21,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelDenseDataStrategy,
     ObjectLabelMeasurementPayloadStrategy,
     ObjectLabelRepresentation,
+    ObjectLabelPure2DSliceAggregator,
     ObjectLabelVariantCompatibilityStrategy,
     RuntimePayloadDataStrategy,
     RelationshipEndpoint,
@@ -147,6 +148,67 @@ def test_object_label_domain_preservation_rejects_structural_lookalikes() -> Non
 
     assert rebuilt.declared_object_count is None
     assert rebuilt.declared_object_ids == ()
+
+
+def test_object_label_pure_2d_aggregator_preserves_dense_payload_domains() -> None:
+    first = ObjectLabelPayload(
+        labels=np.asarray([[0, 1], [0, 0]], dtype=np.int32),
+        declared_object_ids=(1,),
+        domain_scope=ObjectLabelDomainScope.PAYLOAD,
+    )
+    second = ObjectLabelPayload(
+        labels=np.asarray([[0, 2], [0, 0]], dtype=np.int32),
+        declared_object_ids=(2,),
+        domain_scope=ObjectLabelDomainScope.PAYLOAD,
+    )
+
+    aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
+        (first, second),
+        "numpy",
+    )
+
+    assert isinstance(aggregated, ObjectLabelPayload)
+    assert aggregated.domain_scope is ObjectLabelDomainScope.PLANE
+    assert aggregated.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
+    np.testing.assert_array_equal(
+        aggregated.labels,
+        np.asarray(
+            [
+                [[0, 1], [0, 0]],
+                [[0, 2], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+    )
+    assert aggregated.declared_object_id_domains == ((1,), (2,))
+
+
+def test_object_label_pure_2d_aggregator_preserves_sparse_ijv_sets() -> None:
+    first = ObjectLabelSet(
+        name="Cells",
+        labels=SparseIJVLabelRows.from_dense_labels(
+            np.asarray([[0, 1], [0, 0]], dtype=np.int32)
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+    second = ObjectLabelSet(
+        name="Cells",
+        labels=SparseIJVLabelRows.from_dense_labels(
+            np.asarray([[0, 2], [0, 0]], dtype=np.int32)
+        ),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+
+    aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
+        (first, second),
+        "numpy",
+    )
+
+    assert isinstance(aggregated, ObjectLabelSet)
+    assert aggregated.representation is ObjectLabelRepresentation.SPARSE_IJV
+    assert isinstance(aggregated.labels, SparseIJVLabelRows)
+    assert aggregated.labels.has_slice_index
+    assert aggregated.plane_axis is RuntimePlaneAxis.RUNTIME_SLICE
 
 
 def test_shape_object_feature_table_uses_registered_nominal_contract() -> None:
