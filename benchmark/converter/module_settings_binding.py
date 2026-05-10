@@ -40,7 +40,9 @@ from openhcs.interop.cellprofiler.enhance_edges_settings import (
 from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     expand_or_shrink_bound_kwargs,
 )
-from .filter_objects_settings import filter_objects_bound_kwargs
+from openhcs.interop.cellprofiler.filter_objects_settings import (
+    filter_objects_bound_kwargs,
+)
 from openhcs.interop.cellprofiler.grid_settings import (
     define_grid_bound_kwargs,
     define_grid_invocation_options,

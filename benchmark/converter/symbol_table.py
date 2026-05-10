@@ -87,7 +87,7 @@ from openhcs.interop.cellprofiler.artifact_semantics import (
     function_special_outputs,
 )
 from openhcs.interop.cellprofiler.module_roles import INFRASTRUCTURE_MODULE_NAMES
-from .filter_objects_settings import (
+from openhcs.interop.cellprofiler.filter_objects_settings import (
     FilterObjectsOutputRole,
     filter_objects_child_count_object_names,
     filter_objects_plan,
