@@ -249,18 +249,10 @@ _INVOCATION_CONTROL_KWARGS = frozenset(
 )
 
 
-def _cellprofiler_module_policy_registry_key(name: str, cls: type) -> str | None:
-    """Derive the canonical registry key from a policy leaf's module name."""
-    del name
-    module_name = cls.module_name  # type: ignore[attr-defined]
-    if module_name is None:
-        return None
-    return canonical_module_name(str(module_name))
+class CellProfilerModulePolicyRegistryKey(str, Enum):
+    """Reserved registry keys for CellProfiler module policy families."""
 
-
-def _mro_declares_registry(cls: type) -> bool:
-    """Return whether a class already belongs to an AutoRegisterMeta family."""
-    return any("__registry__" in vars(mro_type) for mro_type in cls.__mro__)
+    DEFAULT = "__default__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,10 +261,26 @@ class CellProfilerModulePolicyRegistryDefaults:
 
     registry_key_attr: str = "registry_key"
     module_name_attr: str = _MODULE_NAME_REGISTRY_KEY
+    fallback_registry_key_attr: str = "fallback_registry_key"
 
     def applies_to_root_bases(self, bases: tuple[type, ...]) -> bool:
         """Return whether a class declaration starts a new policy registry."""
-        return not any(_mro_declares_registry(base) for base in bases)
+        return not any(self.mro_declares_registry(base) for base in bases)
+
+    def mro_declares_registry(self, cls: type) -> bool:
+        """Return whether a class already belongs to an AutoRegisterMeta family."""
+        return any("__registry__" in vars(mro_type) for mro_type in cls.__mro__)
+
+    def registry_key_for_class(self, name: str, cls: type) -> str | None:
+        """Derive the canonical registry key for one policy class."""
+        del name
+        registry_key = vars(cls).get(self.registry_key_attr)
+        if registry_key is not None:
+            return str(registry_key)
+        module_name = cls.module_name  # type: ignore[attr-defined]
+        if module_name is None:
+            return None
+        return canonical_module_name(str(module_name))
 
     def apply_to(self, attrs: dict[str, Any]) -> None:
         """Install AutoRegisterMeta attributes for one policy root."""
@@ -280,10 +288,30 @@ class CellProfilerModulePolicyRegistryDefaults:
         attrs.setdefault("__skip_if_no_key__", True)
         attrs.setdefault(
             "__key_extractor__",
-            staticmethod(_cellprofiler_module_policy_registry_key),
+            staticmethod(self.registry_key_for_class),
         )
         attrs.setdefault(self.registry_key_attr, None)
         attrs.setdefault(self.module_name_attr, None)
+        attrs.setdefault(
+            self.fallback_registry_key_attr,
+            CellProfilerModulePolicyRegistryKey.DEFAULT.value,
+        )
+
+    def clear_inherited_fallback_key(
+        self,
+        bases: tuple[type, ...],
+        attrs: dict[str, Any],
+    ) -> None:
+        """Keep fallback registry keys on the class that declares them."""
+        if self.registry_key_attr in attrs:
+            return
+        inherited_fallback = any(
+            vars(base).get(self.registry_key_attr)
+            == CellProfilerModulePolicyRegistryKey.DEFAULT.value
+            for base in bases
+        )
+        if inherited_fallback:
+            attrs[self.registry_key_attr] = None
 
 
 CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS = (
@@ -304,6 +332,8 @@ class CellProfilerModulePolicyRegistryConfigContext:
         """Install implicit root defaults when this declaration starts a registry."""
         if self.defaults.applies_to_root_bases(bases):
             self.defaults.apply_to(attrs)
+            return
+        self.defaults.clear_inherited_fallback_key(bases, attrs)
 
 
 CELLPROFILER_MODULE_POLICY_IMPLICIT_REGISTRY_CONTEXT = (
@@ -334,6 +364,16 @@ class CellProfilerModulePolicyMeta(AutoRegisterMeta):
             attrs,
             registry_config.raw_registry_config,
         )
+
+    @lru_cache(maxsize=None)
+    def for_module(cls, module_name: str) -> Any:
+        """Return the policy registered for a module, or the root's fallback."""
+        policy_type = cls.__registry__.get(canonical_module_name(module_name))
+        if policy_type is None and cls.fallback_registry_key is not None:
+            policy_type = cls.__registry__.get(cls.fallback_registry_key)
+        if policy_type is None:
+            return None
+        return policy_type()
 
 
 class CellProfilerSpecialInputPayloadSemantics(str, Enum):
@@ -1967,15 +2007,6 @@ class CellProfilerMainFlowReplacementPolicy(
 ):
     """Nominal policy for mapping declared CellProfiler image outputs to main flow."""
 
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(cls, module_name: str) -> "CellProfilerMainFlowReplacementPolicy":
-        policy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            ContractImageOutputMainFlowReplacementPolicy,
-        )
-        return policy_type()
-
     @abstractmethod
     def replaces_main_flow(
         self,
@@ -1988,6 +2019,8 @@ class ContractImageOutputMainFlowReplacementPolicy(
     CellProfilerMainFlowReplacementPolicy
 ):
     """Use the artifact contract, not runtime slice cardinality, as the authority."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def replaces_main_flow(
         self,
@@ -2023,17 +2056,6 @@ class CellProfilerInvocationExecutionModePolicy(
 ):
     """Nominal policy for modules whose settings change stack execution mode."""
 
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(
-        cls, module_name: str
-    ) -> "CellProfilerInvocationExecutionModePolicy":
-        policy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            DefaultInvocationExecutionModePolicy,
-        )
-        return policy_type()
-
     def execution_mode(
         self,
         *,
@@ -2048,6 +2070,8 @@ class CellProfilerInvocationExecutionModePolicy(
 
 class DefaultInvocationExecutionModePolicy(CellProfilerInvocationExecutionModePolicy):
     """Use the execution mode implied by image payload composition."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
 
 class CorrectIlluminationCalculateExecutionModePolicy(
@@ -3062,15 +3086,6 @@ class CellProfilerObjectInputPolicy(
     binds_without_declared_inputs: ClassVar[bool] = False
     supported_non_object_input_kinds: ClassVar[frozenset[ArtifactKind]] = frozenset()
 
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(cls, module_name: str) -> "CellProfilerObjectInputPolicy":
-        policy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            UnsupportedObjectInputPolicy,
-        )
-        return policy_type()
-
     @abstractmethod
     def bind(
         self,
@@ -3085,15 +3100,6 @@ class CellProfilerPrimaryImageInputPolicy(
 ):
     """Nominal policy for image artifacts that drive absorbed execution."""
 
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(cls, module_name: str) -> "CellProfilerPrimaryImageInputPolicy":
-        policy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            DefaultPrimaryImageInputPolicy,
-        )
-        return policy_type()
-
     @abstractmethod
     def primary_image_inputs(
         self,
@@ -3106,6 +3112,8 @@ class CellProfilerPrimaryImageInputPolicy(
 
 class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
     """Use non-special image inputs as the algorithmic image domain."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def primary_image_inputs(
         self,
@@ -3164,6 +3172,8 @@ del _object_label_driven_module_name, _object_label_driven_policy_name
 
 class UnsupportedObjectInputPolicy(CellProfilerObjectInputPolicy):
     """Reject undeclared object-input semantics instead of guessing."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def bind(
         self,
@@ -3307,18 +3317,6 @@ class CellProfilerObjectMeasurementRowPolicy(
     missing_value_policy: ClassVar[MissingObjectMeasurementValuePolicy] = (
         MissingObjectMeasurementValuePolicy.NAN
     )
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(
-        cls,
-        module_name: str,
-    ) -> "CellProfilerObjectMeasurementRowPolicy":
-        policy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            DefaultObjectMeasurementRowPolicy,
-        )
-        return policy_type()
 
     def object_identity(self) -> MeasurementObjectRowIdentity:
         """Return the object identity projection for rows emitted by this module."""
@@ -3734,6 +3732,8 @@ class CellProfilerObjectMeasurementRowPolicy(
 
 class DefaultObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
     """Use runtime object-label IDs as measurement-row identities."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -4654,18 +4654,6 @@ class CellProfilerObjectMeasurementExecutionDomainPolicy(
 ):
     """Choose CellProfiler object-measurement execution domain by module semantics."""
 
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(
-        cls,
-        module_name: str,
-    ) -> "CellProfilerObjectMeasurementExecutionDomainPolicy":
-        policy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            DefaultObjectMeasurementExecutionDomainPolicy,
-        )
-        return policy_type()
-
     @abstractmethod
     def execution_mode(
         self,
@@ -4682,6 +4670,8 @@ class DefaultObjectMeasurementExecutionDomainPolicy(
     CellProfilerObjectMeasurementExecutionDomainPolicy
 ):
     """Apply the function/domain object-measurement contract uniformly."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def execution_mode(
         self,
@@ -5211,18 +5201,6 @@ class CellProfilerMeasurementRecordBuilder(
 ):
     """Nominal module-specific measurement-row enrichment."""
 
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(
-        cls,
-        module_name: str,
-    ) -> "CellProfilerMeasurementRecordBuilder":
-        builder_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            DefaultMeasurementRecordBuilder,
-        )
-        return builder_type()
-
     @abstractmethod
     def build(
         self,
@@ -5233,6 +5211,8 @@ class CellProfilerMeasurementRecordBuilder(
 
 class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
     """Use the emitted rows and infer object ownership from declared inputs."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def build(
         self,
@@ -8228,18 +8208,6 @@ class CellProfilerSpecialInputPolicy(
 ):
     """Nominal module-specific binding for CellProfiler special_inputs."""
 
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(
-        cls,
-        module_name: str,
-    ) -> "CellProfilerSpecialInputPolicy":
-        policy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            PositionalSpecialInputPolicy,
-        )
-        return policy_type()
-
     def special_image_inputs(
         self,
         module_name: str,
@@ -8260,6 +8228,8 @@ class CellProfilerSpecialInputPolicy(
 
 class PositionalSpecialInputPolicy(CellProfilerSpecialInputPolicy):
     """Bind special_inputs positionally to compiled runtime artifact specs."""
+
+    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
 
     def bind(
         self,
@@ -8743,18 +8713,8 @@ class CellProfilerDualScopeMeasurementPolicy(
 ):
     """Nominal policy for modules whose `Both` scope emits image and object facts."""
 
+    fallback_registry_key = None
     image_function_name: ClassVar[str | None] = None
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(
-        cls,
-        module_name: str,
-    ) -> "CellProfilerDualScopeMeasurementPolicy | None":
-        policy_type = cls.__registry__.get(canonical_module_name(module_name))
-        if policy_type is None:
-            return None
-        return policy_type()
 
     def image_function(self, object_func: Callable[..., Any]) -> Callable[..., Any]:
         del object_func
