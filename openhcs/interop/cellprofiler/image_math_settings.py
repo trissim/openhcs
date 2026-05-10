@@ -26,38 +26,63 @@ from .settings_binder import (
 class ImageMathOperation(Enum):
     """ImageMath operation literals exposed by CellProfiler settings."""
 
-    ADD = "add"
-    SUBTRACT = "subtract"
-    DIFFERENCE = "absolute_difference"
-    MULTIPLY = "multiply"
-    DIVIDE = "divide"
-    AVERAGE = "average"
-    MINIMUM = "minimum"
-    MAXIMUM = "maximum"
-    STDEV = "standard_deviation"
-    INVERT = "invert"
-    COMPLEMENT = "complement"
-    LOG_TRANSFORM = "log_transform_base2"
-    LOG_TRANSFORM_LEGACY = "log_transform_legacy"
-    NONE = "none"
-    OR = "or"
-    AND = "and"
-    NOT = "not"
-    EQUALS = "equals"
+    def __new__(
+        cls,
+        absorbed_value: str,
+        *cellprofiler_literals: str,
+    ) -> "ImageMathOperation":
+        obj = object.__new__(cls)
+        obj._value_ = absorbed_value
+        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
+        return obj
+
+    ADD = ("add",)
+    SUBTRACT = ("subtract",)
+    DIFFERENCE = ("absolute_difference", "difference")
+    MULTIPLY = ("multiply",)
+    DIVIDE = ("divide",)
+    AVERAGE = ("average",)
+    MINIMUM = ("minimum",)
+    MAXIMUM = ("maximum",)
+    STDEV = ("standard_deviation", "stdev")
+    INVERT = ("invert",)
+    COMPLEMENT = ("complement",)
+    LOG_TRANSFORM = (
+        "log_transform_base2",
+        "log_transform",
+        "log_transform_base_2",
+    )
+    LOG_TRANSFORM_LEGACY = ("log_transform_legacy",)
+    NONE = ("none",)
+    OR = ("or",)
+    AND = ("and",)
+    NOT = ("not",)
+    EQUALS = ("equals",)
+
+    def matches_cellprofiler_literal(self, value: str) -> bool:
+        """Return whether a CP setting literal names this operation."""
+        normalized = normalize_cellprofiler_setting_name(value)
+        return normalized in {
+            normalize_cellprofiler_setting_name(literal)
+            for literal in (self.name, *self.cellprofiler_literals)
+        }
+
+    @classmethod
+    def from_cellprofiler_literal(cls, value: str) -> "ImageMathOperation":
+        """Return the operation named by a CellProfiler setting literal."""
+        matches = tuple(
+            operation
+            for operation in cls
+            if operation.matches_cellprofiler_literal(value)
+        )
+        if len(matches) == 1:
+            return matches[0]
+        return coerce_cellprofiler_enum(cls, value)
 
 
 def parse_image_math_operation(value: str) -> str:
     """Return the absorbed-function operation literal for a CP setting."""
-    normalized = normalize_cellprofiler_setting_name(value)
-    aliases = {
-        "difference": ImageMathOperation.DIFFERENCE,
-        "stdev": ImageMathOperation.STDEV,
-        "log_transform": ImageMathOperation.LOG_TRANSFORM,
-        "log_transform_base_2": ImageMathOperation.LOG_TRANSFORM,
-    }
-    if normalized in aliases:
-        return aliases[normalized].value
-    return coerce_cellprofiler_enum(ImageMathOperation, value).value
+    return ImageMathOperation.from_cellprofiler_literal(value).value
 
 
 IMAGE_MATH_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
