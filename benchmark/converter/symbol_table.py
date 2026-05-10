@@ -404,6 +404,9 @@ IDENTIFY_TERTIARY_SMALLER_OBJECTS_SETTING = SettingNameFamily(
 IDENTIFY_TERTIARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
     "Name the tertiary objects to be identified",
 )
+CLASSIFY_OBJECTS_INPUT_SETTING = SettingNameFamily(
+    "Select the object to be classified",
+)
 DISPLAY_OBJECTS_SETTING = SettingNameFamily(
     "Select objects to display",
     aliases=("Select object to display",),
@@ -1269,36 +1272,6 @@ def _measure_image_area_occupied(
     )
 
 
-def _classify_objects(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    objects = [
-        builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
-        for name in _setting_symbol_names(
-            module,
-            SettingNameFamily("Select the object to be classified"),
-        )
-    ]
-    retained_images = _retained_output_image(
-        builder,
-        module,
-        retain_setting="Retain an image of the classified objects?",
-        output_setting=OUTPUT_IMAGE_SETTING,
-    )
-    measurements = builder.declare(
-        _measurement_name(module),
-        CellProfilerSymbolKind.MEASUREMENTS,
-        module,
-    )
-    return _contracts(
-        module,
-        builder,
-        inputs=objects,
-        outputs=[*retained_images, measurements],
-    )
-
-
 def _define_grid(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -1575,102 +1548,12 @@ def _opening(
     return _contracts(module, builder, inputs=[image], outputs=[output])
 
 
-def _convert_objects_to_image(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    objects = builder.require(
-        _setting(module, "Select the input objects"),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    output = builder.declare(
-        _setting(module, OUTPUT_IMAGE_SETTING),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    return _contracts(module, builder, inputs=[objects], outputs=[output])
-
-
-def _gray_to_color(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    images = [
-        builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-        for name in GrayToColorInputNameResolver.for_module(module).input_names(module)
-    ]
-    output = builder.declare(
-        _setting(module, OUTPUT_IMAGE_SETTING),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    return _contracts(module, builder, inputs=images, outputs=[output])
-
-
-def _overlay_outlines(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    inputs: list[CellProfilerSymbol] = []
-    base_image_name = overlay_outlines_base_image_name(module)
-    if base_image_name is not None:
-        inputs.append(
-            builder.require(
-                base_image_name,
-                CellProfilerSymbolKind.IMAGE,
-                module,
-            )
-        )
-    for row in overlay_outline_rows(module):
-        inputs.append(
-            builder.require(
-                row.input_name,
-                _overlay_outline_symbol_kind(row.source_kind),
-                module,
-            )
-        )
-    output = builder.declare(
-        overlay_outlines_output_image_name(module),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    return _contracts(
-        module,
-        builder,
-        inputs=inputs,
-        outputs=[output],
-    )
-
-
 def _overlay_outline_symbol_kind(
     source_kind: OverlayOutlineSourceKind,
 ) -> CellProfilerSymbolKind:
     if source_kind is OverlayOutlineSourceKind.IMAGE:
         return CellProfilerSymbolKind.IMAGE
     return CellProfilerSymbolKind.OBJECTS
-
-
-def _overlay_objects(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    image = builder.require(
-        _setting(module, INPUT_IMAGE_SETTING),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    objects = builder.require(
-        _setting(module, INPUT_OBJECTS_SETTING),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    output = builder.declare(
-        _setting(module, OUTPUT_IMAGE_SETTING),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    return _contracts(module, builder, inputs=[image, objects], outputs=[output])
 
 
 def _calculate_math(
@@ -1687,57 +1570,6 @@ def _calculate_math(
         module,
     )
     return _contracts(module, builder, inputs=objects, outputs=[measurements])
-
-
-def _relate_objects(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    parent = builder.require(
-        _setting(module, PARENT_OBJECTS_SETTING),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    child = builder.require(
-        _setting(module, CHILD_OBJECTS_SETTING),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    relationship = builder.declare(
-        _relationship_name(parent.name, child.name),
-        CellProfilerSymbolKind.RELATIONSHIPS,
-        module,
-    )
-    measurements = builder.declare(
-        _measurement_name(module),
-        CellProfilerSymbolKind.MEASUREMENTS,
-        module,
-    )
-    outputs = [relationship, measurements]
-    if _setting_bool(module, RELATE_OBJECTS_SAVE_CHILDREN_SETTING):
-        output_objects = builder.declare(
-            _setting(module, OUTPUT_OBJECTS_SETTING),
-            CellProfilerSymbolKind.OBJECTS,
-            module,
-        )
-        outputs.insert(
-            0,
-            output_objects,
-        )
-        outputs.insert(
-            2,
-            builder.declare(
-                _relationship_name(child.name, output_objects.name),
-                CellProfilerSymbolKind.RELATIONSHIPS,
-                module,
-            ),
-        )
-    return _contracts(
-        module,
-        builder,
-        inputs=[parent, child],
-        outputs=outputs,
-    )
 
 
 def _straighten_worms(
@@ -2085,6 +1917,207 @@ class IdentifyTertiaryObjectsContractBuilder(ModuleContractBuilder):
         )
 
 
+class ClassifyObjectsContractBuilder(ModuleContractBuilder):
+    """Compile ClassifyObjects object measurements and optional retained image."""
+
+    module_name = "ClassifyObjectsSingleMeasurement"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        objects = [
+            builder.require(name, CellProfilerSymbolKind.OBJECTS, module)
+            for name in _setting_symbol_names(module, CLASSIFY_OBJECTS_INPUT_SETTING)
+        ]
+        retained_images = _retained_output_image(
+            builder,
+            module,
+            retain_setting="Retain an image of the classified objects?",
+            output_setting=OUTPUT_IMAGE_SETTING,
+        )
+        measurements = builder.declare(
+            _measurement_name(module),
+            CellProfilerSymbolKind.MEASUREMENTS,
+            module,
+        )
+        return _contracts(
+            module,
+            builder,
+            inputs=objects,
+            outputs=[*retained_images, measurements],
+        )
+
+
+class RelateObjectsContractBuilder(ModuleContractBuilder):
+    """Compile RelateObjects relationship, measurement, and optional child outputs."""
+
+    module_name = "RelateObjects"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        parent = builder.require(
+            _setting(module, PARENT_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        child = builder.require(
+            _setting(module, CHILD_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        relationship = builder.declare(
+            _relationship_name(parent.name, child.name),
+            CellProfilerSymbolKind.RELATIONSHIPS,
+            module,
+        )
+        measurements = builder.declare(
+            _measurement_name(module),
+            CellProfilerSymbolKind.MEASUREMENTS,
+            module,
+        )
+        outputs = [relationship, measurements]
+        if _setting_bool(module, RELATE_OBJECTS_SAVE_CHILDREN_SETTING):
+            output_objects = builder.declare(
+                _setting(module, OUTPUT_OBJECTS_SETTING),
+                CellProfilerSymbolKind.OBJECTS,
+                module,
+            )
+            outputs.insert(0, output_objects)
+            outputs.insert(
+                2,
+                builder.declare(
+                    _relationship_name(child.name, output_objects.name),
+                    CellProfilerSymbolKind.RELATIONSHIPS,
+                    module,
+                ),
+            )
+        return _contracts(
+            module,
+            builder,
+            inputs=[parent, child],
+            outputs=outputs,
+        )
+
+
+class ConvertObjectsToImageContractBuilder(ModuleContractBuilder):
+    """Compile ConvertObjectsToImage object input and image output."""
+
+    module_name = "ConvertObjectsToImage"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        objects = builder.require(
+            _setting(module, INPUT_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        output = builder.declare(
+            _setting(module, OUTPUT_IMAGE_SETTING),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        return _contracts(module, builder, inputs=[objects], outputs=[output])
+
+
+class GrayToColorContractBuilder(ModuleContractBuilder):
+    """Compile GrayToColor image channel inputs and composite output."""
+
+    module_name = "GrayToColor"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        images = [
+            builder.require(name, CellProfilerSymbolKind.IMAGE, module)
+            for name in GrayToColorInputNameResolver.for_module(module).input_names(module)
+        ]
+        output = builder.declare(
+            _setting(module, OUTPUT_IMAGE_SETTING),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        return _contracts(module, builder, inputs=images, outputs=[output])
+
+
+class OverlayOutlinesContractBuilder(ModuleContractBuilder):
+    """Compile OverlayOutlines base image/object overlays and image output."""
+
+    module_name = "OverlayOutlines"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        inputs: list[CellProfilerSymbol] = []
+        base_image_name = overlay_outlines_base_image_name(module)
+        if base_image_name is not None:
+            inputs.append(
+                builder.require(
+                    base_image_name,
+                    CellProfilerSymbolKind.IMAGE,
+                    module,
+                )
+            )
+        for row in overlay_outline_rows(module):
+            inputs.append(
+                builder.require(
+                    row.input_name,
+                    _overlay_outline_symbol_kind(row.source_kind),
+                    module,
+                )
+            )
+        output = builder.declare(
+            overlay_outlines_output_image_name(module),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        return _contracts(
+            module,
+            builder,
+            inputs=inputs,
+            outputs=[output],
+        )
+
+
+class OverlayObjectsContractBuilder(ModuleContractBuilder):
+    """Compile OverlayObjects image/object inputs and image output."""
+
+    module_name = "OverlayObjects"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        image = builder.require(
+            _setting(module, INPUT_IMAGE_SETTING),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        objects = builder.require(
+            _setting(module, INPUT_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        output = builder.declare(
+            _setting(module, OUTPUT_IMAGE_SETTING),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        return _contracts(module, builder, inputs=[image, objects], outputs=[output])
+
+
 class _SingleInputSingleOutputContractPattern(InferredModuleContractPattern):
     """Base for single-symbol input/output contract inference."""
 
@@ -2173,15 +2206,10 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("Opening",), _opening),
     (("Crop",), _crop),
     (("Watershed",), _watershed),
-    (("ConvertObjectsToImage",), _convert_objects_to_image),
     (("FilterObjects",), _filter_objects),
-    (("ClassifyObjectsSingleMeasurement",), _classify_objects),
     (("DefineGridManual",), _define_grid),
     (("ColorToGray",), _color_to_gray),
-    (("GrayToColor",), _gray_to_color),
     (("UnmixColors",), _unmix_colors),
-    (("OverlayOutlines",), _overlay_outlines),
-    (("OverlayObjects",), _overlay_objects),
     (("MeasureObjectSizeShape",), _measure_object_size_shape),
     (
         (
@@ -2196,7 +2224,6 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("MeasureImageIntensity",), _measure_image_intensity),
     (("MeasureObjectNeighbors",), _measure_object_neighbors),
     (("CalculateMath",), _calculate_math),
-    (("RelateObjects",), _relate_objects),
     (("UntangleWorms",), _untangle_worms),
     (("StraightenWorms",), _straighten_worms),
 )
