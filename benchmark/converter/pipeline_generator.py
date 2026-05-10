@@ -44,7 +44,7 @@ from benchmark.cellprofiler_library.functions.correctilluminationcalculate impor
     CalculationScope,
 )
 
-from .artifact_semantics import artifact_setting_symbols
+from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
 from .module_function_resolution import ModuleFunctionResolutionStrategy
 from .module_settings_binding import ModuleSettingsBindingStrategy
 from .processing_contract_resolution import resolve_processing_contract

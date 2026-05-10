@@ -74,7 +74,7 @@ from .crop_settings import (
     crop_previous_mask_artifact_name,
     crop_shape,
 )
-from .artifact_semantics import (
+from openhcs.interop.cellprofiler.artifact_semantics import (
     ArtifactSettingSymbol,
     FunctionSpecialOutput,
     artifact_setting_symbols,

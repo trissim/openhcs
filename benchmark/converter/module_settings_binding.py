@@ -33,7 +33,7 @@ from benchmark.cellprofiler_library.functions.watershed import (
     WatershedDeclumpMethod,
     WatershedMethod,
 )
-from benchmark.converter.artifact_semantics import artifact_setting_symbols
+from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
 )
