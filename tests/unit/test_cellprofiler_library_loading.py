@@ -565,7 +565,7 @@ def test_closing_preserves_runtime_mask_context():
 
 
 def test_cellprofiler_disk_structuring_element_uses_radius_setting():
-    from benchmark.cellprofiler_library.functions.structuring_elements import (
+    from openhcs.processing.backends.cellprofiler.structuring_elements import (
         StructuringElement,
         build_structuring_element,
     )
@@ -578,7 +578,7 @@ def test_cellprofiler_disk_structuring_element_uses_radius_setting():
 
 
 def test_cellprofiler_ball_structuring_element_uses_radius_setting():
-    from benchmark.cellprofiler_library.functions.structuring_elements import (
+    from openhcs.processing.backends.cellprofiler.structuring_elements import (
         StructuringElement,
         build_structuring_element,
     )
@@ -591,7 +591,7 @@ def test_cellprofiler_ball_structuring_element_uses_radius_setting():
 
 
 def test_cellprofiler_structuring_element_rank_adapts_by_center_section():
-    from benchmark.cellprofiler_library.functions.structuring_elements import (
+    from openhcs.processing.backends.cellprofiler.structuring_elements import (
         StructuringElement,
         adapt_structuring_element_rank,
         build_structuring_element,

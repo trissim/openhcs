@@ -16,7 +16,7 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from benchmark.cellprofiler_library.functions._enum import _coerce_function_enum
-from benchmark.cellprofiler_library.functions.structuring_elements import (
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
     adapt_structuring_element_rank,
     build_structuring_element,

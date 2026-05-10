@@ -45,7 +45,7 @@ from benchmark.cellprofiler_library.functions.measureobjectneighbors import (
     NeighborDistancePlanner,
 )
 from benchmark.cellprofiler_library.functions.smooth import SmoothingStrategy
-from benchmark.cellprofiler_library.functions.structuring_elements import (
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElementFactory,
 )
 from benchmark.cellprofiler_library.functions.untangleworms import (

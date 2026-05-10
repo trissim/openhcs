@@ -12,7 +12,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
-from .structuring_elements import (
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
     apply_structuring_element,
     build_structuring_element,

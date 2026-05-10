@@ -181,7 +181,7 @@ from openhcs.processing.backends.cellprofiler.library import (
 from openhcs.interop.cellprofiler.relationship_measurements import (
     RelationshipMeasurements,
 )
-from benchmark.cellprofiler_library.functions.structuring_elements import (
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
     build_structuring_element,
 )
 from openhcs.interop.cellprofiler.image_module_settings import (

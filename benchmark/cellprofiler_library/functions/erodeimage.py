@@ -4,7 +4,7 @@ import numpy as np
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
-from benchmark.cellprofiler_library.functions.structuring_elements import (
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
     apply_structuring_element,
     build_structuring_element,

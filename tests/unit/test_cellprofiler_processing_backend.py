@@ -79,6 +79,7 @@ def test_cellprofiler_runtime_bridge_uses_product_semantics_for_special_payloads
     file_path = repo_root / "benchmark" / "cellprofiler_compat" / "module_execution.py"
     banned_modules = (
         "benchmark.cellprofiler_library.functions.relateobjects",
+        "benchmark.cellprofiler_library.functions.structuring_elements",
         "benchmark.cellprofiler_library.functions.untangleworms",
         "benchmark.cellprofiler_library.functions.watershed",
     )

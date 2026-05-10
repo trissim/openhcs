@@ -19,7 +19,7 @@ from openhcs.core.pipeline.function_contracts import special_inputs, special_out
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 from dataclasses import dataclass
 
-from benchmark.cellprofiler_library.functions.structuring_elements import (
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
     adapt_structuring_element_rank,
     build_structuring_element,

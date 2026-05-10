@@ -58,7 +58,7 @@ from benchmark.cellprofiler_compat.module_execution import (
     _processing_contract_for_callable,
     _unstack_cellprofiler_image_slices,
 )
-from benchmark.cellprofiler_library.functions.structuring_elements import StructuringElement
+from openhcs.processing.backends.cellprofiler.structuring_elements import StructuringElement
 from benchmark.cellprofiler_library.functions.colortogray import color_to_gray
 from benchmark.cellprofiler_library.functions.crop import crop
 from benchmark.cellprofiler_library.functions.correctilluminationapply import (
