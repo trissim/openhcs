@@ -389,6 +389,21 @@ IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
     "Name the primary objects to be identified",
     aliases=("Object",),
 )
+IDENTIFY_SECONDARY_INPUT_OBJECTS_SETTING = SettingNameFamily(
+    "Select the input objects",
+)
+IDENTIFY_SECONDARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
+    "Name the objects to be identified",
+)
+IDENTIFY_TERTIARY_LARGER_OBJECTS_SETTING = SettingNameFamily(
+    "Select the larger identified objects",
+)
+IDENTIFY_TERTIARY_SMALLER_OBJECTS_SETTING = SettingNameFamily(
+    "Select the smaller identified objects",
+)
+IDENTIFY_TERTIARY_OUTPUT_OBJECTS_SETTING = SettingNameFamily(
+    "Name the tertiary objects to be identified",
+)
 DISPLAY_OBJECTS_SETTING = SettingNameFamily(
     "Select objects to display",
     aliases=("Select object to display",),
@@ -828,28 +843,6 @@ def _artifact_spec_literal(
     return f"ArtifactSpec({', '.join(args)})"
 
 
-def _identify_primary_objects(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    image = builder.require(
-        _setting(module, INPUT_IMAGE_SETTING),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    objects = builder.declare(
-        _setting(module, IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    measurements = builder.declare(
-        _measurement_name(module),
-        CellProfilerSymbolKind.MEASUREMENTS,
-        module,
-    )
-    return _contracts(module, builder, inputs=[image], outputs=[measurements, objects])
-
-
 def _watershed(
     builder: _SymbolTableBuilder,
     module: ModuleBlock,
@@ -896,85 +889,6 @@ def _watershed(
         builder,
         inputs=inputs,
         outputs=[measurements, objects],
-    )
-
-
-def _identify_secondary_objects(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    input_objects = builder.require(
-        _setting(module, "Select the input objects"),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    image = builder.require(
-        _setting(module, "Select the input image"),
-        CellProfilerSymbolKind.IMAGE,
-        module,
-    )
-    output_objects = builder.declare(
-        _setting(module, "Name the objects to be identified"),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    measurements = builder.declare(
-        _measurement_name(module),
-        CellProfilerSymbolKind.MEASUREMENTS,
-        module,
-    )
-    relationship = builder.declare(
-        _relationship_name(input_objects.name, output_objects.name),
-        CellProfilerSymbolKind.RELATIONSHIPS,
-        module,
-    )
-    return _contracts(
-        module,
-        builder,
-        inputs=[input_objects, image],
-        outputs=[measurements, relationship, output_objects],
-    )
-
-
-def _identify_tertiary_objects(
-    builder: _SymbolTableBuilder,
-    module: ModuleBlock,
-) -> ModuleArtifactContracts:
-    larger = builder.require(
-        _setting(module, "Select the larger identified objects"),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    smaller = builder.require(
-        _setting(module, "Select the smaller identified objects"),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    output = builder.declare(
-        _setting(module, "Name the tertiary objects to be identified"),
-        CellProfilerSymbolKind.OBJECTS,
-        module,
-    )
-    larger_relationship = builder.declare(
-        _relationship_name(larger.name, output.name),
-        CellProfilerSymbolKind.RELATIONSHIPS,
-        module,
-    )
-    smaller_relationship = builder.declare(
-        _relationship_name(smaller.name, output.name),
-        CellProfilerSymbolKind.RELATIONSHIPS,
-        module,
-    )
-    measurements = builder.declare(
-        _measurement_name(module),
-        CellProfilerSymbolKind.MEASUREMENTS,
-        module,
-    )
-    return _contracts(
-        module,
-        builder,
-        inputs=[larger, smaller],
-        outputs=[larger_relationship, smaller_relationship, measurements, output],
     )
 
 
@@ -2047,6 +1961,130 @@ class SemanticSettingsContractPattern(InferredModuleContractPattern):
         return _contracts(module, builder, inputs=inputs, outputs=outputs)
 
 
+class IdentifyPrimaryObjectsContractBuilder(ModuleContractBuilder):
+    """Compile IdentifyPrimaryObjects image, object, and measurement artifacts."""
+
+    module_name = "IdentifyPrimaryObjects"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        image = builder.require(
+            _setting(module, INPUT_IMAGE_SETTING),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        objects = builder.declare(
+            _setting(module, IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        measurements = builder.declare(
+            _measurement_name(module),
+            CellProfilerSymbolKind.MEASUREMENTS,
+            module,
+        )
+        return _contracts(
+            module,
+            builder,
+            inputs=[image],
+            outputs=[measurements, objects],
+        )
+
+
+class IdentifySecondaryObjectsContractBuilder(ModuleContractBuilder):
+    """Compile IdentifySecondaryObjects parent-child object artifacts."""
+
+    module_name = "IdentifySecondaryObjects"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        input_objects = builder.require(
+            _setting(module, IDENTIFY_SECONDARY_INPUT_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        image = builder.require(
+            _setting(module, INPUT_IMAGE_SETTING),
+            CellProfilerSymbolKind.IMAGE,
+            module,
+        )
+        output_objects = builder.declare(
+            _setting(module, IDENTIFY_SECONDARY_OUTPUT_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        measurements = builder.declare(
+            _measurement_name(module),
+            CellProfilerSymbolKind.MEASUREMENTS,
+            module,
+        )
+        relationship = builder.declare(
+            _relationship_name(input_objects.name, output_objects.name),
+            CellProfilerSymbolKind.RELATIONSHIPS,
+            module,
+        )
+        return _contracts(
+            module,
+            builder,
+            inputs=[input_objects, image],
+            outputs=[measurements, relationship, output_objects],
+        )
+
+
+class IdentifyTertiaryObjectsContractBuilder(ModuleContractBuilder):
+    """Compile IdentifyTertiaryObjects dual-parent relationship artifacts."""
+
+    module_name = "IdentifyTertiaryObjects"
+
+    def build(
+        self,
+        builder: _SymbolTableBuilder,
+        module: ModuleBlock,
+    ) -> ModuleArtifactContracts:
+        larger = builder.require(
+            _setting(module, IDENTIFY_TERTIARY_LARGER_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        smaller = builder.require(
+            _setting(module, IDENTIFY_TERTIARY_SMALLER_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        output = builder.declare(
+            _setting(module, IDENTIFY_TERTIARY_OUTPUT_OBJECTS_SETTING),
+            CellProfilerSymbolKind.OBJECTS,
+            module,
+        )
+        larger_relationship = builder.declare(
+            _relationship_name(larger.name, output.name),
+            CellProfilerSymbolKind.RELATIONSHIPS,
+            module,
+        )
+        smaller_relationship = builder.declare(
+            _relationship_name(smaller.name, output.name),
+            CellProfilerSymbolKind.RELATIONSHIPS,
+            module,
+        )
+        measurements = builder.declare(
+            _measurement_name(module),
+            CellProfilerSymbolKind.MEASUREMENTS,
+            module,
+        )
+        return _contracts(
+            module,
+            builder,
+            inputs=[larger, smaller],
+            outputs=[larger_relationship, smaller_relationship, measurements, output],
+        )
+
+
 class _SingleInputSingleOutputContractPattern(InferredModuleContractPattern):
     """Base for single-symbol input/output contract inference."""
 
@@ -2134,10 +2172,7 @@ _FUNCTION_BACKED_MODULE_BUILDER_SPECS: tuple[
     (("Align",), _align),
     (("Opening",), _opening),
     (("Crop",), _crop),
-    (("IdentifyPrimaryObjects",), _identify_primary_objects),
     (("Watershed",), _watershed),
-    (("IdentifySecondaryObjects",), _identify_secondary_objects),
-    (("IdentifyTertiaryObjects",), _identify_tertiary_objects),
     (("ConvertObjectsToImage",), _convert_objects_to_image),
     (("FilterObjects",), _filter_objects),
     (("ClassifyObjectsSingleMeasurement",), _classify_objects),
