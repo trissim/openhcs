@@ -11,10 +11,14 @@ as measurements. The actual visualization is handled by the pipeline's
 visualization layer, not by this function.
 """
 
-import numpy as np
-from typing import Tuple, Optional
+from abc import ABC
 from dataclasses import dataclass
 from enum import Enum
+from typing import Callable, ClassVar, Tuple
+
+import numpy as np
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -41,6 +45,64 @@ class HistogramResult:
     # Histogram bin edges and counts stored as comma-separated strings for CSV
     bin_edges: str
     bin_counts: str
+
+
+class HistogramMeasurementExtractor(ABC, metaclass=AutoRegisterMeta):
+    """Nominal extractor family for DisplayHistogram measurement types."""
+
+    __registry_key__ = "measurement_type"
+    __skip_if_no_key__ = True
+    measurement_type: ClassVar[str | None] = None
+    scalar_value: ClassVar[Callable[[object], float] | None] = None
+
+    @classmethod
+    def for_measurement_type(cls, measurement_type: str) -> "HistogramMeasurementExtractor":
+        extractor_type = cls.__registry__.get(
+            measurement_type,
+            MeanIntensityHistogramMeasurementExtractor,
+        )
+        return extractor_type()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.measurement_type is not None and cls.scalar_value is None:
+            raise TypeError(
+                f"{cls.__name__} must declare scalar_value for histogram extraction"
+            )
+
+    def values(self, props: list[object]) -> np.ndarray:
+        """Return one scalar value per labeled object."""
+        if type(self).scalar_value is None:
+            raise TypeError(f"{type(self).__name__} cannot extract histogram values")
+        return np.array([type(self).scalar_value(prop) for prop in props])
+
+
+class MeanIntensityHistogramMeasurementExtractor(HistogramMeasurementExtractor):
+    """Extract mean object intensity values."""
+
+    measurement_type = "intensity_mean"
+    scalar_value = staticmethod(lambda prop: prop.mean_intensity)
+
+
+class SumIntensityHistogramMeasurementExtractor(HistogramMeasurementExtractor):
+    """Extract summed object intensity values."""
+
+    measurement_type = "intensity_sum"
+    scalar_value = staticmethod(lambda prop: prop.mean_intensity * prop.area)
+
+
+class AreaHistogramMeasurementExtractor(HistogramMeasurementExtractor):
+    """Extract object area values."""
+
+    measurement_type = "area"
+    scalar_value = staticmethod(lambda prop: prop.area)
+
+
+class PerimeterHistogramMeasurementExtractor(HistogramMeasurementExtractor):
+    """Extract object perimeter values."""
+
+    measurement_type = "perimeter"
+    scalar_value = staticmethod(lambda prop: prop.perimeter)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -121,18 +183,9 @@ def display_histogram(
             bin_counts=""
         )
     
-    # Get measurement values based on type
-    if measurement_type == "intensity_mean":
-        values = np.array([p.mean_intensity for p in props])
-    elif measurement_type == "intensity_sum":
-        values = np.array([p.mean_intensity * p.area for p in props])
-    elif measurement_type == "area":
-        values = np.array([p.area for p in props])
-    elif measurement_type == "perimeter":
-        values = np.array([p.perimeter for p in props])
-    else:
-        # Default to mean intensity
-        values = np.array([p.mean_intensity for p in props])
+    values = HistogramMeasurementExtractor.for_measurement_type(measurement_type).values(
+        props
+    )
     
     # Apply log transform if needed for x-axis
     if x_scale == AxisScale.LOG:
