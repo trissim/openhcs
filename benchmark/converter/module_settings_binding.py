@@ -2101,6 +2101,17 @@ class MedianFilterModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         )
 
 
+class GaussianFilterModuleSettingsBindingStrategy(
+    DeclarativeModuleSettingsBindingStrategy
+):
+    """Bind GaussianFilter's smoothing sigma setting."""
+
+    module_name = "GaussianFilter"
+    setting_bindings = (
+        SettingToKeywordBinding("Sigma", "sigma", parse_cellprofiler_float),
+    )
+
+
 class RemoveHolesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind RemoveHoles' diameter setting."""
 

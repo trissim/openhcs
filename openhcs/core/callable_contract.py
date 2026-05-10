@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import lru_cache
 from threading import Lock
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
@@ -60,6 +61,44 @@ class CallableContract:
     raw_processing_function: Any | None = None
     runtime_image_execution_mode: ImagePayloadExecutionMode | None = None
     runtime_batch_executors: Mapping[Any, Any] | None = None
+
+    def __post_init__(self) -> None:
+        if self.runtime_batch_executors is not None and not isinstance(
+            self.runtime_batch_executors,
+            MappingProxyType,
+        ):
+            object.__setattr__(
+                self,
+                "runtime_batch_executors",
+                MappingProxyType(dict(self.runtime_batch_executors)),
+            )
+
+    def __reduce__(
+        self,
+    ) -> tuple[type["CallableContract"], tuple[Any, ...]]:
+        """Serialize immutable mapping-backed metadata across worker queues."""
+        return (
+            self.__class__,
+            (
+                self.func,
+                self.function_name,
+                self.module_name,
+                self.input_memory_type,
+                self.output_memory_type,
+                self.artifact_inputs,
+                self.artifact_outputs,
+                self.runtime_adapter,
+                self.processing_contract,
+                self.declared_processing_contract,
+                self.raw_processing_function,
+                self.runtime_image_execution_mode,
+                (
+                    dict(self.runtime_batch_executors)
+                    if self.runtime_batch_executors is not None
+                    else None
+                ),
+            ),
+        )
 
     @classmethod
     def from_callable(cls, func: Any) -> "CallableContract":

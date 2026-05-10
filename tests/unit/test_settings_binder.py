@@ -1453,6 +1453,22 @@ def test_median_filter_binds_window_size():
     assert bound.kwargs == {"window_size": 5}
 
 
+def test_gaussian_filter_binds_sigma():
+    module = ModuleBlock(
+        name="GaussianFilter",
+        module_num=5,
+        settings={"Sigma": "1"},
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("GaussianFilter").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {"sigma": 1.0}
+
+
 def test_rescale_intensity_binds_source_range_and_nominal_modes():
     module = ModuleBlock(
         name="RescaleIntensity",

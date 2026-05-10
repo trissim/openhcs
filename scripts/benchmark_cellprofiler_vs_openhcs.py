@@ -152,10 +152,15 @@ def _run_command(args: argparse.Namespace) -> int:
         metric_policy=ComparisonMetricPolicy(
             collect_memory=not args.no_memory_metric,
         ),
+        coverage_manifest_path=args.manifest,
     )
     print(f"suite_id={suite_id}")
     print(f"observations={len(observations)}")
     print(f"summary_csv={args.output_dir / 'summary.csv'}")
+    print(
+        "module_coverage_summary_json="
+        f"{args.output_dir / 'module_coverage_summary.json'}"
+    )
     return 0
 
 

@@ -1,3 +1,6 @@
+import pickle
+from types import MappingProxyType
+
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import (
     CallableContract,
@@ -9,6 +12,10 @@ from openhcs.core.callable_contract import (
     runtime_image_execution_mode,
 )
 from openhcs.core.pipeline.compiler import FunctionReference
+from openhcs.core.runtime_batch_contracts import (
+    RuntimeBatchExecutionDomain,
+    pure_2d_batch_executor,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -23,6 +30,15 @@ class _TestCompilerPreparedFamily(CompilerPreparedAutoRegisterFamily):
 
 
 def _function_with_imported_prepared_family(image):
+    return image
+
+
+def _batch_executor(request):
+    return request
+
+
+@pure_2d_batch_executor(_batch_executor)
+def _function_with_runtime_batch_executor(image):
     return image
 
 
@@ -74,3 +90,27 @@ def test_prepare_processing_callable_warms_imported_registered_families() -> Non
     prepare_processing_callable(_function_with_imported_prepared_family)
 
     assert _PREPARED_TEST_FAMILY_CALLS == 1
+
+
+def test_callable_contract_preserves_immutable_runtime_batch_executors() -> None:
+    contract = CallableContract.from_callable(_function_with_runtime_batch_executor)
+
+    assert isinstance(contract.runtime_batch_executors, MappingProxyType)
+    assert (
+        contract.runtime_batch_executor(RuntimeBatchExecutionDomain.PURE_2D_SLICES)
+        is _batch_executor
+    )
+
+
+def test_callable_contract_pickles_runtime_batch_executors() -> None:
+    restored = pickle.loads(
+        pickle.dumps(
+            CallableContract.from_callable(_function_with_runtime_batch_executor)
+        )
+    )
+
+    assert isinstance(restored.runtime_batch_executors, MappingProxyType)
+    assert (
+        restored.runtime_batch_executor(RuntimeBatchExecutionDomain.PURE_2D_SLICES)
+        is _batch_executor
+    )

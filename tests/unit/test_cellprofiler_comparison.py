@@ -12,6 +12,7 @@ from benchmark.cellprofiler_comparison import (
     load_observations_jsonl,
     _discard_openhcs_benchmark_tree,
     _discard_successful_openhcs_benchmark_tree,
+    write_module_coverage_artifacts,
     write_observations_csv,
     write_phase_timing_csv,
     write_summary_csv,
@@ -214,6 +215,57 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
             pipeline_params={"openhcs_max_axis_count": 2},
         ),
     )
+
+
+def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
+    cppipe_path = tmp_path / "coverage.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            (
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:Images only",
+                "IdentifyPrimaryObjects:[module_num:2|enabled:True]",
+                "    Select the input image:DNA",
+            )
+        ),
+        encoding="utf-8",
+    )
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "cases": [
+                    {
+                        "name": "CoverageCase",
+                        "dataset_path": str(tmp_path / "images"),
+                        "cppipe_path": str(cppipe_path),
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    write_module_coverage_artifacts(tmp_path / "artifacts", manifest_path=manifest)
+
+    summary = json.loads(
+        (tmp_path / "artifacts" / "module_coverage_summary.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    cppipe_rows = _csv_rows(
+        tmp_path / "artifacts" / "module_coverage_cppipe_modules.csv"
+    )
+
+    assert summary["cppipe_case_count"] == 1
+    assert summary["missing_processing_cppipe_module_count"] == 0
+    assert "IdentifyPrimaryObjects" in summary["supported_absorbed_processing_modules"]
+    assert {row["module_name"] for row in cppipe_rows} == {
+        "IdentifyPrimaryObjects",
+        "Images",
+    }
 
 
 def test_discard_openhcs_benchmark_tree_requires_marker_and_suite_containment(

@@ -13,7 +13,7 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from nominal_refactor_advisor.record_algebra import product_record
 
@@ -28,6 +28,9 @@ from benchmark.metrics.time import TimeMetric
 from benchmark.runner import CellProfilerCompatibilityResult
 from benchmark.runner import run_cellprofiler_cppipe_parity
 from benchmark.contracts.metric import MetricCollector
+
+if TYPE_CHECKING:
+    from benchmark.converter.compatibility_matrix import CellProfilerCompatibilityReport
 
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"harness"})
@@ -74,8 +77,21 @@ MEDIAN_OPENHCS_PEAK_MEMORY_MB_FIELD = "median_openhcs_peak_memory_mb"
 MEDIAN_SPEEDUP_FIELD = "median_speedup"
 MEDIAN_TOTAL_PHASE_SPEEDUP_FIELD = "median_total_phase_speedup"
 MIN_PARITY_ACCURACY_FIELD = "min_parity_accuracy"
+MODULE_NAME_FIELD = "module_name"
+CORPUS_COVERAGE_FIELD = "corpus_coverage"
+ABSORPTION_COVERAGE_FIELD = "absorption_coverage"
+CPPIPE_CASE_NAMES_FIELD = "cppipe_case_names"
+IMPORTABLE_FIELD = "importable"
+PROCESSING_CONTRACT_FIELD = "processing_contract"
+PROCESSING_CONTRACT_SOURCE_FIELD = "processing_contract_source"
+ARTIFACT_CONTRACT_COVERAGE_FIELD = "artifact_contract_coverage"
+SOURCE_COVERAGE_FIELD = "source_coverage"
 DEFAULT_SPEEDUP_TARGET = 5.0
 OPENHCS_BENCHMARK_CACHE_MARKER = ".openhcs_benchmark_cache.json"
+MODULE_COVERAGE_SUMMARY_JSON = "module_coverage_summary.json"
+MODULE_COVERAGE_CPPIPE_MODULES_CSV = "module_coverage_cppipe_modules.csv"
+MODULE_COVERAGE_ABSORBED_MODULES_CSV = "module_coverage_absorbed_modules.csv"
+MODULE_COVERAGE_SOURCE_MODULES_CSV = "module_coverage_source_modules.csv"
 CsvRow = Mapping[str, object]
 CsvRowBuilder = Callable[
     [Sequence["CellProfilerComparisonObservation"]],
@@ -87,6 +103,220 @@ CsvTableSpec = product_record(
     doc="Authoritative CSV table projection.",
     module_name=__name__,
 )
+ModuleCoverageSummaryPayload = product_record(
+    "ModuleCoverageSummaryPayload",
+    (
+        "manifest_path: str; cppipe_case_count: int; "
+        "supported_cppipe_case_count: int; known_invalid_cppipe_case_count: int; "
+        "module_instance_count: int; unique_cppipe_module_count: int; "
+        "supported_absorbed_processing_module_count: int; "
+        "known_invalid_absorbed_processing_module_count: int; "
+        "untested_absorbed_processing_module_count: int; "
+        "infrastructure_cppipe_module_count: int; "
+        "missing_processing_cppipe_module_count: int; "
+        "supported_absorbed_processing_modules: tuple[str, ...]; "
+        "known_invalid_absorbed_processing_modules: tuple[str, ...]; "
+        "untested_absorbed_processing_modules: tuple[str, ...]; "
+        "infrastructure_cppipe_modules: tuple[str, ...]; "
+        "missing_processing_cppipe_modules: tuple[str, ...]"
+    ),
+    doc="Serializable benchmark-manifest CellProfiler module coverage summary.",
+    module_name=__name__,
+)
+CPPipeModuleCoverageRow = product_record(
+    "CPPipeModuleCoverageRow",
+    (
+        "module_name: str; corpus_coverage: str; absorption_coverage: str; "
+        "cppipe_case_names: str"
+    ),
+    doc="CSV row for one module observed in benchmark .cppipe files.",
+    module_name=__name__,
+)
+AbsorbedModuleCoverageRow = product_record(
+    "AbsorbedModuleCoverageRow",
+    (
+        "module_name: str; corpus_coverage: str; importable: bool; "
+        "processing_contract: str; processing_contract_source: str; "
+        "artifact_contract_coverage: str"
+    ),
+    doc="CSV row for one absorbed CellProfiler library module.",
+    module_name=__name__,
+)
+SourceModuleCoverageRow = product_record(
+    "SourceModuleCoverageRow",
+    "module_name: str; source_coverage: str",
+    doc="CSV row for one checked-in CellProfiler source module.",
+    module_name=__name__,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CsvRowsArtifact:
+    """One materialized CSV artifact with nominal row records."""
+
+    filename: str
+    fieldnames: tuple[str, ...]
+    rows: tuple[object, ...]
+
+    def write_to(self, output_root: Path) -> None:
+        path = output_root / self.filename
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.fieldnames)
+            writer.writeheader()
+            writer.writerows(asdict(row) for row in self.rows)
+
+
+@dataclass(frozen=True, slots=True)
+class ObservationCsvArtifact:
+    """One benchmark observation CSV artifact backed by a table spec."""
+
+    path: Path
+    table: CsvTableSpec
+    observations: Sequence["CellProfilerComparisonObservation"]
+
+    def write(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=self.table.fieldnames)
+            writer.writeheader()
+            writer.writerows(self.table.rows(self.observations))
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleCoverageArtifacts:
+    """Complete module-coverage artifact set for one benchmark manifest."""
+
+    summary: ModuleCoverageSummaryPayload
+    cppipe_modules: tuple[CPPipeModuleCoverageRow, ...]
+    absorbed_modules: tuple[AbsorbedModuleCoverageRow, ...]
+    source_modules: tuple[SourceModuleCoverageRow, ...]
+
+    @classmethod
+    def from_report(
+        cls,
+        report: "CellProfilerCompatibilityReport",
+        *,
+        manifest_path: Path,
+    ) -> "ModuleCoverageArtifacts":
+        coverage = report.benchmark_coverage
+        return cls(
+            summary=ModuleCoverageSummaryPayload(
+                manifest_path=str(manifest_path),
+                cppipe_case_count=coverage.cppipe_case_count,
+                supported_cppipe_case_count=coverage.supported_cppipe_case_count,
+                known_invalid_cppipe_case_count=(
+                    coverage.known_invalid_cppipe_case_count
+                ),
+                module_instance_count=coverage.module_instance_count,
+                unique_cppipe_module_count=coverage.unique_cppipe_module_count,
+                supported_absorbed_processing_module_count=(
+                    coverage.supported_absorbed_processing_module_count
+                ),
+                known_invalid_absorbed_processing_module_count=(
+                    coverage.known_invalid_absorbed_processing_module_count
+                ),
+                untested_absorbed_processing_module_count=(
+                    coverage.untested_absorbed_processing_module_count
+                ),
+                infrastructure_cppipe_module_count=(
+                    coverage.infrastructure_cppipe_module_count
+                ),
+                missing_processing_cppipe_module_count=(
+                    coverage.missing_processing_cppipe_module_count
+                ),
+                supported_absorbed_processing_modules=(
+                    coverage.supported_absorbed_processing_modules
+                ),
+                known_invalid_absorbed_processing_modules=(
+                    coverage.known_invalid_absorbed_processing_modules
+                ),
+                untested_absorbed_processing_modules=(
+                    coverage.untested_absorbed_processing_modules
+                ),
+                infrastructure_cppipe_modules=coverage.infrastructure_cppipe_modules,
+                missing_processing_cppipe_modules=(
+                    coverage.missing_processing_cppipe_modules
+                ),
+            ),
+            cppipe_modules=tuple(
+                CPPipeModuleCoverageRow(
+                    module_name=module.module_name,
+                    corpus_coverage=module.corpus_coverage.value,
+                    absorption_coverage=module.absorption_coverage.value,
+                    cppipe_case_names=";".join(module.cppipe_case_names),
+                )
+                for module in report.cppipe_modules
+            ),
+            absorbed_modules=tuple(
+                AbsorbedModuleCoverageRow(
+                    module_name=module.module_name,
+                    corpus_coverage=module.corpus_coverage.value,
+                    importable=module.importable,
+                    processing_contract=(
+                        module.processing_contract.value
+                        if module.processing_contract is not None
+                        else ""
+                    ),
+                    processing_contract_source=(
+                        module.processing_contract_source.value
+                        if module.processing_contract_source is not None
+                        else ""
+                    ),
+                    artifact_contract_coverage=(
+                        module.artifact_contract_coverage.value
+                    ),
+                )
+                for module in report.modules
+            ),
+            source_modules=tuple(
+                SourceModuleCoverageRow(
+                    module_name=module.module_name,
+                    source_coverage=module.coverage.value,
+                )
+                for module in report.source_modules
+            ),
+        )
+
+    def write_to(self, output_root: Path) -> None:
+        output_root.mkdir(parents=True, exist_ok=True)
+        (output_root / MODULE_COVERAGE_SUMMARY_JSON).write_text(
+            json.dumps(asdict(self.summary), indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+        for artifact in self.csv_artifacts():
+            artifact.write_to(output_root)
+
+    def csv_artifacts(self) -> tuple[CsvRowsArtifact, ...]:
+        return (
+            CsvRowsArtifact(
+                filename=MODULE_COVERAGE_CPPIPE_MODULES_CSV,
+                fieldnames=(
+                    MODULE_NAME_FIELD,
+                    CORPUS_COVERAGE_FIELD,
+                    ABSORPTION_COVERAGE_FIELD,
+                    CPPIPE_CASE_NAMES_FIELD,
+                ),
+                rows=self.cppipe_modules,
+            ),
+            CsvRowsArtifact(
+                filename=MODULE_COVERAGE_ABSORBED_MODULES_CSV,
+                fieldnames=(
+                    MODULE_NAME_FIELD,
+                    CORPUS_COVERAGE_FIELD,
+                    IMPORTABLE_FIELD,
+                    PROCESSING_CONTRACT_FIELD,
+                    PROCESSING_CONTRACT_SOURCE_FIELD,
+                    ARTIFACT_CONTRACT_COVERAGE_FIELD,
+                ),
+                rows=self.absorbed_modules,
+            ),
+            CsvRowsArtifact(
+                filename=MODULE_COVERAGE_SOURCE_MODULES_CSV,
+                fieldnames=(MODULE_NAME_FIELD, SOURCE_COVERAGE_FIELD),
+                rows=self.source_modules,
+            ),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -299,6 +529,7 @@ def run_comparison_suite(
     openhcs_axis_filter: Sequence[str] = (),
     openhcs_max_axis_count: int | None = None,
     metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
+    coverage_manifest_path: Path | None = None,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
@@ -356,6 +587,11 @@ def run_comparison_suite(
                 openhcs_max_axis_count=openhcs_max_axis_count,
                 metric_policy=metric_policy,
             )
+    if coverage_manifest_path is not None:
+        write_module_coverage_artifacts(
+            output_root,
+            manifest_path=coverage_manifest_path,
+        )
     return tuple(observations)
 
 
@@ -387,7 +623,7 @@ def write_observations_csv(
     observations: Sequence[CellProfilerComparisonObservation],
 ) -> None:
     """Write one-row-per-observation benchmark results."""
-    _write_csv_table(path, _OBSERVATION_TABLE, observations)
+    ObservationCsvArtifact(path, _OBSERVATION_TABLE, observations).write()
 
 
 def write_phase_timing_csv(
@@ -395,7 +631,7 @@ def write_phase_timing_csv(
     observations: Sequence[CellProfilerComparisonObservation],
 ) -> None:
     """Write long-form phase timing rows for all observations."""
-    _write_csv_table(path, _PHASE_TIMING_TABLE, observations)
+    ObservationCsvArtifact(path, _PHASE_TIMING_TABLE, observations).write()
 
 
 def write_summary_csv(
@@ -405,20 +641,23 @@ def write_summary_csv(
     speedup_target: float = DEFAULT_SPEEDUP_TARGET,
 ) -> None:
     """Write per-case aggregate medians for plotting."""
-    _write_csv_table(path, _summary_table(speedup_target), observations)
+    ObservationCsvArtifact(path, _summary_table(speedup_target), observations).write()
 
 
-def _write_csv_table(
-    path: Path,
-    table: CsvTableSpec,
-    observations: Sequence[CellProfilerComparisonObservation],
+def write_module_coverage_artifacts(
+    output_root: Path,
+    *,
+    manifest_path: Path,
 ) -> None:
-    """Write a benchmark CSV table through its table-spec authority."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=table.fieldnames)
-        writer.writeheader()
-        writer.writerows(table.rows(observations))
+    """Write CellProfiler module coverage artifacts for one benchmark manifest."""
+    from benchmark.converter.compatibility_matrix import (
+        build_cellprofiler_compatibility_report_for_manifest,
+    )
+
+    report = build_cellprofiler_compatibility_report_for_manifest(manifest_path)
+    ModuleCoverageArtifacts.from_report(report, manifest_path=manifest_path).write_to(
+        output_root
+    )
 
 
 def _observation_csv_rows(
