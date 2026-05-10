@@ -123,7 +123,7 @@ from openhcs.interop.cellprofiler.untangle_worms_settings import (
     UNTANGLE_WORMS_NONOVERLAPPING_OBJECTS_SETTING,
     UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING,
 )
-from .unmix_colors_settings import (
+from openhcs.interop.cellprofiler.unmix_colors_settings import (
     unmix_colors_input_name,
     unmix_colors_output_rows,
 )
