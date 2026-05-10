@@ -31,6 +31,7 @@ from openhcs.processing.backends.cellprofiler.outlines import object_outline_bac
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
@@ -54,19 +55,19 @@ def _profile_elapsed(label: str, start: float, **fields: object) -> float:
 
 
 class DistanceMethod(Enum):
-    ADJACENT = "adjacent"
-    EXPAND = "expand"
-    WITHIN = "within"
+    def __new__(
+        cls,
+        absorbed_value: str,
+        *cellprofiler_literals: str,
+    ) -> "DistanceMethod":
+        obj = object.__new__(cls)
+        obj._value_ = absorbed_value
+        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
+        return obj
 
-
-def _coerce_distance_method(value: DistanceMethod | str) -> DistanceMethod:
-    if isinstance(value, DistanceMethod):
-        return value
-    return NeighborDistancePlanner.method_for_cellprofiler_literal(str(value))
-
-
-def _neighbor_distance_literal_token(value: str) -> str:
-    return "_".join(value.strip().lower().replace("-", " ").split())
+    ADJACENT = ("adjacent",)
+    EXPAND = ("expand", "Expand until adjacent")
+    WITHIN = ("within", "Within a specified distance")
 
 
 @dataclass
@@ -104,27 +105,10 @@ class NeighborDistancePlanner(
     __enum_label_attr__ = "method_label"
     method_label: ClassVar[str | None] = None
     method: ClassVar[DistanceMethod | None] = None
-    cellprofiler_literals: ClassVar[tuple[str, ...]] = ()
 
     @classmethod
     def for_method(cls, method: DistanceMethod) -> "NeighborDistancePlanner":
         return cls.for_enum_member(method)
-
-    @classmethod
-    def method_for_cellprofiler_literal(cls, value: str) -> DistanceMethod:
-        normalized = _neighbor_distance_literal_token(value)
-        matches = tuple(
-            planner_type.method
-            for planner_type in cls.registered_strategy_types()
-            if normalized
-            in {
-                _neighbor_distance_literal_token(literal)
-                for literal in planner_type.cellprofiler_literals
-            }
-        )
-        if len(matches) != 1 or matches[0] is None:
-            raise ValueError(f"Unsupported neighbor distance method {value!r}.")
-        return matches[0]
 
     @abstractmethod
     def plan(
@@ -137,7 +121,6 @@ class NeighborDistancePlanner(
 
 class AdjacentNeighborDistancePlanner(NeighborDistancePlanner):
     method = DistanceMethod.ADJACENT
-    cellprofiler_literals = ("adjacent",)
 
     def plan(
         self,
@@ -150,7 +133,6 @@ class AdjacentNeighborDistancePlanner(NeighborDistancePlanner):
 
 class ExpandedNeighborDistancePlanner(NeighborDistancePlanner):
     method = DistanceMethod.EXPAND
-    cellprofiler_literals = ("expand", "expand_until_adjacent")
 
     def plan(
         self,
@@ -170,7 +152,6 @@ class ExpandedNeighborDistancePlanner(NeighborDistancePlanner):
 
 class WithinNeighborDistancePlanner(NeighborDistancePlanner):
     method = DistanceMethod.WITHIN
-    cellprofiler_literals = ("within", "within_a_specified_distance")
 
     def plan(
         self,
@@ -477,7 +458,7 @@ def measure_object_neighbors(
             measurements.append(NeighborMeasurements(
                 slice_index=0,
                 object_id=i + 1,
-                scale=_coerce_distance_method(distance_method).value,
+                scale=coerce_cellprofiler_enum(DistanceMethod, distance_method).value,
                 number_of_neighbors=0,
                 percent_touching=0.0,
                 first_closest_object_number=0,
@@ -512,7 +493,10 @@ def measure_object_neighbors(
     final_first_object_number = np.zeros(final_object_count, dtype=int)
     final_second_object_number = np.zeros(final_object_count, dtype=int)
     
-    normalized_distance_method = _coerce_distance_method(distance_method)
+    normalized_distance_method = coerce_cellprofiler_enum(
+        DistanceMethod,
+        distance_method,
+    )
     distance_plan = NeighborDistancePlanner.for_method(
         normalized_distance_method
     ).plan(
