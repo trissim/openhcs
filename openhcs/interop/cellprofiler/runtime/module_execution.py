@@ -33,7 +33,10 @@ from openhcs.core.aligned_image_payload import (
     project_singleton_stack_image_domain,
 )
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
-from openhcs.core.callable_contract import CallableContract, RAW_PROCESSING_FUNCTION_ATTR
+from openhcs.core.callable_contract import (
+    CallableContract,
+    RAW_PROCESSING_FUNCTION_ATTR,
+)
 from openhcs.core.config import DtypeConfig
 from openhcs.core.memory import (
     MEMORY_TYPE_NUMPY,
@@ -296,7 +299,9 @@ class CellProfilerModulePolicyRegistryConfigContext:
     raw_registry_config: Any
     defaults: CellProfilerModulePolicyRegistryDefaults
 
-    def apply_root_defaults(self, bases: tuple[type, ...], attrs: dict[str, Any]) -> None:
+    def apply_root_defaults(
+        self, bases: tuple[type, ...], attrs: dict[str, Any]
+    ) -> None:
         """Install implicit root defaults when this declaration starts a registry."""
         if self.defaults.applies_to_root_bases(bases):
             self.defaults.apply_to(attrs)
@@ -513,7 +518,9 @@ class CellProfilerModuleExecutor:
             "_external_source_image_names_cache",
             external_image_names := tuple(
                 spec.name
-                for spec in ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)
+                for spec in ArtifactSpecCollection(declared_inputs).of_kind(
+                    ArtifactKind.IMAGE
+                )
                 if spec.name not in runtime_image_name_set
             ),
         )
@@ -776,7 +783,6 @@ class CellProfilerModuleExecutor:
         )
         return result
 
-
     def _runs_per_object_measurement(self) -> bool:
         return CellProfilerPerObjectMeasurementPolicy.matches(
             self.module_name,
@@ -823,7 +829,9 @@ class CellProfilerModuleExecutor:
     ) -> Any:
         function_name = getattr(func, "__name__", "<unknown>")
         object_inputs = self._object_input_specs()
-        measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(ArtifactKind.MEASUREMENTS)
+        measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(
+            ArtifactKind.MEASUREMENTS
+        )
         if len(measurement_outputs) != 1:
             raise NotImplementedError(
                 f"{self.module_name} per-object execution requires exactly one "
@@ -934,8 +942,7 @@ class CellProfilerModuleExecutor:
                 MeasurementRowOwnership(
                     object_name=(
                         object_spec.name
-                        if row_object_names_required
-                        or requires_explicit_row_ownership
+                        if row_object_names_required or requires_explicit_row_ownership
                         else None
                     ),
                     source_image_name=source_image_name,
@@ -1047,7 +1054,10 @@ class CellProfilerModuleExecutor:
                         raw_output = _CELLPROFILER_FUNCTION_CONTRACT_EXECUTOR.execute(
                             func,
                             aligned_image,
-                            {**invocation.lowered_kwargs(), "labels": executable_labels},
+                            {
+                                **invocation.lowered_kwargs(),
+                                "labels": executable_labels,
+                            },
                             execution_mode=execution_mode,
                         )
                         contract_execute_seconds += (
@@ -1198,11 +1208,9 @@ class CellProfilerModuleExecutor:
             rows=len(combined_rows),
         )
 
-        combined_source_image_name = (
-            measurement_row_policy.table_source_image_name(
-                measurement_images,
-                source_image_name,
-            )
+        combined_source_image_name = measurement_row_policy.table_source_image_name(
+            measurement_images,
+            source_image_name,
         )
 
         record_started_at = time.perf_counter()
@@ -1210,11 +1218,12 @@ class CellProfilerModuleExecutor:
             cellprofiler_runtime,
             measurement_outputs[0].name,
             combined_rows,
-            fields=_measurement_record_fields(measurement_outputs[0], combined_rows, func),
+            fields=_measurement_record_fields(
+                measurement_outputs[0], combined_rows, func
+            ),
             object_name=(
                 None
-                if image_measurement_rows
-                or requires_explicit_row_ownership
+                if image_measurement_rows or requires_explicit_row_ownership
                 else object_inputs[0].name if len(object_inputs) == 1 else None
             ),
             source_image_name=combined_source_image_name,
@@ -1296,7 +1305,9 @@ class CellProfilerModuleExecutor:
         **kwargs: Any,
     ) -> Any:
         function_name = getattr(func, "__name__", "<unknown>")
-        measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(ArtifactKind.MEASUREMENTS)
+        measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(
+            ArtifactKind.MEASUREMENTS
+        )
         if len(measurement_outputs) != 1:
             raise NotImplementedError(
                 f"{self.module_name} per-image execution requires exactly one "
@@ -1408,8 +1419,12 @@ class CellProfilerModuleExecutor:
             cellprofiler_runtime,
             measurement_outputs[0].name,
             combined_rows,
-            fields=_measurement_record_fields(measurement_outputs[0], combined_rows, func),
-            object_name=None if rows_declare_object_name else _MISSING_MEASUREMENT_OBJECT_NAME,
+            fields=_measurement_record_fields(
+                measurement_outputs[0], combined_rows, func
+            ),
+            object_name=(
+                None if rows_declare_object_name else _MISSING_MEASUREMENT_OBJECT_NAME
+            ),
             source_image_name=(
                 None
                 if rows_declare_object_name
@@ -1452,9 +1467,7 @@ class CellProfilerModuleExecutor:
         if not CellProfilerPerObjectMeasurementPolicy.measures_images_independently(
             self.module_name
         ):
-            return (
-                self._composed_measurement_image(image_request, image_inputs),
-            )
+            return (self._composed_measurement_image(image_request, image_inputs),)
 
         return self._resolved_measurement_images(
             image_inputs,
@@ -1606,12 +1619,12 @@ class CellProfilerModuleExecutor:
                         module_name=self.module_name,
                         object_inputs=(),
                         adapter=adapter,
-                    kwargs=kwargs,
-                    current_image=current_image,
-                    external_object_names=self._external_source_object_name_set,
-                    runtime_inputs=runtime_inputs,
+                        kwargs=kwargs,
+                        current_image=current_image,
+                        external_object_names=self._external_source_object_name_set,
+                        runtime_inputs=runtime_inputs,
+                    )
                 )
-            )
             return {}
 
         special_input_names = special_input_names_from_callable(func)
@@ -1634,7 +1647,9 @@ class CellProfilerModuleExecutor:
                 )
             )
 
-        supported_non_object_kinds = object_input_policy.supported_non_object_input_kinds
+        supported_non_object_kinds = (
+            object_input_policy.supported_non_object_input_kinds
+        )
         unsupported_non_object_inputs = tuple(
             spec
             for spec in runtime_inputs
@@ -1669,9 +1684,7 @@ class CellProfilerModuleExecutor:
     ) -> tuple[ArtifactSpec, ...]:
         declared_inputs = self._declared_input_specs()
         non_image_inputs = tuple(
-            spec
-            for spec in declared_inputs
-            if spec.kind is not ArtifactKind.IMAGE
+            spec for spec in declared_inputs if spec.kind is not ArtifactKind.IMAGE
         )
         special_image_inputs = CellProfilerSpecialInputPolicy.for_module(
             self.module_name
@@ -1760,8 +1773,7 @@ class CellProfilerModuleExecutor:
         if not image_inputs:
             payload = (
                 _object_only_reference_image(current_image)
-                if self._object_input_specs()
-                or self._spatial_grid_inputs
+                if self._object_input_specs() or self._spatial_grid_inputs
                 else _cellprofiler_image_payload(current_image)
             )
             return CellProfilerImageRequest(
@@ -1773,9 +1785,7 @@ class CellProfilerModuleExecutor:
 
         runtime_image_names = self._runtime_image_name_set
         external_image_names = tuple(
-            spec.name
-            for spec in image_inputs
-            if spec.name not in runtime_image_names
+            spec.name for spec in image_inputs if spec.name not in runtime_image_names
         )
         adapter.require_resolvable_source_aliases(external_image_names)
         payloads = []
@@ -1901,13 +1911,17 @@ class CellProfilerModuleExecutor:
                 CallableContract.from_callable(func).runtime_image_execution_mode
                 or image_request.execution_mode
             ),
-            image=image_override if image_override is not None else image_request.payload,
+            image=(
+                image_override if image_override is not None else image_request.payload
+            ),
             kwargs=runtime_kwargs,
             invocation_options=invocation_options,
         )
         runtime_kwargs.pop(CELLPROFILER_GRID_CYCLE_SCOPE_KWARG, None)
         return CellProfilerInvocationRequest(
-            image=image_override if image_override is not None else image_request.payload,
+            image=(
+                image_override if image_override is not None else image_request.payload
+            ),
             kwargs=_coerce_invocation_kwargs(func, runtime_kwargs),
             source_image_name=image_request.source_image_name,
             image_count=image_request.image_count,
@@ -2012,7 +2026,9 @@ class CellProfilerInvocationExecutionModePolicy(
 
     @classmethod
     @lru_cache(maxsize=None)
-    def for_module(cls, module_name: str) -> "CellProfilerInvocationExecutionModePolicy":
+    def for_module(
+        cls, module_name: str
+    ) -> "CellProfilerInvocationExecutionModePolicy":
         policy_type = cls.__registry__.get(
             canonical_module_name(module_name),
             DefaultInvocationExecutionModePolicy,
@@ -2130,7 +2146,9 @@ class MaskedImagePayloadSpatialRankStrategy(CellProfilerPayloadSpatialRankStrate
 
     def spatial_rank(self, value: Any) -> int | None:
         if not isinstance(value, MaskedImagePayload):
-            raise TypeError("MaskedImagePayload rank strategy requires MaskedImagePayload.")
+            raise TypeError(
+                "MaskedImagePayload rank strategy requires MaskedImagePayload."
+            )
         return CellProfilerPayloadSpatialRankStrategy.resolve_rank(value.data)
 
 
@@ -2448,7 +2466,9 @@ def _accepted_invocation_kwargs(
     parameters: Mapping[str, Parameter],
     kwargs: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if any(parameter.kind is Parameter.VAR_KEYWORD for parameter in parameters.values()):
+    if any(
+        parameter.kind is Parameter.VAR_KEYWORD for parameter in parameters.values()
+    ):
         return dict(kwargs)
     return {
         name: value
@@ -2542,9 +2562,7 @@ def _enum_annotation_type(
     if parameter is None:
         return None
     annotation = (
-        resolved_annotation
-        if resolved_annotation is not None
-        else parameter.annotation
+        resolved_annotation if resolved_annotation is not None else parameter.annotation
     )
     if isinstance(annotation, type) and issubclass(annotation, Enum):
         return annotation
@@ -2613,11 +2631,7 @@ def _member_string_literals(member: Enum) -> tuple[str, ...]:
     if isinstance(member.value, str):
         literals.append(member.value)
     elif isinstance(member.value, tuple):
-        literals.extend(
-            item
-            for item in member.value
-            if isinstance(item, str)
-        )
+        literals.extend(item for item in member.value if isinstance(item, str))
     return tuple(literals)
 
 
@@ -2716,7 +2730,9 @@ class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
                 )
             )
         return collapse_singleton_object_label_stack(
-            _object_label_runtime_payload(request.adapter.get_objects(request.spec.name))
+            _object_label_runtime_payload(
+                request.adapter.get_objects(request.spec.name)
+            )
         )
 
     def source_image_name(
@@ -2972,7 +2988,9 @@ class CellProfilerObjectMeasurementVectorBinding:
             request=request,
             object_name=object_name,
             feature_name=feature_name,
-            object_spec=ArtifactSpecCollection(request.object_inputs).by_name(object_name),
+            object_spec=ArtifactSpecCollection(request.object_inputs).by_name(
+                object_name
+            ),
         )
 
     def vector(self) -> CellProfilerMeasurementVector:
@@ -2989,9 +3007,11 @@ class CellProfilerObjectMeasurementVectorBinding:
             self.request.adapter.measurement_values_for_label_slices(
                 self.object_name,
                 self.feature_name,
-                self.labels
-                if self.labels is not None
-                else self.request.labels_for(self.object_spec),
+                (
+                    self.labels
+                    if self.labels is not None
+                    else self.request.labels_for(self.object_spec)
+                ),
             )
         )
 
@@ -3005,7 +3025,9 @@ class CellProfilerObjectMeasurementVectorBatchBinding:
     def vectors(self) -> tuple[CellProfilerMeasurementVector, ...]:
         if not self.bindings:
             return ()
-        feature_names = tuple(dict.fromkeys(binding.feature_name for binding in self.bindings))
+        feature_names = tuple(
+            dict.fromkeys(binding.feature_name for binding in self.bindings)
+        )
         if len(feature_names) != 1 or any(
             binding.object_spec is None for binding in self.bindings
         ):
@@ -3015,13 +3037,17 @@ class CellProfilerObjectMeasurementVectorBatchBinding:
         requests = {
             binding.object_name: (
                 binding.feature_name,
-                binding.labels
-                if binding.labels is not None
-                else binding.request.labels_for(binding.object_spec),
+                (
+                    binding.labels
+                    if binding.labels is not None
+                    else binding.request.labels_for(binding.object_spec)
+                ),
             )
             for binding in self.bindings
         }
-        vectors = self.bindings[0].request.adapter.measurement_values_for_label_slice_batch(
+        vectors = self.bindings[
+            0
+        ].request.adapter.measurement_values_for_label_slice_batch(
             requests,
             feature_name=feature_name,
         )
@@ -3091,7 +3117,9 @@ class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
         func: Callable[..., Any],
         declared_inputs: tuple[ArtifactSpec, ...],
     ) -> tuple[ArtifactSpec, ...]:
-        image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)
+        image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(
+            ArtifactKind.IMAGE
+        )
         special_image_count = len(
             CellProfilerSpecialInputPolicy.for_module(
                 canonical_module_name(module_name)
@@ -3121,7 +3149,9 @@ class ObjectLabelDrivenPrimaryImageInputPolicy(DefaultPrimaryImageInputPolicy):
         return ()
 
 
-for _object_label_driven_module_name in ObjectLabelDrivenPrimaryImageInputPolicy.module_names:
+for (
+    _object_label_driven_module_name
+) in ObjectLabelDrivenPrimaryImageInputPolicy.module_names:
     _object_label_driven_policy_name = (
         f"{_object_label_driven_module_name}PrimaryImageInputPolicy"
     )
@@ -3162,9 +3192,7 @@ class SingleObjectLabelInputPolicy(CellProfilerObjectInputPolicy):
         request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         request.require_exact_object_count(1)
-        return {
-            self.label_kwarg: request.labels_for(request.object_inputs[0])
-        }
+        return {self.label_kwarg: request.labels_for(request.object_inputs[0])}
 
 
 class IdentifySecondaryObjectsInputPolicy(CellProfilerObjectInputPolicy):
@@ -3177,9 +3205,7 @@ class IdentifySecondaryObjectsInputPolicy(CellProfilerObjectInputPolicy):
         request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         request.require_exact_object_count(1)
-        return {
-            "primary_labels": request.label_payload_for(request.object_inputs[0])
-        }
+        return {"primary_labels": request.label_payload_for(request.object_inputs[0])}
 
 
 @dataclass(frozen=True, slots=True)
@@ -3460,9 +3486,7 @@ class CellProfilerObjectMeasurementRowPolicy(
                     f"{type(self).__name__} requires an object name for object rows."
                 )
             return annotate_measurement_row_object(row, object_name)
-        resolved_source_image_name = self.image_row_source_image_name(
-            source_image_name
-        )
+        resolved_source_image_name = self.image_row_source_image_name(source_image_name)
         if resolved_source_image_name is None:
             raise ValueError(
                 f"{type(self).__name__} requires a source image name for image rows."
@@ -3708,11 +3732,7 @@ class CellProfilerObjectMeasurementRowPolicy(
                 if positive_label_extent is None
                 else positive_label_extent
             )
-            return (
-                0.0
-                if object_id <= extent
-                else np.nan
-            )
+            return 0.0 if object_id <= extent else np.nan
         raise ValueError(f"Unsupported missing measurement value policy: {policy}.")
 
 
@@ -3921,7 +3941,10 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
                 for field_name, value in row_mapping.items()
                 if field_name in identity_fields
             }
-            for source_field_name, runtime_feature_name in runtime_feature_names.items():
+            for (
+                source_field_name,
+                runtime_feature_name,
+            ) in runtime_feature_names.items():
                 if source_field_name not in row_mapping:
                     continue
                 projected[runtime_feature_name] = row_mapping[source_field_name]
@@ -3936,8 +3959,7 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
         """Return one row with CellProfiler source-pair feature names."""
         row_mapping = measurement_row_mapping(row)
         has_pair_features = bool(
-            CellProfilerSourcePairFeature.source_field_names()
-            & row_mapping.keys()
+            CellProfilerSourcePairFeature.source_field_names() & row_mapping.keys()
         )
         if not has_pair_features:
             return dict(row_mapping)
@@ -3946,11 +3968,12 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
             for field_name, value in row_mapping.items()
             if field_name in type(self).identity_fields
         }
-        for source_field_name, runtime_feature_name in (
-            CellProfilerSourcePairFeature.runtime_feature_names_for_pair(
-                source_pair
-            ).items()
-        ):
+        for (
+            source_field_name,
+            runtime_feature_name,
+        ) in CellProfilerSourcePairFeature.runtime_feature_names_for_pair(
+            source_pair
+        ).items():
             if source_field_name not in row_mapping:
                 continue
             projected[runtime_feature_name] = row_mapping[source_field_name]
@@ -4003,6 +4026,7 @@ for _row_policy_spec in (
     ),
 ):
     _row_policy_spec.declare_in(globals())
+
 
 class DeclaredSingleObjectLabelInputPolicy(SingleObjectLabelInputPolicy):
     """Generated base for modules with one declared label input."""
@@ -4090,9 +4114,7 @@ class MeasureObjectNeighborsInputPolicy(CellProfilerObjectInputPolicy):
                 None if same_objects else _label_payload_final(neighbor_payload)
             ),
             "small_removed_neighbor_labels": (
-                None
-                if same_objects
-                else _label_payload_small_removed(neighbor_payload)
+                None if same_objects else _label_payload_small_removed(neighbor_payload)
             ),
             "neighbors_are_same_objects": same_objects,
         }
@@ -4192,7 +4214,9 @@ class FilterObjectsRuntimeInputPlan:
         runtime_inputs: tuple[ArtifactSpec, ...],
         kwargs: Mapping[str, Any],
     ) -> "FilterObjectsRuntimeInputPlan":
-        object_inputs = ArtifactSpecCollection(runtime_inputs).of_kind(ArtifactKind.OBJECT_LABELS)
+        object_inputs = ArtifactSpecCollection(runtime_inputs).of_kind(
+            ArtifactKind.OBJECT_LABELS
+        )
         object_count = int(kwargs.get("additional_object_count", 0)) + 1
         enclosing_name = kwargs.get("enclosing_object_name")
         object_specs = object_inputs[:object_count]
@@ -4233,7 +4257,9 @@ class FilterObjectsRuntimeInputPlan:
             object_specs=object_specs,
             enclosing_spec=enclosing_spec,
             relationship_spec=relationship_spec,
-            measurement_relationship_specs=ArtifactSpecCollection(measurement_relationship_specs).unique(conflict_context="CellProfiler input spec"),
+            measurement_relationship_specs=ArtifactSpecCollection(
+                measurement_relationship_specs
+            ).unique(conflict_context="CellProfiler input spec"),
         )
 
 
@@ -4389,9 +4415,14 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
                 "CalculateMath",
             )
             object_name = _optional_string_kwarg(request.kwargs, object_kwarg)
-            if object_name is None or count_feature_object_name(feature_name) is not None:
+            if (
+                object_name is None
+                or count_feature_object_name(feature_name) is not None
+            ):
                 return None
-            object_spec = ArtifactSpecCollection(request.object_inputs).by_name(object_name)
+            object_spec = ArtifactSpecCollection(request.object_inputs).by_name(
+                object_name
+            )
             if object_spec is None:
                 return None
             bindings.append(
@@ -4613,7 +4644,9 @@ class SparseIJVMeasurementLabelExecutionModeStrategy(
     ) -> ImagePayloadExecutionMode:
         del func, runtime_slice_count
         if not isinstance(labels, SparseIJVLabelRows):
-            raise TypeError("Sparse IJV execution strategy requires SparseIJVLabelRows.")
+            raise TypeError(
+                "Sparse IJV execution strategy requires SparseIJVLabelRows."
+            )
         if labels.has_slice_index:
             return ImagePayloadExecutionMode.FULL_STACK
         return default
@@ -4695,7 +4728,11 @@ class SliceAlignedLabelArgumentStrategy(
         request: CellProfilerObjectMeasurementLabelArgumentRequest,
     ) -> "SliceAlignedLabelArgumentStrategy":
         strategy = cls.for_nominal_value(request.measurement_image_payload)
-        return strategy if strategy is not None else DenseSliceAlignedLabelArgumentStrategy()
+        return (
+            strategy
+            if strategy is not None
+            else DenseSliceAlignedLabelArgumentStrategy()
+        )
 
     @abstractmethod
     def label_argument(
@@ -4793,6 +4830,19 @@ class CellProfilerOutputRecordRequest:
     source_image_names: tuple[str, ...] = ()
     source_image_payload: Any | None = None
 
+    def single_output_object_name(self) -> str:
+        """Return the unique object-label output owned by this record request."""
+        object_outputs = ArtifactSpecCollection(self.executor.outputs).of_kind(
+            ArtifactKind.OBJECT_LABELS
+        )
+        if len(object_outputs) != 1:
+            raise NotImplementedError(
+                f"{self.executor.module_name} threshold measurement semantics "
+                f"require exactly one object-label output, got "
+                f"{[spec.name for spec in object_outputs]}."
+            )
+        return object_outputs[0].name
+
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerMeasurementRecord:
@@ -4828,7 +4878,9 @@ class CellProfilerMeasurementRecord:
             or any(record.source_image_name is None for record in records)
         ):
             return None
-        unique_names = tuple(dict.fromkeys(record.source_image_name for record in records))
+        unique_names = tuple(
+            dict.fromkeys(record.source_image_name for record in records)
+        )
         if len(unique_names) == 1:
             return unique_names[0]
         return None
@@ -4854,6 +4906,7 @@ class CellProfilerMeasurementRecordPartition:
                 tuple(measurement_row_mapping(row) for row in self.rows)
             ),
         )
+
 
 class CellProfilerImageMeasurementSource(ABC, metaclass=AutoRegisterMeta):
     """Nominal source for image-owned measurement row identity."""
@@ -5079,7 +5132,7 @@ class ObjectLabelSourceBindingProjectionRequest:
             raise TypeError(
                 "Object-label plane projection requires a RuntimePlaneAxisProjector, "
                 f"got {type(self.adapter).__name__}."
-        )
+            )
         return self.adapter.runtime_plane_index(
             axis,
             source_aliases=self.source_aliases,
@@ -5181,6 +5234,7 @@ class CellProfilerMeasurementRecordBuilder(
     ) -> CellProfilerMeasurementRecord:
         """Return measurement rows plus the object set they describe."""
 
+
 class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
     """Use the emitted rows and infer object ownership from declared inputs."""
 
@@ -5198,9 +5252,7 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
             object_name=(
                 None
                 if rows_declare_object_name
-                else _measurement_object_name(
-                    request.executor._declared_input_specs()
-                )
+                else _measurement_object_name(request.executor._declared_input_specs())
             ),
             source_image_name=(
                 None
@@ -5282,7 +5334,9 @@ class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
         source_pair: CellProfilerSourceImagePair,
     ) -> dict[str, Any]:
         row_mapping = measurement_row_mapping(row)
-        if not (CellProfilerSourcePairFeature.source_field_names() & row_mapping.keys()):
+        if not (
+            CellProfilerSourcePairFeature.source_field_names() & row_mapping.keys()
+        ):
             return dict(row_mapping)
 
         projected: dict[str, Any] = {}
@@ -5290,11 +5344,12 @@ class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
             if field_name not in CellProfilerSourcePairFeature.source_field_names():
                 projected[field_name] = value
 
-        for source_field_name, runtime_feature_name in (
-            CellProfilerSourcePairFeature.runtime_feature_names_for_pair(
-                source_pair
-            ).items()
-        ):
+        for (
+            source_field_name,
+            runtime_feature_name,
+        ) in CellProfilerSourcePairFeature.runtime_feature_names_for_pair(
+            source_pair
+        ).items():
             if source_field_name not in row_mapping:
                 continue
             projected[runtime_feature_name] = row_mapping[source_field_name]
@@ -5376,7 +5431,9 @@ class ProducedImageMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> ProducedArtifactImageMeasurementSource:
-        return self._primary_image_measurement_source(request).require_produced_artifact()
+        return self._primary_image_measurement_source(
+            request
+        ).require_produced_artifact()
 
 
 class CropMeasurementRecordBuilder(ProducedImageMeasurementRecordBuilder):
@@ -5476,7 +5533,7 @@ class IdentifyObjectRelationshipsMeasurementRecordBuilder(
             rows=[
                 *ThresholdMeasurementRows(
                     request.value,
-                    object_name=_single_output_object_name(request),
+                    object_name=request.single_output_object_name(),
                 ).rows(),
                 *RelationshipMeasurementRows.for_request(request).rows(),
             ],
@@ -5542,7 +5599,7 @@ class IdentifyObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuild
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        object_name = _single_output_object_name(request)
+        object_name = request.single_output_object_name()
         return CellProfilerMeasurementRecord(
             rows=ThresholdMeasurementRows(
                 request.value,
@@ -5564,7 +5621,7 @@ class IdentifyObjectsInGridMeasurementRecordBuilder(
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        object_name = _single_output_object_name(request)
+        object_name = request.single_output_object_name()
         rows = [
             *_measurement_table_rows(request.value),
             *ObjectLocationMeasurementRows(
@@ -5932,16 +5989,6 @@ class CellProfilerCallableOutputSpecs:
                 return raw_outputs
         return ()
 
-def _single_output_object_name(request: CellProfilerOutputRecordRequest) -> str:
-    object_outputs = ArtifactSpecCollection(request.executor.outputs).of_kind(ArtifactKind.OBJECT_LABELS)
-    if len(object_outputs) != 1:
-        raise NotImplementedError(
-            f"{request.executor.module_name} threshold measurement semantics "
-            f"require exactly one object-label output, got "
-            f"{[spec.name for spec in object_outputs]}."
-        )
-    return object_outputs[0].name
-
 
 class ClassifyObjectsMeasurementStatField(str, Enum):
     """Source fields emitted by absorbed ClassifyObjects functions."""
@@ -6048,7 +6095,9 @@ class ClassifyObjectsMeasurementRows(CellProfilerResultMeasurementRows):
         rows: list[dict[str, Any]] = []
         for result in self.source_rows():
             bin_counts = self.json_object_mapping(
-                self.row_value(result, ClassifyObjectsMeasurementStatField.BIN_COUNTS, {})
+                self.row_value(
+                    result, ClassifyObjectsMeasurementStatField.BIN_COUNTS, {}
+                )
             )
             bin_percentages = self.json_object_mapping(
                 self.row_value(
@@ -6065,7 +6114,9 @@ class ClassifyObjectsMeasurementRows(CellProfilerResultMeasurementRows):
                 )
             )
             slice_index = int(
-                self.row_value(result, ClassifyObjectsMeasurementStatField.SLICE_INDEX, 0)
+                self.row_value(
+                    result, ClassifyObjectsMeasurementStatField.SLICE_INDEX, 0
+                )
             )
             bin_names = tuple(str(name) for name in bin_counts)
             for bin_name, count in bin_counts.items():
@@ -6073,8 +6124,9 @@ class ClassifyObjectsMeasurementRows(CellProfilerResultMeasurementRows):
                     {
                         MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
                         MEASUREMENT_FEATURE_NAME_FIELD: (
-                            ClassifyObjectsMeasurementFeatureTemplate.OBJECTS_PER_BIN
-                            .feature_name(bin_name=str(bin_name))
+                            ClassifyObjectsMeasurementFeatureTemplate.OBJECTS_PER_BIN.feature_name(
+                                bin_name=str(bin_name)
+                            )
                         ),
                         MEASUREMENT_RESULT_VALUE_FIELD: count,
                     }
@@ -6083,8 +6135,9 @@ class ClassifyObjectsMeasurementRows(CellProfilerResultMeasurementRows):
                     {
                         MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
                         MEASUREMENT_FEATURE_NAME_FIELD: (
-                            ClassifyObjectsMeasurementFeatureTemplate.PERCENT_PER_BIN
-                            .feature_name(bin_name=str(bin_name))
+                            ClassifyObjectsMeasurementFeatureTemplate.PERCENT_PER_BIN.feature_name(
+                                bin_name=str(bin_name)
+                            )
                         ),
                         MEASUREMENT_RESULT_VALUE_FIELD: bin_percentages.get(
                             bin_name,
@@ -6128,8 +6181,9 @@ class ClassifyObjectsMeasurementRows(CellProfilerResultMeasurementRows):
                 MEASUREMENT_OBJECT_LABEL_FIELD: object_label,
                 MeasurementRowAxisField.SLICE_INDEX.value: slice_index,
                 MEASUREMENT_FEATURE_NAME_FIELD: (
-                    ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS
-                    .feature_name(bin_name=bin_name)
+                    ClassifyObjectsMeasurementFeatureTemplate.OBJECT_CLASS.feature_name(
+                        bin_name=bin_name
+                    )
                 ),
                 MEASUREMENT_RESULT_VALUE_FIELD: int(
                     object_classes.get(str(object_label)) == bin_name
@@ -6487,7 +6541,8 @@ def _measurement_table_rows(rows: Any) -> list[Any]:
 
 def _measurement_rows_declare_object_name(rows: Sequence[Any]) -> bool:
     return any(
-        measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD) not in (
+        measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD)
+        not in (
             None,
             "",
         )
@@ -6661,8 +6716,13 @@ class ObjectMeasurementRowCompletionSchema:
         axis_key: tuple[Any, ...],
         row_policy: CellProfilerObjectMeasurementRowPolicy,
     ) -> int | None:
-        policy = MissingObjectMeasurementValuePolicy(type(row_policy).missing_value_policy)
-        if policy is not MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT:
+        policy = MissingObjectMeasurementValuePolicy(
+            type(row_policy).missing_value_policy
+        )
+        if (
+            policy
+            is not MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT
+        ):
             return None
         axis_payload = self.label_payload_for_axis(label_payload, axis_key=axis_key)
         return self.positive_object_label_extent(axis_payload)
@@ -6734,7 +6794,9 @@ class ObjectMeasurementRowIdentityProjectionResult:
         ordered_row_keys = self.row_keys if row_keys is None else row_keys
         object_order = {object_id: index for index, object_id in enumerate(object_ids)}
         axis_order = {axis_key: index for index, axis_key in enumerate(axis_keys)}
-        indexed_rows = tuple(enumerate(zip(ordered_rows, ordered_row_keys, strict=True)))
+        indexed_rows = tuple(
+            enumerate(zip(ordered_rows, ordered_row_keys, strict=True))
+        )
         return [
             row
             for _index, (row, _row_key) in sorted(
@@ -6879,7 +6941,9 @@ class LabelIdMeasurementObjectRowIdentityProjectionStrategy(
         return ObjectMeasurementRowIdentityProjectionResult(
             rows=rows,
             row_keys=row_keys,
-            axis_keys=tuple(dict.fromkeys(axis_key for _object_id, axis_key in row_keys)),
+            axis_keys=tuple(
+                dict.fromkeys(axis_key for _object_id, axis_key in row_keys)
+            ),
         )
 
 
@@ -6930,15 +6994,15 @@ class RowOrdinalMeasurementObjectRowIdentityProjectionStrategy(
                 ):
                     continue
                 ordinal = ordinal_state.next_unbound_ordinal(axis_key)
-            projected_rows.append(
-                request.row_with_object_id(row, ordinal)
-            )
+            projected_rows.append(request.row_with_object_id(row, ordinal))
             projected_row_keys.append((ordinal, axis_key))
         object_ids = tuple(
             sorted(dict.fromkeys(ordinal for ordinal, _axis_key in projected_row_keys))
         )
         axis_keys = tuple(
-            dict.fromkeys(axis_key for _row, _mapping, axis_key, _measured in row_entries)
+            dict.fromkeys(
+                axis_key for _row, _mapping, axis_key, _measured in row_entries
+            )
         )
         projection = ObjectMeasurementRowIdentityProjectionResult(
             rows=tuple(projected_rows),
@@ -7141,8 +7205,7 @@ def _coerce_spatial_grid(
         return value
     if is_dataclass(value):
         return {
-            field.name: getattr(value, field.name)
-            for field in dataclass_fields(value)
+            field.name: getattr(value, field.name) for field in dataclass_fields(value)
         }
     raise TypeError(
         f"Spatial grid output '{name}' must be SpatialGrid or mapping-backed, "
@@ -7162,9 +7225,7 @@ def _measurement_record_fields(
     if fields:
         return fields
     if _rows_have_inferable_fields(rows):
-        return _field_specs_for_rows(
-            [measurement_row_mapping(row) for row in rows]
-        )
+        return _field_specs_for_rows([measurement_row_mapping(row) for row in rows])
     return _measurement_fields_from_callable(func)
 
 
@@ -7454,7 +7515,10 @@ def _collapse_repeated_label_stack_for_image(image: Any, labels: Any) -> Any:
     if labels.shape[0] == 0:
         return labels
     first_plane = labels[0]
-    if all(np.array_equal(first_plane, labels[index]) for index in range(1, labels.shape[0])):
+    if all(
+        np.array_equal(first_plane, labels[index])
+        for index in range(1, labels.shape[0])
+    ):
         return first_plane
     return labels
 
@@ -7544,13 +7608,13 @@ class RelationshipEndpointResolver:
     def object_inputs(self) -> tuple[ArtifactSpec, ...]:
         return ArtifactSpecCollection(
             self.request.executor._declared_input_specs()
-        ).of_kind(
-            ArtifactKind.OBJECT_LABELS
-        )
+        ).of_kind(ArtifactKind.OBJECT_LABELS)
 
     @property
     def object_outputs(self) -> tuple[ArtifactSpec, ...]:
-        return ArtifactSpecCollection(self.request.executor.outputs).of_kind(ArtifactKind.OBJECT_LABELS)
+        return ArtifactSpecCollection(self.request.executor.outputs).of_kind(
+            ArtifactKind.OBJECT_LABELS
+        )
 
     def endpoint_specs(
         self,
@@ -7572,21 +7636,26 @@ class RelationshipEndpointResolver:
                 f"'{relationship_spec.name}' matches multiple object endpoint pairs."
             )
         if len(self.object_inputs) == 2 and not self.object_outputs:
-            return RelationshipEndpointContract(self.object_inputs[0], self.object_inputs[1])
+            return RelationshipEndpointContract(
+                self.object_inputs[0], self.object_inputs[1]
+            )
         endpoints = parent_child_relationship_artifact_endpoints(
             relationship_spec.name,
             parent_candidates=tuple(spec.name for spec in self.object_inputs),
         )
         if endpoints is not None:
             parent_name, child_name = endpoints
-            parent_spec = ArtifactSpecCollection(self.object_inputs).by_name(parent_name)
+            parent_spec = ArtifactSpecCollection(self.object_inputs).by_name(
+                parent_name
+            )
             if parent_spec is not None:
                 child_spec = ArtifactSpecCollection(
                     (*self.object_outputs, *self.object_inputs),
                 ).by_name(child_name)
                 return RelationshipEndpointContract(
                     parent_spec,
-                    child_spec or ArtifactSpec(
+                    child_spec
+                    or ArtifactSpec(
                         child_name,
                         ArtifactKind.OBJECT_LABELS,
                     ),
@@ -7631,7 +7700,9 @@ class RelationshipMeasurementRows(CellProfilerMeasurementRows):
         cls,
         request: CellProfilerOutputRecordRequest,
     ) -> "RelationshipMeasurementRows":
-        row_type = cls.__registry__.get(canonical_module_name(request.executor.module_name))
+        row_type = cls.__registry__.get(
+            canonical_module_name(request.executor.module_name)
+        )
         if row_type is None:
             return GenericRelationshipMeasurementRows(request)
         return row_type(request)
@@ -7640,7 +7711,9 @@ class RelationshipMeasurementRows(CellProfilerMeasurementRows):
         rows: list[dict[str, int | str]] = []
         endpoint_resolver = RelationshipEndpointResolver(self.request)
         for relationship_spec, payload in self.output_entries():
-            parent_spec, child_spec = endpoint_resolver.endpoint_specs(relationship_spec)
+            parent_spec, child_spec = endpoint_resolver.endpoint_specs(
+                relationship_spec
+            )
             rows.extend(
                 self.child_count_rows(
                     parent_object_name=parent_spec.name,
@@ -7692,7 +7765,9 @@ class RelationshipMeasurementRows(CellProfilerMeasurementRows):
         return self.child_count_rows_for_ids(
             parent_object_name=parent_object_name,
             child_object_name=child_object_name,
-            related_parent_ids=tuple(int(parent_id) for parent_id in payload.parent_ids),
+            related_parent_ids=tuple(
+                int(parent_id) for parent_id in payload.parent_ids
+            ),
             slice_index=None,
         )
 
@@ -7715,7 +7790,9 @@ class RelationshipMeasurementRows(CellProfilerMeasurementRows):
         for parent_id in related_parent_ids:
             if parent_id > 0:
                 counts[parent_id] = counts.get(parent_id, 0) + 1
-        feature_name = CellProfilerMeasurementFeature.child_count(child_object_name).name
+        feature_name = CellProfilerMeasurementFeature.child_count(
+            child_object_name
+        ).name
         return tuple(
             self.axis_qualified_row(
                 {
@@ -7771,8 +7848,7 @@ class RelationshipMeasurementRows(CellProfilerMeasurementRows):
         slice_index: int | None,
     ) -> tuple[dict[str, int | str], ...]:
         parent_by_child = {
-            int(child_id): int(parent_id)
-            for parent_id, child_id in pairs
+            int(child_id): int(parent_id) for parent_id, child_id in pairs
         }
         child_count = max(
             (
@@ -7872,7 +7948,9 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         rows: list[dict[str, int | str | float]] = list(super().rows())
         endpoint_resolver = RelationshipEndpointResolver(self.request)
         for relationship_spec, payload in self.output_entries():
-            parent_spec, child_spec = endpoint_resolver.endpoint_specs(relationship_spec)
+            parent_spec, child_spec = endpoint_resolver.endpoint_specs(
+                relationship_spec
+            )
             if not self.distance_contract_applies(parent_spec, child_spec):
                 continue
             rows.extend(
@@ -7980,11 +8058,15 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
             child_array,
             parents_of,
         )
-        centroid_feature = CellProfilerRelationshipMeasurementFeature.DISTANCE_CENTROID.feature_name(
-            parent_object_name=parent_object_name
+        centroid_feature = (
+            CellProfilerRelationshipMeasurementFeature.DISTANCE_CENTROID.feature_name(
+                parent_object_name=parent_object_name
+            )
         )
-        minimum_feature = CellProfilerRelationshipMeasurementFeature.DISTANCE_MINIMUM.feature_name(
-            parent_object_name=parent_object_name
+        minimum_feature = (
+            CellProfilerRelationshipMeasurementFeature.DISTANCE_MINIMUM.feature_name(
+                parent_object_name=parent_object_name
+            )
         )
         return tuple(
             self.axis_qualified_row(
@@ -8014,6 +8096,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
             labels,
             slice_index=slice_index,
         )
+
 
 def _object_label_count(
     adapter: CellProfilerRuntimeAdapter,
@@ -8047,7 +8130,11 @@ def _object_label_count_from_value(
     ):
         if label_array.size == 0:
             return 0
-        sparse_rows = labels if isinstance(labels, SparseIJVLabelRows) else SparseIJVLabelRows(labels)
+        sparse_rows = (
+            labels
+            if isinstance(labels, SparseIJVLabelRows)
+            else SparseIJVLabelRows(labels)
+        )
         if slice_index is not None:
             sparse_rows = sparse_rows.slice(slice_index)
             label_array = sparse_rows.as_array()
@@ -8057,11 +8144,7 @@ def _object_label_count_from_value(
     if (
         isinstance(value, ObjectLabelPayload | ObjectLabelSet)
         and value.declared_object_count is not None
-        and (
-            slice_index is None
-            or label_array.ndim < 3
-            or label_array.shape[0] == 1
-        )
+        and (slice_index is None or label_array.ndim < 3 or label_array.shape[0] == 1)
     ):
         return int(value.declared_object_count)
     if slice_index is not None and label_array.ndim >= 3:
@@ -8113,11 +8196,15 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
 
     @property
     def object_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return ArtifactSpecCollection(self.special_input_specs).of_kind(ArtifactKind.OBJECT_LABELS)
+        return ArtifactSpecCollection(self.special_input_specs).of_kind(
+            ArtifactKind.OBJECT_LABELS
+        )
 
     @property
     def image_inputs(self) -> tuple[ArtifactSpec, ...]:
-        return ArtifactSpecCollection(self.special_input_specs).of_kind(ArtifactKind.IMAGE)
+        return ArtifactSpecCollection(self.special_input_specs).of_kind(
+            ArtifactKind.IMAGE
+        )
 
     def runtime_value(
         self,
@@ -8196,7 +8283,9 @@ class CropSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         declared_inputs: tuple[ArtifactSpec, ...],
     ) -> tuple[ArtifactSpec, ...]:
         del module_name, func
-        image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(ArtifactKind.IMAGE)
+        image_inputs = ArtifactSpecCollection(declared_inputs).of_kind(
+            ArtifactKind.IMAGE
+        )
         return image_inputs[1:]
 
     def bind(
@@ -8254,9 +8343,7 @@ class WatershedSpecialInputBindingStrategy(
         return request.runtime_value(spec, semantics)
 
 
-class MarkerWatershedSpecialInputBindingStrategy(
-    WatershedSpecialInputBindingStrategy
-):
+class MarkerWatershedSpecialInputBindingStrategy(WatershedSpecialInputBindingStrategy):
     """Marker mode consumes marker labels first and an optional mask second."""
 
     strategy_key = WatershedMethod.MARKERS
@@ -8283,9 +8370,7 @@ class MarkerWatershedSpecialInputBindingStrategy(
         return bound
 
 
-class MaskedWatershedSpecialInputBindingStrategy(
-    WatershedSpecialInputBindingStrategy
-):
+class MaskedWatershedSpecialInputBindingStrategy(WatershedSpecialInputBindingStrategy):
     """Non-marker modes consume their special image as a mask."""
 
     strategy_key = WatershedMethod.DISTANCE
@@ -8495,7 +8580,9 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
         }
 
 
-class ClassifyObjectsSingleMeasurementInputPolicy(ClassifyObjectsMeasurementInputPolicy):
+class ClassifyObjectsSingleMeasurementInputPolicy(
+    ClassifyObjectsMeasurementInputPolicy
+):
     module_name = "ClassifyObjectsSingleMeasurement"
 
 
@@ -8852,6 +8939,8 @@ def _openhcs_main_flow_output(
         mask=stacked_mask,
         metadata=output_metadata,
     )
+
+
 def _single_source_name(source_names: tuple[str, ...]) -> str | None:
     unique_names = tuple(dict.fromkeys(source_names))
     if len(unique_names) == 1:
@@ -8909,14 +8998,18 @@ class CellProfilerPure2DOutputAggregator(ABC, metaclass=AutoRegisterMeta):
         for aggregator_type in cls.registered_aggregator_families():
             if aggregator_type.supports(slice_outputs):
                 return aggregator_type().aggregate_outputs(slice_outputs, memory_type)
-        return Pure2DAuxiliaryOutputAggregator.aggregate(list(slice_outputs), memory_type)
+        return Pure2DAuxiliaryOutputAggregator.aggregate(
+            list(slice_outputs), memory_type
+        )
 
     @classmethod
     def supports(cls, slice_outputs: Sequence[Any]) -> bool:
         """Return whether this aggregator owns the output payload type."""
         accepted_types = cls.accepted_output_types()
-        return bool(slice_outputs) and bool(accepted_types) and all(
-            isinstance(output, accepted_types) for output in slice_outputs
+        return (
+            bool(slice_outputs)
+            and bool(accepted_types)
+            and all(isinstance(output, accepted_types) for output in slice_outputs)
         )
 
     @classmethod
@@ -9006,14 +9099,10 @@ class ParentChildRelationshipPure2DOutputAggregator(CellProfilerPure2DOutputAggr
         del memory_type
         return ParentChildRelationshipPayload(
             parent_ids=tuple(
-                parent_id
-                for output in slice_outputs
-                for parent_id in output.parent_ids
+                parent_id for output in slice_outputs for parent_id in output.parent_ids
             ),
             child_ids=tuple(
-                child_id
-                for output in slice_outputs
-                for child_id in output.child_ids
+                child_id for output in slice_outputs for child_id in output.child_ids
             ),
             slice_indices=tuple(
                 slice_index
@@ -9136,6 +9225,7 @@ def _unstack_cellprofiler_image_slices(image: Any, memory_type: str) -> tuple[An
             )
         )
     )
+
 
 def _image_payload_slice(data: Any, mask: Any | None, metadata: Any, index: int) -> Any:
     return ImagePayloadSliceProjector(mask=mask, metadata=metadata).payload_for_slice(
@@ -9444,16 +9534,21 @@ class CellProfilerFunctionContractExecutor:
 
 def _pure_2d_batch_executor(
     func: Callable[..., Any],
-) -> Callable[
-    [
-        RuntimePure2DSliceBatchRequest,
-    ],
-    list[Any],
-] | None:
+) -> (
+    Callable[
+        [
+            RuntimePure2DSliceBatchRequest,
+        ],
+        list[Any],
+    ]
+    | None
+):
     executor = CallableContract.from_callable(func).runtime_batch_executor(
         RuntimeBatchExecutionDomain.PURE_2D_SLICES
     )
-    return executor if callable(executor) else Pure2DSliceBatchExecutor.default_executor()
+    return (
+        executor if callable(executor) else Pure2DSliceBatchExecutor.default_executor()
+    )
 
 
 def _execute_pure_2d_slice(
@@ -9575,6 +9670,7 @@ def _log_pure_2d_slice_count_candidates(kwargs: Mapping[str, Any]) -> None:
             relationship_count=relationship_count,
             measurement_count=measurement_count,
         )
+
 
 def _should_slice_flexible_object_invocation(
     object_inputs: tuple[ArtifactSpec, ...],
