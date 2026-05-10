@@ -91,7 +91,7 @@ from .filter_objects_settings import (
     filter_objects_plan,
 )
 from .gray_to_color_settings import GrayToColorInputNameResolver
-from .overlay_outlines_settings import (
+from openhcs.interop.cellprofiler.overlay_outlines_settings import (
     OverlayOutlineSourceKind,
     overlay_outline_rows,
     overlay_outlines_base_image_name,

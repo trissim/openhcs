@@ -75,7 +75,9 @@ from openhcs.interop.cellprofiler.module_function_resolution import (
 from openhcs.interop.cellprofiler.module_runtime_semantics import (
     ModuleRuntimeSemanticsBinding,
 )
-from .overlay_outlines_settings import overlay_outlines_bound_kwargs
+from openhcs.interop.cellprofiler.overlay_outlines_settings import (
+    overlay_outlines_bound_kwargs,
+)
 from .parser import ModuleBlock
 from openhcs.interop.cellprofiler.resize_objects_settings import (
     resize_objects_bound_kwargs,
