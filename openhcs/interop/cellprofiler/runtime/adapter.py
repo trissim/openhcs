@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import time
 from types import MappingProxyType
-from typing import Any, ClassVar
+from typing import Any, Callable, ClassVar
 from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
@@ -311,6 +311,7 @@ class MeasurementTableCacheMutationPolicy(ABC, metaclass=AutoRegisterMeta):
     """Registered policy for measurement-table cache mutation side effects."""
 
     __registry_key__ = "__name__"
+    policy_template: ClassVar[bool] = False
 
     @classmethod
     def registered_policies(cls) -> tuple["MeasurementTableCacheMutationPolicy", ...]:
@@ -319,6 +320,7 @@ class MeasurementTableCacheMutationPolicy(ABC, metaclass=AutoRegisterMeta):
             policy_type()
             for policy_type in cls.__registry__.values()
             if not isabstract(policy_type)
+            and not getattr(policy_type, "policy_template", False)
         )
 
     @abstractmethod
@@ -328,6 +330,8 @@ class MeasurementTableCacheMutationPolicy(ABC, metaclass=AutoRegisterMeta):
 
 class MeasurementQueryCacheMutationPolicy(MeasurementTableCacheMutationPolicy):
     """Shared mutation contract for measurement-query caches."""
+
+    policy_template: ClassVar[bool] = True
 
     def apply(self, mutation: MeasurementTableCacheMutation) -> None:
         if not mutation.object_names:
@@ -342,19 +346,22 @@ class MeasurementQueryCacheMutationPolicy(MeasurementTableCacheMutationPolicy):
 class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
     """Shared object/feature invalidation for measurement-query caches."""
 
+    policy_template: ClassVar[bool] = True
     entry_type: ClassVar[type[object]]
     feature_scoped: ClassVar[bool] = False
-
-    @abstractmethod
-    def adapter_cache(
-        self,
-        adapter: "CellProfilerRuntimeAdapter",
-    ) -> MutableMapping[object, object]:
-        """Return the adapter cache owned by this invalidation policy."""
+    adapter_cache_accessor: ClassVar[
+        Callable[["CellProfilerRuntimeAdapter"], MutableMapping[object, object]]
+        | None
+    ] = None
 
     def cache(self, mutation: MeasurementTableCacheMutation) -> MutableMapping[object, object]:
         """Return the cache owned by this invalidation policy."""
-        return self.adapter_cache(mutation.adapter)
+        cache_accessor = type(self).adapter_cache_accessor
+        if cache_accessor is None:
+            raise RuntimeError(
+                f"{type(self).__name__} must declare adapter_cache_accessor."
+            )
+        return cache_accessor(mutation.adapter)
 
     def cache_entries(self, mutation: MeasurementTableCacheMutation) -> tuple[object, ...]:
         """Return cache entries considered for this mutation."""
@@ -400,43 +407,30 @@ class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolic
 class ObjectFeatureValueCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate object-feature vector cache entries touched by a table write."""
 
+    policy_template = False
     entry_type = RuntimeObjectMeasurementQuery
     feature_scoped = True
-
-    def adapter_cache(
-        self,
-        adapter: "CellProfilerRuntimeAdapter",
-    ) -> MutableMapping[object, object]:
-        return adapter.object_feature_value_cache()
 
 
 class ObjectLabelMeasurementValuesCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate label-aligned measurement vector cache entries touched by a write."""
 
+    policy_template = False
     entry_type = RuntimeObjectLabelMeasurementQuery
     feature_scoped = True
-
-    def adapter_cache(
-        self,
-        adapter: "CellProfilerRuntimeAdapter",
-    ) -> MutableMapping[object, object]:
-        return adapter.object_label_measurement_values_cache()
 
 
 class ObjectMeasurementTableCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
     """Invalidate object-subject measurement table query cache entries."""
 
+    policy_template = False
     entry_type = ObjectMeasurementTableCacheKey
-
-    def adapter_cache(
-        self,
-        adapter: "CellProfilerRuntimeAdapter",
-    ) -> MutableMapping[object, object]:
-        return adapter.object_measurement_table_cache()
 
 
 class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
     """Invalidate object-subject indexes touched by measurement-table writes."""
+
+    policy_template = False
 
     def apply_query_cache_mutation(self, mutation: MeasurementTableCacheMutation) -> None:
         object_table_index_cache = mutation.adapter.object_measurement_table_index_cache()
@@ -2140,6 +2134,17 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 count=len(candidates),
             )
         return candidates
+
+
+ObjectFeatureValueCacheInvalidationPolicy.adapter_cache_accessor = (
+    CellProfilerRuntimeAdapter.object_feature_value_cache
+)
+ObjectLabelMeasurementValuesCacheInvalidationPolicy.adapter_cache_accessor = (
+    CellProfilerRuntimeAdapter.object_label_measurement_values_cache
+)
+ObjectMeasurementTableCacheInvalidationPolicy.adapter_cache_accessor = (
+    CellProfilerRuntimeAdapter.object_measurement_table_cache
+)
 
 
 class RuntimeArtifactCacheInvalidationPolicy(
