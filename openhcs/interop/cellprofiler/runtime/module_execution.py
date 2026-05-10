@@ -1309,7 +1309,9 @@ class CellProfilerModuleExecutor:
         image_func = policy.image_function(object_func)
         rows: list[Any] = []
         row_source_names_required = _row_source_names_required(measurement_images)
-        image_kwargs = _coerce_invocation_kwargs(image_func, kwargs)
+        image_kwargs = CallableInvocationKwargSpec.from_callable(
+            image_func
+        ).coerce_kwargs(kwargs)
         contract_execute_seconds = 0.0
         split_rows_seconds = 0.0
         for measurement_image in measurement_images:
@@ -1398,7 +1400,9 @@ class CellProfilerModuleExecutor:
                 kwargs,
             ),
         }
-        coerced_kwargs = _coerce_invocation_kwargs(func, runtime_kwargs)
+        coerced_kwargs = CallableInvocationKwargSpec.from_callable(
+            func
+        ).coerce_kwargs(runtime_kwargs)
         _log_module_profile(
             "cp_per_image_prepare_kwargs",
             time.perf_counter() - kwargs_started_at,
@@ -1978,7 +1982,9 @@ class CellProfilerModuleExecutor:
             image=(
                 image_override if image_override is not None else image_request.payload
             ),
-            kwargs=_coerce_invocation_kwargs(func, runtime_kwargs),
+            kwargs=CallableInvocationKwargSpec.from_callable(func).coerce_kwargs(
+                runtime_kwargs
+            ),
             source_image_name=image_request.source_image_name,
             image_count=image_request.image_count,
             execution_mode=execution_mode_override or execution_mode,
@@ -2469,65 +2475,58 @@ class AlignedMultiImageStackExecutionStrategy(CellProfilerImageExecutionStrategy
         )
 
 
-def _coerce_invocation_kwargs(
-    func: Callable[..., Any],
-    kwargs: Mapping[str, Any],
-) -> dict[str, Any]:
-    accepts_var_keyword, accepted_names, enum_types = _callable_invocation_kwarg_spec(
-        func
-    )
-    if accepts_var_keyword:
-        coerced_kwargs = dict(kwargs)
-    else:
-        coerced_kwargs = {
-            name: value
-            for name, value in kwargs.items()
-            if name in accepted_names or name in _INVOCATION_CONTROL_KWARGS
-        }
-    for name, enum_type in enum_types:
-        if name not in coerced_kwargs:
-            continue
-        value = coerced_kwargs[name]
-        coerced_kwargs[name] = _coerce_enum_argument(enum_type, value, name)
-    return coerced_kwargs
+@dataclass(frozen=True, slots=True)
+class CallableInvocationKwargSpec:
+    """Cached callable kwarg contract used before CellProfiler invocation."""
 
+    accepts_var_keyword: bool
+    accepted_names: frozenset[str]
+    enum_types: tuple[tuple[str, type[Enum]], ...]
 
-@lru_cache(maxsize=256)
-def _callable_invocation_kwarg_spec(
-    func: Callable[..., Any],
-) -> tuple[bool, frozenset[str], tuple[tuple[str, type[Enum]], ...]]:
-    parameters = _callable_parameters(func)
-    annotations = _callable_type_hints(func)
-    accepts_var_keyword = any(
-        parameter.kind is Parameter.VAR_KEYWORD for parameter in parameters.values()
-    )
-    enum_types = tuple(
-        (name, enum_type)
-        for name, parameter in parameters.items()
-        if (
-            enum_type := _enum_annotation_type(
-                parameter,
-                annotations.get(name),
+    @classmethod
+    @lru_cache(maxsize=256)
+    def from_callable(cls, func: Callable[..., Any]) -> "CallableInvocationKwargSpec":
+        parameters = _callable_parameters(func)
+        annotations = _callable_type_hints(func)
+        enum_types = tuple(
+            (name, enum_type)
+            for name, parameter in parameters.items()
+            if (
+                enum_type := _enum_annotation_type(
+                    parameter,
+                    annotations.get(name),
+                )
             )
+            is not None
         )
-        is not None
-    )
-    return accepts_var_keyword, frozenset(parameters), enum_types
+        return cls(
+            accepts_var_keyword=any(
+                parameter.kind is Parameter.VAR_KEYWORD
+                for parameter in parameters.values()
+            ),
+            accepted_names=frozenset(parameters),
+            enum_types=enum_types,
+        )
 
-
-def _accepted_invocation_kwargs(
-    parameters: Mapping[str, Parameter],
-    kwargs: Mapping[str, Any],
-) -> dict[str, Any]:
-    if any(
-        parameter.kind is Parameter.VAR_KEYWORD for parameter in parameters.values()
-    ):
-        return dict(kwargs)
-    return {
-        name: value
-        for name, value in kwargs.items()
-        if name in parameters or name in _INVOCATION_CONTROL_KWARGS
-    }
+    def coerce_kwargs(self, kwargs: Mapping[str, Any]) -> dict[str, Any]:
+        """Filter unsupported kwargs and coerce enum-typed values."""
+        if self.accepts_var_keyword:
+            coerced_kwargs = dict(kwargs)
+        else:
+            coerced_kwargs = {
+                name: value
+                for name, value in kwargs.items()
+                if name in self.accepted_names or name in _INVOCATION_CONTROL_KWARGS
+            }
+        for name, enum_type in self.enum_types:
+            if name not in coerced_kwargs:
+                continue
+            coerced_kwargs[name] = _coerce_enum_argument(
+                enum_type,
+                coerced_kwargs[name],
+                name,
+            )
+        return coerced_kwargs
 
 
 @lru_cache(maxsize=256)

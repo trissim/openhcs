@@ -48,7 +48,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerOutputRecordRequest,
     CellProfilerOutputRecorder,
     CellProfilerPure2DOutputAggregator,
-    _coerce_invocation_kwargs,
+    CallableInvocationKwargSpec,
     _cellprofiler_global_image_number_rows,
     _measurement_image_for_labels,
     _measurement_labels,
@@ -457,8 +457,9 @@ def test_special_inputs_bind_from_declared_role_order_not_runtime_dedup_order() 
 
 
 def test_coerce_invocation_kwargs_uses_function_enum_annotations() -> None:
-    coerced = _coerce_invocation_kwargs(
-        identify_primary_objects,
+    coerced = CallableInvocationKwargSpec.from_callable(
+        identify_primary_objects
+    ).coerce_kwargs(
         {
             "unclump_method": "Shape",
             "fill_holes": "After both thresholding and declumping",
