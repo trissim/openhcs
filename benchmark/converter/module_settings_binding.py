@@ -71,14 +71,14 @@ from .illumination_settings import (
     CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
 )
 from .image_math_settings import image_math_bound_kwargs
-from .mask_objects_settings import MASK_OBJECTS_SETTINGS
+from openhcs.interop.cellprofiler.mask_objects_settings import MASK_OBJECTS_SETTINGS
 from .module_function_resolution import measurement_target_scope
 from .module_runtime_semantics import ModuleRuntimeSemanticsBinding
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
 from .resize_objects_settings import resize_objects_bound_kwargs
-from .resize_settings import resize_bound_kwargs
-from .relate_objects_settings import (
+from openhcs.interop.cellprofiler.resize_settings import resize_bound_kwargs
+from openhcs.interop.cellprofiler.relate_objects_settings import (
     RELATE_OBJECTS_DISTANCE_SETTING,
     RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
     RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
@@ -111,8 +111,10 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from .smooth_settings import SMOOTH_SETTINGS
 from .straighten_worms_settings import straighten_worms_bound_kwargs
-from .structuring_element_settings import structuring_element_bound_kwargs
-from .structuring_element_settings import StructuringElementSettingBinding
+from openhcs.interop.cellprofiler.structuring_element_settings import (
+    StructuringElementSettingBinding,
+    structuring_element_bound_kwargs,
+)
 from .untangle_worms_settings import untangle_worms_bound_kwargs
 from .unmix_colors_settings import unmix_colors_bound_kwargs
 from .watershed_settings import (

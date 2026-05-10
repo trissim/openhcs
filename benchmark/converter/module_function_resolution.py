@@ -20,7 +20,10 @@ from .resize_objects_settings import (
     RESIZE_OBJECTS_FACTOR_Z_SETTING,
     RESIZE_OBJECTS_PLANES_SETTING,
 )
-from .resize_settings import RESIZE_FACTOR_Z_SETTING, RESIZE_PLANES_SETTING
+from openhcs.interop.cellprofiler.resize_settings import (
+    RESIZE_FACTOR_Z_SETTING,
+    RESIZE_PLANES_SETTING,
+)
 from .setting_names import (
     OBJECT_MEASUREMENT_SETTING,
     SettingNameFamily,

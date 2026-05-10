@@ -21,6 +21,11 @@ from openhcs.interop.cellprofiler.import_service import (
     CellProfilerPipelineImporter,
     CellProfilerPipelineImportRequest,
 )
+from openhcs.interop.cellprofiler.mask_objects_settings import (
+    MASK_OBJECTS_SETTINGS,
+    MaskObjectsNumberingChoice,
+    MaskObjectsOverlapHandling,
+)
 from openhcs.interop.cellprofiler.artifact_semantics import (
     ArtifactSettingClassifier,
     ArtifactSettingDirection,
@@ -58,6 +63,27 @@ from openhcs.interop.cellprofiler.parser import (
 from openhcs.interop.cellprofiler.pipeline_compiler import (
     CellProfilerDialectCompiler,
 )
+from openhcs.interop.cellprofiler.relate_objects_settings import (
+    RELATE_OBJECTS_DISTANCE_SETTING,
+    RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
+    RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
+    RelateObjectsDistanceMethod,
+    parse_relate_objects_distance_method,
+)
+from openhcs.interop.cellprofiler.resize_settings import (
+    RESIZE_FACTOR_SETTING,
+    RESIZE_FACTOR_X_SETTING,
+    RESIZE_FACTOR_Y_SETTING,
+    RESIZE_FACTOR_Z_SETTING,
+    RESIZE_HEIGHT_SETTING,
+    RESIZE_INTERPOLATION_SETTING,
+    RESIZE_METHOD_SETTING,
+    RESIZE_PLANES_SETTING,
+    RESIZE_WIDTH_SETTING,
+    ResizeInterpolationMethod,
+    ResizeMethod,
+    resize_bound_kwargs,
+)
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerImageExecutionContext,
     CellProfilerImageRequest,
@@ -81,6 +107,14 @@ from openhcs.interop.cellprofiler.settings_binder import (
 from openhcs.interop.cellprofiler.source_schema import (
     SetupModuleCompiler,
     compile_image_schema,
+)
+from openhcs.interop.cellprofiler.structuring_element_settings import (
+    DEFAULT_STRUCTURING_ELEMENT_SETTING,
+    STRUCTURING_ELEMENT_SETTING_NAME,
+    CellProfilerStructuringElement,
+    StructuringElementSetting,
+    StructuringElementSettingBinding,
+    structuring_element_bound_kwargs,
 )
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
@@ -117,17 +151,40 @@ __all__ = (
     "CellProfilerPipelineProvenance",
     "CellProfilerResolvedInputRequest",
     "CellProfilerSliceAlignedValues",
+    "CellProfilerStructuringElement",
     "CellProfilerMeasurementTargetScope",
+    "DEFAULT_STRUCTURING_ELEMENT_SETTING",
     "CellProfilerDialectCompiler",
     "FunctionSpecialOutput",
     "INFRASTRUCTURE_MODULE_NAMES",
     "INFRASTRUCTURE_MODULE_NAMES_BY_KEY",
+    "MASK_OBJECTS_SETTINGS",
+    "MaskObjectsNumberingChoice",
+    "MaskObjectsOverlapHandling",
     "ModuleBlock",
     "ModuleSetting",
+    "RELATE_OBJECTS_DISTANCE_SETTING",
+    "RELATE_OBJECTS_PER_PARENT_MEANS_SETTING",
+    "RELATE_OBJECTS_SAVE_CHILDREN_SETTING",
+    "RelateObjectsDistanceMethod",
+    "RESIZE_FACTOR_SETTING",
+    "RESIZE_FACTOR_X_SETTING",
+    "RESIZE_FACTOR_Y_SETTING",
+    "RESIZE_FACTOR_Z_SETTING",
+    "RESIZE_HEIGHT_SETTING",
+    "RESIZE_INTERPOLATION_SETTING",
+    "RESIZE_METHOD_SETTING",
+    "RESIZE_PLANES_SETTING",
+    "RESIZE_WIDTH_SETTING",
+    "ResizeInterpolationMethod",
+    "ResizeMethod",
     "SettingNameFamily",
     "SettingToKeywordBinding",
     "SettingsBinder",
     "SetupModuleCompiler",
+    "STRUCTURING_ELEMENT_SETTING_NAME",
+    "StructuringElementSetting",
+    "StructuringElementSettingBinding",
     "artifact_setting_symbols",
     "cellprofiler_runtime_equivalence_policy",
     "cellprofiler_module_role",
@@ -139,7 +196,10 @@ __all__ = (
     "get_cellprofiler_dialect_compiler",
     "normalize_cellprofiler_setting_name",
     "optional_setting_value",
+    "parse_relate_objects_distance_method",
     "register_cellprofiler_dialect_compiler",
     "required_setting_value",
+    "resize_bound_kwargs",
     "setting_values",
+    "structuring_element_bound_kwargs",
 )

@@ -21,7 +21,9 @@ from metaclass_registry import AutoRegisterMeta
 from benchmark.cellprofiler_semantics.crop import (
     CropShape,
 )
-from benchmark.converter.relate_objects_settings import RELATE_OBJECTS_SAVE_CHILDREN_SETTING
+from openhcs.interop.cellprofiler.relate_objects_settings import (
+    RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
+)
 from openhcs.core.artifact_materialization_policy import (
     DEFAULT_ARTIFACT_MATERIALIZATION_RULES,
 )
