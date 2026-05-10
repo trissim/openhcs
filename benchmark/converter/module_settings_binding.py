@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from types import MappingProxyType
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
@@ -204,20 +205,29 @@ class UnmappedModuleSettingsError(ValueError):
         )
 
 
-class ModuleUnmappedSettingIgnore(ABC, metaclass=AutoRegisterMeta):
-    """Auto-registered typed ignore list for semantically dead CP settings."""
-
-    __registry_key__ = "module_name"
-    __skip_if_no_key__ = True
+class CanonicalModuleNameRegistrationMixin:
+    """Normalize CellProfiler module-name keys before registry insertion."""
 
     module_name: ClassVar[str | None] = None
-    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         module_name = cls.__dict__.get("module_name")
         if isinstance(module_name, str):
             cls.module_name = canonical_module_name(module_name)
+
+
+class ModuleUnmappedSettingIgnore(
+    CanonicalModuleNameRegistrationMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Auto-registered typed ignore list for semantically dead CP settings."""
+
+    __registry_key__ = "module_name"
+    __skip_if_no_key__ = True
+
+    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
 
     @classmethod
     def ignored_setting_names_for(cls, module_name: str) -> frozenset[str]:
@@ -302,33 +312,67 @@ class BlankSymbolModuleUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgn
         return not value.strip() or is_blank_symbol_name(value)
 
 
-class CorrectIlluminationCalculateUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """CP UI output toggles ignored when averaged/dilated images are disabled."""
+@dataclass(frozen=True, slots=True)
+class GeneratedModuleClassDeclaration(ABC, metaclass=AutoRegisterMeta):
+    """Shared declaration state for generated module-scoped classes."""
 
-    module_name = "CorrectIlluminationCalculate"
-    ignored_settings = (
-        "Retain the averaged image?",
-        "Name the averaged image",
-        "Retain the dilated image?",
-        "Name the dilated image",
-    )
+    __registry_key__ = "declaration_kind"
+    __skip_if_no_key__ = True
 
-
-class IdentifyPrimaryObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Display-only maxima visualization settings are not runtime semantics."""
-
-    module_name = "IdentifyPrimaryObjects"
-    ignored_settings = (
-        "Display accepted local maxima?",
-        "Select maxima color",
-    )
+    declaration_kind: ClassVar[str | None] = None
+    class_name: str
+    module_name: str
+    doc: str
 
 
-class MeasureObjectIntensityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Legacy hidden group-count setting is parser metadata, not runtime input."""
+@dataclass(frozen=True, slots=True)
+class ModuleUnmappedSettingIgnoreDeclaration(GeneratedModuleClassDeclaration):
+    """Authoritative declaration for simple unmapped-setting ignore policies."""
 
-    module_name = "MeasureObjectIntensity"
-    ignored_settings = ("Hidden",)
+    declaration_kind: ClassVar[str] = "unmapped_setting_ignore"
+    ignored_settings: tuple[str | SettingNameFamily, ...]
+
+    def ignore_type(
+        self,
+        base_type: type[ModuleUnmappedSettingIgnore],
+    ) -> type[ModuleUnmappedSettingIgnore]:
+        return type(
+            self.class_name,
+            (base_type,),
+            {
+                "__module__": __name__,
+                "__doc__": self.doc,
+                "module_name": self.module_name,
+                "ignored_settings": self.ignored_settings,
+            },
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleUnmappedSettingIgnoreFamily:
+    """Generated unmapped-setting ignore family with explicit type lineage."""
+
+    base_type: type[ModuleUnmappedSettingIgnore]
+    declarations: tuple[ModuleUnmappedSettingIgnoreDeclaration, ...]
+
+    def ignore_types(self) -> Mapping[str, type[ModuleUnmappedSettingIgnore]]:
+        return MappingProxyType(
+            {
+                declaration.class_name: declaration.ignore_type(self.base_type)
+                for declaration in self.declarations
+            }
+        )
+
+    def generated_lineage(
+        self,
+        generated_types: Mapping[str, type[ModuleUnmappedSettingIgnore]],
+    ) -> Mapping[type[ModuleUnmappedSettingIgnore], type[ModuleUnmappedSettingIgnore]]:
+        return MappingProxyType(
+            {
+                generated_type: self.base_type
+                for generated_type in generated_types.values()
+            }
+        )
 
 
 class MeasureImageIntensityUnmappedSettingIgnore(BlankSymbolModuleUnmappedSettingIgnore):
@@ -355,17 +399,6 @@ class MeasureColocalizationUnmappedSettingIgnore(
     inactive_settings = (SettingNameFamily("Select an object to measure"),)
 
 
-class MeasureGranularityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Granularity object mask routing is consumed by measurement scope binding."""
-
-    module_name = "MeasureGranularity"
-    ignored_settings = (
-        "Measure within objects?",
-        "image_count",
-        "object_count",
-    )
-
-
 class MeasureImageQualityUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgnore):
     """Image selector is inactive when image quality measures all loaded images."""
 
@@ -373,21 +406,6 @@ class MeasureImageQualityUnmappedSettingIgnore(ConditionalModuleUnmappedSettingI
     controlling_setting = "Calculate metrics for which images?"
     inactive_when_values = ("All loaded images",)
     inactive_settings = ("Select the images to measure",)
-
-
-class RelateObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Object routing and disabled relationship outputs are contract semantics."""
-
-    module_name = "RelateObjects"
-    ignored_settings = (
-        RELATE_OBJECTS_PARENT_OBJECTS_SETTING,
-        RELATE_OBJECTS_CHILD_OBJECTS_SETTING,
-        RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
-        "Calculate distances to other parents?",
-        "Parent name",
-        RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
-        "Name the output object",
-    )
 
 
 class MaskObjectsUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgnore):
@@ -404,56 +422,119 @@ class MaskObjectsUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgnore):
     inactive_settings = ("Name the outline image",)
 
 
-class MeasureTextureUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Legacy hidden group-count setting is parser metadata, not runtime input."""
-
-    module_name = "MeasureTexture"
-    ignored_settings = (
-        "Hidden",
-        "Angles to measure",
-        "Measure Gabor features?",
-        "Number of angles to compute for Gabor",
+MODULE_UNMAPPED_SETTING_IGNORE_FAMILY = ModuleUnmappedSettingIgnoreFamily(
+    base_type=ModuleUnmappedSettingIgnore,
+    declarations=(
+        ModuleUnmappedSettingIgnoreDeclaration(
+            class_name="CorrectIlluminationCalculateUnmappedSettingIgnore",
+            module_name="CorrectIlluminationCalculate",
+            doc="CP UI output toggles ignored when averaged/dilated images are disabled.",
+            ignored_settings=(
+                "Retain the averaged image?",
+                "Name the averaged image",
+                "Retain the dilated image?",
+                "Name the dilated image",
+            ),
+        ),
+        ModuleUnmappedSettingIgnoreDeclaration(
+            class_name="IdentifyPrimaryObjectsUnmappedSettingIgnore",
+            module_name="IdentifyPrimaryObjects",
+            doc="Display-only maxima visualization settings are not runtime semantics.",
+            ignored_settings=(
+                "Display accepted local maxima?",
+                "Select maxima color",
+            ),
+        ),
+        ModuleUnmappedSettingIgnoreDeclaration(
+            class_name="MeasureObjectIntensityUnmappedSettingIgnore",
+            module_name="MeasureObjectIntensity",
+            doc="Legacy hidden group-count setting is parser metadata, not runtime input.",
+            ignored_settings=("Hidden",),
+        ),
+        ModuleUnmappedSettingIgnoreDeclaration(
+            class_name="MeasureGranularityUnmappedSettingIgnore",
+            module_name="MeasureGranularity",
+            doc="Granularity object mask routing is consumed by measurement scope binding.",
+            ignored_settings=(
+                "Measure within objects?",
+                "image_count",
+                "object_count",
+            ),
+        ),
+        ModuleUnmappedSettingIgnoreDeclaration(
+            class_name="RelateObjectsUnmappedSettingIgnore",
+            module_name="RelateObjects",
+            doc="Object routing and disabled relationship outputs are contract semantics.",
+            ignored_settings=(
+                RELATE_OBJECTS_PARENT_OBJECTS_SETTING,
+                RELATE_OBJECTS_CHILD_OBJECTS_SETTING,
+                RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
+                "Calculate distances to other parents?",
+                "Parent name",
+                RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
+                "Name the output object",
+            ),
+        ),
+        ModuleUnmappedSettingIgnoreDeclaration(
+            class_name="MeasureTextureUnmappedSettingIgnore",
+            module_name="MeasureTexture",
+            doc="Legacy hidden group-count setting is parser metadata, not runtime input.",
+            ignored_settings=(
+                "Hidden",
+                "Angles to measure",
+                "Measure Gabor features?",
+                "Number of angles to compute for Gabor",
+            ),
+        ),
+        ModuleUnmappedSettingIgnoreDeclaration(
+            class_name="EnhanceOrSuppressFeaturesUnmappedSettingIgnore",
+            module_name="EnhanceOrSuppressFeatures",
+            doc="Output display scaling does not affect absorbed numeric feature output.",
+            ignored_settings=("Rescale result image",),
+        ),
+        ModuleUnmappedSettingIgnoreDeclaration(
+            class_name="TrackObjectsUnmappedSettingIgnore",
+            module_name="TrackObjects",
+            doc="Unsupported LAP/display knobs are intentionally outside overlap tracking.",
+            ignored_settings=(
+                "Average cell diameter in pixels",
+                "Cost of cell to empty matching",
+                "Filter objects by lifetime?",
+                "Filter using a maximum lifetime?",
+                "Filter using a minimum lifetime?",
+                "Gap closing cost",
+                "Maximum gap displacement in pixel units",
+                "Maximum lifetime",
+                "Maximum merge score",
+                "Maximum mitosis distance in pixel units",
+                "Maximum split score",
+                "Maximum temporal gap in frames",
+                "Merge alternative cost",
+                "Minimum lifetime",
+                "Mitosis alternative cost",
+                "Number of standard deviations for search radius",
+                "Run the second phase of the LAP algorithm?",
+                "Save color-coded image?",
+                "Search radius limit, in pixel units",
+                "Select display option",
+                "Select object measurement to use for tracking",
+                "Select the movement model",
+                "Split alternative cost",
+                "Use advanced configuration parameters",
+                "Weight of area difference in function matching cost",
+            ),
+        ),
+    ),
+)
+MODULE_UNMAPPED_SETTING_IGNORE_TYPES = (
+    MODULE_UNMAPPED_SETTING_IGNORE_FAMILY.ignore_types()
+)
+MODULE_UNMAPPED_SETTING_IGNORE_LINEAGE = (
+    MODULE_UNMAPPED_SETTING_IGNORE_FAMILY.generated_lineage(
+        MODULE_UNMAPPED_SETTING_IGNORE_TYPES
     )
-
-
-class EnhanceOrSuppressFeaturesUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Output display scaling does not affect absorbed numeric feature output."""
-
-    module_name = "EnhanceOrSuppressFeatures"
-    ignored_settings = ("Rescale result image",)
-
-
-class TrackObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Unsupported LAP/display knobs are intentionally outside overlap tracking."""
-
-    module_name = "TrackObjects"
-    ignored_settings = (
-        "Average cell diameter in pixels",
-        "Cost of cell to empty matching",
-        "Filter objects by lifetime?",
-        "Filter using a maximum lifetime?",
-        "Filter using a minimum lifetime?",
-        "Gap closing cost",
-        "Maximum gap displacement in pixel units",
-        "Maximum lifetime",
-        "Maximum merge score",
-        "Maximum mitosis distance in pixel units",
-        "Maximum split score",
-        "Maximum temporal gap in frames",
-        "Merge alternative cost",
-        "Minimum lifetime",
-        "Mitosis alternative cost",
-        "Number of standard deviations for search radius",
-        "Run the second phase of the LAP algorithm?",
-        "Save color-coded image?",
-        "Search radius limit, in pixel units",
-        "Select display option",
-        "Select object measurement to use for tracking",
-        "Select the movement model",
-        "Split alternative cost",
-        "Use advanced configuration parameters",
-        "Weight of area difference in function matching cost",
-    )
+)
+globals().update(MODULE_UNMAPPED_SETTING_IGNORE_TYPES)
 
 
 class RepeatedSettingValuePolicy(ABC, metaclass=AutoRegisterMeta):
@@ -518,18 +599,15 @@ class LastRepeatedSettingValuePolicy(RepeatedSettingValuePolicy):
         return values[-1]
 
 
-class ModuleSettingsBindingStrategy(ABC, metaclass=AutoRegisterMeta):
+class ModuleSettingsBindingStrategy(
+    CanonicalModuleNameRegistrationMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal family for converting one module's settings into function kwargs."""
 
     __registry_key__ = "module_name"
     __skip_if_no_key__ = True
-    module_name: ClassVar[str | None] = None
-
-    def __init_subclass__(cls, **kwargs: Any) -> None:
-        super().__init_subclass__(**kwargs)
-        module_name = cls.__dict__.get("module_name")
-        if isinstance(module_name, str):
-            cls.module_name = canonical_module_name(module_name)
 
     @classmethod
     def for_module(cls, module_name: str) -> "ModuleSettingsBindingStrategy":
@@ -1694,6 +1772,56 @@ class DeclarativeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         )
 
 
+@dataclass(frozen=True, slots=True)
+class ModuleSettingsBindingStrategyDeclaration(GeneratedModuleClassDeclaration):
+    """Authoritative declaration for classvar-only module binding strategies."""
+
+    declaration_kind: ClassVar[str] = "module_settings_binding"
+    setting_bindings: tuple[SettingToKeywordBinding, ...] = ()
+
+    def strategy_type(
+        self,
+        base_type: type[ModuleSettingsBindingStrategy],
+    ) -> type[ModuleSettingsBindingStrategy]:
+        return type(
+            self.class_name,
+            (base_type,),
+            {
+                "__module__": __name__,
+                "__doc__": self.doc,
+                "module_name": self.module_name,
+                "setting_bindings": self.setting_bindings,
+            },
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleSettingsBindingStrategyFamily:
+    """Generated binding-strategy family with explicit type lineage."""
+
+    base_type: type[ModuleSettingsBindingStrategy]
+    declarations: tuple[ModuleSettingsBindingStrategyDeclaration, ...]
+
+    def strategy_types(self) -> Mapping[str, type[ModuleSettingsBindingStrategy]]:
+        return MappingProxyType(
+            {
+                declaration.class_name: declaration.strategy_type(self.base_type)
+                for declaration in self.declarations
+            }
+        )
+
+    def generated_lineage(
+        self,
+        generated_types: Mapping[str, type[ModuleSettingsBindingStrategy]],
+    ) -> Mapping[type[ModuleSettingsBindingStrategy], type[ModuleSettingsBindingStrategy]]:
+        return MappingProxyType(
+            {
+                generated_type: self.base_type
+                for generated_type in generated_types.values()
+            }
+        )
+
+
 class ConvertObjectsToImageModuleSettingsBindingStrategy(
     DeclarativeModuleSettingsBindingStrategy
 ):
@@ -2349,13 +2477,46 @@ class CropModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(crop_bound_kwargs(module, binder))
 
 
-class CorrectIlluminationCalculateModuleSettingsBindingStrategy(
-    DeclarativeModuleSettingsBindingStrategy
-):
-    """Bind illumination-function calculation settings without bool/enum loss."""
-
-    module_name = "CorrectIlluminationCalculate"
-    setting_bindings = CORRECT_ILLUMINATION_CALCULATE_SETTINGS
+DECLARATIVE_MODULE_SETTINGS_BINDING_STRATEGY_FAMILY = (
+    ModuleSettingsBindingStrategyFamily(
+        base_type=DeclarativeModuleSettingsBindingStrategy,
+        declarations=(
+            ModuleSettingsBindingStrategyDeclaration(
+                class_name="CorrectIlluminationCalculateModuleSettingsBindingStrategy",
+                module_name="CorrectIlluminationCalculate",
+                doc="Bind illumination-function calculation settings without bool/enum loss.",
+                setting_bindings=CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
+            ),
+            ModuleSettingsBindingStrategyDeclaration(
+                class_name="SmoothModuleSettingsBindingStrategy",
+                module_name="Smooth",
+                doc="Bind Smooth's filter and scale settings into absorbed image smoothing.",
+                setting_bindings=SMOOTH_SETTINGS,
+            ),
+            ModuleSettingsBindingStrategyDeclaration(
+                class_name="EnhanceEdgesModuleSettingsBindingStrategy",
+                module_name="EnhanceEdges",
+                doc="Bind EnhanceEdges method and threshold settings into edge filtering.",
+                setting_bindings=ENHANCE_EDGES_SETTINGS,
+            ),
+            ModuleSettingsBindingStrategyDeclaration(
+                class_name="MaskObjectsModuleSettingsBindingStrategy",
+                module_name="MaskObjects",
+                doc="Bind object-mask policy settings into absorbed MaskObjects kwargs.",
+                setting_bindings=MASK_OBJECTS_SETTINGS,
+            ),
+        ),
+    )
+)
+DECLARATIVE_MODULE_SETTINGS_BINDING_STRATEGY_TYPES = (
+    DECLARATIVE_MODULE_SETTINGS_BINDING_STRATEGY_FAMILY.strategy_types()
+)
+DECLARATIVE_MODULE_SETTINGS_BINDING_STRATEGY_LINEAGE = (
+    DECLARATIVE_MODULE_SETTINGS_BINDING_STRATEGY_FAMILY.generated_lineage(
+        DECLARATIVE_MODULE_SETTINGS_BINDING_STRATEGY_TYPES
+    )
+)
+globals().update(DECLARATIVE_MODULE_SETTINGS_BINDING_STRATEGY_TYPES)
 
 
 class CorrectIlluminationApplyModuleSettingsBindingStrategy(
@@ -2418,22 +2579,6 @@ def _bind_repeated_bool_setting(
         kwargs[parameter_name] = tuple(parse_cellprofiler_bool(value) for value in values)
 
 
-class SmoothModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
-    """Bind Smooth's filter and scale settings into absorbed image smoothing."""
-
-    module_name = "Smooth"
-    setting_bindings = SMOOTH_SETTINGS
-
-
-class EnhanceEdgesModuleSettingsBindingStrategy(
-    DeclarativeModuleSettingsBindingStrategy
-):
-    """Bind EnhanceEdges method and threshold settings into edge filtering."""
-
-    module_name = "EnhanceEdges"
-    setting_bindings = ENHANCE_EDGES_SETTINGS
-
-
 class ExpandOrShrinkObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind ExpandOrShrinkObjects operation settings into morphology kwargs."""
 
@@ -2450,15 +2595,6 @@ class ExpandOrShrinkObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingSt
         return BoundModuleSettings(expand_or_shrink_bound_kwargs(module, binder))
 
 
-class MaskObjectsModuleSettingsBindingStrategy(
-    DeclarativeModuleSettingsBindingStrategy
-):
-    """Bind object-mask policy settings into absorbed MaskObjects kwargs."""
-
-    module_name = "MaskObjects"
-    setting_bindings = MASK_OBJECTS_SETTINGS
-
-
 class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind shared morphology structuring-element settings."""
 
@@ -2473,28 +2609,42 @@ class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrat
         return BoundModuleSettings(structuring_element_bound_kwargs(module, binder))
 
 
-class OpeningModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
-    """Bind Opening's CellProfiler structuring-element setting."""
-
-    module_name = "Opening"
-
-
-class ClosingModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
-    """Bind Closing's CellProfiler structuring-element setting."""
-
-    module_name = "Closing"
-
-
-class ErodeImageModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
-    """Bind ErodeImage's CellProfiler structuring-element setting."""
-
-    module_name = "ErodeImage"
-
-
-class DilateImageModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
-    """Bind DilateImage's CellProfiler structuring-element setting."""
-
-    module_name = "DilateImage"
+STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_STRATEGY_FAMILY = (
+    ModuleSettingsBindingStrategyFamily(
+        base_type=StructuringElementModuleSettingsBindingStrategy,
+        declarations=(
+            ModuleSettingsBindingStrategyDeclaration(
+                class_name="OpeningModuleSettingsBindingStrategy",
+                module_name="Opening",
+                doc="Bind Opening's CellProfiler structuring-element setting.",
+            ),
+            ModuleSettingsBindingStrategyDeclaration(
+                class_name="ClosingModuleSettingsBindingStrategy",
+                module_name="Closing",
+                doc="Bind Closing's CellProfiler structuring-element setting.",
+            ),
+            ModuleSettingsBindingStrategyDeclaration(
+                class_name="ErodeImageModuleSettingsBindingStrategy",
+                module_name="ErodeImage",
+                doc="Bind ErodeImage's CellProfiler structuring-element setting.",
+            ),
+            ModuleSettingsBindingStrategyDeclaration(
+                class_name="DilateImageModuleSettingsBindingStrategy",
+                module_name="DilateImage",
+                doc="Bind DilateImage's CellProfiler structuring-element setting.",
+            ),
+        ),
+    )
+)
+STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_STRATEGY_TYPES = (
+    STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_STRATEGY_FAMILY.strategy_types()
+)
+STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_STRATEGY_LINEAGE = (
+    STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_STRATEGY_FAMILY.generated_lineage(
+        STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_STRATEGY_TYPES
+    )
+)
+globals().update(STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_STRATEGY_TYPES)
 
 
 class ErodeObjectsModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
