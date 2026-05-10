@@ -16,15 +16,26 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 class CellProfilerModuleCategory(Enum):
     """Manual-facing CellProfiler module category."""
 
-    INPUT = "Input"
-    FILE_PROCESSING = "File Processing"
-    IMAGE_PROCESSING = "Image Processing"
-    OBJECT_PROCESSING = "Object Processing"
-    MEASUREMENT = "Measurement"
-    ADVANCED = "Advanced"
-    WORM_TOOLBOX = "Worm Toolbox"
-    OTHER = "Other"
-    DATA_TOOLS = "Data Tools"
+    INPUT = ("Input", True)
+    FILE_PROCESSING = ("File Processing", True)
+    IMAGE_PROCESSING = ("Image Processing", False)
+    OBJECT_PROCESSING = ("Object Processing", False)
+    MEASUREMENT = ("Measurement", False)
+    ADVANCED = ("Advanced", False)
+    WORM_TOOLBOX = ("Worm Toolbox", False)
+    OTHER = ("Other", False)
+    DATA_TOOLS = ("Data Tools", False)
+
+    def __new__(cls, label: str, is_infrastructure: bool):
+        obj = object.__new__(cls)
+        obj._value_ = label
+        obj._is_infrastructure = is_infrastructure
+        return obj
+
+    @property
+    def is_infrastructure(self) -> bool:
+        """Return whether OpenHCS handles this category as infrastructure."""
+        return self._is_infrastructure
 
 
 class CellProfilerModuleDimensionality(Enum):
@@ -49,10 +60,13 @@ class CellProfilerModuleDimensionality(Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerModuleSemantics:
-    """Typed manual semantics for one CellProfiler module."""
+class CellProfilerModuleSemanticTraits(metaclass=AutoRegisterMeta):
+    """Shared semantic traits for CellProfiler module declarations."""
 
-    module_name: str
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
     category: CellProfilerModuleCategory
     dimensionality: CellProfilerModuleDimensionality
     respects_masks: bool
@@ -70,10 +84,15 @@ class CellProfilerModuleSemantics:
     @property
     def is_infrastructure(self) -> bool:
         """Return whether OpenHCS handles this as runtime/file infrastructure."""
-        return self.category in {
-            CellProfilerModuleCategory.INPUT,
-            CellProfilerModuleCategory.FILE_PROCESSING,
-        }
+        return self.category.is_infrastructure
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerModuleSemantics(CellProfilerModuleSemanticTraits):
+    """Typed manual semantics for one CellProfiler module."""
+
+    registry_key: ClassVar[str] = "module"
+    module_name: str
 
 
 def cellprofiler_module_semantics(
@@ -86,334 +105,320 @@ def cellprofiler_module_semantics(
     return CELLPROFILER_MODULE_SEMANTICS_BY_KEY.get(normalized_name.casefold())
 
 
-class CellProfilerModuleSemanticsFamily(metaclass=AutoRegisterMeta):
-    """Auto-registered declaration for a family of equivalent module semantics."""
+@dataclass(frozen=True, slots=True)
+class CellProfilerModuleSemanticsFamilySpec(CellProfilerModuleSemanticTraits):
+    """Authoritative declaration for a family of equivalent module semantics."""
 
-    __registry_key__ = "family_name"
-    __skip_if_no_key__ = True
+    registry_key: ClassVar[str] = "family"
+    family_name: str
+    module_names: tuple[str, ...]
 
-    family_name: ClassVar[str | None] = None
-    category: ClassVar[CellProfilerModuleCategory]
-    dimensionality: ClassVar[CellProfilerModuleDimensionality]
-    respects_masks: ClassVar[bool]
-    module_names: ClassVar[tuple[str, ...]]
+    def __init__(
+        self,
+        family_name: str,
+        category: CellProfilerModuleCategory,
+        dimensionality: CellProfilerModuleDimensionality,
+        respects_masks: bool,
+        module_names: Iterable[str],
+    ) -> None:
+        object.__setattr__(self, "family_name", family_name)
+        object.__setattr__(self, "category", category)
+        object.__setattr__(self, "dimensionality", dimensionality)
+        object.__setattr__(self, "respects_masks", respects_masks)
+        object.__setattr__(self, "module_names", tuple(module_names))
 
-    @classmethod
-    def declared_semantics(cls) -> tuple[CellProfilerModuleSemantics, ...]:
+    def declared_semantics(self) -> tuple[CellProfilerModuleSemantics, ...]:
         """Materialize all module declarations in this family."""
         return tuple(
             CellProfilerModuleSemantics(
                 module_name=module_name,
-                category=cls.category,
-                dimensionality=cls.dimensionality,
-                respects_masks=cls.respects_masks,
+                category=self.category,
+                dimensionality=self.dimensionality,
+                respects_masks=self.respects_masks,
             )
-            for module_name in cls.module_names
+            for module_name in self.module_names
         )
 
 
-class CellProfilerModuleAliasFamily(metaclass=AutoRegisterMeta):
-    """Auto-registered declaration for legacy module names."""
+@dataclass(frozen=True, slots=True)
+class CellProfilerModuleAliasFamilySpec:
+    """Authoritative declaration for CellProfiler legacy module-name aliases."""
 
-    __registry_key__ = "family_name"
-    __skip_if_no_key__ = True
-
-    family_name: ClassVar[str | None] = None
-    aliases: ClassVar[tuple[tuple[str, str], ...]]
-
-
-def _register_semantics_family(
-    family_name: str,
-    category: CellProfilerModuleCategory,
-    dimensionality: CellProfilerModuleDimensionality,
-    respects_masks: bool,
-    module_names: Iterable[str],
-) -> None:
-    class_name = f"CellProfiler{family_name}Semantics"
-    globals()[class_name] = type(
-        class_name,
-        (CellProfilerModuleSemanticsFamily,),
-        {
-            "__module__": __name__,
-            "family_name": family_name,
-            "category": category,
-            "dimensionality": dimensionality,
-            "respects_masks": respects_masks,
-            "module_names": tuple(module_names),
-        },
-    )
-
-
-def _register_alias_family(
-    family_name: str,
-    aliases: Iterable[tuple[str, str]],
-) -> None:
-    class_name = f"CellProfiler{family_name}Aliases"
-    globals()[class_name] = type(
-        class_name,
-        (CellProfilerModuleAliasFamily,),
-        {
-            "__module__": __name__,
-            "family_name": family_name,
-            "aliases": tuple(aliases),
-        },
-    )
+    family_name: str
+    aliases: tuple[tuple[str, str], ...]
 
 
 def _registered_semantics() -> tuple[CellProfilerModuleSemantics, ...]:
     return tuple(
         semantics
-        for family_type in CellProfilerModuleSemanticsFamily.__registry__.values()
-        for semantics in family_type.declared_semantics()
+        for family in CELLPROFILER_MODULE_SEMANTICS_FAMILY_SPECS
+        for semantics in family.declared_semantics()
     )
 
 
 def _registered_aliases() -> tuple[tuple[str, str], ...]:
     return tuple(
         alias
-        for family_type in CellProfilerModuleAliasFamily.__registry__.values()
-        for alias in family_type.aliases
+        for family in CELLPROFILER_MODULE_ALIAS_FAMILY_SPECS
+        for alias in family.aliases
     )
 
 
 _C = CellProfilerModuleCategory
 _D = CellProfilerModuleDimensionality
-_register_semantics_family("InputUnmasked", _C.INPUT, _D.PLANAR_AND_VOLUMETRIC, False, (
-    "Images",
-    "LoadImages",
-    "Metadata",
-    "Groups",
-))
-_register_semantics_family("InputMasked", _C.INPUT, _D.PLANAR_AND_VOLUMETRIC, True, ("NamesAndTypes",))
-_register_semantics_family(
-    "FileProcessingUnmasked3D",
-    _C.FILE_PROCESSING,
-    _D.PLANAR_AND_VOLUMETRIC,
-    False,
-    ("CreateBatchFiles",),
-)
-_register_semantics_family(
-    "FileProcessingMasked3D",
-    _C.FILE_PROCESSING,
-    _D.PLANAR_AND_VOLUMETRIC,
-    True,
-    ("ExportToDatabase", "ExportToSpreadsheet", "SaveCroppedObjects", "SaveImages"),
-)
-_register_semantics_family(
-    "FileProcessingUnmasked2D",
-    _C.FILE_PROCESSING,
-    _D.PLANAR,
-    False,
-    ("LabelImages",),
-)
-_register_semantics_family(
-    "FileProcessingMasked2D",
-    _C.FILE_PROCESSING,
-    _D.PLANAR,
-    True,
-    ("LoadData",),
-)
-_register_semantics_family(
-    "ImageProcessingUnmasked2D",
-    _C.IMAGE_PROCESSING,
-    _D.PLANAR,
-    False,
-    (
-        "ColorToGray",
-        "FlipAndRotate",
-        "GrayToColor",
-        "InvertForPrinting",
-        "Tile",
-        "UnmixColors",
+CELLPROFILER_MODULE_SEMANTICS_FAMILY_SPECS = (
+    CellProfilerModuleSemanticsFamilySpec(
+        "InputUnmasked",
+        _C.INPUT,
+        _D.PLANAR_AND_VOLUMETRIC,
+        False,
+        (
+            "Images",
+            "LoadImages",
+            "Metadata",
+            "Groups",
+        ),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "InputMasked", _C.INPUT, _D.PLANAR_AND_VOLUMETRIC, True, ("NamesAndTypes",)
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "FileProcessingUnmasked3D",
+        _C.FILE_PROCESSING,
+        _D.PLANAR_AND_VOLUMETRIC,
+        False,
+        ("CreateBatchFiles",),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "FileProcessingMasked3D",
+        _C.FILE_PROCESSING,
+        _D.PLANAR_AND_VOLUMETRIC,
+        True,
+        ("ExportToDatabase", "ExportToSpreadsheet", "SaveCroppedObjects", "SaveImages"),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "FileProcessingUnmasked2D",
+        _C.FILE_PROCESSING,
+        _D.PLANAR,
+        False,
+        ("LabelImages",),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "FileProcessingMasked2D",
+        _C.FILE_PROCESSING,
+        _D.PLANAR,
+        True,
+        ("LoadData",),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ImageProcessingUnmasked2D",
+        _C.IMAGE_PROCESSING,
+        _D.PLANAR,
+        False,
+        (
+            "ColorToGray",
+            "FlipAndRotate",
+            "GrayToColor",
+            "InvertForPrinting",
+            "Tile",
+            "UnmixColors",
+        ),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ImageProcessingMasked2D",
+        _C.IMAGE_PROCESSING,
+        _D.PLANAR,
+        True,
+        (
+            "Align",
+            "CorrectIlluminationCalculate",
+            "Crop",
+            "EnhanceEdges",
+            "MakeProjection",
+            "Morph",
+            "OverlayObjects",
+            "Smooth",
+        ),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ImageProcessingUnmasked2DApply",
+        _C.IMAGE_PROCESSING,
+        _D.PLANAR,
+        False,
+        ("CorrectIlluminationApply",),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ImageProcessingMasked3D",
+        _C.IMAGE_PROCESSING,
+        _D.PLANAR_AND_VOLUMETRIC,
+        True,
+        (
+            "EnhanceOrSuppressFeatures",
+            "ImageMath",
+            "MaskImage",
+            "RescaleIntensity",
+            "Resize",
+            "Threshold",
+        ),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ImageProcessingUnmasked3D",
+        _C.IMAGE_PROCESSING,
+        _D.PLANAR_AND_VOLUMETRIC,
+        False,
+        ("OverlayOutlines",),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ObjectProcessingUnmasked2D",
+        _C.OBJECT_PROCESSING,
+        _D.PLANAR,
+        False,
+        ("ClassifyObjects", "IdentifyObjectsManually"),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ObjectProcessingMasked2D",
+        _C.OBJECT_PROCESSING,
+        _D.PLANAR,
+        True,
+        (
+            "EditObjectsManually",
+            "ExpandOrShrinkObjects",
+            "IdentifyObjectsInGrid",
+            "IdentifyPrimaryObjects",
+            "IdentifySecondaryObjects",
+            "IdentifyTertiaryObjects",
+            "MaskObjects",
+            "SplitOrMergeObjects",
+            "TrackObjects",
+        ),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ObjectProcessingUnmasked3D",
+        _C.OBJECT_PROCESSING,
+        _D.PLANAR_AND_VOLUMETRIC,
+        False,
+        ("CombineObjects", "ConvertImageToObjects", "ResizeObjects"),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "ObjectProcessingMasked3D",
+        _C.OBJECT_PROCESSING,
+        _D.PLANAR_AND_VOLUMETRIC,
+        True,
+        ("ConvertObjectsToImage", "FilterObjects", "RelateObjects"),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "MeasurementMasked3D",
+        _C.MEASUREMENT,
+        _D.PLANAR_AND_VOLUMETRIC,
+        True,
+        (
+            "MeasureColocalization",
+            "MeasureGranularity",
+            "MeasureImageAreaOccupied",
+            "MeasureImageIntensity",
+            "MeasureImageOverlap",
+            "MeasureImageQuality",
+            "MeasureImageSkeleton",
+            "MeasureObjectIntensity",
+            "MeasureTexture",
+        ),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "MeasurementMasked2D",
+        _C.MEASUREMENT,
+        _D.PLANAR,
+        True,
+        ("MeasureObjectIntensityDistribution",),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "MeasurementUnmasked3D",
+        _C.MEASUREMENT,
+        _D.PLANAR_AND_VOLUMETRIC,
+        False,
+        ("MeasureObjectNeighbors", "MeasureObjectSizeShape"),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "MeasurementUnmasked2D",
+        _C.MEASUREMENT,
+        _D.PLANAR,
+        False,
+        ("MeasureObjectOverlap", "MeasureObjectSkeleton"),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "AdvancedUnmasked3D",
+        _C.ADVANCED,
+        _D.PLANAR_AND_VOLUMETRIC,
+        False,
+        (
+            "Closing",
+            "DilateImage",
+            "DilateObjects",
+            "ErodeImage",
+            "ErodeObjects",
+            "FillObjects",
+            "GaussianFilter",
+            "MedialAxis",
+            "MedianFilter",
+            "MorphologicalSkeleton",
+            "Opening",
+            "ReduceNoise",
+            "RemoveHoles",
+            "ShrinkToObjectCenters",
+        ),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "AdvancedUnmasked2D",
+        _C.ADVANCED,
+        _D.PLANAR,
+        False,
+        ("MatchTemplate", "RunImageJMacro"),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "AdvancedMasked3D", _C.ADVANCED, _D.PLANAR_AND_VOLUMETRIC, True, ("Watershed",)
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "WormToolboxMasked2D",
+        _C.WORM_TOOLBOX,
+        _D.PLANAR,
+        True,
+        ("IdentifyDeadWorms", "StraightenWorms", "UntangleWorms"),
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "OtherUnmasked2D", _C.OTHER, _D.PLANAR, False, ("DefineGrid",)
+    ),
+    CellProfilerModuleSemanticsFamilySpec(
+        "DataToolsUnmasked2D",
+        _C.DATA_TOOLS,
+        _D.PLANAR,
+        False,
+        (
+            "CalculateMath",
+            "CalculateStatistics",
+            "DisplayDataOnImage",
+            "DisplayDensityPlot",
+            "DisplayHistogram",
+            "DisplayPlatemap",
+            "DisplayScatterPlot",
+            "FindMaxima",
+            "FlagImage",
+        ),
     ),
 )
-_register_semantics_family(
-    "ImageProcessingMasked2D",
-    _C.IMAGE_PROCESSING,
-    _D.PLANAR,
-    True,
-    (
-        "Align",
-        "CorrectIlluminationCalculate",
-        "Crop",
-        "EnhanceEdges",
-        "MakeProjection",
-        "Morph",
-        "OverlayObjects",
-        "Smooth",
-    ),
-)
-_register_semantics_family(
-    "ImageProcessingUnmasked2DApply",
-    _C.IMAGE_PROCESSING,
-    _D.PLANAR,
-    False,
-    ("CorrectIlluminationApply",),
-)
-_register_semantics_family(
-    "ImageProcessingMasked3D",
-    _C.IMAGE_PROCESSING,
-    _D.PLANAR_AND_VOLUMETRIC,
-    True,
-    (
-        "EnhanceOrSuppressFeatures",
-        "ImageMath",
-        "MaskImage",
-        "RescaleIntensity",
-        "Resize",
-        "Threshold",
-    ),
-)
-_register_semantics_family(
-    "ImageProcessingUnmasked3D",
-    _C.IMAGE_PROCESSING,
-    _D.PLANAR_AND_VOLUMETRIC,
-    False,
-    ("OverlayOutlines",),
-)
-_register_semantics_family(
-    "ObjectProcessingUnmasked2D",
-    _C.OBJECT_PROCESSING,
-    _D.PLANAR,
-    False,
-    ("ClassifyObjects", "IdentifyObjectsManually"),
-)
-_register_semantics_family(
-    "ObjectProcessingMasked2D",
-    _C.OBJECT_PROCESSING,
-    _D.PLANAR,
-    True,
-    (
-        "EditObjectsManually",
-        "ExpandOrShrinkObjects",
-        "IdentifyObjectsInGrid",
-        "IdentifyPrimaryObjects",
-        "IdentifySecondaryObjects",
-        "IdentifyTertiaryObjects",
-        "MaskObjects",
-        "SplitOrMergeObjects",
-        "TrackObjects",
-    ),
-)
-_register_semantics_family(
-    "ObjectProcessingUnmasked3D",
-    _C.OBJECT_PROCESSING,
-    _D.PLANAR_AND_VOLUMETRIC,
-    False,
-    ("CombineObjects", "ConvertImageToObjects", "ResizeObjects"),
-)
-_register_semantics_family(
-    "ObjectProcessingMasked3D",
-    _C.OBJECT_PROCESSING,
-    _D.PLANAR_AND_VOLUMETRIC,
-    True,
-    ("ConvertObjectsToImage", "FilterObjects", "RelateObjects"),
-)
-_register_semantics_family(
-    "MeasurementMasked3D",
-    _C.MEASUREMENT,
-    _D.PLANAR_AND_VOLUMETRIC,
-    True,
-    (
-        "MeasureColocalization",
-        "MeasureGranularity",
-        "MeasureImageAreaOccupied",
-        "MeasureImageIntensity",
-        "MeasureImageOverlap",
-        "MeasureImageQuality",
-        "MeasureImageSkeleton",
-        "MeasureObjectIntensity",
-        "MeasureTexture",
-    ),
-)
-_register_semantics_family(
-    "MeasurementMasked2D",
-    _C.MEASUREMENT,
-    _D.PLANAR,
-    True,
-    ("MeasureObjectIntensityDistribution",),
-)
-_register_semantics_family(
-    "MeasurementUnmasked3D",
-    _C.MEASUREMENT,
-    _D.PLANAR_AND_VOLUMETRIC,
-    False,
-    ("MeasureObjectNeighbors", "MeasureObjectSizeShape"),
-)
-_register_semantics_family(
-    "MeasurementUnmasked2D",
-    _C.MEASUREMENT,
-    _D.PLANAR,
-    False,
-    ("MeasureObjectOverlap", "MeasureObjectSkeleton"),
-)
-_register_semantics_family(
-    "AdvancedUnmasked3D",
-    _C.ADVANCED,
-    _D.PLANAR_AND_VOLUMETRIC,
-    False,
-    (
-        "Closing",
-        "DilateImage",
-        "DilateObjects",
-        "ErodeImage",
-        "ErodeObjects",
-        "FillObjects",
-        "GaussianFilter",
-        "MedialAxis",
-        "MedianFilter",
-        "MorphologicalSkeleton",
-        "Opening",
-        "ReduceNoise",
-        "RemoveHoles",
-        "ShrinkToObjectCenters",
-    ),
-)
-_register_semantics_family(
-    "AdvancedUnmasked2D",
-    _C.ADVANCED,
-    _D.PLANAR,
-    False,
-    ("MatchTemplate", "RunImageJMacro"),
-)
-_register_semantics_family("AdvancedMasked3D", _C.ADVANCED, _D.PLANAR_AND_VOLUMETRIC, True, ("Watershed",))
-_register_semantics_family(
-    "WormToolboxMasked2D",
-    _C.WORM_TOOLBOX,
-    _D.PLANAR,
-    True,
-    ("IdentifyDeadWorms", "StraightenWorms", "UntangleWorms"),
-)
-_register_semantics_family("OtherUnmasked2D", _C.OTHER, _D.PLANAR, False, ("DefineGrid",))
-_register_semantics_family(
-    "DataToolsUnmasked2D",
-    _C.DATA_TOOLS,
-    _D.PLANAR,
-    False,
-    (
-        "CalculateMath",
-        "CalculateStatistics",
-        "DisplayDataOnImage",
-        "DisplayDensityPlot",
-        "DisplayHistogram",
-        "DisplayPlatemap",
-        "DisplayScatterPlot",
-        "FindMaxima",
-        "FlagImage",
-    ),
-)
-_register_alias_family(
-    "LegacyModuleName",
-    (
-        ("ClassifyObjectsSingleMeasurement", "ClassifyObjects"),
-        ("Combineobjects", "CombineObjects"),
-        ("DefineGridManual", "DefineGrid"),
-        ("MeasureImageAreaOccupiedBinary", "MeasureImageAreaOccupied"),
-        ("Measureimageoverlap", "MeasureImageOverlap"),
-        ("Medialaxis", "MedialAxis"),
-        ("Medianfilter", "MedianFilter"),
-        ("Morphologicalskeleton", "MorphologicalSkeleton"),
-        ("Reducenoise", "ReduceNoise"),
+
+CELLPROFILER_MODULE_ALIAS_FAMILY_SPECS = (
+    CellProfilerModuleAliasFamilySpec(
+        "LegacyModuleName",
+        (
+            ("ClassifyObjectsSingleMeasurement", "ClassifyObjects"),
+            ("Combineobjects", "CombineObjects"),
+            ("DefineGridManual", "DefineGrid"),
+            ("MeasureImageAreaOccupiedBinary", "MeasureImageAreaOccupied"),
+            ("Measureimageoverlap", "MeasureImageOverlap"),
+            ("Medialaxis", "MedialAxis"),
+            ("Medianfilter", "MedianFilter"),
+            ("Morphologicalskeleton", "MorphologicalSkeleton"),
+            ("Reducenoise", "ReduceNoise"),
+        ),
     ),
 )
 
@@ -421,11 +426,13 @@ _register_alias_family(
 _REGISTERED_CELLPROFILER_MODULE_SEMANTICS = _registered_semantics()
 
 
-CELLPROFILER_MODULE_SEMANTICS: Mapping[str, CellProfilerModuleSemantics] = MappingProxyType(
-    {
-        semantics.module_name: semantics
-        for semantics in _REGISTERED_CELLPROFILER_MODULE_SEMANTICS
-    }
+CELLPROFILER_MODULE_SEMANTICS: Mapping[str, CellProfilerModuleSemantics] = (
+    MappingProxyType(
+        {
+            semantics.module_name: semantics
+            for semantics in _REGISTERED_CELLPROFILER_MODULE_SEMANTICS
+        }
+    )
 )
 
 CELLPROFILER_MODULE_SEMANTICS_BY_KEY: Mapping[

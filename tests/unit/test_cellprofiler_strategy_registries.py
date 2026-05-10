@@ -18,7 +18,9 @@ from benchmark.cellprofiler_library.functions.correctilluminationcalculate impor
     SmoothingPlaneStrategy,
 )
 from benchmark.cellprofiler_library.functions.crop import CropShapeMaskStrategy
-from benchmark.cellprofiler_library.functions.enhanceedges import EdgeEnhancementStrategy
+from benchmark.cellprofiler_library.functions.enhanceedges import (
+    EdgeEnhancementStrategy,
+)
 from benchmark.cellprofiler_library.functions.filterobjects import (
     FilterSelectionStrategy,
     PerObjectAssignmentStrategy,
@@ -27,15 +29,18 @@ from benchmark.cellprofiler_library.functions.graytocolor import GrayToColorSche
 from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     WatershedImageBuilder,
 )
-from benchmark.converter.image_math_settings import ImageMathOperandFactorSettingResolver
-from benchmark.cellprofiler_library.functions.imagemath import ImageMathOperationStrategy
+from benchmark.converter.image_math_settings import (
+    ImageMathOperandFactorSettingResolver,
+)
+from benchmark.cellprofiler_library.functions.imagemath import (
+    ImageMathOperationStrategy,
+)
 from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     ExpandShrinkOperationModeBinding,
 )
 from benchmark.converter.module_runtime_semantics import ModuleRuntimeSemanticsBinding
 from openhcs.interop.cellprofiler.module_semantics import (
-    CellProfilerModuleAliasFamily,
-    CellProfilerModuleSemanticsFamily,
+    CellProfilerModuleSemanticTraits,
 )
 from benchmark.cellprofiler_library.functions.identifysecondaryobjects import (
     SecondarySegmentationStrategy,
@@ -104,8 +109,7 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
         WatershedSeedStrategy,
         WatershedRuntimeStrategy,
         ModuleRuntimeSemanticsBinding,
-        CellProfilerModuleSemanticsFamily,
-        CellProfilerModuleAliasFamily,
+        CellProfilerModuleSemanticTraits,
         MeasurementLabelExecutionModeStrategy,
         CellProfilerObjectMeasurementLabelArgumentPolicy,
     )
@@ -126,36 +130,51 @@ def test_measurement_label_execution_mode_follows_object_label_domain():
     def full_stack_measurement(image, labels):
         return image, labels
 
-    assert MeasurementLabelExecutionModeStrategy.resolve(
-        slice_aligned_measurement,
-        np.zeros((3, 8, 8), dtype=np.int32),
-        ImagePayloadExecutionMode.NATURAL,
-    ) is ImagePayloadExecutionMode.NATURAL
-    assert MeasurementLabelExecutionModeStrategy.resolve(
-        full_stack_measurement,
-        np.zeros((3, 8, 8), dtype=np.int32),
-        ImagePayloadExecutionMode.NATURAL,
-    ) is ImagePayloadExecutionMode.FULL_STACK
-    assert MeasurementLabelExecutionModeStrategy.resolve(
-        full_stack_measurement,
-        np.zeros((3, 8, 8), dtype=np.int32),
-        ImagePayloadExecutionMode.FULL_STACK,
-    ) is ImagePayloadExecutionMode.FULL_STACK
-    assert MeasurementLabelExecutionModeStrategy.resolve(
-        full_stack_measurement,
-        np.zeros((8, 8), dtype=np.int32),
-        ImagePayloadExecutionMode.NATURAL,
-    ) is ImagePayloadExecutionMode.NATURAL
-    assert MeasurementLabelExecutionModeStrategy.resolve(
-        full_stack_measurement,
-        ObjectLabelPayload(
-            labels=np.zeros((3, 8, 8), dtype=np.int32),
-            domain_scope=ObjectLabelDomainScope.PLANE,
-            plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-        ),
-        ImagePayloadExecutionMode.FULL_STACK,
-        runtime_slice_count=1,
-    ) is ImagePayloadExecutionMode.NATURAL
+    assert (
+        MeasurementLabelExecutionModeStrategy.resolve(
+            slice_aligned_measurement,
+            np.zeros((3, 8, 8), dtype=np.int32),
+            ImagePayloadExecutionMode.NATURAL,
+        )
+        is ImagePayloadExecutionMode.NATURAL
+    )
+    assert (
+        MeasurementLabelExecutionModeStrategy.resolve(
+            full_stack_measurement,
+            np.zeros((3, 8, 8), dtype=np.int32),
+            ImagePayloadExecutionMode.NATURAL,
+        )
+        is ImagePayloadExecutionMode.FULL_STACK
+    )
+    assert (
+        MeasurementLabelExecutionModeStrategy.resolve(
+            full_stack_measurement,
+            np.zeros((3, 8, 8), dtype=np.int32),
+            ImagePayloadExecutionMode.FULL_STACK,
+        )
+        is ImagePayloadExecutionMode.FULL_STACK
+    )
+    assert (
+        MeasurementLabelExecutionModeStrategy.resolve(
+            full_stack_measurement,
+            np.zeros((8, 8), dtype=np.int32),
+            ImagePayloadExecutionMode.NATURAL,
+        )
+        is ImagePayloadExecutionMode.NATURAL
+    )
+    assert (
+        MeasurementLabelExecutionModeStrategy.resolve(
+            full_stack_measurement,
+            ObjectLabelPayload(
+                labels=np.zeros((3, 8, 8), dtype=np.int32),
+                domain_scope=ObjectLabelDomainScope.PLANE,
+                plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            ),
+            ImagePayloadExecutionMode.FULL_STACK,
+            runtime_slice_count=1,
+        )
+        is ImagePayloadExecutionMode.NATURAL
+    )
 
 
 def test_measurement_label_argument_policy_follows_execution_contract() -> None:
@@ -181,7 +200,9 @@ def test_measurement_label_argument_policy_follows_execution_contract() -> None:
     )
 
 
-def test_measurement_label_argument_policy_defers_aligned_stack_label_projection() -> None:
+def test_measurement_label_argument_policy_defers_aligned_stack_label_projection() -> (
+    None
+):
     dense_labels = np.zeros((8, 8), dtype=np.int32)
     label_payload = ObjectLabelPayload(
         labels=np.zeros((2, 8, 8), dtype=np.int32),
