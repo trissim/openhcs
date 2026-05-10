@@ -1644,7 +1644,7 @@ def test_mask_objects_uses_object_labels_as_primary_execution_domain() -> None:
         )
     )
 
-    assert executor._primary_image_inputs(mask_objects) == ()
+    assert executor.primary_image_inputs(mask_objects) == ()
 
 
 def test_module_executor_slices_aligned_object_labels_for_pure_2d_module():

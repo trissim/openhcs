@@ -640,8 +640,8 @@ class CellProfilerModuleExecutor:
             CellProfilerImageExecutionStrategy.for_mode(mode)
         for kind in tuple(RuntimeArtifactKindStrategy.__registry__.keys()):
             RuntimeArtifactKindStrategy.for_kind(kind)
-        self._declared_input_specs()
-        self._primary_image_inputs(func)
+        self.declared_input_specs
+        self.primary_image_inputs(func)
         self._object_input_specs()
         CellProfilerObjectInputPolicy.for_module(self.module_name)
         CellProfilerSpecialInputPolicy.for_module(self.module_name)
@@ -850,7 +850,7 @@ class CellProfilerModuleExecutor:
             CellProfilerPerImageMeasurementRequest(
                 module_name=self.module_name,
                 func=func,
-                image_inputs=self._primary_image_inputs(func),
+                image_inputs=self.primary_image_inputs(func),
                 object_inputs=self._object_input_specs(),
                 outputs=self.outputs,
             )
@@ -1512,7 +1512,7 @@ class CellProfilerModuleExecutor:
         current_image: Any,
         image_request: "CellProfilerImageRequest",
     ) -> tuple["CellProfilerMeasurementImage", ...]:
-        image_inputs = self._primary_image_inputs(func)
+        image_inputs = self.primary_image_inputs(func)
         if not image_inputs:
             return (
                 self._measurement_carrier_image(
@@ -1540,7 +1540,7 @@ class CellProfilerModuleExecutor:
         adapter: CellProfilerRuntimeAdapter,
         current_image: Any,
     ) -> tuple["CellProfilerMeasurementImage", ...]:
-        image_inputs = self._primary_image_inputs(func)
+        image_inputs = self.primary_image_inputs(func)
         if not image_inputs:
             return (
                 self._measurement_carrier_image(
@@ -1740,7 +1740,7 @@ class CellProfilerModuleExecutor:
         self,
         func: Callable[..., Any],
     ) -> tuple[ArtifactSpec, ...]:
-        declared_inputs = self._declared_input_specs()
+        declared_inputs = self.declared_input_specs
         non_image_inputs = tuple(
             spec for spec in declared_inputs if spec.kind is not ArtifactKind.IMAGE
         )
@@ -1827,7 +1827,7 @@ class CellProfilerModuleExecutor:
         current_image: Any,
         adapter: CellProfilerRuntimeAdapter,
     ) -> "CellProfilerImageRequest":
-        image_inputs = self._primary_image_inputs(func)
+        image_inputs = self.primary_image_inputs(func)
         if not image_inputs:
             payload = (
                 _object_only_reference_image(current_image)
@@ -1869,16 +1869,17 @@ class CellProfilerModuleExecutor:
             execution_mode=composition.execution_mode,
         )
 
-    def _primary_image_inputs(
+    def primary_image_inputs(
         self,
         func: Callable[..., Any],
     ) -> tuple[ArtifactSpec, ...]:
+        """Return policy-declared image inputs that drive this invocation."""
         return CellProfilerPrimaryImageInputPolicy.for_module(
             self._canonical_module_name
         ).primary_image_inputs(
             self.module_name,
             func,
-            self._declared_input_specs(),
+            self.declared_input_specs,
         )
 
     def _input_source_image_name(
@@ -1888,7 +1889,7 @@ class CellProfilerModuleExecutor:
         source_names: list[str] = []
         runtime_image_names = self._runtime_image_name_set
         external_image_names = self._external_source_image_name_set
-        for spec in self._declared_input_specs():
+        for spec in self.declared_input_specs:
             source_name = _artifact_kind_strategy(spec.kind).source_image_name(
                 RuntimeArtifactInputRequest(
                     spec=spec,
@@ -2007,7 +2008,9 @@ class CellProfilerModuleExecutor:
     def _runtime_image_names(self) -> tuple[str, ...]:
         return self._runtime_image_names_cache
 
-    def _declared_input_specs(self) -> tuple[ArtifactSpec, ...]:
+    @property
+    def declared_input_specs(self) -> tuple[ArtifactSpec, ...]:
+        """Return declared module inputs plus runtime-only input contracts."""
         return self._declared_inputs
 
 
@@ -5341,7 +5344,7 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
             object_name=(
                 None
                 if rows_declare_object_name
-                else _measurement_object_name(request.executor._declared_input_specs())
+                else _measurement_object_name(request.executor.declared_input_specs)
             ),
             source_image_name=(
                 None
@@ -5349,7 +5352,7 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
                 else (
                     request.source_image_name
                     or _measurement_source_name_for_specs(
-                        request.executor._primary_image_inputs(request.func)
+                        request.executor.primary_image_inputs(request.func)
                     )
                 )
             ),
@@ -5469,7 +5472,7 @@ class ObjectTopologyMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilde
         return CellProfilerMeasurementRecord(
             rows=rows,
             object_name=_measurement_object_name(
-                request.executor._declared_input_specs()
+                request.executor.declared_input_specs
             ),
             source_image_name=None,
             fields=CellProfilerMeasurementFieldSchema.for_record(
@@ -5642,7 +5645,7 @@ class ClassifyObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuild
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        object_name = _measurement_object_name(request.executor._declared_input_specs())
+        object_name = _measurement_object_name(request.executor.declared_input_specs)
         return CellProfilerMeasurementRecord(
             rows=ClassifyObjectsMeasurementRows(
                 request.value,
@@ -5682,7 +5685,7 @@ class CalculateMathMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
         return CellProfilerMeasurementRecord(
             rows=rows,
             object_name=_measurement_object_name(
-                request.executor._declared_input_specs()
+                request.executor.declared_input_specs
             ),
             source_image_name=None,
             fields=CellProfilerMeasurementFieldSchema.for_record(
@@ -5787,7 +5790,7 @@ class TrackObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder)
         rows = row_policy.annotate_record_rows(
             _measurement_table_rows(request.value),
             object_name=_measurement_object_name(
-                request.executor._declared_input_specs()
+                request.executor.declared_input_specs
             ),
             source_image_name=request.source_image_name or MeasurementScope.IMAGE.value,
         )
@@ -7607,7 +7610,7 @@ class RelationshipEndpointResolver:
     @property
     def object_inputs(self) -> tuple[ArtifactSpec, ...]:
         return ArtifactSpecCollection(
-            self.request.executor._declared_input_specs()
+            self.request.executor.declared_input_specs
         ).of_kind(ArtifactKind.OBJECT_LABELS)
 
     @property
