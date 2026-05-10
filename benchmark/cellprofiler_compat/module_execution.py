@@ -178,17 +178,19 @@ from openhcs.processing.backends.cellprofiler.library import (
     coerce_registered_absorbed_processing_contract,
     require_function,
 )
-
-from benchmark.cellprofiler_library.functions.relateobjects import (
+from openhcs.interop.cellprofiler.relationship_measurements import (
     RelationshipMeasurements,
 )
 from benchmark.cellprofiler_library.functions.structuring_elements import (
     build_structuring_element,
 )
-from benchmark.cellprofiler_library.functions.watershed import (
+from openhcs.interop.cellprofiler.image_module_settings import (
     WatershedInputKeyword,
     WatershedMethod,
-    coerce_watershed_method,
+)
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.interop.cellprofiler.worm_measurements import (
+    control_points_from_worm_measurement_rows,
 )
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
@@ -7809,10 +7811,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         value = self.request.value
         if not isinstance(value, RelationshipMeasurements):
             return False
-        return bool(
-            np.isfinite(value.mean_centroid_distance)
-            or np.isfinite(value.mean_minimum_distance)
-        )
+        return value.declares_distance_measurements
 
     def distance_rows_for_pairs(
         self,
@@ -8208,7 +8207,14 @@ class WatershedSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
         image_inputs = request.image_inputs
-        watershed_method = coerce_watershed_method(request.kwargs.get("watershed_method"))
+        watershed_method = (
+            WatershedMethod.DISTANCE
+            if request.kwargs.get("watershed_method") is None
+            else coerce_cellprofiler_enum(
+                WatershedMethod,
+                request.kwargs["watershed_method"],
+            )
+        )
         return WatershedSpecialInputBindingStrategy.for_enum_member(
             watershed_method
         ).bind(request, image_inputs)
@@ -8238,10 +8244,6 @@ class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicy):
                 f"{request.module_name} supports one producer measurement "
                 f"input; got {[spec.name for spec in measurement_inputs]}."
             )
-        from benchmark.cellprofiler_library.functions.untangleworms import (
-            control_points_from_worm_measurement_rows,
-        )
-
         num_control_points = int(request.kwargs.get("num_control_points", 21))
         control_points = control_points_from_worm_measurement_rows(
             _runtime_input_value(measurement_inputs[0], request),

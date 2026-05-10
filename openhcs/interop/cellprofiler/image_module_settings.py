@@ -81,3 +81,10 @@ class WatershedMethod(Enum):
     DISTANCE = "distance"
     INTENSITY = "intensity"
     MARKERS = "markers"
+
+
+class WatershedInputKeyword(Enum):
+    """Runtime kwargs used for Watershed special image inputs."""
+
+    MASK = "mask"
+    MARKERS = "markers"

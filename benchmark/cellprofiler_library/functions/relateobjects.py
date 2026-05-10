@@ -9,6 +9,9 @@ All objects (e.g., speckles) within a parent object (e.g., nucleus) become its c
 import numpy as np
 from dataclasses import dataclass
 from enum import Enum
+from openhcs.interop.cellprofiler.relationship_measurements import (
+    RelationshipMeasurements,
+)
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import (
     special_inputs,
@@ -33,18 +36,6 @@ class DistanceMethod(Enum):
     CENTROID = "centroid"
     MINIMUM = "minimum"
     BOTH = "both"
-
-
-@dataclass
-class RelationshipMeasurements:
-    """Measurements from relating parent and child objects."""
-    slice_index: int
-    parent_object_count: int
-    child_object_count: int
-    children_with_parents_count: int
-    mean_children_per_parent: float
-    mean_centroid_distance: float
-    mean_minimum_distance: float
 
 
 @dataclass(frozen=True, slots=True)

@@ -64,6 +64,7 @@ from openhcs.interop.cellprofiler.image_module_settings import (
     RescaleIntensityAutomaticLow,
     RescaleIntensityMethod,
     WatershedDeclumpMethod,
+    WatershedInputKeyword,
     WatershedMethod,
 )
 from openhcs.interop.cellprofiler.image_math_settings import (
@@ -130,6 +131,9 @@ from openhcs.interop.cellprofiler.relate_objects_settings import (
     RelateObjectsDistanceMethod,
     parse_relate_objects_distance_method,
 )
+from openhcs.interop.cellprofiler.relationship_measurements import (
+    RelationshipMeasurements,
+)
 from openhcs.interop.cellprofiler.resize_settings import (
     RESIZE_FACTOR_SETTING,
     RESIZE_FACTOR_X_SETTING,
@@ -195,6 +199,12 @@ from openhcs.interop.cellprofiler.untangle_worms_settings import (
     UNTANGLE_WORMS_TRAINING_FILE_NAME_SETTING,
     UntangleWormsOverlapStyle,
     untangle_worms_bound_kwargs,
+)
+from openhcs.interop.cellprofiler.worm_measurements import (
+    WormControlPointAxis,
+    WormControlPointMeasurementField,
+    WormControlPointMeasurementSchema,
+    control_points_from_worm_measurement_rows,
 )
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
@@ -312,8 +322,13 @@ __all__ = (
     "UNTANGLE_WORMS_TRAINING_FILE_NAME_SETTING",
     "UntangleWormsOverlapStyle",
     "WatershedDeclumpMethod",
+    "WatershedInputKeyword",
     "WatershedMethod",
     "WatershedRuntimeSemanticsBinding",
+    "RelationshipMeasurements",
+    "WormControlPointAxis",
+    "WormControlPointMeasurementField",
+    "WormControlPointMeasurementSchema",
     "artifact_setting_symbols",
     "cellprofiler_runtime_equivalence_policy",
     "cellprofiler_module_role",
@@ -322,6 +337,7 @@ __all__ = (
     "clear_cellprofiler_dialect_compiler",
     "compile_image_schema",
     "coerce_cellprofiler_measurement_target_scope",
+    "control_points_from_worm_measurement_rows",
     "count_feature_object_name",
     "expand_or_shrink_bound_kwargs",
     "expand_shrink_mode_for_operation",

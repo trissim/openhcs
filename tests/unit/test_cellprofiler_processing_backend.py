@@ -74,6 +74,29 @@ def test_cellprofiler_converter_does_not_import_absorbed_runtime_packages() -> N
     assert offenders == []
 
 
+def test_cellprofiler_runtime_bridge_uses_product_semantics_for_special_payloads() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    file_path = repo_root / "benchmark" / "cellprofiler_compat" / "module_execution.py"
+    banned_modules = (
+        "benchmark.cellprofiler_library.functions.relateobjects",
+        "benchmark.cellprofiler_library.functions.untangleworms",
+        "benchmark.cellprofiler_library.functions.watershed",
+    )
+    tree = ast.parse(file_path.read_text(), filename=str(file_path))
+    offenders: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        module_names: list[str] = []
+        if isinstance(node, ast.Import):
+            module_names = [alias.name for alias in node.names]
+        elif isinstance(node, ast.ImportFrom):
+            module_names = [node.module or ""]
+        for module_name in module_names:
+            if module_name in banned_modules:
+                offenders.append((node.lineno, module_name))
+
+    assert offenders == []
+
+
 def test_cellprofiler_processing_backend_exports_absorbed_function() -> None:
     from openhcs.processing.backends import cellprofiler
 
