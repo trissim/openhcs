@@ -1890,7 +1890,9 @@ class CellProfilerModuleExecutor:
         runtime_image_names = self._runtime_image_name_set
         external_image_names = self._external_source_image_name_set
         for spec in self.declared_input_specs:
-            source_name = _artifact_kind_strategy(spec.kind).source_image_name(
+            source_name = RuntimeArtifactKindStrategy.for_kind(
+                spec.kind
+            ).source_image_name(
                 RuntimeArtifactInputRequest(
                     spec=spec,
                     adapter=adapter,
@@ -2699,7 +2701,13 @@ class RuntimeArtifactKindStrategy(ABC, metaclass=AutoRegisterMeta):
     @classmethod
     @lru_cache(maxsize=None)
     def for_kind(cls, kind: ArtifactKind) -> "RuntimeArtifactKindStrategy":
-        return cls.__registry__[kind]()
+        try:
+            strategy_type = cls.__registry__[kind]
+        except KeyError as exc:
+            raise TypeError(
+                f"No CellProfiler artifact kind strategy registered for {kind.value}."
+            ) from exc
+        return strategy_type()
 
     @abstractmethod
     def runtime_input_value(self, request: RuntimeArtifactInputRequest) -> Any:
@@ -2860,7 +2868,9 @@ class IntensityImageSpecialInputValueStrategy(CellProfilerSpecialInputValueStrat
         self,
         request: RuntimeArtifactInputRequest,
     ) -> Any:
-        return _artifact_kind_strategy(request.spec.kind).runtime_input_value(request)
+        return RuntimeArtifactKindStrategy.for_kind(
+            request.spec.kind
+        ).runtime_input_value(request)
 
 
 class DenseLabelImageSpecialInputValueStrategy(CellProfilerSpecialInputValueStrategy):
@@ -2872,9 +2882,9 @@ class DenseLabelImageSpecialInputValueStrategy(CellProfilerSpecialInputValueStra
         self,
         request: RuntimeArtifactInputRequest,
     ) -> np.ndarray:
-        raw_value = _artifact_kind_strategy(request.spec.kind).raw_runtime_input_value(
-            request
-        )
+        raw_value = RuntimeArtifactKindStrategy.for_kind(
+            request.spec.kind
+        ).raw_runtime_input_value(request)
         return object_label_dense_array(raw_value, dtype=np.int32)
 
 
@@ -8212,7 +8222,9 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
     def runtime_value(
         self,
         spec: ArtifactSpec,
-        semantics: CellProfilerSpecialInputPayloadSemantics,
+        semantics: CellProfilerSpecialInputPayloadSemantics = (
+            CellProfilerSpecialInputPayloadSemantics.INTENSITY_IMAGE
+        ),
     ) -> Any:
         return CellProfilerSpecialInputValueStrategy.for_enum_member(
             semantics
@@ -8226,6 +8238,23 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
                 runtime_image_names=self.runtime_image_names,
             )
         )
+
+    def bind_positional_parameters(self) -> dict[str, Any]:
+        """Bind declared special-input parameters to compiled runtime specs."""
+        if len(self.parameter_names) != len(self.special_input_specs):
+            raise NotImplementedError(
+                f"{self.module_name} declares special_inputs "
+                f"{list(self.parameter_names)}, but compiled runtime inputs are "
+                f"{[spec.name for spec in self.special_input_specs]}."
+            )
+        return {
+            parameter_name: self.runtime_value(spec)
+            for parameter_name, spec in zip(
+                self.parameter_names,
+                self.special_input_specs,
+                strict=True,
+            )
+        }
 
 
 class CellProfilerSpecialInputPolicy(
@@ -8261,7 +8290,7 @@ class PositionalSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         self,
         request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
-        return _bind_special_runtime_inputs(request)
+        return request.bind_positional_parameters()
 
 
 class CropSpecialInputPolicy(CellProfilerSpecialInputPolicy):
@@ -8299,7 +8328,7 @@ class CropSpecialInputPolicy(CellProfilerSpecialInputPolicy):
             )
         bound: dict[str, Any] = {}
         if image_inputs:
-            bound["mask_plane"] = _runtime_input_value(image_inputs[0], request)
+            bound["mask_plane"] = request.runtime_value(image_inputs[0])
         if object_inputs:
             bound["cropping_labels"] = request.label_payload_for(object_inputs[0])
         return bound
@@ -8447,7 +8476,7 @@ class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicy):
             )
         num_control_points = int(request.kwargs.get("num_control_points", 21))
         control_points = control_points_from_worm_measurement_rows(
-            _runtime_input_value(measurement_inputs[0], request),
+            request.runtime_value(measurement_inputs[0]),
             num_control_points=num_control_points,
             object_name=object_inputs[0].name,
         )
@@ -8798,58 +8827,6 @@ def _callable_accepts_composed_image_payload(func: Callable[..., Any]) -> bool:
         parameter_name in parameters
         for parameter_name in _COMPOSED_IMAGE_PAYLOAD_PARAMETERS
     )
-
-
-def _bind_special_runtime_inputs(
-    request: SpecialInputBindingRequest,
-) -> dict[str, Any]:
-    if len(request.parameter_names) != len(request.special_input_specs):
-        raise NotImplementedError(
-            f"{request.module_name} declares special_inputs "
-            f"{list(request.parameter_names)}, but compiled runtime inputs are "
-            f"{[spec.name for spec in request.special_input_specs]}."
-        )
-    return {
-        parameter_name: _runtime_input_value(spec, request)
-        for parameter_name, spec in zip(
-            request.parameter_names,
-            request.special_input_specs,
-            strict=True,
-        )
-    }
-
-
-def _runtime_input_value(
-    spec: ArtifactSpec,
-    request: SpecialInputBindingRequest,
-) -> Any:
-    try:
-        return _artifact_kind_strategy(spec.kind).runtime_input_value(
-            RuntimeArtifactInputRequest(
-                spec=spec,
-                adapter=request.adapter,
-                current_image=request.current_image,
-                external_image_names=request.external_image_names,
-                external_object_names=request.external_object_names,
-                runtime_image_names=request.runtime_image_names,
-            )
-        )
-    except KeyError as exc:
-        raise TypeError(
-            f"Unsupported special runtime input kind {spec.kind.value} for "
-            f"'{spec.name}'."
-        ) from exc
-
-
-def _artifact_kind_strategy(
-    kind: ArtifactKind,
-) -> RuntimeArtifactKindStrategy:
-    try:
-        return RuntimeArtifactKindStrategy.for_kind(kind)
-    except KeyError as exc:
-        raise TypeError(
-            f"No CellProfiler artifact kind strategy registered for {kind.value}."
-        ) from exc
 
 
 def _collapse_singleton_stack_output(value: Any) -> Any:
