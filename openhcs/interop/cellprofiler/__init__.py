@@ -47,6 +47,12 @@ from openhcs.interop.cellprofiler.module_roles import (
     CellProfilerModuleRoleSpec,
     cellprofiler_module_role,
 )
+from openhcs.interop.cellprofiler.module_runtime_semantics import (
+    CellProfilerWatershedRuntimeFamily,
+    ModuleRevisionRange,
+    ModuleRuntimeSemanticsBinding,
+    WatershedRuntimeSemanticsBinding,
+)
 from openhcs.interop.cellprofiler.module_semantics import (
     CELLPROFILER_MODULE_SEMANTICS,
     CELLPROFILER_MODULE_SEMANTICS_BY_KEY,
@@ -108,6 +114,18 @@ from openhcs.interop.cellprofiler.source_schema import (
     SetupModuleCompiler,
     compile_image_schema,
 )
+from openhcs.interop.cellprofiler.straighten_worms_settings import (
+    STRAIGHTEN_WORMS_INPUT_IMAGE_SETTING,
+    STRAIGHTEN_WORMS_INPUT_OBJECTS_SETTING,
+    STRAIGHTEN_WORMS_OUTPUT_IMAGE_SETTING,
+    STRAIGHTEN_WORMS_OUTPUT_OBJECTS_SETTING,
+    StraightenWormsFlipMode,
+    StraightenWormsImageBinding,
+    straighten_worms_bound_kwargs,
+    straighten_worms_image_bindings,
+    straighten_worms_input_objects_name,
+    straighten_worms_output_objects_name,
+)
 from openhcs.interop.cellprofiler.structuring_element_settings import (
     DEFAULT_STRUCTURING_ELEMENT_SETTING,
     STRUCTURING_ELEMENT_SETTING_NAME,
@@ -140,6 +158,7 @@ __all__ = (
     "CellProfilerModuleRole",
     "CellProfilerModuleRoleSpec",
     "CellProfilerModuleSemantics",
+    "CellProfilerWatershedRuntimeFamily",
     "CellProfilerImageExecutionContext",
     "CellProfilerImageRequest",
     "CellProfilerInvocationRequest",
@@ -162,6 +181,8 @@ __all__ = (
     "MaskObjectsNumberingChoice",
     "MaskObjectsOverlapHandling",
     "ModuleBlock",
+    "ModuleRevisionRange",
+    "ModuleRuntimeSemanticsBinding",
     "ModuleSetting",
     "RELATE_OBJECTS_DISTANCE_SETTING",
     "RELATE_OBJECTS_PER_PARENT_MEANS_SETTING",
@@ -183,8 +204,15 @@ __all__ = (
     "SettingsBinder",
     "SetupModuleCompiler",
     "STRUCTURING_ELEMENT_SETTING_NAME",
+    "STRAIGHTEN_WORMS_INPUT_IMAGE_SETTING",
+    "STRAIGHTEN_WORMS_INPUT_OBJECTS_SETTING",
+    "STRAIGHTEN_WORMS_OUTPUT_IMAGE_SETTING",
+    "STRAIGHTEN_WORMS_OUTPUT_OBJECTS_SETTING",
+    "StraightenWormsFlipMode",
+    "StraightenWormsImageBinding",
     "StructuringElementSetting",
     "StructuringElementSettingBinding",
+    "WatershedRuntimeSemanticsBinding",
     "artifact_setting_symbols",
     "cellprofiler_runtime_equivalence_policy",
     "cellprofiler_module_role",
@@ -201,5 +229,9 @@ __all__ = (
     "required_setting_value",
     "resize_bound_kwargs",
     "setting_values",
+    "straighten_worms_bound_kwargs",
+    "straighten_worms_image_bindings",
+    "straighten_worms_input_objects_name",
+    "straighten_worms_output_objects_name",
     "structuring_element_bound_kwargs",
 )

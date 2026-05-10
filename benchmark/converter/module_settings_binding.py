@@ -73,7 +73,9 @@ from .illumination_settings import (
 from .image_math_settings import image_math_bound_kwargs
 from openhcs.interop.cellprofiler.mask_objects_settings import MASK_OBJECTS_SETTINGS
 from .module_function_resolution import measurement_target_scope
-from .module_runtime_semantics import ModuleRuntimeSemanticsBinding
+from openhcs.interop.cellprofiler.module_runtime_semantics import (
+    ModuleRuntimeSemanticsBinding,
+)
 from .overlay_outlines_settings import overlay_outlines_bound_kwargs
 from .parser import ModuleBlock
 from .resize_objects_settings import resize_objects_bound_kwargs
@@ -110,7 +112,9 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
 )
 from .smooth_settings import SMOOTH_SETTINGS
-from .straighten_worms_settings import straighten_worms_bound_kwargs
+from openhcs.interop.cellprofiler.straighten_worms_settings import (
+    straighten_worms_bound_kwargs,
+)
 from openhcs.interop.cellprofiler.structuring_element_settings import (
     StructuringElementSettingBinding,
     structuring_element_bound_kwargs,

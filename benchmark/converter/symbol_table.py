@@ -107,7 +107,7 @@ from openhcs.interop.cellprofiler.setting_names import (
     normalized_symbol_name,
     split_symbol_names,
 )
-from .straighten_worms_settings import (
+from openhcs.interop.cellprofiler.straighten_worms_settings import (
     straighten_worms_image_bindings,
     straighten_worms_input_objects_name,
     straighten_worms_output_objects_name,
