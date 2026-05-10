@@ -835,6 +835,27 @@ _BOOL_CELLPROFILER_THRESHOLD_SETTINGS: frozenset[str] = frozenset(
 )
 
 
+class LegacyCellProfilerThresholdVersionAuthority(ABC):
+    """Nominal authority for CellProfiler threshold-setting schema versions."""
+
+    setting_name: ClassVar[str] = _CELLPROFILER_THRESHOLD_SETTING_VERSION
+
+    @classmethod
+    def version_for(cls, module: ModuleBlock) -> int | None:
+        value = optional_setting_value(module, cls.setting_name)
+        if value is None:
+            return None
+        try:
+            return int(float(value))
+        except ValueError:
+            return None
+
+    @classmethod
+    def is_legacy_v10_or_older(cls, module: ModuleBlock) -> bool:
+        version = cls.version_for(module)
+        return version is not None and version <= 10
+
+
 def _parse_cellprofiler_threshold_setting(
     binder: SettingsBinder,
     setting_name: str,
@@ -899,16 +920,6 @@ def _cellprofiler_threshold_setting_token(value: Any) -> str:
     return " ".join(str(value).strip().lower().replace("-", " ").split())
 
 
-def _legacy_cellprofiler_threshold_version(module: ModuleBlock) -> int | None:
-    value = optional_setting_value(module, _CELLPROFILER_THRESHOLD_SETTING_VERSION)
-    if value is None:
-        return None
-    try:
-        return int(float(value))
-    except ValueError:
-        return None
-
-
 def _legacy_cellprofiler_log_transform_default(
     module: ModuleBlock,
     kwargs: Mapping[str, Any],
@@ -919,8 +930,7 @@ def _legacy_cellprofiler_log_transform_default(
     upgrading threshold setting version 10 to version 11. The inserted value is
     true only for three-class Otsu thresholding.
     """
-    version = _legacy_cellprofiler_threshold_version(module)
-    if version is None or version > 10:
+    if not LegacyCellProfilerThresholdVersionAuthority.is_legacy_v10_or_older(module):
         return None
     threshold_method = _cellprofiler_threshold_setting_token(
         kwargs.get("threshold_method", "")
@@ -938,8 +948,7 @@ def _upgrade_legacy_cellprofiler_threshold_kwargs(
     module: ModuleBlock,
     kwargs: dict[str, Any],
 ) -> None:
-    version = _legacy_cellprofiler_threshold_version(module)
-    if version is None or version > 10:
+    if not LegacyCellProfilerThresholdVersionAuthority.is_legacy_v10_or_older(module):
         return
 
     threshold_method = kwargs.get("threshold_method")
