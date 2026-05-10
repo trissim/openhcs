@@ -6,7 +6,9 @@ from abc import ABC
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
+
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from openhcs.interop.cellprofiler.setting_names import normalized_symbol_name
@@ -65,17 +67,59 @@ class FilterObjectsOutputRole(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
-class FilterObjectsObjectPair(ABC):
+class FilterObjectsObjectPair(ABC, metaclass=AutoRegisterMeta):
     """Shared input/output object-name pair for FilterObjects rows."""
 
+    __registry_key__ = "pair_role"
+    __skip_if_no_key__ = True
+
+    pair_role: ClassVar[str | None] = None
     input_object_name: str
     output_object_name: str
+
+    @classmethod
+    def registered_pair_types(cls) -> tuple[type["FilterObjectsObjectPair"], ...]:
+        return tuple(cls.__registry__.values())
+
+    @property
+    def filtered_object_output(self) -> "FilterObjectsOutput":
+        return FilterObjectsOutput(
+            FilterObjectsOutputRole.FILTERED_OBJECTS,
+            self.output_object_name,
+        )
+
+    @property
+    def relationship_output(self) -> "FilterObjectsOutput":
+        return FilterObjectsOutput(
+            FilterObjectsOutputRole.RELATIONSHIPS,
+            parent_child_relationship_artifact_name(
+                self.input_object_name,
+                self.output_object_name,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsSymbolRequirement:
+    """Fail-loud FilterObjects symbol-setting validation."""
+
+    value: str
+    setting_name: str | SettingNameFamily
+
+    def validate(self, module: ModuleBlock) -> None:
+        if normalized_symbol_name(self.value) is not None:
+            return
+        raise ValueError(
+            f"Module {module.name}({module.module_num}) has an empty "
+            f"FilterObjects symbol in setting {self.setting_name!r}."
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class FilterObjectsAdditionalObjectRow(FilterObjectsObjectPair):
     """One additional object set relabeled using the primary filter mask."""
 
+    pair_role: ClassVar[str] = "additional"
     retain_outline: bool = False
     outline_image_name: str | None = None
 
@@ -110,16 +154,14 @@ class FilterObjectsAdditionalObjectRow(FilterObjectsObjectPair):
         self,
         module: ModuleBlock,
     ) -> "FilterObjectsAdditionalObjectRow":
-        _require_symbol_value(
+        FilterObjectsSymbolRequirement(
             self.input_object_name,
-            module,
             FILTER_OBJECTS_ADDITIONAL_INPUT_SETTING,
-        )
-        _require_symbol_value(
+        ).validate(module)
+        FilterObjectsSymbolRequirement(
             self.output_object_name,
-            module,
             FILTER_OBJECTS_ADDITIONAL_OUTPUT_SETTING,
-        )
+        ).validate(module)
         if self.retain_outline and self.outline_image_name is None:
             raise ValueError(
                 f"Module {module.name}({module.module_num}) retains an "
@@ -153,9 +195,9 @@ class FilterObjectsMeasurementRule:
                     default="No",
                 )
             ),
-            min_value=_optional_float_literal(
+            min_value=OptionalFloatLiteral(
                 block_setting_value(block, FILTER_OBJECTS_MINIMUM_SETTING)
-            ),
+            ).value,
             use_maximum=_setting_bool(
                 block_setting_value(
                     block,
@@ -163,9 +205,9 @@ class FilterObjectsMeasurementRule:
                     default="No",
                 )
             ),
-            max_value=_optional_float_literal(
+            max_value=OptionalFloatLiteral(
                 block_setting_value(block, FILTER_OBJECTS_MAXIMUM_SETTING)
-            ),
+            ).value,
         ).validated(module)
 
     def validated(self, module: ModuleBlock) -> "FilterObjectsMeasurementRule":
@@ -186,9 +228,41 @@ class FilterObjectsOutput:
 
 
 @dataclass(frozen=True, slots=True)
+class RepeatedSettingValues:
+    """CellProfiler repeated-setting sequence with last-value fallback semantics."""
+
+    values: tuple[str, ...]
+    default: str = ""
+
+    def at(self, index: int) -> str:
+        if not self.values:
+            return self.default
+        if index < len(self.values):
+            return self.values[index]
+        return self.values[-1]
+
+
+@dataclass(frozen=True, slots=True)
+class OptionalFloatLiteral:
+    """Typed optional float parser for blank CellProfiler numeric literals."""
+
+    raw_value: str | None
+
+    @property
+    def value(self) -> float | None:
+        if self.raw_value is None:
+            return None
+        stripped = self.raw_value.strip()
+        if not stripped:
+            return None
+        return float(stripped)
+
+
+@dataclass(frozen=True, slots=True)
 class FilterObjectsPlan(FilterObjectsObjectPair):
     """Complete typed FilterObjects artifact and runtime plan."""
 
+    pair_role: ClassVar[str] = "primary"
     retain_outline: bool
     outline_image_name: str | None
     additional_rows: tuple[FilterObjectsAdditionalObjectRow, ...]
@@ -198,8 +272,7 @@ class FilterObjectsPlan(FilterObjectsObjectPair):
     @property
     def input_object_names(self) -> tuple[str, ...]:
         ordered_names = (
-            self.input_object_name,
-            *(row.input_object_name for row in self.additional_rows),
+            *(pair.input_object_name for pair in self.object_pairs),
             *(
                 ()
                 if self.enclosing_object_name is None
@@ -210,43 +283,23 @@ class FilterObjectsPlan(FilterObjectsObjectPair):
 
     @property
     def outputs(self) -> tuple[FilterObjectsOutput, ...]:
-        object_pairs = (
-            (self.input_object_name, self.output_object_name),
-            *(
-                (row.input_object_name, row.output_object_name)
-                for row in self.additional_rows
-            ),
-        )
-        object_outputs = tuple(
-            FilterObjectsOutput(
-                FilterObjectsOutputRole.FILTERED_OBJECTS,
-                output_object_name,
-            )
-            for _input_object_name, output_object_name in object_pairs
-        )
         outline_outputs = tuple(
             FilterObjectsOutput(FilterObjectsOutputRole.OUTLINE_IMAGE, name)
             for name in self.outline_image_names
-        )
-        relationship_outputs = tuple(
-            FilterObjectsOutput(
-                FilterObjectsOutputRole.RELATIONSHIPS,
-                parent_child_relationship_artifact_name(
-                    input_object_name,
-                    output_object_name,
-                ),
-            )
-            for input_object_name, output_object_name in object_pairs
         )
         return (
             FilterObjectsOutput(
                 FilterObjectsOutputRole.MEASUREMENTS,
                 "",
             ),
-            *object_outputs,
-            *relationship_outputs,
+            *(pair.filtered_object_output for pair in self.object_pairs),
+            *(pair.relationship_output for pair in self.object_pairs),
             *outline_outputs,
         )
+
+    @property
+    def object_pairs(self) -> tuple[FilterObjectsObjectPair, ...]:
+        return (self, *self.additional_rows)
 
     @property
     def outline_image_names(self) -> tuple[str, ...]:
@@ -301,16 +354,14 @@ def filter_objects_plan(module: ModuleBlock) -> FilterObjectsPlan:
             or "Both parents"
         ),
     )
-    _require_symbol_value(
+    FilterObjectsSymbolRequirement(
         plan.input_object_name,
-        module,
         FILTER_OBJECTS_INPUT_SETTING,
-    )
-    _require_symbol_value(
+    ).validate(module)
+    FilterObjectsSymbolRequirement(
         plan.output_object_name,
-        module,
         FILTER_OBJECTS_OUTPUT_SETTING,
-    )
+    ).validate(module)
     if plan.retain_outline and plan.outline_image_name is None:
         raise ValueError(
             f"Module {module.name}({module.module_num}) retains filtered-object "
@@ -400,15 +451,19 @@ def _mapping_measurement_rules(
     row_count = len(feature_names)
     return tuple(
         FilterObjectsMeasurementRule(
-            feature_name=_indexed_value(feature_names, index),
+            feature_name=RepeatedSettingValues(feature_names).at(index),
             use_minimum=_setting_bool(
-                _indexed_value(use_minimum, index, default="No")
+                RepeatedSettingValues(use_minimum, default="No").at(index)
             ),
-            min_value=_optional_float_literal(_indexed_value(min_values, index)),
+            min_value=OptionalFloatLiteral(
+                RepeatedSettingValues(min_values).at(index)
+            ).value,
             use_maximum=_setting_bool(
-                _indexed_value(use_maximum, index, default="No")
+                RepeatedSettingValues(use_maximum, default="No").at(index)
             ),
-            max_value=_optional_float_literal(_indexed_value(max_values, index)),
+            max_value=OptionalFloatLiteral(
+                RepeatedSettingValues(max_values).at(index)
+            ).value,
         ).validated(module)
         for index in range(row_count)
     )
@@ -424,13 +479,13 @@ def _mapping_additional_rows(
     row_count = max(len(input_names), len(output_names), len(outline_flags))
     return tuple(
         FilterObjectsAdditionalObjectRow(
-            input_object_name=_indexed_value(input_names, index),
-            output_object_name=_indexed_value(output_names, index),
+            input_object_name=RepeatedSettingValues(input_names).at(index),
+            output_object_name=RepeatedSettingValues(output_names).at(index),
             retain_outline=_setting_bool(
-                _indexed_value(outline_flags, index, default="No")
+                RepeatedSettingValues(outline_flags, default="No").at(index)
             ),
             outline_image_name=normalized_symbol_name(
-                _indexed_value(outline_names, index)
+                RepeatedSettingValues(outline_names).at(index)
             ),
         ).validated(module)
         for index in range(row_count)
@@ -453,40 +508,5 @@ def _filter_mode_value(module: ModuleBlock) -> str:
     return value
 
 
-def _optional_float_literal(value: str | None) -> float | None:
-    if value is None:
-        return None
-    stripped = value.strip()
-    if not stripped:
-        return None
-    return float(stripped)
-
-
 def _setting_bool(value: str) -> bool:
     return value.strip().lower() in {"yes", "true", "1"}
-
-
-def _indexed_value(
-    values: tuple[str, ...],
-    index: int,
-    *,
-    default: str = "",
-) -> str:
-    if not values:
-        return default
-    if index < len(values):
-        return values[index]
-    return values[-1]
-
-
-def _require_symbol_value(
-    value: str,
-    module: ModuleBlock,
-    setting_name: str | SettingNameFamily,
-) -> None:
-    if normalized_symbol_name(value) is not None:
-        return
-    raise ValueError(
-        f"Module {module.name}({module.module_num}) has an empty "
-        f"FilterObjects symbol in setting {setting_name!r}."
-    )
