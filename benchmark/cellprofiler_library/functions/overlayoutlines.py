@@ -119,6 +119,59 @@ class OverlayOutlineExecutionContext:
             max_type=self.max_type,
         )
 
+    def render(self, image_sources: tuple[np.ndarray, ...]) -> np.ndarray:
+        if _requires_plane_stack_execution(image_sources, self.object_labels):
+            return self.render_plane_stack(image_sources)
+        return self.render_single_plane(image_sources)
+
+    def render_plane_stack(self, image_sources: tuple[np.ndarray, ...]) -> np.ndarray:
+        slice_count = _aligned_plane_slice_count((*image_sources, *self.object_labels))
+        return np.stack(
+            tuple(
+                self.plane(slice_index).render_single_plane(
+                    tuple(
+                        _plane_payload_slice(source, slice_index)
+                        for source in image_sources
+                    )
+                )
+                for slice_index in range(slice_count)
+            )
+        ).astype(np.float32)
+
+    def render_single_plane(self, image_sources: tuple[np.ndarray, ...]) -> np.ndarray:
+        output = _base_image(
+            image_sources=image_sources,
+            object_labels=self.object_labels,
+            blank_image=self.blank_image,
+            display_mode=self.display_mode,
+        )
+        outline_intensity = _outline_intensity(output, self.blank_image, self.max_type)
+        image_index = self.first_outline_image_index
+        object_index = 0
+        for row in self.rows:
+            if row.source_kind is OutlineSourceKind.IMAGE:
+                output = _draw_outline_image(
+                    output,
+                    image_sources[image_index],
+                    row.color,
+                    outline_intensity=outline_intensity,
+                    display_mode=self.display_mode,
+                )
+                image_index += 1
+                continue
+            output = _draw_object_labels(
+                output,
+                collapse_singleton_plane_stack(self.object_labels[object_index]),
+                row.color,
+                outline_intensity=outline_intensity,
+                display_mode=self.display_mode,
+                line_mode=self.line_mode,
+            )
+            object_index += 1
+        if self.display_mode is OutlineDisplayMode.GRAYSCALE and output.ndim == 3:
+            return skimage.color.rgb2gray(output).astype(np.float32)
+        return output.astype(np.float32)
+
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
 def overlay_outlines(
@@ -151,74 +204,7 @@ def overlay_outlines(
         image_row_count=context.image_row_count,
     )
 
-    if _requires_plane_stack_execution(image_sources, context.object_labels):
-        return _overlay_plane_stack(
-            context=context,
-            image_sources=image_sources,
-        )
-    return _overlay_single_plane(
-        context=context,
-        image_sources=image_sources,
-    )
-
-
-def _overlay_plane_stack(
-    *,
-    context: OverlayOutlineExecutionContext,
-    image_sources: tuple[np.ndarray, ...],
-) -> np.ndarray:
-    slice_count = _aligned_plane_slice_count((*image_sources, *context.object_labels))
-    return np.stack(
-        tuple(
-            _overlay_single_plane(
-                context=context.plane(slice_index),
-                image_sources=tuple(
-                    _plane_payload_slice(source, slice_index)
-                    for source in image_sources
-                ),
-            )
-            for slice_index in range(slice_count)
-        )
-    ).astype(np.float32)
-
-
-def _overlay_single_plane(
-    *,
-    context: OverlayOutlineExecutionContext,
-    image_sources: tuple[np.ndarray, ...],
-) -> np.ndarray:
-    output = _base_image(
-        image_sources=image_sources,
-        object_labels=context.object_labels,
-        blank_image=context.blank_image,
-        display_mode=context.display_mode,
-    )
-    outline_intensity = _outline_intensity(output, context.blank_image, context.max_type)
-    image_index = context.first_outline_image_index
-    object_index = 0
-    for row in context.rows:
-        if row.source_kind is OutlineSourceKind.IMAGE:
-            output = _draw_outline_image(
-                output,
-                image_sources[image_index],
-                row.color,
-                outline_intensity=outline_intensity,
-                display_mode=context.display_mode,
-            )
-            image_index += 1
-            continue
-        output = _draw_object_labels(
-            output,
-            collapse_singleton_plane_stack(context.object_labels[object_index]),
-            row.color,
-            outline_intensity=outline_intensity,
-            display_mode=context.display_mode,
-            line_mode=context.line_mode,
-        )
-        object_index += 1
-    if context.display_mode is OutlineDisplayMode.GRAYSCALE and output.ndim == 3:
-        return skimage.color.rgb2gray(output).astype(np.float32)
-    return output.astype(np.float32)
+    return context.render(image_sources)
 
 
 def _runtime_rows(
