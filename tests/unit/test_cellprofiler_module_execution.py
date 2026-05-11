@@ -2048,17 +2048,20 @@ def test_filter_labels_maps_unedited_secondary_labels_to_accepted_primary_labels
 
 def test_distance_b_limits_expansion_from_accepted_primary_labels(monkeypatch):
     def fake_propagate(
-        image: np.ndarray,
-        labels: np.ndarray,
-        mask: np.ndarray,
-        regularization: float,
+        self: DistanceMaskedSegmentationStrategy,
+        request: SecondarySegmentationRequest,
         *,
+        regularization: float,
         max_distance: float | None = None,
     ) -> np.ndarray:
-        del image, labels, mask, regularization, max_distance
+        del self, request, regularization, max_distance
         return np.array([[1, 0, 0, 1, 4]], dtype=np.int32)
 
-    monkeypatch.setattr(iso, "_propagate_labels", fake_propagate)
+    monkeypatch.setattr(
+        DistanceMaskedSegmentationStrategy,
+        "propagate_labels",
+        fake_propagate,
+    )
     final_labels = np.array([[1, 0, 0, 0, 0]], dtype=np.int32)
     unedited_labels = np.array([[1, 0, 0, 0, 4]], dtype=np.int32)
 
@@ -2082,16 +2085,21 @@ def test_secondary_propagation_uses_threshold_mask_without_seed_or(monkeypatch):
     captured: dict[str, np.ndarray] = {}
 
     def fake_propagate(
-        image: np.ndarray,
-        labels: np.ndarray,
-        mask: np.ndarray,
+        self: PropagationSegmentationStrategy,
+        request: SecondarySegmentationRequest,
+        *,
         regularization: float,
+        max_distance: float | None = None,
     ) -> np.ndarray:
-        del image, regularization
-        captured["mask"] = mask
-        return labels.copy()
+        del self, regularization, max_distance
+        captured["mask"] = request.thresholded
+        return request.unedited_labels.copy()
 
-    monkeypatch.setattr(iso, "_propagate_labels", fake_propagate)
+    monkeypatch.setattr(
+        PropagationSegmentationStrategy,
+        "propagate_labels",
+        fake_propagate,
+    )
     labels = np.array([[1, 0], [0, 0]], dtype=np.int32)
     thresholded = np.array([[False, False], [False, True]])
 
@@ -2137,10 +2145,16 @@ def test_secondary_propagation_aligns_label_and_mask_planes_to_image_geometry():
     labels[2, 2] = 1
     mask = np.ones((5, 5), dtype=bool)
 
-    propagated = iso._propagate_labels(
-        image,
-        labels,
-        mask,
+    propagated = PropagationSegmentationStrategy().propagate_labels(
+        SecondarySegmentationRequest(
+            image=image,
+            labels=labels,
+            unedited_labels=labels,
+            thresholded=mask,
+            distance_to_dilate=10,
+            regularization_factor=1.0,
+            watershed_backend_provider=None,
+        ),
         regularization=1.0,
     )
 

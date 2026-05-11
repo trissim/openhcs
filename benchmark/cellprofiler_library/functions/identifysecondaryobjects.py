@@ -12,7 +12,7 @@ import time
 
 import numpy as np
 from abc import ABC, abstractmethod
-from typing import ClassVar, Tuple
+from typing import Callable, ClassVar, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from metaclass_registry import AutoRegisterMeta
@@ -56,7 +56,10 @@ from openhcs.processing.backends.cellprofiler.secondary import (
     SecondaryDistanceTransformBackendStrategy,
     SecondaryPropagationBackendStrategy,
 )
-from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    ThresholdPrimitiveBackendStrategy,
+    threshold_primitives,
+)
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
@@ -106,30 +109,6 @@ class SecondaryObjectStats:
     original_threshold: float = 0.0
     weighted_variance: float = 0.0
     sum_of_entropies: float = 0.0
-
-
-def _propagate_labels(
-    image: np.ndarray,
-    labels: np.ndarray,
-    mask: np.ndarray,
-    regularization: float,
-    backend_provider: CellProfilerBackendProvider | None = None,
-    max_distance: float | None = None,
-) -> np.ndarray:
-    """Propagate labels using the configured explicit backend provider."""
-    geometry = CellProfilerPlaneGeometry.from_image_plane(image)
-    labels = geometry.label_plane(labels)
-    mask = geometry.binary_mask(mask)
-    return SecondaryPropagationBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    ).propagate(
-        image,
-        labels,
-        mask,
-        regularization,
-        max_distance=max_distance,
-    )
-    return result
 
 
 @dataclass(frozen=True)
@@ -250,48 +229,44 @@ class ThresholdCalculator(ABC, metaclass=AutoRegisterMeta):
     """Threshold strategy for one closed CellProfiler threshold method."""
 
     __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
     method_label: ClassVar[str | None] = None
     method: ClassVar[ThresholdMethod | None] = None
+    primitive: ClassVar[
+        Callable[[ThresholdPrimitiveBackendStrategy, np.ndarray], float]
+    ]
 
     @classmethod
     def for_method(cls, method: ThresholdMethod) -> "ThresholdCalculator":
         return cls.__registry__[method.value]()
 
-    @abstractmethod
     def calculate(self, image: np.ndarray) -> float:
         """Calculate a threshold value for a normalized intensity image."""
+        return type(self).primitive(threshold_primitives(), image)
 
 
 class OtsuThresholdCalculator(ThresholdCalculator):
     method = ThresholdMethod.OTSU
     method_label = method.value
-
-    def calculate(self, image: np.ndarray) -> float:
-        return threshold_primitives().otsu_threshold(image)
+    primitive = ThresholdPrimitiveBackendStrategy.otsu_threshold
 
 
 class LiThresholdCalculator(ThresholdCalculator):
     method = ThresholdMethod.LI
     method_label = method.value
-
-    def calculate(self, image: np.ndarray) -> float:
-        return threshold_primitives().li_threshold(image)
+    primitive = ThresholdPrimitiveBackendStrategy.li_threshold
 
 
 class MinimumThresholdCalculator(ThresholdCalculator):
     method = ThresholdMethod.MINIMUM
     method_label = method.value
-
-    def calculate(self, image: np.ndarray) -> float:
-        return threshold_primitives().minimum_threshold(image)
+    primitive = ThresholdPrimitiveBackendStrategy.minimum_threshold
 
 
 class TriangleThresholdCalculator(ThresholdCalculator):
     method = ThresholdMethod.TRIANGLE
     method_label = method.value
-
-    def calculate(self, image: np.ndarray) -> float:
-        return threshold_primitives().triangle_threshold(image)
+    primitive = ThresholdPrimitiveBackendStrategy.triangle_threshold
 
 
 class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -309,6 +284,41 @@ class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):
         if not request.has_primary_objects:
             return np.zeros_like(request.labels)
         return self._segment_non_empty(request)
+
+    def propagate_labels(
+        self,
+        request: SecondarySegmentationRequest,
+        *,
+        regularization: float,
+        max_distance: float | None = None,
+    ) -> np.ndarray:
+        """Propagate secondary labels through the configured backend."""
+        geometry = CellProfilerPlaneGeometry.from_image_plane(request.image)
+        labels = geometry.label_plane(request.unedited_labels)
+        mask = geometry.binary_mask(request.thresholded)
+        return SecondaryPropagationBackendStrategy.for_memory_type(
+            backend_provider=request.propagation_backend_provider,
+        ).propagate(
+            request.image,
+            labels,
+            mask,
+            regularization,
+            max_distance=max_distance,
+        )
+
+    def watershed_secondary_labels(
+        self,
+        request: SecondarySegmentationRequest,
+        watershed_image: np.ndarray,
+    ) -> np.ndarray:
+        """Build secondary labels from watershed markers and object mask."""
+        return cellprofiler_legacy_watershed(
+            watershed_image,
+            markers=request.unedited_labels,
+            mask=request.object_mask,
+            connectivity=np.ones((3, 3), bool),
+            backend_provider=request.watershed_backend_provider,
+        )
 
     @abstractmethod
     def _segment_non_empty(
@@ -342,23 +352,10 @@ class DistanceMaskedSegmentationStrategy(SecondarySegmentationStrategy):
         self,
         request: SecondarySegmentationRequest,
     ) -> np.ndarray:
-        labels_out = (
-            _propagate_labels(
-                request.image,
-                request.unedited_labels,
-                request.thresholded,
-                1.0,
-                max_distance=float(request.distance_to_dilate),
-            )
-            if request.propagation_backend_provider is None
-            else _propagate_labels(
-                request.image,
-                request.unedited_labels,
-                request.thresholded,
-                1.0,
-                backend_provider=request.propagation_backend_provider,
-                max_distance=float(request.distance_to_dilate),
-            )
+        labels_out = self.propagate_labels(
+            request,
+            regularization=1.0,
+            max_distance=float(request.distance_to_dilate),
         )
         labels_out[request.labels > 0] = request.labels[request.labels > 0]
         accepted_labels = np.unique(request.labels[request.labels > 0])
@@ -375,21 +372,9 @@ class PropagationSegmentationStrategy(SecondarySegmentationStrategy):
         self,
         request: SecondarySegmentationRequest,
     ) -> np.ndarray:
-        return (
-            _propagate_labels(
-                request.image,
-                request.unedited_labels,
-                request.thresholded,
-                request.regularization_factor,
-            )
-            if request.propagation_backend_provider is None
-            else _propagate_labels(
-                request.image,
-                request.unedited_labels,
-                request.thresholded,
-                request.regularization_factor,
-                backend_provider=request.propagation_backend_provider,
-            )
+        return self.propagate_labels(
+            request,
+            regularization=request.regularization_factor,
         )
 
 
@@ -406,7 +391,7 @@ class GradientWatershedSegmentationStrategy(SecondarySegmentationStrategy):
         sobel_image = np.abs(sobel(request.image, axis=0)) + np.abs(
             sobel(request.image, axis=1)
         )
-        return _watershed_secondary_labels(request, sobel_image)
+        return self.watershed_secondary_labels(request, sobel_image)
 
 
 class ImageWatershedSegmentationStrategy(SecondarySegmentationStrategy):
@@ -417,20 +402,7 @@ class ImageWatershedSegmentationStrategy(SecondarySegmentationStrategy):
         self,
         request: SecondarySegmentationRequest,
     ) -> np.ndarray:
-        return _watershed_secondary_labels(request, 1.0 - request.image)
-
-
-def _watershed_secondary_labels(
-    request: SecondarySegmentationRequest,
-    watershed_image: np.ndarray,
-) -> np.ndarray:
-    return cellprofiler_legacy_watershed(
-        watershed_image,
-        markers=request.unedited_labels,
-        mask=request.object_mask,
-        connectivity=np.ones((3, 3), bool),
-        backend_provider=request.watershed_backend_provider,
-    )
+        return self.watershed_secondary_labels(request, 1.0 - request.image)
 
 
 def _normalize_secondary_inputs(
