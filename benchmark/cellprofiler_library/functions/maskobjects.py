@@ -1,13 +1,10 @@
 """Converted from CellProfiler: MaskObjects
 
 Removes objects outside of a specified region or regions.
-This module allows you to delete the objects or portions of objects that
-are outside of a region (mask) you specify.
 """
 
 import numpy as np
 from typing import Tuple
-from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
@@ -17,14 +14,11 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelDomainScope,
     ParentChildRelationshipPayload,
     aligned_dense_object_label_mask_stack_alignment,
-    aligned_dense_object_labels_and_mask,
     dense_object_label_plane_id_domains,
     project_dense_object_label_stack,
 )
 from openhcs.core.runtime_values import (
-    ObjectLabelPayload,
     ObjectLabelRuntimeSliceStackContract,
-    ObjectLabelSet,
     object_label_dense_array,
     object_label_payload_with_dense_labels,
 )
@@ -36,180 +30,23 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
+from openhcs.processing.backends.cellprofiler.morphology import (
+    MaskObjectsOutputLabels,
+    MaskObjectsPlaneOperation,
+    MaskObjectsStats,
+)
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
+from openhcs.interop.cellprofiler.mask_objects_settings import (
+    MaskObjectsNumberingChoice as NumberingChoice,
+    MaskObjectsOverlapHandling as OverlapHandling,
+)
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
 class MaskChoice(Enum):
     OBJECTS = "objects"
     IMAGE = "image"
-
-
-class OverlapHandling(Enum):
-    MASK = "keep_overlapping_region"  # Keep only overlapping portion
-    KEEP = "keep"  # Keep whole object if any overlap
-    REMOVE = "remove"  # Remove if any part outside
-    REMOVE_PERCENTAGE = "remove_depending_on_overlap"  # Remove based on fraction
-
-
-class NumberingChoice(Enum):
-    RENUMBER = "renumber"  # Consecutive numbering
-    RETAIN = "retain"  # Keep original labels
-
-
-@dataclass
-class MaskObjectsStats:
-    slice_index: int
-    original_object_count: int
-    remaining_object_count: int
-    objects_removed: int
-
-
-@dataclass(frozen=True, slots=True)
-class MaskObjectsPlaneResult:
-    """MaskObjects result for one runtime plane."""
-
-    labels: np.ndarray
-    stats: MaskObjectsStats
-    relationships: ParentChildRelationshipPayload
-
-
-@dataclass(frozen=True, slots=True)
-class MaskObjectsPlaneOperation:
-    """CellProfiler MaskObjects semantics for one aligned object-label plane."""
-
-    overlap_handling: OverlapHandling
-    overlap_fraction: float
-    numbering: NumberingChoice
-    invert_mask: bool
-    relationship_backend: ObjectRelationshipBackendStrategy
-
-    def apply(
-        self,
-        label_image: np.ndarray,
-        mask: np.ndarray,
-        *,
-        slice_index: int = 0,
-    ) -> MaskObjectsPlaneResult:
-        import scipy.ndimage as ndi
-
-        label_image = np.asarray(label_image, dtype=np.int32)
-        _aligned_labels, mask = aligned_dense_object_labels_and_mask(label_image, mask)
-        label_image = _aligned_labels.astype(np.int32, copy=False)
-
-        binary_mask = mask > 0 if mask.max() > 1 else mask.astype(bool)
-        if self.invert_mask:
-            binary_mask = ~binary_mask
-
-        masked_labels = label_image.copy()
-        nobjects = int(np.max(label_image))
-        if nobjects == 0:
-            return MaskObjectsPlaneResult(
-                labels=masked_labels,
-                stats=MaskObjectsStats(
-                    slice_index=slice_index,
-                    original_object_count=0,
-                    remaining_object_count=0,
-                    objects_removed=0,
-                ),
-                relationships=ParentChildRelationshipPayload(
-                    parent_ids=(),
-                    child_ids=(),
-                ),
-            )
-
-        binary_mask = _size_binary_mask_like_labels(label_image, binary_mask)
-        if self.overlap_handling == OverlapHandling.MASK:
-            masked_labels = masked_labels * binary_mask.astype(masked_labels.dtype)
-        else:
-            object_indices = np.arange(1, nobjects + 1, dtype=np.int32)
-            pixel_counts = np.atleast_1d(
-                ndi.sum(binary_mask.astype(np.float64), label_image, object_indices)
-            )
-
-            if self.overlap_handling == OverlapHandling.KEEP:
-                keep = pixel_counts > 0
-            else:
-                total_pixels = np.atleast_1d(
-                    ndi.sum(
-                        np.ones(label_image.shape, dtype=np.float64),
-                        label_image,
-                        object_indices,
-                    )
-                )
-
-                if self.overlap_handling == OverlapHandling.REMOVE:
-                    keep = pixel_counts == total_pixels
-                elif self.overlap_handling == OverlapHandling.REMOVE_PERCENTAGE:
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        fractions = np.where(
-                            total_pixels > 0,
-                            pixel_counts / total_pixels,
-                            0,
-                        )
-                    keep = fractions >= self.overlap_fraction
-                else:
-                    keep = pixel_counts > 0
-
-            keep_lookup = np.concatenate([[False], keep])
-            masked_labels[~keep_lookup[label_image]] = 0
-
-        if self.numbering == NumberingChoice.RENUMBER:
-            unique_labels = np.unique(masked_labels[masked_labels != 0])
-            if len(unique_labels) > 0:
-                indexer = np.zeros(nobjects + 1, dtype=np.int32)
-                indexer[unique_labels] = np.arange(
-                    1,
-                    len(unique_labels) + 1,
-                    dtype=np.int32,
-                )
-                masked_labels = indexer[masked_labels]
-                remaining_count = len(unique_labels)
-            else:
-                remaining_count = 0
-        else:
-            remaining_count = len(np.unique(masked_labels[masked_labels != 0]))
-
-        return MaskObjectsPlaneResult(
-            labels=masked_labels,
-            stats=MaskObjectsStats(
-                slice_index=slice_index,
-                original_object_count=nobjects,
-                remaining_object_count=remaining_count,
-                objects_removed=nobjects - remaining_count,
-            ),
-            relationships=self.relationship_backend.parent_child_payload_from_labels(
-                label_image,
-                masked_labels,
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class MaskObjectsOutputLabels:
-    """Typed MaskObjects label output preserving input object-label semantics."""
-
-    source: object
-    labels: np.ndarray
-
-    def value(self) -> object:
-        if not isinstance(self.source, (ObjectLabelPayload, ObjectLabelSet)):
-            return self.labels
-        plane_domains = dense_object_label_plane_id_domains(
-            self.labels,
-            domain_scope=ObjectLabelDomainScope.PLANE,
-        )
-        return object_label_payload_with_dense_labels(
-            self.source,
-            self.labels,
-            domain_declaration=ExplicitObjectLabelDomainDeclaration(
-                ObjectLabelDomain(
-                    declared_object_id_domains=plane_domains,
-                    scope=ObjectLabelDomainScope.PLANE,
-                )
-            ),
-        )
 
 
 @numpy
@@ -333,21 +170,3 @@ def mask_objects(
 
     masked_labels = MaskObjectsOutputLabels(labels, result.labels).value()
     return image, result.stats, result.relationships, masked_labels
-
-
-def _size_binary_mask_like_labels(
-    labels: np.ndarray,
-    binary_mask: np.ndarray,
-) -> np.ndarray:
-    """Return a binary mask sized like CP size_similarly(labels, mask)."""
-    if binary_mask.shape == labels.shape:
-        return binary_mask
-    result = np.zeros(labels.shape, dtype=bool)
-    common_slices = tuple(
-        slice(0, min(label_extent, mask_extent))
-        for label_extent, mask_extent in zip(labels.shape, binary_mask.shape, strict=False)
-    )
-    if not common_slices:
-        return result
-    result[common_slices] = binary_mask[common_slices]
-    return result

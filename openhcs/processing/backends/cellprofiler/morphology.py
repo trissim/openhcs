@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 from typing import ClassVar
@@ -19,12 +20,42 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_semantics import (
+    ExplicitObjectLabelDomainDeclaration,
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
+    ParentChildRelationshipPayload,
+    aligned_dense_object_labels_and_mask,
+    dense_object_label_plane_id_domains,
+    dense_object_label_max_present_id,
+)
+from openhcs.core.runtime_values import (
+    ObjectLabelPayload,
+    ObjectLabelSet,
+    object_label_payload_with_dense_labels,
+)
+from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
+    CellProfilerExpandShrinkOperation,
+    ExpandShrinkMode,
+)
+from openhcs.interop.cellprofiler.mask_objects_settings import (
+    MaskObjectsNumberingChoice,
+    MaskObjectsOverlapHandling,
+)
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.processing.backends.cellprofiler.relationships import (
+    ObjectRelationshipBackendStrategy,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
+)
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
 )
 
 HolePredicate = Callable[[int, bool], bool]
@@ -2930,11 +2961,665 @@ def _relabel_sequential_3d_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
     return output, count
 
 
+class ExpandShrinkOperationStrategy(
+    EnumKeyedStrategyMixin[ExpandShrinkMode],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal CellProfiler ExpandOrShrinkObjects operation strategy."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "mode"
+    mode: ClassVar[ExpandShrinkMode | None] = None
+    strategy_label: ClassVar[str | None] = None
+    cellprofiler_operations: ClassVar[tuple[CellProfilerExpandShrinkOperation, ...]] = ()
+
+    @classmethod
+    def for_mode(
+        cls,
+        mode: ExpandShrinkMode | str,
+    ) -> "ExpandShrinkOperationStrategy":
+        resolved = coerce_cellprofiler_enum(ExpandShrinkMode, mode)
+        return cls.for_enum_member(resolved)
+
+    @abstractmethod
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        """Return transformed labels for this operation mode."""
+
+    def output_domain(self, labels: np.ndarray) -> ObjectLabelDomain:
+        """Return CP's semantic object domain for transformed labels."""
+        return ObjectLabelDomain(
+            declared_object_count=dense_object_label_max_present_id(labels),
+            scope=ObjectLabelDomainScope.PLANE,
+        )
+
+    @staticmethod
+    def apply_label_planes(
+        labels: np.ndarray,
+        operation: Callable[[np.ndarray], np.ndarray],
+    ) -> np.ndarray:
+        output = np.empty_like(labels, dtype=np.int32)
+        label_planes = labels.reshape((-1, *labels.shape[-2:]))
+        output_planes = output.reshape((-1, *output.shape[-2:]))
+        for plane_index in range(label_planes.shape[0]):
+            output_planes[plane_index] = operation(label_planes[plane_index])
+        return output
+
+
+class ExpandDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
+    """Expand labeled objects by a fixed pixel radius."""
+
+    mode = ExpandShrinkMode.EXPAND_DEFINED_PIXELS
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.EXPAND_DEFINED_PIXELS,
+        CellProfilerExpandShrinkOperation.EXPAND_BY_MEASUREMENT,
+    )
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return self.expand_defined_pixels(labels, iterations)
+
+    def expand_defined_pixels(
+        self,
+        labels: np.ndarray,
+        iterations: int,
+    ) -> np.ndarray:
+        """Expand labeled objects by a defined number of pixels."""
+        from scipy.ndimage import distance_transform_edt
+
+        if iterations <= 0:
+            return labels.copy()
+        labels_int = labels.astype(np.int32, copy=False)
+        if labels_int.ndim > 2:
+            return self.apply_label_planes(
+                labels_int,
+                lambda plane: self.expand_defined_pixels(plane, iterations),
+            )
+        if _labels_are_points_numba(np.ascontiguousarray(labels_int)):
+            return _expand_point_labels_defined_pixels_numba(
+                np.ascontiguousarray(labels_int),
+                int(iterations),
+            )
+
+        result = labels_int.copy()
+        background = labels_int == 0
+        distances, indices = distance_transform_edt(background, return_indices=True)
+        expand_mask = background & (distances <= iterations)
+        result[expand_mask] = labels_int[indices[0][expand_mask], indices[1][expand_mask]]
+        return result
+
+
+class ExpandInfiniteStrategy(ExpandShrinkOperationStrategy):
+    """Expand labeled objects until all background is assigned."""
+
+    mode = ExpandShrinkMode.EXPAND_INFINITE
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.EXPAND_UNTIL_TOUCHING,
+    )
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _expand_until_touching(labels)
+
+
+class ShrinkDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
+    """Shrink labeled objects by a fixed pixel radius."""
+
+    mode = ExpandShrinkMode.SHRINK_DEFINED_PIXELS
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.SHRINK_DEFINED_PIXELS,
+        CellProfilerExpandShrinkOperation.SHRINK_BY_MEASUREMENT,
+    )
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _shrink_defined_pixels(labels, iterations, fill_holes)
+
+
+class ShrinkToPointStrategy(ExpandShrinkOperationStrategy):
+    """Shrink each object to its center point."""
+
+    mode = ExpandShrinkMode.SHRINK_TO_POINT
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.SHRINK_TO_POINT,
+    )
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return self.shrink_to_point(labels, fill_holes)
+
+    def shrink_to_point(
+        self,
+        labels: np.ndarray,
+        fill: bool,
+    ) -> np.ndarray:
+        """Shrink each labeled object to a single point at its centroid."""
+        labels_int = labels.astype(np.int32, copy=False)
+        if labels_int.ndim > 2:
+            return self.apply_label_planes(
+                labels_int,
+                lambda plane: self.shrink_to_point(plane, fill),
+            )
+        if labels_int.size == 0 or int(labels_int.max()) <= 0:
+            return np.zeros_like(labels_int)
+        return _shrink_to_point_numba(np.ascontiguousarray(labels_int))
+
+
+class AddDividingLinesStrategy(ExpandShrinkOperationStrategy):
+    """Remove touching object boundary pixels."""
+
+    mode = ExpandShrinkMode.ADD_DIVIDING_LINES
+    cellprofiler_operations = (
+        CellProfilerExpandShrinkOperation.ADD_DIVIDING_LINES,
+    )
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _add_dividing_lines(labels)
+
+
+class DespurStrategy(ExpandShrinkOperationStrategy):
+    """Remove object spurs by repeated opening."""
+
+    mode = ExpandShrinkMode.DESPUR
+    cellprofiler_operations = (CellProfilerExpandShrinkOperation.DESPUR,)
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _despur(labels, iterations)
+
+
+class SkeletonizeStrategy(ExpandShrinkOperationStrategy):
+    """Reduce each object to a skeleton."""
+
+    mode = ExpandShrinkMode.SKELETONIZE
+    cellprofiler_operations = (CellProfilerExpandShrinkOperation.SKELETONIZE,)
+
+    def apply(
+        self,
+        labels: np.ndarray,
+        *,
+        iterations: int,
+        fill_holes: bool,
+    ) -> np.ndarray:
+        return _skeletonize_labels(labels)
+
+
+@njit(cache=True)
+def _labels_are_points_numba(labels: np.ndarray) -> bool:
+    max_label = 0
+    height, width = labels.shape
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+    if max_label <= 0:
+        return True
+
+    counts = np.zeros(max_label + 1, dtype=np.int64)
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            counts[label] += 1
+            if counts[label] > 1:
+                return False
+    return True
+
+
+@njit(cache=True)
+def _expand_point_labels_defined_pixels_numba(
+    labels: np.ndarray,
+    radius: int,
+) -> np.ndarray:
+    height, width = labels.shape
+    output = labels.copy()
+    radius_squared = radius * radius
+    initial_distance = radius_squared + 1
+    best_distance = np.full(labels.shape, initial_distance, dtype=np.int32)
+    best_y = np.full(labels.shape, 2147483647, dtype=np.int32)
+    best_x = np.full(labels.shape, 2147483647, dtype=np.int32)
+
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            for dy in range(-radius, radius + 1):
+                yy = y + dy
+                if yy < 0 or yy >= height:
+                    continue
+                for dx in range(-radius, radius + 1):
+                    xx = x + dx
+                    if xx < 0 or xx >= width:
+                        continue
+                    distance = dy * dy + dx * dx
+                    if distance > radius_squared:
+                        continue
+                    if (
+                        distance < best_distance[yy, xx]
+                        or (
+                            distance == best_distance[yy, xx]
+                            and (
+                                x < best_x[yy, xx]
+                                or (x == best_x[yy, xx] and y < best_y[yy, xx])
+                            )
+                        )
+                    ):
+                        best_distance[yy, xx] = distance
+                        best_y[yy, xx] = y
+                        best_x[yy, xx] = x
+                        output[yy, xx] = label
+    return output
+
+
+def _expand_until_touching(labels: np.ndarray) -> np.ndarray:
+    """Expand labeled objects until they touch."""
+    from scipy.ndimage import distance_transform_edt
+
+    if labels.ndim > 2:
+        return ExpandShrinkOperationStrategy.apply_label_planes(
+            labels,
+            _expand_until_touching,
+        )
+    if labels.max() == 0:
+        return labels.copy()
+    mask = labels > 0
+    _distances, indices = distance_transform_edt(~mask, return_indices=True)
+    return labels[indices[0], indices[1]]
+
+
+def _shrink_defined_pixels(labels: np.ndarray, iterations: int, fill: bool) -> np.ndarray:
+    """Shrink labeled objects by a defined number of pixels."""
+    if iterations <= 0:
+        return labels.copy()
+
+    original = labels.astype(np.int32, copy=False)
+    if original.ndim > 2:
+        return ExpandShrinkOperationStrategy.apply_label_planes(
+            original,
+            lambda plane: _shrink_defined_pixels(plane, iterations, fill),
+        )
+    result = original.copy()
+    for _ in range(iterations):
+        same_neighbors = np.zeros(result.shape, dtype=bool)
+        center = result[1:-1, 1:-1]
+        same_neighbors[1:-1, 1:-1] = (
+            (center > 0)
+            & (center == result[:-2, 1:-1])
+            & (center == result[2:, 1:-1])
+            & (center == result[1:-1, :-2])
+            & (center == result[1:-1, 2:])
+        )
+        result = np.where(same_neighbors, result, 0).astype(np.int32, copy=False)
+
+    if fill:
+        _restore_eroded_objects_to_centroids(original, result)
+
+    return result
+
+
+def _restore_eroded_objects_to_centroids(
+    original: np.ndarray,
+    eroded: np.ndarray,
+) -> None:
+    """Preserve one centroid pixel for labels fully removed by shrinking."""
+    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        original.astype(np.int32, copy=False)
+    )
+    if region_props.label.size == 0:
+        return
+    remaining_ids = set(int(label_id) for label_id in np.unique(eroded) if label_id > 0)
+    for index, label_id in enumerate(region_props.label):
+        label_int = int(label_id)
+        if label_int in remaining_ids:
+            continue
+        cy = int(region_props.centroid_y[index])
+        cx = int(region_props.centroid_x[index])
+        eroded[cy, cx] = label_int
+
+
+@njit(cache=True)
+def _shrink_to_point_numba(labels: np.ndarray) -> np.ndarray:
+    height, width = labels.shape
+    max_label = 0
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+
+    y_sums = np.zeros(max_label + 1, dtype=np.float64)
+    x_sums = np.zeros(max_label + 1, dtype=np.float64)
+    counts = np.zeros(max_label + 1, dtype=np.int64)
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            y_sums[label] += float(y)
+            x_sums[label] += float(x)
+            counts[label] += 1
+
+    result = np.zeros(labels.shape, dtype=np.int32)
+    for label in range(1, max_label + 1):
+        count = counts[label]
+        if count <= 0:
+            continue
+        cy = int(y_sums[label] / float(count))
+        cx = int(x_sums[label] / float(count))
+        if cy < 0:
+            cy = 0
+        elif cy >= height:
+            cy = height - 1
+        if cx < 0:
+            cx = 0
+        elif cx >= width:
+            cx = width - 1
+        result[cy, cx] = label
+    return result
+
+
+def _add_dividing_lines(labels: np.ndarray) -> np.ndarray:
+    """Add 1-pixel dividing lines between touching objects."""
+    from scipy.ndimage import maximum_filter, minimum_filter
+
+    if labels.ndim > 2:
+        return ExpandShrinkOperationStrategy.apply_label_planes(
+            labels,
+            _add_dividing_lines,
+        )
+    if labels.max() == 0:
+        return labels.copy()
+    result = labels.copy()
+    max_filt = maximum_filter(labels, size=3)
+    min_filt = minimum_filter(labels, size=3)
+    boundary = (max_filt != min_filt) & (min_filt > 0)
+    result[boundary] = 0
+    return result
+
+
+def _despur(labels: np.ndarray, iterations: int) -> np.ndarray:
+    """Remove spurs from labeled objects."""
+    from scipy.ndimage import binary_dilation, binary_erosion, generate_binary_structure
+
+    if iterations <= 0:
+        return labels.copy()
+    if labels.ndim > 2:
+        return ExpandShrinkOperationStrategy.apply_label_planes(
+            labels,
+            lambda plane: _despur(plane, iterations),
+        )
+    result = np.zeros_like(labels)
+    struct = generate_binary_structure(2, 1)
+    for label_id in range(1, labels.max() + 1):
+        obj_mask = labels == label_id
+        opened = binary_erosion(obj_mask, structure=struct, iterations=iterations)
+        opened = binary_dilation(opened, structure=struct, iterations=iterations)
+        result[opened] = label_id
+    return result
+
+
+def _skeletonize_labels(labels: np.ndarray) -> np.ndarray:
+    """Reduce labeled objects to their skeletons."""
+    from skimage.morphology import skeletonize
+
+    if labels.ndim > 2:
+        return ExpandShrinkOperationStrategy.apply_label_planes(
+            labels,
+            _skeletonize_labels,
+        )
+    result = np.zeros_like(labels)
+    for label_id in range(1, labels.max() + 1):
+        obj_mask = labels == label_id
+        skeleton = skeletonize(obj_mask)
+        result[skeleton] = label_id
+    return result
+
+
+def prepare_expand_or_shrink_objects() -> None:
+    """Compile kernels used by common object expansion/shrink modes."""
+    labels = np.zeros((16, 16), dtype=np.int32)
+    labels[2:5, 3:7] = 1
+    labels[8:12, 9:14] = 2
+    points = ShrinkToPointStrategy().shrink_to_point(labels, False)
+    ExpandDefinedPixelsStrategy().expand_defined_pixels(points, 2)
+
+
+@dataclass(frozen=True, slots=True)
+class MaskObjectsStats:
+    """MaskObjects count summary for one runtime plane."""
+
+    slice_index: int
+    original_object_count: int
+    remaining_object_count: int
+    objects_removed: int
+
+
+@dataclass(frozen=True, slots=True)
+class MaskObjectsPlaneResult:
+    """MaskObjects result for one runtime plane."""
+
+    labels: np.ndarray
+    stats: MaskObjectsStats
+    relationships: ParentChildRelationshipPayload
+
+
+@dataclass(frozen=True, slots=True)
+class MaskObjectsPlaneOperation:
+    """CellProfiler MaskObjects semantics for one aligned object-label plane."""
+
+    overlap_handling: MaskObjectsOverlapHandling
+    overlap_fraction: float
+    numbering: MaskObjectsNumberingChoice
+    invert_mask: bool
+    relationship_backend: ObjectRelationshipBackendStrategy
+
+    def apply(
+        self,
+        label_image: np.ndarray,
+        mask: np.ndarray,
+        *,
+        slice_index: int = 0,
+    ) -> MaskObjectsPlaneResult:
+        import scipy.ndimage as ndi
+
+        label_image = np.asarray(label_image, dtype=np.int32)
+        _aligned_labels, mask = aligned_dense_object_labels_and_mask(label_image, mask)
+        label_image = _aligned_labels.astype(np.int32, copy=False)
+
+        binary_mask = mask > 0 if mask.max() > 1 else mask.astype(bool)
+        if self.invert_mask:
+            binary_mask = ~binary_mask
+
+        masked_labels = label_image.copy()
+        nobjects = int(np.max(label_image))
+        if nobjects == 0:
+            return MaskObjectsPlaneResult(
+                labels=masked_labels,
+                stats=MaskObjectsStats(
+                    slice_index=slice_index,
+                    original_object_count=0,
+                    remaining_object_count=0,
+                    objects_removed=0,
+                ),
+                relationships=ParentChildRelationshipPayload(
+                    parent_ids=(),
+                    child_ids=(),
+                ),
+            )
+
+        binary_mask = _size_binary_mask_like_labels(label_image, binary_mask)
+        if self.overlap_handling == MaskObjectsOverlapHandling.MASK:
+            masked_labels = masked_labels * binary_mask.astype(masked_labels.dtype)
+        else:
+            object_indices = np.arange(1, nobjects + 1, dtype=np.int32)
+            pixel_counts = np.atleast_1d(
+                ndi.sum(binary_mask.astype(np.float64), label_image, object_indices)
+            )
+
+            if self.overlap_handling == MaskObjectsOverlapHandling.KEEP:
+                keep = pixel_counts > 0
+            else:
+                total_pixels = np.atleast_1d(
+                    ndi.sum(
+                        np.ones(label_image.shape, dtype=np.float64),
+                        label_image,
+                        object_indices,
+                    )
+                )
+
+                if self.overlap_handling == MaskObjectsOverlapHandling.REMOVE:
+                    keep = pixel_counts == total_pixels
+                elif (
+                    self.overlap_handling
+                    == MaskObjectsOverlapHandling.REMOVE_PERCENTAGE
+                ):
+                    with np.errstate(divide="ignore", invalid="ignore"):
+                        fractions = np.where(
+                            total_pixels > 0,
+                            pixel_counts / total_pixels,
+                            0,
+                        )
+                    keep = fractions >= self.overlap_fraction
+                else:
+                    raise ValueError(
+                        "Unsupported MaskObjects overlap handling: "
+                        f"{self.overlap_handling!r}"
+                    )
+
+            keep_lookup = np.concatenate([[False], keep])
+            masked_labels[~keep_lookup[label_image]] = 0
+
+        if self.numbering == MaskObjectsNumberingChoice.RENUMBER:
+            unique_labels = np.unique(masked_labels[masked_labels != 0])
+            if len(unique_labels) > 0:
+                indexer = np.zeros(nobjects + 1, dtype=np.int32)
+                indexer[unique_labels] = np.arange(
+                    1,
+                    len(unique_labels) + 1,
+                    dtype=np.int32,
+                )
+                masked_labels = indexer[masked_labels]
+                remaining_count = len(unique_labels)
+            else:
+                remaining_count = 0
+        elif self.numbering == MaskObjectsNumberingChoice.RETAIN:
+            remaining_count = len(np.unique(masked_labels[masked_labels != 0]))
+        else:
+            raise ValueError(f"Unsupported MaskObjects numbering: {self.numbering!r}")
+
+        return MaskObjectsPlaneResult(
+            labels=masked_labels,
+            stats=MaskObjectsStats(
+                slice_index=slice_index,
+                original_object_count=nobjects,
+                remaining_object_count=remaining_count,
+                objects_removed=nobjects - remaining_count,
+            ),
+            relationships=self.relationship_backend.parent_child_payload_from_labels(
+                label_image,
+                masked_labels,
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MaskObjectsOutputLabels:
+    """Typed MaskObjects label output preserving input object-label semantics."""
+
+    source: object
+    labels: np.ndarray
+
+    def value(self) -> object:
+        if not isinstance(self.source, (ObjectLabelPayload, ObjectLabelSet)):
+            return self.labels
+        plane_domains = dense_object_label_plane_id_domains(
+            self.labels,
+            domain_scope=ObjectLabelDomainScope.PLANE,
+        )
+        return object_label_payload_with_dense_labels(
+            self.source,
+            self.labels,
+            domain_declaration=ExplicitObjectLabelDomainDeclaration(
+                ObjectLabelDomain(
+                    declared_object_id_domains=plane_domains,
+                    scope=ObjectLabelDomainScope.PLANE,
+                )
+            ),
+        )
+
+
+def _size_binary_mask_like_labels(
+    labels: np.ndarray,
+    binary_mask: np.ndarray,
+) -> np.ndarray:
+    """Return a binary mask sized like CP size_similarly(labels, mask)."""
+    if binary_mask.shape == labels.shape:
+        return binary_mask
+    result = np.zeros(labels.shape, dtype=bool)
+    common_slices = tuple(
+        slice(0, min(label_extent, mask_extent))
+        for label_extent, mask_extent in zip(labels.shape, binary_mask.shape, strict=False)
+    )
+    if not common_slices:
+        return result
+    result[common_slices] = binary_mask[common_slices]
+    return result
+
+
 __all__ = [
     "CentrosomeNumpyMorphologyBackendStrategy",
     "CellProfilerDeclumpMethod",
+    "ExpandDefinedPixelsStrategy",
+    "ExpandInfiniteStrategy",
+    "ExpandShrinkOperationStrategy",
     "HolePredicate",
+    "MaskObjectsOutputLabels",
+    "MaskObjectsPlaneOperation",
+    "MaskObjectsPlaneResult",
+    "MaskObjectsStats",
     "MorphologyBackendStrategy",
     "NumbaNumpyMorphologyBackendStrategy",
     "NumpyMorphologyBackendStrategy",
+    "prepare_expand_or_shrink_objects",
 ]
