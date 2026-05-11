@@ -14,6 +14,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields, make_dataclass, replace
 from typing import Tuple, Optional
 from enum import Enum
+from nominal_refactor_advisor.record_algebra import product_record
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import (
     measurement_image_batch_executor,
@@ -200,12 +201,12 @@ class ColocalizationMeasurementOptions:
         object.__setattr__(self, "costes_method", CostesMethod(self.costes_method))
 
 
-@dataclass(frozen=True)
-class ColocalizationCostesThresholds:
-    """Precomputed Costes thresholds for one resolved image source pair."""
-
-    first: float
-    second: float
+ColocalizationCostesThresholds = product_record(
+    "ColocalizationCostesThresholds",
+    "first: float; second: float",
+    doc="Precomputed Costes thresholds for one resolved image source pair.",
+    module_name=__name__,
+)
 
 
 @dataclass(frozen=True, slots=True)
