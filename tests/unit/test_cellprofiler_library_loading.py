@@ -2066,8 +2066,8 @@ def test_measure_object_intensity_rejects_true_color_images_like_cellprofiler():
 
 
 def test_measure_image_quality_uses_openhcs_image_quality_backend():
-    from benchmark.cellprofiler_library.functions.measureimagequality import (
-        _calculate_correlation,
+    from openhcs.processing.backends.cellprofiler.image_quality import (
+        image_quality_haralick_correlation,
     )
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -2075,8 +2075,8 @@ def test_measure_image_quality_uses_openhcs_image_quality_backend():
 
     image = np.arange(100, dtype=np.float32).reshape(10, 10) / 100.0
 
-    default_value = _calculate_correlation(image, 2)
-    centrosome_value = _calculate_correlation(
+    default_value = image_quality_haralick_correlation(image, 2)
+    centrosome_value = image_quality_haralick_correlation(
         image,
         2,
         backend_provider=CellProfilerBackendProvider.CENTROSOME,
@@ -2086,9 +2086,9 @@ def test_measure_image_quality_uses_openhcs_image_quality_backend():
 
 
 def test_measure_image_quality_uses_openhcs_power_spectrum_backend(monkeypatch):
-    import benchmark.cellprofiler_library.functions.measureimagequality as module
-    from benchmark.cellprofiler_library.functions.measureimagequality import (
-        _calculate_power_spectrum_slope,
+    import openhcs.processing.backends.cellprofiler.image_quality as module
+    from openhcs.processing.backends.cellprofiler.image_quality import (
+        image_quality_power_spectrum_slope,
     )
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
@@ -2113,7 +2113,7 @@ def test_measure_image_quality_uses_openhcs_power_spectrum_backend(monkeypatch):
     image = np.arange(16, dtype=np.float32).reshape(4, 4)
 
     assert np.isclose(
-        _calculate_power_spectrum_slope(
+        image_quality_power_spectrum_slope(
             image,
             backend_provider=CellProfilerBackendProvider.NUMBA,
         ),
@@ -2123,9 +2123,9 @@ def test_measure_image_quality_uses_openhcs_power_spectrum_backend(monkeypatch):
 
 
 def test_measure_image_quality_uses_numba_otsu():
-    from benchmark.cellprofiler_library.functions.measureimagequality import (
+    from openhcs.processing.backends.cellprofiler.image_quality import (
         ThresholdMethod,
-        _calculate_threshold,
+        image_quality_threshold,
     )
     from openhcs.processing.backends.cellprofiler.thresholding import (
         threshold_primitives,
@@ -2136,12 +2136,12 @@ def test_measure_image_quality_uses_numba_otsu():
         image.astype(np.float32, copy=False),
     )
 
-    assert _calculate_threshold(image, ThresholdMethod.OTSU) == expected
+    assert image_quality_threshold(image, ThresholdMethod.OTSU) == expected
 
 
 def test_measure_image_quality_constancy_check_matches_numpy_unique():
-    from benchmark.cellprofiler_library.functions.measureimagequality import (
-        _has_multiple_unique_values,
+    from openhcs.processing.backends.cellprofiler.image_quality import (
+        image_quality_has_multiple_unique_values,
     )
 
     cases = (
@@ -2154,13 +2154,13 @@ def test_measure_image_quality_constancy_check_matches_numpy_unique():
 
     for image in cases:
         expected = len(np.unique(image)) > 1
-        assert _has_multiple_unique_values(image) is expected
+        assert image_quality_has_multiple_unique_values(image) is expected
 
 
 def test_measure_image_quality_log_log_slope_matches_lstsq():
     import scipy.linalg
 
-    from benchmark.cellprofiler_library.functions.measureimagequality import (
+    from openhcs.processing.backends.cellprofiler.image_quality import (
         _least_squares_log_log_slope_numba,
     )
 
@@ -2189,8 +2189,8 @@ def test_measure_image_quality_log_log_slope_matches_lstsq():
 def test_measure_image_quality_local_focus_matches_grid_semantics():
     from scipy.ndimage import mean as ndimage_mean, sum as ndimage_sum
 
-    from benchmark.cellprofiler_library.functions.measureimagequality import (
-        _calculate_local_focus_score,
+    from openhcs.processing.backends.cellprofiler.image_quality import (
+        image_quality_local_focus_score,
     )
 
     image = np.arange(35, dtype=np.float32).reshape(5, 7) / 10.0
@@ -2225,7 +2225,7 @@ def test_measure_image_quality_local_focus_matches_grid_semantics():
     expected = float(np.var(expected_values) / np.median(expected_values))
 
     assert np.isclose(
-        _calculate_local_focus_score(image, scale),
+        image_quality_local_focus_score(image, scale),
         expected,
         rtol=1e-12,
         atol=1e-12,
