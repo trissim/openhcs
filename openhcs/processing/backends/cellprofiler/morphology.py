@@ -35,15 +35,18 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelDomain,
     ObjectLabelDomainScope,
     ParentChildRelationshipPayload,
+    aligned_dense_object_label_mask_stack_alignment,
     aligned_dense_object_labels_and_mask,
     dense_object_label_plane_id_domains,
     dense_object_label_max_present_id,
     object_label_lineage_payload,
+    project_dense_object_label_stack,
     relabel_dense_object_labels_consecutive,
 )
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ObjectLabelPayload,
+    ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
     object_label_dense_array,
     object_label_payload_with_dense_labels,
@@ -143,6 +146,13 @@ class ResizeObjectsMethod(Enum):
 class FillMode(Enum):
     HOLES = "holes"
     CONVEX_HULL = "convex_hull"
+
+
+class MaskChoice(Enum):
+    """MaskObjects mask source kind."""
+
+    OBJECTS = "objects"
+    IMAGE = "image"
 
 
 @dataclass(frozen=True, slots=True)
@@ -4272,6 +4282,134 @@ class MaskObjectsOutputLabels:
         )
 
 
+@numpy_decorator
+@special_inputs("labels", "mask")
+@special_outputs(
+    (
+        "mask_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "original_object_count",
+                "remaining_object_count",
+                "objects_removed",
+            ],
+            analysis_type="mask_objects",
+        ),
+    ),
+    "object_relationships",
+    ("masked_labels", segmentation_mask_rois()),
+)
+def mask_objects(
+    image: np.ndarray,
+    labels: np.ndarray,
+    mask: np.ndarray,
+    overlap_handling: MaskObjectsOverlapHandling = MaskObjectsOverlapHandling.MASK,
+    overlap_fraction: float = 0.5,
+    numbering: MaskObjectsNumberingChoice = MaskObjectsNumberingChoice.RENUMBER,
+    invert_mask: bool = False,
+    relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[
+    np.ndarray,
+    MaskObjectsStats | list[MaskObjectsStats],
+    ParentChildRelationshipPayload,
+    object,
+]:
+    """Mask object labels while preserving OpenHCS object-label domain semantics."""
+
+    overlap_handling = coerce_cellprofiler_enum(
+        MaskObjectsOverlapHandling,
+        overlap_handling,
+    )
+    numbering = coerce_cellprofiler_enum(MaskObjectsNumberingChoice, numbering)
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
+        backend_provider=relationship_backend_provider,
+    )
+    operation = MaskObjectsPlaneOperation(
+        overlap_handling=overlap_handling,
+        overlap_fraction=overlap_fraction,
+        numbering=numbering,
+        invert_mask=invert_mask,
+        relationship_backend=relationship_backend,
+    )
+
+    stack_slice_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(labels)
+    if stack_slice_count is None and label_array.ndim == 3:
+        stack_slice_count = int(label_array.shape[0])
+    if stack_slice_count is not None and stack_slice_count > 1:
+        stack_alignment = aligned_dense_object_label_mask_stack_alignment(
+            label_array,
+            mask,
+            slice_count=stack_slice_count,
+        )
+        if stack_alignment is not None:
+            plane_results = tuple(
+                operation.apply(
+                    stack_alignment.label_stack[slice_index],
+                    stack_alignment.mask_stack[slice_index],
+                    slice_index=slice_index,
+                )
+                for slice_index in range(stack_slice_count)
+            )
+            masked_stack = stack_alignment.restore_label_stack(
+                np.stack([result.labels for result in plane_results], axis=0)
+            )
+            plane_domains = dense_object_label_plane_id_domains(
+                masked_stack,
+                domain_scope=ObjectLabelDomainScope.PLANE,
+            )
+            masked_payload = object_label_payload_with_dense_labels(
+                labels,
+                masked_stack,
+                domain_declaration=ExplicitObjectLabelDomainDeclaration(
+                    ObjectLabelDomain(
+                        declared_object_id_domains=plane_domains,
+                        scope=ObjectLabelDomainScope.PLANE,
+                    )
+                ),
+            )
+            relationships = ParentChildRelationshipPayload(
+                parent_ids=tuple(
+                    parent_id
+                    for result in plane_results
+                    for parent_id in result.relationships.parent_ids
+                ),
+                child_ids=tuple(
+                    child_id
+                    for result in plane_results
+                    for child_id in result.relationships.child_ids
+                ),
+                slice_indices=tuple(
+                    slice_index
+                    for slice_index, result in enumerate(plane_results)
+                    for _child_id in result.relationships.child_ids
+                ),
+                slice_count=stack_slice_count,
+            )
+            return (
+                image,
+                [result.stats for result in plane_results],
+                relationships,
+                masked_payload,
+            )
+
+    try:
+        label_image = project_dense_object_label_stack(label_array).astype(
+            np.int32,
+            copy=False,
+        )
+    except ValueError as exc:
+        raise ValueError(
+            "MaskObjects could not project object labels; "
+            f"labels shape={label_array.shape!r}, "
+            f"mask shape={mask.shape!r}."
+        ) from exc
+    result = operation.apply(label_image, mask)
+    masked_labels = MaskObjectsOutputLabels(labels, result.labels).value()
+    return image, result.stats, result.relationships, masked_labels
+
+
 def _size_binary_mask_like_labels(
     labels: np.ndarray,
     binary_mask: np.ndarray,
@@ -5697,6 +5835,7 @@ __all__ = [
     "FillHolesOption",
     "FillMode",
     "HolePredicate",
+    "MaskChoice",
     "MaskObjectsOutputLabels",
     "MaskObjectsPlaneOperation",
     "MaskObjectsPlaneResult",
@@ -5745,6 +5884,7 @@ __all__ = [
     "filter_physical_border_objects_numba",
     "manual_declumping_size",
     "mask_planes_for_labels",
+    "mask_objects",
     "positive_dense_label_count",
     "prepare_expand_or_shrink_objects",
     "resize_objects",
