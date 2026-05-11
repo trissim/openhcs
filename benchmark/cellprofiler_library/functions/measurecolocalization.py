@@ -11,7 +11,7 @@ import logging
 import os
 import time
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, fields, make_dataclass, replace
 from typing import Tuple, Optional
 from enum import Enum
 from openhcs.core.memory import numpy
@@ -86,56 +86,58 @@ class ColocalizationMeasurements:
     costes_threshold_2: float
 
 
-@dataclass(slots=True)
-class ObjectColocalizationMeasurements:
-    """Colocalization measurements scoped to one labeled object."""
+class ColocalizationMeasurementSchema:
+    """Authoritative row schema for image- and object-scoped colocalization."""
 
-    slice_index: int
-    object_label: int
-    correlation: float
-    slope: float
-    slope_reverse: float
-    overlap: float
-    k1: float
-    k2: float
-    manders_m1: float
-    manders_m2: float
-    rwc1: float
-    rwc2: float
-    costes_m1: float
-    costes_m2: float
-    costes_threshold_1: float
-    costes_threshold_2: float
+    object_label_field = ("object_label", int)
 
     @classmethod
-    def from_measurement(
+    def object_measurement_type(
         cls,
+        measurement_type: type[ColocalizationMeasurements],
+    ) -> type:
+        measurement_fields = tuple(fields(measurement_type))
+        row_fields = (
+            (measurement_fields[0].name, measurement_fields[0].type),
+            cls.object_label_field,
+            *(
+                (field.name, field.type)
+                for field in measurement_fields[1:]
+            ),
+        )
+        return make_dataclass(
+            "ObjectColocalizationMeasurements",
+            row_fields,
+            slots=True,
+            namespace={
+                "__module__": __name__,
+                "__doc__": "Colocalization measurements scoped to one labeled object.",
+                "from_measurement": classmethod(cls.from_measurement),
+                "from_values": classmethod(cls.from_values),
+            },
+        )
+
+    @staticmethod
+    def finite_or_zero(value: float) -> float:
+        return float(value) if np.isfinite(value) else 0.0
+
+    @staticmethod
+    def from_measurement(
+        row_type: type,
         *,
         object_label: int,
         measurement: ColocalizationMeasurements,
-    ) -> "ObjectColocalizationMeasurements":
-        return cls(
-            slice_index=measurement.slice_index,
+    ) -> object:
+        measurement_values = asdict(measurement)
+        return row_type(
             object_label=object_label,
-            correlation=measurement.correlation,
-            slope=measurement.slope,
-            slope_reverse=measurement.slope_reverse,
-            overlap=measurement.overlap,
-            k1=measurement.k1,
-            k2=measurement.k2,
-            manders_m1=measurement.manders_m1,
-            manders_m2=measurement.manders_m2,
-            rwc1=measurement.rwc1,
-            rwc2=measurement.rwc2,
-            costes_m1=measurement.costes_m1,
-            costes_m2=measurement.costes_m2,
-            costes_threshold_1=measurement.costes_threshold_1,
-            costes_threshold_2=measurement.costes_threshold_2,
+            **measurement_values,
         )
 
     @classmethod
     def from_values(
         cls,
+        row_type: type,
         object_label: int,
         *,
         correlation: float = 0.0,
@@ -152,36 +154,31 @@ class ObjectColocalizationMeasurements:
         costes_m2: float = 0.0,
         costes_threshold_1: float = 0.0,
         costes_threshold_2: float = 0.0,
-    ) -> "ObjectColocalizationMeasurements":
+    ) -> object:
         """Build one object-row record using CellProfiler finite-value semantics."""
-        return cls(
+        return row_type(
             slice_index=0,
             object_label=object_label,
-            correlation=float(correlation) if np.isfinite(correlation) else 0.0,
-            slope=float(slope) if np.isfinite(slope) else 0.0,
-            slope_reverse=(
-                float(slope_reverse) if np.isfinite(slope_reverse) else 0.0
-            ),
-            overlap=float(overlap) if np.isfinite(overlap) else 0.0,
-            k1=float(k1) if np.isfinite(k1) else 0.0,
-            k2=float(k2) if np.isfinite(k2) else 0.0,
-            manders_m1=float(manders_m1) if np.isfinite(manders_m1) else 0.0,
-            manders_m2=float(manders_m2) if np.isfinite(manders_m2) else 0.0,
-            rwc1=float(rwc1) if np.isfinite(rwc1) else 0.0,
-            rwc2=float(rwc2) if np.isfinite(rwc2) else 0.0,
+            correlation=cls.finite_or_zero(correlation),
+            slope=cls.finite_or_zero(slope),
+            slope_reverse=cls.finite_or_zero(slope_reverse),
+            overlap=cls.finite_or_zero(overlap),
+            k1=cls.finite_or_zero(k1),
+            k2=cls.finite_or_zero(k2),
+            manders_m1=cls.finite_or_zero(manders_m1),
+            manders_m2=cls.finite_or_zero(manders_m2),
+            rwc1=cls.finite_or_zero(rwc1),
+            rwc2=cls.finite_or_zero(rwc2),
             costes_m1=float(costes_m1),
             costes_m2=float(costes_m2),
-            costes_threshold_1=(
-                float(costes_threshold_1)
-                if np.isfinite(costes_threshold_1)
-                else 0.0
-            ),
-            costes_threshold_2=(
-                float(costes_threshold_2)
-                if np.isfinite(costes_threshold_2)
-                else 0.0
-            ),
+            costes_threshold_1=cls.finite_or_zero(costes_threshold_1),
+            costes_threshold_2=cls.finite_or_zero(costes_threshold_2),
         )
+
+
+ObjectColocalizationMeasurements = (
+    ColocalizationMeasurementSchema.object_measurement_type(ColocalizationMeasurements)
+)
 
 
 @dataclass(frozen=True)
