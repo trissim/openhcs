@@ -13,12 +13,13 @@ import time
 import numpy as np
 from abc import ABC, abstractmethod
 from typing import Callable, ClassVar, Tuple
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory import numpy
+from openhcs.core.registry_strategies import RegisteredLeafClassSpec
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     image_payload_data,
@@ -249,28 +250,53 @@ class ThresholdCalculator(ABC, metaclass=AutoRegisterMeta):
         return type(self).primitive(threshold_primitives(), image)
 
 
-class OtsuThresholdCalculator(ThresholdCalculator):
-    method = ThresholdMethod.OTSU
-    method_label = method.value
-    primitive = ThresholdPrimitiveBackendStrategy.otsu_threshold
+@dataclass(frozen=True)
+class ThresholdCalculatorDeclaration(RegisteredLeafClassSpec):
+    """Typed declaration for metadata-only secondary threshold calculators."""
+
+    method: ThresholdMethod
+    primitive: Callable[[ThresholdPrimitiveBackendStrategy, np.ndarray], float]
+    base_type: type[ThresholdCalculator] = field(
+        default=ThresholdCalculator,
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    @property
+    def class_name(self) -> str:
+        method_name = "".join(part.title() for part in self.method.name.split("_"))
+        return f"{method_name}ThresholdCalculator"
+
+    def class_attributes(self) -> dict[str, object]:
+        return {
+            "method": self.method,
+            "method_label": self.method.value,
+            "primitive": self.primitive,
+        }
 
 
-class LiThresholdCalculator(ThresholdCalculator):
-    method = ThresholdMethod.LI
-    method_label = method.value
-    primitive = ThresholdPrimitiveBackendStrategy.li_threshold
+THRESHOLD_CALCULATOR_DECLARATIONS = (
+    ThresholdCalculatorDeclaration(
+        ThresholdMethod.OTSU,
+        ThresholdPrimitiveBackendStrategy.otsu_threshold,
+    ),
+    ThresholdCalculatorDeclaration(
+        ThresholdMethod.LI,
+        ThresholdPrimitiveBackendStrategy.li_threshold,
+    ),
+    ThresholdCalculatorDeclaration(
+        ThresholdMethod.MINIMUM,
+        ThresholdPrimitiveBackendStrategy.minimum_threshold,
+    ),
+    ThresholdCalculatorDeclaration(
+        ThresholdMethod.TRIANGLE,
+        ThresholdPrimitiveBackendStrategy.triangle_threshold,
+    ),
+)
 
-
-class MinimumThresholdCalculator(ThresholdCalculator):
-    method = ThresholdMethod.MINIMUM
-    method_label = method.value
-    primitive = ThresholdPrimitiveBackendStrategy.minimum_threshold
-
-
-class TriangleThresholdCalculator(ThresholdCalculator):
-    method = ThresholdMethod.TRIANGLE
-    method_label = method.value
-    primitive = ThresholdPrimitiveBackendStrategy.triangle_threshold
+for threshold_calculator_declaration in THRESHOLD_CALCULATOR_DECLARATIONS:
+    threshold_calculator_declaration.declare_in(globals())
 
 
 class SecondarySegmentationStrategy(ABC, metaclass=AutoRegisterMeta):

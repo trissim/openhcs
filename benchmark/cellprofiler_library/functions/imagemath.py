@@ -13,7 +13,10 @@ from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Tuple
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    RegisteredLeafClassSpec,
+)
 from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
@@ -295,10 +298,10 @@ class EqualsImageMathOperationStrategy(ImageMathOperationStrategy):
 
 
 @dataclass(frozen=True)
-class ImageMathOperationStrategyDeclaration:
+class ImageMathOperationStrategyDeclaration(RegisteredLeafClassSpec):
     """Typed declaration for metadata-only ImageMath strategy leaves."""
 
-    strategy_base: type[ImageMathOperationStrategy]
+    base_type: type[ImageMathOperationStrategy]
     operation: MathOperation
     numpy_operator: ImageMathBinaryOperator | None = None
     logical_operator: ImageMathBinaryOperator | None = None
@@ -308,16 +311,15 @@ class ImageMathOperationStrategyDeclaration:
         operation_name = "".join(part.title() for part in self.operation.name.split("_"))
         return f"{operation_name}ImageMathOperationStrategy"
 
-    def materialize(self) -> type[ImageMathOperationStrategy]:
-        namespace: dict[str, object] = {
-            "__module__": __name__,
+    def class_attributes(self) -> dict[str, object]:
+        attributes: dict[str, object] = {
             "operation": self.operation,
         }
         if self.numpy_operator is not None:
-            namespace["numpy_operator"] = self.numpy_operator
+            attributes["numpy_operator"] = self.numpy_operator
         if self.logical_operator is not None:
-            namespace["logical_operator"] = self.logical_operator
-        return type(self.class_name, (self.strategy_base,), namespace)
+            attributes["logical_operator"] = self.logical_operator
+        return attributes
 
 
 IMAGE_MATH_OPERATION_STRATEGY_DECLARATIONS = (
@@ -362,9 +364,7 @@ IMAGE_MATH_OPERATION_STRATEGY_DECLARATIONS = (
 )
 
 for image_math_operation_strategy_declaration in IMAGE_MATH_OPERATION_STRATEGY_DECLARATIONS:
-    globals()[image_math_operation_strategy_declaration.class_name] = (
-        image_math_operation_strategy_declaration.materialize()
-    )
+    image_math_operation_strategy_declaration.declare_in(globals())
 
 
 @dataclass(frozen=True)
