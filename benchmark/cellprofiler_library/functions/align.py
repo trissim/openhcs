@@ -8,8 +8,6 @@ from enum import Enum
 from typing import ClassVar
 
 import numpy as np
-import scipy.ndimage as scind
-import scipy.sparse
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
@@ -25,45 +23,43 @@ from openhcs.processing.materialization import csv_materializer
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-    CellProfilerBackendProvider,
 )
 from openhcs.processing.backends.cellprofiler.alignment import AlignmentBackendStrategy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from scipy.fftpack import fft2, ifft2
 
 
-class AlignCropMode(str, Enum):
+class AlignLiteralEnum(str, Enum):
+    """Closed CellProfiler Align literal enum with shared coercion semantics."""
+
+    @classmethod
+    def from_literal(cls, value: "AlignLiteralEnum | str") -> "AlignLiteralEnum":
+        if isinstance(value, cls):
+            return value
+        normalized = value.strip().lower()
+        for mode in cls:
+            if normalized == mode.value.lower():
+                return mode
+        raise ValueError(f"Unsupported {cls.__name__} literal {value!r}.")
+
+
+class AlignCropMode(AlignLiteralEnum):
     """Closed crop modes from legacy CellProfiler Align."""
 
     KEEP_SIZE = "Keep size"
     CROP_TO_ALIGNED_REGION = "Crop to aligned region"
     PAD_IMAGES = "Pad images"
 
-    @classmethod
-    def from_literal(cls, value: "AlignCropMode | str") -> "AlignCropMode":
-        if isinstance(value, cls):
-            return value
-        normalized = value.strip().lower()
-        for mode in cls:
-            if normalized == mode.value.lower():
-                return mode
-        raise ValueError(f"Unsupported Align crop mode {value!r}.")
 
-
-class AlignAdditionalMode(str, Enum):
+class AlignAdditionalMode(AlignLiteralEnum):
     """Closed modes for applying Align shifts to additional outputs."""
 
     SIMILARLY = "Similarly"
 
-    @classmethod
-    def from_literal(cls, value: "AlignAdditionalMode | str") -> "AlignAdditionalMode":
-        if isinstance(value, cls):
-            return value
-        normalized = value.strip().lower()
-        for mode in cls:
-            if normalized == mode.value.lower():
-                return mode
-        raise ValueError(f"Unsupported Align additional-image mode {value!r}.")
+
+AlignAdditionalModes = tuple[AlignAdditionalMode | str, ...]
+AlignImageGeometry = tuple[tuple[int, int], tuple[int, int]]
+AlignGeometryPair = tuple[AlignImageGeometry, AlignImageGeometry]
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,8 +70,8 @@ class AlignCropRequest:
     second_image: np.ndarray
     first_mask: np.ndarray | None
     second_mask: np.ndarray | None
-    offsets: tuple[tuple[int, int], tuple[int, int]]
-    shapes: tuple[tuple[int, int], tuple[int, int]]
+    offsets: AlignImageGeometry
+    shapes: AlignImageGeometry
 
 
 @dataclass(frozen=True, slots=True)
@@ -88,6 +84,92 @@ class AlignShiftMeasurement:
     y_shift: float
 
 
+@dataclass(frozen=True, slots=True)
+class TranslationOffsetRequest:
+    """Inputs for Align translation-offset computation."""
+
+    reference_image: np.ndarray
+    moving_image: np.ndarray
+    method: str
+    first_mask: np.ndarray | None
+    second_mask: np.ndarray | None
+    alignment_backend_provider: BackendProviderInput
+
+    def offset(self) -> tuple[int, int]:
+        """Return integer row/column offsets in CellProfiler's native convention."""
+        reference_pixels = _alignment_pixels(self.reference_image)
+        moving_pixels = _alignment_pixels(self.moving_image)
+        if self.method.strip().lower() == "normalized cross correlation":
+            column_offset, row_offset = _cross_correlation_offset(
+                reference_pixels,
+                moving_pixels,
+            )
+        else:
+            alignment_backend = AlignmentBackendStrategy.for_memory_type(
+                backend_provider=self.alignment_backend_provider,
+            )
+            column_offset, row_offset = alignment_backend.mutual_information_offset(
+                reference_pixels,
+                moving_pixels,
+                _alignment_mask(self.first_mask, reference_pixels.shape),
+                _alignment_mask(self.second_mask, moving_pixels.shape),
+            )
+        return int(row_offset), int(column_offset)
+
+
+@dataclass(frozen=True, slots=True)
+class AlignOutputRequest:
+    """Nominal request for applying one Align output geometry."""
+
+    image: np.ndarray
+    mask: np.ndarray | None
+    metadata: ImagePayloadMetadata
+    offset: tuple[int, int]
+    shape: tuple[int, int]
+
+    def aligned_payload(self) -> np.ndarray | MaskedImagePayload:
+        output_shape = tuple(self.shape) + tuple(np.asarray(self.image).shape[2:])
+        output = np.zeros(output_shape, dtype=np.asarray(self.image).dtype)
+        source_view, output_view = _offset_slice(
+            np.asarray(self.image),
+            output,
+            *self.offset,
+        )
+        output_view[...] = source_view
+
+        source_mask = (
+            np.ones(np.asarray(self.image).shape[:2], dtype=bool)
+            if self.mask is None
+            else np.asarray(self.mask, dtype=bool)
+        )
+        output_mask = np.zeros(tuple(self.shape), dtype=bool)
+        source_mask_view, output_mask_view = _offset_slice(
+            source_mask,
+            output_mask,
+            *self.offset,
+        )
+        output_mask_view[...] = source_mask_view
+        return image_payload_with_context(
+            output,
+            mask=None if np.all(output_mask) else output_mask,
+            metadata=self.metadata,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AlignGeometryProjection:
+    """Projection from mutable offset/shape arrays to immutable Align geometry."""
+
+    offsets: np.ndarray
+    shapes: np.ndarray
+
+    def as_pair(self) -> AlignGeometryPair:
+        return (
+            tuple(tuple(int(value) for value in row) for row in self.offsets),
+            tuple(tuple(int(value) for value in row) for row in self.shapes),
+        )
+
+
 @numpy(contract=ProcessingContract.FLEXIBLE)
 @special_outputs(("align_measurements", csv_materializer(
     fields=["slice_index", "output_index", "x_shift", "y_shift"],
@@ -98,7 +180,7 @@ def align(
     *,
     method: str = "Mutual Information",
     crop_mode: AlignCropMode | str = AlignCropMode.KEEP_SIZE,
-    additional_alignment_modes: tuple[AlignAdditionalMode | str, ...] = (),
+    additional_alignment_modes: AlignAdditionalModes = (),
     alignment_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[object, ...]:
     """Align primary images and apply declared additional-image shifts."""
@@ -110,14 +192,14 @@ def align(
         additional_alignment_modes,
         additional_count=len(images) - 2,
     )
-    row_offset, column_offset = _translation_offset(
-        first_image,
-        second_image,
+    row_offset, column_offset = TranslationOffsetRequest(
+        reference_image=first_image,
+        moving_image=second_image,
         method=method,
         first_mask=masks[0],
         second_mask=masks[1],
         alignment_backend_provider=alignment_backend_provider,
-    )
+    ).offset()
     normalized_crop_mode = AlignCropMode.from_literal(crop_mode)
     offsets, shapes = _adjust_offsets(
         ((0, 0), (row_offset, column_offset)),
@@ -151,13 +233,13 @@ def align(
             crop_mode=normalized_crop_mode,
         )
         outputs.append(
-            _apply_alignment(
-                additional_image,
-                additional_mask,
-                additional_metadata,
-                additional_offset,
-                additional_shape,
-            )
+            AlignOutputRequest(
+                image=additional_image,
+                mask=additional_mask,
+                metadata=additional_metadata,
+                offset=additional_offset,
+                shape=additional_shape,
+            ).aligned_payload()
         )
         additional_measurements.append(
             AlignShiftMeasurement(
@@ -195,13 +277,6 @@ def _image_payloads(image: np.ndarray) -> tuple[np.ndarray, ...]:
     return tuple(data[index] for index in range(data.shape[0]))
 
 
-def _two_image_payload(image: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    payloads = _image_payloads(image)
-    if len(payloads) != 2:
-        raise ValueError("Align requires exactly two stacked image inputs.")
-    return payloads[0], payloads[1]
-
-
 def _image_masks(
     image: np.ndarray,
     images: tuple[np.ndarray, ...],
@@ -220,17 +295,6 @@ def _image_masks(
     raise ValueError("Align mask must be shared 2D mask or one mask per stacked image.")
 
 
-def _two_image_masks(
-    image: np.ndarray,
-    first_image: np.ndarray,
-    second_image: np.ndarray,
-) -> tuple[np.ndarray | None, np.ndarray | None]:
-    masks = _image_masks(image, (first_image, second_image))
-    if len(masks) != 2:
-        raise ValueError("Align requires exactly two stacked image inputs.")
-    return masks[0], masks[1]
-
-
 def _image_metadata(
     image: np.ndarray,
     count: int,
@@ -240,7 +304,7 @@ def _image_metadata(
 
 
 def _additional_alignment_modes(
-    modes: tuple[AlignAdditionalMode | str, ...],
+    modes: AlignAdditionalModes,
     *,
     additional_count: int,
 ) -> tuple[AlignAdditionalMode, ...]:
@@ -277,43 +341,6 @@ def _similarly_aligned_output_geometry(
             "the second input image spatial shape."
         )
     return second_offset, second_shape
-
-
-def _two_image_metadata(
-    image: np.ndarray,
-) -> tuple[ImagePayloadMetadata, ImagePayloadMetadata]:
-    metadata = image_payload_metadata(image)
-    return metadata.for_channel(0), metadata.for_channel(1)
-
-
-def _translation_offset(
-    reference_image: np.ndarray,
-    moving_image: np.ndarray,
-    *,
-    method: str,
-    first_mask: np.ndarray | None,
-    second_mask: np.ndarray | None,
-    alignment_backend_provider: CellProfilerBackendProvider | None,
-) -> tuple[int, int]:
-    """Return integer row/column offsets in CellProfiler's native convention."""
-    reference_pixels = _alignment_pixels(reference_image)
-    moving_pixels = _alignment_pixels(moving_image)
-    if method.strip().lower() == "normalized cross correlation":
-        column_offset, row_offset = _cross_correlation_offset(
-            reference_pixels,
-            moving_pixels,
-        )
-    else:
-        alignment_backend = AlignmentBackendStrategy.for_memory_type(
-            backend_provider=alignment_backend_provider,
-        )
-        column_offset, row_offset = alignment_backend.mutual_information_offset(
-            reference_pixels,
-            moving_pixels,
-            _alignment_mask(first_mask, reference_pixels.shape),
-            _alignment_mask(second_mask, moving_pixels.shape),
-        )
-    return int(row_offset), int(column_offset)
 
 
 def _alignment_pixels(image: np.ndarray) -> np.ndarray:
@@ -391,120 +418,6 @@ def _cross_correlation_offset(
     return int(column_offset), int(row_offset)
 
 
-def _mutual_information_offset_python(
-    reference_pixels: np.ndarray,
-    moving_pixels: np.ndarray,
-    reference_mask: np.ndarray,
-    moving_mask: np.ndarray,
-) -> tuple[int, int]:
-    """Readable reference implementation of legacy MI offset search."""
-    best = _mutual_information(
-        reference_pixels,
-        moving_pixels,
-        reference_mask,
-        moving_mask,
-    )
-    row_offset = 0
-    column_offset = 0
-    while True:
-        previous_row_offset = row_offset
-        previous_column_offset = column_offset
-        for candidate_row in range(previous_row_offset - 1, previous_row_offset + 2):
-            for candidate_column in range(
-                previous_column_offset - 1,
-                previous_column_offset + 2,
-            ):
-                if candidate_row == 0 and candidate_column == 0:
-                    continue
-                moving_slice, reference_slice = _offset_slice(
-                    moving_pixels,
-                    reference_pixels,
-                    candidate_row,
-                    candidate_column,
-                )
-                moving_mask_slice, reference_mask_slice = _offset_slice(
-                    moving_mask,
-                    reference_mask,
-                    candidate_row,
-                    candidate_column,
-                )
-                information = _mutual_information(
-                    reference_slice,
-                    moving_slice,
-                    reference_mask_slice,
-                    moving_mask_slice,
-                )
-                if information > best:
-                    best = information
-                    row_offset = candidate_row
-                    column_offset = candidate_column
-        if row_offset == previous_row_offset and column_offset == previous_column_offset:
-            return int(column_offset), int(row_offset)
-
-
-def _mutual_information(
-    reference_pixels: np.ndarray,
-    moving_pixels: np.ndarray,
-    reference_mask: np.ndarray,
-    moving_mask: np.ndarray,
-) -> float:
-    mask = reference_mask & moving_mask
-    reference_values = reference_pixels[mask]
-    moving_values = moving_pixels[mask]
-    return (
-        _entropy(reference_values)
-        + _entropy(moving_values)
-        - _joint_entropy(reference_values, moving_values)
-    )
-
-
-def _entropy(values: np.ndarray) -> float:
-    if values.size == 0:
-        return 0.0
-    histogram = scind.histogram(
-        values.astype(float),
-        float(np.min(values)),
-        float(np.max(values)),
-        256,
-    )
-    count = np.sum(histogram)
-    if count <= 0 or np.max(histogram) <= 0:
-        return 0.0
-    nonzero = histogram[histogram != 0]
-    return float(np.log2(count) - np.sum(nonzero * np.log2(nonzero)) / count)
-
-
-def _joint_entropy(x_values: np.ndarray, y_values: np.ndarray) -> float:
-    if x_values.size == 0 or y_values.size == 0:
-        return 0.0
-    x_bins = (_stretch_to_unit_interval(x_values) * 255).astype(int)
-    y_bins = (_stretch_to_unit_interval(y_values) * 255).astype(int)
-    paired_bins = (256 * x_bins + y_bins).flatten()
-    histogram = scipy.sparse.coo_matrix(
-        (
-            np.ones(paired_bins.shape, dtype=np.int32),
-            (paired_bins, np.zeros(paired_bins.shape, dtype=np.int32)),
-        )
-    ).toarray()
-    count = np.sum(histogram)
-    if count <= 0 or np.max(histogram) <= 0:
-        return 0.0
-    nonzero = histogram[histogram > 0]
-    return float(np.log2(count) - np.sum(nonzero * np.log2(nonzero)) / count)
-
-
-def _stretch_to_unit_interval(values: np.ndarray) -> np.ndarray:
-    """Linearly stretch finite values to [0, 1] for MI histogram binning."""
-    array = np.asarray(values, dtype=float)
-    if array.size == 0:
-        return array
-    minimum = float(np.min(array))
-    maximum = float(np.max(array))
-    if maximum <= minimum:
-        return np.zeros(array.shape, dtype=float)
-    return (array - minimum) / (maximum - minimum)
-
-
 def _cumsum_quadrant(
     values: np.ndarray,
     *,
@@ -526,14 +439,14 @@ def _prepare_align() -> None:
     moving = np.zeros((32, 32), dtype=np.float32)
     reference[8:20, 9:21] = 1.0
     moving[9:21, 8:20] = 1.0
-    _translation_offset(
-        reference,
-        moving,
+    TranslationOffsetRequest(
+        reference_image=reference,
+        moving_image=moving,
         method="Mutual Information",
         first_mask=None,
         second_mask=None,
-        alignment_backend_provider=None,
-    )
+        alignment_backend_provider=DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    ).offset()
 
 
 def _crop_mode_outputs(
@@ -544,24 +457,24 @@ def _crop_mode_outputs(
     second_mask: np.ndarray | None,
     first_metadata: ImagePayloadMetadata,
     second_metadata: ImagePayloadMetadata,
-    offsets: tuple[tuple[int, int], tuple[int, int]],
-    shapes: tuple[tuple[int, int], tuple[int, int]],
+    offsets: AlignImageGeometry,
+    shapes: AlignImageGeometry,
 ) -> tuple[np.ndarray, np.ndarray]:
     return (
-        _apply_alignment(
-            first_image,
-            first_mask,
-            first_metadata,
-            offsets[0],
-            shapes[0],
-        ),
-        _apply_alignment(
-            second_image,
-            second_mask,
-            second_metadata,
-            offsets[1],
-            shapes[1],
-        ),
+        AlignOutputRequest(
+            image=first_image,
+            mask=first_mask,
+            metadata=first_metadata,
+            offset=offsets[0],
+            shape=shapes[0],
+        ).aligned_payload(),
+        AlignOutputRequest(
+            image=second_image,
+            mask=second_mask,
+            metadata=second_metadata,
+            offset=offsets[1],
+            shape=shapes[1],
+        ).aligned_payload(),
     )
 
 
@@ -578,10 +491,7 @@ class AlignCropModeStrategy(ABC, metaclass=AutoRegisterMeta):
         return cls.__registry__[crop_mode.value]()
 
     @abstractmethod
-    def apply(self, request: AlignCropRequest) -> tuple[
-        tuple[tuple[int, int], tuple[int, int]],
-        tuple[tuple[int, int], tuple[int, int]],
-    ]:
+    def apply(self, request: AlignCropRequest) -> AlignGeometryPair:
         """Return first/second image outputs for one crop mode."""
 
 
@@ -591,10 +501,7 @@ class KeepSizeAlignCropModeStrategy(AlignCropModeStrategy):
     crop_mode = AlignCropMode.KEEP_SIZE
     crop_mode_label = crop_mode.value
 
-    def apply(self, request: AlignCropRequest) -> tuple[
-        tuple[tuple[int, int], tuple[int, int]],
-        tuple[tuple[int, int], tuple[int, int]],
-    ]:
+    def apply(self, request: AlignCropRequest) -> AlignGeometryPair:
         return request.offsets, request.shapes
 
 
@@ -604,10 +511,7 @@ class PadImagesAlignCropModeStrategy(AlignCropModeStrategy):
     crop_mode = AlignCropMode.PAD_IMAGES
     crop_mode_label = crop_mode.value
 
-    def apply(self, request: AlignCropRequest) -> tuple[
-        tuple[tuple[int, int], tuple[int, int]],
-        tuple[tuple[int, int], tuple[int, int]],
-    ]:
+    def apply(self, request: AlignCropRequest) -> AlignGeometryPair:
         return _adjust_offsets_for_padding(request.offsets, request.shapes)
 
 
@@ -617,21 +521,15 @@ class CropToOverlapAlignCropModeStrategy(AlignCropModeStrategy):
     crop_mode = AlignCropMode.CROP_TO_ALIGNED_REGION
     crop_mode_label = crop_mode.value
 
-    def apply(self, request: AlignCropRequest) -> tuple[
-        tuple[tuple[int, int], tuple[int, int]],
-        tuple[tuple[int, int], tuple[int, int]],
-    ]:
+    def apply(self, request: AlignCropRequest) -> AlignGeometryPair:
         return _adjust_offsets_for_cropping(request.offsets, request.shapes)
 
 
 def _adjust_offsets(
-    offsets: tuple[tuple[int, int], tuple[int, int]],
-    shapes: tuple[tuple[int, int], tuple[int, int]],
+    offsets: AlignImageGeometry,
+    shapes: AlignImageGeometry,
     crop_mode: AlignCropMode,
-) -> tuple[
-    tuple[tuple[int, int], tuple[int, int]],
-    tuple[tuple[int, int], tuple[int, int]],
-]:
+) -> AlignGeometryPair:
     return AlignCropModeStrategy.for_crop_mode(crop_mode).apply(
         AlignCropRequest(
             first_image=np.empty(shapes[0]),
@@ -645,79 +543,33 @@ def _adjust_offsets(
 
 
 def _adjust_offsets_for_cropping(
-    offsets: tuple[tuple[int, int], tuple[int, int]],
-    shapes: tuple[tuple[int, int], tuple[int, int]],
-) -> tuple[
-    tuple[tuple[int, int], tuple[int, int]],
-    tuple[tuple[int, int], tuple[int, int]],
-]:
+    offsets: AlignImageGeometry,
+    shapes: AlignImageGeometry,
+) -> AlignGeometryPair:
     offsets_array = np.asarray(offsets, dtype=int)
     shapes_array = np.asarray(shapes, dtype=int)
     offsets_array = offsets_array - np.max(offsets_array, axis=0)[np.newaxis, :]
     shapes_array = shapes_array + offsets_array
     output_shape = np.min(shapes_array, axis=0)
-    return _offsets_and_shapes_tuple(
-        offsets_array,
-        np.tile(output_shape, (len(shapes), 1)),
-    )
+    return AlignGeometryProjection(
+        offsets=offsets_array,
+        shapes=np.tile(output_shape, (len(shapes), 1)),
+    ).as_pair()
 
 
 def _adjust_offsets_for_padding(
-    offsets: tuple[tuple[int, int], tuple[int, int]],
-    shapes: tuple[tuple[int, int], tuple[int, int]],
-) -> tuple[
-    tuple[tuple[int, int], tuple[int, int]],
-    tuple[tuple[int, int], tuple[int, int]],
-]:
+    offsets: AlignImageGeometry,
+    shapes: AlignImageGeometry,
+) -> AlignGeometryPair:
     offsets_array = np.asarray(offsets, dtype=int)
     shapes_array = np.asarray(shapes, dtype=int)
     offsets_array = offsets_array - np.min(offsets_array, axis=0)[np.newaxis, :]
     shapes_array = shapes_array + offsets_array
     output_shape = np.max(shapes_array, axis=0)
-    return _offsets_and_shapes_tuple(
-        offsets_array,
-        np.tile(output_shape, (len(shapes), 1)),
-    )
-
-
-def _offsets_and_shapes_tuple(
-    offsets: np.ndarray,
-    shapes: np.ndarray,
-) -> tuple[
-    tuple[tuple[int, int], tuple[int, int]],
-    tuple[tuple[int, int], tuple[int, int]],
-]:
-    return (
-        tuple(tuple(int(value) for value in row) for row in offsets),
-        tuple(tuple(int(value) for value in row) for row in shapes),
-    )
-
-
-def _apply_alignment(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-    metadata: ImagePayloadMetadata,
-    offset: tuple[int, int],
-    shape: tuple[int, int],
-) -> np.ndarray | MaskedImagePayload:
-    output_shape = tuple(shape) + tuple(np.asarray(image).shape[2:])
-    output = np.zeros(output_shape, dtype=np.asarray(image).dtype)
-    source_view, output_view = _offset_slice(np.asarray(image), output, *offset)
-    output_view[...] = source_view
-
-    source_mask = (
-        np.ones(np.asarray(image).shape[:2], dtype=bool)
-        if mask is None
-        else np.asarray(mask, dtype=bool)
-    )
-    output_mask = np.zeros(tuple(shape), dtype=bool)
-    source_mask_view, output_mask_view = _offset_slice(source_mask, output_mask, *offset)
-    output_mask_view[...] = source_mask_view
-    return image_payload_with_context(
-        output,
-        mask=None if np.all(output_mask) else output_mask,
-        metadata=metadata,
-    )
+    return AlignGeometryProjection(
+        offsets=offsets_array,
+        shapes=np.tile(output_shape, (len(shapes), 1)),
+    ).as_pair()
 
 
 def _offset_slice(
