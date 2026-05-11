@@ -660,6 +660,80 @@ class CellProfilerDeclumpMethod(Enum):
     SHAPE = "shape"
 
 
+class FillHolesOption(Enum):
+    """CellProfiler IdentifyPrimaryObjects hole-fill phase policy."""
+
+    NEVER = ("never", False, False)
+    AFTER_BOTH = ("after_both", True, True)
+    AFTER_DECLUMP = ("after_declump", False, True)
+
+    def __new__(
+        cls,
+        value: str,
+        fill_before_declump: bool,
+        fill_after_declump: bool,
+    ):
+        option = object.__new__(cls)
+        option._value_ = value
+        option.fill_before_declump = fill_before_declump
+        option.fill_after_declump = fill_after_declump
+        return option
+
+    def before_declump_requested(self, *, use_advanced_settings: bool) -> bool:
+        """Return whether CP fills binary foreground holes before declumping."""
+        return (not use_advanced_settings) or self.fill_before_declump
+
+    def after_declump_requested(self, *, use_advanced_settings: bool) -> bool:
+        """Return whether CP fills labeled-object holes after declumping/filtering."""
+        return (not use_advanced_settings) or self.fill_after_declump
+
+
+CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE = 7.0
+
+
+@dataclass(frozen=True, slots=True)
+class DeclumpingMaximaGeometry:
+    """CellProfiler declumping maxima resize and suppression geometry."""
+
+    image_resize_factor: float
+    suppress_size: float
+
+    @classmethod
+    def from_cellprofiler_settings(
+        cls,
+        *,
+        min_diameter: int,
+        low_res_maxima: bool,
+        automatic_suppression: bool,
+        maxima_suppression_size: float,
+    ) -> "DeclumpingMaximaGeometry":
+        if min_diameter > 10 and low_res_maxima:
+            image_resize_factor = 10.0 / float(min_diameter)
+            if automatic_suppression:
+                return cls(
+                    image_resize_factor,
+                    CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE,
+                )
+            return cls(
+                image_resize_factor,
+                manual_declumping_size(maxima_suppression_size)
+                * image_resize_factor
+                + 0.5,
+            )
+
+        if automatic_suppression:
+            return cls(1.0, float(min_diameter) / 1.5)
+        return cls(1.0, manual_declumping_size(maxima_suppression_size))
+
+
+def manual_declumping_size(size: float) -> float:
+    """Return the configured manual CP declumping size."""
+    size = float(size)
+    if size <= 0:
+        return 0.0
+    return size
+
+
 class MorphologyBackendStrategy(
     CellProfilerBackendStrategyMixin,
     ABC,
@@ -4276,9 +4350,11 @@ __all__ = [
     "CellProfilerDeclumpMethod",
     "CombineObjectsStats",
     "CombineObjectsStrategy",
+    "DeclumpingMaximaGeometry",
     "ExpandDefinedPixelsStrategy",
     "ExpandInfiniteStrategy",
     "ExpandShrinkOperationStrategy",
+    "FillHolesOption",
     "HolePredicate",
     "MaskObjectsOutputLabels",
     "MaskObjectsPlaneOperation",
@@ -4293,6 +4369,7 @@ __all__ = [
     "RepeatMode",
     "RepeatModeStrategy",
     "apply_morph_operation",
+    "manual_declumping_size",
     "positive_dense_label_count",
     "prepare_expand_or_shrink_objects",
 ]

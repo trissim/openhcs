@@ -31,14 +31,13 @@ from benchmark.cellprofiler_library.functions.imagemath import image_math
 from benchmark.cellprofiler_library.functions.maskimage import mask_image
 from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     FillHolesOption,
-    CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE,
-    _declumping_maxima_geometry,
-    _fill_after_declump_requested,
-    _fill_before_declump_requested,
     _filter_border_objects,
-    _declumping_suppression_footprint,
-    _manual_declumping_size,
     identify_primary_objects,
+)
+from openhcs.processing.backends.cellprofiler.morphology import (
+    CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE,
+    DeclumpingMaximaGeometry,
+    manual_declumping_size,
 )
 import benchmark.cellprofiler_library.functions.identifyprimaryobjects as identifyprimaryobjects_module
 from benchmark.cellprofiler_library.functions.measurecolocalization import (
@@ -906,17 +905,12 @@ def test_cellprofiler_three_class_otsu_honors_log_transform():
 
 
 def test_identify_primary_objects_basic_mode_fills_holes_like_cellprofiler():
-    assert _fill_before_declump_requested(
-        use_advanced_settings=False,
-        fill_holes=FillHolesOption.AFTER_DECLUMP,
+    assert FillHolesOption.AFTER_DECLUMP.before_declump_requested(
+        use_advanced_settings=False
     )
-    assert _fill_after_declump_requested(
-        use_advanced_settings=False,
-        fill_holes=FillHolesOption.NEVER,
-    )
-    assert not _fill_before_declump_requested(
-        use_advanced_settings=True,
-        fill_holes=FillHolesOption.AFTER_DECLUMP,
+    assert FillHolesOption.NEVER.after_declump_requested(use_advanced_settings=False)
+    assert not FillHolesOption.AFTER_DECLUMP.before_declump_requested(
+        use_advanced_settings=True
     )
 
 
@@ -1156,65 +1150,36 @@ def test_identify_primary_objects_does_not_size_filter_after_hole_fill() -> None
 
 
 def test_identify_primary_objects_declumping_maxima_geometry_matches_public_semantics():
-    assert _declumping_maxima_geometry(
+    def geometry_tuple(**settings):
+        geometry = DeclumpingMaximaGeometry.from_cellprofiler_settings(**settings)
+        return geometry.image_resize_factor, geometry.suppress_size
+
+    assert geometry_tuple(
         min_diameter=8,
         low_res_maxima=True,
         automatic_suppression=True,
         maxima_suppression_size=7.0,
-        declump_method=CellProfilerDeclumpMethod.INTENSITY,
     ) == (1.0, 8.0 / 1.5)
-    assert _declumping_maxima_geometry(
-        min_diameter=8,
-        low_res_maxima=True,
-        automatic_suppression=True,
-        maxima_suppression_size=7.0,
-        declump_method=CellProfilerDeclumpMethod.INTENSITY,
-        median_initial_object_radius=6.2,
-    ) == (1.0, 8.0 / 1.5)
-    assert _declumping_maxima_geometry(
-        min_diameter=8,
-        low_res_maxima=True,
-        automatic_suppression=True,
-        maxima_suppression_size=7.0,
-        declump_method=CellProfilerDeclumpMethod.SHAPE,
-    ) == (1.0, 8.0 / 1.5)
-    assert _declumping_maxima_geometry(
+    assert geometry_tuple(
         min_diameter=20,
         low_res_maxima=True,
         automatic_suppression=True,
         maxima_suppression_size=7.0,
-        declump_method=CellProfilerDeclumpMethod.INTENSITY,
     ) == (0.5, CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE)
-    assert _declumping_maxima_geometry(
+    assert geometry_tuple(
         min_diameter=20,
         low_res_maxima=True,
         automatic_suppression=False,
         maxima_suppression_size=7.0,
-        declump_method=CellProfilerDeclumpMethod.INTENSITY,
     ) == (0.5, 4.0)
-    assert _declumping_maxima_geometry(
-        min_diameter=20,
-        low_res_maxima=True,
-        automatic_suppression=True,
-        maxima_suppression_size=7.0,
-        declump_method=CellProfilerDeclumpMethod.SHAPE,
-    ) == (0.5, CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE)
-    assert _declumping_maxima_geometry(
-        min_diameter=20,
-        low_res_maxima=True,
-        automatic_suppression=False,
-        maxima_suppression_size=7.0,
-        declump_method=CellProfilerDeclumpMethod.SHAPE,
-    ) == (0.5, 4.0)
-    assert _declumping_maxima_geometry(
+    assert geometry_tuple(
         min_diameter=4,
         low_res_maxima=True,
         automatic_suppression=False,
         maxima_suppression_size=4.0,
-        declump_method=CellProfilerDeclumpMethod.INTENSITY,
     ) == (1.0, 4.0)
-    assert _manual_declumping_size(0) == 0.0
-    assert _manual_declumping_size(4) == 4.0
+    assert manual_declumping_size(0) == 0.0
+    assert manual_declumping_size(4) == 4.0
 
 
 def test_identify_primary_objects_declumping_footprint_respects_min_diameter():
@@ -1234,20 +1199,17 @@ def test_identify_primary_objects_declumping_footprint_respects_min_diameter():
 
     morphology = FakeMorphology()
 
-    _declumping_suppression_footprint(
-        morphology,
+    morphology.declumping_suppression_footprint(
         4,
         min_diameter=5,
         declump_method=CellProfilerDeclumpMethod.INTENSITY,
     )
-    _declumping_suppression_footprint(
-        morphology,
+    morphology.declumping_suppression_footprint(
         4,
         min_diameter=4,
         declump_method=CellProfilerDeclumpMethod.INTENSITY,
     )
-    _declumping_suppression_footprint(
-        morphology,
+    morphology.declumping_suppression_footprint(
         2,
         min_diameter=1,
         declump_method=CellProfilerDeclumpMethod.SHAPE,

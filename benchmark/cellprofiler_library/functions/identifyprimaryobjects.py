@@ -10,11 +10,9 @@ import logging
 import numpy as np
 import os
 import time
-from abc import ABC, abstractmethod
-from typing import ClassVar, Tuple
+from typing import Tuple
 from dataclasses import dataclass
 from enum import Enum
-from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_values import (
@@ -42,7 +40,13 @@ from openhcs.processing.backends.cellprofiler.perf_fixtures import capture_array
 from benchmark.cellprofiler_library.functions.watershed import (
     cellprofiler_legacy_watershed,
 )
-from openhcs.processing.backends.cellprofiler.morphology import CellProfilerDeclumpMethod
+from openhcs.processing.backends.cellprofiler.morphology import (
+    CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE,
+    CellProfilerDeclumpMethod,
+    DeclumpingMaximaGeometry,
+    FillHolesOption,
+    manual_declumping_size,
+)
 from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -50,7 +54,6 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendProvider,
 )
 
-CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE = 7.0
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
 
@@ -79,24 +82,6 @@ class WatershedMethod(Enum):
     NONE = "none"
 
 
-class FillHolesOption(Enum):
-    NEVER = ("never", False, False)
-    AFTER_BOTH = ("after_both", True, True)
-    AFTER_DECLUMP = ("after_declump", False, True)
-
-    def __new__(
-        cls,
-        value: str,
-        fill_before_declump: bool,
-        fill_after_declump: bool,
-    ):
-        option = object.__new__(cls)
-        option._value_ = value
-        option.fill_before_declump = fill_before_declump
-        option.fill_after_declump = fill_after_declump
-        return option
-
-
 class ExcessObjectHandling(Enum):
     CONTINUE = ("Continue", False)
     ERASE = ("Erase", True)
@@ -106,100 +91,6 @@ class ExcessObjectHandling(Enum):
         option._value_ = value
         option.erase_excess = erase_excess
         return option
-
-
-def _fill_before_declump_requested(
-    *,
-    use_advanced_settings: bool,
-    fill_holes: FillHolesOption,
-) -> bool:
-    """Return whether CP fills binary foreground holes before declumping."""
-    return (not use_advanced_settings) or fill_holes.fill_before_declump
-
-
-def _fill_after_declump_requested(
-    *,
-    use_advanced_settings: bool,
-    fill_holes: FillHolesOption,
-) -> bool:
-    """Return whether CP fills labeled-object holes after declumping/filtering."""
-    return (not use_advanced_settings) or fill_holes.fill_after_declump
-
-
-def _fill_post_declump_labels(labels: np.ndarray, morphology_backend: object) -> np.ndarray:
-    """Apply CellProfiler's post-declump labeled-hole fill phase."""
-    return morphology_backend.fill_labeled_holes(labels)
-
-
-def _declumping_maxima_geometry(
-    *,
-    min_diameter: int,
-    low_res_maxima: bool,
-    automatic_suppression: bool,
-    maxima_suppression_size: float,
-    declump_method: "CellProfilerDeclumpMethod",
-    median_initial_object_radius: float | None = None,
-) -> tuple[float, float]:
-    """Return ``(image_resize_factor, suppress_size)`` for declumping maxima."""
-    if min_diameter > 10 and low_res_maxima:
-        image_resize_factor = 10.0 / float(min_diameter)
-        if automatic_suppression:
-            return image_resize_factor, 7.0
-        return image_resize_factor, maxima_suppression_size * image_resize_factor + 0.5
-
-    if automatic_suppression:
-        return 1.0, float(min_diameter) / 1.5
-    return 1.0, _manual_declumping_size(maxima_suppression_size)
-
-
-def _manual_declumping_size(size: float) -> float:
-    """Return the configured manual CP declumping size."""
-    size = float(size)
-    if size <= 0:
-        return 0.0
-    return size
-
-
-class WatershedImageBuilder(ABC, metaclass=AutoRegisterMeta):
-    """Build the watershed surface for one closed watershed method."""
-
-    __registry_key__ = "method_label"
-    method_label: ClassVar[str | None] = None
-    method: ClassVar[WatershedMethod | None] = None
-
-    @classmethod
-    def for_method(cls, method: WatershedMethod) -> "WatershedImageBuilder":
-        return cls.__registry__[method.value]()
-
-    @abstractmethod
-    def build(self, image: np.ndarray, binary: np.ndarray) -> np.ndarray:
-        """Return the image used as the watershed surface."""
-
-
-class IntensityWatershedImageBuilder(WatershedImageBuilder):
-    method = WatershedMethod.INTENSITY
-    method_label = method.value
-
-    def build(self, image: np.ndarray, binary: np.ndarray) -> np.ndarray:
-        return 1 - image
-
-
-class ShapeWatershedImageBuilder(WatershedImageBuilder):
-    method = WatershedMethod.SHAPE
-    method_label = method.value
-
-    def build(self, image: np.ndarray, binary: np.ndarray) -> np.ndarray:
-        from scipy import ndimage as ndi
-
-        return -ndi.distance_transform_edt(binary)
-
-
-class PropagateWatershedImageBuilder(WatershedImageBuilder):
-    method = WatershedMethod.PROPAGATE
-    method_label = method.value
-
-    def build(self, image: np.ndarray, binary: np.ndarray) -> np.ndarray:
-        return 1 - image
 
 
 @dataclass
@@ -394,10 +285,7 @@ def identify_primary_objects(
         function="identify_primary_objects",
     )
     # Fill holes if requested (before declumping)
-    if _fill_before_declump_requested(
-        use_advanced_settings=use_advanced_settings,
-        fill_holes=fill_holes,
-    ):
+    if fill_holes.before_declump_requested(use_advanced_settings=use_advanced_settings):
         phase_started_at = time.perf_counter()
         max_hole_size = max_diameter * max_diameter
         binary = morphology.fill_labeled_holes_below_size(
@@ -430,33 +318,29 @@ def identify_primary_objects(
         if automatic_smoothing:
             smooth_size = 2.35 * min_diameter / 3.5
         else:
-            smooth_size = _manual_declumping_size(smoothing_filter_size)
+            smooth_size = manual_declumping_size(smoothing_filter_size)
 
-        initial_areas = np.bincount(labeled_image.ravel())[1:]
-        median_initial_object_radius = (
-            None
-            if initial_areas.size == 0
-            else float(np.sqrt(float(np.median(initial_areas)) / np.pi))
-        )
         declump_backend_method = (
             CellProfilerDeclumpMethod.INTENSITY
             if unclump_method is UnclumpMethod.INTENSITY
             else CellProfilerDeclumpMethod.SHAPE
         )
-        image_resize_factor, suppress_size = _declumping_maxima_geometry(
+        maxima_geometry = DeclumpingMaximaGeometry.from_cellprofiler_settings(
             min_diameter=min_diameter,
             low_res_maxima=low_res_maxima,
             automatic_suppression=automatic_suppression,
             maxima_suppression_size=maxima_suppression_size,
-            declump_method=declump_backend_method,
-            median_initial_object_radius=median_initial_object_radius,
         )
+        image_resize_factor = maxima_geometry.image_resize_factor
+        suppress_size = maxima_geometry.suppress_size
 
-        maxima_mask = _declumping_suppression_footprint(
-            morphology,
-            suppress_size,
-            min_diameter=min_diameter,
-            declump_method=declump_backend_method,
+        maxima_mask = np.asarray(
+            morphology.declumping_suppression_footprint(
+                suppress_size,
+                min_diameter=min_diameter,
+                declump_method=declump_backend_method,
+            ),
+            dtype=bool,
         )
         image_mask = (
             np.ones(img.shape, dtype=bool)
@@ -530,9 +414,7 @@ def identify_primary_objects(
                 watershed_image = -distance
                 watershed_image = watershed_image - np.min(watershed_image)
             else:
-                watershed_image = WatershedImageBuilder.for_method(
-                    watershed_method
-                ).build(img, binary)
+                watershed_image = 1 - img
             watershed_markers = np.zeros(watershed_image.shape, np.int32)
             watershed_markers[markers > 0] = -markers[markers > 0]
             _log_profile(
@@ -603,13 +485,10 @@ def identify_primary_objects(
         )
 
     # CellProfiler fills segmented-object holes after border and size filtering.
-    if _fill_after_declump_requested(
-        use_advanced_settings=use_advanced_settings,
-        fill_holes=fill_holes,
-    ):
+    if fill_holes.after_declump_requested(use_advanced_settings=use_advanced_settings):
         phase_started_at = time.perf_counter()
         capture_array_fixture("ipo_fill_after", labels=labeled_image)
-        labeled_image = _fill_post_declump_labels(labeled_image, morphology)
+        labeled_image = morphology.fill_labeled_holes(labeled_image)
         _log_profile(
             "ipo_fill_after_declump",
             time.perf_counter() - phase_started_at,
@@ -1022,24 +901,6 @@ def _filter_physical_border_objects_numba(
             if label > 0 and remove[label]:
                 output[y, x] = 0
     return output, True
-
-
-def _declumping_suppression_footprint(
-    morphology: object,
-    suppress_size: float,
-    *,
-    min_diameter: float,
-    declump_method: "CellProfilerDeclumpMethod",
-) -> np.ndarray:
-    """Return the backend-provided local-maxima suppression footprint."""
-    return np.asarray(
-        morphology.declumping_suppression_footprint(
-            suppress_size,
-            min_diameter=min_diameter,
-            declump_method=declump_method,
-        ),
-        dtype=bool,
-    )
 
 
 def _prepare_identify_primary_objects() -> None:

@@ -26,9 +26,6 @@ from benchmark.cellprofiler_library.functions.filterobjects import (
     PerObjectAssignmentStrategy,
 )
 from benchmark.cellprofiler_library.functions.graytocolor import GrayToColorSchemeRunner
-from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
-    WatershedImageBuilder,
-)
 from benchmark.converter.image_math_settings import (
     ImageMathOperandFactorSettingResolver,
 )
@@ -98,7 +95,6 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
         FilterSelectionStrategy,
         PerObjectAssignmentStrategy,
         GrayToColorSchemeRunner,
-        WatershedImageBuilder,
         SecondarySegmentationStrategy,
         ThresholdCalculator,
         NeighborDistancePlanner,
