@@ -18,6 +18,10 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.runtime_semantics import (
+    ObjectIntensityZernikeMeasurementRows,
+    ObjectMeasurementValueRow,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -136,6 +140,39 @@ class ZernikeIntensityDebugTrace:
         with path.open("wb") as handle:
             pickle.dump(self, handle, protocol=pickle.HIGHEST_PROTOCOL)
         return path
+
+
+@dataclass(frozen=True, slots=True)
+class IntensityZernikeMeasurementRowsRequest:
+    """Backend request for long-form intensity-Zernike measurement rows."""
+
+    image: np.ndarray
+    labels: np.ndarray
+    max_order: int
+    include_phase: bool
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
+
+    def rows(self) -> list[ObjectMeasurementValueRow]:
+        labels_array = np.asarray(self.labels, dtype=np.int32)
+        object_count = int(labels_array.max()) if labels_array.size else 0
+        if object_count <= 0:
+            return []
+
+        object_ids = np.arange(1, object_count + 1, dtype=np.int32)
+        zernike_indexes, magnitudes, phases = intensity_zernike_moments(
+            self.image,
+            labels_array,
+            object_ids,
+            max_order=int(self.max_order),
+            backend_provider=self.backend_provider,
+        )
+        return ObjectIntensityZernikeMeasurementRows(
+            object_ids=object_ids,
+            zernike_indexes=zernike_indexes,
+            magnitudes=magnitudes,
+            phases=phases,
+            include_phase=self.include_phase,
+        ).rows()
 
 
 _ZERNIKE_LABEL_GEOMETRY_CACHE: OrderedDict[
@@ -644,6 +681,7 @@ def _zernike_indexes_array(max_order: int) -> np.ndarray:
 
 __all__ = [
     "CentrosomeNumpyShapeZernikeBackendStrategy",
+    "IntensityZernikeMeasurementRowsRequest",
     "LegacyFastNumpyShapeZernikeBackendStrategy",
     "ShapeZernikeBackendStrategy",
     "ZernikeIntensityDebugTrace",

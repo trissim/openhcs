@@ -4,7 +4,7 @@ import logging
 import numpy as np
 import os
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable
 from typing import Tuple, List, Any
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import (
@@ -14,24 +14,20 @@ from openhcs.core.pipeline.function_contracts import (
 )
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_semantics import (
-    ObjectIntensityDistributionMeasurementFeature,
-    ObjectMeasurementValueRow,
-    ObjectZernikeDescriptorFeature,
+    ObjectIntensityDistributionMeasurementRows,
     dense_object_label_extent_id_domain,
-    indexed_object_intensity_distribution_feature_name,
-    indexed_object_intensity_zernike_feature_name,
 )
-from openhcs.core.runtime_values import image_payload_data, object_label_dense_array
+from openhcs.core.runtime_values import image_payload_data
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-    CellProfilerBackendProvider,
 )
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
+    IntensityDistributionPlaneInputs,
     radial_distribution_backend,
 )
 from openhcs.processing.backends.cellprofiler.zernike import (
-    intensity_zernike_moments,
+    IntensityZernikeMeasurementRowsRequest,
 )
 from openhcs.interop.cellprofiler.intensity_distribution_settings import (
     IntensityDistributionCenterChoice as CenterChoice,
@@ -99,7 +95,7 @@ def measure_object_intensity_distribution(
         Tuple of (original image, list of measurements)
     """
     total_started_at = time.perf_counter()
-    img_2d, labels_2d = _intensity_distribution_2d_inputs(image, labels)
+    img_2d, labels_2d = IntensityDistributionPlaneInputs(image, labels).arrays()
     
     wants_zernikes = coerce_cellprofiler_enum(ZernikeMode, wants_zernikes)
     object_ids = dense_object_label_extent_id_domain(labels_2d)
@@ -124,22 +120,29 @@ def measure_object_intensity_distribution(
         nobjects=len(object_ids),
         bins=radial_arrays.n_bins,
     )
-    measurements = _intensity_distribution_measurement_rows(
-        radial_arrays,
+    phase_started_at = time.perf_counter()
+    measurements = ObjectIntensityDistributionMeasurementRows(
+        radial_arrays=radial_arrays,
         object_ids=object_ids,
         bin_count=bin_count,
+    ).rows()
+    _log_profile(
+        "idist_radial_rows",
+        time.perf_counter() - phase_started_at,
+        function="measure_object_intensity_distribution",
+        rows=len(measurements),
     )
 
     if wants_zernikes != ZernikeMode.NONE:
         phase_started_at = time.perf_counter()
         measurements.extend(
-            _zernike_measurement_rows(
-                img_2d,
-                labels_2d,
-                wants_zernikes=wants_zernikes,
-                zernike_degree=zernike_degree,
+            IntensityZernikeMeasurementRowsRequest(
+                image=img_2d,
+                labels=labels_2d,
+                max_order=zernike_degree,
+                include_phase=wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE,
                 backend_provider=zernike_backend_provider,
-            )
+            ).rows()
         )
         _log_profile(
             "idist_zernike_rows",
@@ -157,83 +160,6 @@ def measure_object_intensity_distribution(
     return image, measurements
 
 
-def _intensity_distribution_2d_inputs(
-    image: np.ndarray,
-    labels: Any,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Return the 2D image/label plane consumed by this measurement contract."""
-    label_array = object_label_dense_array(labels, dtype=np.int32)
-    if image.ndim == 3:
-        image_2d = image[0]
-        labels_2d = label_array[0] if label_array.ndim == 3 else label_array
-        return image_2d, labels_2d
-    return image, label_array
-
-
-def _intensity_distribution_measurement_rows(
-    radial_arrays: Any,
-    *,
-    object_ids: Sequence[int],
-    bin_count: int,
-) -> list[ObjectMeasurementValueRow]:
-    """Return radial distribution rows for one measured image."""
-    phase_started_at = time.perf_counter()
-    measurements: list[ObjectMeasurementValueRow] = []
-    for bin_idx in range(radial_arrays.n_bins):
-        bin_index = bin_idx + 1
-        radial_cv = radial_arrays.radial_cv_by_bin[bin_idx]
-        for object_label in object_ids:
-            obj_idx = object_label - 1
-            frac_at_d = (
-                float(radial_arrays.fraction_at_distance[obj_idx, bin_idx])
-                if radial_arrays.object_has_pixels[obj_idx]
-                else np.nan
-            )
-            mean_frac = (
-                float(radial_arrays.mean_pixel_fraction[obj_idx, bin_idx])
-                if radial_arrays.object_has_pixels[obj_idx]
-                else np.nan
-            )
-            measurements.extend(
-                (
-                    ObjectMeasurementValueRow(
-                        object_label=object_label,
-                        feature_name=indexed_object_intensity_distribution_feature_name(
-                            ObjectIntensityDistributionMeasurementFeature.FRACTION_AT_DISTANCE,
-                            bin_index=bin_index,
-                            bin_count=bin_count,
-                        ),
-                        result_value=frac_at_d,
-                    ),
-                    ObjectMeasurementValueRow(
-                        object_label=object_label,
-                        feature_name=indexed_object_intensity_distribution_feature_name(
-                            ObjectIntensityDistributionMeasurementFeature.MEAN_FRACTION,
-                            bin_index=bin_index,
-                            bin_count=bin_count,
-                        ),
-                        result_value=mean_frac,
-                    ),
-                    ObjectMeasurementValueRow(
-                        object_label=object_label,
-                        feature_name=indexed_object_intensity_distribution_feature_name(
-                            ObjectIntensityDistributionMeasurementFeature.RADIAL_CV,
-                            bin_index=bin_index,
-                            bin_count=bin_count,
-                        ),
-                        result_value=float(radial_cv[obj_idx]),
-                    ),
-                )
-            )
-    _log_profile(
-        "idist_radial_rows",
-        time.perf_counter() - phase_started_at,
-        function="measure_object_intensity_distribution",
-        rows=len(measurements),
-    )
-    return measurements
-
-
 def _measure_object_intensity_distribution_batch(
     func: Callable[..., Any],
     requests: tuple[RuntimeBatchInvocationRequest, ...],
@@ -249,10 +175,10 @@ def _measure_object_intensity_distribution_batch(
         labels = request.kwargs.get("labels")
         if labels is None:
             return [execute_request(func, item) for item in requests]
-        image_2d, labels_2d = _intensity_distribution_2d_inputs(
+        image_2d, labels_2d = IntensityDistributionPlaneInputs(
             np.asarray(image_payload_data(request.image)),
             labels,
-        )
+        ).arrays()
         images_2d_by_request.append(image_2d)
         labels_2d_by_request.append(labels_2d)
 
@@ -288,125 +214,23 @@ def _measure_object_intensity_distribution_batch(
             wants_scaled=bool(kwargs.get("wants_scaled", True)),
             maximum_radius=int(kwargs.get("maximum_radius", 100)),
         )
-        rows = _intensity_distribution_measurement_rows(
-            radial_arrays,
+        rows = ObjectIntensityDistributionMeasurementRows(
+            radial_arrays=radial_arrays,
             object_ids=object_ids,
             bin_count=int(kwargs.get("bin_count", 4)),
-        )
+        ).rows()
         if wants_zernikes != ZernikeMode.NONE:
             rows.extend(
-                _zernike_measurement_rows(
-                    image_2d,
-                    first_labels,
-                    wants_zernikes=wants_zernikes,
-                    zernike_degree=int(kwargs.get("zernike_degree", 9)),
+                IntensityZernikeMeasurementRowsRequest(
+                    image=image_2d,
+                    labels=first_labels,
+                    max_order=int(kwargs.get("zernike_degree", 9)),
+                    include_phase=wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE,
                     backend_provider=kwargs.get("zernike_backend_provider"),
-                )
+                ).rows()
             )
         outputs.append((request.image, rows))
     return outputs
-
-
-def _zernike_measurement_rows(
-    image: np.ndarray,
-    labels: np.ndarray,
-    *,
-    wants_zernikes: ZernikeMode,
-    zernike_degree: int,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> list[ObjectMeasurementValueRow]:
-    """Return CellProfiler-compatible long-form Zernike measurement rows."""
-    labels_int = object_label_dense_array(labels, dtype=np.int32)
-    object_count = int(labels_int.max()) if labels_int.size else 0
-    if object_count <= 0:
-        return []
-
-    object_ids = np.arange(1, object_count + 1, dtype=np.int32)
-    zernike_indexes, magnitudes, phases = intensity_zernike_moments(
-        image,
-        labels_int,
-        object_ids,
-        max_order=int(zernike_degree),
-        backend_provider=backend_provider,
-    )
-    if len(zernike_indexes) == 0:
-        return []
-
-    rows: list[ObjectMeasurementValueRow] = []
-
-    for index, (n, m) in enumerate(zernike_indexes):
-        for object_label, magnitude in zip(
-            object_ids,
-            magnitudes[:, index],
-            strict=True,
-        ):
-            rows.append(
-                ObjectMeasurementValueRow(
-                    object_label=int(object_label),
-                    feature_name=indexed_object_intensity_zernike_feature_name(
-                        ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
-                        degree=int(n),
-                        repetition=int(m),
-                    ),
-                    result_value=float(magnitude),
-                )
-            )
-
-        if wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE:
-            for object_label, phase in zip(
-                object_ids,
-                phases[:, index],
-                strict=True,
-            ):
-                rows.append(
-                    ObjectMeasurementValueRow(
-                        object_label=int(object_label),
-                        feature_name=indexed_object_intensity_zernike_feature_name(
-                            ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
-                            degree=int(n),
-                            repetition=int(m),
-                        ),
-                        result_value=float(phase),
-                    )
-                )
-
-    return rows
-
-
-def _empty_zernike_measurement_rows(
-    object_count: int,
-    zernike_indexes: list[tuple[int, int]],
-    *,
-    wants_zernikes: ZernikeMode,
-) -> list[ObjectMeasurementValueRow]:
-    rows: list[ObjectMeasurementValueRow] = []
-    for n, m in zernike_indexes:
-        for object_label in range(1, object_count + 1):
-            rows.append(
-                ObjectMeasurementValueRow(
-                    object_label=object_label,
-                    feature_name=indexed_object_intensity_zernike_feature_name(
-                        ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
-                        degree=int(n),
-                        repetition=int(m),
-                    ),
-                    result_value=np.nan,
-                )
-            )
-        if wants_zernikes == ZernikeMode.MAGNITUDES_AND_PHASE:
-            for object_label in range(1, object_count + 1):
-                rows.append(
-                    ObjectMeasurementValueRow(
-                        object_label=object_label,
-                        feature_name=indexed_object_intensity_zernike_feature_name(
-                            ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
-                            degree=int(n),
-                            repetition=int(m),
-                        ),
-                        result_value=np.nan,
-                    )
-                )
-    return rows
 
 
 def _prepare_measure_object_intensity_distribution() -> None:

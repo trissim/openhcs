@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from functools import lru_cache
@@ -1389,6 +1389,76 @@ def indexed_object_intensity_distribution_feature_name(
     return f"IntensityDistribution_{feature.value}_{int(bin_index)}of{int(bin_count)}"
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectIntensityDistributionMeasurementRows:
+    """Materialize long-form object radial intensity-distribution rows."""
+
+    radial_arrays: Any
+    object_ids: Sequence[int]
+    bin_count: int
+
+    def rows(self) -> list[ObjectMeasurementValueRow]:
+        object_ids = tuple(int(object_id) for object_id in self.object_ids)
+        rows: list[ObjectMeasurementValueRow] = []
+        for bin_idx in range(self.radial_arrays.n_bins):
+            bin_index = bin_idx + 1
+            radial_cv = self.radial_arrays.radial_cv_by_bin[bin_idx]
+            for object_label in object_ids:
+                obj_idx = object_label - 1
+                object_has_pixels = bool(self.radial_arrays.object_has_pixels[obj_idx])
+                frac_at_d = (
+                    float(self.radial_arrays.fraction_at_distance[obj_idx, bin_idx])
+                    if object_has_pixels
+                    else np.nan
+                )
+                mean_frac = (
+                    float(self.radial_arrays.mean_pixel_fraction[obj_idx, bin_idx])
+                    if object_has_pixels
+                    else np.nan
+                )
+                rows.extend(
+                    (
+                        self._row(
+                            ObjectIntensityDistributionMeasurementFeature.FRACTION_AT_DISTANCE,
+                            object_label=object_label,
+                            bin_index=bin_index,
+                            result_value=frac_at_d,
+                        ),
+                        self._row(
+                            ObjectIntensityDistributionMeasurementFeature.MEAN_FRACTION,
+                            object_label=object_label,
+                            bin_index=bin_index,
+                            result_value=mean_frac,
+                        ),
+                        self._row(
+                            ObjectIntensityDistributionMeasurementFeature.RADIAL_CV,
+                            object_label=object_label,
+                            bin_index=bin_index,
+                            result_value=float(radial_cv[obj_idx]),
+                        ),
+                    )
+                )
+        return rows
+
+    def _row(
+        self,
+        feature: ObjectIntensityDistributionMeasurementFeature,
+        *,
+        object_label: int,
+        bin_index: int,
+        result_value: float,
+    ) -> ObjectMeasurementValueRow:
+        return ObjectMeasurementValueRow(
+            object_label=object_label,
+            feature_name=indexed_object_intensity_distribution_feature_name(
+                feature,
+                bin_index=bin_index,
+                bin_count=self.bin_count,
+            ),
+            result_value=result_value,
+        )
+
+
 @lru_cache(maxsize=None)
 def indexed_object_intensity_zernike_feature_name(
     feature: ObjectZernikeDescriptorFeature | str,
@@ -1405,6 +1475,72 @@ def indexed_object_intensity_zernike_feature_name(
     return ObjectIntensityZernikeFeatureNameStrategy.for_enum_member(
         feature
     ).feature_name(degree=degree, repetition=repetition)
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectIntensityZernikeMeasurementRows:
+    """Materialize long-form object intensity-Zernike rows from backend arrays."""
+
+    object_ids: Sequence[int]
+    zernike_indexes: Sequence[tuple[int, int]]
+    magnitudes: Any
+    phases: Any
+    include_phase: bool
+
+    def rows(self) -> list[ObjectMeasurementValueRow]:
+        """Return rows in canonical magnitude-then-phase feature order."""
+        object_ids = np.asarray(self.object_ids, dtype=np.int32)
+        zernike_indexes = tuple((int(n), int(m)) for n, m in self.zernike_indexes)
+        if object_ids.size == 0 or len(zernike_indexes) == 0:
+            return []
+
+        magnitude_values = np.asarray(self.magnitudes, dtype=np.float64)
+        phase_values = np.asarray(self.phases, dtype=np.float64)
+        rows: list[ObjectMeasurementValueRow] = []
+        for index, (degree, repetition) in enumerate(zernike_indexes):
+            rows.extend(
+                self._descriptor_rows(
+                    ObjectZernikeDescriptorFeature.INTENSITY_MAGNITUDE,
+                    object_ids=object_ids,
+                    values=magnitude_values[:, index],
+                    degree=degree,
+                    repetition=repetition,
+                )
+            )
+            if self.include_phase:
+                rows.extend(
+                    self._descriptor_rows(
+                        ObjectZernikeDescriptorFeature.INTENSITY_PHASE,
+                        object_ids=object_ids,
+                        values=phase_values[:, index],
+                        degree=degree,
+                        repetition=repetition,
+                    )
+                )
+        return rows
+
+    @staticmethod
+    def _descriptor_rows(
+        feature: ObjectZernikeDescriptorFeature,
+        *,
+        object_ids: np.ndarray,
+        values: np.ndarray,
+        degree: int,
+        repetition: int,
+    ) -> list[ObjectMeasurementValueRow]:
+        feature_name = indexed_object_intensity_zernike_feature_name(
+            feature,
+            degree=degree,
+            repetition=repetition,
+        )
+        return [
+            ObjectMeasurementValueRow(
+                object_label=int(object_label),
+                feature_name=feature_name,
+                result_value=float(value),
+            )
+            for object_label, value in zip(object_ids, values, strict=True)
+        ]
 
 
 class MeasurementRowAxisField(str, Enum):

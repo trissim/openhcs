@@ -16,6 +16,7 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -128,6 +129,23 @@ class RadialLabelGeometry:
 
     d_to_edge: np.ndarray
     center_fields: RadialCenterDistanceFields
+
+
+@dataclass(frozen=True, slots=True)
+class IntensityDistributionPlaneInputs:
+    """2D image/label plane consumed by intensity-distribution measurement."""
+
+    image: np.ndarray
+    labels: object
+
+    def arrays(self) -> tuple[np.ndarray, np.ndarray]:
+        label_array = object_label_dense_array(self.labels, dtype=np.int32)
+        image_array = np.asarray(self.image)
+        if image_array.ndim == 3:
+            image_2d = image_array[0]
+            labels_2d = label_array[0] if label_array.ndim == 3 else label_array
+            return image_2d, labels_2d
+        return image_array, label_array
 
 
 class RadialDistributionBackendStrategy(
