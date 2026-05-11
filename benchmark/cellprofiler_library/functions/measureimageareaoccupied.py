@@ -89,21 +89,48 @@ class AreaOccupiedMeasurement:
         )
 
 
-def _area_occupied_measurement(
-    area_occupied: float,
-    perimeter_value: float,
-    total_area: float,
-    *,
-    slice_index: int = 0,
-    source_image_name: str | None = None,
-) -> AreaOccupiedMeasurement:
-    return AreaOccupiedMeasurement.from_area(
-        area_occupied=area_occupied,
-        perimeter=perimeter_value,
-        total_area=total_area,
-        slice_index=slice_index,
-        source_image_name=source_image_name,
-    )
+@dataclass(frozen=True, slots=True)
+class BinaryAreaOccupiedRequest:
+    """Measure occupied area for one binary image plane."""
+
+    image: np.ndarray
+    slice_index: int = 0
+    source_image_name: str | None = None
+
+    def measure(self) -> tuple[np.ndarray, AreaOccupiedMeasurement]:
+        binary_mask = self.image > 0
+        area_occupied, perimeter_value = binary_area_and_perimeter_2d(binary_mask)
+        measurement = AreaOccupiedMeasurement.from_area(
+            area_occupied=area_occupied,
+            perimeter=perimeter_value,
+            total_area=float(np.prod(self.image.shape)),
+            slice_index=self.slice_index,
+            source_image_name=self.source_image_name,
+        )
+        return self.image, measurement
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelsAreaOccupiedRequest:
+    """Measure occupied area for one object-label plane."""
+
+    image: np.ndarray
+    labels: np.ndarray
+    slice_index: int = 0
+    source_image_name: str | None = None
+
+    def measure(self) -> tuple[np.ndarray, AreaOccupiedMeasurement]:
+        label_array = object_label_dense_array(self.labels)
+        area_occupied, perimeter_value = label_area_and_perimeter(label_array)
+        measurement = AreaOccupiedMeasurement.from_area(
+            area_occupied=area_occupied,
+            perimeter=perimeter_value,
+            total_area=float(np.prod(label_array.shape)),
+            slice_index=self.slice_index,
+            source_image_name=self.source_image_name,
+        )
+        object_region_mask = (label_array > 0).astype(np.asarray(self.image).dtype)
+        return object_region_mask, measurement
 
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
@@ -140,20 +167,20 @@ def measure_image_area_occupied(
     object_index = 0
     for row_index, row in enumerate(rows):
         if row.operand is OperandChoice.BINARY_IMAGE:
-            output_image, measurement = _measure_binary_image(
-                binary_images[binary_index],
+            output_image, measurement = BinaryAreaOccupiedRequest(
+                image=binary_images[binary_index],
                 slice_index=row_index,
                 source_image_name=row.input_name,
-            )
+            ).measure()
             binary_index += 1
         else:
             labels = object_labels[object_index]
-            output_image, measurement = _measure_object_labels(
-                _reference_image_for_labels(image, labels),
-                labels,
+            output_image, measurement = ObjectLabelsAreaOccupiedRequest(
+                image=_reference_image_for_labels(image, labels),
+                labels=labels,
                 slice_index=row_index,
                 source_image_name=row.input_name,
-            )
+            ).measure()
             object_index += 1
         measurements.append(measurement)
         if row.retained_image_name is not None:
@@ -182,7 +209,10 @@ def measure_image_area_occupied_binary(
     Returns:
         Tuple of (original image, AreaOccupiedMeasurement)
     """
-    return _measure_binary_image(image, source_image_name=source_image_name)
+    return BinaryAreaOccupiedRequest(
+        image=image,
+        source_image_name=source_image_name,
+    ).measure()
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -206,7 +236,11 @@ def measure_image_area_occupied_objects(
     Returns:
         Tuple of (original image, AreaOccupiedMeasurement)
     """
-    return _measure_object_labels(image, labels, source_image_name=source_image_name)
+    return ObjectLabelsAreaOccupiedRequest(
+        image=image,
+        labels=labels,
+        source_image_name=source_image_name,
+    ).measure()
 
 
 def _area_occupied_runtime_rows(
@@ -258,45 +292,7 @@ def _binary_images_from_payload(
     return tuple(image[index] for index in range(binary_image_count))
 
 
-def _measure_binary_image(
-    image: np.ndarray,
-    *,
-    slice_index: int = 0,
-    source_image_name: str | None = None,
-) -> tuple[np.ndarray, AreaOccupiedMeasurement]:
-    binary_mask = image > 0
-    area_occupied, perimeter_value = binary_area_and_perimeter_2d(binary_mask)
-    measurement = _area_occupied_measurement(
-        area_occupied,
-        perimeter_value,
-        float(np.prod(image.shape)),
-        slice_index=slice_index,
-        source_image_name=source_image_name,
-    )
-    return image, measurement
-
-
-def _measure_object_labels(
-    image: np.ndarray,
-    labels: np.ndarray,
-    *,
-    slice_index: int = 0,
-    source_image_name: str | None = None,
-) -> tuple[np.ndarray, AreaOccupiedMeasurement]:
-    label_array = object_label_dense_array(labels)
-    area_occupied, perimeter_value = _label_area_and_perimeter(label_array)
-    measurement = _area_occupied_measurement(
-        area_occupied,
-        perimeter_value,
-        float(np.prod(label_array.shape)),
-        slice_index=slice_index,
-        source_image_name=source_image_name,
-    )
-    object_region_mask = (label_array > 0).astype(getattr(image, "dtype", label_array.dtype))
-    return object_region_mask, measurement
-
-
-def _label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
+def label_area_and_perimeter(labels: np.ndarray) -> tuple[float, float]:
     label_array = object_label_dense_array(labels)
     if label_array.ndim <= 2:
         return _label_plane_area_and_perimeter(label_array)
@@ -346,53 +342,56 @@ class VolumeOccupiedMeasurement:
         )
 
 
-def _volume_occupied_measurement(
-    volume_occupied: float,
-    surface_area_value: float,
-    total_volume: float,
-) -> VolumeOccupiedMeasurement:
-    return VolumeOccupiedMeasurement.from_volume(
-        volume_occupied=volume_occupied,
-        surface_area=surface_area_value,
-        total_volume=total_volume,
-    )
+@dataclass(frozen=True, slots=True)
+class SurfaceAreaRequest:
+    """Compute rounded surface area for one 3D label image."""
+
+    label_image: np.ndarray
+    spacing: Optional[Tuple[float, ...]] = None
+
+    def surface_area(self) -> float:
+        from skimage.measure import marching_cubes, mesh_surface_area
+
+        spacing = self.spacing
+        label_image = np.asarray(self.label_image)
+        if spacing is None:
+            spacing = (1.0,) * label_image.ndim
+
+        unique_labels = np.unique(label_image)
+        unique_labels = unique_labels[unique_labels != 0]
+        if len(unique_labels) == 0:
+            return 0.0
+
+        total_surface = 0.0
+        for label in unique_labels:
+            binary_mask = (label_image == label).astype(np.float32)
+            try:
+                verts, faces, _, _ = marching_cubes(
+                    binary_mask,
+                    spacing=spacing,
+                    level=0.5,
+                    method="lorensen",
+                )
+                total_surface += mesh_surface_area(verts, faces)
+            except (ValueError, RuntimeError):
+                continue
+        return float(np.round(total_surface))
 
 
-def _compute_surface_area(label_image: np.ndarray, spacing: Optional[Tuple[float, ...]] = None) -> float:
-    """
-    Compute surface area of labeled regions using marching cubes.
-    
-    Args:
-        label_image: 3D label image
-        spacing: Voxel spacing (z, y, x)
-        
-    Returns:
-        Total surface area
-    """
-    from skimage.measure import marching_cubes, mesh_surface_area
-    
-    if spacing is None:
-        spacing = (1.0,) * label_image.ndim
-    
-    unique_labels = np.unique(label_image)
-    unique_labels = unique_labels[unique_labels != 0]  # Exclude background
-    
-    if len(unique_labels) == 0:
-        return 0.0
-    
-    total_surface = 0.0
-    for label in unique_labels:
-        binary_mask = (label_image == label).astype(np.float32)
-        try:
-            verts, faces, _, _ = marching_cubes(
-                binary_mask, spacing=spacing, level=0.5, method="lorensen"
-            )
-            total_surface += mesh_surface_area(verts, faces)
-        except (ValueError, RuntimeError):
-            # marching_cubes can fail on very small objects
-            continue
-    
-    return float(np.round(total_surface))
+@dataclass(frozen=True, slots=True)
+class VolumeOccupiedRequest:
+    """Materialize a volume-occupied measurement from voxel totals."""
+
+    volume_occupied: float
+    surface_area: float
+    total_volume: float
+
+    def measurement(self) -> VolumeOccupiedMeasurement:
+        return VolumeOccupiedMeasurement.from_volume(
+            volume_occupied=self.volume_occupied,
+            surface_area=self.surface_area,
+            total_volume=self.total_volume,
+        )
 
 
 @numpy(contract=ProcessingContract.PURE_3D)
@@ -420,20 +419,21 @@ def measure_image_volume_occupied_binary(
     
     # Calculate surface area
     if volume_occupied > 0:
-        surface_area_value = _compute_surface_area(
-            binary_mask.astype(np.int32), spacing=spacing
-        )
+        surface_area_value = SurfaceAreaRequest(
+            binary_mask.astype(np.int32),
+            spacing=spacing,
+        ).surface_area()
     else:
         surface_area_value = 0.0
     
     # Total volume is the total number of voxels
     total_volume = float(np.prod(image.shape))
     
-    measurement = _volume_occupied_measurement(
-        volume_occupied,
-        surface_area_value,
-        total_volume,
-    )
+    measurement = VolumeOccupiedRequest(
+        volume_occupied=volume_occupied,
+        surface_area=surface_area_value,
+        total_volume=total_volume,
+    ).measurement()
     
     return image, measurement
 
@@ -465,20 +465,21 @@ def measure_image_volume_occupied_objects(
     
     # Calculate surface area
     if volume_occupied > 0:
-        surface_area_value = _compute_surface_area(
-            labels_array, spacing=spacing
-        )
+        surface_area_value = SurfaceAreaRequest(
+            labels_array,
+            spacing=spacing,
+        ).surface_area()
     else:
         surface_area_value = 0.0
     
     # Total volume is the total number of voxels
     total_volume = float(np.prod(labels_array.shape))
     
-    measurement = _volume_occupied_measurement(
-        volume_occupied,
-        surface_area_value,
-        total_volume,
-    )
+    measurement = VolumeOccupiedRequest(
+        volume_occupied=volume_occupied,
+        surface_area=surface_area_value,
+        total_volume=total_volume,
+    ).measurement()
     
     return image, measurement
 
@@ -491,5 +492,5 @@ def _prepare_measure_image_area_occupied() -> None:
     labels = np.zeros((64, 64), dtype=np.int32)
     labels[8:24, 8:24] = 1
     labels[32:56, 32:56] = 2
-    _measure_binary_image(binary)
-    _measure_object_labels(binary, labels)
+    BinaryAreaOccupiedRequest(binary).measure()
+    ObjectLabelsAreaOccupiedRequest(binary, labels).measure()
