@@ -952,6 +952,57 @@ def test_cellprofiler_adapter_broadcasts_single_slice_measurements_for_repeated_
         np.testing.assert_allclose(value, [5.0])
 
 
+def test_cellprofiler_adapter_measurement_query_cache_is_store_scoped():
+    first, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    second, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
+    for adapter, values in (
+        (first, (20.0, 80.0)),
+        (second, (4.0, 12.0)),
+    ):
+        adapter.add_objects(NUCLEI, labels)
+        adapter.add_measurements(
+            NUCLEI_MEASUREMENTS,
+            [
+                {
+                    "object_name": NUCLEI,
+                    "object_label": object_label,
+                    "feature_name": "AreaShape_Area",
+                    "result_value": value,
+                }
+                for object_label, value in enumerate(values, start=1)
+            ],
+            object_name=NUCLEI,
+        )
+
+    np.testing.assert_allclose(
+        first.measurement_values_for_label_slices(
+            NUCLEI,
+            "AreaShape_Area",
+            labels,
+        )[0],
+        [20.0, 80.0],
+    )
+    np.testing.assert_allclose(
+        second.measurement_values_for_label_slices(
+            NUCLEI,
+            "AreaShape_Area",
+            labels,
+        )[0],
+        [4.0, 12.0],
+    )
+
+
 def test_cellprofiler_adapter_adds_relationships_after_objects_exist():
     adapter, _filemanager = _adapter(
         {

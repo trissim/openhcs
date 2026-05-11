@@ -75,11 +75,6 @@ _MEASUREMENT_TABLE_CACHE: WeakKeyDictionary[
     RuntimeValueStore,
     dict[tuple[int, str, str | None], tuple[MeasurementTable, ...]],
 ] = WeakKeyDictionary()
-_ROW_SEQUENCE_VALUE_INDEX_CACHE: dict[
-    tuple[int, str, tuple[str, ...]],
-    "MeasurementRowSequenceFeatureValueIndex | None",
-] = {}
-
 
 @dataclass(frozen=True, slots=True)
 class RuntimeArtifactQueryContext:
@@ -849,16 +844,7 @@ def _row_sequence_measurement_value_index(
     """Return a feature vector directly from homogeneous row sequences."""
     table_rows = table.rows
     if not isinstance(table_rows, ColumnarRows) and isinstance(table_rows, list | tuple):
-        cache_key = (
-            id(table_rows),
-            query.feature_name,
-            query.candidates,
-        )
-        cached = _ROW_SEQUENCE_VALUE_INDEX_CACHE.get(cache_key)
-        if cached is not None or cache_key in _ROW_SEQUENCE_VALUE_INDEX_CACHE:
-            return None if cached is None else cached.for_object(query.object_name)
         value_index = MeasurementRowSequenceFeatureValueIndex.from_table(table, query)
-        _ROW_SEQUENCE_VALUE_INDEX_CACHE[cache_key] = value_index
         return None if value_index is None else value_index.for_object(query.object_name)
     return _uncached_row_sequence_measurement_value_index(table, query)
 

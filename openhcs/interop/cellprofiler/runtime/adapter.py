@@ -1953,6 +1953,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     def clear_measurement_query_cache(self) -> None:
         """Clear cached measurement table queries after measurement writes."""
         self._measurement_cache.clear()
+        self.object_feature_value_cache().clear()
+        self.object_label_measurement_values_cache().clear()
+        self.object_measurement_table_cache().clear()
+        self.object_measurement_table_index_cache().clear()
 
     def _require_output_plan(
         self,
