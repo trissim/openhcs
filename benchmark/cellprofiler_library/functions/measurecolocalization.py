@@ -35,7 +35,10 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.cellprofiler.colocalization import (
     ColocalizationCostesBackendStrategy,
+    costes_above_threshold_mask,
     costes_backend,
+    object_colocalization_base_reductions,
+    object_colocalization_threshold_reductions,
     thresholded_colocalization_metrics,
 )
 from openhcs.processing.materialization import csv_materializer
@@ -342,115 +345,6 @@ class ColocalizationObjectLabelContext:
             aggregation=aggregation,
             object_counts=aggregation.counts(),
         )
-
-
-@njit(cache=True)
-def _object_colocalization_base_reductions(
-    first_pixels: np.ndarray,
-    second_pixels: np.ndarray,
-    object_labels: np.ndarray,
-    object_count: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    counts = np.zeros(object_count, dtype=np.float64)
-    sum1 = np.zeros(object_count, dtype=np.float64)
-    sum2 = np.zeros(object_count, dtype=np.float64)
-    sum1_sq = np.zeros(object_count, dtype=np.float64)
-    sum2_sq = np.zeros(object_count, dtype=np.float64)
-    product_sum = np.zeros(object_count, dtype=np.float64)
-    max1 = np.zeros(object_count, dtype=np.float64)
-    max2 = np.zeros(object_count, dtype=np.float64)
-    for index in range(object_labels.size):
-        label_index = int(object_labels[index]) - 1
-        first_value = float(first_pixels[index])
-        second_value = float(second_pixels[index])
-        counts[label_index] += 1.0
-        sum1[label_index] += first_value
-        sum2[label_index] += second_value
-        sum1_sq[label_index] += first_value * first_value
-        sum2_sq[label_index] += second_value * second_value
-        product_sum[label_index] += first_value * second_value
-        if first_value > max1[label_index]:
-            max1[label_index] = first_value
-        if second_value > max2[label_index]:
-            max2[label_index] = second_value
-    return counts, sum1, sum2, sum1_sq, sum2_sq, product_sum, max1, max2
-
-
-@njit(cache=True)
-def _object_colocalization_threshold_reductions(
-    first_pixels: np.ndarray,
-    second_pixels: np.ndarray,
-    object_labels: np.ndarray,
-    threshold_1: np.ndarray,
-    threshold_2: np.ndarray,
-    costes_threshold_1: float,
-    costes_threshold_2: float,
-    first_costes_denominator_threshold: float,
-    object_count: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    total_first_threshold = np.zeros(object_count, dtype=np.float64)
-    total_second_threshold = np.zeros(object_count, dtype=np.float64)
-    threshold_sum1 = np.zeros(object_count, dtype=np.float64)
-    threshold_sum2 = np.zeros(object_count, dtype=np.float64)
-    threshold_sum1_sq = np.zeros(object_count, dtype=np.float64)
-    threshold_sum2_sq = np.zeros(object_count, dtype=np.float64)
-    threshold_product_sum = np.zeros(object_count, dtype=np.float64)
-    total_first_costes = np.zeros(object_count, dtype=np.float64)
-    total_second_costes = np.zeros(object_count, dtype=np.float64)
-    costes_sum1 = np.zeros(object_count, dtype=np.float64)
-    costes_sum2 = np.zeros(object_count, dtype=np.float64)
-    for index in range(object_labels.size):
-        label_index = int(object_labels[index]) - 1
-        first_value = float(first_pixels[index])
-        second_value = float(second_pixels[index])
-        first_above = first_value >= threshold_1[label_index]
-        second_above = second_value >= threshold_2[label_index]
-        if first_above:
-            total_first_threshold[label_index] += first_value
-        if second_above:
-            total_second_threshold[label_index] += second_value
-        if first_above and second_above:
-            threshold_sum1[label_index] += first_value
-            threshold_sum2[label_index] += second_value
-            threshold_sum1_sq[label_index] += first_value * first_value
-            threshold_sum2_sq[label_index] += second_value * second_value
-            threshold_product_sum[label_index] += first_value * second_value
-        first_above_costes = (
-            first_value >= costes_threshold_1
-            if costes_threshold_1 <= 0.0
-            else first_value > costes_threshold_1
-        )
-        second_above_costes = (
-            second_value >= costes_threshold_2
-            if costes_threshold_2 <= 0.0
-            else second_value > costes_threshold_2
-        )
-        if first_value >= first_costes_denominator_threshold:
-            total_first_costes[label_index] += first_value
-        if second_above_costes:
-            total_second_costes[label_index] += second_value
-        if first_above_costes and second_above_costes:
-            costes_sum1[label_index] += first_value
-            costes_sum2[label_index] += second_value
-    return (
-        total_first_threshold,
-        total_second_threshold,
-        threshold_sum1,
-        threshold_sum2,
-        threshold_sum1_sq,
-        threshold_sum2_sq,
-        threshold_product_sum,
-        total_first_costes,
-        total_second_costes,
-        costes_sum1,
-        costes_sum2,
-    )
-
-
-def _costes_above_threshold(values: np.ndarray, threshold: float) -> np.ndarray:
-    if threshold <= 0:
-        return values >= threshold
-    return values > threshold
 
 
 def _colocalization_measurement(
@@ -937,7 +831,7 @@ def measure_colocalization_objects(
         product_sum,
         max1,
         max2,
-    ) = _object_colocalization_base_reductions(
+    ) = object_colocalization_base_reductions(
         first_pixels,
         second_pixels,
         object_labels,
@@ -1022,7 +916,7 @@ def measure_colocalization_objects(
             _total_second_costes,
             _costes_sum1,
             _costes_sum2,
-        ) = _object_colocalization_threshold_reductions(
+        ) = object_colocalization_threshold_reductions(
             first_pixels,
             second_pixels,
             object_labels,
@@ -1077,8 +971,8 @@ def measure_colocalization_objects(
         k2 = _divide_measurements(threshold_product_sum, threshold_sum2_sq)
 
     if options.do_costes and full_fi.size:
-        first_above_costes = _costes_above_threshold(first_pixels, threshold_c1)
-        second_above_costes = _costes_above_threshold(second_pixels, threshold_c2)
+        first_above_costes = costes_above_threshold_mask(first_pixels, threshold_c1)
+        second_above_costes = costes_above_threshold_mask(second_pixels, threshold_c2)
         combined_costes = first_above_costes & second_above_costes
         total_first_costes = (
             label_aggregation.subset(
@@ -1363,7 +1257,7 @@ def _prepare_measure_colocalization_objects() -> None:
     second_pixels = np.linspace(1.0, 0.0, 16, dtype=np.float64)
     object_labels = np.repeat(np.arange(1, 5, dtype=np.int32), 4)
     object_count = 4
-    reductions = _object_colocalization_base_reductions(
+    reductions = object_colocalization_base_reductions(
         first_pixels,
         second_pixels,
         object_labels,
@@ -1371,7 +1265,7 @@ def _prepare_measure_colocalization_objects() -> None:
     )
     threshold_1 = 0.15 * reductions[6]
     threshold_2 = 0.15 * reductions[7]
-    _object_colocalization_threshold_reductions(
+    object_colocalization_threshold_reductions(
         first_pixels,
         second_pixels,
         object_labels,
