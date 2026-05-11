@@ -36,6 +36,7 @@ from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer
 
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from benchmark.cellprofiler_library.functions.smooth import MaskedLinearFilterRequest
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
@@ -91,6 +92,13 @@ class CalculationScope(Enum):
     ALL_FIRST_CYCLE = "all_first_cycle"
     ALL_ACROSS_CYCLES = "all_across_cycles"
 
+    @property
+    def uses_all_images(self) -> bool:
+        return self in {
+            CalculationScope.ALL_FIRST_CYCLE,
+            CalculationScope.ALL_ACROSS_CYCLES,
+        }
+
 
 @dataclass
 class IlluminationStats:
@@ -113,6 +121,79 @@ class SmoothingFilterSizeRequest:
     image_shape: tuple[int, ...]
     object_width: int
     manual_filter_size: int
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationMask:
+    """Mask aligned with illumination input and stack-slice semantics."""
+
+    mask: object | None
+    pixel_data: np.ndarray
+
+    @property
+    def normalized(self) -> np.ndarray | None:
+        if self.mask is None:
+            return None
+        mask_array = np.asarray(self.mask, dtype=bool)
+        if mask_array.shape == self.pixel_data.shape:
+            return mask_array
+        if mask_array.shape == self.pixel_data.shape[-mask_array.ndim :]:
+            return mask_array
+        if (
+            self.pixel_data.ndim == 2
+            and mask_array.ndim == 3
+            and mask_array.shape[0] == 1
+        ):
+            return mask_array[0]
+        return mask_array
+
+    def for_stack_slice(self, slice_index: int) -> np.ndarray | None:
+        mask = self.normalized
+        if mask is None:
+            return None
+        if mask.ndim >= 3 and slice_index < mask.shape[0]:
+            return np.asarray(mask[slice_index], dtype=bool)
+        return mask
+
+    def for_output(self, illumination: np.ndarray) -> np.ndarray | None:
+        mask = self.normalized
+        if mask is None:
+            return None
+        if mask.shape == illumination.shape:
+            return mask
+        if illumination.ndim == 2 and mask.ndim >= 3:
+            return np.any(mask, axis=0)
+        return mask
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationGaussianFilter:
+    """Gaussian filtering semantics for illumination smoothing and dilation."""
+
+    pixel_data: np.ndarray
+    mask: np.ndarray | None
+    sigma: float
+
+    def apply(self) -> np.ndarray:
+        from scipy.ndimage import gaussian_filter
+
+        if self.mask is None:
+            return gaussian_filter(
+                self.pixel_data,
+                self.sigma,
+                mode=NDIMAGE_CONSTANT_MODE,
+                cval=0,
+            )
+        return MaskedLinearFilterRequest(
+            pixels=self.pixel_data,
+            mask=self.mask,
+            operation=lambda image: gaussian_filter(
+                image,
+                self.sigma,
+                mode=NDIMAGE_CONSTANT_MODE,
+                cval=0,
+            ),
+        ).apply()
 
 
 class SmoothingFilterSizeStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -224,11 +305,11 @@ class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method_label = method.value
 
     def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
-        return _masked_gaussian_filter(
+        return IlluminationGaussianFilter(
             request.pixel_data,
             request.mask,
             request.sigma,
-        )
+        ).apply()
 
 
 class MedianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
@@ -324,38 +405,6 @@ class SplinesSmoothingPlaneStrategy(SmoothingPlaneStrategy):
         else:
             result -= np.mean(result)
         return result
-
-
-def _masked_gaussian_filter(
-    pixel_data: np.ndarray,
-    mask: np.ndarray | None,
-    sigma: float,
-) -> np.ndarray:
-    from scipy.ndimage import gaussian_filter
-
-    if mask is None:
-        return gaussian_filter(
-            pixel_data,
-            sigma,
-            mode=NDIMAGE_CONSTANT_MODE,
-            cval=0,
-        )
-
-    masked_data = pixel_data.copy()
-    masked_data[~mask] = 0
-    smoothed = gaussian_filter(
-        masked_data,
-        sigma,
-        mode=NDIMAGE_CONSTANT_MODE,
-        cval=0,
-    )
-    mask_smoothed = gaussian_filter(
-        mask.astype(float),
-        sigma,
-        mode=NDIMAGE_CONSTANT_MODE,
-        cval=0,
-    )
-    return smoothed / np.maximum(mask_smoothed, 1e-10)
 
 
 def _fit_polynomial_surface(
@@ -530,13 +579,6 @@ def _preprocess_for_averaging(
         )
 
 
-def _calculation_scope_uses_all_images(calculation_scope: CalculationScope) -> bool:
-    return calculation_scope in {
-        CalculationScope.ALL_FIRST_CYCLE,
-        CalculationScope.ALL_ACROSS_CYCLES,
-    }
-
-
 def _is_multi_image_stack(
     pixel_data: np.ndarray,
     calculation_scope: CalculationScope | None = None,
@@ -550,7 +592,7 @@ def _spatial_image_shape(
     calculation_scope: CalculationScope,
 ) -> tuple[int, ...]:
     if (
-        _calculation_scope_uses_all_images(calculation_scope)
+        calculation_scope.uses_all_images
         and _is_multi_image_stack(pixel_data, calculation_scope)
     ):
         return tuple(pixel_data.shape[1:])
@@ -567,7 +609,7 @@ def _illumination_average_image(
     calculation_scope: CalculationScope,
 ) -> np.ndarray:
     if not (
-        _calculation_scope_uses_all_images(calculation_scope)
+        calculation_scope.uses_all_images
         and _is_multi_image_stack(pixel_data, calculation_scope)
     ):
         return _preprocess_for_averaging(
@@ -585,7 +627,7 @@ def _illumination_average_image(
     averaged_inputs = [
         _preprocess_for_averaging(
             np.asarray(slice_data),
-            _mask_for_stack_slice(mask, slice_index),
+            IlluminationMask(mask, pixel_data).for_stack_slice(slice_index),
             intensity_choice,
             smoothing_method,
             block_size,
@@ -594,47 +636,6 @@ def _illumination_average_image(
         for slice_index, slice_data in enumerate(pixel_data)
     ]
     return np.mean(np.stack(averaged_inputs, axis=0), axis=0)
-
-
-def _normalized_illumination_mask(
-    mask: object | None,
-    pixel_data: np.ndarray,
-) -> np.ndarray | None:
-    """Return a mask aligned with the illumination input data."""
-    if mask is None:
-        return None
-    mask_array = np.asarray(mask, dtype=bool)
-    if mask_array.shape == pixel_data.shape:
-        return mask_array
-    if mask_array.shape == pixel_data.shape[-mask_array.ndim :]:
-        return mask_array
-    if pixel_data.ndim == 2 and mask_array.ndim == 3 and mask_array.shape[0] == 1:
-        return mask_array[0]
-    return mask_array
-
-
-def _mask_for_stack_slice(
-    mask: np.ndarray | None,
-    slice_index: int,
-) -> np.ndarray | None:
-    if mask is None:
-        return None
-    if mask.ndim >= 3 and slice_index < mask.shape[0]:
-        return np.asarray(mask[slice_index], dtype=bool)
-    return mask
-
-
-def _output_mask_for_illumination(
-    mask: np.ndarray | None,
-    illumination: np.ndarray,
-) -> np.ndarray | None:
-    if mask is None:
-        return None
-    if mask.shape == illumination.shape:
-        return mask
-    if illumination.ndim == 2 and mask.ndim >= 3:
-        return np.any(mask, axis=0)
-    return mask
 
 
 def _apply_dilation(
@@ -647,7 +648,7 @@ def _apply_dilation(
     if not dilate:
         return pixel_data
 
-    result = _masked_gaussian_filter(pixel_data, mask, dilation_radius)
+    result = IlluminationGaussianFilter(pixel_data, mask, dilation_radius).apply()
     if mask is not None:
         result[~mask] = 0
     return result
@@ -889,7 +890,8 @@ def correct_illumination_calculate(
     )
 
     pixel_data = np.asarray(image_payload_data(image))
-    mask = _normalized_illumination_mask(image_payload_mask(image), pixel_data)
+    illumination_mask = IlluminationMask(image_payload_mask(image), pixel_data)
+    mask = illumination_mask.normalized
     metadata = image_payload_metadata(image).without_unit_interval_intensity_scale()
     common_kwargs = {
         "intensity_choice": intensity_choice,
@@ -915,12 +917,12 @@ def correct_illumination_calculate(
 
     if (
         _is_multi_image_stack(pixel_data, calculation_scope)
-        and not _calculation_scope_uses_all_images(calculation_scope)
+        and not calculation_scope.uses_all_images
     ):
         slice_results = [
             _calculate_illumination_from_pixels(
                 np.asarray(slice_data),
-                mask=_mask_for_stack_slice(mask, slice_index),
+                mask=illumination_mask.for_stack_slice(slice_index),
                 calculation_scope=CalculationScope.EACH,
                 slice_index=slice_index,
                 **common_kwargs,
@@ -934,7 +936,7 @@ def correct_illumination_calculate(
         return (
             image_payload_with_context(
                 illumination_stack,
-                mask=_output_mask_for_illumination(mask, illumination_stack),
+                mask=illumination_mask.for_output(illumination_stack),
                 metadata=metadata,
             ),
             [result[1] for result in slice_results],
@@ -949,7 +951,7 @@ def correct_illumination_calculate(
     return (
         image_payload_with_context(
             illumination,
-            mask=_output_mask_for_illumination(mask, illumination),
+            mask=illumination_mask.for_output(illumination),
             metadata=metadata,
         ),
         stats,
