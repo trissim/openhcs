@@ -8,7 +8,13 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import MemoryType
-from openhcs.core.pipeline.function_contracts import RuntimePure2DSliceBatchRequest
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import (
+    RuntimePure2DSliceBatchRequest,
+    pure_2d_batch_executor,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -16,6 +22,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 class MedianFilterBackendStrategy(
@@ -227,8 +234,27 @@ def median_filter_backend(
     )
 
 
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy(contract=ProcessingContract.PURE_2D)
+def medianfilter(
+    image: np.ndarray,
+    window_size: int = 3,
+    mode: str = "constant",
+) -> np.ndarray:
+    """Apply CellProfiler-compatible median filtering."""
+    return median_filter_backend().filter(
+        np.asarray(image),
+        window_size=int(window_size),
+        mode=str(mode),
+    )
+
+
+pure_2d_batch_executor(median_filter_backend().filter_batch)(medianfilter)
+
+
 __all__ = [
     "MedianFilterBackendStrategy",
     "NumpyMedianFilterBackendStrategy",
     "median_filter_backend",
+    "medianfilter",
 ]

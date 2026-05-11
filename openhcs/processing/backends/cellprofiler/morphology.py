@@ -4318,6 +4318,36 @@ def prepare_expand_or_shrink_objects() -> None:
     ExpandDefinedPixelsStrategy().expand_defined_pixels(points, 2)
 
 
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(("labels", segmentation_mask_rois()))
+def expand_or_shrink_objects(
+    image: np.ndarray,
+    labels: np.ndarray | ObjectLabelPayload,
+    mode: ExpandShrinkMode | str = ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
+    iterations: int = 1,
+    fill_holes: bool = True,
+) -> tuple[object, ObjectLabelPayload]:
+    """Expand or shrink labeled objects using CellProfiler-compatible semantics."""
+    labels_int = object_label_dense_array(labels, dtype=np.int32)
+    operation = ExpandShrinkOperationStrategy.for_mode(mode)
+    result_labels = operation.apply(
+        labels_int,
+        iterations=iterations,
+        fill_holes=fill_holes,
+    )
+    return image, object_label_payload_with_dense_labels(
+        labels,
+        result_labels.astype(np.int32, copy=False),
+        domain_declaration=ExplicitObjectLabelDomainDeclaration(
+            operation.output_domain(result_labels)
+        ),
+    )
+
+
+expand_or_shrink_objects.__openhcs_prepare__ = prepare_expand_or_shrink_objects
+
+
 @dataclass(frozen=True, slots=True)
 class MaskObjectsStats:
     """MaskObjects count summary for one runtime plane."""
@@ -4754,6 +4784,37 @@ class SegmentCombineObjectsStrategy(CombineObjectsStrategy):
         if markers.max() == 0:
             return labels_x.astype(np.int32)
         return watershed(-distance, markers, mask=binary_x).astype(np.int32)
+
+
+@numpy_decorator
+@special_outputs(
+    (
+        "combine_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "method",
+                "input_objects_x",
+                "input_objects_y",
+                "output_objects",
+            ],
+            analysis_type="combine_objects",
+        ),
+    ),
+    ("labels", segmentation_mask_rois()),
+)
+def combineobjects(
+    image: np.ndarray,
+    method: CombineObjectsMethod | str = CombineObjectsMethod.MERGE,
+) -> tuple[np.ndarray, CombineObjectsStats, np.ndarray]:
+    """Combine objects from two label images using CellProfiler policies."""
+    labels_x = object_label_dense_array(image[0], dtype=np.int32)
+    labels_y = object_label_dense_array(image[1], dtype=np.int32)
+    stats, combined_labels = CombineObjectsStrategy.for_method(method).result(
+        labels_x,
+        labels_y,
+    )
+    return labels_x.astype(np.float32), stats, combined_labels
 
 
 class SplitOrMergeOperation(Enum):
@@ -6071,12 +6132,14 @@ __all__ = [
     "SplitOrMergeStats",
     "apply_morph_operation",
     "closing",
+    "combineobjects",
     "dense_label_area_statistics",
     "dilate_image",
     "dilate_objects",
     "dilate_objects_3d",
     "erode_image",
     "erode_objects",
+    "expand_or_shrink_objects",
     "fill_objects",
     "filter_border_objects",
     "filter_border_objects_planewise",
