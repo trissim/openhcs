@@ -117,6 +117,48 @@ class AbsorbedFunctionLocation:
         """Return the source file that declares this absorbed function."""
         return self.root / f"{self.module_stem}.py"
 
+    def callable_source_path(self) -> Path | None:
+        """Return the implementation source for this function, following facades."""
+        module = importlib.import_module(self.module_name)
+        function = module.__dict__.get(self.function_name)
+        if not callable(function):
+            return None
+        source_file = inspect.getsourcefile(inspect.unwrap(function))
+        return Path(source_file) if source_file is not None else None
+
+
+@dataclass(frozen=True, slots=True)
+class AbsorbedFunctionModuleExports:
+    """AST-derived executable exports for one absorbed function module."""
+
+    parsed_module: ast.Module
+    declared_function_names: set[str]
+    declared_only: bool
+
+    def public_function_names(self) -> tuple[str, ...]:
+        exports: list[str] = []
+        for node in self.parsed_module.body:
+            if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+                exports.append(node.name)
+            elif isinstance(node, ast.ImportFrom):
+                exports.extend(self.imported_declared_function_names(node))
+        if self.declared_only:
+            exports = [
+                name for name in exports if name in self.declared_function_names
+            ]
+        return tuple(dict.fromkeys(exports))
+
+    def imported_declared_function_names(self, node: ast.ImportFrom) -> tuple[str, ...]:
+        names: list[str] = []
+        for alias in node.names:
+            exported_name = alias.asname or alias.name
+            if (
+                not exported_name.startswith("_")
+                and exported_name in self.declared_function_names
+            ):
+                names.append(exported_name)
+        return tuple(names)
+
 
 _contracts: Mapping[str, AbsorbedFunctionMetadata] = MappingProxyType({})
 _canonical_module_names: Mapping[str, str] = MappingProxyType({})
@@ -223,7 +265,7 @@ def function_source_path(function_name: str) -> Path | None:
     location = _function_locations.get(function_name)
     if location is None:
         return None
-    return location.source_path
+    return location.callable_source_path() or location.source_path
 
 
 def coerce_absorbed_processing_contract(
@@ -376,28 +418,26 @@ def _register_function_locations(
             continue
         module_stem = file_path.stem
         parsed_module = ast.parse(file_path.read_text(), filename=str(file_path))
-        for node in parsed_module.body:
-            if not isinstance(node, ast.FunctionDef):
-                continue
-            if node.name.startswith("_"):
-                continue
-            if declared_only and node.name not in declared_function_names:
-                continue
-            if node.name in locations and not replace_existing:
-                existing = locations[node.name]
+        module_exports = AbsorbedFunctionModuleExports(
+            declared_function_names=declared_function_names,
+            declared_only=declared_only,
+            parsed_module=parsed_module,
+        )
+        for function_name in module_exports.public_function_names():
+            if function_name in locations and not replace_existing:
+                existing = locations[function_name]
                 if existing.package != package:
                     continue
                 raise ValueError(
-                    f"CellProfiler function {node.name!r} is declared in both "
+                    f"CellProfiler function {function_name!r} is declared in both "
                     f"{existing.module_name!r} and {package}.{module_stem!r}."
                 )
-            locations[node.name] = AbsorbedFunctionLocation(
+            locations[function_name] = AbsorbedFunctionLocation(
                 package=package,
                 root=root,
                 module_stem=module_stem,
-                function_name=node.name,
+                function_name=function_name,
             )
-
 
 def _required_string(
     payload: Mapping[str, Any],

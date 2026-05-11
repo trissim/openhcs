@@ -13,11 +13,14 @@ import ast
 from pathlib import Path
 
 
-def public_top_level_names(source: str) -> list[str]:
+def public_top_level_names(source: str, *, functions_only: bool) -> list[str]:
     tree = ast.parse(source)
     names: list[str] = []
     for node in tree.body:
-        if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if not node.name.startswith("_"):
+                names.append(node.name)
+        elif not functions_only and isinstance(node, ast.ClassDef):
             if not node.name.startswith("_"):
                 names.append(node.name)
         elif isinstance(node, ast.Assign):
@@ -60,6 +63,11 @@ def main() -> None:
         default=None,
         help="CellProfiler module title for the facade docstring.",
     )
+    parser.add_argument(
+        "--full-public-api",
+        action="store_true",
+        help="Also re-export public classes/constants for temporary legacy imports.",
+    )
     args = parser.parse_args()
 
     source_path = args.source
@@ -70,7 +78,10 @@ def main() -> None:
         raise FileExistsError(target_path)
 
     source = source_path.read_text()
-    names = public_top_level_names(source)
+    names = public_top_level_names(
+        source,
+        functions_only=not args.full_public_api,
+    )
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_text(source)
     source_path.write_text(
