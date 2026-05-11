@@ -40,7 +40,7 @@ from openhcs.processing.backends.cellprofiler.morphology import (
     filter_labels_by_diameter_range,
     manual_declumping_size,
 )
-import benchmark.cellprofiler_library.functions.identifyprimaryobjects as identifyprimaryobjects_module
+import openhcs.processing.backends.cellprofiler.primary_objects as primary_objects_backend
 from benchmark.cellprofiler_library.functions.measurecolocalization import (
     ObjectColocalizationMeasurements,
     measure_colocalization,
@@ -1036,7 +1036,7 @@ def test_identify_primary_objects_applies_threshold_smoothing_to_binary_mask(
         return np.zeros_like(pixel_data, dtype=bool), 0.1, 0.1
 
     monkeypatch.setattr(
-        identifyprimaryobjects_module,
+        primary_objects_backend,
         "cellprofiler_threshold",
         fake_threshold,
     )
@@ -1098,12 +1098,12 @@ def test_identify_primary_objects_threshold_diagnostics_use_pre_fill_binary(
         )
 
     monkeypatch.setattr(
-        identifyprimaryobjects_module,
+        primary_objects_backend,
         "cellprofiler_threshold",
         fake_threshold,
     )
     monkeypatch.setattr(
-        identifyprimaryobjects_module,
+        primary_objects_backend,
         "cellprofiler_threshold_diagnostics",
         fake_diagnostics,
     )
