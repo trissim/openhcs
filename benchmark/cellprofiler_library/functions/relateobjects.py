@@ -150,14 +150,14 @@ def relate_objects(
     mean_centroid_dist = np.nan
     mean_minimum_dist = np.nan
     
-    if calculate_distances in (DistanceMethod.CENTROID, DistanceMethod.BOTH):
+    if calculate_distances.calculates_centroid_distance:
         centroid_distances = relationship_backend.centroid_distances(
             parent_labels, child_labels, parents_of
         )
         valid_dists = centroid_distances[~np.isnan(centroid_distances)]
         mean_centroid_dist = float(np.mean(valid_dists)) if len(valid_dists) > 0 else np.nan
     
-    if calculate_distances in (DistanceMethod.MINIMUM, DistanceMethod.BOTH):
+    if calculate_distances.calculates_minimum_distance:
         minimum_distances = relationship_backend.minimum_distances(
             parent_labels, child_labels, parents_of
         )

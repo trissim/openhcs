@@ -11,10 +11,28 @@ from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enu
 class RelateObjectsDistanceMethod(Enum):
     """CellProfiler RelateObjects child-parent distance calculation mode."""
 
-    NONE = "none"
-    CENTROID = "centroid"
-    MINIMUM = "minimum"
-    BOTH = "both"
+    NONE = ("none", False, False)
+    CENTROID = ("centroid", True, False)
+    MINIMUM = ("minimum", False, True)
+    BOTH = ("both", True, True)
+
+    def __init__(
+        self,
+        label: str,
+        calculates_centroid_distance: bool,
+        calculates_minimum_distance: bool,
+    ) -> None:
+        self._value_ = label
+        self._calculates_centroid_distance = calculates_centroid_distance
+        self._calculates_minimum_distance = calculates_minimum_distance
+
+    @property
+    def calculates_centroid_distance(self) -> bool:
+        return self._calculates_centroid_distance
+
+    @property
+    def calculates_minimum_distance(self) -> bool:
+        return self._calculates_minimum_distance
 
 
 RELATE_OBJECTS_DISTANCE_SETTING = SettingNameFamily("Calculate child-parent distances?")
