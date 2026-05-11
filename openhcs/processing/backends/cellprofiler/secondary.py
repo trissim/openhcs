@@ -17,17 +17,30 @@ from numba import njit, prange
 from openhcs.constants.constants import MemoryType
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory import numpy
+from openhcs.core.pipeline.function_contracts import (
+    RuntimePure2DSliceBatchRequest,
+    pure_2d_batch_executor,
+)
 from openhcs.core.registry_strategies import RegisteredLeafClassSpec
 from openhcs.core.runtime_semantics import (
+    ExplicitObjectLabelDomainDeclaration,
+    ObjectLabelDomain,
+    ObjectLabelDomainScope,
     ParentChildRelationshipPayload,
+    aligned_dense_object_label_arrays,
+    aligned_dense_object_label_stack_alignment,
+    dense_object_label_plane_id_domains,
     object_label_parent_child_payload,
 )
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
+    ObjectLabelSet,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
+    object_label_dense_array,
     object_label_payload_from_source_image,
+    object_label_payload_with_dense_labels,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.image_geometry import (
@@ -35,6 +48,7 @@ from openhcs.processing.backends.cellprofiler.image_geometry import (
     collapse_singleton_plane_stack,
 )
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
+from openhcs.processing.backends.cellprofiler.outlines import ObjectOutlineBackendStrategy
 from openhcs.processing.backends.cellprofiler.thresholding import (
     CellProfilerAveragingMethod,
     CellProfilerOtsuMethod,
@@ -1589,6 +1603,347 @@ def _prepare_identify_secondary_objects() -> None:
     )
 
 
+@dataclass
+class TertiaryObjectStats:
+    """Runtime measurements emitted by IdentifyTertiaryObjects."""
+
+    slice_index: int
+    object_count: int
+    mean_area: float
+    primary_parent_count: int
+    secondary_parent_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class TertiaryObjectLabelOutput:
+    """Typed tertiary labels preserving the secondary object-label domain."""
+
+    source: object
+    labels: np.ndarray
+
+    def value(self) -> object:
+        if not isinstance(self.source, (ObjectLabelPayload, ObjectLabelSet)):
+            return self.labels
+        return object_label_payload_with_dense_labels(
+            self.source,
+            self.labels,
+            domain_declaration=ExplicitObjectLabelDomainDeclaration(
+                ObjectLabelDomain(
+                    declared_object_id_domains=dense_object_label_plane_id_domains(
+                        self.labels,
+                        domain_scope=ObjectLabelDomainScope.PLANE,
+                    ),
+                    scope=ObjectLabelDomainScope.PLANE,
+                )
+            ),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class TertiaryObjectMeasurement:
+    """Nominal measurement summary for one tertiary label plane."""
+
+    labels: np.ndarray
+
+    @property
+    def positive_label_count(self) -> int:
+        return int(np.count_nonzero(np.bincount(np.asarray(self.labels).ravel())[1:]))
+
+    @property
+    def positive_label_mean_area(self) -> tuple[int, float]:
+        areas = np.bincount(np.asarray(self.labels).ravel())[1:]
+        positive_areas = areas[areas > 0]
+        if positive_areas.size == 0:
+            return 0, 0.0
+        return int(positive_areas.size), float(np.mean(positive_areas))
+
+
+@dataclass(frozen=True, slots=True)
+class TertiaryObjectInputs:
+    """Dense aligned label inputs and source payloads for tertiary segmentation."""
+
+    primary_source: object
+    secondary_source: object
+    primary_array: np.ndarray
+    secondary_array: np.ndarray
+
+    @classmethod
+    def from_labels(
+        cls,
+        primary_labels: np.ndarray | ObjectLabelPayload,
+        secondary_labels: np.ndarray | ObjectLabelPayload,
+    ) -> "TertiaryObjectInputs":
+        primary_array = object_label_dense_array(primary_labels, dtype=np.int32)
+        secondary_array = object_label_dense_array(secondary_labels, dtype=np.int32)
+        if primary_array.ndim == 3:
+            primary_array = primary_array[0]
+        if secondary_array.ndim == 3:
+            secondary_array = secondary_array[0]
+        primary_array, secondary_array = aligned_dense_object_label_arrays(
+            primary_array,
+            secondary_array,
+        )
+        if primary_array.shape != secondary_array.shape:
+            raise ValueError(
+                f"Primary and secondary label shapes must match. "
+                f"Got {primary_array.shape} vs {secondary_array.shape}"
+            )
+        return cls(
+            primary_source=primary_labels,
+            secondary_source=secondary_labels,
+            primary_array=primary_array,
+            secondary_array=secondary_array,
+        )
+
+
+class TertiaryObjectSegmentation:
+    """Load-bearing IdentifyTertiaryObjects segmentation policy."""
+
+    def segment(
+        self,
+        inputs: TertiaryObjectInputs,
+        *,
+        shrink_primary: bool,
+        outline_backend_provider: BackendProviderInput,
+    ) -> np.ndarray:
+        primary_outline = ObjectOutlineBackendStrategy.for_memory_type(
+            backend_provider=outline_backend_provider,
+        ).outline(inputs.primary_array)
+
+        tertiary_labels = inputs.secondary_array.copy()
+        if shrink_primary:
+            primary_mask = np.logical_or(inputs.primary_array == 0, primary_outline > 0)
+        else:
+            primary_mask = inputs.primary_array == 0
+        tertiary_labels[~primary_mask] = 0
+        return tertiary_labels
+
+    def stats(
+        self,
+        inputs: TertiaryObjectInputs,
+        tertiary_labels: np.ndarray,
+        *,
+        slice_index: int = 0,
+    ) -> TertiaryObjectStats:
+        object_count, mean_area = TertiaryObjectMeasurement(
+            tertiary_labels,
+        ).positive_label_mean_area
+        return TertiaryObjectStats(
+            slice_index=slice_index,
+            object_count=object_count,
+            mean_area=float(mean_area),
+            primary_parent_count=TertiaryObjectMeasurement(
+                inputs.primary_array,
+            ).positive_label_count,
+            secondary_parent_count=TertiaryObjectMeasurement(
+                inputs.secondary_array,
+            ).positive_label_count,
+        )
+
+
+def _identify_tertiary_objects_batch(
+    request: RuntimePure2DSliceBatchRequest,
+) -> list[object]:
+    kwargs = request.kwargs
+    slice_count = request.slice_count
+    alignment = aligned_dense_object_label_stack_alignment(
+        kwargs["primary_labels"],
+        kwargs["secondary_labels"],
+        slice_count=slice_count,
+    )
+    if alignment is None:
+        return [request.execute_one(slice_index) for slice_index in range(slice_count)]
+
+    primary_stack = alignment.first_stack
+    secondary_stack = alignment.second_stack
+    tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts = (
+        _tertiary_stack_numba(
+            primary_stack,
+            secondary_stack,
+            bool(kwargs.get("shrink_primary", True)),
+        )
+    )
+    output_tertiary_stack = alignment.restore_second_stack(tertiary_stack)
+
+    return [
+        (
+            request.slices_2d[slice_index],
+            object_label_parent_child_payload(
+                secondary_stack[slice_index],
+                tertiary_stack[slice_index],
+            ),
+            object_label_parent_child_payload(
+                primary_stack[slice_index],
+                tertiary_stack[slice_index],
+                child_region_labels=secondary_stack[slice_index],
+            ),
+            TertiaryObjectStats(
+                slice_index=slice_index,
+                object_count=int(object_counts[slice_index]),
+                mean_area=float(mean_areas[slice_index]),
+                primary_parent_count=int(primary_counts[slice_index]),
+                secondary_parent_count=int(secondary_counts[slice_index]),
+            ),
+            TertiaryObjectLabelOutput(
+                kwargs["secondary_labels"],
+                output_tertiary_stack[slice_index],
+            ).value(),
+        )
+        for slice_index in range(slice_count)
+    ]
+
+
+@njit(cache=True)
+def _tertiary_stack_numba(
+    primary_stack: np.ndarray,
+    secondary_stack: np.ndarray,
+    shrink_primary: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    slice_count, height, width = secondary_stack.shape
+    max_primary = 0
+    max_secondary = 0
+    for z in range(slice_count):
+        for y in range(height):
+            for x in range(width):
+                primary_label = primary_stack[z, y, x]
+                secondary_label = secondary_stack[z, y, x]
+                if primary_label > max_primary:
+                    max_primary = primary_label
+                if secondary_label > max_secondary:
+                    max_secondary = secondary_label
+
+    tertiary_stack = np.zeros_like(secondary_stack)
+    primary_present = np.zeros((slice_count, max_primary + 1), dtype=np.uint8)
+    secondary_present = np.zeros((slice_count, max_secondary + 1), dtype=np.uint8)
+    tertiary_present = np.zeros((slice_count, max_secondary + 1), dtype=np.uint8)
+    tertiary_areas = np.zeros((slice_count, max_secondary + 1), dtype=np.int64)
+    first_y = np.full((slice_count, max_secondary + 1), -1, dtype=np.int64)
+    first_x = np.full((slice_count, max_secondary + 1), -1, dtype=np.int64)
+
+    for z in range(slice_count):
+        for y in range(height):
+            for x in range(width):
+                primary_label = primary_stack[z, y, x]
+                secondary_label = secondary_stack[z, y, x]
+                if primary_label > 0:
+                    primary_present[z, primary_label] = 1
+                if secondary_label > 0:
+                    secondary_present[z, secondary_label] = 1
+                    if first_y[z, secondary_label] < 0:
+                        first_y[z, secondary_label] = y
+                        first_x[z, secondary_label] = x
+
+                keep_pixel = primary_label <= 0
+                if shrink_primary and primary_label > 0:
+                    for dy in range(-1, 2):
+                        ny = y + dy
+                        for dx in range(-1, 2):
+                            nx = x + dx
+                            if ny < 0 or ny >= height or nx < 0 or nx >= width:
+                                keep_pixel = True
+                            elif primary_stack[z, ny, nx] != primary_label:
+                                keep_pixel = True
+
+                if keep_pixel and secondary_label > 0:
+                    tertiary_stack[z, y, x] = secondary_label
+                    tertiary_present[z, secondary_label] = 1
+                    tertiary_areas[z, secondary_label] += 1
+
+    for z in range(slice_count):
+        for label in range(1, max_secondary + 1):
+            if secondary_present[z, label] == 0 or tertiary_present[z, label] != 0:
+                continue
+            y = first_y[z, label]
+            x = first_x[z, label]
+            if y >= 0:
+                tertiary_stack[z, y, x] = label
+                tertiary_present[z, label] = 1
+                tertiary_areas[z, label] += 1
+
+    object_counts = np.zeros(slice_count, dtype=np.int64)
+    mean_areas = np.zeros(slice_count, dtype=np.float64)
+    primary_counts = np.zeros(slice_count, dtype=np.int64)
+    secondary_counts = np.zeros(slice_count, dtype=np.int64)
+    for z in range(slice_count):
+        total_area = 0
+        for label in range(1, max_primary + 1):
+            if primary_present[z, label] != 0:
+                primary_counts[z] += 1
+        for label in range(1, max_secondary + 1):
+            if secondary_present[z, label] != 0:
+                secondary_counts[z] += 1
+            if tertiary_present[z, label] != 0:
+                object_counts[z] += 1
+                total_area += tertiary_areas[z, label]
+        if object_counts[z] > 0:
+            mean_areas[z] = total_area / object_counts[z]
+    return tertiary_stack, object_counts, mean_areas, primary_counts, secondary_counts
+
+
+@numpy
+def identify_tertiary_objects(
+    image: np.ndarray,
+    primary_labels: np.ndarray | ObjectLabelPayload,
+    secondary_labels: np.ndarray | ObjectLabelPayload,
+    shrink_primary: bool = True,
+    outline_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> Tuple[
+    np.ndarray,
+    ParentChildRelationshipPayload,
+    ParentChildRelationshipPayload,
+    TertiaryObjectStats,
+    np.ndarray,
+]:
+    """Identify tertiary objects by subtracting primary labels from secondary labels."""
+    inputs = TertiaryObjectInputs.from_labels(primary_labels, secondary_labels)
+    segmentation = TertiaryObjectSegmentation()
+    tertiary_labels = segmentation.segment(
+        inputs,
+        shrink_primary=shrink_primary,
+        outline_backend_provider=outline_backend_provider,
+    )
+
+    tertiary_labels_out = (
+        np.expand_dims(tertiary_labels, axis=0) if image.ndim == 3 else tertiary_labels
+    )
+
+    return (
+        image,
+        object_label_parent_child_payload(inputs.secondary_source, tertiary_labels),
+        object_label_parent_child_payload(
+            inputs.primary_source,
+            tertiary_labels,
+            child_region_labels=inputs.secondary_array,
+        ),
+        segmentation.stats(inputs, tertiary_labels),
+        TertiaryObjectLabelOutput(inputs.secondary_source, tertiary_labels_out).value(),
+    )
+
+
+@processing_prepare(identify_tertiary_objects)
+def _prepare_identify_tertiary_objects() -> None:
+    """Compile tertiary-object kernels before benchmarked execution."""
+    image = np.zeros((32, 32), dtype=np.float32)
+    primary = np.zeros((32, 32), dtype=np.int32)
+    secondary = np.zeros((32, 32), dtype=np.int32)
+    primary[10:20, 10:20] = 1
+    secondary[6:24, 6:24] = 1
+    identify_tertiary_objects.__wrapped__(
+        image,
+        primary,
+        secondary,
+        shrink_primary=True,
+    )
+    _tertiary_stack_numba(
+        np.expand_dims(primary, axis=0),
+        np.expand_dims(secondary, axis=0),
+        True,
+    )
+
+
+pure_2d_batch_executor(_identify_tertiary_objects_batch)(identify_tertiary_objects)
+
+
 __all__ = [
     "CentrosomeSecondaryPropagationBackendStrategy",
     "DistanceMaskedSegmentationStrategy",
@@ -1613,7 +1968,13 @@ __all__ = [
     "ThresholdCalculator",
     "ThresholdCalculatorDeclaration",
     "ThresholdMethod",
+    "TertiaryObjectInputs",
+    "TertiaryObjectLabelOutput",
+    "TertiaryObjectMeasurement",
+    "TertiaryObjectSegmentation",
+    "TertiaryObjectStats",
     "THRESHOLD_CALCULATOR_DECLARATIONS",
     "identify_secondary_objects",
+    "identify_tertiary_objects",
     "secondary_propagation_backend",
 ]
