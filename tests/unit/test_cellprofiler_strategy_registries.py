@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from benchmark.cellprofiler_library.functions.align import AlignCropModeStrategy
+from openhcs.processing.backends.cellprofiler.alignment import AlignCropModeStrategy
 from openhcs.processing.backends.cellprofiler.measurement_math import (
     MathOperationStrategy,
     RoundingStrategy,
