@@ -87,6 +87,86 @@ class _GranularityImageSeriesCacheEntry:
     series: _GranularityImageSeries
 
 
+@dataclass(frozen=True)
+class GranularityImageSeriesRequest:
+    """Request for reusable background-corrected granularity reconstructions."""
+
+    image: np.ndarray
+    subsample_size: float
+    background_subsample_size: float
+    element_radius: int
+    spectrum_length: int
+    profile_function: str
+
+    def series(self) -> _GranularityImageSeries:
+        image_array = np.asarray(self.image)
+        phase_started_at = time.perf_counter()
+        dtype, shape, digest = _granularity_image_content_key(image_array)
+        _log_profile(
+            "granularity_series_key",
+            time.perf_counter() - phase_started_at,
+            function=self.profile_function,
+        )
+        key = (
+            dtype,
+            shape,
+            digest,
+            float(self.subsample_size),
+            float(self.background_subsample_size),
+            int(self.element_radius),
+            int(self.spectrum_length),
+        )
+        entry = _GRANULARITY_IMAGE_SERIES_CACHE.get(key)
+        if entry is not None:
+            _GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
+            _log_profile(
+                "granularity_series_cache_hit",
+                0.0,
+                function=self.profile_function,
+            )
+            return entry.series
+
+        phase_started_at = time.perf_counter()
+        pixels, new_shape = _background_corrected_pixels(
+            image_array,
+            self.subsample_size,
+            self.background_subsample_size,
+            self.element_radius,
+        )
+        _log_profile(
+            "granularity_background_correct",
+            time.perf_counter() - phase_started_at,
+            function=self.profile_function,
+            shape=tuple(int(value) for value in pixels.shape),
+        )
+        phase_started_at = time.perf_counter()
+        reconstructions = _granularity_reconstruction_series(
+            pixels,
+            self.spectrum_length,
+        )
+        _log_profile(
+            "granularity_reconstruction_series",
+            time.perf_counter() - phase_started_at,
+            function=self.profile_function,
+            reconstructions=len(reconstructions),
+        )
+        series = _GranularityImageSeries(
+            pixels=pixels,
+            new_shape=new_shape,
+            reconstructions=reconstructions,
+        )
+        _GRANULARITY_IMAGE_SERIES_CACHE[key] = _GranularityImageSeriesCacheEntry(
+            series=series,
+        )
+        _GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
+        while (
+            len(_GRANULARITY_IMAGE_SERIES_CACHE)
+            > _GRANULARITY_IMAGE_SERIES_CACHE_MAX_ENTRIES
+        ):
+            _GRANULARITY_IMAGE_SERIES_CACHE.popitem(last=False)
+        return series
+
+
 _GRANULARITY_IMAGE_SERIES_CACHE: dict[
     tuple[str, tuple[int, ...], bytes, float, float, int, int],
     _GranularityImageSeriesCacheEntry,
@@ -124,13 +204,14 @@ def measure_granularity(
     Returns:
         Tuple of (original image, granularity measurements)
     """
-    series = _granularity_image_series(
-        image,
-        subsample_size,
-        background_subsample_size,
-        element_radius,
-        spectrum_length,
-    )
+    series = GranularityImageSeriesRequest(
+        image=image,
+        subsample_size=subsample_size,
+        background_subsample_size=background_subsample_size,
+        element_radius=element_radius,
+        spectrum_length=spectrum_length,
+        profile_function="measure_granularity",
+    ).series()
     pixels = series.pixels
     
     # Calculate granular spectrum
@@ -219,13 +300,14 @@ def measure_granularity_objects(
         return image, []
 
     phase_started_at = time.perf_counter()
-    series = _granularity_image_series(
-        image,
-        subsample_size,
-        background_subsample_size,
-        element_radius,
-        spectrum_length,
-    )
+    series = GranularityImageSeriesRequest(
+        image=image,
+        subsample_size=subsample_size,
+        background_subsample_size=background_subsample_size,
+        element_radius=element_radius,
+        spectrum_length=spectrum_length,
+        profile_function="measure_granularity_objects",
+    ).series()
     pixels = series.pixels
     new_shape = series.new_shape
     _log_profile(
@@ -336,79 +418,6 @@ def measure_granularity_objects(
     )
     
     return image, measurements
-
-
-def _granularity_image_series(
-    image: np.ndarray,
-    subsample_size: float,
-    background_subsample_size: float,
-    element_radius: int,
-    spectrum_length: int,
-) -> _GranularityImageSeries:
-    """Return reusable background-corrected reconstruction series for one image."""
-    image_array = np.asarray(image)
-    phase_started_at = time.perf_counter()
-    dtype, shape, digest = _granularity_image_content_key(image_array)
-    _log_profile(
-        "granularity_series_key",
-        time.perf_counter() - phase_started_at,
-        function="measure_granularity_objects",
-    )
-    key = (
-        dtype,
-        shape,
-        digest,
-        float(subsample_size),
-        float(background_subsample_size),
-        int(element_radius),
-        int(spectrum_length),
-    )
-    entry = _GRANULARITY_IMAGE_SERIES_CACHE.get(key)
-    if entry is not None:
-        _GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
-        _log_profile(
-            "granularity_series_cache_hit",
-            0.0,
-            function="measure_granularity_objects",
-        )
-        return entry.series
-
-    phase_started_at = time.perf_counter()
-    pixels, new_shape = _background_corrected_pixels(
-        image_array,
-        subsample_size,
-        background_subsample_size,
-        element_radius,
-    )
-    _log_profile(
-        "granularity_background_correct",
-        time.perf_counter() - phase_started_at,
-        function="measure_granularity_objects",
-        shape=tuple(int(value) for value in pixels.shape),
-    )
-    phase_started_at = time.perf_counter()
-    reconstructions = _granularity_reconstruction_series(
-        pixels,
-        spectrum_length,
-    )
-    _log_profile(
-        "granularity_reconstruction_series",
-        time.perf_counter() - phase_started_at,
-        function="measure_granularity_objects",
-        reconstructions=len(reconstructions),
-    )
-    series = _GranularityImageSeries(
-        pixels=pixels,
-        new_shape=new_shape,
-        reconstructions=reconstructions,
-    )
-    _GRANULARITY_IMAGE_SERIES_CACHE[key] = _GranularityImageSeriesCacheEntry(
-        series=series,
-    )
-    _GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
-    while len(_GRANULARITY_IMAGE_SERIES_CACHE) > _GRANULARITY_IMAGE_SERIES_CACHE_MAX_ENTRIES:
-        _GRANULARITY_IMAGE_SERIES_CACHE.popitem(last=False)
-    return series
 
 
 def _granularity_image_content_key(
@@ -882,31 +891,6 @@ def _label_to_index_lookup_numba(object_ids: np.ndarray) -> np.ndarray:
 
 
 @njit(cache=True)
-def _label_counts_from_lookup_numba(
-    labels: np.ndarray,
-    label_to_index: np.ndarray,
-) -> np.ndarray:
-    """Count object pixels once for all granularity spectrum iterations."""
-    object_count = 0
-    for label_id in range(len(label_to_index)):
-        index = int(label_to_index[label_id])
-        if index >= object_count:
-            object_count = index + 1
-    object_counts = np.zeros(object_count, dtype=np.int64)
-    max_label = len(label_to_index) - 1
-    height, width = labels.shape
-    for row in range(height):
-        for col in range(width):
-            label_id = int(labels[row, col])
-            if label_id <= 0 or label_id > max_label:
-                continue
-            index = int(label_to_index[label_id])
-            if index >= 0:
-                object_counts[index] += 1
-    return object_counts
-
-
-@njit(cache=True)
 def _compact_label_pixels_from_lookup_numba(
     labels: np.ndarray,
     label_to_index: np.ndarray,
@@ -977,99 +961,6 @@ def _mean_by_compact_label_pixels_numba(
 
 
 @njit(cache=True)
-def _mean_by_label_with_counts_numba(
-    image: np.ndarray,
-    labels: np.ndarray,
-    label_to_index: np.ndarray,
-    object_counts: np.ndarray,
-) -> np.ndarray:
-    """Return means using precomputed label lookup and pixel counts."""
-    object_count = len(object_counts)
-    means = np.empty(object_count, dtype=np.float64)
-    sums = np.zeros(object_count, dtype=np.float64)
-    max_label = len(label_to_index) - 1
-    height, width = labels.shape
-    for row in range(height):
-        for col in range(width):
-            label_id = int(labels[row, col])
-            if label_id <= 0 or label_id > max_label:
-                continue
-            index = int(label_to_index[label_id])
-            if index >= 0:
-                sums[index] += float(image[row, col])
-
-    for index in range(object_count):
-        count = object_counts[index]
-        means[index] = sums[index] / count if count > 0 else np.nan
-    return means
-
-
-@njit(cache=True)
-def _mean_by_label_numba(
-    image: np.ndarray,
-    labels: np.ndarray,
-    object_ids: np.ndarray,
-) -> np.ndarray:
-    """Return means for explicit label IDs without SciPy object loops."""
-    object_count = len(object_ids)
-    means = np.empty(object_count, dtype=np.float64)
-    for index in range(object_count):
-        means[index] = np.nan
-    if object_count == 0:
-        return means
-
-    max_label = 0
-    for index in range(object_count):
-        object_id = int(object_ids[index])
-        if object_id > max_label:
-            max_label = object_id
-    label_to_index = np.full(max_label + 1, -1, dtype=np.int64)
-    for index in range(object_count):
-        object_id = int(object_ids[index])
-        if object_id > 0:
-            label_to_index[object_id] = index
-
-    sums = np.zeros(object_count, dtype=np.float64)
-    counts = np.zeros(object_count, dtype=np.int64)
-    height, width = labels.shape
-    for row in range(height):
-        for col in range(width):
-            label_id = int(labels[row, col])
-            if label_id <= 0 or label_id > max_label:
-                continue
-            index = label_to_index[label_id]
-            if index < 0:
-                continue
-            sums[index] += float(image[row, col])
-            counts[index] += 1
-
-    for index in range(object_count):
-        if counts[index] > 0:
-            means[index] = sums[index] / counts[index]
-    return means
-
-
-def _mean_by_label_from_resampled_numba(
-    image: np.ndarray,
-    labels: np.ndarray,
-    object_ids: np.ndarray,
-    row_scale: float,
-    col_scale: float,
-) -> np.ndarray:
-    """Compatibility wrapper using precomputed lookup/count kernels."""
-    label_to_index = _label_to_index_lookup_numba(object_ids)
-    object_counts = _label_counts_from_lookup_numba(labels, label_to_index)
-    return _mean_by_label_from_resampled_with_counts_numba(
-        image,
-        labels,
-        label_to_index,
-        object_counts,
-        row_scale,
-        col_scale,
-    )
-
-
-@njit(cache=True)
 def _mean_by_compact_label_pixels_from_resampled_numba(
     image: np.ndarray,
     pixel_rows: np.ndarray,
@@ -1090,41 +981,6 @@ def _mean_by_compact_label_pixels_from_resampled_numba(
             float(pixel_rows[pixel_index]) * row_scale,
             float(pixel_cols[pixel_index]) * col_scale,
         )
-
-    for index in range(object_count):
-        count = object_counts[index]
-        means[index] = sums[index] / count if count > 0 else np.nan
-    return means
-
-
-@njit(cache=True)
-def _mean_by_label_from_resampled_with_counts_numba(
-    image: np.ndarray,
-    labels: np.ndarray,
-    label_to_index: np.ndarray,
-    object_counts: np.ndarray,
-    row_scale: float,
-    col_scale: float,
-) -> np.ndarray:
-    """Mean label values after order-1 coordinate sampling, without materializing."""
-    object_count = len(object_counts)
-    means = np.empty(object_count, dtype=np.float64)
-    if object_count == 0:
-        return means
-
-    sums = np.zeros(object_count, dtype=np.float64)
-    max_label = len(label_to_index) - 1
-    height, width = labels.shape
-    for row in range(height):
-        sample_row = row * row_scale
-        for col in range(width):
-            label_id = int(labels[row, col])
-            if label_id <= 0 or label_id > max_label:
-                continue
-            index = label_to_index[label_id]
-            if index < 0:
-                continue
-            sums[index] += _bilinear_sample_numba(image, sample_row, col * col_scale)
 
     for index in range(object_count):
         count = object_counts[index]

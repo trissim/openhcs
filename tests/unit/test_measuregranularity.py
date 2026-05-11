@@ -1,13 +1,12 @@
 import numpy as np
 
 from benchmark.cellprofiler_library.functions.measuregranularity import (
+    GranularityImageSeriesRequest,
     _GRANULARITY_IMAGE_SERIES_CACHE,
     _background_corrected_pixels,
     _disk_offsets,
-    _granularity_image_series,
     _gray_dilation_offsets_reflect_numba,
     _gray_erosion_offsets_reflect_numba,
-    _mean_by_label_from_resampled_numba,
     _reconstruct_dilation_cross_numba,
     measure_granularity_objects,
 )
@@ -45,29 +44,31 @@ def test_granularity_series_cache_reuses_equal_image_values():
     image_copy = image.copy()
     _GRANULARITY_IMAGE_SERIES_CACHE.clear()
 
-    first = _granularity_image_series(
-        image,
+    first = GranularityImageSeriesRequest(
+        image=image,
         subsample_size=1.0,
         background_subsample_size=1.0,
         element_radius=1,
         spectrum_length=2,
-    )
-    second = _granularity_image_series(
-        image_copy,
+        profile_function="test",
+    ).series()
+    second = GranularityImageSeriesRequest(
+        image=image_copy,
         subsample_size=1.0,
         background_subsample_size=1.0,
         element_radius=1,
         spectrum_length=2,
-    )
+        profile_function="test",
+    ).series()
 
     assert second is first
     assert len(_GRANULARITY_IMAGE_SERIES_CACHE) == 1
 
 
-def test_resampled_object_means_match_order_one_coordinate_sampling():
+def test_measure_granularity_objects_uses_order_one_coordinate_sampling_after_subsampling():
     import scipy.ndimage
 
-    rec = np.arange(16, dtype=np.float64).reshape(4, 4)
+    image = np.arange(25, dtype=np.float64).reshape(5, 5) / 25.0
     labels = np.array(
         [
             [1, 1, 0, 0, 3],
@@ -78,24 +79,37 @@ def test_resampled_object_means_match_order_one_coordinate_sampling():
         ],
         dtype=np.int32,
     )
-    object_ids = np.array([1, 3], dtype=np.int32)
-    row_scale = float(rec.shape[0] - 1) / float(labels.shape[0] - 1)
-    col_scale = float(rec.shape[1] - 1) / float(labels.shape[1] - 1)
-    ri, rj = np.mgrid[0:labels.shape[0], 0:labels.shape[1]].astype(float)
+    _result, measurements = measure_granularity_objects(
+        image,
+        labels,
+        subsample_size=0.8,
+        background_subsample_size=1.0,
+        element_radius=1,
+        spectrum_length=1,
+        dtype_config=DtypeConfig(),
+    )
+
+    series = GranularityImageSeriesRequest(
+        image=image,
+        subsample_size=0.8,
+        background_subsample_size=1.0,
+        element_radius=1,
+        spectrum_length=1,
+        profile_function="test",
+    ).series()
+    object_ids = np.array([measurement.object_id for measurement in measurements])
+    current_means = scipy.ndimage.mean(image, labels, object_ids)
+    start_means = np.maximum(current_means, np.finfo(float).eps)
+    rec = series.reconstructions[0]
+    row_scale = float(series.new_shape[0] - 1) / float(labels.shape[0] - 1)
+    col_scale = float(series.new_shape[1] - 1) / float(labels.shape[1] - 1)
+    ri, rj = np.mgrid[0:labels.shape[0], 0:labels.shape[1]].astype(np.float64)
     ri *= row_scale
     rj *= col_scale
     rec_full = scipy.ndimage.map_coordinates(rec, (ri, rj), order=1)
-
-    expected = np.array(
-        [rec_full[labels == object_id].mean() for object_id in object_ids]
-    )
-    actual = _mean_by_label_from_resampled_numba(
-        rec,
-        labels,
-        object_ids,
-        row_scale,
-        col_scale,
-    )
+    new_means = scipy.ndimage.mean(rec_full, labels, object_ids)
+    expected = (current_means - new_means) * 100 / start_means
+    actual = np.array([measurement.gs1 for measurement in measurements])
 
     np.testing.assert_allclose(actual, expected)
 
