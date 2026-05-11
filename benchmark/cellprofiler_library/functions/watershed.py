@@ -13,8 +13,6 @@ from enum import Enum
 from typing import ClassVar, Literal, Tuple
 
 from metaclass_registry import AutoRegisterMeta
-from numba import njit
-
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
@@ -29,9 +27,9 @@ from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-    CellProfilerBackendProvider,
-    CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+)
+from openhcs.processing.backends.cellprofiler.watershed import (
+    CellProfiler4DistanceMarkerBackendStrategy,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
@@ -513,187 +511,6 @@ class CellProfiler4InitialWatershedStrategy(
         parameters: WatershedParameters,
     ) -> tuple[np.ndarray, np.ndarray]:
         """Return the initial labels and the image-domain mask source."""
-
-
-class CellProfiler4DistanceMarkerBackendStrategy(
-    CellProfilerBackendStrategyMixin,
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Build CellProfiler 4 distance-watershed markers through a typed backend."""
-
-    __registry_key__ = "backend_key"
-    __skip_if_no_key__ = True
-
-    @abstractmethod
-    def distance_markers(
-        self,
-        distance: np.ndarray,
-        peak_footprint: np.ndarray,
-        seed_connectivity: np.ndarray,
-    ) -> tuple[np.ndarray, int, np.ndarray]:
-        """Return seed markers, marker count, and the regional-maxima mask."""
-
-
-class MahotasCellProfiler4DistanceMarkerBackendStrategy(
-    CellProfiler4DistanceMarkerBackendStrategy
-):
-    """Reference CellProfiler 4 marker backend."""
-
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY, CellProfilerBackendProvider.NATIVE)
-    memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.NATIVE
-    is_default_backend = False
-
-    def distance_markers(
-        self,
-        distance: np.ndarray,
-        peak_footprint: np.ndarray,
-        seed_connectivity: np.ndarray,
-    ) -> tuple[np.ndarray, int, np.ndarray]:
-        import mahotas
-
-        peaks = mahotas.regmax(distance, peak_footprint)
-        seed_markers, marker_count = mahotas.label(peaks, seed_connectivity)
-        return seed_markers, int(marker_count), peaks
-
-
-class NumbaCellProfiler4DistanceMarkerBackendStrategy(
-    CellProfiler4DistanceMarkerBackendStrategy
-):
-    """Exact numba backend for CellProfiler 4 regional-maxima markers."""
-
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA)
-    memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.NUMBA
-    is_default_backend = True
-
-    def distance_markers(
-        self,
-        distance: np.ndarray,
-        peak_footprint: np.ndarray,
-        seed_connectivity: np.ndarray,
-    ) -> tuple[np.ndarray, int, np.ndarray]:
-        import mahotas
-        import scipy.ndimage
-
-        distance_array = np.ascontiguousarray(distance)
-        peak_footprint_array = np.asarray(peak_footprint, dtype=bool)
-        if distance_array.ndim != 3 or peak_footprint_array.ndim != 3:
-            return MahotasCellProfiler4DistanceMarkerBackendStrategy().distance_markers(
-                distance_array,
-                peak_footprint_array,
-                seed_connectivity,
-            )
-        local_maxima = (
-            distance_array
-            == scipy.ndimage.maximum_filter(
-                distance_array,
-                footprint=peak_footprint_array,
-                mode="constant",
-                cval=0,
-            )
-        ) & (distance_array > 0)
-        peaks = _cellprofiler4_regional_maxima_from_candidates_3d_numba(
-            distance_array,
-            np.ascontiguousarray(local_maxima),
-            _footprint_offsets_3d(peak_footprint_array),
-        )
-        seed_markers, marker_count = mahotas.label(peaks, seed_connectivity)
-        return seed_markers, int(marker_count), peaks
-
-    def prepare_backend(self) -> None:
-        distance = np.zeros((8, 16, 16), dtype=np.uint8)
-        distance[2:6, 4:12, 4:12] = 1
-        distance[3:5, 6:10, 6:10] = 2
-        footprint = np.ones((4, 4, 4), dtype=bool)
-        connectivity = np.ones((4, 4, 4), dtype=bool)
-        self.distance_markers(distance, footprint, connectivity)
-
-
-def _footprint_offsets_3d(footprint: np.ndarray) -> np.ndarray:
-    center = np.asarray(footprint.shape, dtype=np.int64) // 2
-    offsets = np.argwhere(footprint).astype(np.int64) - center
-    return np.ascontiguousarray(offsets[np.any(offsets != 0, axis=1)])
-
-
-@njit(cache=True)
-def _cellprofiler4_regional_maxima_from_candidates_3d_numba(
-    image: np.ndarray,
-    candidates: np.ndarray,
-    offsets: np.ndarray,
-) -> np.ndarray:
-    z_size, y_size, x_size = image.shape
-    voxel_count = image.size
-    visited = np.zeros(voxel_count, np.uint8)
-    output = np.zeros(image.shape, np.bool_)
-    stack = np.empty(voxel_count, np.int64)
-    component = np.empty(voxel_count, np.int64)
-    plane_size = y_size * x_size
-
-    for start_index in range(voxel_count):
-        z_start = start_index // plane_size
-        start_remainder = start_index - z_start * plane_size
-        y_start = start_remainder // x_size
-        x_start = start_remainder - y_start * x_size
-        if not candidates[z_start, y_start, x_start] or visited[start_index]:
-            continue
-
-        value = image[z_start, y_start, x_start]
-        visited[start_index] = 1
-        stack_size = 1
-        stack[0] = start_index
-        component_size = 0
-        has_higher_neighbor = False
-
-        while stack_size > 0:
-            stack_size -= 1
-            index = stack[stack_size]
-            component[component_size] = index
-            component_size += 1
-            z_index = index // plane_size
-            remainder = index - z_index * plane_size
-            y_index = remainder // x_size
-            x_index = remainder - y_index * x_size
-
-            for offset_index in range(offsets.shape[0]):
-                z_neighbor = z_index + offsets[offset_index, 0]
-                y_neighbor = y_index + offsets[offset_index, 1]
-                x_neighbor = x_index + offsets[offset_index, 2]
-                if (
-                    z_neighbor < 0
-                    or y_neighbor < 0
-                    or x_neighbor < 0
-                    or z_neighbor >= z_size
-                    or y_neighbor >= y_size
-                    or x_neighbor >= x_size
-                ):
-                    continue
-
-                neighbor_value = image[z_neighbor, y_neighbor, x_neighbor]
-                if neighbor_value > value:
-                    has_higher_neighbor = True
-                elif neighbor_value == value:
-                    neighbor_index = (
-                        z_neighbor * plane_size
-                        + y_neighbor * x_size
-                        + x_neighbor
-                    )
-                    if not visited[neighbor_index]:
-                        visited[neighbor_index] = 1
-                        stack[stack_size] = neighbor_index
-                        stack_size += 1
-
-        if not has_higher_neighbor:
-            for component_index in range(component_size):
-                index = component[component_index]
-                z_index = index // plane_size
-                remainder = index - z_index * plane_size
-                y_index = remainder // x_size
-                x_index = remainder - y_index * x_size
-                output[z_index, y_index, x_index] = True
-
-    return output
 
 
 class CellProfiler4DistanceInitialWatershedStrategy(
