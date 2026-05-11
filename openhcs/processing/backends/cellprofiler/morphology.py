@@ -140,6 +140,11 @@ class ResizeObjectsMethod(Enum):
         return member
 
 
+class FillMode(Enum):
+    HOLES = "holes"
+    CONVEX_HULL = "convex_hull"
+
+
 @dataclass(frozen=True, slots=True)
 class ResizeObjectsStats:
     slice_index: int
@@ -171,6 +176,12 @@ class DilationStats3D:
     object_count: int
     mean_volume_before: float
     mean_volume_after: float
+
+
+@dataclass(frozen=True, slots=True)
+class CentroidStats:
+    slice_index: int
+    object_count: int
 
 
 @dataclass(frozen=True)
@@ -5375,6 +5386,146 @@ def dilate_objects_3d(
 
 @numpy_decorator(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
+@special_outputs(("labels", segmentation_mask_rois()))
+def fill_objects(
+    image: np.ndarray,
+    labels: np.ndarray,
+    mode: FillMode = FillMode.HOLES,
+    diameter: float = 64.0,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Fill object holes or replace objects with convex hull labels."""
+    from skimage.morphology import remove_small_holes
+
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    if label_array.max() == 0:
+        return image, label_array.copy()
+
+    mode = coerce_cellprofiler_enum(FillMode, mode)
+    filled_labels = np.zeros_like(label_array)
+    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        label_array
+    )
+
+    if mode == FillMode.HOLES:
+        max_hole_area = np.pi * (diameter / 2.0) ** 2
+        for label_id in region_props.label:
+            label_int = int(label_id)
+            obj_mask = label_array == label_int
+            filled_mask = remove_small_holes(
+                obj_mask,
+                area_threshold=int(max_hole_area),
+                connectivity=1,
+            )
+            filled_labels[filled_mask] = label_int
+    elif mode == FillMode.CONVEX_HULL:
+        morphology = MorphologyBackendStrategy.for_callable(
+            fill_objects,
+            backend_provider=morphology_backend_provider,
+        )
+        for index, label_id in enumerate(region_props.label):
+            label_int = int(label_id)
+            obj_mask = label_array == label_int
+            minr = int(region_props.bbox_min_y[index])
+            minc = int(region_props.bbox_min_x[index])
+            maxr = int(region_props.bbox_max_y[index])
+            maxc = int(region_props.bbox_max_x[index])
+            obj_crop = obj_mask[minr:maxr, minc:maxc]
+            if obj_crop.sum() > 2:
+                hull = morphology.convex_hull_image(obj_crop)
+                filled_labels[minr:maxr, minc:maxc][hull] = label_int
+            else:
+                filled_labels[obj_mask] = label_int
+    else:
+        raise ValueError(
+            f"Mode '{mode}' is not supported. "
+            f"Available modes are: 'holes' and 'convex_hull'."
+        )
+
+    return image, filled_labels.astype(label_array.dtype)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "centroid_stats",
+        csv_materializer(
+            fields=["slice_index", "object_count"],
+            analysis_type="centroid",
+        ),
+    ),
+    ("centroid_labels", segmentation_mask_rois()),
+)
+def shrink_to_object_centers(
+    image: np.ndarray,
+    labels: np.ndarray,
+) -> tuple[np.ndarray, CentroidStats, np.ndarray]:
+    """Transform labeled objects into single-pixel centroid labels."""
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        label_array
+    )
+    output_labels = np.zeros_like(label_array, dtype=np.int32)
+
+    for index, label_id in enumerate(region_props.label):
+        centroid_int = (
+            int(round(float(region_props.centroid_y[index]))),
+            int(round(float(region_props.centroid_x[index]))),
+        )
+        if all(
+            0 <= centroid_int[axis] < label_array.shape[axis]
+            for axis in range(len(centroid_int))
+        ):
+            output_labels[centroid_int] = int(label_id)
+
+    return (
+        image,
+        CentroidStats(slice_index=0, object_count=int(region_props.label.size)),
+        output_labels,
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_3D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "centroid_stats",
+        csv_materializer(
+            fields=["slice_index", "object_count"],
+            analysis_type="centroid",
+        ),
+    ),
+    ("centroid_labels", segmentation_mask_rois()),
+)
+def shrink_to_object_centers_3d(
+    image: np.ndarray,
+    labels: np.ndarray,
+) -> tuple[np.ndarray, CentroidStats, np.ndarray]:
+    """Transform 3D labeled objects into single-voxel centroid labels."""
+    from skimage.measure import regionprops
+
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    props = regionprops(label_array)
+    output_labels = np.zeros_like(label_array, dtype=np.int32)
+
+    for region in props:
+        centroid_int = tuple(int(round(coordinate)) for coordinate in region.centroid)
+        if all(
+            0 <= centroid_int[axis] < label_array.shape[axis]
+            for axis in range(len(centroid_int))
+        ):
+            output_labels[centroid_int] = region.label
+
+    return (
+        image,
+        CentroidStats(slice_index=0, object_count=len(props)),
+        output_labels,
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
 @special_outputs(
     (
         "resize_stats",
@@ -5536,6 +5687,7 @@ def resize_objects_3d(
 __all__ = [
     "CentrosomeNumpyMorphologyBackendStrategy",
     "CellProfilerDeclumpMethod",
+    "CentroidStats",
     "CombineObjectsStats",
     "CombineObjectsStrategy",
     "DeclumpingMaximaGeometry",
@@ -5543,6 +5695,7 @@ __all__ = [
     "ExpandInfiniteStrategy",
     "ExpandShrinkOperationStrategy",
     "FillHolesOption",
+    "FillMode",
     "HolePredicate",
     "MaskObjectsOutputLabels",
     "MaskObjectsPlaneOperation",
@@ -5581,6 +5734,7 @@ __all__ = [
     "dilate_objects",
     "dilate_objects_3d",
     "erode_objects",
+    "fill_objects",
     "filter_border_objects",
     "filter_border_objects_planewise",
     "filter_labels_above_maximum_diameter",
@@ -5598,5 +5752,7 @@ __all__ = [
     "resize_objects_target_shape",
     "resize_objects_zoom_factors",
     "SimpleDiskMidpointPreservationPolicy",
+    "shrink_to_object_centers",
+    "shrink_to_object_centers_3d",
     "split_or_merge_objects",
 ]
