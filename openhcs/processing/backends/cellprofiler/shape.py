@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import logging
 import os
 import time
+from typing import Any
 
 import numpy as np
 import scipy.ndimage
@@ -15,6 +16,12 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.memory import numpy as numpy_decorator
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelMeasurementExecution,
+    object_label_measurement_execution,
+    special_outputs,
+)
 from openhcs.core.runtime_semantics import (
     MeasurementRowAxisField,
     ObjectLabelRepresentation,
@@ -22,6 +29,7 @@ from openhcs.core.runtime_semantics import (
     ShapeObjectFeatureValueTable,
     dense_object_label_id_domain,
     indexed_measurement_feature_name,
+    object_shape_measurement_all_field_names,
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
@@ -42,6 +50,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.secondary import _edt_1d_numba
+from openhcs.processing.materialization import csv_materializer
 from openhcs.processing.backends.cellprofiler.zernike import shape_zernike_moments
 
 _ZERNIKE_MAX_ORDER = 9
@@ -446,6 +455,51 @@ class ObjectSizeShapeMeasurementRowsRequest(ObjectSizeShapeFeatureArrayOwner):
             measured_labels,
             object_domain=dense_object_label_id_domain(self.labels),
         ).rows()
+
+
+@numpy_decorator
+@object_label_measurement_execution(ObjectLabelMeasurementExecution.FULL_STACK)
+@special_outputs(
+    (
+        "measurements",
+        csv_materializer(fields=list(object_shape_measurement_all_field_names())),
+    )
+)
+def measure_object_size_shape(
+    image: np.ndarray,
+    labels: np.ndarray | ObjectLabelSet,
+    calculate_advanced: bool = True,
+    calculate_zernikes: bool = True,
+    shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, list[dict[str, Any]]]:
+    """Measure CellProfiler AreaShape rows for labeled objects."""
+    total_started_at = time.perf_counter()
+    rows = ObjectSizeShapeMeasurementRowsRequest(
+        labels=labels,
+        calculate_advanced=calculate_advanced,
+        calculate_zernikes=calculate_zernikes,
+        shape_backend_provider=shape_backend_provider,
+        zernike_backend_provider=zernike_backend_provider,
+    ).rows()
+    _log_profile(
+        "moss_total",
+        time.perf_counter() - total_started_at,
+        function="measure_object_size_shape",
+        objects=len(rows),
+    )
+    return image, rows
+
+
+def prepare_measure_object_size_shape() -> None:
+    """Compile AreaShape paths before benchmark execution."""
+    image = np.linspace(0.0, 1.0, 32 * 32, dtype=np.float32).reshape((32, 32))
+    labels = np.zeros((32, 32), dtype=np.int32)
+    labels[8:24, 8:24] = 1
+    measure_object_size_shape.__wrapped__(image, labels)
+
+
+measure_object_size_shape.__openhcs_prepare__ = prepare_measure_object_size_shape
 
 
 @dataclass(frozen=True, slots=True)
