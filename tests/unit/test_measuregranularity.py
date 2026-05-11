@@ -1,14 +1,16 @@
 import numpy as np
 
 from benchmark.cellprofiler_library.functions.measuregranularity import (
-    GranularityImageSeriesRequest,
-    _GRANULARITY_IMAGE_SERIES_CACHE,
-    _background_corrected_pixels,
-    _disk_offsets,
-    _gray_dilation_offsets_reflect_numba,
-    _gray_erosion_offsets_reflect_numba,
-    _reconstruct_dilation_cross_numba,
     measure_granularity_objects,
+)
+from openhcs.processing.backends.cellprofiler.granularity import (
+    GRANULARITY_IMAGE_SERIES_CACHE,
+    GranularityImageSeriesRequest,
+    background_corrected_pixels,
+    disk_offsets,
+    gray_dilation_offsets_reflect_numba,
+    gray_erosion_offsets_reflect_numba,
+    reconstruct_dilation_cross_numba,
 )
 from openhcs.core.config import DtypeConfig
 
@@ -42,7 +44,7 @@ def test_measure_granularity_objects_preserves_sparse_label_ids():
 def test_granularity_series_cache_reuses_equal_image_values():
     image = np.arange(36, dtype=np.float64).reshape(6, 6)
     image_copy = image.copy()
-    _GRANULARITY_IMAGE_SERIES_CACHE.clear()
+    GRANULARITY_IMAGE_SERIES_CACHE.clear()
 
     first = GranularityImageSeriesRequest(
         image=image,
@@ -62,7 +64,7 @@ def test_granularity_series_cache_reuses_equal_image_values():
     ).series()
 
     assert second is first
-    assert len(_GRANULARITY_IMAGE_SERIES_CACHE) == 1
+    assert len(GRANULARITY_IMAGE_SERIES_CACHE) == 1
 
 
 def test_measure_granularity_objects_uses_order_one_coordinate_sampling_after_subsampling():
@@ -126,14 +128,14 @@ def test_numba_disk_morphology_matches_skimage_reflect_mode():
         dtype=np.float64,
     )
     footprint = skimage.morphology.disk(1, dtype=bool)
-    offsets = _disk_offsets(1)
+    offsets = disk_offsets(1)
 
     np.testing.assert_allclose(
-        _gray_erosion_offsets_reflect_numba(image, offsets),
+        gray_erosion_offsets_reflect_numba(image, offsets),
         skimage.morphology.erosion(image, footprint=footprint),
     )
     np.testing.assert_allclose(
-        _gray_dilation_offsets_reflect_numba(image, offsets),
+        gray_dilation_offsets_reflect_numba(image, offsets),
         skimage.morphology.dilation(image, footprint=footprint),
     )
 
@@ -160,7 +162,7 @@ def test_numba_reconstruction_matches_skimage_disk_one_connectivity():
         mask,
         footprint=skimage.morphology.disk(1, dtype=bool),
     )
-    actual = _reconstruct_dilation_cross_numba(seed, mask)
+    actual = reconstruct_dilation_cross_numba(seed, mask)
 
     np.testing.assert_allclose(actual, expected)
 
@@ -170,7 +172,7 @@ def test_background_corrected_pixels_match_reference_operations():
     import skimage.morphology
 
     image = np.arange(80, dtype=np.float64).reshape(8, 10) / 80.0
-    pixels, _shape = _background_corrected_pixels(
+    pixels, _shape = background_corrected_pixels(
         image,
         subsample_size=1.0,
         background_subsample_size=0.5,
