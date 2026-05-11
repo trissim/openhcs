@@ -39,6 +39,7 @@ from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     CellProfilerExpandShrinkOperation,
     ExpandShrinkMode,
 )
+from openhcs.interop.cellprofiler.image_module_settings import CombineObjectsMethod
 from openhcs.interop.cellprofiler.mask_objects_settings import (
     MaskObjectsNumberingChoice,
     MaskObjectsOverlapHandling,
@@ -3607,9 +3608,144 @@ def _size_binary_mask_like_labels(
     return result
 
 
+@dataclass(frozen=True, slots=True)
+class CombineObjectsStats:
+    """CellProfiler CombineObjects summary row."""
+
+    slice_index: int
+    method: str
+    input_objects_x: int
+    input_objects_y: int
+    output_objects: int
+
+
+class CombineObjectsStrategy(
+    EnumKeyedStrategyMixin[CombineObjectsMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal object-label combination strategy."""
+
+    __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+    method_label: ClassVar[str | None] = None
+    method: ClassVar[CombineObjectsMethod | None] = None
+
+    @classmethod
+    def for_method(
+        cls,
+        method: CombineObjectsMethod | str,
+    ) -> "CombineObjectsStrategy":
+        return cls.for_enum_member(
+            coerce_cellprofiler_enum(CombineObjectsMethod, method)
+        )
+
+    @abstractmethod
+    def combine(self, labels_x: np.ndarray, labels_y: np.ndarray) -> np.ndarray:
+        """Return combined labels for this policy."""
+
+    def result(
+        self,
+        labels_x: np.ndarray,
+        labels_y: np.ndarray,
+    ) -> tuple[CombineObjectsStats, np.ndarray]:
+        combined_labels = self.combine(labels_x, labels_y)
+        method = type(self).method
+        if method is None:
+            raise TypeError(f"{type(self).__name__} must declare method.")
+        return (
+            CombineObjectsStats(
+                slice_index=0,
+                method=method.value,
+                input_objects_x=positive_dense_label_count(labels_x),
+                input_objects_y=positive_dense_label_count(labels_y),
+                output_objects=positive_dense_label_count(combined_labels),
+            ),
+            combined_labels,
+        )
+
+
+class MergeCombineObjectsStrategy(CombineObjectsStrategy):
+    """Merge overlapping objects from two label images into single objects."""
+
+    method = CombineObjectsMethod.MERGE
+
+    def combine(self, labels_x: np.ndarray, labels_y: np.ndarray) -> np.ndarray:
+        from scipy.ndimage import label as scipy_label
+
+        combined_binary = ((labels_x > 0) | (labels_y > 0)).astype(np.uint8)
+        merged_labels, _ = scipy_label(combined_binary)
+        return merged_labels.astype(np.int32)
+
+
+class PreserveCombineObjectsStrategy(CombineObjectsStrategy):
+    """Preserve labels_x and add non-overlapping objects from labels_y."""
+
+    method = CombineObjectsMethod.PRESERVE
+
+    def combine(self, labels_x: np.ndarray, labels_y: np.ndarray) -> np.ndarray:
+        result = labels_x.copy().astype(np.int32)
+        max_label = labels_x.max()
+        non_overlapping_mask = (labels_y > 0) & (labels_x == 0)
+        if non_overlapping_mask.any():
+            y_labels_in_mask = np.unique(labels_y[non_overlapping_mask])
+            y_labels_in_mask = y_labels_in_mask[y_labels_in_mask > 0]
+            for index, y_label in enumerate(y_labels_in_mask):
+                y_object_mask = (labels_y == y_label) & non_overlapping_mask
+                result[y_object_mask] = max_label + index + 1
+        return result
+
+
+class DiscardCombineObjectsStrategy(CombineObjectsStrategy):
+    """Discard objects from labels_x that overlap labels_y."""
+
+    method = CombineObjectsMethod.DISCARD
+
+    def combine(self, labels_x: np.ndarray, labels_y: np.ndarray) -> np.ndarray:
+        from scipy.ndimage import label as scipy_label
+
+        overlap_mask = (labels_x > 0) & (labels_y > 0)
+        overlapping_labels = np.unique(labels_x[overlap_mask])
+        result = labels_x.copy().astype(np.int32)
+        for label_id in overlapping_labels:
+            if label_id > 0:
+                result[labels_x == label_id] = 0
+        if result.max() > 0:
+            result, _ = scipy_label(result > 0)
+        return result.astype(np.int32)
+
+
+class SegmentCombineObjectsStrategy(CombineObjectsStrategy):
+    """Segment labels_x using labels_y as watershed markers."""
+
+    method = CombineObjectsMethod.SEGMENT
+
+    def combine(self, labels_x: np.ndarray, labels_y: np.ndarray) -> np.ndarray:
+        from scipy.ndimage import distance_transform_edt
+        from skimage.segmentation import watershed
+
+        binary_x = labels_x > 0
+        if not binary_x.any():
+            return np.zeros_like(labels_x, dtype=np.int32)
+        distance = distance_transform_edt(binary_x)
+        markers = labels_y.copy()
+        markers[~binary_x] = 0
+        if markers.max() == 0:
+            return labels_x.astype(np.int32)
+        return watershed(-distance, markers, mask=binary_x).astype(np.int32)
+
+
+def positive_dense_label_count(labels: np.ndarray) -> int:
+    """Return the count of positive labels present in a dense label image."""
+    return int(len(np.unique(labels)) - (1 if 0 in labels else 0))
+
+
 __all__ = [
     "CentrosomeNumpyMorphologyBackendStrategy",
     "CellProfilerDeclumpMethod",
+    "CombineObjectsStats",
+    "CombineObjectsStrategy",
     "ExpandDefinedPixelsStrategy",
     "ExpandInfiniteStrategy",
     "ExpandShrinkOperationStrategy",
@@ -3621,5 +3757,6 @@ __all__ = [
     "MorphologyBackendStrategy",
     "NumbaNumpyMorphologyBackendStrategy",
     "NumpyMorphologyBackendStrategy",
+    "positive_dense_label_count",
     "prepare_expand_or_shrink_objects",
 ]
