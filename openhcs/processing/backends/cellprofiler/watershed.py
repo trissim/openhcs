@@ -751,7 +751,10 @@ def _legacy_watershed_raveled_numba(
 
 
 __all__ = [
+    "CellProfiler4DistanceMarkerBackendStrategy",
     "LegacyWatershedBackendStrategy",
+    "MahotasCellProfiler4DistanceMarkerBackendStrategy",
+    "NumbaCellProfiler4DistanceMarkerBackendStrategy",
     "NumbaNumpyLegacyWatershedBackendStrategy",
     "NumpyLegacyWatershedBackendStrategy",
     "cellprofiler_legacy_watershed",
