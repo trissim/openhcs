@@ -7,7 +7,7 @@ with options for rectangles, circles, or natural shapes.
 
 from abc import ABC, abstractmethod
 import numpy as np
-from typing import ClassVar, Tuple, Optional
+from typing import ClassVar, Tuple
 from dataclasses import dataclass
 from enum import Enum
 from metaclass_registry import AutoRegisterMeta
@@ -53,6 +53,189 @@ class GridDefinition:
     image_width: int
     ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS
 
+    @classmethod
+    def from_runtime(
+        cls,
+        *,
+        image_shape: tuple[int, int],
+        grid: SpatialGrid | None,
+        grid_rows: int,
+        grid_columns: int,
+        x_spacing: float,
+        y_spacing: float,
+        x_origin: float,
+        y_origin: float,
+        ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
+    ) -> "GridDefinition":
+        """Build executable grid geometry from a runtime grid or direct kwargs."""
+        spatial_grid = (
+            grid
+            if grid is not None
+            else SpatialGrid(
+                name="grid",
+                rows=grid_rows,
+                columns=grid_columns,
+                x_spacing=x_spacing,
+                y_spacing=y_spacing,
+                x_origin=x_origin,
+                y_origin=y_origin,
+                ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
+                source_spatial_shape_yx=tuple(int(value) for value in image_shape),
+            )
+        )
+        height, width = (
+            spatial_grid.source_spatial_shape_yx
+            if spatial_grid.source_spatial_shape_yx is not None
+            else image_shape
+        )
+        return cls(
+            rows=spatial_grid.rows,
+            columns=spatial_grid.columns,
+            x_spacing=spatial_grid.x_spacing,
+            y_spacing=spatial_grid.y_spacing,
+            x_location_of_lowest_x_spot=spatial_grid.x_origin,
+            y_location_of_lowest_y_spot=spatial_grid.y_origin,
+            x_locations=spatial_grid.x_locations_array(),
+            y_locations=spatial_grid.y_locations_array(),
+            spot_table=spatial_grid.spot_table_array(),
+            image_height=height,
+            image_width=width,
+            ordering=spatial_grid.ordering,
+        )
+
+    def filled_labels(self) -> np.ndarray:
+        """Fill a labels matrix by labeling each rectangle in the grid."""
+        i_min = int(self.y_location_of_lowest_y_spot - self.y_spacing / 2)
+        j_min = int(self.x_location_of_lowest_x_spot - self.x_spacing / 2)
+        return _fill_grid_numba(
+            int(self.image_height),
+            int(self.image_width),
+            float(self.y_spacing),
+            float(self.x_spacing),
+            i_min,
+            j_min,
+            np.asarray(self.spot_table, dtype=np.int32),
+        )
+
+    def labels_for_shape(self, shape: tuple[int, int]) -> np.ndarray:
+        """Return grid labels aligned to the requested output shape."""
+        labels = self.filled_labels()
+        if labels.shape == shape:
+            return labels
+        result = np.zeros(
+            [max(labels.shape[i], shape[i]) for i in range(2)],
+            dtype=np.int32,
+        )
+        result[0:labels.shape[0], 0:labels.shape[1]] = labels
+        return result
+
+    def circle_labels(
+        self,
+        *,
+        center_i: np.ndarray,
+        center_j: np.ndarray,
+        radius: float,
+        guiding_labels: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Return labels constrained to circles centered on grid spot IDs."""
+        labels = (
+            self.labels_for_shape(guiding_labels.shape)
+            if guiding_labels is not None
+            else self.filled_labels()
+        )
+        center_i_by_label, center_j_by_label = _spot_center_lookup_numba(
+            np.asarray(self.spot_table, dtype=np.int32),
+            np.asarray(center_i, dtype=np.float64),
+            np.asarray(center_j, dtype=np.float64),
+            int(self.spot_table.max()),
+        )
+        return _apply_circle_mask_numba(
+            np.asarray(labels, dtype=np.int32),
+            center_i_by_label,
+            center_j_by_label,
+            float(radius),
+        )
+
+    def forced_circle_labels(self, radius: float) -> np.ndarray:
+        """Return circular labels centered in each grid cell."""
+        row_indices, col_indices = np.mgrid[0:self.rows, 0:self.columns]
+        return self.circle_labels(
+            center_i=(
+                self.y_locations[row_indices, col_indices]
+                if self.y_locations.ndim == 2
+                else self.y_locations[row_indices]
+            ),
+            center_j=(
+                self.x_locations[row_indices, col_indices]
+                if self.x_locations.ndim == 2
+                else self.x_locations[col_indices]
+            ),
+            radius=radius,
+        )
+
+    def guide_label_center_grid_ids(
+        self,
+        guide_labels: np.ndarray,
+        *,
+        grid_labels: np.ndarray | None = None,
+    ) -> np.ndarray:
+        """Map each guide label ID to the grid object ID containing its center."""
+        labels = self.filled_labels() if grid_labels is None else grid_labels
+        max_guide = int(np.max(guide_labels))
+        label_center_grid_ids = np.zeros(max_guide + 1, dtype=np.int32)
+        if max_guide == 0:
+            return label_center_grid_ids
+
+        centers = np.zeros((2, max_guide + 1), dtype=np.float64)
+        centers_i, centers_j = _centers_of_labels_numba(
+            np.asarray(guide_labels, dtype=np.int32),
+            max_guide,
+        )
+        centers[0, 1:] = centers_i
+        centers[1, 1:] = centers_j
+        bad_centers = (
+            (~np.isfinite(centers[0, :]))
+            | (~np.isfinite(centers[1, :]))
+            | (centers[0, :] >= labels.shape[0])
+            | (centers[1, :] >= labels.shape[1])
+        )
+        rounded_centers = np.round(centers).astype(int)
+        masked_labels = labels.copy()
+        y_border = int(np.ceil(self.y_spacing / 10))
+        x_border = int(np.ceil(self.x_spacing / 10))
+        if y_border > 0:
+            ymask = labels[y_border:, :] != labels[:-y_border, :]
+            masked_labels[y_border:, :][ymask] = 0
+            masked_labels[:-y_border, :][ymask] = 0
+        if x_border > 0:
+            xmask = labels[:, x_border:] != labels[:, :-x_border]
+            masked_labels[:, x_border:][xmask] = 0
+            masked_labels[:, :-x_border][xmask] = 0
+        rounded_centers[:, bad_centers] = 0
+        label_center_grid_ids = masked_labels[
+            rounded_centers[0, :],
+            rounded_centers[1, :],
+        ]
+        label_center_grid_ids[bad_centers] = 0
+        return np.asarray(label_center_grid_ids, dtype=np.int32)
+
+    def filtered_guides(self, guide_labels: np.ndarray) -> np.ndarray:
+        """Filter guide labels to object parts accepted by this grid."""
+        labels = self.filled_labels()
+        return _filter_labels_by_grid_numba(
+            np.asarray(guide_labels, dtype=np.int32),
+            np.asarray(labels, dtype=np.int32),
+            self.guide_label_center_grid_ids(guide_labels, grid_labels=labels),
+        )
+
+    def labels_from_filtered_guides(self, filtered_guides: np.ndarray) -> np.ndarray:
+        """Return grid labels masked by accepted guide pixels."""
+        labels = self.labels_for_shape(filtered_guides.shape)
+        return _mask_grid_labels_by_filtered_guides_numba(
+            np.asarray(labels, dtype=np.int32),
+            np.asarray(filtered_guides, dtype=np.int32),
+        )
+
 
 @dataclass
 class GridObjectStats:
@@ -63,30 +246,128 @@ class GridObjectStats:
     shape_type: str
 
 
-@dataclass(frozen=True, slots=True)
-class GridShapeRequest:
-    """Inputs needed to materialize one grid object shape strategy."""
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GridShapeContext(ABC):
+    """Shared grid-shape execution state carried through nominal requests."""
 
     grid: GridDefinition
     guiding_labels: np.ndarray | None = None
-    filtered_guides: np.ndarray | None = None
     diameter_choice: DiameterChoice = DiameterChoice.MANUAL
     circle_diameter: int = 20
 
 
-def _fill_grid(grid: GridDefinition) -> np.ndarray:
-    """Fill a labels matrix by labeling each rectangle in the grid."""
-    i_min = int(grid.y_location_of_lowest_y_spot - grid.y_spacing / 2)
-    j_min = int(grid.x_location_of_lowest_x_spot - grid.x_spacing / 2)
-    return _fill_grid_numba(
-        int(grid.image_height),
-        int(grid.image_width),
-        float(grid.y_spacing),
-        float(grid.x_spacing),
-        i_min,
-        j_min,
-        np.asarray(grid.spot_table, dtype=np.int32),
-    )
+@dataclass(frozen=True, slots=True, kw_only=True)
+class GridShapeRequest(GridShapeContext):
+    """Inputs needed to materialize one grid object shape strategy."""
+
+    filtered_guides: np.ndarray | None = None
+
+    def labels(self, shape_choice: ShapeChoice) -> np.ndarray:
+        """Materialize labels through the registered strategy family."""
+        strategy = GridShapeStrategy.for_shape_choice(shape_choice)
+        if strategy.requires_guides and self.guiding_labels is None:
+            strategy = GridShapeStrategy.for_shape_choice(ShapeChoice.RECTANGLE)
+        return strategy.labels(self)
+
+    @property
+    def required_guiding_labels(self) -> np.ndarray:
+        if self.guiding_labels is None:
+            raise ValueError("Grid shape strategy requires guiding labels.")
+        return self.guiding_labels
+
+    @property
+    def required_filtered_guides(self) -> np.ndarray:
+        if self.filtered_guides is None:
+            raise ValueError("Grid shape strategy requires filtered guiding labels.")
+        return self.filtered_guides
+
+    def circle_radius(self) -> float:
+        """Return manual or area-derived circle radius for grid object modes."""
+        if self.diameter_choice is DiameterChoice.MANUAL:
+            return self.circle_diameter / 2.0
+        filtered_guides = self.required_filtered_guides
+        areas = np.bincount(filtered_guides[filtered_guides != 0].flatten())
+        if len(areas) > 0 and np.any(areas != 0):
+            median_area = np.median(areas[areas != 0])
+            return max(1, np.sqrt(median_area / np.pi))
+        return self.circle_diameter / 2.0
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class IdentifyObjectsInGridRequest(GridShapeContext):
+    """Executable request for CellProfiler IdentifyObjectsInGrid semantics."""
+
+    image: np.ndarray
+    shape_choice: ShapeChoice
+
+    @classmethod
+    def from_runtime(
+        cls,
+        *,
+        image: np.ndarray,
+        grid: SpatialGrid | None,
+        grid_rows: int,
+        grid_columns: int,
+        x_spacing: float,
+        y_spacing: float,
+        x_origin: float,
+        y_origin: float,
+        shape_choice: ShapeChoice | str,
+        diameter_choice: DiameterChoice | str,
+        circle_diameter: int,
+        guiding_labels: np.ndarray | None = None,
+    ) -> "IdentifyObjectsInGridRequest":
+        """Bind CP/runtime inputs into one nominal executable request."""
+        return cls(
+            image=image,
+            grid=GridDefinition.from_runtime(
+                image_shape=image.shape,
+                grid=grid,
+                grid_rows=grid_rows,
+                grid_columns=grid_columns,
+                x_spacing=x_spacing,
+                y_spacing=y_spacing,
+                x_origin=x_origin,
+                y_origin=y_origin,
+            ),
+            shape_choice=coerce_cellprofiler_enum(ShapeChoice, shape_choice),
+            diameter_choice=coerce_cellprofiler_enum(DiameterChoice, diameter_choice),
+            circle_diameter=circle_diameter,
+            guiding_labels=guiding_labels,
+        )
+
+    @property
+    def object_count(self) -> int:
+        return self.grid.rows * self.grid.columns
+
+    @property
+    def filtered_guides(self) -> np.ndarray | None:
+        if self.guiding_labels is None:
+            return None
+        return self.grid.filtered_guides(self.guiding_labels)
+
+    def stats(self) -> GridObjectStats:
+        return GridObjectStats(
+            slice_index=0,
+            object_count=self.object_count,
+            grid_rows=self.grid.rows,
+            grid_columns=self.grid.columns,
+            shape_type=self.shape_choice.value,
+        )
+
+    def execute(self) -> Tuple[np.ndarray, GridObjectStats, ObjectLabelPayload]:
+        labels = GridShapeRequest(
+            grid=self.grid,
+            guiding_labels=self.guiding_labels,
+            filtered_guides=self.filtered_guides,
+            diameter_choice=self.diameter_choice,
+            circle_diameter=self.circle_diameter,
+        ).labels(self.shape_choice)
+        return self.image, self.stats(), object_label_payload_from_source_image(
+            self.image,
+            labels.astype(np.int32, copy=False),
+            declared_object_count=self.object_count,
+        )
 
 
 @njit(cache=True)
@@ -125,71 +406,6 @@ def _fill_grid_numba(
                 for col in range(col_start, col_stop):
                     labels[row, col] = label_id
     return labels
-
-
-def _grid_labels_for_shape(
-    grid: GridDefinition,
-    shape: tuple[int, int],
-) -> np.ndarray:
-    """Return grid labels aligned to the requested output shape."""
-    labels = _fill_grid(grid)
-    if labels.shape == shape:
-        return labels
-    result = np.zeros(
-        [max(labels.shape[i], shape[i]) for i in range(2)],
-        dtype=np.int32,
-    )
-    result[0:labels.shape[0], 0:labels.shape[1]] = labels
-    return result
-
-
-def _grid_definition(
-    *,
-    image_shape: tuple[int, int],
-    grid: SpatialGrid | None,
-    grid_rows: int,
-    grid_columns: int,
-    x_spacing: float,
-    y_spacing: float,
-    x_origin: float,
-    y_origin: float,
-    ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
-) -> GridDefinition:
-    """Build executable grid geometry from a runtime grid or direct kwargs."""
-    spatial_grid = (
-        grid
-        if grid is not None
-        else SpatialGrid(
-            name="grid",
-            rows=grid_rows,
-            columns=grid_columns,
-            x_spacing=x_spacing,
-            y_spacing=y_spacing,
-            x_origin=x_origin,
-            y_origin=y_origin,
-            ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
-            source_spatial_shape_yx=tuple(int(value) for value in image_shape),
-        )
-    )
-    height, width = (
-        spatial_grid.source_spatial_shape_yx
-        if spatial_grid.source_spatial_shape_yx is not None
-        else image_shape
-    )
-    return GridDefinition(
-        rows=spatial_grid.rows,
-        columns=spatial_grid.columns,
-        x_spacing=spatial_grid.x_spacing,
-        y_spacing=spatial_grid.y_spacing,
-        x_location_of_lowest_x_spot=spatial_grid.x_origin,
-        y_location_of_lowest_y_spot=spatial_grid.y_origin,
-        x_locations=spatial_grid.x_locations_array(),
-        y_locations=spatial_grid.y_locations_array(),
-        spot_table=spatial_grid.spot_table_array(),
-        image_height=height,
-        image_width=width,
-        ordering=spatial_grid.ordering,
-    )
 
 
 def _centers_of_labels(labels: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -233,40 +449,6 @@ def _centers_of_labels_numba(
             centers_i[label_id - 1] = sums_i[label_id] / count
             centers_j[label_id - 1] = sums_j[label_id] / count
     return centers_i, centers_j
-
-
-def _run_circle(
-    grid: GridDefinition,
-    spot_center_i: np.ndarray,
-    spot_center_j: np.ndarray,
-    radius: float,
-    guiding_labels: Optional[np.ndarray] = None
-) -> np.ndarray:
-    """Return a labels matrix composed of circles centered on given locations."""
-    labels = _fill_grid(grid)
-
-    # Fit labels to guiding objects size if needed
-    if guiding_labels is not None:
-        if any(guiding_labels.shape[i] > labels.shape[i] for i in range(2)):
-            result = np.zeros(
-                [max(guiding_labels.shape[i], labels.shape[i]) for i in range(2)],
-                dtype=np.int32
-            )
-            result[0:labels.shape[0], 0:labels.shape[1]] = labels
-            labels = result
-
-    center_i_by_label, center_j_by_label = _spot_center_lookup_numba(
-        np.asarray(grid.spot_table, dtype=np.int32),
-        np.asarray(spot_center_i, dtype=np.float64),
-        np.asarray(spot_center_j, dtype=np.float64),
-        int(grid.spot_table.max()),
-    )
-    return _apply_circle_mask_numba(
-        np.asarray(labels, dtype=np.int32),
-        center_i_by_label,
-        center_j_by_label,
-        float(radius),
-    )
 
 
 @njit(cache=True)
@@ -323,34 +505,6 @@ def _apply_circle_mask_numba(
     return labels
 
 
-def _run_forced_circle(
-    grid: GridDefinition,
-    radius: float
-) -> np.ndarray:
-    """Return a labels matrix composed of circles centered in grid cells."""
-    i, j = np.mgrid[0:grid.rows, 0:grid.columns]
-    return _run_circle(
-        grid,
-        grid.y_locations[i, j] if grid.y_locations.ndim == 2 else grid.y_locations[i],
-        grid.x_locations[i, j] if grid.x_locations.ndim == 2 else grid.x_locations[j],
-        radius
-    )
-
-
-def _filter_labels_by_grid(
-    guide_labels: np.ndarray,
-    grid: GridDefinition
-) -> np.ndarray:
-    """Filter guide labels by proximity to edges of grid."""
-    labels = _fill_grid(grid)
-    lcenters = _guide_label_center_grid_ids(guide_labels, grid, grid_labels=labels)
-    return _filter_labels_by_grid_numba(
-        np.asarray(guide_labels, dtype=np.int32),
-        np.asarray(labels, dtype=np.int32),
-        lcenters,
-    )
-
-
 @njit(cache=True)
 def _filter_labels_by_grid_numba(
     guide_labels: np.ndarray,
@@ -382,81 +536,6 @@ def _filter_labels_by_grid_numba(
     return filtered
 
 
-def _guide_label_center_grid_ids(
-    guide_labels: np.ndarray,
-    grid: GridDefinition,
-    *,
-    grid_labels: np.ndarray | None = None,
-) -> np.ndarray:
-    """Map each guide label ID to the grid object ID containing its center."""
-    labels = _fill_grid(grid) if grid_labels is None else grid_labels
-    max_guide = int(np.max(guide_labels))
-    lcenters = np.zeros(max_guide + 1, dtype=np.int32)
-    if max_guide == 0:
-        return lcenters
-
-    centers = np.zeros((2, max_guide + 1), dtype=np.float64)
-    centers_i, centers_j = _centers_of_labels_numba(
-        np.asarray(guide_labels, dtype=np.int32),
-        max_guide,
-    )
-    centers[0, 1:] = centers_i
-    centers[1, 1:] = centers_j
-    bad_centers = (
-        (~np.isfinite(centers[0, :]))
-        | (~np.isfinite(centers[1, :]))
-        | (centers[0, :] >= labels.shape[0])
-        | (centers[1, :] >= labels.shape[1])
-    )
-    rounded_centers = np.round(centers).astype(int)
-    masked_labels = labels.copy()
-    y_border = int(np.ceil(grid.y_spacing / 10))
-    x_border = int(np.ceil(grid.x_spacing / 10))
-    if y_border > 0:
-        ymask = labels[y_border:, :] != labels[:-y_border, :]
-        masked_labels[y_border:, :][ymask] = 0
-        masked_labels[:-y_border, :][ymask] = 0
-    if x_border > 0:
-        xmask = labels[:, x_border:] != labels[:, :-x_border]
-        masked_labels[:, x_border:][xmask] = 0
-        masked_labels[:, :-x_border][xmask] = 0
-    rounded_centers[:, bad_centers] = 0
-    lcenters = masked_labels[rounded_centers[0, :], rounded_centers[1, :]]
-    lcenters[bad_centers] = 0
-    return np.asarray(lcenters, dtype=np.int32)
-
-
-def _natural_grid_labels_from_guides(
-    guide_labels: np.ndarray,
-    grid: GridDefinition,
-) -> np.ndarray:
-    """Combine accepted guide parts per grid compartment."""
-    grid_labels = _grid_labels_for_shape(grid, guide_labels.shape)
-    lcenters = _guide_label_center_grid_ids(
-        guide_labels,
-        grid,
-        grid_labels=grid_labels,
-    )
-    sparse_labels = _natural_grid_labels_from_guides_numba(
-        np.asarray(guide_labels, dtype=np.int32),
-        np.asarray(grid_labels, dtype=np.int32),
-        lcenters,
-    )
-    return sparse_labels
-
-
-def _natural_grid_labels_from_filtered_guides(
-    filtered_guides: np.ndarray,
-    grid: GridDefinition,
-) -> np.ndarray:
-    """Return CP natural-shape grid labels masked by accepted guide pixels."""
-    labels = _grid_labels_for_shape(grid, filtered_guides.shape)
-    return _mask_grid_labels_by_filtered_guides_numba(
-        np.asarray(labels, dtype=np.int32),
-        np.asarray(filtered_guides, dtype=np.int32),
-    )
-
-
 @njit(cache=True)
 def _mask_grid_labels_by_filtered_guides_numba(
     grid_labels: np.ndarray,
@@ -470,31 +549,6 @@ def _mask_grid_labels_by_filtered_guides_numba(
         for col in range(width):
             if row >= guide_height or col >= guide_width or filtered_guides[row, col] == 0:
                 labels[row, col] = 0
-    return labels
-
-
-@njit(cache=True)
-def _natural_grid_labels_from_guides_numba(
-    guide_labels: np.ndarray,
-    grid_labels: np.ndarray,
-    label_center_grid_ids: np.ndarray,
-) -> np.ndarray:
-    """Project accepted guide parts inside their center grid compartment."""
-    labels = np.zeros(grid_labels.shape, dtype=np.int32)
-    guide_height, guide_width = guide_labels.shape
-    for row in range(guide_height):
-        for col in range(guide_width):
-            guide_id = int(guide_labels[row, col])
-            if (
-                guide_id <= 0
-                or guide_id >= len(label_center_grid_ids)
-                or row >= grid_labels.shape[0]
-                or col >= grid_labels.shape[1]
-            ):
-                continue
-            projected_id = int(label_center_grid_ids[guide_id])
-            if projected_id != 0 and int(grid_labels[row, col]) == projected_id:
-                labels[row, col] = projected_id
     return labels
 
 
@@ -526,7 +580,7 @@ class RectangleGridShapeStrategy(GridShapeStrategy):
     shape_choice = ShapeChoice.RECTANGLE.value
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
-        return _fill_grid(request.grid)
+        return request.grid.filled_labels()
 
 
 class ForcedCircleGridShapeStrategy(GridShapeStrategy):
@@ -535,7 +589,7 @@ class ForcedCircleGridShapeStrategy(GridShapeStrategy):
     shape_choice = ShapeChoice.CIRCLE_FORCED.value
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
-        return _run_forced_circle(request.grid, request.circle_diameter / 2.0)
+        return request.grid.forced_circle_labels(request.circle_diameter / 2.0)
 
 
 class NaturalCircleGridShapeStrategy(GridShapeStrategy):
@@ -545,9 +599,9 @@ class NaturalCircleGridShapeStrategy(GridShapeStrategy):
     requires_guides = True
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
-        guiding_labels = _require_guiding_labels(request)
-        filtered_guides = _require_filtered_guides(request)
-        labels = _fill_grid(request.grid)
+        guiding_labels = request.required_guiding_labels
+        filtered_guides = request.required_filtered_guides
+        labels = request.grid.filled_labels()
         labels[filtered_guides[0:labels.shape[0], 0:labels.shape[1]] == 0] = 0
         centers_i, centers_j = _centers_of_labels(labels)
 
@@ -559,12 +613,11 @@ class NaturalCircleGridShapeStrategy(GridShapeStrategy):
         spot_centers_i = centers_i[request.grid.spot_table - 1]
         spot_centers_j = centers_j[request.grid.spot_table - 1]
 
-        return _run_circle(
-            request.grid,
-            spot_centers_i,
-            spot_centers_j,
-            _circle_radius(request, filtered_guides),
-            guiding_labels,
+        return request.grid.circle_labels(
+            center_i=spot_centers_i,
+            center_j=spot_centers_j,
+            radius=request.circle_radius(),
+            guiding_labels=guiding_labels,
         )
 
 
@@ -575,47 +628,7 @@ class NaturalGridShapeStrategy(GridShapeStrategy):
     requires_guides = True
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
-        return _natural_grid_labels_from_filtered_guides(
-            _require_filtered_guides(request),
-            request.grid,
-        )
-
-
-def _grid_shape_labels(
-    shape_choice: ShapeChoice,
-    request: GridShapeRequest,
-) -> np.ndarray:
-    """Materialize labels, falling back to rectangles when guides are absent."""
-    strategy = GridShapeStrategy.for_shape_choice(shape_choice)
-    if strategy.requires_guides and request.guiding_labels is None:
-        strategy = GridShapeStrategy.for_shape_choice(ShapeChoice.RECTANGLE)
-    return strategy.labels(request)
-
-
-def _circle_radius(
-    request: GridShapeRequest,
-    filtered_guides: np.ndarray,
-) -> float:
-    """Return manual or area-derived circle radius for grid object modes."""
-    if request.diameter_choice is DiameterChoice.MANUAL:
-        return request.circle_diameter / 2.0
-    areas = np.bincount(filtered_guides[filtered_guides != 0].flatten())
-    if len(areas) > 0 and np.any(areas != 0):
-        median_area = np.median(areas[areas != 0])
-        return max(1, np.sqrt(median_area / np.pi))
-    return request.circle_diameter / 2.0
-
-
-def _require_guiding_labels(request: GridShapeRequest) -> np.ndarray:
-    if request.guiding_labels is None:
-        raise ValueError("Grid shape strategy requires guiding labels.")
-    return request.guiding_labels
-
-
-def _require_filtered_guides(request: GridShapeRequest) -> np.ndarray:
-    if request.filtered_guides is None:
-        raise ValueError("Grid shape strategy requires filtered guiding labels.")
-    return request.filtered_guides
+        return request.grid.labels_from_filtered_guides(request.required_filtered_guides)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -661,11 +674,8 @@ def identify_objects_in_grid(
     Returns:
         Tuple of (image, stats, labels)
     """
-    shape_choice = coerce_cellprofiler_enum(ShapeChoice, shape_choice)
-    diameter_choice = coerce_cellprofiler_enum(DiameterChoice, diameter_choice)
-
-    grid_definition = _grid_definition(
-        image_shape=image.shape,
+    return IdentifyObjectsInGridRequest.from_runtime(
+        image=image,
         grid=grid,
         grid_rows=grid_rows,
         grid_columns=grid_columns,
@@ -673,31 +683,10 @@ def identify_objects_in_grid(
         y_spacing=y_spacing,
         x_origin=x_origin,
         y_origin=y_origin,
-    )
-    labels = _grid_shape_labels(
-        shape_choice,
-        GridShapeRequest(
-            grid=grid_definition,
-            diameter_choice=diameter_choice,
-            circle_diameter=circle_diameter,
-        ),
-    )
-    
-    object_count = grid_definition.rows * grid_definition.columns
-    
-    stats = GridObjectStats(
-        slice_index=0,
-        object_count=object_count,
-        grid_rows=grid_definition.rows,
-        grid_columns=grid_definition.columns,
-        shape_type=shape_choice.value
-    )
-    
-    return image, stats, object_label_payload_from_source_image(
-        image,
-        labels.astype(np.int32, copy=False),
-        declared_object_count=object_count,
-    )
+        shape_choice=shape_choice,
+        diameter_choice=diameter_choice,
+        circle_diameter=circle_diameter,
+    ).execute()
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -745,11 +734,8 @@ def identify_objects_in_grid_with_guides(
     Returns:
         Tuple of (image, stats, labels)
     """
-    shape_choice = coerce_cellprofiler_enum(ShapeChoice, shape_choice)
-    diameter_choice = coerce_cellprofiler_enum(DiameterChoice, diameter_choice)
-
-    grid_definition = _grid_definition(
-        image_shape=image.shape,
+    return IdentifyObjectsInGridRequest.from_runtime(
+        image=image,
         grid=grid,
         grid_rows=grid_rows,
         grid_columns=grid_columns,
@@ -757,36 +743,11 @@ def identify_objects_in_grid_with_guides(
         y_spacing=y_spacing,
         x_origin=x_origin,
         y_origin=y_origin,
-    )
-    
-    # Filter guiding labels
-    filtered_guides = _filter_labels_by_grid(guiding_labels, grid_definition)
-    labels = _grid_shape_labels(
-        shape_choice,
-        GridShapeRequest(
-            grid=grid_definition,
-            guiding_labels=guiding_labels,
-            filtered_guides=filtered_guides,
-            diameter_choice=diameter_choice,
-            circle_diameter=circle_diameter,
-        ),
-    )
-    
-    object_count = grid_definition.rows * grid_definition.columns
-    
-    stats = GridObjectStats(
-        slice_index=0,
-        object_count=object_count,
-        grid_rows=grid_definition.rows,
-        grid_columns=grid_definition.columns,
-        shape_type=shape_choice.value
-    )
-    
-    return image, stats, object_label_payload_from_source_image(
-        image,
-        labels.astype(np.int32, copy=False),
-        declared_object_count=object_count,
-    )
+        shape_choice=shape_choice,
+        diameter_choice=diameter_choice,
+        circle_diameter=circle_diameter,
+        guiding_labels=guiding_labels,
+    ).execute()
 
 
 def _prepare_identify_objects_in_grid() -> None:

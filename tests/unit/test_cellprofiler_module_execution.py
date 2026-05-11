@@ -97,8 +97,7 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
 )
 from benchmark.cellprofiler_library.functions.definegrid import define_grid_automatic
 from benchmark.cellprofiler_library.functions.identifyobjectsingrid import (
-    _fill_grid,
-    _grid_definition,
+    GridDefinition,
     GridShapeRequest,
     identify_objects_in_grid,
     identify_objects_in_grid_with_guides,
@@ -4791,7 +4790,7 @@ def test_identify_objects_in_grid_respects_column_primary_ordering() -> None:
 
 
 def test_identify_objects_in_grid_fill_boundaries_match_floor_bins() -> None:
-    grid = _grid_definition(
+    grid = GridDefinition.from_runtime(
         image_shape=(11, 14),
         grid=None,
         grid_rows=3,
@@ -4803,7 +4802,7 @@ def test_identify_objects_in_grid_fill_boundaries_match_floor_bins() -> None:
         ordering=SpatialGridOrdering.BY_ROWS,
     )
 
-    labels = _fill_grid(grid)
+    labels = grid.filled_labels()
     row_origin = int(grid.y_location_of_lowest_y_spot - grid.y_spacing / 2)
     col_origin = int(grid.x_location_of_lowest_x_spot - grid.x_spacing / 2)
     expected = np.zeros(labels.shape, dtype=np.int32)
@@ -4886,7 +4885,7 @@ def test_identify_objects_in_grid_natural_shape_uses_filtered_guides() -> None:
     guide_labels = np.zeros((5, 10), dtype=np.int32)
     guide_labels[2, 1:4] = 7
     filtered_guides = np.zeros_like(guide_labels)
-    grid = _grid_definition(
+    grid = GridDefinition.from_runtime(
         image_shape=guide_labels.shape,
         grid=None,
         grid_rows=1,
