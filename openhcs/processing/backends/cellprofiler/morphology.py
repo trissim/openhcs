@@ -12,6 +12,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from enum import Enum
 from functools import lru_cache
+from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -26,6 +27,67 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 
 HolePredicate = Callable[[int, bool], bool]
+ConnectivityStructureBuilder = Callable[[int], np.ndarray]
+LabelBoundingBox = tuple[int, tuple[slice, ...]]
+LabelBoundingBoxes = list[LabelBoundingBox]
+SCIPY_CONSTANT_BOUNDARY_MODE = "constant"
+
+
+def face_connected_component_structure(ndim: int) -> np.ndarray:
+    """Return the SciPy face-connectivity structure for an nd label image."""
+    from scipy import ndimage as ndi
+
+    return ndi.generate_binary_structure(ndim, 1)
+
+
+def full_connected_component_structure(ndim: int) -> np.ndarray:
+    """Return the full 3-wide neighborhood structure for an nd label image."""
+    return np.ones((3,) * ndim, dtype=bool)
+
+
+class ConnectedComponentConnectivity(ABC, metaclass=AutoRegisterMeta):
+    """Registered structuring-element policy for connected components."""
+
+    __registry_key__ = "connectivity"
+    __skip_if_no_key__ = True
+    connectivity: ClassVar[int | None] = None
+    structure_builder: ClassVar[ConnectivityStructureBuilder | None] = None
+
+    @classmethod
+    def for_connectivity(cls, connectivity: int) -> "ConnectedComponentConnectivity":
+        strategy_type = cls.__registry__.get(connectivity)
+        if strategy_type is None:
+            raise ValueError(
+                f"Unsupported connected-component connectivity: {connectivity}"
+            )
+        return strategy_type()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.connectivity is not None and cls.structure_builder is None:
+            raise TypeError(
+                f"{cls.__name__} must declare structure_builder for connectivity"
+            )
+
+    def structure(self, ndim: int) -> np.ndarray:
+        structure_builder = type(self).structure_builder
+        if structure_builder is None:
+            raise TypeError(f"{type(self).__name__} cannot build connectivity")
+        return structure_builder(ndim)
+
+
+class FaceConnectedComponents(ConnectedComponentConnectivity):
+    """Face-connected components."""
+
+    connectivity = 1
+    structure_builder = staticmethod(face_connected_component_structure)
+
+
+class FullConnectedComponents(ConnectedComponentConnectivity):
+    """Fully connected components over a 3-wide neighborhood."""
+
+    connectivity = 2
+    structure_builder = staticmethod(full_connected_component_structure)
 
 
 class CellProfilerDeclumpMethod(Enum):
@@ -542,10 +604,11 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
                 "Numba morphology backend currently supports 2-D grayscale closing."
             )
         footprint_offsets = _footprint_offsets(footprint_array)
-        return _grayscale_closing_2d_numba(
+        return _grayscale_morphology_2d_numba(
             np.ascontiguousarray(image_array),
             footprint_offsets[:, 0],
             footprint_offsets[:, 1],
+            True,
         )
 
     def grayscale_opening(
@@ -560,10 +623,11 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
                 "Numba morphology backend currently supports 2-D grayscale opening."
             )
         footprint_offsets = _footprint_offsets(footprint_array)
-        return _grayscale_opening_2d_numba(
+        return _grayscale_morphology_2d_numba(
             np.ascontiguousarray(image_array),
             footprint_offsets[:, 0],
             footprint_offsets[:, 1],
+            False,
         )
 
     def block_labels(
@@ -1242,12 +1306,9 @@ def _scipy_connected_components(
     from scipy import ndimage as ndi
 
     mask_array = np.asarray(mask, dtype=bool)
-    if connectivity == 1:
-        structure = ndi.generate_binary_structure(mask_array.ndim, 1)
-    elif connectivity == 2:
-        structure = np.ones((3,) * mask_array.ndim, dtype=bool)
-    else:
-        raise ValueError(f"Unsupported connected-component connectivity: {connectivity}")
+    structure = ConnectedComponentConnectivity.for_connectivity(
+        connectivity
+    ).structure(mask_array.ndim)
     labels, count = ndi.label(mask_array, structure=structure)
     return labels.astype(np.int32, copy=False), int(count)
 
@@ -1329,7 +1390,7 @@ def _scipy_local_maxima_by_label(
         local_max = ndi.maximum_filter(
             masked_image,
             footprint=footprint,
-            mode="constant",
+            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
             cval=-np.inf,
         )
         maxima[bounds] |= label_crop & (image_crop == local_max)
@@ -1357,8 +1418,18 @@ def _scipy_smooth_image_for_declumping(
     )
 
     def convolve(array: np.ndarray) -> np.ndarray:
-        output = scipy.ndimage.convolve1d(array, kernel, axis=0, mode="constant")
-        return scipy.ndimage.convolve1d(output, kernel, axis=1, mode="constant")
+        output = scipy.ndimage.convolve1d(
+            array,
+            kernel,
+            axis=0,
+            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
+        )
+        return scipy.ndimage.convolve1d(
+            output,
+            kernel,
+            axis=1,
+            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
+        )
 
     mask_array = np.asarray(mask, dtype=bool)
     edge_array = convolve(mask_array.astype(float))
@@ -1512,7 +1583,7 @@ def _scipy_declumping_seed_points(
 
 def _positive_label_bounding_boxes(
     labels: np.ndarray,
-) -> list[tuple[int, tuple[slice, ...]]]:
+) -> LabelBoundingBoxes:
     positive_coords = np.nonzero(labels > 0)
     if not positive_coords[0].size:
         return []
@@ -1525,7 +1596,7 @@ def _positive_label_bounding_boxes(
     group_starts = np.concatenate(([0], change_offsets))
     group_ends = np.concatenate((change_offsets, [sorted_labels.size]))
 
-    boxes: list[tuple[int, tuple[slice, ...]]] = []
+    boxes: LabelBoundingBoxes = []
     for start, end in zip(group_starts, group_ends):
         bounds = tuple(
             slice(int(axis_coords[start:end].min()), int(axis_coords[start:end].max()) + 1)
@@ -1762,14 +1833,15 @@ def _border_component_ids(component_labels: np.ndarray) -> set[int]:
 
 
 @njit(cache=True, parallel=True)
-def _grayscale_closing_2d_numba(
+def _grayscale_morphology_2d_numba(
     image: np.ndarray,
     offset_rows: np.ndarray,
     offset_cols: np.ndarray,
+    first_pass_is_dilation: bool,
 ) -> np.ndarray:
     height, width = image.shape
-    dilated = np.empty_like(image)
-    closed = np.empty_like(image)
+    intermediate = np.empty_like(image)
+    output = np.empty_like(image)
     footprint_size = offset_rows.size
     for row in prange(height):
         for col in range(width):
@@ -1782,67 +1854,29 @@ def _grayscale_closing_2d_numba(
                     _reflect_index_1d(row + int(offset_rows[offset_index]), height),
                     _reflect_index_1d(col + int(offset_cols[offset_index]), width),
                 ]
-                if value > best:
+                if (first_pass_is_dilation and value > best) or (
+                    not first_pass_is_dilation and value < best
+                ):
                     best = value
-            dilated[row, col] = best
+            intermediate[row, col] = best
 
     for row in prange(height):
         for col in range(width):
-            best = dilated[
+            best = intermediate[
                 _reflect_index_1d(row + int(offset_rows[0]), height),
                 _reflect_index_1d(col + int(offset_cols[0]), width),
             ]
             for offset_index in range(1, footprint_size):
-                value = dilated[
+                value = intermediate[
                     _reflect_index_1d(row + int(offset_rows[offset_index]), height),
                     _reflect_index_1d(col + int(offset_cols[offset_index]), width),
                 ]
-                if value < best:
+                if (first_pass_is_dilation and value < best) or (
+                    not first_pass_is_dilation and value > best
+                ):
                     best = value
-            closed[row, col] = best
-    return closed
-
-
-@njit(cache=True, parallel=True)
-def _grayscale_opening_2d_numba(
-    image: np.ndarray,
-    offset_rows: np.ndarray,
-    offset_cols: np.ndarray,
-) -> np.ndarray:
-    height, width = image.shape
-    eroded = np.empty_like(image)
-    opened = np.empty_like(image)
-    footprint_size = offset_rows.size
-    for row in prange(height):
-        for col in range(width):
-            best = image[
-                _reflect_index_1d(row + int(offset_rows[0]), height),
-                _reflect_index_1d(col + int(offset_cols[0]), width),
-            ]
-            for offset_index in range(1, footprint_size):
-                value = image[
-                    _reflect_index_1d(row + int(offset_rows[offset_index]), height),
-                    _reflect_index_1d(col + int(offset_cols[offset_index]), width),
-                ]
-                if value < best:
-                    best = value
-            eroded[row, col] = best
-
-    for row in prange(height):
-        for col in range(width):
-            best = eroded[
-                _reflect_index_1d(row + int(offset_rows[0]), height),
-                _reflect_index_1d(col + int(offset_cols[0]), width),
-            ]
-            for offset_index in range(1, footprint_size):
-                value = eroded[
-                    _reflect_index_1d(row + int(offset_rows[offset_index]), height),
-                    _reflect_index_1d(col + int(offset_cols[offset_index]), width),
-                ]
-                if value > best:
-                    best = value
-            opened[row, col] = best
-    return opened
+            output[row, col] = best
+    return output
 
 
 @njit(cache=True)
