@@ -278,14 +278,13 @@ def untangle_worms(
             
             cumul_lengths = calculate_cumulative_lengths(path_coords)
             total_length = cumul_lengths[-1]
-            if not _worm_shape_cost_passes(
-                path_coords,
+            if not WormShapeCostRequest(
+                path_coords=path_coords,
                 total_length=total_length,
                 num_control_points=num_control_points,
                 mean_angles=mean_angles_array,
                 inv_angles_covariance_matrix=inv_angles_covariance_array,
-                cost_threshold=cost_threshold,
-            ):
+            ).passes(cost_threshold):
                 continue
             
             all_path_coords.append(
@@ -296,12 +295,12 @@ def untangle_worms(
                 )
             )
         else:
-            graph = _worm_graph_from_binary(
-                mask,
-                component_skeleton,
+            graph = WormGraphFromBinaryRequest(
+                binary_image=mask,
+                skeleton=component_skeleton,
                 max_radius=max_radius,
                 max_skel_length=max_skel_length,
-            )
+            ).build()
             paths = _all_worm_graph_paths(
                 graph,
                 min_length=min_path_length,
@@ -365,35 +364,116 @@ class _WormGraph:
     incident_segments: tuple[np.ndarray, ...]
 
 
-def _worm_graph_from_binary(
-    binary_image: np.ndarray,
-    skeleton: np.ndarray,
-    *,
-    max_radius: float | None,
-    max_skel_length: float | None,
-) -> _WormGraph:
-    """Build CP's branch-area/segment graph without centrosome calls."""
-    branch_areas = branchpoints(skeleton)
-    if max_radius is not None and max_radius > 0:
-        far = binary_erosion(binary_image, structure=_cellprofiler_strel_disk(max_radius))
-        far = binary_opening(far, structure=eight_connectivity())
-        far_labels, _count = label(far, structure=eight_connectivity())
-        if far_labels.size:
-            far_counts = np.bincount(
-                far_labels.ravel(),
-                weights=branch_areas.ravel().astype(float),
+@dataclass(frozen=True, slots=True)
+class WormGraphFromBinaryRequest:
+    """Inputs for CP-style worm branch-area/segment graph construction."""
+
+    binary_image: np.ndarray
+    skeleton: np.ndarray
+    max_radius: float | None
+    max_skel_length: float | None
+
+    def build(self) -> _WormGraph:
+        branch_areas = branchpoints(self.skeleton)
+        if self.max_radius is not None and self.max_radius > 0:
+            far = binary_erosion(
+                self.binary_image,
+                structure=_cellprofiler_strel_disk(self.max_radius),
             )
-            far[far_counts[far_labels] < 2] = False
-            branch_areas |= far
-    branch_areas = binary_dilation(branch_areas, structure=eight_connectivity())
-    segments = skeleton & ~branch_areas
-    if max_skel_length is not None and np.any(segments):
-        segments, branch_areas = _insert_long_segment_breakpoints(
-            segments,
-            branch_areas,
-            max_skel_length=max(int(max_skel_length), 2),
+            far = binary_opening(far, structure=eight_connectivity())
+            far_labels, _count = label(far, structure=eight_connectivity())
+            if far_labels.size:
+                far_counts = np.bincount(
+                    far_labels.ravel(),
+                    weights=branch_areas.ravel().astype(float),
+                )
+                far[far_counts[far_labels] < 2] = False
+                branch_areas |= far
+        branch_areas = binary_dilation(branch_areas, structure=eight_connectivity())
+        segments = self.skeleton & ~branch_areas
+        if self.max_skel_length is not None and np.any(segments):
+            segments, branch_areas = _insert_long_segment_breakpoints(
+                segments,
+                branch_areas,
+                max_skel_length=max(int(self.max_skel_length), 2),
+            )
+        return _worm_graph_from_branching_areas(branch_areas, segments)
+
+
+@dataclass(frozen=True, slots=True)
+class WormSegmentTrace:
+    """Ordered pixels, labels, and distances for traced worm graph segments."""
+
+    rows: np.ndarray
+    columns: np.ndarray
+    labels: np.ndarray
+    order: np.ndarray
+    distance: np.ndarray
+    segment_count: int
+
+    @classmethod
+    def from_segments(cls, segments: np.ndarray) -> "WormSegmentTrace":
+        foreground = np.argwhere(segments)
+        if len(foreground) == 0:
+            empty_i = np.zeros(0, dtype=int)
+            empty_distance = np.zeros(0, dtype=float)
+            return cls(empty_i, empty_i, empty_i, empty_i, empty_distance, 0)
+
+        row_min, column_min = foreground.min(axis=0)
+        row_max, column_max = foreground.max(axis=0) + 1
+        local_segments = segments[row_min:row_max, column_min:column_max]
+        segment_labels, segment_count = label(
+            local_segments,
+            structure=eight_connectivity(),
         )
-    return _worm_graph_from_branching_areas(branch_areas, segments)
+        if segment_count == 0:
+            empty_i = np.zeros(0, dtype=int)
+            empty_distance = np.zeros(0, dtype=float)
+            return cls(empty_i, empty_i, empty_i, empty_i, empty_distance, 0)
+        endpoint_mask = endpoints(local_segments)
+        traced: list[tuple[int, int, int, float]] = []
+        object_slices = find_objects(segment_labels)
+        for label_id, object_slice in enumerate(object_slices, start=1):
+            if object_slice is None:
+                continue
+            row_slice, column_slice = object_slice
+            local_labels = segment_labels[object_slice]
+            segment_mask = local_labels == label_id
+            endpoint_coords = np.argwhere(endpoint_mask[object_slice] & segment_mask)
+            if len(endpoint_coords):
+                start = endpoint_coords[
+                    np.lexsort((endpoint_coords[:, 1], endpoint_coords[:, 0]))
+                ][0]
+            else:
+                coords = np.argwhere(segment_mask)
+                start = coords[np.lexsort((coords[:, 1], coords[:, 0]))][0]
+            distances = _segment_geodesic_distances(segment_mask, tuple(start))
+            coords = np.argwhere(segment_mask)
+            for row, column in coords:
+                traced.append(
+                    (
+                        int(row + row_slice.start + row_min),
+                        int(column + column_slice.start + column_min),
+                        label_id,
+                        float(distances[row, column]),
+                    )
+                )
+        traced_array = np.array(traced, dtype=float)
+        sort_order = np.lexsort((traced_array[:, 3], traced_array[:, 2]))
+        traced_array = traced_array[sort_order]
+        labels = traced_array[:, 2].astype(int)
+        segment_order = np.arange(len(labels), dtype=int)
+        areas = np.bincount(labels)
+        indexes = np.cumsum(areas) - areas
+        segment_order -= indexes[labels]
+        return cls(
+            traced_array[:, 0].astype(int),
+            traced_array[:, 1].astype(int),
+            labels,
+            segment_order,
+            traced_array[:, 3],
+            segment_count,
+        )
 
 
 def _insert_long_segment_breakpoints(
@@ -402,12 +482,12 @@ def _insert_long_segment_breakpoints(
     *,
     max_skel_length: int,
 ) -> tuple[np.ndarray, np.ndarray]:
-    i, j, labels, order, _distance, segment_count = _trace_segments(segments)
-    if segment_count == 0:
+    trace = WormSegmentTrace.from_segments(segments)
+    if trace.segment_count == 0:
         return segments, branch_areas
-    max_order = np.zeros(segment_count + 1, dtype=int)
-    for label_id in range(1, segment_count + 1):
-        label_orders = order[labels == label_id]
+    max_order = np.zeros(trace.segment_count + 1, dtype=int)
+    for label_id in range(1, trace.segment_count + 1):
+        label_orders = trace.order[trace.labels == label_id]
         if len(label_orders):
             max_order[label_id] = int(np.max(label_orders))
     big_segment = max_order >= max_skel_length
@@ -417,14 +497,14 @@ def _insert_long_segment_breakpoints(
     )
     segment_length = np.maximum(((max_order + 1) / segment_count_per_label).astype(int), 1)
     new_breakpoints = (
-        (order % segment_length[labels] == segment_length[labels] - 1)
-        & (order != max_order[labels])
-        & big_segment[labels]
+        (trace.order % segment_length[trace.labels] == segment_length[trace.labels] - 1)
+        & (trace.order != max_order[trace.labels])
+        & big_segment[trace.labels]
     )
     if not np.any(new_breakpoints):
         return segments, branch_areas
     new_branch_areas = np.zeros(segments.shape, dtype=bool)
-    new_branch_areas[i[new_breakpoints], j[new_breakpoints]] = True
+    new_branch_areas[trace.rows[new_breakpoints], trace.columns[new_breakpoints]] = True
     new_branch_areas = binary_dilation(
         new_branch_areas,
         structure=eight_connectivity(),
@@ -437,8 +517,8 @@ def _worm_graph_from_branching_areas(
     segments: np.ndarray,
 ) -> _WormGraph:
     branch_labels, branch_count = label(branch_areas, structure=eight_connectivity())
-    i, j, labels, order, _distance, segment_count = _trace_segments(segments)
-    if segment_count == 0:
+    trace = WormSegmentTrace.from_segments(segments)
+    if trace.segment_count == 0:
         empty_incidence = np.zeros((branch_count, 0), dtype=bool)
         return _WormGraph(
             segments=(),
@@ -449,11 +529,12 @@ def _worm_graph_from_branching_areas(
             incident_segments=tuple(np.zeros(0, dtype=int) for _ in range(branch_count)),
         )
 
-    sort_order = np.lexsort((order, labels))
-    i = i[sort_order]
-    j = j[sort_order]
-    labels = labels[sort_order]
-    order = order[sort_order]
+    sort_order = np.lexsort((trace.order, trace.labels))
+    i = trace.rows[sort_order]
+    j = trace.columns[sort_order]
+    labels = trace.labels[sort_order]
+    order = trace.order[sort_order]
+    segment_count = trace.segment_count
     counts = np.bincount(labels)[1:]
     indexes = np.cumsum(counts) - counts
     coords = np.column_stack((i, j))
@@ -533,12 +614,12 @@ def _longest_worm_graph_path_coords(
     *,
     max_length: float,
 ) -> np.ndarray:
-    graph = _worm_graph_from_binary(
-        binary_image,
-        skeleton,
+    graph = WormGraphFromBinaryRequest(
+        binary_image=binary_image,
+        skeleton=skeleton,
         max_radius=None,
         max_skel_length=None,
-    )
+    ).build()
     longest_coords = np.zeros((0, 2), dtype=int)
     longest_length = 0.0
     for path in _all_worm_graph_paths(graph, min_length=0.0, max_length=max_length):
@@ -548,69 +629,6 @@ def _longest_worm_graph_path_coords(
             longest_coords = coords
             longest_length = path_length
     return longest_coords
-
-
-def _trace_segments(
-    segments: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, int]:
-    foreground = np.argwhere(segments)
-    if len(foreground) == 0:
-        empty_i = np.zeros(0, dtype=int)
-        empty_distance = np.zeros(0, dtype=float)
-        return empty_i, empty_i, empty_i, empty_i, empty_distance, 0
-
-    row_min, column_min = foreground.min(axis=0)
-    row_max, column_max = foreground.max(axis=0) + 1
-    local_segments = segments[row_min:row_max, column_min:column_max]
-    segment_labels, segment_count = label(local_segments, structure=eight_connectivity())
-    if segment_count == 0:
-        empty_i = np.zeros(0, dtype=int)
-        empty_distance = np.zeros(0, dtype=float)
-        return empty_i, empty_i, empty_i, empty_i, empty_distance, 0
-    endpoint_mask = endpoints(local_segments)
-    traced: list[tuple[int, int, int, float]] = []
-    object_slices = find_objects(segment_labels)
-    for label_id, object_slice in enumerate(object_slices, start=1):
-        if object_slice is None:
-            continue
-        row_slice, column_slice = object_slice
-        local_labels = segment_labels[object_slice]
-        segment_mask = local_labels == label_id
-        endpoint_coords = np.argwhere(endpoint_mask[object_slice] & segment_mask)
-        if len(endpoint_coords):
-            start = endpoint_coords[
-                np.lexsort((endpoint_coords[:, 1], endpoint_coords[:, 0]))
-            ][0]
-        else:
-            coords = np.argwhere(segment_mask)
-            start = coords[np.lexsort((coords[:, 1], coords[:, 0]))][0]
-        distances = _segment_geodesic_distances(segment_mask, tuple(start))
-        coords = np.argwhere(segment_mask)
-        for row, column in coords:
-            traced.append(
-                (
-                    int(row + row_slice.start + row_min),
-                    int(column + column_slice.start + column_min),
-                    label_id,
-                    float(distances[row, column]),
-                )
-            )
-    traced_array = np.array(traced, dtype=float)
-    sort_order = np.lexsort((traced_array[:, 3], traced_array[:, 2]))
-    traced_array = traced_array[sort_order]
-    labels = traced_array[:, 2].astype(int)
-    segment_order = np.arange(len(labels), dtype=int)
-    areas = np.bincount(labels)
-    indexes = np.cumsum(areas) - areas
-    segment_order -= indexes[labels]
-    return (
-        traced_array[:, 0].astype(int),
-        traced_array[:, 1].astype(int),
-        labels,
-        segment_order,
-        traced_array[:, 3],
-        segment_count,
-    )
 
 
 def _segment_geodesic_distances(
@@ -814,13 +832,13 @@ def _select_worm_cluster_paths(
         total_length = float(calculate_cumulative_lengths(coords)[-1])
         if total_length > max_path_length or total_length < min_path_length:
             continue
-        cost = _worm_shape_cost(
-            coords,
+        cost = WormShapeCostRequest(
+            path_coords=coords,
             total_length=total_length,
             num_control_points=num_control_points,
             mean_angles=mean_angles,
             inv_angles_covariance_matrix=inv_angles_covariance_matrix,
-        )
+        ).cost
         if cost < cost_threshold:
             paths_and_costs.append((path, cost))
     if not paths_and_costs:
@@ -1081,45 +1099,38 @@ def _coerce_worm_radii(
     return radii[:num_control_points]
 
 
-def _worm_shape_cost_passes(
-    path_coords: np.ndarray,
-    *,
-    total_length: float,
-    num_control_points: int,
-    mean_angles: np.ndarray,
-    inv_angles_covariance_matrix: np.ndarray,
-    cost_threshold: float,
-) -> bool:
-    cost = _worm_shape_cost(
-        path_coords,
-        total_length=total_length,
-        num_control_points=num_control_points,
-        mean_angles=mean_angles,
-        inv_angles_covariance_matrix=inv_angles_covariance_matrix,
-    )
-    return cost < cost_threshold
+@dataclass(frozen=True, slots=True)
+class WormShapeCostRequest:
+    """Mahalanobis-style CP worm shape cost for one candidate path."""
 
+    path_coords: np.ndarray
+    total_length: float
+    num_control_points: int
+    mean_angles: np.ndarray
+    inv_angles_covariance_matrix: np.ndarray
 
-def _worm_shape_cost(
-    path_coords: np.ndarray,
-    *,
-    total_length: float,
-    num_control_points: int,
-    mean_angles: np.ndarray,
-    inv_angles_covariance_matrix: np.ndarray,
-) -> float:
-    control_coords = sample_control_points(
-        path_coords,
-        calculate_cumulative_lengths(path_coords),
-        num_control_points,
-    )
-    if len(mean_angles) != num_control_points - 1:
-        return 0.0
-    if inv_angles_covariance_matrix.shape != (num_control_points - 1, num_control_points - 1):
-        return 0.0
-    angles = _get_angles(control_coords)
-    feature_vector = np.hstack((angles, [total_length])) - mean_angles
-    return float(feature_vector @ inv_angles_covariance_matrix @ feature_vector)
+    @property
+    def cost(self) -> float:
+        control_coords = sample_control_points(
+            self.path_coords,
+            calculate_cumulative_lengths(self.path_coords),
+            self.num_control_points,
+        )
+        if len(self.mean_angles) != self.num_control_points - 1:
+            return 0.0
+        expected_shape = (self.num_control_points - 1, self.num_control_points - 1)
+        if self.inv_angles_covariance_matrix.shape != expected_shape:
+            return 0.0
+        angles = _get_angles(control_coords)
+        feature_vector = np.hstack((angles, [self.total_length])) - self.mean_angles
+        return float(
+            feature_vector
+            @ self.inv_angles_covariance_matrix
+            @ feature_vector
+        )
+
+    def passes(self, cost_threshold: float) -> bool:
+        return self.cost < cost_threshold
 
 
 def _worm_descriptor_rows(
