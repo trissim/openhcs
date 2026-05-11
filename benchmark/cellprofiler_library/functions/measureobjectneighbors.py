@@ -169,28 +169,6 @@ class WithinNeighborDistancePlanner(NeighborDistancePlanner):
         )
 
 
-def _strel_disk(
-    radius: float,
-    *,
-    morphology_backend_provider: CellProfilerBackendProvider | None,
-) -> np.ndarray:
-    """Create the CellProfiler disk-shaped structuring element."""
-    return MorphologyBackendStrategy.for_memory_type(
-        backend_provider=morphology_backend_provider,
-    ).disk_footprint(radius)
-
-
-def _centers_of_labels(
-    labels: np.ndarray,
-    *,
-    relationship_backend_provider: CellProfilerBackendProvider | None,
-) -> np.ndarray:
-    """Calculate centers of mass for each labeled object."""
-    return ObjectRelationshipBackendStrategy.for_memory_type(
-        backend_provider=relationship_backend_provider,
-    ).label_centers(labels)
-
-
 def _variant_numbers_for_final_labels(
     final_labels: np.ndarray,
     variant_labels: np.ndarray,
@@ -220,17 +198,6 @@ def _require_matching_shape(
             f"{variant_name} shape {variant.shape!r} does not match final "
             f"labels shape {labels.shape!r}."
         )
-
-
-def _outline(
-    labels: np.ndarray,
-    *,
-    outline_backend_provider: CellProfilerBackendProvider | None,
-) -> np.ndarray:
-    """Create CellProfiler-style labeled object outlines."""
-    return object_outline_backend(
-        backend_provider=outline_backend_provider,
-    ).outline(labels)
 
 
 def _neighbor_output(
@@ -527,14 +494,11 @@ def measure_object_neighbors(
     
     if variant_neighbor_count > (1 if neighbors_are_same_objects else 0):
         # Calculate object centers
-        ocenters = _centers_of_labels(
-            measured_variant_labels,
-            relationship_backend_provider=relationship_backend_provider,
+        relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type(
+            backend_provider=relationship_backend_provider,
         )
-        ncenters = _centers_of_labels(
-            neighbor_variant_labels,
-            relationship_backend_provider=relationship_backend_provider,
-        )
+        ocenters = relationship_backend.label_centers(measured_variant_labels)
+        ncenters = relationship_backend.label_centers(neighbor_variant_labels)
         profile_mark = _profile_elapsed(
             "measure_object_neighbors.centers",
             profile_mark,
@@ -543,10 +507,9 @@ def measure_object_neighbors(
         )
         
         # Calculate perimeters
-        perimeter_outlines = _outline(
-            working_labels,
-            outline_backend_provider=outline_backend_provider,
-        )
+        perimeter_outlines = object_outline_backend(
+            backend_provider=outline_backend_provider,
+        ).outline(working_labels)
         perimeters = neighbor_backend.perimeter_counts(
             perimeter_outlines,
             variant_object_count=variant_object_count,
@@ -585,14 +548,11 @@ def measure_object_neighbors(
                 variant_neighbor_count=variant_neighbor_count,
             )
         
-        strel = _strel_disk(
-            distance,
-            morphology_backend_provider=morphology_backend_provider,
+        morphology_backend = MorphologyBackendStrategy.for_memory_type(
+            backend_provider=morphology_backend_provider,
         )
-        strel_touching = _strel_disk(
-            distance + 0.5,
-            morphology_backend_provider=morphology_backend_provider,
-        )
+        strel = morphology_backend.disk_footprint(distance)
+        strel_touching = morphology_backend.disk_footprint(distance + 0.5)
 
         topology = neighbor_backend.measure_topology(
             working_labels,
