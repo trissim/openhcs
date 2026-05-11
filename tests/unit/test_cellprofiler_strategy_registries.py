@@ -39,7 +39,7 @@ from benchmark.converter.module_runtime_semantics import ModuleRuntimeSemanticsB
 from openhcs.interop.cellprofiler.module_semantics import (
     CellProfilerModuleSemanticTraits,
 )
-from benchmark.cellprofiler_library.functions.identifysecondaryobjects import (
+from openhcs.processing.backends.cellprofiler.secondary import (
     SecondarySegmentationStrategy,
     ThresholdCalculator,
 )

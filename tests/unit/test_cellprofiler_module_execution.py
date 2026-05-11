@@ -116,6 +116,8 @@ from benchmark.cellprofiler_library.functions.identifysecondaryobjects import (
     DistanceMaskedSegmentationStrategy,
     PropagationSegmentationStrategy,
     SecondarySegmentationRequest,
+)
+from openhcs.processing.backends.cellprofiler.secondary import (
     _filter_labels,
     _secondary_seed_labels,
 )
