@@ -92,6 +92,15 @@ class WormLabelOutputStrategy(
     ) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
         """Return the public overlapping and nonoverlapping label payloads."""
 
+    @abstractmethod
+    def measurement_object_names(
+        self,
+        *,
+        overlapping_object_name: str,
+        nonoverlapping_object_name: str,
+    ) -> tuple[str, ...]:
+        """Return object names that should receive UntangleWorms measurements."""
+
 
 class WithOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     overlap_style = OverlapStyle.WITH_OVERLAP
@@ -101,6 +110,14 @@ class WithOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
         request: WormLabelOutputRequest,
     ) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
         return request.sparse_overlapping, request.overlapping
+
+    def measurement_object_names(
+        self,
+        *,
+        overlapping_object_name: str,
+        nonoverlapping_object_name: str,
+    ) -> tuple[str, ...]:
+        return (overlapping_object_name,)
 
 
 class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
@@ -112,6 +129,14 @@ class WithoutOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     ) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
         return request.nonoverlapping, request.nonoverlapping
 
+    def measurement_object_names(
+        self,
+        *,
+        overlapping_object_name: str,
+        nonoverlapping_object_name: str,
+    ) -> tuple[str, ...]:
+        return (nonoverlapping_object_name,)
+
 
 class BothOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
     overlap_style = OverlapStyle.BOTH
@@ -121,6 +146,14 @@ class BothOverlapWormLabelOutputStrategy(WormLabelOutputStrategy):
         request: WormLabelOutputRequest,
     ) -> tuple[ObjectLabelSet | ObjectLabelPayload, ObjectLabelPayload]:
         return request.sparse_overlapping, request.nonoverlapping
+
+    def measurement_object_names(
+        self,
+        *,
+        overlapping_object_name: str,
+        nonoverlapping_object_name: str,
+    ) -> tuple[str, ...]:
+        return (overlapping_object_name, nonoverlapping_object_name)
 
 
 def coerce_overlap_style(value: str | OverlapStyle) -> OverlapStyle:
@@ -142,19 +175,24 @@ def coerce_overlap_style(value: str | OverlapStyle) -> OverlapStyle:
     )
 
 
-def _get_angles(control_coords: np.ndarray) -> np.ndarray:
-    """Extract angles at each interior control point"""
-    if len(control_coords) < 3:
-        return np.array([])
-    
-    segments_delta = control_coords[1:] - control_coords[:-1]
-    segment_bearings = np.arctan2(segments_delta[:, 0], segments_delta[:, 1])
-    angles = segment_bearings[1:] - segment_bearings[:-1]
-    
-    # Constrain angles to [-pi, pi]
-    angles[angles > np.pi] -= 2 * np.pi
-    angles[angles < -np.pi] += 2 * np.pi
-    return angles
+@dataclass(frozen=True, slots=True)
+class WormControlPointGeometry:
+    """CP-compatible geometry derived from sampled worm control points."""
+
+    control_coords: np.ndarray
+
+    @property
+    def angles(self) -> np.ndarray:
+        """Extract angles at each interior control point."""
+        if len(self.control_coords) < 3:
+            return np.array([])
+
+        segments_delta = self.control_coords[1:] - self.control_coords[:-1]
+        segment_bearings = np.arctan2(segments_delta[:, 0], segments_delta[:, 1])
+        angles = segment_bearings[1:] - segment_bearings[:-1]
+        angles[angles > np.pi] -= 2 * np.pi
+        angles[angles < -np.pi] += 2 * np.pi
+        return angles
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -301,8 +339,7 @@ def untangle_worms(
                 max_radius=max_radius,
                 max_skel_length=max_skel_length,
             ).build()
-            paths = _all_worm_graph_paths(
-                graph,
+            paths = graph.paths_between_lengths(
                 min_length=min_path_length,
                 max_length=max_path_length,
             )
@@ -312,11 +349,9 @@ def untangle_worms(
                     row_offset=row_slice.start,
                     column_offset=column_slice.start,
                 )
-                for path_coords in _select_worm_cluster_paths(
-                    graph,
-                    paths,
-                    component_area=int(component_area),
+                for path_coords in WormClusterPathSelectionPolicy(
                     median_worm_area=median_worm_area,
+                    component_area=int(component_area),
                     num_control_points=num_control_points,
                     mean_angles=mean_angles_array,
                     inv_angles_covariance_matrix=inv_angles_covariance_array,
@@ -325,7 +360,7 @@ def untangle_worms(
                     leftover_weight=leftover_weight,
                     min_path_length=min_path_length,
                     max_path_length=max_path_length,
-                )
+                ).select(graph, paths)
             )
     
     overlapping_labels, nonoverlapping_labels = _worm_label_outputs(
@@ -349,19 +384,113 @@ def untangle_worms(
 
 
 @dataclass(frozen=True, slots=True)
-class _WormGraphPath:
+class WormGraphPath:
+    """Ordered path through a CP worm graph."""
+
     segments: tuple[int, ...]
     branch_areas: tuple[int, ...]
 
+    def to_pixel_coords(self, graph: "WormGraph") -> np.ndarray:
+        if len(self.segments) == 1:
+            return graph.segments[self.segments[0]][0]
+        direction = graph.incidence_directions[self.branch_areas[0], self.segments[0]]
+        result = [graph.segments[self.segments[0]][int(direction)]]
+        for branch_area, segment in zip(
+            self.branch_areas,
+            self.segments[1:],
+            strict=True,
+        ):
+            direction = not graph.incidence_directions[branch_area, segment]
+            result.append(graph.segments[segment][int(direction)])
+        return np.vstack(result)
+
 
 @dataclass(frozen=True, slots=True)
-class _WormGraph:
+class WormGraph:
+    """CP worm branch-area graph with path enumeration semantics."""
+
     segments: tuple[tuple[np.ndarray, np.ndarray], ...]
     segment_lengths: np.ndarray
     incidence_matrix: np.ndarray
     incidence_directions: np.ndarray
     incident_branch_areas: tuple[np.ndarray, ...]
     incident_segments: tuple[np.ndarray, ...]
+
+    def paths_between_lengths(
+        self,
+        *,
+        min_length: float,
+        max_length: float,
+    ) -> list[WormGraphPath]:
+        paths: list[WormGraphPath] = []
+        for segment_index, current_length in enumerate(self.segment_lengths):
+            if current_length >= min_length:
+                paths.append(WormGraphPath((segment_index,), ()))
+            unfinished_branches = tuple(
+                (int(branch_index),)
+                for branch_index in self.incident_branch_areas[segment_index]
+            )
+            paths.extend(
+                self._paths_from(
+                    unfinished_segments=(segment_index,),
+                    unfinished_branch_areas=unfinished_branches,
+                    current_length=float(current_length),
+                    min_length=min_length,
+                    max_length=max_length,
+                )
+            )
+        return paths
+
+    def _paths_from(
+        self,
+        *,
+        unfinished_segments: tuple[int, ...],
+        unfinished_branch_areas: tuple[tuple[int, ...], ...],
+        current_length: float,
+        min_length: float,
+        max_length: float,
+    ) -> list[WormGraphPath]:
+        if not unfinished_segments:
+            return []
+        paths: list[WormGraphPath] = []
+        last_segment = unfinished_segments[-1]
+        for unfinished_branch in unfinished_branch_areas:
+            end_branch = unfinished_branch[-1]
+            direction = self.incidence_directions[end_branch, last_segment]
+            last_coord = self.segments[last_segment][int(direction)][-1]
+            for segment_index in self.incident_segments[end_branch]:
+                segment_index = int(segment_index)
+                if segment_index in unfinished_segments:
+                    continue
+                direction = not self.incidence_directions[end_branch, segment_index]
+                first_coord = self.segments[segment_index][int(direction)][0]
+                gap_length = float(np.sqrt(np.sum((last_coord - first_coord) ** 2)))
+                next_length = (
+                    current_length
+                    + gap_length
+                    + self.segment_lengths[segment_index]
+                )
+                if next_length > max_length:
+                    continue
+                next_segments = (*unfinished_segments, segment_index)
+                if segment_index > unfinished_segments[0] and next_length >= min_length:
+                    paths.append(WormGraphPath(next_segments, unfinished_branch))
+                next_branches = tuple(
+                    (*unfinished_branch, int(branch_index))
+                    for branch_index in self.incident_branch_areas[segment_index]
+                    if int(branch_index) != end_branch
+                    and int(branch_index) not in unfinished_branch
+                )
+                paths.extend(
+                    self._paths_from(
+                        unfinished_segments=next_segments,
+                        unfinished_branch_areas=next_branches,
+                        current_length=float(next_length),
+                        min_length=min_length,
+                        max_length=max_length,
+                    )
+                )
+        return paths
 
 
 @dataclass(frozen=True, slots=True)
@@ -373,7 +502,7 @@ class WormGraphFromBinaryRequest:
     max_radius: float | None
     max_skel_length: float | None
 
-    def build(self) -> _WormGraph:
+    def build(self) -> WormGraph:
         branch_areas = branchpoints(self.skeleton)
         if self.max_radius is not None and self.max_radius > 0:
             far = binary_erosion(
@@ -515,12 +644,12 @@ def _insert_long_segment_breakpoints(
 def _worm_graph_from_branching_areas(
     branch_areas: np.ndarray,
     segments: np.ndarray,
-) -> _WormGraph:
+) -> WormGraph:
     branch_labels, branch_count = label(branch_areas, structure=eight_connectivity())
     trace = WormSegmentTrace.from_segments(segments)
     if trace.segment_count == 0:
         empty_incidence = np.zeros((branch_count, 0), dtype=bool)
-        return _WormGraph(
+        return WormGraph(
             segments=(),
             segment_lengths=np.zeros(0, dtype=float),
             incidence_matrix=empty_incidence,
@@ -576,7 +705,7 @@ def _worm_graph_from_branching_areas(
         np.flatnonzero(incidence_matrix[:, segment_index])
         for segment_index in range(segment_count)
     )
-    return _WormGraph(
+    return WormGraph(
         segments=graph_segments,
         segment_lengths=segment_lengths,
         incidence_matrix=incidence_matrix,
@@ -622,8 +751,8 @@ def _longest_worm_graph_path_coords(
     ).build()
     longest_coords = np.zeros((0, 2), dtype=int)
     longest_length = 0.0
-    for path in _all_worm_graph_paths(graph, min_length=0.0, max_length=max_length):
-        coords = _graph_path_to_pixel_coords(graph, path)
+    for path in graph.paths_between_lengths(min_length=0.0, max_length=max_length):
+        coords = path.to_pixel_coords(graph)
         path_length = float(calculate_cumulative_lengths(coords)[-1])
         if path_length >= longest_length:
             longest_coords = coords
@@ -664,37 +793,6 @@ def _segment_geodesic_distances(
     return distances
 
 
-def _trace_segment_from_start(segment_mask: np.ndarray, start: tuple[int, int]) -> np.ndarray:
-    path = [start]
-    visited = {start}
-    current = start
-    while True:
-        next_points = []
-        row, column = current
-        for row_delta in (-1, 0, 1):
-            for column_delta in (-1, 0, 1):
-                if row_delta == 0 and column_delta == 0:
-                    continue
-                point = (row + row_delta, column + column_delta)
-                if (
-                    0 <= point[0] < segment_mask.shape[0]
-                    and 0 <= point[1] < segment_mask.shape[1]
-                    and segment_mask[point]
-                    and point not in visited
-                ):
-                    next_points.append(point)
-        if not next_points:
-            break
-        next_points.sort()
-        current = next_points[0]
-        path.append(current)
-        visited.add(current)
-    if len(visited) != int(np.count_nonzero(segment_mask)):
-        remaining = [tuple(coord) for coord in np.argwhere(segment_mask) if tuple(coord) not in visited]
-        path.extend(sorted(remaining))
-    return np.asarray(path, dtype=int)
-
-
 def _incidence_matrix(
     branch_labels: np.ndarray,
     branch_count: int,
@@ -722,152 +820,65 @@ def _incidence_matrix(
     return incidence
 
 
-def _all_worm_graph_paths(
-    graph: _WormGraph,
-    *,
-    min_length: float,
-    max_length: float,
-) -> list[_WormGraphPath]:
-    paths: list[_WormGraphPath] = []
-    for segment_index, current_length in enumerate(graph.segment_lengths):
-        if current_length >= min_length:
-            paths.append(_WormGraphPath((segment_index,), ()))
-        unfinished_branches = tuple(
-            (int(branch_index),)
-            for branch_index in graph.incident_branch_areas[segment_index]
-        )
-        paths.extend(
-            _all_worm_graph_paths_recur(
-                graph,
-                unfinished_segments=(segment_index,),
-                unfinished_branch_areas=unfinished_branches,
-                current_length=float(current_length),
-                min_length=min_length,
-                max_length=max_length,
-            )
-        )
-    return paths
+@dataclass(frozen=True, slots=True)
+class WormClusterPathSelectionPolicy:
+    """Shape and coverage policy for selecting candidate paths in a worm cluster."""
 
+    median_worm_area: float | None
+    component_area: int
+    num_control_points: int
+    mean_angles: np.ndarray
+    inv_angles_covariance_matrix: np.ndarray
+    cost_threshold: float
+    overlap_weight: float
+    leftover_weight: float
+    min_path_length: float
+    max_path_length: float
 
-def _all_worm_graph_paths_recur(
-    graph: _WormGraph,
-    *,
-    unfinished_segments: tuple[int, ...],
-    unfinished_branch_areas: tuple[tuple[int, ...], ...],
-    current_length: float,
-    min_length: float,
-    max_length: float,
-) -> list[_WormGraphPath]:
-    if not unfinished_segments:
-        return []
-    paths: list[_WormGraphPath] = []
-    last_segment = unfinished_segments[-1]
-    for unfinished_branch in unfinished_branch_areas:
-        end_branch = unfinished_branch[-1]
-        direction = graph.incidence_directions[end_branch, last_segment]
-        last_coord = graph.segments[last_segment][int(direction)][-1]
-        for segment_index in graph.incident_segments[end_branch]:
-            segment_index = int(segment_index)
-            if segment_index in unfinished_segments:
+    def select(self, graph: WormGraph, paths: list[WormGraphPath]) -> list[np.ndarray]:
+        paths_and_costs: list[tuple[WormGraphPath, float]] = []
+        for path in paths:
+            coords = path.to_pixel_coords(graph)
+            total_length = float(calculate_cumulative_lengths(coords)[-1])
+            if total_length > self.max_path_length or total_length < self.min_path_length:
                 continue
-            direction = not graph.incidence_directions[end_branch, segment_index]
-            first_coord = graph.segments[segment_index][int(direction)][0]
-            gap_length = float(np.sqrt(np.sum((last_coord - first_coord) ** 2)))
-            next_length = current_length + gap_length + graph.segment_lengths[segment_index]
-            if next_length > max_length:
-                continue
-            next_segments = (*unfinished_segments, segment_index)
-            if segment_index > unfinished_segments[0] and next_length >= min_length:
-                paths.append(_WormGraphPath(next_segments, unfinished_branch))
-            next_branches = tuple(
-                (*unfinished_branch, int(branch_index))
-                for branch_index in graph.incident_branch_areas[segment_index]
-                if int(branch_index) != end_branch and int(branch_index) not in unfinished_branch
-            )
-            paths.extend(
-                _all_worm_graph_paths_recur(
-                    graph,
-                    unfinished_segments=next_segments,
-                    unfinished_branch_areas=next_branches,
-                    current_length=float(next_length),
-                    min_length=min_length,
-                    max_length=max_length,
-                )
-            )
-    return paths
+            cost = WormShapeCostRequest(
+                path_coords=coords,
+                total_length=total_length,
+                num_control_points=self.num_control_points,
+                mean_angles=self.mean_angles,
+                inv_angles_covariance_matrix=self.inv_angles_covariance_matrix,
+            ).cost
+            if cost < self.cost_threshold:
+                paths_and_costs.append((path, cost))
+        if not paths_and_costs:
+            return []
 
-
-def _graph_path_to_pixel_coords(
-    graph: _WormGraph,
-    path: _WormGraphPath,
-) -> np.ndarray:
-    if len(path.segments) == 1:
-        return graph.segments[path.segments[0]][0]
-    direction = graph.incidence_directions[path.branch_areas[0], path.segments[0]]
-    result = [graph.segments[path.segments[0]][int(direction)]]
-    for branch_area, segment in zip(path.branch_areas, path.segments[1:], strict=True):
-        direction = not graph.incidence_directions[branch_area, segment]
-        result.append(graph.segments[segment][int(direction)])
-    return np.vstack(result)
-
-
-def _select_worm_cluster_paths(
-    graph: _WormGraph,
-    paths: list[_WormGraphPath],
-    *,
-    component_area: int,
-    median_worm_area: float | None,
-    num_control_points: int,
-    mean_angles: np.ndarray,
-    inv_angles_covariance_matrix: np.ndarray,
-    cost_threshold: float,
-    overlap_weight: float,
-    leftover_weight: float,
-    min_path_length: float,
-    max_path_length: float,
-) -> list[np.ndarray]:
-    paths_and_costs: list[tuple[_WormGraphPath, float]] = []
-    for path in paths:
-        coords = _graph_path_to_pixel_coords(graph, path)
-        total_length = float(calculate_cumulative_lengths(coords)[-1])
-        if total_length > max_path_length or total_length < min_path_length:
-            continue
-        cost = WormShapeCostRequest(
-            path_coords=coords,
-            total_length=total_length,
-            num_control_points=num_control_points,
-            mean_angles=mean_angles,
-            inv_angles_covariance_matrix=inv_angles_covariance_matrix,
-        ).cost
-        if cost < cost_threshold:
-            paths_and_costs.append((path, cost))
-    if not paths_and_costs:
-        return []
-    costs = np.asarray([cost for _path, cost in paths_and_costs], dtype=float)
-    order = np.lexsort([costs])
-    if len(order) > 500:
-        order = order[:500]
-    costs = costs[order]
-    path_segment_matrix = np.zeros((len(graph.segments), len(order)), dtype=bool)
-    for column, ordered_index in enumerate(order):
-        path_segment_matrix[list(paths_and_costs[int(ordered_index)][0].segments), column] = True
-    max_worms = _cluster_max_worms(
-        component_area,
-        median_worm_area=median_worm_area,
-    )
-    selected_indexes = _fast_select_worm_paths(
-        costs,
-        path_segment_matrix,
-        graph.segment_lengths,
-        overlap_weight=overlap_weight,
-        leftover_weight=leftover_weight,
-        max_worms=max_worms,
-    )
-    selected_paths = [
-        paths_and_costs[int(order[selected_index])][0]
-        for selected_index in selected_indexes
-    ]
-    return [_graph_path_to_pixel_coords(graph, path) for path in selected_paths]
+        costs = np.asarray([cost for _path, cost in paths_and_costs], dtype=float)
+        order = np.lexsort([costs])
+        if len(order) > 500:
+            order = order[:500]
+        costs = costs[order]
+        path_segment_matrix = np.zeros((len(graph.segments), len(order)), dtype=bool)
+        for column, ordered_index in enumerate(order):
+            path = paths_and_costs[int(ordered_index)][0]
+            path_segment_matrix[list(path.segments), column] = True
+        selected_indexes = WormPathSubsetSelectionContext(
+            costs=costs,
+            path_segment_matrix=path_segment_matrix,
+            segment_lengths=graph.segment_lengths,
+            overlap_weight=self.overlap_weight,
+            leftover_weight=self.leftover_weight,
+            max_worms=_cluster_max_worms(
+                self.component_area,
+                median_worm_area=self.median_worm_area,
+            ),
+        ).select()
+        selected_paths = [
+            paths_and_costs[int(order[selected_index])][0]
+            for selected_index in selected_indexes
+        ]
+        return [path.to_pixel_coords(graph) for path in selected_paths]
 
 
 def _cluster_max_worms(
@@ -880,106 +891,98 @@ def _cluster_max_worms(
     return max(1, int(np.ceil(component_area / median_worm_area)))
 
 
-def _fast_select_worm_paths(
-    costs: np.ndarray,
-    path_segment_matrix: np.ndarray,
-    segment_lengths: np.ndarray,
-    *,
-    overlap_weight: float,
-    leftover_weight: float,
-    max_worms: int,
-) -> list[int]:
-    current_best_subset: list[int] = []
-    current_best_cost = float(np.sum(segment_lengths) * leftover_weight)
-    current_path_segment_matrix = path_segment_matrix.astype(int)
-    current_path_choices = np.eye(len(costs), dtype=bool)
-    for _level in range(min(max_worms, len(costs))):
-        (
-            current_best_subset,
-            current_best_cost,
-            current_path_segment_matrix,
-            current_path_choices,
-        ) = _select_one_worm_path_level(
-            costs,
-            path_segment_matrix,
-            segment_lengths,
-            current_best_subset,
-            current_best_cost,
-            current_path_segment_matrix,
-            current_path_choices,
-            overlap_weight=overlap_weight,
-            leftover_weight=leftover_weight,
-        )
-        if np.prod(current_path_choices.shape) == 0:
-            break
-    return current_best_subset
+@dataclass(frozen=True, slots=True)
+class WormPathSelectionState:
+    """Mutable-search state returned immutably between path selection levels."""
+
+    best_subset: list[int]
+    best_cost: float
+    path_segment_matrix: np.ndarray
+    path_choices: np.ndarray
 
 
-def _select_one_worm_path_level(
-    costs: np.ndarray,
-    path_segment_matrix: np.ndarray,
-    segment_lengths: np.ndarray,
-    current_best_subset: list[int],
-    current_best_cost: float,
-    current_path_segment_matrix: np.ndarray,
-    current_path_choices: np.ndarray,
-    *,
-    overlap_weight: float,
-    leftover_weight: float,
-) -> tuple[list[int], float, np.ndarray, np.ndarray]:
-    partial_costs = (
-        np.sum(costs[:, np.newaxis] * current_path_choices, axis=0)
-        + np.sum(
-            np.maximum(current_path_segment_matrix - 1, 0)
-            * segment_lengths[:, np.newaxis],
-            axis=0,
+@dataclass(frozen=True, slots=True)
+class WormPathSubsetSelectionContext:
+    """CP path coverage objective for selecting non-overlapping worm paths."""
+
+    costs: np.ndarray
+    path_segment_matrix: np.ndarray
+    segment_lengths: np.ndarray
+    overlap_weight: float
+    leftover_weight: float
+    max_worms: int
+
+    def select(self) -> list[int]:
+        state = WormPathSelectionState(
+            best_subset=[],
+            best_cost=float(np.sum(self.segment_lengths) * self.leftover_weight),
+            path_segment_matrix=self.path_segment_matrix.astype(int),
+            path_choices=np.eye(len(self.costs), dtype=bool),
         )
-        * overlap_weight
-    )
-    total_costs = (
-        partial_costs
-        + np.sum(
-            (current_path_segment_matrix == 0) * segment_lengths[:, np.newaxis],
-            axis=0,
+        for _level in range(min(self.max_worms, len(self.costs))):
+            state = self._select_one_level(state)
+            if np.prod(state.path_choices.shape) == 0:
+                break
+        return state.best_subset
+
+    def _select_one_level(self, state: WormPathSelectionState) -> WormPathSelectionState:
+        partial_costs = (
+            np.sum(self.costs[:, np.newaxis] * state.path_choices, axis=0)
+            + np.sum(
+                np.maximum(state.path_segment_matrix - 1, 0)
+                * self.segment_lengths[:, np.newaxis],
+                axis=0,
+            )
+            * self.overlap_weight
         )
-        * leftover_weight
-    )
-    order = np.lexsort([total_costs])
-    if len(order) and total_costs[order[0]] < current_best_cost:
-        current_best_subset = np.flatnonzero(
-            current_path_choices[:, order[0]]
-        ).tolist()
-        current_best_cost = float(total_costs[order[0]])
-    mask = partial_costs < current_best_cost
-    if not np.any(mask):
-        return (
-            current_best_subset,
-            current_best_cost,
-            np.zeros((len(costs), 0), dtype=int),
-            np.zeros((len(costs), 0), dtype=bool),
+        total_costs = (
+            partial_costs
+            + np.sum(
+                (state.path_segment_matrix == 0) * self.segment_lengths[:, np.newaxis],
+                axis=0,
+            )
+            * self.leftover_weight
         )
-    order = order[mask[order]]
-    if len(order) * len(costs) > 5000:
-        order = order[: (1 + 5000 // len(costs))]
-    current_path_segment_matrix = current_path_segment_matrix[:, order]
-    current_path_choices = current_path_choices[:, order]
-    i, j = np.mgrid[0 : len(costs), 0 : len(costs)]
-    disallow = i >= j
-    allowed = np.dot(disallow, current_path_choices) == 0
-    if not np.any(allowed):
-        return (
-            current_best_subset,
-            current_best_cost,
-            np.zeros((len(costs), 0), dtype=int),
-            np.zeros((len(costs), 0), dtype=bool),
+        order = np.lexsort([total_costs])
+        best_subset = state.best_subset
+        best_cost = state.best_cost
+        if len(order) and total_costs[order[0]] < best_cost:
+            best_subset = np.flatnonzero(state.path_choices[:, order[0]]).tolist()
+            best_cost = float(total_costs[order[0]])
+        mask = partial_costs < best_cost
+        if not np.any(mask):
+            return self._empty_state(best_subset, best_cost)
+        order = order[mask[order]]
+        if len(order) * len(self.costs) > 5000:
+            order = order[: (1 + 5000 // len(self.costs))]
+        path_segment_matrix = state.path_segment_matrix[:, order]
+        path_choices = state.path_choices[:, order]
+        i, j = np.mgrid[0 : len(self.costs), 0 : len(self.costs)]
+        disallow = i >= j
+        allowed = np.dot(disallow, path_choices) == 0
+        if not np.any(allowed):
+            return self._empty_state(best_subset, best_cost)
+        i, j = np.argwhere(allowed).transpose()
+        return WormPathSelectionState(
+            best_subset=best_subset,
+            best_cost=best_cost,
+            path_segment_matrix=(
+                self.path_segment_matrix[:, i] + path_segment_matrix[:, j]
+            ),
+            path_choices=np.eye(len(self.costs), dtype=bool)[:, i] | path_choices[:, j],
         )
-    i, j = np.argwhere(allowed).transpose()
-    return (
-        current_best_subset,
-        current_best_cost,
-        path_segment_matrix[:, i] + current_path_segment_matrix[:, j],
-        np.eye(len(costs), dtype=bool)[:, i] | current_path_choices[:, j],
-    )
+
+    def _empty_state(
+        self,
+        best_subset: list[int],
+        best_cost: float,
+    ) -> WormPathSelectionState:
+        return WormPathSelectionState(
+            best_subset=best_subset,
+            best_cost=best_cost,
+            path_segment_matrix=np.zeros((len(self.costs), 0), dtype=int),
+            path_choices=np.zeros((len(self.costs), 0), dtype=bool),
+        )
 
 
 def _worm_label_outputs(
@@ -1121,7 +1124,7 @@ class WormShapeCostRequest:
         expected_shape = (self.num_control_points - 1, self.num_control_points - 1)
         if self.inv_angles_covariance_matrix.shape != expected_shape:
             return 0.0
-        angles = _get_angles(control_coords)
+        angles = WormControlPointGeometry(control_coords).angles
         feature_vector = np.hstack((angles, [self.total_length])) - self.mean_angles
         return float(
             feature_vector
@@ -1143,10 +1146,11 @@ def _worm_descriptor_rows(
 ) -> list[dict[str, float | int | str]]:
     """Return CellProfiler-compatible per-object worm descriptor rows."""
     rows: list[dict[str, float | int | str]] = []
-    object_names = _measurement_object_names(
-        overlap_style,
-        overlapping_object_name,
-        nonoverlapping_object_name,
+    object_names = WormLabelOutputStrategy.for_overlap_style(
+        overlap_style
+    ).measurement_object_names(
+        overlapping_object_name=overlapping_object_name,
+        nonoverlapping_object_name=nonoverlapping_object_name,
     )
     for object_number, path_coords in enumerate(all_path_coords, start=1):
         descriptor = _worm_descriptor_row(
@@ -1157,18 +1161,6 @@ def _worm_descriptor_rows(
         for object_name in object_names:
             rows.append({"object_name": object_name, **descriptor})
     return rows
-
-
-def _measurement_object_names(
-    overlap_style: OverlapStyle,
-    overlapping_object_name: str,
-    nonoverlapping_object_name: str,
-) -> tuple[str, ...]:
-    if overlap_style is OverlapStyle.WITH_OVERLAP:
-        return (overlapping_object_name,)
-    if overlap_style is OverlapStyle.WITHOUT_OVERLAP:
-        return (nonoverlapping_object_name,)
-    return (overlapping_object_name, nonoverlapping_object_name)
 
 
 def _worm_descriptor_row(
@@ -1188,7 +1180,7 @@ def _worm_descriptor_row(
             cumul_lengths,
             num_control_points,
         )
-        angles = _get_angles(control_coords)
+        angles = WormControlPointGeometry(control_coords).angles
         length = float(cumul_lengths[-1])
 
     row: dict[str, float | int] = {
