@@ -200,17 +200,6 @@ class ColocalizationMeasurementOptions:
 
 
 @dataclass(frozen=True)
-class CostesRegressionLine:
-    """Regression line used by Costes automatic threshold search."""
-
-    slope: float
-    intercept: float
-
-    def second_threshold(self, first_threshold: float) -> float:
-        return (self.slope * first_threshold) + self.intercept
-
-
-@dataclass(frozen=True)
 class ColocalizationCostesThresholds:
     """Precomputed Costes thresholds for one resolved image source pair."""
 
@@ -230,6 +219,42 @@ class ColocalizationImagePairContext:
     full_first_pixels: np.ndarray
     full_second_pixels: np.ndarray
 
+    @staticmethod
+    def valid_mask(
+        image: object,
+        image_data: np.ndarray,
+        channel_1: int,
+        channel_2: int,
+    ) -> np.ndarray | None:
+        """Return CellProfiler-style valid pixels for a two-image measurement."""
+        first_pixels = image_data[channel_1]
+        second_pixels = image_data[channel_2]
+        mask = image_payload_mask(image)
+        if mask is None:
+            if bool(np.all(np.isfinite(first_pixels))) and bool(
+                np.all(np.isfinite(second_pixels))
+            ):
+                return None
+            return np.isfinite(first_pixels) & np.isfinite(second_pixels)
+
+        valid = np.isfinite(first_pixels) & np.isfinite(second_pixels)
+        mask_array = np.asarray(mask, dtype=bool)
+        if mask_array.shape == valid.shape:
+            return valid & mask_array
+        if mask_array.shape == image_data.shape:
+            return valid & mask_array[channel_1] & mask_array[channel_2]
+        if (
+            mask_array.ndim >= 3
+            and mask_array.shape[0] == image_data.shape[0]
+            and mask_array.shape[1:] == valid.shape
+        ):
+            return valid & mask_array[channel_1] & mask_array[channel_2]
+        raise ValueError(
+            "MeasureColocalization image mask must match the shared spatial "
+            f"domain or channel stack; got mask {mask_array.shape!r} for image "
+            f"{image_data.shape!r}."
+        )
+
     @classmethod
     def from_request(
         cls,
@@ -242,7 +267,7 @@ class ColocalizationImagePairContext:
         image_float = _cellprofiler_float_pixels(image_data)
         first_image = image_float[channel_1]
         second_image = image_float[channel_2]
-        pair_valid_mask = _channel_pair_valid_mask(
+        pair_valid_mask = cls.valid_mask(
             image,
             image_float,
             channel_1,
@@ -316,57 +341,6 @@ class ColocalizationObjectLabelContext:
             aggregation=aggregation,
             object_counts=aggregation.counts(),
         )
-
-
-def _costes_regression_line(
-    fi: np.ndarray,
-    si: np.ndarray,
-) -> CostesRegressionLine | None:
-    non_zero = (fi > 0) | (si > 0)
-    if np.count_nonzero(non_zero) <= 1:
-        return None
-
-    first_values = fi[non_zero]
-    second_values = si[non_zero]
-    xvar = np.var(first_values, axis=0, ddof=1)
-    yvar = np.var(second_values, axis=0, ddof=1)
-    xmean = np.mean(first_values, axis=0)
-    ymean = np.mean(second_values, axis=0)
-
-    z = first_values + second_values
-    zvar = np.var(z, axis=0, ddof=1)
-    covar = 0.5 * (zvar - (xvar + yvar))
-
-    denom = 2 * covar
-    if denom == 0:
-        return None
-
-    num = (yvar - xvar) + np.sqrt((yvar - xvar) ** 2 + 4 * covar**2)
-    slope = num / denom
-    intercept = ymean - slope * xmean
-    if not np.isfinite(slope) or not np.isfinite(intercept):
-        return None
-    return CostesRegressionLine(float(slope), float(intercept))
-
-
-def _costes_intensity_step(
-    fi: np.ndarray,
-    si: np.ndarray,
-    scale_max: int,
-) -> float:
-    if scale_max <= 0:
-        raise ValueError("scale_max must be positive.")
-    image_max = float(max(np.max(fi), np.max(si)))
-    if image_max <= 1.0:
-        return 1.0 / scale_max
-    return max(1.0, image_max / scale_max)
-
-
-def _costes_minimum_scale_index(scale_max: int) -> int:
-    """Lowest Costes bin tested by CellProfiler's scaled threshold search."""
-    if scale_max <= 0:
-        raise ValueError("scale_max must be positive.")
-    return min(scale_max, 5)
 
 
 @njit(cache=True)
@@ -472,152 +446,10 @@ def _object_colocalization_threshold_reductions(
     )
 
 
-def _costes_scale_threshold(scale_index: int, scale_max: int) -> float:
-    if scale_max <= 0:
-        raise ValueError("scale_max must be positive.")
-    return scale_index / scale_max
-
-
 def _costes_above_threshold(values: np.ndarray, threshold: float) -> np.ndarray:
     if threshold <= 0:
         return values >= threshold
     return values > threshold
-
-
-def _pearson_correlation_or_nan(first: np.ndarray, second: np.ndarray) -> float:
-    if first.size <= 1 or second.size <= 1:
-        return np.nan
-    first_values = np.asarray(first, dtype=float)
-    second_values = np.asarray(second, dtype=float)
-    first_centered = first_values - np.mean(first_values)
-    second_centered = second_values - np.mean(second_values)
-    denominator = np.sqrt(
-        np.sum(first_centered * first_centered)
-        * np.sum(second_centered * second_centered)
-    )
-    if denominator == 0:
-        return np.nan
-    return float(np.sum(first_centered * second_centered) / denominator)
-
-
-def _initial_costes_scale_index(
-    fi: np.ndarray,
-    si: np.ndarray,
-    regression_line: CostesRegressionLine,
-    intensity_step: float,
-    scale_max: int,
-) -> int:
-    fi_max = float(np.max(fi))
-    si_max = float(np.max(si))
-    image_max = max(fi_max, si_max)
-    scale_index = min(scale_max, max(1, int(np.ceil(image_max / intensity_step))))
-
-    while scale_index > 1:
-        first_threshold = scale_index * intensity_step
-        second_threshold = regression_line.second_threshold(first_threshold)
-        if first_threshold <= fi_max or second_threshold <= si_max:
-            break
-        scale_index -= 1
-
-    return scale_index
-
-
-def _linear_costes_numpy_reference(fi: np.ndarray, si: np.ndarray, scale_max: int = 255, fast_mode: bool = True) -> Tuple[float, float]:
-    """Reference Python implementation used to validate backend semantics."""
-    regression_line = _costes_regression_line(fi, si)
-    if regression_line is None:
-        return 0.0, 0.0
-
-    intensity_step = 1 / scale_max
-    threshold = intensity_step * ((max(fi.max(), si.max()) // intensity_step) + 1)
-    num_true = None
-    thr_fi_c = threshold
-    thr_si_c = regression_line.second_threshold(thr_fi_c)
-
-    while threshold > fi.max() and regression_line.second_threshold(threshold) > si.max():
-        threshold -= intensity_step
-    while threshold > intensity_step:
-        thr_fi_c = threshold
-        thr_si_c = regression_line.second_threshold(thr_fi_c)
-        combt = (fi < thr_fi_c) | (si < thr_si_c)
-        positives = np.count_nonzero(combt)
-        if positives != num_true:
-            costReg = _pearson_correlation_or_nan(fi[combt], si[combt])
-            num_true = positives
-
-        if not np.isfinite(costReg):
-            break
-        if costReg <= 0:
-            break
-        elif not fast_mode or threshold < intensity_step * 10:
-            threshold -= intensity_step
-        elif costReg > 0.45:
-            threshold -= intensity_step * 10
-        elif costReg > 0.35:
-            threshold -= intensity_step * 5
-        elif costReg > 0.25:
-            threshold -= intensity_step * 2
-        else:
-            threshold -= intensity_step
-
-    return thr_fi_c, thr_si_c
-
-
-def _threshold_for_second_costes_bin(
-    regression_line: CostesRegressionLine,
-    second_scale_index: int,
-    scale_max: int,
-) -> float:
-    second_threshold = _costes_scale_threshold(second_scale_index, scale_max)
-    if regression_line.slope == 0:
-        return 0.0
-    return max(0.0, (second_threshold - regression_line.intercept) / regression_line.slope)
-
-
-def _scaled_second_channel_costes_numpy_reference(
-    fi: np.ndarray,
-    si: np.ndarray,
-    scale_max: int,
-) -> Tuple[float, float]:
-    """Reference Python implementation used to validate backend semantics."""
-    regression_line = _costes_regression_line(fi, si)
-    if regression_line is None:
-        return 0.0, 0.0
-
-    minimum_scale_index = _costes_minimum_scale_index(scale_max)
-    selected_first_threshold = 0.0
-    selected_second_threshold = _costes_scale_threshold(
-        minimum_scale_index,
-        scale_max,
-    )
-    selected_correlation = np.nan
-
-    for second_scale_index in range(scale_max, minimum_scale_index - 1, -1):
-        second_threshold = _costes_scale_threshold(second_scale_index, scale_max)
-        first_threshold = _threshold_for_second_costes_bin(
-            regression_line,
-            second_scale_index,
-            scale_max,
-        )
-        below_threshold = (fi < first_threshold) | (si < second_threshold)
-        cost_regression = _pearson_correlation_or_nan(
-            fi[below_threshold],
-            si[below_threshold],
-        )
-        selected_first_threshold = first_threshold
-        selected_second_threshold = second_threshold
-        selected_correlation = cost_regression
-        if np.isfinite(cost_regression) and cost_regression <= 0:
-            break
-
-    if (
-        not np.isfinite(selected_correlation)
-        or selected_correlation > 0
-        or selected_first_threshold <= 0
-    ):
-        selected_first_threshold = 0.0
-
-    return selected_first_threshold, selected_second_threshold
 
 
 def _colocalization_measurement(
@@ -1107,42 +939,6 @@ def _cellprofiler_float_pixels(image: np.ndarray) -> np.ndarray:
     return np.asarray(image_payload_data(image), dtype=np.float32)
 
 
-def _channel_pair_valid_mask(
-    image: object,
-    image_data: np.ndarray,
-    channel_1: int,
-    channel_2: int,
-) -> np.ndarray | None:
-    """Return CellProfiler-style valid pixels for a two-image measurement."""
-    first_pixels = image_data[channel_1]
-    second_pixels = image_data[channel_2]
-    mask = image_payload_mask(image)
-    if mask is None:
-        if bool(np.all(np.isfinite(first_pixels))) and bool(
-            np.all(np.isfinite(second_pixels))
-        ):
-            return None
-        return np.isfinite(first_pixels) & np.isfinite(second_pixels)
-
-    valid = np.isfinite(first_pixels) & np.isfinite(second_pixels)
-    mask_array = np.asarray(mask, dtype=bool)
-    if mask_array.shape == valid.shape:
-        return valid & mask_array
-    if mask_array.shape == image_data.shape:
-        return valid & mask_array[channel_1] & mask_array[channel_2]
-    if (
-        mask_array.ndim >= 3
-        and mask_array.shape[0] == image_data.shape[0]
-        and mask_array.shape[1:] == valid.shape
-    ):
-        return valid & mask_array[channel_1] & mask_array[channel_2]
-    raise ValueError(
-        "MeasureColocalization image mask must match the shared spatial "
-        f"domain or channel stack; got mask {mask_array.shape!r} for image "
-        f"{image_data.shape!r}."
-    )
-
-
 def _channel_output_payload(
     image: object,
     image_data: np.ndarray,
@@ -1159,35 +955,6 @@ def _channel_output_payload(
     if mask_array.shape == image_data.shape:
         mask_array = mask_array[channel_index : channel_index + 1]
     return image_payload_with_context(output, mask=mask_array, metadata=metadata)
-
-
-def _costes_scale_max(
-    image: object,
-    image_data: np.ndarray,
-    channel_1: int,
-    channel_2: int,
-    explicit_scale_max: int | None,
-) -> int:
-    """Resolve Costes scale from generic image metadata, with dtype fallback."""
-    if explicit_scale_max is not None:
-        return int(explicit_scale_max)
-
-    metadata = image_payload_metadata(image)
-    metadata_scales = tuple(
-        scale
-        for scale in (
-            metadata.intensity_scale_for_channel(channel_1),
-            metadata.intensity_scale_for_channel(channel_2),
-        )
-        if scale is not None and scale > 0
-    )
-    if metadata_scales:
-        return int(round(max(metadata_scales)))
-
-    dtype_scale = image_intensity_scale_for_dtype(np.asarray(image_data).dtype)
-    if dtype_scale is not None and dtype_scale > 0:
-        return int(round(dtype_scale))
-    return 255
 
 
 def _colocalization_unit_interval_scale(
@@ -1281,7 +1048,7 @@ def measure_colocalization(
         do_overlap=do_overlap,
         do_costes=do_costes,
         costes_method=costes_method,
-        scale_max=_costes_scale_max(
+        scale_max=ColocalizationCostesThresholdRequest.scale_max_for_image_pair(
             image,
             image_data,
             channel_1,
@@ -1302,7 +1069,7 @@ def measure_colocalization(
     )
     phase_started_at = time.perf_counter()
     image_float = _cellprofiler_float_pixels(image_data)
-    valid_mask = _channel_pair_valid_mask(
+    valid_mask = ColocalizationImagePairContext.valid_mask(
         image,
         image_float,
         channel_1,
@@ -1410,7 +1177,7 @@ def measure_colocalization_objects(
         do_overlap=do_overlap,
         do_costes=do_costes,
         costes_method=costes_method,
-        scale_max=_costes_scale_max(
+        scale_max=ColocalizationCostesThresholdRequest.scale_max_for_image_pair(
             image,
             image_data,
             channel_1,
@@ -1665,6 +1432,35 @@ class ColocalizationCostesThresholdRequest:
             self.backend_provider,
         )
 
+    @staticmethod
+    def scale_max_for_image_pair(
+        image: object,
+        image_data: np.ndarray,
+        channel_1: int,
+        channel_2: int,
+        explicit_scale_max: int | None,
+    ) -> int:
+        """Resolve Costes scale from image metadata, with dtype fallback."""
+        if explicit_scale_max is not None:
+            return int(explicit_scale_max)
+
+        metadata = image_payload_metadata(image)
+        metadata_scales = tuple(
+            scale
+            for scale in (
+                metadata.intensity_scale_for_channel(channel_1),
+                metadata.intensity_scale_for_channel(channel_2),
+            )
+            if scale is not None and scale > 0
+        )
+        if metadata_scales:
+            return int(round(max(metadata_scales)))
+
+        dtype_scale = image_intensity_scale_for_dtype(np.asarray(image_data).dtype)
+        if dtype_scale is not None and dtype_scale > 0:
+            return int(round(dtype_scale))
+        return 255
+
     @classmethod
     def from_batch_request(
         cls,
@@ -1688,7 +1484,7 @@ class ColocalizationCostesThresholdRequest:
             channel_1=channel_1,
             channel_2=channel_2,
             method=CostesMethod(kwargs.get("costes_method", CostesMethod.FASTER)),
-            scale_max=_costes_scale_max(
+            scale_max=cls.scale_max_for_image_pair(
                 request.image,
                 image_data,
                 channel_1,
