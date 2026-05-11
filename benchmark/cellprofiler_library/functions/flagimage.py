@@ -8,37 +8,18 @@ and 0 if it does not meet the criteria (passes QC).
 """
 
 import numpy as np
-from typing import Tuple, List, Optional
-from dataclasses import dataclass
-from enum import Enum
+from typing import Tuple, Optional
+
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.interop.cellprofiler.flag_image import (
+    CombinationChoice,
+    FlagResult,
+    MeasurementSource,
+    flag_image_result,
+)
 from openhcs.processing.materialization import csv_materializer
-
-
-class CombinationChoice(Enum):
-    ANY = "any"  # Flag if any measurement fails
-    ALL = "all"  # Flag if all measurements fail
-
-
-class MeasurementSource(Enum):
-    IMAGE = "image"  # Whole-image measurement
-    AVERAGE_OBJECT = "average_object"  # Average measurement for all objects
-    ALL_OBJECTS = "all_objects"  # Measurements for all objects
-
-
-@dataclass
-class FlagResult:
-    """Result of flag evaluation for an image."""
-    slice_index: int
-    flag_name: str
-    flag_value: int  # 0 = pass, 1 = fail
-    measurement_name: str
-    measurement_value: float
-    min_threshold: float
-    max_threshold: float
-    pass_fail: str
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -84,38 +65,16 @@ def flag_image(
     if measurement_value is None:
         measurement_value = float(np.mean(image))
     
-    # Evaluate flag conditions
-    fail = False
-    
-    # Check if value is NaN - don't flag NaN values
-    if np.isnan(measurement_value):
-        fail = False
-    else:
-        # Check minimum threshold
-        if check_minimum and measurement_value < minimum_value:
-            fail = True
-        
-        # Check maximum threshold
-        if check_maximum and measurement_value > maximum_value:
-            fail = True
-    
-    # Flag value: 1 = fail (flagged), 0 = pass (not flagged)
-    flag_value = 1 if fail else 0
-    pass_fail = "Fail" if fail else "Pass"
-    
-    full_flag_name = f"{flag_category}_{flag_name}"
-    
-    result = FlagResult(
-        slice_index=0,
-        flag_name=full_flag_name,
-        flag_value=flag_value,
+    result = flag_image_result(
+        flag_name=flag_name,
+        flag_category=flag_category,
         measurement_name="intensity_mean",
-        measurement_value=float(measurement_value),
-        min_threshold=minimum_value if check_minimum else float('nan'),
-        max_threshold=maximum_value if check_maximum else float('nan'),
-        pass_fail=pass_fail
+        measurement_value=measurement_value,
+        check_minimum=check_minimum,
+        minimum_value=minimum_value,
+        check_maximum=check_maximum,
+        maximum_value=maximum_value,
     )
-    
     return image, result
 
 
@@ -161,29 +120,14 @@ def flag_image_intensity(
         measurement_value = float(np.median(image))
         measurement_name = "intensity_median"
     
-    # Evaluate flag conditions
-    fail = False
-    
-    if not np.isnan(measurement_value):
-        if check_minimum and measurement_value < minimum_value:
-            fail = True
-        if check_maximum and measurement_value > maximum_value:
-            fail = True
-    
-    flag_value = 1 if fail else 0
-    pass_fail = "Fail" if fail else "Pass"
-    
-    full_flag_name = f"{flag_category}_{flag_name}"
-    
-    result = FlagResult(
-        slice_index=0,
-        flag_name=full_flag_name,
-        flag_value=flag_value,
+    result = flag_image_result(
+        flag_name=flag_name,
+        flag_category=flag_category,
         measurement_name=measurement_name,
         measurement_value=measurement_value,
-        min_threshold=minimum_value if check_minimum else float('nan'),
-        max_threshold=maximum_value if check_maximum else float('nan'),
-        pass_fail=pass_fail
+        check_minimum=check_minimum,
+        minimum_value=minimum_value,
+        check_maximum=check_maximum,
+        maximum_value=maximum_value,
     )
-    
     return image, result
