@@ -13,6 +13,8 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_artifact_queries import (
     measurement_values_for_feature,
     normalize_measurement_token,
@@ -25,6 +27,7 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelMeasurementValues,
     ParentChildRelationshipPayload,
     aligned_dense_object_label_arrays,
+    dense_object_label_present_ids,
     project_dense_object_label_stack,
 )
 from openhcs.interop.cellprofiler.measurement_dialect import (
@@ -33,13 +36,16 @@ from openhcs.interop.cellprofiler.measurement_dialect import (
 from openhcs.interop.cellprofiler.measurement_lookup import (
     child_count_feature_child_name,
 )
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler.shape import form_factor_values
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 from openhcs.core.runtime_values import (
     MeasurementTable,
     ObjectLabelPayload,
@@ -1131,6 +1137,274 @@ def filter_objects_outline_image(labels: np.ndarray) -> np.ndarray:
     return boundary.astype(np.uint8)
 
 
+@numpy(contract=ProcessingContract.FLEXIBLE)
+@special_outputs(
+    (
+        "filter_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "objects_pre_filter",
+                "objects_post_filter",
+                "objects_removed",
+            ],
+            analysis_type="filter_objects",
+        ),
+    ),
+    ("filtered_labels", segmentation_mask_rois()),
+)
+def filter_objects(
+    image: np.ndarray,
+    mode: FilterMode = FilterMode.MEASUREMENTS,
+    filter_method: FilterMethod = FilterMethod.LIMITS,
+    object_labels: tuple[np.ndarray, ...] = (),
+    measurement_values: np.ndarray | None = None,
+    measurement_features: tuple[str, ...] = (),
+    measurement_min_values: tuple[float | None, ...] = (),
+    measurement_max_values: tuple[float | None, ...] = (),
+    measurement_use_minimum: tuple[bool, ...] = (),
+    measurement_use_maximum: tuple[bool, ...] = (),
+    measurement_tables: tuple[MeasurementTable, ...] = (),
+    enclosing_object_labels: np.ndarray | None = None,
+    parent_child_relationship: FilterObjectsParentChildRelationship | None = None,
+    parent_child_relationships: FilterObjectsParentChildRelationships = (),
+    per_object_assignment: PerObjectAssignment = PerObjectAssignment.BOTH_PARENTS,
+    min_value: float | None = None,
+    max_value: float | None = None,
+    use_minimum: bool = True,
+    use_maximum: bool = True,
+    additional_object_count: int = 0,
+    outline_object_indices: tuple[int, ...] = (),
+) -> tuple[np.ndarray, FilterObjectsStats, np.ndarray | ParentChildRelationshipPayload, ...]:
+    """Filter dense object labels using CellProfiler-compatible selection policy."""
+    if object_labels is None:
+        object_labels = ()
+    elif isinstance(object_labels, np.ndarray):
+        object_labels = (object_labels,)
+    if len(object_labels) == 0:
+        raise ValueError("FilterObjects requires at least one object label input.")
+    mode = coerce_cellprofiler_enum(FilterMode, mode)
+    filter_method = coerce_cellprofiler_enum(FilterMethod, filter_method)
+    per_object_assignment = coerce_cellprofiler_enum(
+        PerObjectAssignment,
+        per_object_assignment,
+    )
+    if additional_object_count != len(object_labels) - 1:
+        raise ValueError(
+            "FilterObjects additional_object_count must match additional object "
+            "label inputs."
+        )
+    labels = FilterObjectsLabelPlane(object_labels[0]).projected.astype(np.int32)
+    additional_label_planes = tuple(
+        FilterObjectsLabelPlane(value).aligned_to(labels)
+        for value in object_labels[1:]
+    )
+    input_label_planes = (labels, *additional_label_planes)
+    max_label = labels.max()
+
+    if max_label == 0:
+        stats = FilterObjectsStats.from_counts(
+            objects_pre_filter=0,
+            objects_post_filter=0,
+        )
+        relabeled_objects = filtered_object_payloads(
+            object_labels,
+            (labels, *additional_label_planes),
+        )
+        relationships = object_transform_relationships(
+            input_label_planes,
+            relabeled_objects,
+        )
+        return (
+            image,
+            stats,
+            *relabeled_objects,
+            *relationships,
+            *filter_objects_outline_images(relabeled_objects, outline_object_indices),
+        )
+
+    object_ids = dense_object_label_present_ids(labels)
+    selection_measurement_values = (
+        None
+        if measurement_values is None
+        else ObjectLabelMeasurementValues.from_label_indexed_values(
+            object_ids,
+            measurement_values,
+        )
+    )
+
+    indexes_to_keep = FilterSelectionStrategy.for_mode_and_method(
+        mode,
+        filter_method,
+    ).indexes_to_keep(
+        FilterObjectsSelectionRequest(
+            labels=labels,
+            object_ids=object_ids,
+            filter_method=filter_method,
+            measurement_values=selection_measurement_values,
+            measurement_features=measurement_features,
+            measurement_min_values=measurement_min_values,
+            measurement_max_values=measurement_max_values,
+            measurement_use_minimum=measurement_use_minimum,
+            measurement_use_maximum=measurement_use_maximum,
+            measurement_tables=measurement_tables,
+            enclosing_labels=FilterObjectsLabelPlane.optional_aligned_to(
+                labels,
+                enclosing_object_labels,
+            ),
+            parent_child_relationship=parent_child_relationship,
+            parent_child_relationships=filter_objects_relationship_tuple(
+                parent_child_relationship,
+                parent_child_relationships,
+            ),
+            per_object_assignment=per_object_assignment,
+            min_value=min_value,
+            max_value=max_value,
+            use_minimum=use_minimum,
+            use_maximum=use_maximum,
+        )
+    )
+
+    label_mapping = np.zeros(max_label + 1, dtype=np.int32)
+    for new_idx, old_idx in enumerate(indexes_to_keep, start=1):
+        if old_idx <= max_label:
+            label_mapping[old_idx] = new_idx
+
+    filtered_labels = label_mapping[labels]
+    relabeled_objects = filtered_object_payloads(
+        object_labels,
+        (
+            filtered_labels,
+            *(
+                relabel_overlapping_objects(additional, filtered_labels)
+                for additional in additional_label_planes
+            ),
+        ),
+    )
+    relationships = object_transform_relationships(
+        input_label_planes,
+        relabeled_objects,
+    )
+    stats = FilterObjectsStats.from_counts(
+        objects_pre_filter=len(object_ids),
+        objects_post_filter=len(indexes_to_keep),
+    )
+
+    return (
+        image,
+        stats,
+        *relabeled_objects,
+        *relationships,
+        *filter_objects_outline_images(relabeled_objects, outline_object_indices),
+    )
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "filter_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "objects_pre_filter",
+                "objects_post_filter",
+                "objects_removed",
+            ],
+            analysis_type="filter_objects",
+        ),
+    ),
+    ("filtered_labels", segmentation_mask_rois()),
+)
+def filter_objects_by_size(
+    image: np.ndarray,
+    labels: np.ndarray,
+    min_area: float = 0.0,
+    max_area: float = float("inf"),
+    use_minimum: bool = True,
+    use_maximum: bool = True,
+) -> tuple[np.ndarray, FilterObjectsStats, np.ndarray]:
+    """Filter objects based on area measurements."""
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    max_label = labels.max()
+
+    if max_label == 0:
+        stats = FilterObjectsStats.from_counts(
+            objects_pre_filter=0,
+            objects_post_filter=0,
+        )
+        return image, stats, labels
+
+    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        labels
+    )
+    indexes_to_keep = FilterObjectsMeasurementLimitWindow.from_label_indexed_values(
+        region_props.area,
+        min_value=min_area,
+        max_value=max_area,
+        use_minimum=use_minimum,
+        use_maximum=use_maximum,
+    ).retained_ids
+
+    label_mapping = np.zeros(max_label + 1, dtype=np.int32)
+    for new_idx, old_idx in enumerate(indexes_to_keep, start=1):
+        if old_idx <= max_label:
+            label_mapping[old_idx] = new_idx
+
+    stats = FilterObjectsStats.from_counts(
+        objects_pre_filter=len(region_props.label),
+        objects_post_filter=len(indexes_to_keep),
+    )
+    return image, stats, label_mapping[labels]
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "filter_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "objects_pre_filter",
+                "objects_post_filter",
+                "objects_removed",
+            ],
+            analysis_type="filter_objects",
+        ),
+    ),
+    ("filtered_labels", segmentation_mask_rois()),
+)
+def filter_border_objects(
+    image: np.ndarray,
+    labels: np.ndarray,
+) -> tuple[np.ndarray, FilterObjectsStats, np.ndarray]:
+    """Remove objects touching the image border."""
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    max_label = labels.max()
+
+    if max_label == 0:
+        stats = FilterObjectsStats.from_counts(
+            objects_pre_filter=0,
+            objects_post_filter=0,
+        )
+        return image, stats, labels
+
+    object_ids = dense_object_label_present_ids(labels)
+    indexes_to_keep = BorderFilterSelectionStrategy.discard_border_objects(labels)
+
+    label_mapping = np.zeros(max_label + 1, dtype=np.int32)
+    for new_idx, old_idx in enumerate(indexes_to_keep, start=1):
+        if old_idx <= max_label:
+            label_mapping[old_idx] = new_idx
+
+    stats = FilterObjectsStats.from_counts(
+        objects_pre_filter=len(object_ids),
+        objects_post_filter=len(indexes_to_keep),
+    )
+    return image, stats, label_mapping[labels]
+
+
 __all__ = [
     "FilterMethod",
     "FilterMode",
@@ -1152,6 +1426,9 @@ __all__ = [
     "filter_objects_outline_image",
     "filter_objects_outline_images",
     "filter_objects_relationship_tuple",
+    "filter_border_objects",
+    "filter_objects",
+    "filter_objects_by_size",
     "filtered_object_payload",
     "filtered_object_payloads",
     "keep_one_object",
