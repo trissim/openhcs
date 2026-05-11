@@ -1,71 +1,60 @@
 """
 Converted from CellProfiler: ClassifyObjects
 Original: ClassifyObjects module
-
-Classifies objects into different classes based on measurements or thresholds.
-This is a measurement-based classification module that operates on pre-computed
-measurements from segmented objects.
 """
 
+from typing import Any, Optional, Tuple
+
 import numpy as np
-from typing import Tuple, List, Optional, Dict, Any
-from dataclasses import dataclass, field
-from enum import Enum
+
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-    CellProfilerBackendProvider,
 )
 from openhcs.processing.backends.cellprofiler.classification import (
+    ClassificationBinChoice as BinChoice,
+    ClassificationMethod,
+    ClassificationResult,
+    ClassificationThresholdMethod as ThresholdMethod,
+    IntensityBinsClassificationRequest,
     ObjectClassificationBackendStrategy,
+    SingleMeasurementClassificationRequest,
+    TwoMeasurementClassificationRequest,
 )
-from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
-from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
-class ClassificationMethod(Enum):
-    SINGLE_MEASUREMENT = "single_measurement"
-    TWO_MEASUREMENTS = "two_measurements"
+CLASSIFICATION_RESULT_FIELDS = [
+    "slice_index",
+    "total_objects",
+    "bin_counts",
+    "bin_percentages",
+    "object_classes",
+]
 
 
-class ThresholdMethod(Enum):
-    MEAN = "mean"
-    MEDIAN = "median"
-    CUSTOM = "custom"
-
-
-class BinChoice(Enum):
-    EVEN = "even"
-    CUSTOM = "custom"
-
-
-@dataclass
-class ClassificationResult:
-    """Results from object classification."""
-    slice_index: int
-    total_objects: int
-    bin_counts: str  # JSON-encoded dict of bin_name -> count
-    bin_percentages: str  # JSON-encoded dict of bin_name -> percentage
-    object_classes: str = "{}"  # JSON-encoded dict of object label -> bin name
+def _classification_backend(
+    classification_backend_provider: BackendProviderInput,
+) -> ObjectClassificationBackendStrategy:
+    return ObjectClassificationBackendStrategy.for_memory_type(
+        backend_provider=classification_backend_provider,
+    )
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
 @special_outputs(
-    ("classification_results", csv_materializer(
-        fields=[
-            "slice_index",
-            "total_objects",
-            "bin_counts",
-            "bin_percentages",
-            "object_classes",
-        ],
-        analysis_type="classification"
-    ))
+    (
+        "classification_results",
+        csv_materializer(
+            fields=CLASSIFICATION_RESULT_FIELDS,
+            analysis_type="classification",
+        ),
+    )
 )
 def classify_objects_single_measurement(
     image: np.ndarray,
@@ -83,27 +72,9 @@ def classify_objects_single_measurement(
     bin_names: Optional[str] = None,
     classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, ClassificationResult]:
-    """
-    Classify objects based on a single measurement into bins.
-    
-    Args:
-        image: Input image (H, W)
-        labels: Label image with segmented objects (H, W)
-        measurement_values: Pre-computed measurement values per object.
-                          If None, uses mean intensity per object.
-        bin_choice: How to define bins (EVEN or CUSTOM)
-        bin_count: Number of bins between low and high threshold (for EVEN)
-        low_threshold: Lower threshold value (for EVEN)
-        high_threshold: Upper threshold value (for EVEN)
-        wants_low_bin: Include bin for objects below low threshold
-        wants_high_bin: Include bin for objects above high threshold
-        custom_thresholds: Comma-separated threshold values (for CUSTOM)
-        bin_names: Optional comma-separated custom bin names
-    
-    Returns:
-        Tuple of (classified_labels, classification_results)
-    """
+    """Classify objects based on a single measurement into bins."""
     labels = object_label_dense_array(labels, dtype=np.int32)
+    backend = _classification_backend(classification_backend_provider)
     if classification_rules:
         results: list[ClassificationResult] = []
         classified_labels = labels
@@ -113,9 +84,7 @@ def classify_objects_single_measurement(
                 if rule_index < len(measurement_values_by_rule)
                 else None
             )
-            classified_labels, result = _classify_objects_single_measurement_impl(
-                image,
-                labels,
+            classified_labels, result = SingleMeasurementClassificationRequest(
                 measurement_values=rule_values,
                 bin_choice=rule.get("bin_choice", BinChoice.EVEN),
                 bin_count=int(rule.get("bin_count", 3)),
@@ -125,14 +94,11 @@ def classify_objects_single_measurement(
                 wants_high_bin=bool(rule.get("wants_high_bin", False)),
                 custom_thresholds=str(rule.get("custom_thresholds", "0,1")),
                 bin_names=rule.get("bin_names"),
-                classification_backend_provider=classification_backend_provider,
-            )
+            ).classify(image, labels, backend)
             results.append(result)
         return classified_labels, tuple(results)
 
-    return _classify_objects_single_measurement_impl(
-        image,
-        labels,
+    return SingleMeasurementClassificationRequest(
         measurement_values=measurement_values,
         bin_choice=bin_choice,
         bin_count=bin_count,
@@ -142,134 +108,19 @@ def classify_objects_single_measurement(
         wants_high_bin=wants_high_bin,
         custom_thresholds=custom_thresholds,
         bin_names=bin_names,
-        classification_backend_provider=classification_backend_provider,
-    )
-
-
-def _classify_objects_single_measurement_impl(
-    image: np.ndarray,
-    labels: np.ndarray,
-    *,
-    measurement_values: Optional[np.ndarray],
-    bin_choice: BinChoice | str,
-    bin_count: int,
-    low_threshold: float,
-    high_threshold: float,
-    wants_low_bin: bool,
-    wants_high_bin: bool,
-    custom_thresholds: str,
-    bin_names: Optional[str],
-    classification_backend_provider: CellProfilerBackendProvider | None,
-) -> Tuple[np.ndarray, ClassificationResult]:
-    import json
-
-    bin_choice = coerce_cellprofiler_enum(BinChoice, bin_choice)
-    classification_backend = ObjectClassificationBackendStrategy.for_memory_type(
-        backend_provider=classification_backend_provider,
-    )
-    
-    # Get unique object labels (excluding background)
-    unique_labels = classification_backend.positive_label_ids(labels)
-    num_objects = len(unique_labels)
-    
-    if num_objects == 0:
-        return labels, ClassificationResult(
-            slice_index=0,
-            total_objects=0,
-            bin_counts=json.dumps({}),
-            bin_percentages=json.dumps({}),
-        )
-    
-    # Get measurement values if not provided
-    if measurement_values is None:
-        # Default to mean intensity per object
-        values = classification_backend.mean_intensity_values(
-            labels,
-            image,
-            unique_labels,
-        )
-    else:
-        values = measurement_values.copy()
-    
-    # Pad values if needed
-    if len(values) < num_objects:
-        values = np.concatenate([values, np.full(num_objects - len(values), np.nan)])
-    
-    # Determine thresholds
-    if bin_choice == BinChoice.EVEN:
-        if low_threshold >= high_threshold:
-            low_threshold, high_threshold = high_threshold, low_threshold
-        thresholds = np.linspace(low_threshold, high_threshold, bin_count + 1)
-    else:
-        thresholds = np.array([float(x.strip()) for x in custom_thresholds.split(",")])
-    
-    # Add infinite bounds if needed
-    threshold_list = []
-    if wants_low_bin:
-        threshold_list.append(-np.inf)
-    threshold_list.extend(thresholds.tolist())
-    if wants_high_bin:
-        threshold_list.append(np.inf)
-    thresholds = np.array(threshold_list)
-    
-    num_bins = len(thresholds) - 1
-    
-    # Generate bin names
-    if bin_names is not None:
-        names = [n.strip() for n in bin_names.split(",")]
-    else:
-        names = [f"Bin_{i+1}" for i in range(num_bins)]
-    
-    # Ensure we have enough names
-    while len(names) < num_bins:
-        names.append(f"Bin_{len(names)+1}")
-    
-    # Classify each object
-    object_bins = np.zeros(num_objects, dtype=np.int32)
-    for i, val in enumerate(values):
-        if np.isnan(val):
-            object_bins[i] = 0  # Unclassified
-        else:
-            for bin_idx in range(num_bins):
-                if thresholds[bin_idx] < val <= thresholds[bin_idx + 1]:
-                    object_bins[i] = bin_idx + 1
-                    break
-    
-    # Count objects per bin
-    bin_counts = {}
-    bin_percentages = {}
-    for bin_idx in range(num_bins):
-        count = np.sum(object_bins == (bin_idx + 1))
-        bin_counts[names[bin_idx]] = int(count)
-        bin_percentages[names[bin_idx]] = float(count / num_objects * 100) if num_objects > 0 else 0.0
-    
-    object_classes = {}
-    for i, label_val in enumerate(unique_labels):
-        if object_bins[i] > 0:
-            object_classes[int(label_val)] = names[object_bins[i] - 1]
-    
-    return labels, ClassificationResult(
-        slice_index=0,
-        total_objects=num_objects,
-        bin_counts=json.dumps(bin_counts),
-        bin_percentages=json.dumps(bin_percentages),
-        object_classes=json.dumps(object_classes),
-    )
+    ).classify(image, labels, backend)
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
 @special_outputs(
-    ("classification_results", csv_materializer(
-        fields=[
-            "slice_index",
-            "total_objects",
-            "bin_counts",
-            "bin_percentages",
-            "object_classes",
-        ],
-        analysis_type="classification"
-    ))
+    (
+        "classification_results",
+        csv_materializer(
+            fields=CLASSIFICATION_RESULT_FIELDS,
+            analysis_type="classification",
+        ),
+    )
 )
 def classify_objects_two_measurements(
     image: np.ndarray,
@@ -286,126 +137,32 @@ def classify_objects_two_measurements(
     high_high_name: str = "high_high",
     classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, ClassificationResult]:
-    """
-    Classify objects based on two measurements into four quadrants.
-    
-    Args:
-        image: Input image (H, W)
-        labels: Label image with segmented objects (H, W)
-        measurement1_values: First measurement values per object
-        measurement2_values: Second measurement values per object
-        threshold1_method: How to determine threshold for measurement 1
-        threshold1_value: Custom threshold for measurement 1
-        threshold2_method: How to determine threshold for measurement 2
-        threshold2_value: Custom threshold for measurement 2
-        low_low_name: Name for low-low bin
-        low_high_name: Name for low-high bin
-        high_low_name: Name for high-low bin
-        high_high_name: Name for high-high bin
-    
-    Returns:
-        Tuple of (classified_labels, classification_results)
-    """
-    import json
-
+    """Classify objects based on two measurements into four quadrants."""
     labels = object_label_dense_array(labels, dtype=np.int32)
-    threshold1_method = coerce_cellprofiler_enum(ThresholdMethod, threshold1_method)
-    threshold2_method = coerce_cellprofiler_enum(ThresholdMethod, threshold2_method)
-    classification_backend = ObjectClassificationBackendStrategy.for_memory_type(
-        backend_provider=classification_backend_provider,
-    )
-    
-    unique_labels = classification_backend.positive_label_ids(labels)
-    num_objects = len(unique_labels)
-    
-    if num_objects == 0:
-        return labels, ClassificationResult(
-            slice_index=0,
-            total_objects=0,
-            bin_counts=json.dumps({}),
-            bin_percentages=json.dumps({}),
-        )
-    
-    if measurement1_values is None:
-        values1 = classification_backend.mean_intensity_values(
-            labels,
-            image,
-            unique_labels,
-        )
-    else:
-        values1 = measurement1_values.copy()
-    
-    if measurement2_values is None:
-        values2 = np.bincount(
-            labels.astype(np.intp, copy=False).ravel(),
-            minlength=(int(unique_labels[-1]) + 1 if num_objects else 1),
-        )[unique_labels].astype(float)
-    else:
-        values2 = measurement2_values.copy()
-    
-    # Determine thresholds
-    def get_threshold(values, method, custom_value):
-        valid_values = values[~np.isnan(values)]
-        if len(valid_values) == 0:
-            return custom_value
-        if method == ThresholdMethod.MEAN:
-            return np.mean(valid_values)
-        elif method == ThresholdMethod.MEDIAN:
-            return np.median(valid_values)
-        else:
-            return custom_value
-    
-    t1 = get_threshold(values1, threshold1_method, threshold1_value)
-    t2 = get_threshold(values2, threshold2_method, threshold2_value)
-    
-    # Classify into quadrants
-    high1 = values1 >= t1
-    high2 = values2 >= t2
-    has_nan = np.isnan(values1) | np.isnan(values2)
-    
-    # Quadrant assignments: 1=low_low, 2=high_low, 3=low_high, 4=high_high
-    object_class = np.zeros(num_objects, dtype=np.int32)
-    object_class[(~high1) & (~high2) & (~has_nan)] = 1  # low_low
-    object_class[(high1) & (~high2) & (~has_nan)] = 2   # high_low
-    object_class[(~high1) & (high2) & (~has_nan)] = 3   # low_high
-    object_class[(high1) & (high2) & (~has_nan)] = 4    # high_high
-    
-    names = [low_low_name, high_low_name, low_high_name, high_high_name]
-    
-    bin_counts = {}
-    bin_percentages = {}
-    for i, name in enumerate(names):
-        count = np.sum(object_class == (i + 1))
-        bin_counts[name] = int(count)
-        bin_percentages[name] = float(count / num_objects * 100) if num_objects > 0 else 0.0
-    
-    object_classes = {}
-    for i, label_val in enumerate(unique_labels):
-        if object_class[i] > 0:
-            object_classes[int(label_val)] = names[object_class[i] - 1]
-    
-    return labels, ClassificationResult(
-        slice_index=0,
-        total_objects=num_objects,
-        bin_counts=json.dumps(bin_counts),
-        bin_percentages=json.dumps(bin_percentages),
-        object_classes=json.dumps(object_classes),
-    )
+    return TwoMeasurementClassificationRequest(
+        measurement1_values=measurement1_values,
+        measurement2_values=measurement2_values,
+        threshold1_method=threshold1_method,
+        threshold1_value=threshold1_value,
+        threshold2_method=threshold2_method,
+        threshold2_value=threshold2_value,
+        low_low_name=low_low_name,
+        low_high_name=low_high_name,
+        high_low_name=high_low_name,
+        high_high_name=high_high_name,
+    ).classify(image, labels, _classification_backend(classification_backend_provider))
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_inputs("labels")
 @special_outputs(
-    ("classification_results", csv_materializer(
-        fields=[
-            "slice_index",
-            "total_objects",
-            "bin_counts",
-            "bin_percentages",
-            "object_classes",
-        ],
-        analysis_type="classification"
-    ))
+    (
+        "classification_results",
+        csv_materializer(
+            fields=CLASSIFICATION_RESULT_FIELDS,
+            analysis_type="classification",
+        ),
+    )
 )
 def classify_objects_by_intensity_bins(
     image: np.ndarray,
@@ -414,88 +171,9 @@ def classify_objects_by_intensity_bins(
     use_percentiles: bool = True,
     classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, ClassificationResult]:
-    """
-    Classify objects by mean intensity into evenly distributed bins.
-    
-    Args:
-        image: Input intensity image (H, W)
-        labels: Label image with segmented objects (H, W)
-        num_bins: Number of classification bins
-        use_percentiles: If True, use percentile-based thresholds for even distribution
-    
-    Returns:
-        Tuple of (classified_labels, classification_results)
-    """
-    import json
+    """Classify objects by mean intensity into evenly distributed bins."""
     labels = object_label_dense_array(labels, dtype=np.int32)
-    classification_backend = ObjectClassificationBackendStrategy.for_memory_type(
-        backend_provider=classification_backend_provider,
-    )
-    
-    unique_labels = classification_backend.positive_label_ids(labels)
-    num_objects = len(unique_labels)
-    
-    if num_objects == 0:
-        return labels, ClassificationResult(
-            slice_index=0,
-            total_objects=0,
-            bin_counts=json.dumps({}),
-            bin_percentages=json.dumps({}),
-        )
-    
-    # Measure mean intensity per object
-    values = classification_backend.mean_intensity_values(labels, image, unique_labels)
-    
-    valid_mask = ~np.isnan(values)
-    valid_values = values[valid_mask]
-    
-    if len(valid_values) == 0:
-        return labels, ClassificationResult(
-            slice_index=0,
-            total_objects=num_objects,
-            bin_counts=json.dumps({}),
-            bin_percentages=json.dumps({}),
-        )
-    
-    # Determine thresholds
-    if use_percentiles:
-        percentiles = np.linspace(0, 100, num_bins + 1)
-        thresholds = np.percentile(valid_values, percentiles)
-    else:
-        thresholds = np.linspace(np.min(valid_values), np.max(valid_values), num_bins + 1)
-    
-    # Classify objects
-    object_bins = np.zeros(num_objects, dtype=np.int32)
-    for i, val in enumerate(values):
-        if np.isnan(val):
-            continue
-        for bin_idx in range(num_bins):
-            if bin_idx == num_bins - 1:
-                if thresholds[bin_idx] <= val <= thresholds[bin_idx + 1]:
-                    object_bins[i] = bin_idx + 1
-            else:
-                if thresholds[bin_idx] <= val < thresholds[bin_idx + 1]:
-                    object_bins[i] = bin_idx + 1
-                    break
-    
-    # Generate results
-    bin_names = [f"Intensity_Bin_{i+1}" for i in range(num_bins)]
-    bin_counts = {}
-    bin_percentages = {}
-    for i, name in enumerate(bin_names):
-        count = np.sum(object_bins == (i + 1))
-        bin_counts[name] = int(count)
-        bin_percentages[name] = float(count / num_objects * 100) if num_objects > 0 else 0.0
-    
-    object_classes = {}
-    for i, label_val in enumerate(unique_labels):
-        if object_bins[i] > 0:
-            object_classes[int(label_val)] = bin_names[object_bins[i] - 1]
-    
-    return labels, ClassificationResult(
-        slice_index=0,
-        total_objects=num_objects,
-        bin_counts=json.dumps(bin_counts),
-        bin_percentages=json.dumps(bin_percentages),
-        object_classes=json.dumps(object_classes),
-    )
+    return IntensityBinsClassificationRequest(
+        num_bins=num_bins,
+        use_percentiles=use_percentiles,
+    ).classify(image, labels, _classification_backend(classification_backend_provider))
