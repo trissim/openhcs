@@ -18,6 +18,10 @@ from collections import OrderedDict
 import hashlib
 from numba import njit, prange
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.measurement_schemas import (
+    DataclassCompanionSchema,
+    DataclassFieldInsertion,
+)
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
@@ -60,27 +64,15 @@ class GranularityMeasurement:
     gs16: float
 
 
-@dataclass
-class ObjectGranularityMeasurement:
-    """Granularity spectrum measurements per object."""
-    slice_index: int
-    object_id: int
-    gs1: float
-    gs2: float
-    gs3: float
-    gs4: float
-    gs5: float
-    gs6: float
-    gs7: float
-    gs8: float
-    gs9: float
-    gs10: float
-    gs11: float
-    gs12: float
-    gs13: float
-    gs14: float
-    gs15: float
-    gs16: float
+ObjectGranularityMeasurement = DataclassCompanionSchema(
+    source_type=GranularityMeasurement,
+    companion_name="ObjectGranularityMeasurement",
+    insertions=(
+        DataclassFieldInsertion("object_id", int, after_field="slice_index"),
+    ),
+    module_name=__name__,
+    doc="Granularity spectrum measurements per object.",
+).materialize()
 
 
 @dataclass(frozen=True)

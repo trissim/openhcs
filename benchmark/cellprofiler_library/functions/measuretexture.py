@@ -11,6 +11,10 @@ import numpy as np
 from typing import Tuple, List
 from dataclasses import dataclass
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.measurement_schemas import (
+    DataclassCompanionSchema,
+    DataclassFieldInsertion,
+)
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -54,28 +58,15 @@ class TextureMeasurement:
     source_image_name: str | None = None
 
 
-@dataclass
-class ObjectTextureMeasurement:
-    """Texture measurement results per object."""
-    slice_index: int
-    object_label: int
-    scale: int
-    direction: int
-    gray_levels: int
-    angular_second_moment: float
-    contrast: float
-    correlation: float
-    variance: float
-    inverse_difference_moment: float
-    sum_average: float
-    sum_variance: float
-    sum_entropy: float
-    entropy: float
-    difference_variance: float
-    difference_entropy: float
-    info_meas1: float
-    info_meas2: float
-    source_image_name: str | None = None
+ObjectTextureMeasurement = DataclassCompanionSchema(
+    source_type=TextureMeasurement,
+    companion_name="ObjectTextureMeasurement",
+    insertions=(
+        DataclassFieldInsertion("object_label", int, after_field="slice_index"),
+    ),
+    module_name=__name__,
+    doc="Texture measurement results per object.",
+).materialize()
 
 
 def _normalize_gray_levels(gray_levels: int) -> int:
