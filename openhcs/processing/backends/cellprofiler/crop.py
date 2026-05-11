@@ -9,6 +9,8 @@ from typing import Any, ClassVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
+from openhcs.core.memory.decorators import numpy as numpy_decorator
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.runtime_values import (
@@ -23,6 +25,8 @@ from openhcs.interop.cellprofiler.crop_settings import (
     CroppingMethod,
     RemovalMethod,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer
 
 CropBoundaryPair = tuple[int | None, int | None] | None
 
@@ -475,6 +479,70 @@ def split_crop_input(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]:
     )
 
 
+@numpy_decorator
+@special_inputs("mask_plane")
+@special_outputs(
+    (
+        "crop_measurements",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "original_area",
+                "area_retained",
+                "fraction_retained",
+            ],
+            analysis_type="crop",
+        ),
+    )
+)
+def crop(
+    image: np.ndarray,
+    mask_plane: np.ndarray | None = None,
+    crop_shape: CropShape | str = CropShape.RECTANGLE,
+    cropping_method: CroppingMethod | str = CroppingMethod.COORDINATES,
+    removal_method: RemovalMethod | str = RemovalMethod.NO,
+    left_right_rectangle_positions: CropBoundaryPair = None,
+    top_bottom_rectangle_positions: CropBoundaryPair = None,
+    ellipse_center: tuple[float, float] | None = None,
+    ellipse_x_radius: float | None = None,
+    ellipse_y_radius: float | None = None,
+    cropping_labels: Any | None = None,
+) -> tuple[np.ndarray, np.ndarray, CropMeasurement]:
+    """Crop an image and return its CellProfiler crop-mask sidecar."""
+    return CropRequest(
+        image=image,
+        mask_plane=mask_plane,
+        crop_shape=crop_shape,
+        cropping_method=cropping_method,
+        removal_method=removal_method,
+        left_right_rectangle_positions=left_right_rectangle_positions,
+        top_bottom_rectangle_positions=top_bottom_rectangle_positions,
+        ellipse_center=ellipse_center,
+        ellipse_x_radius=ellipse_x_radius,
+        ellipse_y_radius=ellipse_y_radius,
+        cropping_labels=cropping_labels,
+    ).execute()
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def crop_simple(
+    image: np.ndarray,
+    crop_top: int = 0,
+    crop_bottom: int = 0,
+    crop_left: int = 0,
+    crop_right: int = 0,
+) -> np.ndarray:
+    """Simple rectangular crop by pixel counts removed from each edge."""
+    height, width = image.shape
+    y_start = max(0, min(crop_top, height - 1))
+    y_end = height - crop_bottom if crop_bottom > 0 else height
+    y_end = max(y_start + 1, min(y_end, height))
+    x_start = max(0, min(crop_left, width - 1))
+    x_end = width - crop_right if crop_right > 0 else width
+    x_end = max(x_start + 1, min(x_end, width))
+    return image[y_start:y_end, x_start:x_end].copy()
+
+
 def object_label_crop_mask(labels: Any, image: np.ndarray) -> np.ndarray:
     """Return a 2-D foreground mask from dense object-label planes."""
     label_array = object_label_dense_array(labels)
@@ -516,6 +584,8 @@ __all__ = [
     "CropRequest",
     "CropShapeMaskStrategy",
     "CropSpatialBounds",
+    "crop",
+    "crop_simple",
     "cropped_image_pixels",
     "cropped_mask_for",
     "crop_output_metadata",
