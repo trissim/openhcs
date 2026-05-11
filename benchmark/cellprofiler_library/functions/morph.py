@@ -73,9 +73,12 @@ RepeatCountResolver = Callable[[int], int]
 NeighborConvolutionTransition = Callable[[np.ndarray, np.ndarray], np.ndarray]
 
 
-class RegisteredCallableStrategy(ABC):
+class RegisteredCallableStrategy(ABC, metaclass=AutoRegisterMeta):
     """Shared callback substrate for registered Morph semantic families."""
 
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    registry_key: ClassVar[str | None] = None
     callback: ClassVar[Callable[..., Any] | None] = None
 
     @classmethod
