@@ -419,6 +419,9 @@
   },
   "MeasureGranularity": {
     "function_name": "measure_granularity",
+    "function_variants": [
+      "measure_granularity_objects"
+    ],
     "contract": "unknown",
     "category": "image_operation",
     "confidence": 1.0,
