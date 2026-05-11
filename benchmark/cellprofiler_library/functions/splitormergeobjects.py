@@ -12,6 +12,7 @@ from typing import Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_semantics import relabel_dense_object_labels_consecutive
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -49,20 +50,6 @@ class SplitOrMergeStats:
     input_object_count: int
     output_object_count: int
     operation: str
-
-
-def _relabel_consecutive(labels: np.ndarray) -> np.ndarray:
-    """Relabel a label image to have consecutive labels starting from 1."""
-    unique_labels = np.unique(labels)
-    unique_labels = unique_labels[unique_labels > 0]
-    if len(unique_labels) == 0:
-        return labels
-    
-    max_label = int(np.max(labels))
-    label_map = np.zeros(max_label + 1, dtype=labels.dtype)
-    label_map[unique_labels] = np.arange(1, len(unique_labels) + 1)
-    
-    return label_map[labels]
 
 
 def _compute_convex_hull_labels(labels: np.ndarray, morphology) -> np.ndarray:
@@ -119,7 +106,7 @@ def _merge_by_distance(
             minimum_intensity_fraction, intensity_method
         )
     
-    return _relabel_consecutive(output_labels)
+    return relabel_dense_object_labels_consecutive(output_labels)
 
 
 def _filter_using_image(
@@ -196,7 +183,7 @@ def _merge_by_parent(
             raise ValueError("morphology backend is required for convex-hull merging")
         output_labels = _compute_convex_hull_labels(output_labels, morphology)
     
-    return _relabel_consecutive(output_labels)
+    return relabel_dense_object_labels_consecutive(output_labels)
 
 
 def _split_objects(labels: np.ndarray) -> np.ndarray:

@@ -72,21 +72,6 @@ class TertiaryObjectLabelOutput:
         )
 
 
-def _outline(
-    labels: np.ndarray,
-    *,
-    outline_backend_provider: CellProfilerBackendProvider | None,
-) -> np.ndarray:
-    """Find outline pixels of labeled objects.
-
-    An outline pixel is a labeled pixel that has at least one neighbor
-    with a different label (including background).
-    """
-    return ObjectOutlineBackendStrategy.for_memory_type(
-        backend_provider=outline_backend_provider,
-    ).outline(labels)
-
-
 def _positive_label_count(labels: np.ndarray) -> int:
     return int(np.count_nonzero(np.bincount(np.asarray(labels).ravel())[1:]))
 
@@ -97,19 +82,6 @@ def _positive_label_mean_area(labels: np.ndarray) -> tuple[int, float]:
     if positive_areas.size == 0:
         return 0, 0.0
     return int(positive_areas.size), float(np.mean(positive_areas))
-
-
-def _parent_child_relationship(
-    parent_labels: np.ndarray | ObjectLabelPayload,
-    child_labels: np.ndarray,
-    *,
-    parent_context_labels: np.ndarray | None = None,
-) -> ParentChildRelationshipPayload:
-    return object_label_parent_child_payload(
-        parent_labels,
-        child_labels,
-        child_region_labels=parent_context_labels,
-    )
 
 
 def _identify_tertiary_objects_batch(
@@ -142,14 +114,14 @@ def _identify_tertiary_objects_batch(
     return [
         (
                 request.slices_2d[slice_index],
-            _parent_child_relationship(
+            object_label_parent_child_payload(
                 secondary_stack[slice_index],
                 tertiary_stack[slice_index],
             ),
-            _parent_child_relationship(
+            object_label_parent_child_payload(
                 primary_stack[slice_index],
                 tertiary_stack[slice_index],
-                parent_context_labels=secondary_stack[slice_index],
+                child_region_labels=secondary_stack[slice_index],
             ),
             TertiaryObjectStats(
                 slice_index=slice_index,
@@ -325,10 +297,9 @@ def identify_tertiary_objects(
         )
     
     # Find outlines of primary objects
-    primary_outline = _outline(
-        primary_array,
-        outline_backend_provider=outline_backend_provider,
-    )
+        primary_outline = ObjectOutlineBackendStrategy.for_memory_type(
+            backend_provider=outline_backend_provider,
+        ).outline(primary_array)
     
     # Create tertiary labels by subtracting primary from secondary
     tertiary_labels = secondary_array.copy()
@@ -366,11 +337,11 @@ def identify_tertiary_objects(
     
     return (
         image,
-        _parent_child_relationship(secondary_payload, tertiary_labels),
-        _parent_child_relationship(
+        object_label_parent_child_payload(secondary_payload, tertiary_labels),
+        object_label_parent_child_payload(
             primary_payload,
             tertiary_labels,
-            parent_context_labels=secondary_array,
+            child_region_labels=secondary_array,
         ),
         stats,
         TertiaryObjectLabelOutput(secondary_payload, tertiary_labels_out).value(),

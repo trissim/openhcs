@@ -156,13 +156,6 @@ class SecondaryThresholdRequest:
     diagnostics_unit_interval_scale: int | None = None
 
 
-def _parent_child_relationship(
-    parent_labels: np.ndarray | ObjectLabelPayload,
-    child_labels: np.ndarray,
-) -> ParentChildRelationshipPayload:
-    return object_label_parent_child_payload(parent_labels, child_labels)
-
-
 @dataclass(frozen=True)
 class SecondarySegmentationRequest:
     image: np.ndarray
@@ -892,7 +885,7 @@ def identify_secondary_objects(
         method=method.value,
     )
     phase_started_at = time.perf_counter()
-    relationships = _parent_child_relationship(
+    relationships = object_label_parent_child_payload(
         primary_labels if isinstance(primary_labels, ObjectLabelPayload) else inputs.labels,
         object_labels.segmented,
     )
