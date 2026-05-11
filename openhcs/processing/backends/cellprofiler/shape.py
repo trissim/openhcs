@@ -643,18 +643,8 @@ class CentrosomeNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStra
         )
 
 
-class LegacyFastNumpyShapeMeasurementBackendStrategy(
-    CentrosomeNumpyShapeMeasurementBackendStrategy
-):
-    """Mixed legacy-fast shape backend with explicit centrosome exact leaves."""
-
-    backend_key = cellprofiler_backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.LEGACY_FAST,
-    )
-    memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.LEGACY_FAST
-    is_default_backend = True
+class NumbaShapeMeasurementMixin(ABC):
+    """Shared Numba-backed shape leaves reused by concrete backend policies."""
 
     def radius_features(
         self,
@@ -702,7 +692,25 @@ class LegacyFastNumpyShapeMeasurementBackendStrategy(
         )
 
 
-class NumbaNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStrategy):
+class LegacyFastNumpyShapeMeasurementBackendStrategy(
+    NumbaShapeMeasurementMixin,
+    CentrosomeNumpyShapeMeasurementBackendStrategy
+):
+    """Mixed legacy-fast shape backend with explicit centrosome exact leaves."""
+
+    backend_key = cellprofiler_backend_key(
+        MemoryType.NUMPY,
+        CellProfilerBackendProvider.LEGACY_FAST,
+    )
+    memory_type = MemoryType.NUMPY
+    backend_provider = CellProfilerBackendProvider.LEGACY_FAST
+    is_default_backend = True
+
+
+class NumbaNumpyShapeMeasurementBackendStrategy(
+    NumbaShapeMeasurementMixin,
+    ShapeMeasurementBackendStrategy,
+):
     """Pure Numba shape backend. Unsupported leaves fail explicitly."""
 
     backend_key = cellprofiler_backend_key(
@@ -723,33 +731,6 @@ class NumbaNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStrategy)
             "Select LEGACY_FAST or CENTROSOME explicitly for this leaf."
         )
 
-    def radius_features(
-        self,
-        object_images: np.ndarray,
-        object_count: int,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        max_radius = np.zeros(object_count, dtype=np.float64)
-        mean_radius = np.zeros(object_count, dtype=np.float64)
-        median_radius = np.zeros(object_count, dtype=np.float64)
-        for index, object_image in enumerate(object_images):
-            max_value, mean_value, median_value = _object_radius_features_numba(
-                np.asarray(object_image, dtype=np.bool_),
-            )
-            max_radius[index] = max_value
-            mean_radius[index] = mean_value
-            median_radius[index] = median_value
-        return max_radius, mean_radius, median_radius
-
-    def radius_features_from_labels(
-        self,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        return _radius_features_from_labels_numba(
-            np.asarray(labels, dtype=np.int32),
-            np.asarray(label_ids, dtype=np.int32),
-        )
-
     def feret_diameters(
         self,
         labels: np.ndarray,
@@ -768,24 +749,6 @@ class NumbaNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStrategy)
         raise NotImplementedError(
             "Pure Numba minimum enclosing circle is not implemented yet. "
             "Select LEGACY_FAST or CENTROSOME explicitly for this leaf."
-        )
-
-    def distance_to_edge(self, labels: np.ndarray) -> np.ndarray:
-        label_array = np.asarray(labels, dtype=np.int32)
-        if label_array.ndim != 2:
-            return _distance_to_edge_planewise(self, label_array)
-        return _distance_to_label_edge_numba(np.ascontiguousarray(label_array))
-
-    def maximum_position_of_labels(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        label_ids: np.ndarray,
-    ) -> tuple[np.ndarray, np.ndarray]:
-        return _maximum_position_of_labels_numba(
-            np.ascontiguousarray(np.asarray(image, dtype=np.float64)),
-            np.ascontiguousarray(np.asarray(labels, dtype=np.int32)),
-            np.ascontiguousarray(np.asarray(label_ids, dtype=np.int32)),
         )
 
     def color_labels(self, labels: np.ndarray) -> np.ndarray:
