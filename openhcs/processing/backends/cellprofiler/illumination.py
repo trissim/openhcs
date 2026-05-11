@@ -15,17 +15,31 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    image_payload_with_context,
+    project_image_mask_to_data_domain,
+)
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.smoothing import MaskedLinearFilterRequest
-from openhcs.core.runtime_values import project_image_mask_to_data_domain
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 NDIMAGE_CONSTANT_MODE = "constant"
+ROBUST_FACTOR = 0.02
 logger = logging.getLogger(__name__)
 
 
@@ -175,6 +189,461 @@ class CalculationScope(Enum):
 def coerce_illumination_enum(enum_type: type[Enum], value: object) -> Enum:
     """Coerce CellProfiler UI literals for illumination-owned enums."""
     return coerce_cellprofiler_enum(enum_type, value)
+
+
+@dataclass
+class IlluminationStats:
+    """Runtime measurements emitted by CorrectIlluminationCalculate."""
+
+    slice_index: int
+    min_value: float
+    max_value: float
+    mean_value: float
+    calculation_type: str
+    smoothing_method: str
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationCalculationRequest:
+    """Complete semantic request for CorrectIlluminationCalculate."""
+
+    pixel_data: np.ndarray
+    mask: np.ndarray | None
+    intensity_choice: IntensityChoice
+    dilate_objects: bool
+    object_dilation_radius: int
+    block_size: int
+    rescale_option: RescaleOption
+    smoothing_method: SmoothingMethod
+    filter_size_method: FilterSizeMethod
+    object_width: int
+    manual_filter_size: int
+    automatic_splines: bool
+    spline_bg_mode: SplineBgMode
+    spline_points: int
+    spline_threshold: float
+    spline_rescale: float
+    spline_max_iterations: int
+    spline_convergence: float
+    calculation_scope: CalculationScope
+    morphology: MorphologyBackendStrategy
+    convex_hull_backend_provider: CellProfilerBackendProvider | None
+    rank_median_backend_provider: CellProfilerBackendProvider | None
+    slice_index: int = 0
+
+    @property
+    def is_multi_image_stack(self) -> bool:
+        return self.pixel_data.ndim >= 3
+
+    @property
+    def spatial_image_shape(self) -> tuple[int, ...]:
+        if self.calculation_scope.uses_all_images and self.is_multi_image_stack:
+            return tuple(self.pixel_data.shape[1:])
+        return tuple(self.pixel_data.shape)
+
+    def for_stack_slice(
+        self,
+        slice_index: int,
+        mask: np.ndarray | None,
+    ) -> "IlluminationCalculationRequest":
+        return IlluminationCalculationRequest(
+            pixel_data=np.asarray(self.pixel_data[slice_index]),
+            mask=mask,
+            intensity_choice=self.intensity_choice,
+            dilate_objects=self.dilate_objects,
+            object_dilation_radius=self.object_dilation_radius,
+            block_size=self.block_size,
+            rescale_option=self.rescale_option,
+            smoothing_method=self.smoothing_method,
+            filter_size_method=self.filter_size_method,
+            object_width=self.object_width,
+            manual_filter_size=self.manual_filter_size,
+            automatic_splines=self.automatic_splines,
+            spline_bg_mode=self.spline_bg_mode,
+            spline_points=self.spline_points,
+            spline_threshold=self.spline_threshold,
+            spline_rescale=self.spline_rescale,
+            spline_max_iterations=self.spline_max_iterations,
+            spline_convergence=self.spline_convergence,
+            calculation_scope=CalculationScope.EACH,
+            morphology=self.morphology,
+            convex_hull_backend_provider=self.convex_hull_backend_provider,
+            rank_median_backend_provider=self.rank_median_backend_provider,
+            slice_index=slice_index,
+        )
+
+
+class IlluminationCalculation:
+    """Load-bearing CorrectIlluminationCalculate execution policy."""
+
+    function_name = "correct_illumination_calculate"
+
+    def calculate(self, request: IlluminationCalculationRequest) -> tuple[np.ndarray, IlluminationStats]:
+        total_started_at = time.perf_counter()
+        filter_size = self.filter_size(request)
+        avg_image = self.average_image(request)
+        dilated_image = self.apply_dilation(request, avg_image)
+        smoothed_image = self.smooth(request, dilated_image, filter_size)
+        output_image = self.apply_scaling(
+            smoothed_image,
+            request.mask,
+            request.rescale_option,
+        ).astype(np.float32)
+        _log_profile(
+            "cic_total",
+            time.perf_counter() - total_started_at,
+            function=self.function_name,
+        )
+        return output_image, self.stats(request, output_image)
+
+    def filter_size(self, request: IlluminationCalculationRequest) -> float:
+        phase_started_at = time.perf_counter()
+        filter_size = SmoothingFilterSizeStrategy.for_method(
+            request.filter_size_method,
+        ).calculate(
+            SmoothingFilterSizeRequest(
+                image_shape=request.spatial_image_shape,
+                object_width=request.object_width,
+                manual_filter_size=request.manual_filter_size,
+            )
+        )
+        _log_profile(
+            "cic_filter_size",
+            time.perf_counter() - phase_started_at,
+            function=self.function_name,
+            method=request.filter_size_method.value,
+            smoothing=request.smoothing_method.value,
+        )
+        return filter_size
+
+    def average_image(self, request: IlluminationCalculationRequest) -> np.ndarray:
+        phase_started_at = time.perf_counter()
+        if not (
+            request.calculation_scope.uses_all_images
+            and request.is_multi_image_stack
+        ):
+            average_image = self.preprocess_for_averaging(
+                request.pixel_data,
+                request.mask,
+                request,
+            )
+        else:
+            if request.pixel_data.shape[0] == 0:
+                raise ValueError(
+                    "All-image illumination calculation requires at least one image."
+                )
+            illumination_mask = IlluminationMask(request.mask, request.pixel_data)
+            averaged_inputs = [
+                self.preprocess_for_averaging(
+                    np.asarray(slice_data),
+                    illumination_mask.for_stack_slice(slice_index),
+                    request,
+                )
+                for slice_index, slice_data in enumerate(request.pixel_data)
+            ]
+            average_image = np.mean(np.stack(averaged_inputs, axis=0), axis=0)
+        _log_profile(
+            "cic_average_image",
+            time.perf_counter() - phase_started_at,
+            function=self.function_name,
+            method=request.intensity_choice.value,
+            scope=request.calculation_scope.value,
+        )
+        return average_image
+
+    def preprocess_for_averaging(
+        self,
+        pixel_data: np.ndarray,
+        mask: np.ndarray | None,
+        request: IlluminationCalculationRequest,
+    ) -> np.ndarray:
+        if (
+            request.intensity_choice == IntensityChoice.REGULAR
+            or request.smoothing_method == SmoothingMethod.SPLINES
+        ):
+            result = pixel_data.copy()
+            if mask is not None:
+                result[~mask] = 0
+            return result
+        return request.morphology.blockwise_minimum(
+            pixel_data,
+            mask,
+            request.block_size,
+        )
+
+    def apply_dilation(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+    ) -> np.ndarray:
+        phase_started_at = time.perf_counter()
+        if not request.dilate_objects:
+            result = pixel_data
+        else:
+            result = IlluminationGaussianFilter(
+                pixel_data,
+                request.mask,
+                request.object_dilation_radius,
+            ).apply()
+            if request.mask is not None:
+                result[~request.mask] = 0
+        _log_profile(
+            "cic_dilation",
+            time.perf_counter() - phase_started_at,
+            function=self.function_name,
+            enabled=request.dilate_objects,
+        )
+        return result
+
+    def smooth(
+        self,
+        request: IlluminationCalculationRequest,
+        pixel_data: np.ndarray,
+        filter_size: float,
+    ) -> np.ndarray:
+        phase_started_at = time.perf_counter()
+        smoothed_image = SmoothingPlaneStrategy.for_method(request.smoothing_method).smooth(
+            SmoothingPlaneRequest(
+                pixel_data=pixel_data,
+                mask=request.mask,
+                smoothing_method=request.smoothing_method,
+                filter_size=filter_size,
+                spline_bg_mode=request.spline_bg_mode,
+                spline_points=request.spline_points,
+                spline_threshold=request.spline_threshold,
+                spline_rescale=request.spline_rescale,
+                spline_max_iterations=request.spline_max_iterations,
+                spline_convergence=request.spline_convergence,
+                automatic_splines=request.automatic_splines,
+                morphology=request.morphology,
+                convex_hull_backend_provider=request.convex_hull_backend_provider,
+                rank_median_backend_provider=request.rank_median_backend_provider,
+            )
+        )
+        _log_profile(
+            "cic_smoothing",
+            time.perf_counter() - phase_started_at,
+            function=self.function_name,
+            method=request.smoothing_method.value,
+        )
+        return smoothed_image
+
+    def apply_scaling(
+        self,
+        pixel_data: np.ndarray,
+        mask: np.ndarray | None,
+        rescale_option: RescaleOption,
+    ) -> np.ndarray:
+        phase_started_at = time.perf_counter()
+        if rescale_option == RescaleOption.NO:
+            result = pixel_data
+        else:
+            projected_mask = project_image_mask_to_data_domain(mask, pixel_data)
+            if projected_mask is not None:
+                sorted_data = pixel_data[(pixel_data > 0) & projected_mask]
+            else:
+                sorted_data = pixel_data[pixel_data > 0]
+
+            if sorted_data.size == 0:
+                result = pixel_data
+            elif rescale_option == RescaleOption.YES:
+                idx = int(len(sorted_data) * ROBUST_FACTOR)
+                robust_minimum = np.partition(sorted_data, idx)[idx]
+                result = pixel_data.copy()
+                result[result < robust_minimum] = robust_minimum
+                if robust_minimum != 0:
+                    result = result / robust_minimum
+            else:
+                idx = len(sorted_data) // 2
+                robust_minimum = np.partition(sorted_data, idx)[idx]
+                result = pixel_data.copy()
+                if robust_minimum != 0:
+                    result = result / robust_minimum
+        _log_profile(
+            "cic_scaling",
+            time.perf_counter() - phase_started_at,
+            function=self.function_name,
+            method=rescale_option.value,
+        )
+        return result
+
+    def stats(
+        self,
+        request: IlluminationCalculationRequest,
+        output_image: np.ndarray,
+    ) -> IlluminationStats:
+        phase_started_at = time.perf_counter()
+        stats = IlluminationStats(
+            slice_index=request.slice_index,
+            min_value=float(np.min(output_image)),
+            max_value=float(np.max(output_image)),
+            mean_value=float(np.mean(output_image)),
+            calculation_type=request.intensity_choice.value,
+            smoothing_method=request.smoothing_method.value,
+        )
+        _log_profile(
+            "cic_stats",
+            time.perf_counter() - phase_started_at,
+            function=self.function_name,
+        )
+        return stats
+
+
+@numpy(contract=ProcessingContract.FLEXIBLE)
+@special_outputs(
+    (
+        "illumination_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "min_value",
+                "max_value",
+                "mean_value",
+                "calculation_type",
+                "smoothing_method",
+            ],
+            analysis_type="illumination_correction",
+        ),
+    )
+)
+def correct_illumination_calculate(
+    image: np.ndarray,
+    intensity_choice: IntensityChoice | str = IntensityChoice.REGULAR,
+    dilate_objects: bool = False,
+    object_dilation_radius: int = 1,
+    block_size: int = 60,
+    rescale_option: RescaleOption | str = RescaleOption.YES,
+    smoothing_method: SmoothingMethod | str = SmoothingMethod.FIT_POLYNOMIAL,
+    filter_size_method: FilterSizeMethod | str = FilterSizeMethod.AUTOMATIC,
+    object_width: int = 10,
+    manual_filter_size: int = 10,
+    automatic_splines: bool = True,
+    spline_bg_mode: SplineBgMode | str = SplineBgMode.AUTO,
+    spline_points: int = 5,
+    spline_threshold: float = 2.0,
+    spline_rescale: float = 2.0,
+    spline_max_iterations: int = 40,
+    spline_convergence: float = 0.001,
+    calculation_scope: CalculationScope | str = CalculationScope.EACH,
+    convex_hull_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    rank_median_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, IlluminationStats]:
+    """Calculate an illumination correction function."""
+    intensity_choice = coerce_cellprofiler_enum(IntensityChoice, intensity_choice)
+    rescale_option = coerce_cellprofiler_enum(RescaleOption, rescale_option)
+    smoothing_method = coerce_cellprofiler_enum(SmoothingMethod, smoothing_method)
+    filter_size_method = coerce_cellprofiler_enum(FilterSizeMethod, filter_size_method)
+    spline_bg_mode = coerce_cellprofiler_enum(SplineBgMode, spline_bg_mode)
+    calculation_scope = coerce_cellprofiler_enum(CalculationScope, calculation_scope)
+
+    morphology = MorphologyBackendStrategy.for_callable(
+        correct_illumination_calculate,
+    )
+
+    pixel_data = np.asarray(image_payload_data(image))
+    illumination_mask = IlluminationMask(image_payload_mask(image), pixel_data)
+    mask = illumination_mask.normalized
+    metadata = image_payload_metadata(image).without_unit_interval_intensity_scale()
+
+    request = IlluminationCalculationRequest(
+        pixel_data=pixel_data,
+        mask=mask,
+        intensity_choice=intensity_choice,
+        dilate_objects=dilate_objects,
+        object_dilation_radius=object_dilation_radius,
+        block_size=block_size,
+        rescale_option=rescale_option,
+        smoothing_method=smoothing_method,
+        filter_size_method=filter_size_method,
+        object_width=object_width,
+        manual_filter_size=manual_filter_size,
+        automatic_splines=automatic_splines,
+        spline_bg_mode=spline_bg_mode,
+        spline_points=spline_points,
+        spline_threshold=spline_threshold,
+        spline_rescale=spline_rescale,
+        spline_max_iterations=spline_max_iterations,
+        spline_convergence=spline_convergence,
+        calculation_scope=calculation_scope,
+        morphology=morphology,
+        convex_hull_backend_provider=convex_hull_backend_provider,
+        rank_median_backend_provider=rank_median_backend_provider,
+    )
+    calculation = IlluminationCalculation()
+
+    if request.is_multi_image_stack and not request.calculation_scope.uses_all_images:
+        slice_results = [
+            calculation.calculate(
+                request.for_stack_slice(
+                    slice_index,
+                    illumination_mask.for_stack_slice(slice_index),
+                )
+            )
+            for slice_index in range(pixel_data.shape[0])
+        ]
+        illumination_stack = np.stack(
+            [result[0] for result in slice_results],
+            axis=0,
+        ).astype(np.float32)
+        return (
+            image_payload_with_context(
+                illumination_stack,
+                mask=illumination_mask.for_output(illumination_stack),
+                metadata=metadata,
+            ),
+            [result[1] for result in slice_results],
+        )
+
+    illumination, stats = calculation.calculate(request)
+    return (
+        image_payload_with_context(
+            illumination,
+            mask=illumination_mask.for_output(illumination),
+            metadata=metadata,
+        ),
+        stats,
+    )
+
+
+def _prepare_correct_illumination_calculate() -> None:
+    """Compile common illumination kernels outside measured step execution."""
+    image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
+    correct_illumination_calculate.__wrapped__(
+        image,
+        smoothing_method=SmoothingMethod.FIT_POLYNOMIAL,
+        filter_size_method=FilterSizeMethod.AUTOMATIC,
+        rescale_option=RescaleOption.YES,
+    )
+    background = np.zeros((64, 64), dtype=np.float32)
+    background[::8, ::8] = 1.0
+    correct_illumination_calculate.__wrapped__(
+        background,
+        intensity_choice=IntensityChoice.BACKGROUND,
+        block_size=8,
+        smoothing_method=SmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=FilterSizeMethod.MANUALLY,
+        manual_filter_size=32,
+        rescale_option=RescaleOption.NO,
+    )
+    nonconstant_background = np.linspace(
+        0.0,
+        1.0,
+        96 * 96,
+        dtype=np.float32,
+    ).reshape((96, 96))
+    correct_illumination_calculate.__wrapped__(
+        nonconstant_background,
+        intensity_choice=IntensityChoice.REGULAR,
+        smoothing_method=SmoothingMethod.MEDIAN_FILTER,
+        filter_size_method=FilterSizeMethod.MANUALLY,
+        manual_filter_size=96,
+        rescale_option=RescaleOption.NO,
+    )
+
+
+correct_illumination_calculate.__openhcs_prepare__ = (
+    _prepare_correct_illumination_calculate
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1724,6 +2193,7 @@ __all__ = [
     "GaussianFilterSmoothingPlaneStrategy",
     "IlluminationGaussianFilter",
     "IlluminationMask",
+    "IlluminationStats",
     "IntensityChoice",
     "LegacyFastNumpyConvexHullSmoothingBackendStrategy",
     "ManualSmoothingFilterSizeStrategy",
@@ -1744,6 +2214,7 @@ __all__ = [
     "SplineBgMode",
     "SplinesSmoothingPlaneStrategy",
     "coerce_illumination_enum",
+    "correct_illumination_calculate",
     "fit_polynomial_surface",
     "fit_polynomial_unmasked_gram",
 ]
