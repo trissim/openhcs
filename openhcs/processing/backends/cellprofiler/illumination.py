@@ -189,10 +189,7 @@ class CalculationScope(Enum):
 
     @property
     def uses_all_images(self) -> bool:
-        return self in {
-            CalculationScope.ALL_FIRST_CYCLE,
-            CalculationScope.ALL_ACROSS_CYCLES,
-        }
+        return self is not CalculationScope.EACH
 
 
 def coerce_illumination_enum(enum_type: type[Enum], value: object) -> Enum:

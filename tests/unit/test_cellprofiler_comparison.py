@@ -228,6 +228,7 @@ def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
                 "    Filter images?:Images only",
                 "IdentifyPrimaryObjects:[module_num:2|enabled:True]",
                 "    Select the input image:DNA",
+                "    Name the primary objects to be identified:Nuclei",
             )
         ),
         encoding="utf-8",
@@ -258,14 +259,32 @@ def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
     cppipe_rows = _csv_rows(
         tmp_path / "artifacts" / "module_coverage_cppipe_modules.csv"
     )
+    setting_rows = _csv_rows(
+        tmp_path / "artifacts" / "module_coverage_cppipe_settings.csv"
+    )
 
     assert summary["cppipe_case_count"] == 1
     assert summary["missing_processing_cppipe_module_count"] == 0
+    assert summary["cppipe_setting_row_count"] == 3
+    assert summary["covered_cppipe_setting_row_count"] == 3
+    assert summary["unmapped_cppipe_setting_row_count"] == 0
     assert "IdentifyPrimaryObjects" in summary["supported_absorbed_processing_modules"]
     assert {row["module_name"] for row in cppipe_rows} == {
         "IdentifyPrimaryObjects",
         "Images",
     }
+    assert {
+        (row["module_name"], row["setting_name"], row["coverage"])
+        for row in setting_rows
+        } == {
+            ("Images", "Filter images?", "infrastructure"),
+            ("IdentifyPrimaryObjects", "Select the input image", "bound"),
+            (
+                "IdentifyPrimaryObjects",
+                "Name the primary objects to be identified",
+                "bound",
+            ),
+        }
 
 
 def test_discard_openhcs_benchmark_tree_requires_marker_and_suite_containment(

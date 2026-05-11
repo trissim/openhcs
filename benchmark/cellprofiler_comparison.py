@@ -15,8 +15,6 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from nominal_refactor_advisor.record_algebra import product_record
-
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.adapters.cellprofiler import native_cellprofiler_reference_is_complete
@@ -90,6 +88,7 @@ DEFAULT_SPEEDUP_TARGET = 5.0
 OPENHCS_BENCHMARK_CACHE_MARKER = ".openhcs_benchmark_cache.json"
 MODULE_COVERAGE_SUMMARY_JSON = "module_coverage_summary.json"
 MODULE_COVERAGE_CPPIPE_MODULES_CSV = "module_coverage_cppipe_modules.csv"
+MODULE_COVERAGE_CPPIPE_SETTINGS_CSV = "module_coverage_cppipe_settings.csv"
 MODULE_COVERAGE_ABSORBED_MODULES_CSV = "module_coverage_absorbed_modules.csv"
 MODULE_COVERAGE_SOURCE_MODULES_CSV = "module_coverage_source_modules.csv"
 CsvRow = Mapping[str, object]
@@ -97,57 +96,81 @@ CsvRowBuilder = Callable[
     [Sequence["CellProfilerComparisonObservation"]],
     Iterable[CsvRow],
 ]
-CsvTableSpec = product_record(
-    "CsvTableSpec",
-    "fieldnames: tuple[str, ...]; rows: CsvRowBuilder",
-    doc="Authoritative CSV table projection.",
-    module_name=__name__,
-)
-ModuleCoverageSummaryPayload = product_record(
-    "ModuleCoverageSummaryPayload",
-    (
-        "manifest_path: str; cppipe_case_count: int; "
-        "supported_cppipe_case_count: int; known_invalid_cppipe_case_count: int; "
-        "module_instance_count: int; unique_cppipe_module_count: int; "
-        "supported_absorbed_processing_module_count: int; "
-        "known_invalid_absorbed_processing_module_count: int; "
-        "untested_absorbed_processing_module_count: int; "
-        "infrastructure_cppipe_module_count: int; "
-        "missing_processing_cppipe_module_count: int; "
-        "supported_absorbed_processing_modules: tuple[str, ...]; "
-        "known_invalid_absorbed_processing_modules: tuple[str, ...]; "
-        "untested_absorbed_processing_modules: tuple[str, ...]; "
-        "infrastructure_cppipe_modules: tuple[str, ...]; "
-        "missing_processing_cppipe_modules: tuple[str, ...]"
-    ),
-    doc="Serializable benchmark-manifest CellProfiler module coverage summary.",
-    module_name=__name__,
-)
-CPPipeModuleCoverageRow = product_record(
-    "CPPipeModuleCoverageRow",
-    (
-        "module_name: str; corpus_coverage: str; absorption_coverage: str; "
-        "cppipe_case_names: str"
-    ),
-    doc="CSV row for one module observed in benchmark .cppipe files.",
-    module_name=__name__,
-)
-AbsorbedModuleCoverageRow = product_record(
-    "AbsorbedModuleCoverageRow",
-    (
-        "module_name: str; corpus_coverage: str; importable: bool; "
-        "processing_contract: str; processing_contract_source: str; "
-        "artifact_contract_coverage: str"
-    ),
-    doc="CSV row for one absorbed CellProfiler library module.",
-    module_name=__name__,
-)
-SourceModuleCoverageRow = product_record(
-    "SourceModuleCoverageRow",
-    "module_name: str; source_coverage: str",
-    doc="CSV row for one checked-in CellProfiler source module.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class CsvTableSpec:
+    """Authoritative CSV table projection."""
+
+    fieldnames: tuple[str, ...]
+    rows: CsvRowBuilder
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleCoverageSummaryPayload:
+    """Serializable benchmark-manifest CellProfiler module coverage summary."""
+
+    manifest_path: str
+    cppipe_case_count: int
+    supported_cppipe_case_count: int
+    known_invalid_cppipe_case_count: int
+    module_instance_count: int
+    unique_cppipe_module_count: int
+    supported_absorbed_processing_module_count: int
+    known_invalid_absorbed_processing_module_count: int
+    untested_absorbed_processing_module_count: int
+    infrastructure_cppipe_module_count: int
+    missing_processing_cppipe_module_count: int
+    cppipe_setting_row_count: int
+    covered_cppipe_setting_row_count: int
+    unmapped_cppipe_setting_row_count: int
+    supported_absorbed_processing_modules: tuple[str, ...]
+    known_invalid_absorbed_processing_modules: tuple[str, ...]
+    untested_absorbed_processing_modules: tuple[str, ...]
+    infrastructure_cppipe_modules: tuple[str, ...]
+    missing_processing_cppipe_modules: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CPPipeModuleCoverageRow:
+    """CSV row for one module observed in benchmark .cppipe files."""
+
+    module_name: str
+    corpus_coverage: str
+    absorption_coverage: str
+    cppipe_case_names: str
+
+
+@dataclass(frozen=True, slots=True)
+class AbsorbedModuleCoverageRow:
+    """CSV row for one absorbed CellProfiler library module."""
+
+    module_name: str
+    corpus_coverage: str
+    importable: bool
+    processing_contract: str
+    processing_contract_source: str
+    artifact_contract_coverage: str
+
+
+@dataclass(frozen=True, slots=True)
+class SourceModuleCoverageRow:
+    """CSV row for one checked-in CellProfiler source module."""
+
+    module_name: str
+    source_coverage: str
+
+
+@dataclass(frozen=True, slots=True)
+class CPPipeSettingCoverageRow:
+    """CSV row for one concrete setting observed in benchmark .cppipe files."""
+
+    case_name: str
+    module_name: str
+    canonical_module_name: str
+    module_num: int
+    setting_name: str
+    normalized_setting_name: str
+    coverage: str
+    value: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -189,6 +212,7 @@ class ModuleCoverageArtifacts:
 
     summary: ModuleCoverageSummaryPayload
     cppipe_modules: tuple[CPPipeModuleCoverageRow, ...]
+    cppipe_settings: tuple[CPPipeSettingCoverageRow, ...]
     absorbed_modules: tuple[AbsorbedModuleCoverageRow, ...]
     source_modules: tuple[SourceModuleCoverageRow, ...]
 
@@ -225,6 +249,17 @@ class ModuleCoverageArtifacts:
                 missing_processing_cppipe_module_count=(
                     coverage.missing_processing_cppipe_module_count
                 ),
+                cppipe_setting_row_count=len(report.cppipe_settings),
+                covered_cppipe_setting_row_count=sum(
+                    1
+                    for setting in report.cppipe_settings
+                    if setting.coverage.is_covered
+                ),
+                unmapped_cppipe_setting_row_count=sum(
+                    1
+                    for setting in report.cppipe_settings
+                    if setting.coverage.value == "unmapped"
+                ),
                 supported_absorbed_processing_modules=(
                     coverage.supported_absorbed_processing_modules
                 ),
@@ -247,6 +282,19 @@ class ModuleCoverageArtifacts:
                     cppipe_case_names=";".join(module.cppipe_case_names),
                 )
                 for module in report.cppipe_modules
+            ),
+            cppipe_settings=tuple(
+                CPPipeSettingCoverageRow(
+                    case_name=setting.case_name,
+                    module_name=setting.module_name,
+                    canonical_module_name=setting.canonical_module_name,
+                    module_num=setting.module_num,
+                    setting_name=setting.setting_name,
+                    normalized_setting_name=setting.normalized_setting_name,
+                    coverage=setting.coverage.value,
+                    value=setting.value,
+                )
+                for setting in report.cppipe_settings
             ),
             absorbed_modules=tuple(
                 AbsorbedModuleCoverageRow(
@@ -312,6 +360,20 @@ class ModuleCoverageArtifacts:
                 rows=self.absorbed_modules,
             ),
             CsvRowsArtifact(
+                filename=MODULE_COVERAGE_CPPIPE_SETTINGS_CSV,
+                fieldnames=(
+                    CASE_NAME_FIELD,
+                    MODULE_NAME_FIELD,
+                    "canonical_module_name",
+                    "module_num",
+                    "setting_name",
+                    "normalized_setting_name",
+                    "coverage",
+                    "value",
+                ),
+                rows=self.cppipe_settings,
+            ),
+            CsvRowsArtifact(
                 filename=MODULE_COVERAGE_SOURCE_MODULES_CSV,
                 fieldnames=(MODULE_NAME_FIELD, SOURCE_COVERAGE_FIELD),
                 rows=self.source_modules,
@@ -353,17 +415,19 @@ class CellProfilerComparisonCase:
         return self.dataset_id or self.dataset_path.name
 
 
-ToolExecutionSummary = product_record(
-    "ToolExecutionSummary",
-    (
-        "tool: str; success: bool; output_path: str; "
-        "execution_seconds: float | None; total_metric_seconds: float | None; "
-        "peak_memory_mb: float | None; cached: bool; error_message: str | None; "
-        "phase_seconds: Mapping[str, float]"
-    ),
-    doc="Execution and phase timing summary for one tool run.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class ToolExecutionSummary:
+    """Execution and phase timing summary for one tool run."""
+
+    tool: str
+    success: bool
+    output_path: str
+    execution_seconds: float | None
+    total_metric_seconds: float | None
+    peak_memory_mb: float | None
+    cached: bool
+    error_message: str | None
+    phase_seconds: Mapping[str, float]
 
 
 @dataclass(frozen=True, slots=True)

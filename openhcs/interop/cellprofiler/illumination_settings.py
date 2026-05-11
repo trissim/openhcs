@@ -54,6 +54,10 @@ class IlluminationCalculationScope(Enum):
     ALL_FIRST_CYCLE = "all_first_cycle"
     ALL_ACROSS_CYCLES = "all_across_cycles"
 
+    @property
+    def requires_channel_grouping(self) -> bool:
+        return self is not IlluminationCalculationScope.EACH
+
 
 class IlluminationCorrectionMethod(Enum):
     DIVIDE = "divide"

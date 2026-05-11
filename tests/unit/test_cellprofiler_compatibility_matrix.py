@@ -5,6 +5,7 @@ from benchmark.converter.cppipe_corpus import CPPipeCorpusCase, CPPipeCorpusStat
 from benchmark.converter.compatibility_matrix import (
     ArtifactContractCoverage,
     CPPipeModuleAbsorptionCoverage,
+    CPPipeSettingCoverage,
     ModuleCorpusCoverage,
     SourceModuleCoverage,
     build_cellprofiler_compatibility_report,
@@ -105,8 +106,9 @@ def test_compatibility_matrix_summarizes_benchmark_coverage(
                 "Version:3",
                 "Images:[module_num:1|enabled:True]",
                 "    Filter images?:Images only",
-                "TrackObjects:[module_num:2|enabled:True]",
-                "    Select the input objects:Cells",
+                "IdentifyPrimaryObjects:[module_num:2|enabled:True]",
+                "    Select the input image:DNA",
+                "    Name the primary objects to be identified:Nuclei",
                 "NotAbsorbedModule:[module_num:3|enabled:True]",
                 "    Setting:Value",
             )
@@ -145,11 +147,32 @@ def test_compatibility_matrix_summarizes_benchmark_coverage(
     assert coverage.known_invalid_cppipe_case_count == 1
     assert coverage.module_instance_count == 4
     assert coverage.unique_cppipe_module_count == 4
-    assert "TrackObjects" in coverage.supported_absorbed_processing_modules
+    assert "IdentifyPrimaryObjects" in coverage.supported_absorbed_processing_modules
     assert "GaussianFilter" in coverage.known_invalid_absorbed_processing_modules
-    assert "IdentifyPrimaryObjects" in coverage.untested_absorbed_processing_modules
+    assert "Watershed" in coverage.untested_absorbed_processing_modules
     assert coverage.infrastructure_cppipe_modules == ("Images",)
     assert coverage.missing_processing_cppipe_modules == ("NotAbsorbedModule",)
+    assert {
+        (setting.module_name, setting.setting_name, setting.coverage)
+        for setting in report.cppipe_settings
+    } == {
+        ("Images", "Filter images?", CPPipeSettingCoverage.INFRASTRUCTURE),
+        (
+            "IdentifyPrimaryObjects",
+            "Select the input image",
+            CPPipeSettingCoverage.BOUND,
+        ),
+        (
+            "IdentifyPrimaryObjects",
+            "Name the primary objects to be identified",
+            CPPipeSettingCoverage.BOUND,
+        ),
+        (
+            "NotAbsorbedModule",
+            "Setting",
+            CPPipeSettingCoverage.MODULE_NOT_ABSORBED,
+        ),
+    }
 
 
 def test_compatibility_matrix_accepts_benchmark_manifest_corpus(
@@ -179,6 +202,12 @@ def test_compatibility_matrix_accepts_benchmark_manifest_corpus(
 
     assert {"Watershed", "RescaleIntensity", "Medianfilter"} <= tested
     assert cppipe_modules["Watershed"].cppipe_case_names == ("manifest_only",)
+    assert any(
+        setting.case_name == "manifest_only"
+        and setting.module_name == "Watershed"
+        and setting.setting_name == "Select the input image"
+        for setting in report.cppipe_settings
+    )
 
 
 def test_compatibility_matrix_combines_multiple_benchmark_manifests(

@@ -52,6 +52,7 @@ from openhcs.interop.cellprofiler.module_function_resolution import (
     ModuleFunctionResolutionStrategy,
 )
 from openhcs.interop.cellprofiler.module_settings_binding import (
+    ModuleSettingCoverageRecord,
     ModuleSettingsBindingStrategy,
 )
 from openhcs.interop.cellprofiler.processing_contract_resolution import (
@@ -68,7 +69,6 @@ from openhcs.interop.cellprofiler.setting_names import (
 )
 from openhcs.processing.backends.cellprofiler.library import (
     canonical_module_name,
-    function_source_path,
     validated_contracts,
 )
 from openhcs.interop.cellprofiler.symbol_table import (
@@ -193,10 +193,7 @@ class CorrectIlluminationCalculateProcessingComponentStrategy(
             IlluminationCalculationScope.EACH,
         )
         scope = coerce_cellprofiler_enum(IlluminationCalculationScope, raw_scope)
-        if scope in {
-            IlluminationCalculationScope.ALL_FIRST_CYCLE,
-            IlluminationCalculationScope.ALL_ACROSS_CYCLES,
-        }:
+        if scope.requires_channel_grouping:
             return ModuleProcessingComponents(
                 ("VariableComponents.SITE",),
                 "GroupBy.CHANNEL",
@@ -256,6 +253,7 @@ class GeneratedPipeline:
     failed_modules: List[str]
     artifact_contracts: tuple[ModuleArtifactContracts, ...] = ()
     source_schema: PipelineImageSchema = PipelineImageSchema.empty()
+    setting_coverage: tuple[ModuleSettingCoverageRecord, ...] = ()
     
     def save(
         self,
@@ -560,7 +558,7 @@ from openhcs.constants.input_source import InputSource
         )
 
         # Generate steps with bound settings
-        steps = self._generate_steps_from_registry(
+        steps, setting_coverage = self._generate_steps_from_registry(
             executable_modules,
             runtime_function_bindings,
             contracts_by_module,
@@ -580,6 +578,7 @@ from openhcs.constants.input_source import InputSource
                 for module in executable_modules
             ),
             source_schema=symbol_table.source_schema,
+            setting_coverage=setting_coverage,
         )
 
     # Category → variable_components mapping
@@ -664,7 +663,7 @@ from openhcs.constants.input_source import InputSource
         modules: List[ModuleBlock],
         function_bindings: dict[int, str],
         artifact_contracts: dict[int, ModuleArtifactContracts],
-    ) -> str:
+    ) -> tuple[str, tuple[ModuleSettingCoverageRecord, ...]]:
         """Generate pipeline_steps using registry functions with bound settings."""
         lines = [
             "# Pipeline Steps",
@@ -672,6 +671,7 @@ from openhcs.constants.input_source import InputSource
             "# variable_components derived from LLM-inferred category",
             "pipeline_steps = [",
         ]
+        setting_coverage: list[ModuleSettingCoverageRecord] = []
 
         for module in modules:
             meta = self._module_metadata(module.name)
@@ -693,8 +693,7 @@ from openhcs.constants.input_source import InputSource
                 else None
             )
 
-            # Parse parameter mapping from function docstring
-            param_mapping = self._parse_parameter_mapping(func_name)
+            param_mapping = {}
             dead_output_settings = self._dead_output_setting_names(
                 module=module,
                 artifact_contract=artifact_contract,
@@ -707,6 +706,7 @@ from openhcs.constants.input_source import InputSource
                 param_mapping=param_mapping,
                 ignored_unmapped_settings=dead_output_settings,
             )
+            setting_coverage.extend(bound_settings.setting_coverage)
             translated_kwargs = dict(bound_settings.kwargs)
             translated_kwargs = self._prune_dead_output_setting_kwargs(
                 module=module,
@@ -778,7 +778,7 @@ from openhcs.constants.input_source import InputSource
             lines.append("    ),")
 
         lines.append("]")
-        return "\n".join(lines)
+        return "\n".join(lines), tuple(setting_coverage)
 
     def _prune_dead_output_setting_kwargs(
         self,
@@ -1117,83 +1117,6 @@ from openhcs.constants.input_source import InputSource
             str(self._module_metadata(module_name)["contract"]),
         )
         return f"ProcessingContract.{resolved_contract.contract.name}"
-
-    def _parse_parameter_mapping(self, func_name: str) -> Dict[str, Any]:
-        """
-        Parse parameter mapping from function docstring.
-
-        Returns dict mapping CellProfiler setting names to Python parameter names.
-        Example: {'Typical diameter...' -> ['min_diameter', 'max_diameter']}
-        """
-        try:
-            func_file = function_source_path(func_name)
-            if func_file is None or not func_file.exists():
-                return {}
-
-            # Read file content
-            content = func_file.read_text()
-
-            # Find the parameter mapping section (anywhere in the file)
-            mapping = {}
-            in_mapping_section = False
-
-            for line in content.split('\n'):
-                stripped = line.strip()
-
-                if 'CellProfiler Parameter Mapping:' in stripped:
-                    in_mapping_section = True
-                    continue
-
-                if in_mapping_section:
-                    # Stop at empty line, next section, or another mapping block
-                    if not stripped:
-                        # Empty line - might be end of section
-                        continue
-                    if (stripped.startswith('Args:') or
-                        stripped.startswith('Returns:') or
-                        stripped.startswith('Identify') or
-                        stripped.startswith('Measure') or
-                        stripped.startswith('"""') or
-                        stripped.startswith('from ') or
-                        stripped.startswith('import ')):
-                        # Reached end of mapping section
-                        if mapping:  # Only break if we've collected some mappings
-                            break
-                        continue
-
-                    # Skip header line
-                    if 'CellProfiler setting' in stripped and 'Python parameter' in stripped:
-                        continue
-
-                    # Parse mapping line: 'Setting Name' -> param_name
-                    # or 'Setting Name' -> [param1, param2]
-                    # or 'Setting Name' -> (pipeline-handled)
-                    if '->' in stripped:
-                        parts = stripped.split('->', 1)
-                        if len(parts) == 2:
-                            cp_setting = parts[0].strip().strip("'\"")
-                            py_param = parts[1].strip()
-
-                            normalized_key = normalize_cellprofiler_setting_name(
-                                cp_setting
-                            )
-
-                            # Handle (pipeline-handled) or null
-                            if 'pipeline-handled' in py_param or py_param == 'null':
-                                mapping[normalized_key] = None
-                            # Handle list [param1, param2]
-                            elif py_param.startswith('[') and py_param.endswith(']'):
-                                params = py_param[1:-1].split(',')
-                                mapping[normalized_key] = [p.strip() for p in params]
-                            # Handle single parameter
-                            else:
-                                mapping[normalized_key] = py_param
-
-            return mapping
-
-        except Exception as e:
-            logger.warning(f"Could not parse parameter mapping for {func_name}: {e}")
-            return {}
 
 
 def python_literal(value: Any) -> str:

@@ -302,12 +302,7 @@ def test_identify_primary_objects_binds_threshold_semantics():
     ).bind(
         module,
         binder=SettingsBinder(),
-        param_mapping={
-            "typical_diameter_of_objects_in_pixel_units": [
-                "min_diameter",
-                "max_diameter",
-            ],
-        },
+        param_mapping={},
     )
 
     assert bound.kwargs["min_diameter"] == 10

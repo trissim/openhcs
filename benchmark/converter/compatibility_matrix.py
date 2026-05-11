@@ -16,11 +16,20 @@ from openhcs.processing.backends.cellprofiler import require_cellprofiler_functi
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
-from openhcs.interop.cellprofiler.parser import CPPipeParser
+from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.module_settings_binding import (
+    ModuleSettingCoverageRecord,
+    ModuleSettingRowRecord,
+)
+from openhcs.interop.cellprofiler.settings_binder import (
+    normalize_cellprofiler_setting_name,
+)
 from openhcs.interop.cellprofiler.module_semantics import (
     CellProfilerModuleSemantics,
     cellprofiler_module_semantics,
 )
+from openhcs.interop.cellprofiler.pipeline_generator import PipelineGenerator
+from openhcs.interop.cellprofiler.runtime_pipeline import partition_cppipe_modules
 
 from .cppipe_corpus import (
     CPPipeCorpusCase,
@@ -35,6 +44,9 @@ from openhcs.interop.cellprofiler.processing_contract_resolution import (
     resolve_processing_contract,
 )
 from openhcs.interop.cellprofiler.symbol_table import ModuleContractBuilder
+
+
+INFRASTRUCTURE_COVERAGE_VALUE = "infrastructure"
 
 
 class ArtifactContractCoverage(str, Enum):
@@ -56,7 +68,7 @@ class CPPipeModuleAbsorptionCoverage(str, Enum):
     """How one real-corpus .cppipe module is handled by conversion."""
 
     ABSORBED_PROCESSING = "absorbed_processing"
-    INFRASTRUCTURE = "infrastructure"
+    INFRASTRUCTURE = INFRASTRUCTURE_COVERAGE_VALUE
     MISSING_PROCESSING = "missing_processing"
 
 
@@ -64,8 +76,31 @@ class SourceModuleCoverage(str, Enum):
     """How one checked-in CellProfiler source module is covered."""
 
     ABSORBED = "absorbed"
-    INFRASTRUCTURE = "infrastructure"
+    INFRASTRUCTURE = INFRASTRUCTURE_COVERAGE_VALUE
     MISSING = "missing"
+
+
+class CPPipeSettingCoverage(str, Enum):
+    """How one concrete .cppipe setting row is covered by OpenHCS import."""
+
+    BOUND = "bound", True
+    ARTIFACT_CONTRACT = "artifact_contract", True
+    TYPED_IGNORE = "typed_ignore", True
+    CALLER_IGNORE = "caller_ignore", True
+    INFRASTRUCTURE = INFRASTRUCTURE_COVERAGE_VALUE, True
+    UNMAPPED = "unmapped", False
+    MODULE_NOT_ABSORBED = "module_not_absorbed", False
+    GENERATION_ERROR = "generation_error", False
+
+    def __new__(cls, value: str, covered: bool) -> "CPPipeSettingCoverage":
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member._covered = covered
+        return member
+
+    @property
+    def is_covered(self) -> bool:
+        return self._covered
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +109,7 @@ class _CorpusModuleObservations:
 
     coverage: Mapping[str, ModuleCorpusCoverage]
     case_names_by_module: Mapping[str, tuple[str, ...]]
+    setting_coverage: tuple["CPPipeSettingCompatibilityCoverage", ...]
     cppipe_case_count: int
     supported_cppipe_case_count: int
     known_invalid_cppipe_case_count: int
@@ -131,6 +167,120 @@ class SourceModuleCompatibilityCoverage:
 
 
 @dataclass(frozen=True, slots=True)
+class CPPipeSettingCompatibilityCoverage(ModuleSettingRowRecord):
+    """Compatibility coverage for one concrete setting row in a benchmark .cppipe."""
+
+    case_name: str
+    canonical_module_name: str
+    coverage: CPPipeSettingCoverage
+
+
+@dataclass(frozen=True, slots=True)
+class CPPipeSettingCoverageCollector:
+    """Project generated-pipeline binding coverage onto concrete .cppipe settings."""
+
+    generator: PipelineGenerator
+
+    def for_case(
+        self,
+        case: CPPipeCorpusCase,
+        modules: Sequence[ModuleBlock],
+    ) -> tuple[CPPipeSettingCompatibilityCoverage, ...]:
+        partition = partition_cppipe_modules(modules)
+        absorbed_modules = frozenset(list_modules())
+        absorbed_processing_modules = tuple(
+            module
+            for module in partition.processing_modules
+            if canonical_module_name(module.name) in absorbed_modules
+        )
+        missing_processing_rows = tuple(
+            self.for_module_setting(
+                case,
+                module,
+                setting,
+                CPPipeSettingCoverage.MODULE_NOT_ABSORBED,
+            )
+            for module in partition.processing_modules
+            if canonical_module_name(module.name) not in absorbed_modules
+            for setting in module.iter_settings()
+        )
+        infrastructure_rows = tuple(
+            self.for_module_setting(
+                case,
+                module,
+                setting,
+                CPPipeSettingCoverage.INFRASTRUCTURE,
+            )
+            for module in partition.infrastructure_modules
+            for setting in module.iter_settings()
+        )
+        try:
+            generated = self.generator.generate_from_registry(
+                pipeline_name=case.cppipe_path.stem,
+                source_cppipe=case.cppipe_path,
+                modules=list(absorbed_processing_modules),
+                skipped_modules=list(partition.infrastructure_modules),
+            )
+        except Exception:
+            return (
+                *infrastructure_rows,
+                *missing_processing_rows,
+                *(
+                    self.for_module_setting(
+                        case,
+                        module,
+                        setting,
+                        CPPipeSettingCoverage.GENERATION_ERROR,
+                    )
+                    for module in absorbed_processing_modules
+                    for setting in module.iter_settings()
+                ),
+            )
+        return (
+            *infrastructure_rows,
+            *missing_processing_rows,
+            *(
+                self.for_bound_setting(case, coverage)
+                for coverage in generated.setting_coverage
+            ),
+        )
+
+    def for_bound_setting(
+        self,
+        case: CPPipeCorpusCase,
+        coverage: ModuleSettingCoverageRecord,
+    ) -> CPPipeSettingCompatibilityCoverage:
+        return CPPipeSettingCompatibilityCoverage(
+            case_name=case.name,
+            module_name=coverage.module_name,
+            canonical_module_name=canonical_module_name(coverage.module_name),
+            module_num=coverage.module_num,
+            setting_name=coverage.setting_name,
+            normalized_setting_name=coverage.normalized_setting_name,
+            value=str(coverage.value),
+            coverage=CPPipeSettingCoverage(coverage.status.value),
+        )
+
+    def for_module_setting(
+        self,
+        case: CPPipeCorpusCase,
+        module: ModuleBlock,
+        setting: ModuleSetting,
+        coverage: CPPipeSettingCoverage,
+    ) -> CPPipeSettingCompatibilityCoverage:
+        return CPPipeSettingCompatibilityCoverage(
+            case_name=case.name,
+            module_name=module.name,
+            canonical_module_name=canonical_module_name(module.name),
+            module_num=module.module_num,
+            setting_name=setting.name,
+            normalized_setting_name=normalize_cellprofiler_setting_name(setting.name),
+            value=setting.value,
+            coverage=coverage,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerBenchmarkCoverageSummary:
     """Benchmark corpus coverage for absorbed and observed CellProfiler modules."""
 
@@ -172,6 +322,7 @@ class CellProfilerCompatibilityReport:
 
     modules: tuple[ModuleCompatibilityCoverage, ...]
     cppipe_modules: tuple[CPPipeModuleCompatibilityCoverage, ...]
+    cppipe_settings: tuple[CPPipeSettingCompatibilityCoverage, ...]
     source_modules: tuple[SourceModuleCompatibilityCoverage, ...]
     benchmark_coverage: CellProfilerBenchmarkCoverageSummary
 
@@ -245,6 +396,7 @@ def build_cellprofiler_compatibility_report(
     return CellProfilerCompatibilityReport(
         modules=modules,
         cppipe_modules=cppipe_modules,
+        cppipe_settings=corpus_observations.setting_coverage,
         source_modules=tuple(
             _source_module_compatibility_coverage(
                 module_name,
@@ -413,9 +565,11 @@ def _corpus_module_observations(
 ) -> _CorpusModuleObservations:
     coverage: dict[str, ModuleCorpusCoverage] = {}
     case_names_by_module: dict[str, list[str]] = {}
+    setting_coverage: list[CPPipeSettingCompatibilityCoverage] = []
     supported_cppipe_case_count = 0
     known_invalid_cppipe_case_count = 0
     module_instance_count = 0
+    setting_coverage_collector = CPPipeSettingCoverageCollector(PipelineGenerator())
 
     for case in corpus_cases:
         case_coverage = _case_corpus_coverage(case.status)
@@ -424,7 +578,8 @@ def _corpus_module_observations(
         else:
             known_invalid_cppipe_case_count += 1
 
-        module_names = _cppipe_module_names(parser, case.cppipe_path)
+        modules = tuple(parser.parse(case.cppipe_path))
+        module_names = tuple(canonical_module_name(module.name) for module in modules)
         module_instance_count += len(module_names)
         for module_name in module_names:
             coverage[module_name] = _merged_corpus_coverage(
@@ -434,6 +589,10 @@ def _corpus_module_observations(
             module_case_names = case_names_by_module.setdefault(module_name, [])
             if case.name not in module_case_names:
                 module_case_names.append(case.name)
+        if case.status is CPPipeCorpusStatus.SUPPORTED:
+            setting_coverage.extend(
+                setting_coverage_collector.for_case(case, modules)
+            )
 
     return _CorpusModuleObservations(
         coverage=coverage,
@@ -441,6 +600,7 @@ def _corpus_module_observations(
             module_name: tuple(case_names)
             for module_name, case_names in case_names_by_module.items()
         },
+        setting_coverage=tuple(setting_coverage),
         cppipe_case_count=len(corpus_cases),
         supported_cppipe_case_count=supported_cppipe_case_count,
         known_invalid_cppipe_case_count=known_invalid_cppipe_case_count,
@@ -496,16 +656,6 @@ def _case_corpus_coverage(status: CPPipeCorpusStatus) -> ModuleCorpusCoverage:
     if status is CPPipeCorpusStatus.SUPPORTED:
         return ModuleCorpusCoverage.SUPPORTED_CORPUS
     return ModuleCorpusCoverage.KNOWN_INVALID_CORPUS
-
-
-def _cppipe_module_names(
-    parser: CPPipeParser,
-    cppipe_path: Path,
-) -> Sequence[str]:
-    return tuple(
-        canonical_module_name(module.name)
-        for module in parser.parse(cppipe_path)
-    )
 
 
 def _merged_corpus_coverage(

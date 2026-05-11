@@ -15,6 +15,12 @@ from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
 )
 from openhcs.processing.backends.cellprofiler.library import canonical_module_name
+from openhcs.processing.backends.cellprofiler.morphology import FillHolesOption
+from openhcs.processing.backends.cellprofiler.primary_objects import (
+    ExcessObjectHandling,
+    UnclumpMethod,
+    WatershedMethod as PrimaryObjectWatershedMethod,
+)
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.interop.cellprofiler.align_settings import align_bound_kwargs
@@ -166,16 +172,47 @@ from openhcs.interop.cellprofiler.watershed_settings import (
 
 
 @dataclass(frozen=True, slots=True)
+class ModuleSettingRowRecord:
+    """Concrete CellProfiler setting row identity and value."""
+
+    module_name: str
+    module_num: int
+    setting_name: str
+    normalized_setting_name: str
+    value: Any
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleSettingCoverageRecord(ModuleSettingRowRecord):
+    """Coverage status for one concrete CellProfiler setting row."""
+
+    status: "ModuleSettingCoverageStatus"
+
+
+class ModuleSettingCoverageStatus(str, Enum):
+    """How one CellProfiler setting row was accounted for by import binding."""
+
+    BOUND = "bound"
+    ARTIFACT_CONTRACT = "artifact_contract"
+    TYPED_IGNORE = "typed_ignore"
+    CALLER_IGNORE = "caller_ignore"
+    INFRASTRUCTURE = "infrastructure"
+    UNMAPPED = "unmapped"
+
+
+@dataclass(frozen=True, slots=True)
 class BoundModuleSettings:
     """Typed module-setting translation result."""
 
     kwargs: Mapping[str, Any]
     unmapped_kwargs: Mapping[str, Any] = field(default_factory=dict)
     invocation_options: RuntimeInvocationOptions | None = None
+    setting_coverage: tuple[ModuleSettingCoverageRecord, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "kwargs", dict(self.kwargs))
         object.__setattr__(self, "unmapped_kwargs", dict(self.unmapped_kwargs))
+        object.__setattr__(self, "setting_coverage", tuple(self.setting_coverage))
         if (
             self.invocation_options is not None
             and not isinstance(self.invocation_options, RuntimeInvocationOptions)
@@ -584,23 +621,34 @@ class ModuleSettingsBindingStrategy(
                 {**bound.kwargs, **runtime_semantics.kwargs(module)},
                 bound.unmapped_kwargs,
                 bound.invocation_options,
+                bound.setting_coverage,
             )
+        artifact_setting_names = self._artifact_setting_names(module)
+        typed_ignore_setting_names = (
+            ModuleUnmappedSettingIgnore.ignored_setting_names_for_module(module)
+        )
         unmapped_kwargs = {
             setting_name: value
             for setting_name, value in bound.unmapped_kwargs.items()
             if setting_name not in ignored_unmapped_settings
-            and setting_name not in self._artifact_setting_names(module)
-            and setting_name
-            not in ModuleUnmappedSettingIgnore.ignored_setting_names_for_module(module)
+            and setting_name not in artifact_setting_names
+            and setting_name not in typed_ignore_setting_names
         }
+        setting_coverage = self._setting_coverage(
+            module,
+            binder=binder,
+            unmapped_kwargs=bound.unmapped_kwargs,
+            ignored_unmapped_settings=ignored_unmapped_settings,
+            artifact_setting_names=artifact_setting_names,
+            typed_ignore_setting_names=typed_ignore_setting_names,
+        )
         self._validate_mapped_module_settings(module, unmapped_kwargs)
-        if len(unmapped_kwargs) != len(bound.unmapped_kwargs):
-            return BoundModuleSettings(
-                bound.kwargs,
-                unmapped_kwargs,
-                bound.invocation_options,
-            )
-        return bound
+        return BoundModuleSettings(
+            bound.kwargs,
+            unmapped_kwargs,
+            bound.invocation_options,
+            setting_coverage,
+        )
 
     @abstractmethod
     def _bind(
@@ -639,6 +687,45 @@ class ModuleSettingsBindingStrategy(
             normalize_cellprofiler_setting_name(symbol.setting_name)
             for symbol in artifact_setting_symbols(module)
         )
+
+    @classmethod
+    def _setting_coverage(
+        cls,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        unmapped_kwargs: Mapping[str, Any],
+        ignored_unmapped_settings: frozenset[str],
+        artifact_setting_names: frozenset[str],
+        typed_ignore_setting_names: frozenset[str],
+    ) -> tuple[ModuleSettingCoverageRecord, ...]:
+        """Project binding semantics onto every concrete setting row."""
+        records: list[ModuleSettingCoverageRecord] = []
+        for setting in module.iter_settings():
+            normalized_name = normalize_cellprofiler_setting_name(setting.name)
+            if normalized_name in binder.SKIP_SETTINGS:
+                status = ModuleSettingCoverageStatus.INFRASTRUCTURE
+            elif normalized_name not in unmapped_kwargs:
+                status = ModuleSettingCoverageStatus.BOUND
+            elif normalized_name in ignored_unmapped_settings:
+                status = ModuleSettingCoverageStatus.CALLER_IGNORE
+            elif normalized_name in artifact_setting_names:
+                status = ModuleSettingCoverageStatus.ARTIFACT_CONTRACT
+            elif normalized_name in typed_ignore_setting_names:
+                status = ModuleSettingCoverageStatus.TYPED_IGNORE
+            else:
+                status = ModuleSettingCoverageStatus.UNMAPPED
+            records.append(
+                ModuleSettingCoverageRecord(
+                    module_name=module.name,
+                    module_num=module.module_num,
+                    setting_name=setting.name,
+                    normalized_setting_name=normalized_name,
+                    value=setting.value,
+                    status=status,
+                )
+            )
+        return tuple(records)
 
 
 class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
@@ -968,12 +1055,119 @@ def _upgrade_legacy_cellprofiler_threshold_kwargs(
             kwargs["log_transform"] = log_transform_default
 
 
+class DeclarativeModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrategy):
+    """Bind modules described by explicit setting-to-kwarg declarations."""
+
+    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = ()
+    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        bound_details = binder.bind_with_details(module.settings)
+        kwargs = binder.bind_declared(module, type(self).setting_bindings)
+        mapped_settings = {
+            normalize_cellprofiler_setting_name(setting_name)
+            for binding in type(self).setting_bindings
+            for setting_name in setting_names(binding.setting_name)
+        }
+        mapped_settings.update(
+            normalize_cellprofiler_setting_name(concrete_setting_name)
+            for setting_name in type(self).ignored_settings
+            for concrete_setting_name in setting_names(setting_name)
+        )
+        unmapped_kwargs = {
+            detail.name: detail.original_value
+            for detail in bound_details
+            if detail.name not in mapped_settings
+        }
+        return BoundModuleSettings(
+            kwargs,
+            unmapped_kwargs,
+        )
+
+
 class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
-    GenericModuleSettingsBindingStrategy
+    DeclarativeModuleSettingsBindingStrategy
 ):
-    """Bind primary-object threshold settings using ordered CellProfiler settings."""
+    """Bind primary-object settings using typed CellProfiler declarations."""
 
     module_name = "IdentifyPrimaryObjects"
+    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = (
+        INPUT_IMAGE_SETTING,
+        IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING,
+    )
+    setting_bindings = (
+        SettingToKeywordBinding(
+            "Typical diameter of objects, in pixel units (Min,Max)",
+            "diameter_range",
+        ),
+        SettingToKeywordBinding(
+            "Discard objects outside the diameter range?",
+            "exclude_size",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Discard objects touching the border of the image?",
+            "exclude_border_objects",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Method to distinguish clumped objects",
+            "unclump_method",
+            cellprofiler_enum_value_setting_parser(UnclumpMethod),
+        ),
+        SettingToKeywordBinding(
+            "Method to draw dividing lines between clumped objects",
+            "watershed_method",
+            cellprofiler_enum_value_setting_parser(PrimaryObjectWatershedMethod),
+        ),
+        SettingToKeywordBinding(
+            "Size of smoothing filter",
+            "smoothing_filter_size",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Suppress local maxima that are closer than this minimum allowed distance",
+            "maxima_suppression_size",
+            parse_cellprofiler_float,
+        ),
+        SettingToKeywordBinding(
+            "Speed up by using lower-resolution image to find local maxima?",
+            "low_res_maxima",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Fill holes in identified objects?",
+            "fill_holes",
+            cellprofiler_enum_value_setting_parser(FillHolesOption),
+        ),
+        SettingToKeywordBinding(
+            "Automatically calculate size of smoothing filter for declumping?",
+            "automatic_smoothing",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Automatically calculate minimum allowed distance between local maxima?",
+            "automatic_suppression",
+            parse_cellprofiler_bool,
+        ),
+        SettingToKeywordBinding(
+            "Handling of objects if excessive number of objects identified",
+            "limit_erase",
+            cellprofiler_enum_value_setting_parser(ExcessObjectHandling),
+        ),
+        SettingToKeywordBinding(
+            "Maximum number of objects",
+            "maximum_object_count",
+            parse_cellprofiler_int,
+        ),
+    )
 
     def _bind(
         self,
@@ -985,6 +1179,14 @@ class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
         bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
+        diameter_range = kwargs.pop("diameter_range", None)
+        if diameter_range is not None:
+            if not isinstance(diameter_range, tuple) or len(diameter_range) != 2:
+                raise ValueError(
+                    f"{module.name} diameter range must contain two values, "
+                    f"got {diameter_range!r}."
+                )
+            kwargs["min_diameter"], kwargs["max_diameter"] = diameter_range
         self.bind_cellprofiler_threshold_settings(
             module=module,
             binder=binder,
@@ -992,11 +1194,6 @@ class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
             unmapped_kwargs=unmapped_kwargs,
             include_advanced_setting=True,
         )
-        for setting_name in (
-            *setting_names(INPUT_IMAGE_SETTING),
-            *setting_names(IDENTIFY_PRIMARY_OUTPUT_OBJECTS_SETTING),
-        ):
-            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
 
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
@@ -1762,43 +1959,6 @@ class MeasureColocalizationModuleSettingsBindingStrategy(
             )
 
         return BoundModuleSettings(kwargs, unmapped_kwargs)
-
-
-class DeclarativeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
-    """Bind modules described by explicit setting-to-kwarg declarations."""
-
-    setting_bindings: ClassVar[tuple[SettingToKeywordBinding, ...]] = ()
-    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
-
-    def _bind(
-        self,
-        module: ModuleBlock,
-        *,
-        binder: SettingsBinder,
-        param_mapping: Mapping[str, Any],
-    ) -> BoundModuleSettings:
-        del param_mapping
-        bound_details = binder.bind_with_details(module.settings)
-        kwargs = binder.bind_declared(module, type(self).setting_bindings)
-        mapped_settings = {
-            normalize_cellprofiler_setting_name(setting_name)
-            for binding in type(self).setting_bindings
-            for setting_name in setting_names(binding.setting_name)
-        }
-        mapped_settings.update(
-            normalize_cellprofiler_setting_name(concrete_setting_name)
-            for setting_name in type(self).ignored_settings
-            for concrete_setting_name in setting_names(setting_name)
-        )
-        unmapped_kwargs = {
-            detail.name: detail.original_value
-            for detail in bound_details
-            if detail.name not in mapped_settings
-        }
-        return BoundModuleSettings(
-            kwargs,
-            unmapped_kwargs,
-        )
 
 
 class ConvertObjectsToImageModuleSettingsBindingStrategy(
