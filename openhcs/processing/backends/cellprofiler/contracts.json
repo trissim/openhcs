@@ -430,6 +430,12 @@
       "MeasureImageAreaOccupied"
     ],
     "function_name": "measure_image_area_occupied",
+    "function_variants": [
+      "measure_image_area_occupied_binary",
+      "measure_image_area_occupied_objects",
+      "measure_image_volume_occupied_binary",
+      "measure_image_volume_occupied_objects"
+    ],
     "contract": "flexible",
     "category": "image_operation",
     "confidence": 1.0,
