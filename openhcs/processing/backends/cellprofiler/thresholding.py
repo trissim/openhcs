@@ -14,6 +14,14 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    image_intensity_scale_for_dtype,
+    image_payload_data,
+    normalize_image_payload_intensity,
+)
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -31,6 +39,240 @@ CELLPROFILER_THRESHOLD_SMOOTHING_HALF_MASS_FACTOR = 0.6744
 CELLPROFILER_LI_TOLERANCE = 0.5 / 65536.0
 CELLPROFILER_THRESHOLD_ENTROPY_DELTA = 2.0 ** -8
 CELLPROFILER_THRESHOLD_ENTROPY_BINS = 256
+CELLPROFILER_MULTI_OTSU_BINS = 128
+CELLPROFILER_LOG_MULTI_OTSU_BINS = 128
+CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET = 0.0
+
+
+class CellProfilerThresholdAssignment(Enum):
+    """Closed foreground/background assignment for multi-class CP thresholds."""
+
+    FOREGROUND = "Foreground"
+    BACKGROUND = "Background"
+
+
+class CellProfilerAveragingMethod(Enum):
+    """Closed CP robust-background center estimators."""
+
+    MEAN = "Mean"
+    MEDIAN = "Median"
+    MODE = "Mode"
+
+
+class CellProfilerThresholdMethod(Enum):
+    """Closed CP threshold methods with global-threshold source semantics."""
+
+    OTSU = ("Otsu", True, False)
+    MINIMUM_CROSS_ENTROPY = ("Minimum Cross-Entropy", True, False)
+    ROBUST_BACKGROUND = ("Robust Background", False, False)
+    MULTI_OTSU = ("Multi-Otsu", False, True)
+    SAUVOLA = ("Sauvola", False, False)
+    MAX_INTENSITY_PERCENTAGE = ("Max Intensity Percentage", False, False)
+    MANUAL = ("Manual", False, False)
+    MEASUREMENT = ("Measurement", False, False)
+    LI = ("Li", True, False)
+    TRIANGLE = ("Triangle", False, False)
+    ISODATA = ("Isodata", False, False)
+
+    def __new__(
+        cls,
+        label: str,
+        uses_raw_global_threshold_source: bool,
+        uses_raw_global_threshold_source_when_log_transformed: bool,
+    ) -> "CellProfilerThresholdMethod":
+        member = object.__new__(cls)
+        member._value_ = label
+        member._uses_raw_global_threshold_source = uses_raw_global_threshold_source
+        member._uses_raw_global_threshold_source_when_log_transformed = (
+            uses_raw_global_threshold_source_when_log_transformed
+        )
+        return member
+
+    def global_threshold_selection(
+        self,
+        *,
+        log_transform: bool,
+        image: np.ndarray,
+        threshold_image: np.ndarray,
+    ) -> tuple[np.ndarray, dict[str, object]]:
+        """Return the source image and kwargs for global threshold estimation."""
+        if self._uses_raw_global_threshold_source:
+            return np.asarray(image), {}
+        if self._uses_raw_global_threshold_source_when_log_transformed and log_transform:
+            return np.asarray(image), {"nbins": CELLPROFILER_LOG_MULTI_OTSU_BINS}
+        return threshold_image, {}
+
+
+class CellProfilerOtsuMethod(Enum):
+    """Closed CP Otsu class-count selector."""
+
+    TWO_CLASS = "Two classes"
+    THREE_CLASS = "Three classes"
+
+
+class CellProfilerThresholdScope(Enum):
+    """Closed CP global/adaptive threshold scope."""
+
+    GLOBAL = "Global"
+    ADAPTIVE = "Adaptive"
+
+
+class CellProfilerVarianceMethod(Enum):
+    """Closed CP robust-background spread estimators."""
+
+    STANDARD_DEVIATION = "Standard deviation"
+    MEDIAN_ABSOLUTE_DEVIATION = "Median absolute deviation"
+
+
+class RobustBackgroundCenterStrategy(
+    EnumKeyedStrategyMixin[CellProfilerAveragingMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal center estimator for CP robust-background thresholding."""
+
+    __registry_key__ = "averaging_method_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "averaging_method"
+    __enum_label_attr__ = "averaging_method_label"
+
+    averaging_method: ClassVar[CellProfilerAveragingMethod | None] = None
+    averaging_method_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_averaging_method(
+        cls,
+        averaging_method: CellProfilerAveragingMethod | str,
+    ) -> "RobustBackgroundCenterStrategy":
+        resolved = coerce_cellprofiler_enum(
+            CellProfilerAveragingMethod,
+            averaging_method,
+        )
+        return cls.for_enum_member(resolved)
+
+    @abstractmethod
+    def center(self, values: np.ndarray) -> float:
+        """Return the robust-background center for trimmed values."""
+
+
+class MeanRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
+    averaging_method = CellProfilerAveragingMethod.MEAN
+
+    def center(self, values: np.ndarray) -> float:
+        return float(np.mean(values))
+
+
+class MedianRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
+    averaging_method = CellProfilerAveragingMethod.MEDIAN
+
+    def center(self, values: np.ndarray) -> float:
+        return float(np.median(values))
+
+
+class ModeRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
+    averaging_method = CellProfilerAveragingMethod.MODE
+
+    def center(self, values: np.ndarray) -> float:
+        return float(threshold_primitives().binned_mode(values))
+
+
+class RobustBackgroundSpreadStrategy(
+    EnumKeyedStrategyMixin[CellProfilerVarianceMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal spread estimator for CP robust-background thresholding."""
+
+    __registry_key__ = "variance_method_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "variance_method"
+    __enum_label_attr__ = "variance_method_label"
+
+    variance_method: ClassVar[CellProfilerVarianceMethod | None] = None
+    variance_method_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_variance_method(
+        cls,
+        variance_method: CellProfilerVarianceMethod | str,
+    ) -> "RobustBackgroundSpreadStrategy":
+        resolved = coerce_cellprofiler_enum(
+            CellProfilerVarianceMethod,
+            variance_method,
+        )
+        return cls.for_enum_member(resolved)
+
+    @abstractmethod
+    def spread(self, values: np.ndarray) -> float:
+        """Return the robust-background spread for trimmed values."""
+
+
+class StandardDeviationRobustBackgroundSpreadStrategy(RobustBackgroundSpreadStrategy):
+    variance_method = CellProfilerVarianceMethod.STANDARD_DEVIATION
+
+    def spread(self, values: np.ndarray) -> float:
+        return float(np.std(values))
+
+
+class MedianAbsoluteDeviationRobustBackgroundSpreadStrategy(
+    RobustBackgroundSpreadStrategy
+):
+    variance_method = CellProfilerVarianceMethod.MEDIAN_ABSOLUTE_DEVIATION
+
+    def spread(self, values: np.ndarray) -> float:
+        return float(threshold_primitives().mad(values))
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerThresholdDiagnostics:
+    """CellProfiler threshold measurements emitted as runtime facts."""
+
+    final_threshold: float
+    original_threshold: float
+    weighted_variance: float
+    sum_of_entropies: float
+
+
+@dataclass(frozen=True, slots=True)
+class RobustBackgroundThresholdSettings:
+    """Settings meaningful to CP robust-background thresholding."""
+
+    lower_outlier_fraction: float
+    upper_outlier_fraction: float
+    averaging_method: CellProfilerAveragingMethod
+    variance_method: CellProfilerVarianceMethod
+    number_of_deviations: float
+
+    def as_kwargs(self) -> dict[str, object]:
+        return {
+            "lower_outlier_fraction": self.lower_outlier_fraction,
+            "upper_outlier_fraction": self.upper_outlier_fraction,
+            "averaging_method": self.averaging_method,
+            "variance_method": self.variance_method,
+            "number_of_deviations": self.number_of_deviations,
+        }
+
+
+def normalize_cellprofiler_image(image: np.ndarray) -> np.ndarray:
+    """Return an image in CellProfiler's normalized pixel-data convention."""
+    return image_payload_data(normalize_image_payload_intensity(image, dtype=np.float32))
+
+
+def unit_interval_scale_for_threshold_diagnostics(
+    image_data: np.ndarray,
+    metadata: ImagePayloadMetadata,
+) -> int | None:
+    """Return a proof scale for exact unit-interval threshold diagnostics."""
+    metadata_scale = metadata.unit_interval_intensity_scale_for_channel(0)
+    if metadata_scale is not None and metadata_scale > 1:
+        return int(metadata_scale)
+    image_array = np.asarray(image_data)
+    if not np.issubdtype(image_array.dtype, np.integer):
+        return None
+    scale = image_intensity_scale_for_dtype(image_array.dtype)
+    if scale is None or scale <= 1:
+        return None
+    return int(scale)
 
 
 @dataclass(frozen=True, slots=True)
