@@ -9,8 +9,14 @@ from typing import Any, ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer
 from openhcs.interop.cellprofiler.calculate_math_settings import (
     CalculateMathRoundingMethod as RoundingMethod,
 )
@@ -115,6 +121,92 @@ class MathCalculationRequest:
             output_name=self.output_name,
             object_names=self.object_names,
         )
+
+
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_outputs(
+    (
+        "math_results",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "object_name",
+                "object_label",
+                "output_name",
+                "feature_name",
+                "result_value",
+                "operand1_value",
+                "operand2_value",
+                "operation",
+            ],
+            analysis_type="math",
+        ),
+    )
+)
+def calculate_math(
+    image: np.ndarray,
+    operand1_value: Any = 0.0,
+    operand2_value: Any = 0.0,
+    operand1_feature: str | None = None,
+    operand2_feature: str | None = None,
+    operand1_object_name: str | None = None,
+    operand2_object_name: str | None = None,
+    operation: MathOperation = MathOperation.NONE,
+    operand1_multiplicand: float = 1.0,
+    operand1_exponent: float = 1.0,
+    operand2_multiplicand: float = 1.0,
+    operand2_exponent: float = 1.0,
+    take_log10: bool = False,
+    final_multiplicand: float = 1.0,
+    final_exponent: float = 1.0,
+    final_addend: float = 0.0,
+    rounding: RoundingMethod = RoundingMethod.NOT_ROUNDED,
+    rounding_digits: int = 0,
+    constrain_lower_bound: bool = False,
+    lower_bound: float = 0.0,
+    constrain_upper_bound: bool = False,
+    upper_bound: float = 1.0,
+    output_name: str = "Measurement",
+) -> tuple[np.ndarray, MathResult | list[MathResult]]:
+    """Perform CellProfiler CalculateMath measurement-row execution."""
+    del operand1_feature, operand2_feature
+    request = MathCalculationRequest(
+        operand1=MathOperand(
+            value=operand1_value,
+            multiplicand=operand1_multiplicand,
+            exponent=operand1_exponent,
+        ),
+        operand2=MathOperand(
+            value=operand2_value,
+            multiplicand=operand2_multiplicand,
+            exponent=operand2_exponent,
+        ),
+        operation=operation,
+        take_log10=take_log10,
+        final=MathFinalTransform(
+            multiplicand=final_multiplicand,
+            exponent=final_exponent,
+            addend=final_addend,
+        ),
+        rounding=rounding,
+        rounding_digits=rounding_digits,
+        bounds=MathBounds(
+            constrain_lower=constrain_lower_bound,
+            lower=lower_bound,
+            constrain_upper=constrain_upper_bound,
+            upper=upper_bound,
+        ),
+        output_name=output_name,
+        object_names=tuple(
+            dict.fromkeys(
+                name
+                for name in (operand1_object_name, operand2_object_name)
+                if name is not None
+            )
+        ),
+    )
+    return image, CalculateMathExecution(request).result_rows
 
 
 class MathOperationStrategy(
@@ -417,3 +509,23 @@ def scalar_operand_value(value: Any) -> float:
 def float_or_nan(value: Any) -> float:
     scalar = float(value)
     return scalar if not np.isnan(scalar) else np.nan
+
+
+__all__ = [
+    "CalculateMathExecution",
+    "MathBounds",
+    "MathCalculationRequest",
+    "MathFinalTransform",
+    "MathOperand",
+    "MathOperandSliceAlignment",
+    "MathOperationStrategy",
+    "MathPowerTransform",
+    "MathResult",
+    "MathResultRows",
+    "RoundingStrategy",
+    "as_result_list",
+    "broadcast_operand_values",
+    "calculate_math",
+    "float_or_nan",
+    "scalar_operand_value",
+]

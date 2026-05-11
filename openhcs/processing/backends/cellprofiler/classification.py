@@ -12,6 +12,9 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -20,6 +23,16 @@ from openhcs.processing.backends.cellprofiler._backend import (
     cellprofiler_backend_key,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer
+
+CLASSIFICATION_RESULT_FIELDS = [
+    "slice_index",
+    "total_objects",
+    "bin_counts",
+    "bin_percentages",
+    "object_classes",
+]
 
 
 class ClassificationMethod(Enum):
@@ -430,6 +443,150 @@ def object_classification_backend(
     )
 
 
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "classification_results",
+        csv_materializer(
+            fields=CLASSIFICATION_RESULT_FIELDS,
+            analysis_type="classification",
+        ),
+    )
+)
+def classify_objects_single_measurement(
+    image: np.ndarray,
+    labels: np.ndarray,
+    measurement_values: np.ndarray | None = None,
+    measurement_values_by_rule: tuple[np.ndarray, ...] = (),
+    classification_rules: tuple[dict[str, object], ...] = (),
+    bin_choice: ClassificationBinChoice = ClassificationBinChoice.EVEN,
+    bin_count: int = 3,
+    low_threshold: float = 0.0,
+    high_threshold: float = 1.0,
+    wants_low_bin: bool = False,
+    wants_high_bin: bool = False,
+    custom_thresholds: str = "0,1",
+    bin_names: str | None = None,
+    classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, ClassificationResult | tuple[ClassificationResult, ...]]:
+    """Classify objects based on one measurement or declared rule rows."""
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    backend = object_classification_backend(
+        backend_provider=classification_backend_provider
+    )
+    if classification_rules:
+        results: list[ClassificationResult] = []
+        classified_labels = labels
+        for rule_index, rule in enumerate(classification_rules):
+            rule_values = (
+                measurement_values_by_rule[rule_index]
+                if rule_index < len(measurement_values_by_rule)
+                else None
+            )
+            classified_labels, result = SingleMeasurementClassificationRequest(
+                measurement_values=rule_values,
+                bin_choice=rule.get("bin_choice", ClassificationBinChoice.EVEN),
+                bin_count=int(rule.get("bin_count", 3)),
+                low_threshold=float(rule.get("low_threshold", 0.0)),
+                high_threshold=float(rule.get("high_threshold", 1.0)),
+                wants_low_bin=bool(rule.get("wants_low_bin", False)),
+                wants_high_bin=bool(rule.get("wants_high_bin", False)),
+                custom_thresholds=str(rule.get("custom_thresholds", "0,1")),
+                bin_names=rule.get("bin_names"),  # type: ignore[arg-type]
+            ).classify(image, labels, backend)
+            results.append(result)
+        return classified_labels, tuple(results)
+
+    return SingleMeasurementClassificationRequest(
+        measurement_values=measurement_values,
+        bin_choice=bin_choice,
+        bin_count=bin_count,
+        low_threshold=low_threshold,
+        high_threshold=high_threshold,
+        wants_low_bin=wants_low_bin,
+        wants_high_bin=wants_high_bin,
+        custom_thresholds=custom_thresholds,
+        bin_names=bin_names,
+    ).classify(image, labels, backend)
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "classification_results",
+        csv_materializer(
+            fields=CLASSIFICATION_RESULT_FIELDS,
+            analysis_type="classification",
+        ),
+    )
+)
+def classify_objects_two_measurements(
+    image: np.ndarray,
+    labels: np.ndarray,
+    measurement1_values: np.ndarray | None = None,
+    measurement2_values: np.ndarray | None = None,
+    threshold1_method: ClassificationThresholdMethod = ClassificationThresholdMethod.MEAN,
+    threshold1_value: float = 0.5,
+    threshold2_method: ClassificationThresholdMethod = ClassificationThresholdMethod.MEAN,
+    threshold2_value: float = 0.5,
+    low_low_name: str = "low_low",
+    low_high_name: str = "low_high",
+    high_low_name: str = "high_low",
+    high_high_name: str = "high_high",
+    classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, ClassificationResult]:
+    """Classify objects from two measurements into four quadrants."""
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    return TwoMeasurementClassificationRequest(
+        measurement1_values=measurement1_values,
+        measurement2_values=measurement2_values,
+        threshold1_method=threshold1_method,
+        threshold1_value=threshold1_value,
+        threshold2_method=threshold2_method,
+        threshold2_value=threshold2_value,
+        low_low_name=low_low_name,
+        low_high_name=low_high_name,
+        high_low_name=high_low_name,
+        high_high_name=high_high_name,
+    ).classify(
+        image,
+        labels,
+        object_classification_backend(backend_provider=classification_backend_provider),
+    )
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "classification_results",
+        csv_materializer(
+            fields=CLASSIFICATION_RESULT_FIELDS,
+            analysis_type="classification",
+        ),
+    )
+)
+def classify_objects_by_intensity_bins(
+    image: np.ndarray,
+    labels: np.ndarray,
+    num_bins: int = 3,
+    use_percentiles: bool = True,
+    classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, ClassificationResult]:
+    """Classify objects by mean intensity into evenly distributed bins."""
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    return IntensityBinsClassificationRequest(
+        num_bins=num_bins,
+        use_percentiles=use_percentiles,
+    ).classify(
+        image,
+        labels,
+        object_classification_backend(backend_provider=classification_backend_provider),
+    )
+
+
 @njit(cache=True)
 def _mean_intensity_values_numba(
     labels: np.ndarray,
@@ -495,11 +652,15 @@ __all__ = [
     "ClassificationMethod",
     "ClassificationResult",
     "ClassificationThresholdMethod",
+    "CLASSIFICATION_RESULT_FIELDS",
     "IntensityBinsClassificationRequest",
     "NumbaNumpyObjectClassificationBackendStrategy",
     "ObjectClassificationBackendStrategy",
     "SingleMeasurementClassificationRequest",
     "TwoMeasurementClassificationRequest",
+    "classify_objects_by_intensity_bins",
+    "classify_objects_single_measurement",
+    "classify_objects_two_measurements",
     "classification_result_from_bins",
     "classification_threshold",
     "object_classification_backend",
