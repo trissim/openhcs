@@ -1,6 +1,9 @@
 """Converted from CellProfiler: EnhanceOrSuppressFeatures."""
 
+from dataclasses import dataclass
 from enum import Enum
+from abc import ABC, abstractmethod
+from typing import ClassVar
 
 import numpy as np
 import scipy.ndimage
@@ -9,7 +12,9 @@ import skimage.filters
 import skimage.morphology
 import skimage.transform
 from numba import njit
+from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
@@ -73,12 +78,14 @@ def enhance_or_suppress_features(
     )
     if image_data.dtype != np.float32 and image_data.dtype != np.float64:
         image_data = image_data.astype(np.float32)
-    mask = _enhancement_mask(image, image_data)
+    mask_context = FeatureEnhancementMaskContext(
+        original=image_data,
+        mask=_enhancement_mask(image, image_data),
+    )
 
-    if method == OperationMethod.ENHANCE:
-        result = _enhance(
-            image_data,
-            mask,
+    result = FeatureOperationStrategy.for_method(method).apply(
+        FeatureEnhancementRequest(
+            mask_context=mask_context,
             enhance_method=enhance_method,
             radius=radius,
             speckle_accuracy=speckle_accuracy,
@@ -90,14 +97,7 @@ def enhance_or_suppress_features(
             dic_angle=dic_angle,
             dic_decay=dic_decay,
         )
-    elif method == OperationMethod.SUPPRESS:
-        result = _suppress_features(
-            image_data,
-            mask,
-            radius,
-        )
-    else:
-        raise ValueError(f"Unknown filtering method: {method}")
+    )
 
     return image_payload_with_context(
         np.asarray(result, dtype=np.float32),
@@ -106,65 +106,105 @@ def enhance_or_suppress_features(
     )
 
 
-def _enhance(
-    image_data: np.ndarray,
-    mask: np.ndarray,
-    *,
-    enhance_method: EnhanceMethod,
-    radius: float,
-    speckle_accuracy: SpeckleAccuracy,
-    neurite_method: NeuriteMethod,
-    neurite_rescale: bool,
-    dark_hole_radius_min: int,
-    dark_hole_radius_max: int,
-    smoothing_value: float,
-    dic_angle: float,
-    dic_decay: float,
-) -> np.ndarray:
-    if enhance_method == EnhanceMethod.SPECKLES:
-        return _enhance_speckles(
-            image_data,
-            mask,
-            radius,
-            speckle_accuracy,
+@dataclass(frozen=True, slots=True)
+class FeatureEnhancementMaskContext:
+    """Image/mask authority for CP feature enhancement background semantics."""
+
+    original: np.ndarray
+    mask: np.ndarray
+
+    @property
+    def masked_original(self) -> np.ndarray:
+        return np.where(self.mask, self.original, 0)
+
+    def restore_background(self, result: np.ndarray) -> np.ndarray:
+        output = np.asarray(result, dtype=np.float32).copy()
+        output[~self.mask] = self.original[~self.mask]
+        return output
+
+
+@dataclass(frozen=True, slots=True)
+class FeatureEnhancementRequest:
+    """All CP feature enhancement settings after enum coercion."""
+
+    mask_context: FeatureEnhancementMaskContext
+    enhance_method: EnhanceMethod
+    radius: float
+    speckle_accuracy: SpeckleAccuracy
+    neurite_method: NeuriteMethod
+    neurite_rescale: bool
+    dark_hole_radius_min: int
+    dark_hole_radius_max: int
+    smoothing_value: float
+    dic_angle: float
+    dic_decay: float
+
+
+class FeatureOperationStrategy(
+    EnumKeyedStrategyMixin[OperationMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Top-level CP enhance/suppress operation semantics."""
+
+    __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+    __enum_label_attr__ = "method_label"
+    method: ClassVar[OperationMethod | None] = None
+    method_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_method(cls, method: OperationMethod) -> "FeatureOperationStrategy":
+        return cls.for_enum_member(method)
+
+    @abstractmethod
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        """Apply the top-level operation to a feature-enhancement request."""
+
+
+class EnhanceFeatureOperationStrategy(FeatureOperationStrategy):
+    method = OperationMethod.ENHANCE
+
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        return FeatureEnhanceMethodStrategy.for_method(
+            request.enhance_method
+        ).apply(request)
+
+
+class SuppressFeatureOperationStrategy(FeatureOperationStrategy):
+    method = OperationMethod.SUPPRESS
+
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        footprint = _structuring_element(request.radius)
+        opened = skimage.morphology.opening(
+            request.mask_context.masked_original,
+            footprint=footprint,
         )
-    if enhance_method == EnhanceMethod.NEURITES:
-        return _enhance_neurites(
-            image_data,
-            mask,
-            smoothing_value,
-            radius,
-            neurite_method,
-            neurite_rescale,
-        )
-    if enhance_method == EnhanceMethod.DARK_HOLES:
-        return _enhance_dark_holes(
-            image_data,
-            mask,
-            dark_hole_radius_min,
-            dark_hole_radius_max,
-        )
-    if enhance_method == EnhanceMethod.CIRCLES:
-        return _enhance_circles(
-            image_data,
-            mask,
-            radius,
-        )
-    if enhance_method == EnhanceMethod.TEXTURE:
-        return _enhance_texture(
-            image_data,
-            mask,
-            smoothing_value,
-        )
-    if enhance_method == EnhanceMethod.DIC:
-        return _enhance_dic(
-            image_data,
-            mask,
-            dic_angle,
-            dic_decay,
-            smoothing_value,
-        )
-    raise NotImplementedError(f"Unimplemented enhance method: {enhance_method}")
+        return request.mask_context.restore_background(opened)
+
+
+class FeatureEnhanceMethodStrategy(
+    EnumKeyedStrategyMixin[EnhanceMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """CP feature enhancement method semantics."""
+
+    __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+    __enum_label_attr__ = "method_label"
+    method: ClassVar[EnhanceMethod | None] = None
+    method_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_method(cls, method: EnhanceMethod) -> "FeatureEnhanceMethodStrategy":
+        return cls.for_enum_member(method)
+
+    @abstractmethod
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        """Apply one concrete CP feature enhancement method."""
 
 
 def _enhancement_mask(image: object, image_data: np.ndarray) -> np.ndarray:
@@ -178,75 +218,48 @@ def _structuring_element(radius: float) -> np.ndarray:
     return skimage.morphology.disk(max(1, int(round(radius))))
 
 
-def _masked_image(image: np.ndarray, mask: np.ndarray) -> np.ndarray:
-    return np.where(mask, image, 0)
+class SpecklesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
+    method = EnhanceMethod.SPECKLES
+
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        footprint = _structuring_element(request.radius)
+        masked = request.mask_context.masked_original
+        if (
+            request.speckle_accuracy is SpeckleAccuracy.FAST
+            and request.radius > 3
+        ):
+            opened = scipy.ndimage.maximum_filter(
+                scipy.ndimage.minimum_filter(masked, footprint=footprint),
+                footprint=footprint,
+            )
+            result = masked - opened
+        else:
+            result = skimage.morphology.white_tophat(masked, footprint=footprint)
+        return request.mask_context.restore_background(result)
 
 
-def _restore_masked_background(
-    result: np.ndarray,
-    original: np.ndarray,
-    mask: np.ndarray,
-) -> np.ndarray:
-    output = np.asarray(result, dtype=np.float32).copy()
-    output[~mask] = original[~mask]
-    return output
+class NeuritesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
+    method = EnhanceMethod.NEURITES
 
-
-def _suppress_features(
-    image_data: np.ndarray,
-    mask: np.ndarray,
-    radius: float,
-) -> np.ndarray:
-    footprint = _structuring_element(radius)
-    opened = skimage.morphology.opening(_masked_image(image_data, mask), footprint=footprint)
-    return _restore_masked_background(opened, image_data, mask)
-
-
-def _enhance_speckles(
-    image_data: np.ndarray,
-    mask: np.ndarray,
-    radius: float,
-    speckle_accuracy: SpeckleAccuracy,
-) -> np.ndarray:
-    footprint = _structuring_element(radius)
-    masked = _masked_image(image_data, mask)
-    if speckle_accuracy is SpeckleAccuracy.FAST and radius > 3:
-        opened = scipy.ndimage.maximum_filter(
-            scipy.ndimage.minimum_filter(masked, footprint=footprint),
-            footprint=footprint,
-        )
-        result = masked - opened
-    else:
-        result = skimage.morphology.white_tophat(masked, footprint=footprint)
-    return _restore_masked_background(result, image_data, mask)
-
-
-def _enhance_neurites(
-    image_data: np.ndarray,
-    mask: np.ndarray,
-    smoothing_value: float,
-    radius: float,
-    neurite_method: NeuriteMethod,
-    neurite_rescale: bool,
-) -> np.ndarray:
-    masked = _masked_image(image_data, mask)
-    if neurite_method is NeuriteMethod.TUBENESS:
-        smoothed = scipy.ndimage.gaussian_filter(masked, smoothing_value)
-        result = _tubeness_response_2d_numba(
-            np.ascontiguousarray(smoothed, dtype=np.float64),
-            float(smoothing_value),
-        )
-    else:
-        footprint = _structuring_element(radius)
-        result = (
-            masked
-            + skimage.morphology.white_tophat(masked, footprint=footprint)
-            - skimage.morphology.black_tophat(masked, footprint=footprint)
-        )
-        result = np.clip(result, 0, None)
-    if neurite_rescale:
-        result = skimage.exposure.rescale_intensity(result, out_range=(0.0, 1.0))
-    return _restore_masked_background(result, image_data, mask)
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        masked = request.mask_context.masked_original
+        if request.neurite_method is NeuriteMethod.TUBENESS:
+            smoothed = scipy.ndimage.gaussian_filter(masked, request.smoothing_value)
+            result = _tubeness_response_2d_numba(
+                np.ascontiguousarray(smoothed, dtype=np.float64),
+                float(request.smoothing_value),
+            )
+        else:
+            footprint = _structuring_element(request.radius)
+            result = (
+                masked
+                + skimage.morphology.white_tophat(masked, footprint=footprint)
+                - skimage.morphology.black_tophat(masked, footprint=footprint)
+            )
+            result = np.clip(result, 0, None)
+        if request.neurite_rescale:
+            result = skimage.exposure.rescale_intensity(result, out_range=(0.0, 1.0))
+        return request.mask_context.restore_background(result)
 
 
 @njit(cache=True)
@@ -287,97 +300,78 @@ def _tubeness_response_2d_numba(image: np.ndarray, smoothing_value: float) -> np
     return result
 
 
-def _hessian_eigenvalues_2d(image: np.ndarray) -> np.ndarray:
-    """Return centrosome-compatible ordered Hessian eigenvalues for one plane."""
-    hessian = np.zeros((*image.shape, 2, 2), dtype=np.float64)
-    hessian[1:-1, :, 0, 0] = image[:-2, :] - (2 * image[1:-1, :]) + image[2:, :]
-    hessian[1:-1, 1:-1, 0, 1] = (
-        image[2:, 2:]
-        + image[:-2, :-2]
-        - image[2:, :-2]
-        - image[:-2, 2:]
-    ) / 4
-    hessian[:, 1:-1, 1, 1] = image[:, :-2] - (2 * image[:, 1:-1]) + image[:, 2:]
+class DarkHolesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
+    method = EnhanceMethod.DARK_HOLES
 
-    a = hessian[:, :, 0, 0]
-    b = hessian[:, :, 0, 1]
-    c = hessian[:, :, 1, 1]
-    linear = -(a + c)
-    constant = a * c - b * b
-    discriminant = np.maximum(linear * linear - 4 * constant, 0)
-    roots = np.empty((*image.shape, 2), dtype=np.float64)
-    sqrt_discriminant = np.sqrt(discriminant)
-    roots[:, :, 0] = (-linear + sqrt_discriminant) / 2
-    roots[:, :, 1] = (-linear - sqrt_discriminant) / 2
-    swap = np.abs(roots[:, :, 1]) > np.abs(roots[:, :, 0])
-    roots[swap] = roots[swap, ::-1]
-    return roots
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        masked = request.mask_context.masked_original
+        radii = range(
+            max(1, request.dark_hole_radius_min),
+            max(request.dark_hole_radius_min, request.dark_hole_radius_max) + 1,
+        )
+        responses = [
+            skimage.morphology.black_tophat(
+                masked,
+                footprint=_structuring_element(radius),
+            )
+            for radius in radii
+        ]
+        result = np.maximum.reduce(responses) if responses else np.zeros_like(masked)
+        return request.mask_context.restore_background(result)
 
 
-def _enhance_dark_holes(
-    image_data: np.ndarray,
-    mask: np.ndarray,
-    radius_min: int,
-    radius_max: int,
-) -> np.ndarray:
-    masked = _masked_image(image_data, mask)
-    radii = range(max(1, radius_min), max(radius_min, radius_max) + 1)
-    responses = [
-        skimage.morphology.black_tophat(masked, footprint=_structuring_element(radius))
-        for radius in radii
-    ]
-    result = np.maximum.reduce(responses) if responses else np.zeros_like(masked)
-    return _restore_masked_background(result, image_data, mask)
+class CirclesFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
+    method = EnhanceMethod.CIRCLES
+
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        masked = request.mask_context.masked_original
+        radius_i = max(1, int(round(request.radius)))
+        result = skimage.transform.hough_circle(masked, [radius_i])[0]
+        return request.mask_context.restore_background(result)
 
 
-def _enhance_circles(
-    image_data: np.ndarray,
-    mask: np.ndarray,
-    radius: float,
-) -> np.ndarray:
-    masked = _masked_image(image_data, mask)
-    radius_i = max(1, int(round(radius)))
-    result = skimage.transform.hough_circle(masked, [radius_i])[0]
-    return _restore_masked_background(result, image_data, mask)
+class TextureFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
+    method = EnhanceMethod.TEXTURE
+
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        masked = request.mask_context.masked_original.astype(float)
+        mean = scipy.ndimage.gaussian_filter(masked, request.smoothing_value)
+        mean_squared = scipy.ndimage.gaussian_filter(
+            masked * masked,
+            request.smoothing_value,
+        )
+        result = np.maximum(mean_squared - mean * mean, 0)
+        return request.mask_context.restore_background(result)
 
 
-def _enhance_texture(
-    image_data: np.ndarray,
-    mask: np.ndarray,
-    smoothing_value: float,
-) -> np.ndarray:
-    masked = _masked_image(image_data, mask).astype(float)
-    mean = scipy.ndimage.gaussian_filter(masked, smoothing_value)
-    mean_squared = scipy.ndimage.gaussian_filter(masked * masked, smoothing_value)
-    result = np.maximum(mean_squared - mean * mean, 0)
-    return _restore_masked_background(result, image_data, mask)
+class DicFeatureEnhanceMethodStrategy(FeatureEnhanceMethodStrategy):
+    method = EnhanceMethod.DIC
 
-
-def _enhance_dic(
-    image_data: np.ndarray,
-    mask: np.ndarray,
-    angle: float,
-    decay: float,
-    smoothing_value: float,
-) -> np.ndarray:
-    smoothed = scipy.ndimage.gaussian_filter(_masked_image(image_data, mask), smoothing_value)
-    radians = np.deg2rad(angle)
-    shift = np.array((np.sin(radians), np.cos(radians))) * max(decay, 0)
-    coords = np.indices(smoothed.shape, dtype=float)
-    forward = scipy.ndimage.map_coordinates(
-        smoothed,
-        coords + shift.reshape(2, 1, 1),
-        order=1,
-        mode="nearest",
-    )
-    backward = scipy.ndimage.map_coordinates(
-        smoothed,
-        coords - shift.reshape(2, 1, 1),
-        order=1,
-        mode="nearest",
-    )
-    result = np.maximum(forward - backward, 0)
-    return _restore_masked_background(result, image_data, mask)
+    def apply(self, request: FeatureEnhancementRequest) -> np.ndarray:
+        smoothed = scipy.ndimage.gaussian_filter(
+            request.mask_context.masked_original,
+            request.smoothing_value,
+        )
+        radians = np.deg2rad(request.dic_angle)
+        shift = np.array((np.sin(radians), np.cos(radians))) * max(
+            request.dic_decay,
+            0,
+        )
+        coords = np.indices(smoothed.shape, dtype=float)
+        forward = scipy.ndimage.map_coordinates(
+            smoothed,
+            coords + shift.reshape(2, 1, 1),
+            order=1,
+            mode="nearest",
+        )
+        backward = scipy.ndimage.map_coordinates(
+            smoothed,
+            coords - shift.reshape(2, 1, 1),
+            order=1,
+            mode="nearest",
+        )
+        result = np.maximum(forward - backward, 0)
+        return request.mask_context.restore_background(result)
 
 
 @processing_prepare(enhance_or_suppress_features)

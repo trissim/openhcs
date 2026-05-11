@@ -76,7 +76,6 @@ from benchmark.cellprofiler_library.functions.enhanceorsuppressfeatures import (
     EnhanceMethod,
     NeuriteMethod,
     SpeckleAccuracy,
-    _hessian_eigenvalues_2d,
     enhance_or_suppress_features,
 )
 from benchmark.cellprofiler_library.functions.expandorshrinkobjects import (
@@ -2385,10 +2384,38 @@ def test_enhance_or_suppress_features_tubeness_matches_hessian_reference():
     )
 
     smoothed = ndi.gaussian_filter(image, smoothing_value)
-    eigenvalues = _hessian_eigenvalues_2d(smoothed)
+    hessian = np.zeros((*smoothed.shape, 2, 2), dtype=np.float64)
+    hessian[1:-1, :, 0, 0] = (
+        smoothed[:-2, :]
+        - (2 * smoothed[1:-1, :])
+        + smoothed[2:, :]
+    )
+    hessian[1:-1, 1:-1, 0, 1] = (
+        smoothed[2:, 2:]
+        + smoothed[:-2, :-2]
+        - smoothed[2:, :-2]
+        - smoothed[:-2, 2:]
+    ) / 4
+    hessian[:, 1:-1, 1, 1] = (
+        smoothed[:, :-2]
+        - (2 * smoothed[:, 1:-1])
+        + smoothed[:, 2:]
+    )
+    a = hessian[:, :, 0, 0]
+    b = hessian[:, :, 0, 1]
+    c = hessian[:, :, 1, 1]
+    linear = -(a + c)
+    constant = a * c - b * b
+    discriminant = np.maximum(linear * linear - 4 * constant, 0)
+    roots = np.empty((*smoothed.shape, 2), dtype=np.float64)
+    sqrt_discriminant = np.sqrt(discriminant)
+    roots[:, :, 0] = (-linear + sqrt_discriminant) / 2
+    roots[:, :, 1] = (-linear - sqrt_discriminant) / 2
+    swap = np.abs(roots[:, :, 1]) > np.abs(roots[:, :, 0])
+    roots[swap] = roots[swap, ::-1]
     expected = (
-        -eigenvalues[..., 0]
-        * (eigenvalues[..., 0] < 0)
+        -roots[..., 0]
+        * (roots[..., 0] < 0)
         * (smoothing_value ** 2)
     ).astype(np.float32)
     np.testing.assert_allclose(image_payload_data(result), expected, rtol=1e-6, atol=1e-7)
