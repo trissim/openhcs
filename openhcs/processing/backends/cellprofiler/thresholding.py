@@ -7,11 +7,13 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 import math
+import time
 from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
+import scipy.interpolate
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
@@ -29,7 +31,10 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
-from openhcs.processing.backends.cellprofiler.perf_fixtures import capture_array_fixture
+from openhcs.processing.backends.cellprofiler.perf_fixtures import (
+    capture_array_fixture,
+    capture_enabled,
+)
 
 
 CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
@@ -1311,6 +1316,660 @@ def threshold_primitives(
         MemoryType.NUMPY,
         backend_provider=backend_provider,
     )
+
+
+def cellprofiler_get_global_threshold(
+    image: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    threshold_method: CellProfilerThresholdMethod | str = CellProfilerThresholdMethod.OTSU,
+    threshold_min: float = 0,
+    threshold_max: float = 1,
+    threshold_correction_factor: float = 1,
+    assign_middle_to_foreground: (
+        CellProfilerThresholdAssignment | str
+    ) = CellProfilerThresholdAssignment.FOREGROUND,
+    log_transform: bool = False,
+    **kwargs: object,
+) -> float:
+    """Compute one global threshold using independent CP-compatible semantics."""
+    primitives = threshold_primitives()
+    method = coerce_cellprofiler_enum(CellProfilerThresholdMethod, threshold_method)
+    assignment = coerce_cellprofiler_enum(
+        CellProfilerThresholdAssignment,
+        assign_middle_to_foreground,
+    )
+    threshold_image = np.asarray(image, dtype=np.float32)
+    if log_transform:
+        threshold_image, conversion = primitives.log_transform(threshold_image)
+    else:
+        conversion = None
+    threshold_mask = None if mask is None else np.asarray(mask, dtype=bool)
+    values = threshold_image[threshold_mask] if mask is not None else threshold_image.ravel()
+    values = values[np.isfinite(values)]
+
+    if values.size == 0:
+        threshold = 0.0
+    elif np.all(values == values.ravel()[0]):
+        threshold = float(values.ravel()[0])
+    elif method is CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY:
+        threshold = primitives.minimum_cross_entropy_threshold(
+            threshold_image,
+            threshold_mask,
+        )
+    elif method is CellProfilerThresholdMethod.LI:
+        threshold = primitives.li_threshold(values)
+    elif method is CellProfilerThresholdMethod.ROBUST_BACKGROUND:
+        threshold = get_threshold_robust_background(values, **kwargs)
+    elif method is CellProfilerThresholdMethod.OTSU:
+        threshold = primitives.otsu_threshold(values)
+    elif method is CellProfilerThresholdMethod.MULTI_OTSU:
+        bin_wanted = 0 if assignment is CellProfilerThresholdAssignment.FOREGROUND else 1
+        nbins = int(kwargs.get("nbins", CELLPROFILER_MULTI_OTSU_BINS))
+        thresholds = threshold_multiotsu(values, nbins=nbins)
+        threshold = float(thresholds[bin_wanted])
+        if log_transform:
+            threshold += (
+                threshold_histogram_bin_width(values, nbins)
+                * CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET
+            )
+    elif method is CellProfilerThresholdMethod.SAUVOLA:
+        threshold = float(
+            np.mean(
+                primitives.sauvola_threshold_image(
+                    values.reshape(1, -1),
+                    window_size=int(kwargs.get("window_size", 15)),
+                )
+            )
+        )
+    elif method is CellProfilerThresholdMethod.TRIANGLE:
+        threshold = primitives.triangle_threshold(values)
+    elif method is CellProfilerThresholdMethod.ISODATA:
+        threshold = primitives.isodata_threshold(values)
+    elif method is CellProfilerThresholdMethod.MAX_INTENSITY_PERCENTAGE:
+        threshold = float(np.max(values) * float(kwargs.get("fraction", 0.75)))
+    else:
+        raise NotImplementedError(f"Threshold method {method} not supported.")
+
+    if conversion is not None:
+        threshold = float(primitives.inverse_log_transform(threshold, conversion))
+    threshold *= threshold_correction_factor
+    return clip_threshold(threshold, threshold_min, threshold_max)
+
+
+def cellprofiler_get_adaptive_threshold(
+    image: np.ndarray,
+    *,
+    mask: np.ndarray | None = None,
+    threshold_method: CellProfilerThresholdMethod | str = CellProfilerThresholdMethod.OTSU,
+    window_size: int = 50,
+    threshold_min: float = 0,
+    threshold_max: float = 1,
+    threshold_correction_factor: float = 1,
+    assign_middle_to_foreground: (
+        CellProfilerThresholdAssignment | str
+    ) = CellProfilerThresholdAssignment.FOREGROUND,
+    global_limits: tuple[float, float] = (0.7, 1.5),
+    log_transform: bool = False,
+    global_threshold_function: object | None = None,
+    **kwargs: object,
+) -> np.ndarray:
+    """Compute CP-style adaptive thresholds without depending on CP packages."""
+    primitives = threshold_primitives()
+    global_threshold = (
+        cellprofiler_get_global_threshold
+        if global_threshold_function is None
+        else global_threshold_function
+    )
+    method = coerce_cellprofiler_enum(CellProfilerThresholdMethod, threshold_method)
+    assignment = coerce_cellprofiler_enum(
+        CellProfilerThresholdAssignment,
+        assign_middle_to_foreground,
+    )
+    data = np.asarray(image, dtype=np.float32)
+    if mask is not None:
+        data = np.where(np.asarray(mask, dtype=bool), data, False)
+
+    if log_transform:
+        transformed, conversion = primitives.log_transform(data)
+    else:
+        transformed = data
+        conversion = None
+
+    if transformed.size == 0 or np.all(np.isnan(transformed)):
+        thresholds = np.zeros_like(transformed)
+    elif np.all(transformed == transformed.ravel()[0]):
+        thresholds = np.full_like(transformed, transformed.ravel()[0])
+    elif method is CellProfilerThresholdMethod.SAUVOLA:
+        if window_size % 2 == 0:
+            window_size += 1
+        thresholds = primitives.sauvola_threshold_image(
+            transformed,
+            window_size=window_size,
+        )
+    else:
+        thresholds = adaptive_threshold_blocks(
+            transformed,
+            window_size=window_size,
+            threshold_method=method,
+            assign_middle_to_foreground=assignment,
+            global_threshold_function=global_threshold,
+            **kwargs,
+        )
+
+    global_value = global_threshold(
+        transformed,
+        mask=None,
+        threshold_method=method,
+        threshold_min=threshold_min,
+        threshold_max=threshold_max,
+        threshold_correction_factor=threshold_correction_factor,
+        assign_middle_to_foreground=assignment,
+        log_transform=False,
+        **kwargs,
+    )
+    if conversion is not None:
+        thresholds = primitives.inverse_log_transform(thresholds, conversion)
+        global_value = float(primitives.inverse_log_transform(global_value, conversion))
+
+    thresholds = thresholds * threshold_correction_factor
+    t_min = max(threshold_min, global_value * global_limits[0])
+    t_max = min(threshold_max, global_value * global_limits[1])
+    thresholds[thresholds < t_min] = t_min
+    thresholds[thresholds > t_max] = t_max
+    return thresholds
+
+
+def cellprofiler_apply_threshold(
+    image: np.ndarray,
+    *,
+    threshold: float | np.ndarray,
+    mask: np.ndarray | None = None,
+    smoothing: float = 0,
+) -> tuple[np.ndarray, float]:
+    """Apply threshold with CP's mask-aware smoothing convention."""
+    return ThresholdApplicationRequest(
+        image=image,
+        threshold=threshold,
+        mask=mask,
+        smoothing=smoothing,
+    ).apply()
+
+
+def threshold_multiotsu(values: np.ndarray, *, nbins: int) -> np.ndarray:
+    """Compute CP-compatible multi-Otsu thresholds for the observed value range."""
+    if values.size == 0:
+        return np.zeros((2,), dtype=float)
+    return threshold_primitives().multiotsu_thresholds(values, nbins=nbins)
+
+
+def threshold_histogram_bin_width(values: np.ndarray, nbins: int) -> float:
+    values_array = np.asarray(values, dtype=np.float64)
+    finite_values = values_array[np.isfinite(values_array)]
+    if finite_values.size == 0 or nbins <= 0:
+        return 0.0
+    value_min = float(np.min(finite_values))
+    value_max = float(np.max(finite_values))
+    if value_max == value_min:
+        return 0.0
+    return (value_max - value_min) / float(nbins)
+
+
+def get_threshold_robust_background(
+    image: np.ndarray,
+    *,
+    lower_outlier_fraction: float = 0.05,
+    upper_outlier_fraction: float = 0.05,
+    averaging_method: CellProfilerAveragingMethod | str = CellProfilerAveragingMethod.MEAN,
+    variance_method: (
+        CellProfilerVarianceMethod | str
+    ) = CellProfilerVarianceMethod.STANDARD_DEVIATION,
+    number_of_deviations: float = 2,
+    **_ignored: object,
+) -> float:
+    averaging_method = coerce_cellprofiler_enum(
+        CellProfilerAveragingMethod,
+        averaging_method,
+    )
+    variance_method = coerce_cellprofiler_enum(
+        CellProfilerVarianceMethod,
+        variance_method,
+    )
+    flat = np.asarray(image).flatten()
+    if flat.size < 3:
+        return 0.0
+    flat.sort()
+    if flat[0] == flat[-1]:
+        return float(flat[0])
+    low_chop = int(round(flat.size * lower_outlier_fraction))
+    high_chop = flat.size - int(round(flat.size * upper_outlier_fraction))
+    trimmed = flat if low_chop == 0 else flat[low_chop:high_chop]
+    center = RobustBackgroundCenterStrategy.for_averaging_method(
+        averaging_method,
+    ).center(trimmed)
+    spread = RobustBackgroundSpreadStrategy.for_variance_method(
+        variance_method,
+    ).spread(trimmed)
+    return float(center + spread * number_of_deviations)
+
+
+def adaptive_threshold_blocks(
+    image: np.ndarray,
+    *,
+    window_size: int,
+    threshold_method: CellProfilerThresholdMethod,
+    assign_middle_to_foreground: CellProfilerThresholdAssignment,
+    global_threshold_function: object | None = None,
+    **kwargs: object,
+) -> np.ndarray:
+    image_size = np.array(image.shape[:2], dtype=int)
+    nblocks = image_size // window_size
+    if any(count < 2 for count in nblocks):
+        raise ValueError(
+            "Adaptive window cannot exceed 50% of an image dimension.\n"
+            f"Window of {window_size}px is too large for a "
+            f"{image_size[1]}x{image_size[0]} image"
+        )
+
+    increment = np.array(image_size, dtype=float) / np.array(nblocks, dtype=float)
+    block_threshold = np.zeros([nblocks[0], nblocks[1]])
+    for row in range(nblocks[0]):
+        row_start = int(row * increment[0])
+        row_stop = int((row + 1) * increment[0])
+        for column in range(nblocks[1]):
+            column_start = int(column * increment[1])
+            column_stop = int((column + 1) * increment[1])
+            block = image[row_start:row_stop, column_start:column_stop]
+            block = block[~np.logical_not(block)]
+            block_threshold[row, column] = block_threshold_value(
+                block,
+                threshold_method=threshold_method,
+                assign_middle_to_foreground=assign_middle_to_foreground,
+                global_threshold_function=global_threshold_function,
+                **kwargs,
+            )
+
+    spline_order = min(3, int(np.min(nblocks)) - 1)
+    row_start = int(increment[0] / 2)
+    row_end = int((nblocks[0] - 0.5) * increment[0])
+    column_start = int(increment[1] / 2)
+    column_end = int((nblocks[1] - 0.5) * increment[1])
+    interpolation = scipy.interpolate.RectBivariateSpline(
+        np.linspace(row_start, row_end, nblocks[0]),
+        np.linspace(column_start, column_end, nblocks[1]),
+        block_threshold,
+        bbox=(0.5, image.shape[0] - 0.5, 0.5, image.shape[1] - 0.5),
+        kx=spline_order,
+        ky=spline_order,
+    )
+    return interpolation(
+        np.linspace(0.5, int(nblocks[0] * increment[0]) - 0.5, image.shape[0]),
+        np.linspace(0.5, int(nblocks[1] * increment[1]) - 0.5, image.shape[1]),
+    )
+
+
+def block_threshold_value(
+    block: np.ndarray,
+    *,
+    threshold_method: CellProfilerThresholdMethod,
+    assign_middle_to_foreground: CellProfilerThresholdAssignment,
+    global_threshold_function: object | None = None,
+    **kwargs: object,
+) -> float:
+    global_threshold = (
+        cellprofiler_get_global_threshold
+        if global_threshold_function is None
+        else global_threshold_function
+    )
+    if block.size == 0:
+        return 0.0
+    if np.all(block == block[0]):
+        return float(block[0])
+    if (
+        threshold_method is CellProfilerThresholdMethod.MULTI_OTSU
+        and np.unique(block).size < 3
+    ):
+        return threshold_primitives().otsu_threshold(block)
+    return global_threshold(
+        block,
+        threshold_method=threshold_method,
+        assign_middle_to_foreground=assign_middle_to_foreground,
+        threshold_min=0,
+        threshold_max=1,
+        threshold_correction_factor=1,
+        log_transform=False,
+        **kwargs,
+    )
+
+
+def threshold_method_for_class_count(
+    threshold_method: CellProfilerThresholdMethod,
+    otsu_class_count: CellProfilerOtsuMethod,
+) -> CellProfilerThresholdMethod:
+    if (
+        threshold_method is CellProfilerThresholdMethod.OTSU
+        and otsu_class_count is CellProfilerOtsuMethod.THREE_CLASS
+    ):
+        return CellProfilerThresholdMethod.MULTI_OTSU
+    return threshold_method
+
+
+def threshold_method_kwargs(
+    threshold_method: CellProfilerThresholdMethod,
+    *,
+    lower_outlier_fraction: float,
+    upper_outlier_fraction: float,
+    averaging_method: CellProfilerAveragingMethod,
+    variance_method: CellProfilerVarianceMethod,
+    number_of_deviations: float,
+) -> dict[str, object]:
+    """Return kwargs that are meaningful for the selected threshold algorithm."""
+    if threshold_method is not CellProfilerThresholdMethod.ROBUST_BACKGROUND:
+        return {}
+    return RobustBackgroundThresholdSettings(
+        lower_outlier_fraction=lower_outlier_fraction,
+        upper_outlier_fraction=upper_outlier_fraction,
+        averaging_method=averaging_method,
+        variance_method=variance_method,
+        number_of_deviations=number_of_deviations,
+    ).as_kwargs()
+
+
+def clip_threshold(threshold: float, threshold_min: float, threshold_max: float) -> float:
+    return float(min(max(float(threshold), threshold_min), threshold_max))
+
+
+def cellprofiler_threshold(
+    image: np.ndarray,
+    *,
+    use_advanced_settings: bool,
+    threshold_scope: CellProfilerThresholdScope,
+    threshold_method: CellProfilerThresholdMethod,
+    otsu_class_count: CellProfilerOtsuMethod,
+    assign_middle_to_foreground: CellProfilerThresholdAssignment,
+    log_transform: bool,
+    threshold_correction_factor: float,
+    threshold_min: float,
+    threshold_max: float,
+    threshold_smoothing_scale: float,
+    adaptive_window_size: int,
+    lower_outlier_fraction: float,
+    upper_outlier_fraction: float,
+    averaging_method: CellProfilerAveragingMethod,
+    variance_method: CellProfilerVarianceMethod,
+    number_of_deviations: float,
+    manual_threshold: float,
+    mask: np.ndarray | None = None,
+    smooth_threshold_application: bool = True,
+    global_threshold_function: object | None = None,
+    adaptive_threshold_function: object | None = None,
+    apply_threshold_function: object | None = None,
+    log_profile_function: object | None = None,
+) -> tuple[np.ndarray, float, float]:
+    """Apply CellProfiler threshold semantics without a CP workspace."""
+    global_threshold = (
+        cellprofiler_get_global_threshold
+        if global_threshold_function is None
+        else global_threshold_function
+    )
+    adaptive_threshold = (
+        cellprofiler_get_adaptive_threshold
+        if adaptive_threshold_function is None
+        else adaptive_threshold_function
+    )
+    apply_threshold = (
+        cellprofiler_apply_threshold
+        if apply_threshold_function is None
+        else apply_threshold_function
+    )
+    log_profile = (lambda *args, **kwargs: None) if log_profile_function is None else log_profile_function
+
+    total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
+    threshold_mask = None if mask is None else np.asarray(mask, dtype=bool)
+    threshold_scope = coerce_cellprofiler_enum(CellProfilerThresholdScope, threshold_scope)
+    threshold_method = coerce_cellprofiler_enum(CellProfilerThresholdMethod, threshold_method)
+    otsu_class_count = coerce_cellprofiler_enum(CellProfilerOtsuMethod, otsu_class_count)
+    assign_middle_to_foreground = coerce_cellprofiler_enum(
+        CellProfilerThresholdAssignment,
+        assign_middle_to_foreground,
+    )
+    averaging_method = coerce_cellprofiler_enum(CellProfilerAveragingMethod, averaging_method)
+    variance_method = coerce_cellprofiler_enum(CellProfilerVarianceMethod, variance_method)
+    log_profile(
+        "threshold_coerce_settings",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold",
+    )
+
+    if not use_advanced_settings:
+        threshold_scope = CellProfilerThresholdScope.GLOBAL
+        threshold_method = CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY
+        log_transform = False
+        threshold_smoothing_scale = CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE
+
+    if threshold_method is CellProfilerThresholdMethod.MEASUREMENT:
+        raise NotImplementedError(
+            "Measurement-based thresholding requires a prior measurement source."
+        )
+
+    effective_method = threshold_method_for_class_count(threshold_method, otsu_class_count)
+    threshold_image = np.asarray(image)
+    if threshold_method is CellProfilerThresholdMethod.MANUAL:
+        final_threshold: float | np.ndarray = float(manual_threshold)
+        original_threshold = float(manual_threshold)
+    else:
+        phase_started_at = time.perf_counter()
+        method_kwargs = threshold_method_kwargs(
+            effective_method,
+            lower_outlier_fraction=lower_outlier_fraction,
+            upper_outlier_fraction=upper_outlier_fraction,
+            averaging_method=averaging_method,
+            variance_method=variance_method,
+            number_of_deviations=number_of_deviations,
+        )
+        log_profile(
+            "threshold_method_kwargs",
+            time.perf_counter() - phase_started_at,
+            function="cellprofiler_threshold",
+            method=effective_method.value,
+        )
+        if threshold_scope is CellProfilerThresholdScope.ADAPTIVE:
+            phase_started_at = time.perf_counter()
+            final_threshold = adaptive_threshold(
+                threshold_image,
+                mask=threshold_mask,
+                threshold_method=effective_method,
+                window_size=adaptive_window_size,
+                threshold_min=threshold_min,
+                threshold_max=threshold_max,
+                threshold_correction_factor=threshold_correction_factor,
+                assign_middle_to_foreground=assign_middle_to_foreground,
+                log_transform=log_transform,
+                global_threshold_function=global_threshold,
+                **method_kwargs,
+            )
+            log_profile(
+                "threshold_adaptive_final",
+                time.perf_counter() - phase_started_at,
+                function="cellprofiler_threshold",
+                method=effective_method.value,
+            )
+            phase_started_at = time.perf_counter()
+            original_threshold = float(
+                np.mean(
+                    np.atleast_1d(
+                        adaptive_threshold(
+                            threshold_image,
+                            mask=threshold_mask,
+                            threshold_method=effective_method,
+                            window_size=adaptive_window_size,
+                            threshold_min=threshold_min if not use_advanced_settings else 0,
+                            threshold_max=threshold_max if not use_advanced_settings else 1,
+                            threshold_correction_factor=(
+                                threshold_correction_factor
+                                if not use_advanced_settings
+                                else 1
+                            ),
+                            assign_middle_to_foreground=assign_middle_to_foreground,
+                            log_transform=log_transform,
+                            global_threshold_function=global_threshold,
+                            **method_kwargs,
+                        )
+                    )
+                )
+            )
+            log_profile(
+                "threshold_adaptive_original",
+                time.perf_counter() - phase_started_at,
+                function="cellprofiler_threshold",
+                method=effective_method.value,
+            )
+        else:
+            selection_image, selection_kwargs = effective_method.global_threshold_selection(
+                log_transform=log_transform,
+                image=image,
+                threshold_image=threshold_image,
+            )
+            phase_started_at = time.perf_counter()
+            raw_threshold = global_threshold(
+                selection_image,
+                mask=threshold_mask,
+                threshold_method=effective_method,
+                threshold_min=0,
+                threshold_max=1,
+                threshold_correction_factor=1,
+                assign_middle_to_foreground=assign_middle_to_foreground,
+                log_transform=log_transform,
+                **method_kwargs,
+                **selection_kwargs,
+            )
+            log_profile(
+                "threshold_global_raw",
+                time.perf_counter() - phase_started_at,
+                function="cellprofiler_threshold",
+                method=effective_method.value,
+                pixels=np.asarray(selection_image).size,
+            )
+            phase_started_at = time.perf_counter()
+            final_threshold = clip_threshold(
+                raw_threshold * threshold_correction_factor,
+                threshold_min,
+                threshold_max,
+            )
+            original_threshold = (
+                final_threshold
+                if not use_advanced_settings
+                else clip_threshold(raw_threshold, 0, 1)
+            )
+            log_profile(
+                "threshold_clip",
+                time.perf_counter() - phase_started_at,
+                function="cellprofiler_threshold",
+                method=effective_method.value,
+            )
+
+    application_smoothing = threshold_smoothing_scale if smooth_threshold_application else 0.0
+    phase_started_at = time.perf_counter()
+    binary, _sigma = apply_threshold(
+        image,
+        threshold=final_threshold,
+        mask=threshold_mask,
+        smoothing=application_smoothing,
+    )
+    log_profile(
+        "threshold_apply",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold",
+        smoothing=float(application_smoothing),
+    )
+    phase_started_at = time.perf_counter()
+    if threshold_mask is not None:
+        binary = np.asarray(binary, dtype=bool) & threshold_mask
+    result = (
+        binary.astype(bool),
+        float(np.mean(np.atleast_1d(final_threshold))),
+        float(original_threshold),
+    )
+    log_profile(
+        "threshold_finalize",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold",
+    )
+    log_profile(
+        "threshold_total",
+        time.perf_counter() - total_started_at,
+        function="cellprofiler_threshold",
+    )
+    return result
+
+
+def cellprofiler_threshold_diagnostics(
+    image: np.ndarray,
+    binary: np.ndarray,
+    *,
+    final_threshold: float,
+    original_threshold: float,
+    mask: np.ndarray | None = None,
+    proven_unit_interval_scale: int | None = None,
+    log_profile_function: object | None = None,
+) -> CellProfilerThresholdDiagnostics:
+    """Return CellProfiler's image-level threshold quality measurements."""
+    log_profile = (lambda *args, **kwargs: None) if log_profile_function is None else log_profile_function
+    total_started_at = time.perf_counter()
+    phase_started_at = time.perf_counter()
+    measurement_mask = None if mask is None else np.asarray(mask, dtype=bool)
+    binary_image = np.asarray(binary, dtype=bool)
+    if capture_enabled():
+        capture_array_fixture(
+            "threshold_diagnostics",
+            image=np.asarray(image),
+            binary=binary_image,
+            mask=(
+                np.ones_like(binary_image, dtype=bool)
+                if measurement_mask is None
+                else measurement_mask
+            ),
+            final_threshold=np.asarray(final_threshold, dtype=np.float64),
+            original_threshold=np.asarray(original_threshold, dtype=np.float64),
+        )
+    log_profile(
+        "threshold_diagnostics_prepare",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold_diagnostics",
+    )
+    phase_started_at = time.perf_counter()
+    weighted_variance, sum_of_entropies = (
+        ThresholdDiagnosticsBackendStrategy.for_memory_type().diagnostics(
+            image,
+            measurement_mask,
+            binary_image,
+            proven_unit_interval_scale=proven_unit_interval_scale,
+        )
+    )
+    log_profile(
+        "threshold_diagnostics_backend",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold_diagnostics",
+    )
+    phase_started_at = time.perf_counter()
+    result = CellProfilerThresholdDiagnostics(
+        final_threshold=float(final_threshold),
+        original_threshold=float(original_threshold),
+        weighted_variance=float(np.mean(np.atleast_1d(weighted_variance))),
+        sum_of_entropies=float(np.mean(np.atleast_1d(sum_of_entropies))),
+    )
+    log_profile(
+        "threshold_diagnostics_finalize",
+        time.perf_counter() - phase_started_at,
+        function="cellprofiler_threshold_diagnostics",
+    )
+    log_profile(
+        "threshold_diagnostics_total",
+        time.perf_counter() - total_started_at,
+        function="cellprofiler_threshold_diagnostics",
+    )
+    return result
 
 
 def _finite_flat_float64(values: np.ndarray) -> np.ndarray:
