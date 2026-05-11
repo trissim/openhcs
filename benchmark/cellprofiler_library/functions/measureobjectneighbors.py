@@ -200,65 +200,75 @@ def _require_matching_shape(
         )
 
 
-def _neighbor_output(
-    image: np.ndarray,
-    measurements: list,
-    *,
-    retained_images: tuple[np.ndarray, ...],
-) -> tuple:
-    """Return retained images first so artifact contracts map them by kind."""
-    if retained_images:
-        return (*retained_images, measurements)
-    return image, measurements
+@dataclass(frozen=True)
+class NeighborRetainedImageRequest:
+    """Own sidecar image materialization and return ordering for neighbor metrics."""
 
+    labels: np.ndarray
+    retain_neighbor_count_image: bool
+    neighbor_count_colormap: str
+    retain_percent_touching_image: bool
+    percent_touching_colormap: str
 
-def _retained_neighbor_images(
-    labels: np.ndarray,
-    neighbor_count_image: np.ndarray,
-    percent_touching_image: np.ndarray,
-    *,
-    retain_neighbor_count_image: bool,
-    neighbor_count_colormap: str,
-    retain_percent_touching_image: bool,
-    percent_touching_colormap: str,
-) -> tuple[np.ndarray, ...]:
-    retained: list[np.ndarray] = []
-    if retain_neighbor_count_image:
-        retained.append(
-            _colored_object_metric_image(
-                labels,
-                neighbor_count_image,
-                neighbor_count_colormap,
-            )
+    def empty_metric_image(self) -> np.ndarray:
+        return np.zeros_like(self.labels, dtype=float)
+
+    def output(
+        self,
+        image: np.ndarray,
+        measurements: list,
+        *,
+        neighbor_count_image: np.ndarray,
+        percent_touching_image: np.ndarray,
+    ) -> tuple:
+        retained = self.retained_images(
+            neighbor_count_image=neighbor_count_image,
+            percent_touching_image=percent_touching_image,
         )
-    if retain_percent_touching_image:
-        retained.append(
-            _colored_object_metric_image(
-                labels,
-                percent_touching_image,
-                percent_touching_colormap,
+        if retained:
+            return (*retained, measurements)
+        return image, measurements
+
+    def retained_images(
+        self,
+        *,
+        neighbor_count_image: np.ndarray,
+        percent_touching_image: np.ndarray,
+    ) -> tuple[np.ndarray, ...]:
+        retained: list[np.ndarray] = []
+        if self.retain_neighbor_count_image:
+            retained.append(
+                self.colored_metric_image(
+                    neighbor_count_image,
+                    self.neighbor_count_colormap,
+                )
             )
+        if self.retain_percent_touching_image:
+            retained.append(
+                self.colored_metric_image(
+                    percent_touching_image,
+                    self.percent_touching_colormap,
+                )
+            )
+        return tuple(retained)
+
+    def colored_metric_image(
+        self,
+        metric_image: np.ndarray,
+        colormap_name: str,
+    ) -> np.ndarray:
+        """Color one object metric image using CellProfiler-style masked RGB output."""
+        import matplotlib.cm
+
+        cmap_name = str(colormap_name).strip() or "Default"
+        if cmap_name.lower() == "default":
+            cmap_name = "viridis"
+        scalar_mappable = matplotlib.cm.ScalarMappable(
+            cmap=matplotlib.cm.get_cmap(cmap_name)
         )
-    return tuple(retained)
-
-
-def _colored_object_metric_image(
-    labels: np.ndarray,
-    metric_image: np.ndarray,
-    colormap_name: str,
-) -> np.ndarray:
-    """Color one object metric image using CellProfiler-style masked RGB output."""
-    import matplotlib.cm
-
-    cmap_name = str(colormap_name).strip() or "Default"
-    if cmap_name.lower() == "default":
-        cmap_name = "viridis"
-    scalar_mappable = matplotlib.cm.ScalarMappable(
-        cmap=matplotlib.cm.get_cmap(cmap_name)
-    )
-    rgb = scalar_mappable.to_rgba(metric_image)[:, :, :3]
-    rgb[labels <= 0] = 0
-    return rgb
+        rgb = scalar_mappable.to_rgba(metric_image)[:, :, :3]
+        rgb[self.labels <= 0] = 0
+        return rgb
 
 
 @numpy
@@ -320,6 +330,13 @@ def measure_object_neighbors(
     profile_mark = profile_start
     labels = object_label_dense_array(labels, dtype=np.int32)
     final_labels = labels
+    retained_image_request = NeighborRetainedImageRequest(
+        labels=final_labels,
+        retain_neighbor_count_image=retain_neighbor_count_image,
+        neighbor_count_colormap=neighbor_count_colormap,
+        retain_percent_touching_image=retain_percent_touching_image,
+        percent_touching_colormap=percent_touching_colormap,
+    )
     neighbor_final_labels = (
         final_labels
         if neighbor_labels is None
@@ -357,18 +374,12 @@ def measure_object_neighbors(
     final_object_count = int(final_labels.max()) if final_labels.size else 0
     
     if final_object_count == 0:
-        return _neighbor_output(
+        empty_metric_image = retained_image_request.empty_metric_image()
+        return retained_image_request.output(
             image,
             [],
-            retained_images=_retained_neighbor_images(
-                final_labels,
-                np.zeros_like(final_labels, dtype=float),
-                np.zeros_like(final_labels, dtype=float),
-                retain_neighbor_count_image=retain_neighbor_count_image,
-                neighbor_count_colormap=neighbor_count_colormap,
-                retain_percent_touching_image=retain_percent_touching_image,
-                percent_touching_colormap=percent_touching_colormap,
-            ),
+            neighbor_count_image=empty_metric_image,
+            percent_touching_image=empty_metric_image,
         )
 
     measured_topology_labels = measured_variant_labels
@@ -438,18 +449,12 @@ def measure_object_neighbors(
                 second_closest_distance=0.0,
                 angle_between_neighbors=0.0,
             ))
-        return _neighbor_output(
+        empty_metric_image = retained_image_request.empty_metric_image()
+        return retained_image_request.output(
             image,
             measurements,
-            retained_images=_retained_neighbor_images(
-                final_labels,
-                np.zeros_like(final_labels, dtype=float),
-                np.zeros_like(final_labels, dtype=float),
-                retain_neighbor_count_image=retain_neighbor_count_image,
-                neighbor_count_colormap=neighbor_count_colormap,
-                retain_percent_touching_image=retain_percent_touching_image,
-                percent_touching_colormap=percent_touching_colormap,
-            ),
+            neighbor_count_image=empty_metric_image,
+            percent_touching_image=empty_metric_image,
         )
     
     # Initialize measurement arrays
@@ -648,18 +653,11 @@ def measure_object_neighbors(
         variant_object_count=variant_object_count,
         variant_neighbor_count=variant_neighbor_count,
     )
-    return _neighbor_output(
+    return retained_image_request.output(
         image,
         measurements,
-        retained_images=_retained_neighbor_images(
-            final_labels,
-            neighbor_count_image,
-            percent_touching_image,
-            retain_neighbor_count_image=retain_neighbor_count_image,
-            neighbor_count_colormap=neighbor_count_colormap,
-            retain_percent_touching_image=retain_percent_touching_image,
-            percent_touching_colormap=percent_touching_colormap,
-        ),
+        neighbor_count_image=neighbor_count_image,
+        percent_touching_image=percent_touching_image,
     )
 
 
