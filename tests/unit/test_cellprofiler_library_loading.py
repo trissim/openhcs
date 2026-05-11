@@ -47,9 +47,11 @@ from benchmark.cellprofiler_library.functions.measurecolocalization import (
     measure_colocalization_objects,
     _costes_first_channel_bin_threshold,
     _divide_costes_measurements,
-    _thresholded_colocalization_metrics_numba,
 )
-from openhcs.processing.backends.cellprofiler.colocalization import costes_backend
+from openhcs.processing.backends.cellprofiler.colocalization import (
+    costes_backend,
+    thresholded_colocalization_metrics,
+)
 from benchmark.cellprofiler_library.functions.opening import opening
 from benchmark.cellprofiler_library.functions.overlayobjects import overlay_objects
 from benchmark.cellprofiler_library.functions.overlayoutlines import overlay_outlines
@@ -776,7 +778,7 @@ def test_measure_colocalization_threshold_metrics_match_numpy_semantics():
         product_sum / (second_thresholded**2).sum(),
     )
 
-    observed = _thresholded_colocalization_metrics_numba(
+    observed = thresholded_colocalization_metrics(
         first,
         second,
         threshold_percent,

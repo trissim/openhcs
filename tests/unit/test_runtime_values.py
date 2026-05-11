@@ -7,6 +7,7 @@ from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     FieldSpec,
     DenseObjectLabelSliceStack,
+    ImagePayloadChannelProjection,
     ImagePayloadMetadata,
     ImageMetadataPayload,
     MeasurementTable,
@@ -765,6 +766,28 @@ def test_derived_image_payload_context_projects_bundle_mask_to_single_output() -
 
     assert isinstance(result, MaskedImagePayload)
     np.testing.assert_array_equal(result.mask, np.all(mask, axis=0))
+
+
+def test_image_payload_channel_projection_preserves_channel_mask_and_metadata() -> None:
+    data = np.zeros((2, 3, 4), dtype=np.float32)
+    mask = np.ones_like(data, dtype=bool)
+    mask[1, 0, 0] = False
+    payload = MaskedImagePayload(
+        data=data,
+        mask=mask,
+        metadata=ImagePayloadMetadata(
+            channel_intensity_scales=(255.0, 65535.0),
+            channel_source_dtypes=("uint8", "uint16"),
+        ),
+    )
+
+    result = ImagePayloadChannelProjection.from_channel(payload, data, 1).payload()
+
+    assert isinstance(result, MaskedImagePayload)
+    assert result.data.shape == (1, 3, 4)
+    np.testing.assert_array_equal(result.mask, mask[1:2])
+    assert result.metadata.intensity_scale == 65535.0
+    assert result.metadata.source_dtype == "uint16"
 
 
 def test_masked_image_payload_accepts_grayscale_volume_stack_mask_domains() -> None:

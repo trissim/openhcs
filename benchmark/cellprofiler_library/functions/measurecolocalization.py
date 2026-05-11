@@ -23,11 +23,11 @@ from openhcs.core.pipeline.function_contracts import (
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_values import (
     DenseObjectLabelAggregation,
+    ImagePayloadChannelProjection,
     image_intensity_scale_for_dtype,
     image_payload_data,
     image_payload_metadata,
     image_payload_mask,
-    image_payload_with_context,
     object_label_dense_array,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -36,6 +36,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.cellprofiler.colocalization import (
     ColocalizationCostesBackendStrategy,
     costes_backend,
+    thresholded_colocalization_metrics,
 )
 from openhcs.processing.materialization import csv_materializer
 import scipy.ndimage
@@ -529,7 +530,7 @@ def _colocalization_measurement(
                 overlap,
                 k1,
                 k2,
-            ) = _thresholded_colocalization_metrics(
+            ) = thresholded_colocalization_metrics(
                 np.ascontiguousarray(fi),
                 np.ascontiguousarray(si),
                 float(options.threshold_percent),
@@ -610,263 +611,6 @@ def _colocalization_measurement(
     return result
 
 
-def _thresholded_colocalization_metrics(
-    first: np.ndarray,
-    second: np.ndarray,
-    threshold_percent: float,
-    do_manders: bool,
-    do_rwc: bool,
-    do_overlap: bool,
-    preferred_scale: int | None = None,
-    proven_unit_interval_scale: int | None = None,
-) -> tuple[float, float, float, float, float, float, float]:
-    if not do_rwc:
-        empty_ranks = np.empty(0, dtype=np.int64)
-        return _thresholded_colocalization_metrics_with_ranks_numba(
-            first,
-            second,
-            empty_ranks,
-            empty_ranks,
-            threshold_percent,
-            do_manders,
-            False,
-            do_overlap,
-        )
-
-    first_ranks = _dense_ranks(
-        first,
-        preferred_scale=preferred_scale,
-        proven_unit_interval_scale=proven_unit_interval_scale,
-    )
-    second_ranks = _dense_ranks(
-        second,
-        preferred_scale=preferred_scale,
-        proven_unit_interval_scale=proven_unit_interval_scale,
-    )
-    return _thresholded_colocalization_metrics_with_ranks_numba(
-        first,
-        second,
-        first_ranks,
-        second_ranks,
-        threshold_percent,
-        do_manders,
-        True,
-        do_overlap,
-    )
-
-
-def _dense_ranks(
-    values: np.ndarray,
-    *,
-    preferred_scale: int | None = None,
-    proven_unit_interval_scale: int | None = None,
-) -> np.ndarray:
-    if proven_unit_interval_scale is not None:
-        return _dense_ranks_for_proven_unit_interval(
-            values,
-            int(proven_unit_interval_scale),
-        )
-    quantized_ranks = _dense_ranks_for_integer_unit_interval(
-        values,
-        preferred_scale=preferred_scale,
-    )
-    if quantized_ranks is not None:
-        return quantized_ranks
-    return np.ascontiguousarray(
-        np.unique(values, return_inverse=True)[1],
-        dtype=np.int64,
-    )
-
-
-def _dense_ranks_for_proven_unit_interval(
-    values: np.ndarray,
-    scale: int,
-) -> np.ndarray:
-    """Return dense ranks when metadata proves values are exact code / scale."""
-    codes = np.rint(np.asarray(values) * int(scale)).astype(np.int64, copy=False)
-    present = np.bincount(codes.ravel(), minlength=int(scale) + 1) > 0
-    lookup = np.cumsum(present, dtype=np.int64) - 1
-    return np.ascontiguousarray(lookup[codes], dtype=np.int64)
-
-
-def _dense_ranks_for_integer_unit_interval(
-    values: np.ndarray,
-    *,
-    preferred_scale: int | None = None,
-) -> np.ndarray | None:
-    values_array = np.asarray(values)
-    if values_array.size == 0 or values_array.dtype.kind not in {"f", "u", "i"}:
-        return None
-    minimum = np.min(values_array)
-    maximum = np.max(values_array)
-    if not np.isfinite(minimum) or not np.isfinite(maximum):
-        return None
-    if minimum < 0 or maximum > 1:
-        return None
-    scales = (
-        (preferred_scale, 65535, 255)
-        if preferred_scale is not None
-        else (65535, 255)
-    )
-    for scale in dict.fromkeys(int(candidate) for candidate in scales if candidate):
-        codes = np.rint(values_array * scale).astype(np.int64, copy=False)
-        if np.any(codes < 0) or np.any(codes > scale):
-            continue
-        reconstructed = (
-            codes.astype(values_array.dtype, copy=False)
-            / values_array.dtype.type(scale)
-        )
-        if not np.array_equal(values_array, reconstructed):
-            continue
-        present = np.bincount(codes.ravel(), minlength=scale + 1) > 0
-        lookup = np.cumsum(present, dtype=np.int64) - 1
-        return np.ascontiguousarray(lookup[codes], dtype=np.int64)
-    return None
-
-
-def _thresholded_colocalization_metrics_numba(
-    first: np.ndarray,
-    second: np.ndarray,
-    threshold_percent: float,
-    do_manders: bool,
-    do_rwc: bool,
-    do_overlap: bool,
-    preferred_scale: int | None = None,
-    proven_unit_interval_scale: int | None = None,
-) -> tuple[float, float, float, float, float, float, float]:
-    """Compatibility entrypoint for the Numba-backed metric reducer."""
-    return _thresholded_colocalization_metrics(
-        first,
-        second,
-        threshold_percent,
-        do_manders,
-        do_rwc,
-        do_overlap,
-        preferred_scale,
-        proven_unit_interval_scale,
-    )
-
-
-@njit(cache=True)
-def _thresholded_colocalization_metrics_with_ranks_numba(
-    first: np.ndarray,
-    second: np.ndarray,
-    first_ranks: np.ndarray,
-    second_ranks: np.ndarray,
-    threshold_percent: float,
-    do_manders: bool,
-    do_rwc: bool,
-    do_overlap: bool,
-) -> tuple[float, float, float, float, float, float, float]:
-    count = first.size
-    nan_value = np.nan
-    if count == 0:
-        return (
-            nan_value,
-            nan_value,
-            nan_value,
-            nan_value,
-            nan_value,
-            nan_value,
-            nan_value,
-        )
-
-    first_max = first[0]
-    second_max = second[0]
-    for index in range(1, count):
-        if first[index] > first_max:
-            first_max = first[index]
-        if second[index] > second_max:
-            second_max = second[index]
-
-    first_threshold = threshold_percent * first_max / 100.0
-    second_threshold = threshold_percent * second_max / 100.0
-
-    first_threshold_total = 0.0
-    second_threshold_total = 0.0
-    combined_first_total = 0.0
-    combined_second_total = 0.0
-    combined_first_square_total = 0.0
-    combined_second_square_total = 0.0
-    combined_product_total = 0.0
-    combined_count = 0
-    for index in range(count):
-        first_value = first[index]
-        second_value = second[index]
-        first_above = first_value > first_threshold
-        second_above = second_value > second_threshold
-        if first_above:
-            first_threshold_total += first_value
-        if second_above:
-            second_threshold_total += second_value
-        if first_above and second_above:
-            combined_count += 1
-            combined_first_total += first_value
-            combined_second_total += second_value
-            combined_first_square_total += first_value * first_value
-            combined_second_square_total += second_value * second_value
-            combined_product_total += first_value * second_value
-
-    if combined_count == 0:
-        return (
-            nan_value,
-            nan_value,
-            nan_value,
-            nan_value,
-            nan_value,
-            nan_value,
-            nan_value,
-        )
-
-    manders_m1 = nan_value
-    manders_m2 = nan_value
-    if do_manders and first_threshold_total > 0.0 and second_threshold_total > 0.0:
-        manders_m1 = combined_first_total / first_threshold_total
-        manders_m2 = combined_second_total / second_threshold_total
-
-    overlap = nan_value
-    k1 = nan_value
-    k2 = nan_value
-    if do_overlap:
-        denominator = np.sqrt(
-            combined_first_square_total * combined_second_square_total
-        )
-        if denominator > 0.0:
-            overlap = combined_product_total / denominator
-        if combined_first_square_total > 0.0:
-            k1 = combined_product_total / combined_first_square_total
-        if combined_second_square_total > 0.0:
-            k2 = combined_product_total / combined_second_square_total
-
-    rwc1 = nan_value
-    rwc2 = nan_value
-    if do_rwc and first_threshold_total > 0.0 and second_threshold_total > 0.0:
-        max_rank = 0
-        for index in range(count):
-            if first_ranks[index] > max_rank:
-                max_rank = first_ranks[index]
-            if second_ranks[index] > max_rank:
-                max_rank = second_ranks[index]
-        rank_count = float(max_rank + 1)
-        weighted_first_total = 0.0
-        weighted_second_total = 0.0
-        for index in range(count):
-            first_value = first[index]
-            second_value = second[index]
-            if first_value <= first_threshold or second_value <= second_threshold:
-                continue
-            rank_delta = first_ranks[index] - second_ranks[index]
-            if rank_delta < 0:
-                rank_delta = -rank_delta
-            weight = (rank_count - float(rank_delta)) / rank_count
-            weighted_first_total += first_value * weight
-            weighted_second_total += second_value * weight
-        rwc1 = weighted_first_total / first_threshold_total
-        rwc2 = weighted_second_total / second_threshold_total
-
-    return manders_m1, manders_m2, rwc1, rwc2, overlap, k1, k2
-
-
 @njit(cache=True)
 def _costes_manders_numba(
     first: np.ndarray,
@@ -916,45 +660,9 @@ def _pixel_dtype_threshold(pixels: np.ndarray, threshold: float) -> float:
     return float(np.asarray(threshold, dtype=np.asarray(pixels).dtype).item())
 
 
-@njit(cache=True)
-def _dense_rank_values_numba(values: np.ndarray) -> np.ndarray:
-    order = np.argsort(values)
-    ranks = np.empty(values.size, dtype=np.int64)
-    current_rank = 0
-    if values.size == 0:
-        return ranks
-    ranks[order[0]] = current_rank
-    previous = values[order[0]]
-    for sorted_index in range(1, values.size):
-        value = values[order[sorted_index]]
-        if value != previous:
-            current_rank += 1
-            previous = value
-        ranks[order[sorted_index]] = current_rank
-    return ranks
-
-
 def _cellprofiler_float_pixels(image: np.ndarray) -> np.ndarray:
     """Return image pixels in CellProfiler's native float image domain."""
     return np.asarray(image_payload_data(image), dtype=np.float32)
-
-
-def _channel_output_payload(
-    image: object,
-    image_data: np.ndarray,
-    channel_index: int,
-) -> object:
-    """Return one channel while preserving compatible image-mask semantics."""
-    output = image_data[channel_index : channel_index + 1]
-    mask = image_payload_mask(image)
-    metadata = image_payload_metadata(image).for_channel(channel_index)
-    if mask is None:
-        return image_payload_with_context(output, metadata=metadata)
-
-    mask_array = np.asarray(mask, dtype=bool)
-    if mask_array.shape == image_data.shape:
-        mask_array = mask_array[channel_index : channel_index + 1]
-    return image_payload_with_context(output, mask=mask_array, metadata=metadata)
 
 
 def _colocalization_unit_interval_scale(
@@ -1096,7 +804,11 @@ def measure_colocalization(
     
     # Return first selected channel as the output image
     phase_started_at = time.perf_counter()
-    output = _channel_output_payload(image, image_data, channel_1)
+    output = ImagePayloadChannelProjection.from_channel(
+        image,
+        image_data,
+        channel_1,
+    ).payload()
     _log_profile(
         "measure_coloc_output_payload",
         time.perf_counter() - phase_started_at,
@@ -1166,7 +878,14 @@ def measure_colocalization_objects(
         )
     max_label = object_label_context.max_label
     if max_label <= 0:
-        return _channel_output_payload(image, image_data, channel_1), []
+        return (
+            ImagePayloadChannelProjection.from_channel(
+                image,
+                image_data,
+                channel_1,
+            ).payload(),
+            [],
+        )
 
     label_range = object_label_context.label_range
     options = ColocalizationMeasurementOptions(
@@ -1192,7 +911,11 @@ def measure_colocalization_objects(
     object_mask = object_label_context.object_mask
     if not object_label_context.object_labels.size:
         return (
-            _channel_output_payload(image, image_data, channel_1),
+            ImagePayloadChannelProjection.from_channel(
+                image,
+                image_data,
+                channel_1,
+            ).payload(),
             [
                 ObjectColocalizationMeasurements.from_values(int(object_label))
                 for object_label in label_range
@@ -1383,7 +1106,11 @@ def measure_colocalization_objects(
             )
 
     return (
-        _channel_output_payload(image, image_data, channel_1),
+        ImagePayloadChannelProjection.from_channel(
+            image,
+            image_data,
+            channel_1,
+        ).payload(),
         [
             ObjectColocalizationMeasurements.from_values(
                 int(object_label),

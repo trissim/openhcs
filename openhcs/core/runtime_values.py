@@ -615,6 +615,48 @@ def image_payload_mask_slice(mask: Any, channel_index: int) -> Any:
     return mask
 
 
+@dataclass(frozen=True, slots=True)
+class ImagePayloadChannelProjection:
+    """Project one channel while preserving payload metadata and mask semantics."""
+
+    source_payload: Any
+    source_data: Any
+    channel_index: int
+    channel_data: Any
+
+    @classmethod
+    def from_channel(
+        cls,
+        source_payload: Any,
+        source_data: Any,
+        channel_index: int,
+    ) -> "ImagePayloadChannelProjection":
+        return cls(
+            source_payload=source_payload,
+            source_data=source_data,
+            channel_index=channel_index,
+            channel_data=source_data[channel_index : channel_index + 1],
+        )
+
+    def payload(self) -> Any:
+        return image_payload_with_context(
+            self.channel_data,
+            mask=self.projected_mask(),
+            metadata=image_payload_metadata(self.source_payload).for_channel(
+                self.channel_index,
+            ),
+        )
+
+    def projected_mask(self) -> Any | None:
+        mask = image_payload_mask(self.source_payload)
+        if mask is None:
+            return None
+        mask_array = np.asarray(mask, dtype=bool)
+        if mask_array.shape == np.asarray(self.source_data).shape:
+            return mask_array[self.channel_index : self.channel_index + 1]
+        return mask_array
+
+
 def image_payload_spatial_shape_yx(payload: Any) -> tuple[int, int] | None:
     """Return the XY image shape for a nominal image payload."""
     import numpy as np
