@@ -16,11 +16,16 @@ from numba import njit, prange
 import scipy.interpolate
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
-    image_intensity_scale_for_dtype,
     image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    image_payload_with_context,
+    image_intensity_scale_for_dtype,
     normalize_image_payload_intensity,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
@@ -35,6 +40,8 @@ from openhcs.processing.backends.cellprofiler.perf_fixtures import (
     capture_array_fixture,
     capture_enabled,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer
 
 
 CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
@@ -1970,6 +1977,147 @@ def cellprofiler_threshold_diagnostics(
         function="cellprofiler_threshold_diagnostics",
     )
     return result
+
+
+ThresholdScope = CellProfilerThresholdScope
+ThresholdMethod = CellProfilerThresholdMethod
+Assignment = CellProfilerThresholdAssignment
+AveragingMethod = CellProfilerAveragingMethod
+VarianceMethod = CellProfilerVarianceMethod
+
+
+@dataclass
+class ThresholdResult:
+    """Threshold measurement row emitted by the CP-compatible Threshold module."""
+
+    slice_index: int
+    final_threshold: float
+    original_threshold: float
+    guide_threshold: float
+    sigma: float
+    weighted_variance: float = 0.0
+    sum_of_entropies: float = 0.0
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_outputs(
+    (
+        "threshold_results",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "final_threshold",
+                "original_threshold",
+                "guide_threshold",
+                "sigma",
+            ],
+            analysis_type="threshold",
+        ),
+    )
+)
+def threshold(
+    image: np.ndarray,
+    mask: np.ndarray | None = None,
+    threshold_scope: ThresholdScope | str = ThresholdScope.GLOBAL,
+    threshold_method: ThresholdMethod | str = ThresholdMethod.OTSU,
+    assign_middle_to_foreground: Assignment | str = Assignment.FOREGROUND,
+    log_transform: bool = False,
+    threshold_correction_factor: float = 1.0,
+    threshold_min: float = 0.0,
+    threshold_max: float = 1.0,
+    window_size: int = 50,
+    smoothing: float = 0.0,
+    lower_outlier_fraction: float = 0.05,
+    upper_outlier_fraction: float = 0.05,
+    averaging_method: AveragingMethod | str = AveragingMethod.MEAN,
+    variance_method: VarianceMethod | str = VarianceMethod.STANDARD_DEVIATION,
+    number_of_deviations: float = 2.0,
+    predefined_threshold: float | None = None,
+    automatic: bool = False,
+    otsu_class_count: CellProfilerOtsuMethod | str = CellProfilerOtsuMethod.TWO_CLASS,
+    use_advanced_settings: bool = True,
+) -> tuple[np.ndarray, ThresholdResult]:
+    """Apply CP-compatible thresholding and emit the module measurement row."""
+    source_payload = image
+    image = np.asarray(image_payload_data(source_payload), dtype=np.float32)
+    if mask is not None:
+        mask = np.asarray(image_payload_data(mask))
+    else:
+        mask = image_payload_mask(source_payload)
+    if mask is not None:
+        mask = np.asarray(mask, dtype=bool)
+
+    threshold_scope = coerce_cellprofiler_enum(ThresholdScope, threshold_scope)
+    threshold_method = coerce_cellprofiler_enum(ThresholdMethod, threshold_method)
+    assign_middle_to_foreground = coerce_cellprofiler_enum(
+        Assignment,
+        assign_middle_to_foreground,
+    )
+    averaging_method = coerce_cellprofiler_enum(AveragingMethod, averaging_method)
+    variance_method = coerce_cellprofiler_enum(VarianceMethod, variance_method)
+    otsu_class_count = coerce_cellprofiler_enum(CellProfilerOtsuMethod, otsu_class_count)
+
+    guide_threshold = 0.0
+
+    if automatic:
+        smoothing = 1.0
+        log_transform = False
+        threshold_scope = ThresholdScope.GLOBAL
+        threshold_method = ThresholdMethod.MINIMUM_CROSS_ENTROPY
+
+    if threshold_method is ThresholdMethod.MANUAL and predefined_threshold is None:
+        predefined_threshold = 0.0
+    if predefined_threshold is not None:
+        threshold_method = ThresholdMethod.MANUAL
+
+    binary_image, final_threshold, original_threshold = cellprofiler_threshold(
+        image,
+        use_advanced_settings=use_advanced_settings,
+        threshold_scope=threshold_scope,
+        threshold_method=threshold_method,
+        otsu_class_count=otsu_class_count,
+        assign_middle_to_foreground=assign_middle_to_foreground,
+        log_transform=log_transform,
+        threshold_correction_factor=threshold_correction_factor,
+        threshold_min=threshold_min,
+        threshold_max=threshold_max,
+        threshold_smoothing_scale=smoothing,
+        adaptive_window_size=window_size,
+        lower_outlier_fraction=lower_outlier_fraction,
+        upper_outlier_fraction=upper_outlier_fraction,
+        averaging_method=averaging_method,
+        variance_method=variance_method,
+        number_of_deviations=number_of_deviations,
+        manual_threshold=(
+            float(predefined_threshold)
+            if predefined_threshold is not None
+            else 0.0
+        ),
+        mask=mask,
+    )
+    diagnostics = cellprofiler_threshold_diagnostics(
+        image,
+        binary_image,
+        final_threshold=final_threshold,
+        original_threshold=original_threshold,
+        mask=mask,
+    )
+    output_image = image_payload_with_context(
+        binary_image.astype(np.float32),
+        mask=mask,
+        metadata=image_payload_metadata(
+            source_payload
+        ).without_unit_interval_intensity_scale(),
+    )
+    return output_image, ThresholdResult(
+        slice_index=0,
+        final_threshold=float(final_threshold),
+        original_threshold=float(original_threshold),
+        guide_threshold=guide_threshold,
+        sigma=float(smoothing),
+        weighted_variance=diagnostics.weighted_variance,
+        sum_of_entropies=diagnostics.sum_of_entropies,
+    )
 
 
 def _finite_flat_float64(values: np.ndarray) -> np.ndarray:
@@ -4004,8 +4152,24 @@ __all__ = [
     "NumbaNumpyThresholdDiagnosticsBackendStrategy",
     "NumbaNumpyThresholdSmoothingBackendStrategy",
     "NumpyThresholdDiagnosticsBackendStrategy",
+    "Assignment",
+    "AveragingMethod",
+    "CellProfilerAveragingMethod",
+    "CellProfilerOtsuMethod",
+    "CellProfilerThresholdAssignment",
+    "CellProfilerThresholdDiagnostics",
+    "CellProfilerThresholdMethod",
+    "CellProfilerThresholdScope",
+    "CellProfilerVarianceMethod",
     "ThresholdDiagnosticsBackendStrategy",
+    "ThresholdMethod",
     "ThresholdPrimitiveBackendStrategy",
+    "ThresholdResult",
+    "ThresholdScope",
     "ThresholdSmoothingBackendStrategy",
+    "VarianceMethod",
+    "cellprofiler_threshold",
+    "cellprofiler_threshold_diagnostics",
+    "threshold",
     "threshold_primitives",
 ]
