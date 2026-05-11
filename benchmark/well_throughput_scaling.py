@@ -9,6 +9,7 @@ import threading
 import time
 from collections.abc import Iterable, Sequence
 from dataclasses import asdict, dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +39,35 @@ WELL_THROUGHPUT_ROWS_CSV = "well_throughput.csv"
 WELL_THROUGHPUT_EVENTS_CSV = "well_throughput_progress_events.csv"
 WELL_THROUGHPUT_LANES_CSV = "well_throughput_worker_lanes.csv"
 WELL_THROUGHPUT_STEPS_CSV = "well_throughput_step_timings.csv"
+
+
+class WorkerLaneEventPhase(str, Enum):
+    """Progress-event phases that update benchmark worker-lane summaries."""
+
+    AXIS_STARTED = "axis_started"
+    AXIS_COMPLETED = "axis_completed"
+
+    @classmethod
+    def from_event(cls, event: dict[str, Any]) -> "WorkerLaneEventPhase | None":
+        raw_phase = event.get("phase")
+        if raw_phase is None:
+            return None
+        try:
+            return cls(str(raw_phase))
+        except ValueError:
+            return None
+
+    def apply_to_lane(self, lane: dict[str, Any], timestamp: float) -> None:
+        """Apply this phase to one worker-lane aggregation row."""
+        if self is WorkerLaneEventPhase.AXIS_STARTED:
+            if lane["started_at"] == "" or timestamp < float(lane["started_at"]):
+                lane["started_at"] = timestamp
+            return
+        if self is WorkerLaneEventPhase.AXIS_COMPLETED:
+            lane["axis_count"] += 1
+            if lane["completed_at"] == "" or timestamp > float(lane["completed_at"]):
+                lane["completed_at"] = timestamp
+            return
 
 
 @dataclass(frozen=True, slots=True)
@@ -375,15 +405,11 @@ def _write_worker_lane_csv(
                 "lane_seconds": "",
             },
         )
-        phase = event.get("phase")
+        phase = WorkerLaneEventPhase.from_event(event)
+        if phase is None:
+            continue
         timestamp = float(event["timestamp"])
-        if phase == "axis_started":
-            if lane["started_at"] == "" or timestamp < float(lane["started_at"]):
-                lane["started_at"] = timestamp
-        elif phase == "axis_completed":
-            lane["axis_count"] += 1
-            if lane["completed_at"] == "" or timestamp > float(lane["completed_at"]):
-                lane["completed_at"] = timestamp
+        phase.apply_to_lane(lane, timestamp)
 
     for lane in lanes.values():
         if lane["started_at"] != "" and lane["completed_at"] != "":
