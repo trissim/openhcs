@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
@@ -85,6 +86,7 @@ class ImageQualityThresholdStrategy(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "method"
     __skip_if_no_key__ = True
     method: ClassVar[ThresholdMethod | None] = None
+    primitive: ClassVar[Callable[[object, np.ndarray], float] | None] = None
 
     @classmethod
     def for_method(cls, method: ThresholdMethod) -> "ImageQualityThresholdStrategy":
@@ -93,58 +95,47 @@ class ImageQualityThresholdStrategy(ABC, metaclass=AutoRegisterMeta):
             raise NotImplementedError(f"Threshold method {method} not supported.")
         return strategy_type()
 
-    @abstractmethod
     def threshold(self, values: np.ndarray) -> float:
         """Return the requested threshold for a non-constant image."""
+        primitive = type(self).primitive
+        if primitive is None:
+            raise NotImplementedError(f"{type(self).__name__} has no primitive.")
+        return primitive(threshold_primitives(), values)
 
 
 class OtsuImageQualityThresholdStrategy(ImageQualityThresholdStrategy):
     method = ThresholdMethod.OTSU
-
-    def threshold(self, values: np.ndarray) -> float:
-        return threshold_primitives().weighted_otsu_threshold(values)
+    primitive = lambda primitives, values: primitives.weighted_otsu_threshold(values)
 
 
 class LiImageQualityThresholdStrategy(ImageQualityThresholdStrategy):
     method = ThresholdMethod.LI
-
-    def threshold(self, values: np.ndarray) -> float:
-        return threshold_primitives().li_threshold(values)
+    primitive = lambda primitives, values: primitives.li_threshold(values)
 
 
 class TriangleImageQualityThresholdStrategy(ImageQualityThresholdStrategy):
     method = ThresholdMethod.TRIANGLE
-
-    def threshold(self, values: np.ndarray) -> float:
-        return threshold_primitives().triangle_threshold(values)
+    primitive = lambda primitives, values: primitives.triangle_threshold(values)
 
 
 class IsodataImageQualityThresholdStrategy(ImageQualityThresholdStrategy):
     method = ThresholdMethod.ISODATA
-
-    def threshold(self, values: np.ndarray) -> float:
-        return threshold_primitives().isodata_threshold(values)
+    primitive = lambda primitives, values: primitives.isodata_threshold(values)
 
 
 class MinimumImageQualityThresholdStrategy(ImageQualityThresholdStrategy):
     method = ThresholdMethod.MINIMUM
-
-    def threshold(self, values: np.ndarray) -> float:
-        return threshold_primitives().minimum_threshold(values)
+    primitive = lambda primitives, values: primitives.minimum_threshold(values)
 
 
 class MeanImageQualityThresholdStrategy(ImageQualityThresholdStrategy):
     method = ThresholdMethod.MEAN
-
-    def threshold(self, values: np.ndarray) -> float:
-        return threshold_primitives().mean_threshold(values)
+    primitive = lambda primitives, values: primitives.mean_threshold(values)
 
 
 class YenImageQualityThresholdStrategy(ImageQualityThresholdStrategy):
     method = ThresholdMethod.YEN
-
-    def threshold(self, values: np.ndarray) -> float:
-        return threshold_primitives().yen_threshold(values)
+    primitive = lambda primitives, values: primitives.yen_threshold(values)
 
 
 class NumpyImageQualityBackendStrategy(ImageQualityBackendStrategy):
