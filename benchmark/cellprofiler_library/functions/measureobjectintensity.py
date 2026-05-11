@@ -59,69 +59,17 @@ class ObjectIntensityMeasurement:
     max_intensity_y: float
     max_intensity_z: float
 
-
-@dataclass
-class ObjectIntensityResults:
-    """Collection of intensity measurements for all objects."""
-    slice_index: int
-    object_count: int
-    measurements: List[ObjectIntensityMeasurement]
-
-
-ObjectIntensityLabelInput = np.ndarray | ObjectLabelPayload | ObjectLabelSet
-
-
-def _fixup_scipy_result(result):
-    """Convert scipy.ndimage result to proper array format."""
-    if np.isscalar(result):
-        return np.array([result])
-    return np.asarray(result)
-
-
-def _first_scalar_position(position) -> int:
-    """Return the first scalar index from scipy's nested position shapes."""
-    if np.isscalar(position):
-        return int(position)
-    if isinstance(position, np.ndarray):
-        return _first_scalar_position(position.tolist())
-    if hasattr(position, "__len__") and len(position) > 0:
-        return _first_scalar_position(position[0])
-    raise ValueError(f"Cannot extract scalar position from {position!r}.")
-
-
-def _measure_object_intensity_batch(
-    request: RuntimePure2DSliceBatchRequest,
-) -> list[Any]:
-    kwargs = request.kwargs
-    label_stack = DenseObjectLabelSliceStack.from_payload(
-        kwargs["labels"],
-        slice_count=request.slice_count,
-        dtype=np.int32,
-    )
-    if label_stack is None:
-        return [
-            request.execute_one(slice_index)
-            for slice_index in range(request.slice_count)
-        ]
-
-    backend_provider = kwargs.get("object_intensity_backend_provider")
-    results: list[Any] = []
-    for slice_index, slice_2d in enumerate(request.slices_2d):
-        measurements = _measure_object_intensity_measurements(
-            image_payload_data(slice_2d),
-            label_stack.slice(slice_index),
-            slice_index=slice_index,
-            backend_provider=backend_provider,
-        )
-        results.append((slice_2d, measurements))
-    return results
-
-
-def _measurements_from_arrays(arrays: Any, slice_index: int) -> list[ObjectIntensityMeasurement]:
-    if arrays.object_labels.size == 0:
-        return []
-    return [
-        ObjectIntensityMeasurement(
+    @classmethod
+    def from_backend_arrays(
+        cls,
+        arrays: Any,
+        *,
+        index: int,
+        label: int,
+        slice_index: int,
+    ) -> "ObjectIntensityMeasurement":
+        """Materialize one CP object-intensity row from backend arrays."""
+        return cls(
             slice_index=slice_index,
             object_label=int(label),
             integrated_intensity=float(arrays.integrated_intensity[index]),
@@ -146,8 +94,99 @@ def _measurements_from_arrays(arrays: Any, slice_index: int) -> list[ObjectInten
             max_intensity_y=float(arrays.max_intensity_y[index]),
             max_intensity_z=float(arrays.max_intensity_z[index]),
         )
-        for index, label in enumerate(arrays.object_labels)
-    ]
+
+    @classmethod
+    def rows_from_backend_arrays(
+        cls,
+        arrays: Any,
+        *,
+        slice_index: int,
+    ) -> list["ObjectIntensityMeasurement"]:
+        """Materialize all CP object-intensity rows from backend arrays."""
+        if arrays.object_labels.size == 0:
+            return []
+        return [
+            cls.from_backend_arrays(
+                arrays,
+                index=index,
+                label=int(label),
+                slice_index=slice_index,
+            )
+            for index, label in enumerate(arrays.object_labels)
+        ]
+
+
+@dataclass
+class ObjectIntensityResults:
+    """Collection of intensity measurements for all objects."""
+    slice_index: int
+    object_count: int
+    measurements: List[ObjectIntensityMeasurement]
+
+
+ObjectIntensityLabelInput = np.ndarray | ObjectLabelPayload | ObjectLabelSet
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectIntensityMeasurementRequest:
+    """Executable request for one object-intensity image/label plane."""
+
+    image: np.ndarray
+    labels: ObjectIntensityLabelInput
+    slice_index: int
+    backend_provider: CellProfilerBackendProvider | None
+
+    @property
+    def measurement_image(self) -> np.ndarray:
+        image = np.asarray(self.image)
+        if image.ndim == 3 and not is_color_image_slice(image):
+            return image
+        return cellprofiler_grayscale_plane(image, "image")
+
+    @property
+    def dense_labels(self) -> np.ndarray:
+        return object_label_dense_array(self.labels, dtype=np.int32)
+
+    def measurements(self) -> list[ObjectIntensityMeasurement]:
+        """Measure this image/label plane through the selected backend."""
+        intensity_arrays = object_intensity_backend(
+            backend_provider=self.backend_provider,
+        ).measure(
+            self.measurement_image,
+            self.dense_labels,
+        )
+        return ObjectIntensityMeasurement.rows_from_backend_arrays(
+            intensity_arrays,
+            slice_index=self.slice_index,
+        )
+
+
+def _measure_object_intensity_batch(
+    request: RuntimePure2DSliceBatchRequest,
+) -> list[Any]:
+    kwargs = request.kwargs
+    label_stack = DenseObjectLabelSliceStack.from_payload(
+        kwargs["labels"],
+        slice_count=request.slice_count,
+        dtype=np.int32,
+    )
+    if label_stack is None:
+        return [
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
+        ]
+
+    backend_provider = kwargs.get("object_intensity_backend_provider")
+    results: list[Any] = []
+    for slice_index, slice_2d in enumerate(request.slices_2d):
+        measurements = ObjectIntensityMeasurementRequest(
+            image=image_payload_data(slice_2d),
+            labels=label_stack.slice(slice_index),
+            slice_index=slice_index,
+            backend_provider=backend_provider,
+        ).measurements()
+        results.append((slice_2d, measurements))
+    return results
 
 
 @numpy
@@ -173,37 +212,12 @@ def measure_object_intensity(
     Returns:
         Tuple of (original image, list of intensity measurements per object)
     """
-    return image, _measure_object_intensity_measurements(
-        image,
-        labels,
+    return image, ObjectIntensityMeasurementRequest(
+        image=image,
+        labels=labels,
         slice_index=0,
         backend_provider=object_intensity_backend_provider,
-    )
-
-
-def _measure_object_intensity_measurements(
-    image: np.ndarray,
-    labels: ObjectIntensityLabelInput,
-    *,
-    slice_index: int,
-    backend_provider: CellProfilerBackendProvider | None,
-) -> list[ObjectIntensityMeasurement]:
-    """Measure one image/label plane through the selected intensity backend."""
-    intensity_arrays = object_intensity_backend(
-        backend_provider=backend_provider,
-    ).measure(
-        _cellprofiler_grayscale_measurement_image(np.asarray(image)),
-        object_label_dense_array(labels, dtype=np.int32),
-    )
-    if intensity_arrays.object_labels.size == 0:
-        return []
-    return _measurements_from_arrays(intensity_arrays, slice_index)
-
-
-def _cellprofiler_grayscale_measurement_image(image: np.ndarray) -> np.ndarray:
-    if image.ndim == 3 and not is_color_image_slice(image):
-        return image
-    return cellprofiler_grayscale_plane(image, "image")
+    ).measurements()
 
 
 def _prepare_measure_object_intensity() -> None:
