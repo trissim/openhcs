@@ -14,7 +14,7 @@ from openhcs.processing.materialization import csv_materializer
 import scipy.ndimage
 
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
-from benchmark.cellprofiler_library.functions.worm_geometry import (
+from openhcs.processing.backends.cellprofiler.worm_geometry import (
     calculate_cumulative_lengths,
     control_points_for_label_image,
 )

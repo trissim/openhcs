@@ -19,6 +19,7 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 _LIBRARY_ROOT = Path(__file__).parent
 _CONTRACTS_PATH = _LIBRARY_ROOT / "contracts.json"
 _FUNCTIONS_PACKAGE = "benchmark.cellprofiler_library.functions"
+_BACKEND_FUNCTIONS_PACKAGE = "openhcs.processing.backends.cellprofiler"
 
 
 def _functions_root() -> Path:
@@ -102,17 +103,19 @@ class AbsorbedFunctionMetadata:
 class AbsorbedFunctionLocation:
     """Import location for one top-level absorbed function."""
 
+    package: str
+    root: Path
     module_stem: str
     function_name: str
 
     @property
     def module_name(self) -> str:
-        return f"{_FUNCTIONS_PACKAGE}.{self.module_stem}"
+        return f"{self.package}.{self.module_stem}"
 
     @property
     def source_path(self) -> Path:
         """Return the source file that declares this absorbed function."""
-        return _FUNCTIONS_ROOT / f"{self.module_stem}.py"
+        return self.root / f"{self.module_stem}.py"
 
 
 _contracts: Mapping[str, AbsorbedFunctionMetadata] = MappingProxyType({})
@@ -338,7 +341,33 @@ def _register_module_name(
 
 def _discover_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
     locations: dict[str, AbsorbedFunctionLocation] = {}
-    for file_path in sorted(_FUNCTIONS_ROOT.glob("*.py")):
+    _register_function_locations(
+        locations,
+        package=_FUNCTIONS_PACKAGE,
+        root=_FUNCTIONS_ROOT,
+        replace_existing=False,
+        declared_only=False,
+    )
+    _register_function_locations(
+        locations,
+        package=_BACKEND_FUNCTIONS_PACKAGE,
+        root=_LIBRARY_ROOT,
+        replace_existing=False,
+        declared_only=True,
+    )
+    return MappingProxyType(locations)
+
+
+def _register_function_locations(
+    locations: dict[str, AbsorbedFunctionLocation],
+    *,
+    package: str,
+    root: Path,
+    replace_existing: bool,
+    declared_only: bool,
+) -> None:
+    declared_function_names = set(_default_function_contracts)
+    for file_path in sorted(root.glob("*.py")):
         if file_path.name == "__init__.py":
             continue
         module_stem = file_path.stem
@@ -348,17 +377,22 @@ def _discover_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
                 continue
             if node.name.startswith("_"):
                 continue
-            if node.name in locations:
+            if declared_only and node.name not in declared_function_names:
+                continue
+            if node.name in locations and not replace_existing:
                 existing = locations[node.name]
+                if existing.package != package:
+                    continue
                 raise ValueError(
-                    f"Absorbed CellProfiler function {node.name!r} is declared in "
-                    f"both {existing.module_stem!r} and {module_stem!r}."
+                    f"CellProfiler function {node.name!r} is declared in both "
+                    f"{existing.module_name!r} and {package}.{module_stem!r}."
                 )
             locations[node.name] = AbsorbedFunctionLocation(
+                package=package,
+                root=root,
                 module_stem=module_stem,
                 function_name=node.name,
             )
-    return MappingProxyType(locations)
 
 
 def _required_string(

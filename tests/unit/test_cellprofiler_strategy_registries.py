@@ -50,7 +50,7 @@ from benchmark.cellprofiler_library.functions.smooth import SmoothingStrategy
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElementFactory,
 )
-from benchmark.cellprofiler_library.functions.untangleworms import (
+from openhcs.processing.backends.cellprofiler.worms import (
     WormLabelOutputStrategy,
 )
 from benchmark.cellprofiler_library.functions.watershed import (
