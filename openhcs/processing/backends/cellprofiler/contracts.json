@@ -111,6 +111,9 @@
       "DefineGrid"
     ],
     "function_name": "define_grid_manual",
+    "function_variants": [
+      "define_grid_automatic"
+    ],
     "contract": "pure_2d",
     "category": "image_operation",
     "confidence": 0.0,
@@ -309,6 +312,9 @@
   },
   "IdentifyObjectsInGrid": {
     "function_name": "identify_objects_in_grid",
+    "function_variants": [
+      "identify_objects_in_grid_with_guides"
+    ],
     "contract": "pure_2d",
     "category": "image_operation",
     "confidence": 1.0,

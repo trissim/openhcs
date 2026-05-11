@@ -11,13 +11,20 @@ import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
-from openhcs.core.runtime_semantics import SpatialGridOrdering
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_semantics import SpatialGridOrdering, SpatialGridOrigin
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     SpatialGrid,
+    object_label_dense_array,
     object_label_payload_from_source_image,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
+
+GridInfo = SpatialGrid
 
 
 def label_centroid_extremes(
@@ -93,6 +100,187 @@ class ShapeChoice(Enum):
 class DiameterChoice(Enum):
     AUTOMATIC = "automatic"
     MANUAL = "manual"
+
+
+@dataclass(frozen=True, slots=True)
+class GridSpotReference:
+    """One user-selected spot in CellProfiler DefineGrid coordinates."""
+
+    x: float
+    y: float
+    row: int
+    column: int
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialGridManualDefinition:
+    """Manual two-spot CellProfiler DefineGrid geometry policy."""
+
+    rows: int
+    columns: int
+    first_spot: GridSpotReference
+    second_spot: GridSpotReference
+    origin: SpatialGridOrigin
+    ordering: SpatialGridOrdering
+    image_shape_yx: tuple[int, int]
+
+    def canonical_row_col(self, row: int, column: int) -> tuple[int, int]:
+        if self.origin in (
+            SpatialGridOrigin.BOTTOM_LEFT,
+            SpatialGridOrigin.BOTTOM_RIGHT,
+        ):
+            canonical_row = self.rows - row
+        else:
+            canonical_row = row - 1
+        if self.origin in (
+            SpatialGridOrigin.TOP_RIGHT,
+            SpatialGridOrigin.BOTTOM_RIGHT,
+        ):
+            canonical_column = self.columns - column
+        else:
+            canonical_column = column - 1
+        return canonical_row, canonical_column
+
+    def spatial_grid(self) -> SpatialGrid:
+        first_row, first_column = self.canonical_row_col(
+            self.first_spot.row,
+            self.first_spot.column,
+        )
+        second_row, second_column = self.canonical_row_col(
+            self.second_spot.row,
+            self.second_spot.column,
+        )
+        x_spacing = (
+            1.0
+            if first_column == second_column
+            else float(self.first_spot.x - self.second_spot.x)
+            / float(first_column - second_column)
+        )
+        y_spacing = (
+            1.0
+            if first_row == second_row
+            else float(self.first_spot.y - self.second_spot.y)
+            / float(first_row - second_row)
+        )
+        x_origin = int(self.first_spot.x - first_column * x_spacing)
+        y_origin = int(self.first_spot.y - first_row * y_spacing)
+        return spatial_grid_from_spacing(
+            rows=self.rows,
+            columns=self.columns,
+            x_spacing=abs(x_spacing),
+            y_spacing=abs(y_spacing),
+            x_origin=x_origin,
+            y_origin=y_origin,
+            origin=self.origin,
+            ordering=self.ordering,
+            image_shape_yx=self.image_shape_yx,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialGridAutomaticDefinition:
+    """Automatic CellProfiler DefineGrid geometry policy from object extrema."""
+
+    rows: int
+    columns: int
+    labels: np.ndarray
+    origin: SpatialGridOrigin
+    ordering: SpatialGridOrdering
+    image_shape_yx: tuple[int, int]
+
+    def spatial_grid(self) -> SpatialGrid:
+        object_count, first_y, first_x, second_y, second_x = label_centroid_extremes(
+            object_label_dense_array(self.labels, dtype=np.int32)
+        )
+        if object_count < 2:
+            raise ValueError("Need at least 2 objects to define grid automatically.")
+
+        first_row, second_row = (
+            (self.rows, 1)
+            if self.origin
+            in (SpatialGridOrigin.BOTTOM_LEFT, SpatialGridOrigin.BOTTOM_RIGHT)
+            else (1, self.rows)
+        )
+        first_column, second_column = (
+            (self.columns, 1)
+            if self.origin
+            in (SpatialGridOrigin.TOP_RIGHT, SpatialGridOrigin.BOTTOM_RIGHT)
+            else (1, self.columns)
+        )
+        manual_definition = SpatialGridManualDefinition(
+            rows=self.rows,
+            columns=self.columns,
+            first_spot=GridSpotReference(first_x, first_y, first_row, first_column),
+            second_spot=GridSpotReference(
+                second_x,
+                second_y,
+                second_row,
+                second_column,
+            ),
+            origin=self.origin,
+            ordering=self.ordering,
+            image_shape_yx=self.image_shape_yx,
+        )
+        first_row_c, first_col_c = manual_definition.canonical_row_col(
+            first_row,
+            first_column,
+        )
+        second_row_c, second_col_c = manual_definition.canonical_row_col(
+            second_row,
+            second_column,
+        )
+        if first_col_c != second_col_c:
+            x_spacing = float(first_x - second_x) / float(first_col_c - second_col_c)
+        else:
+            x_spacing = (second_x - first_x) / max(self.columns - 1, 1)
+        if first_row_c != second_row_c:
+            y_spacing = float(first_y - second_y) / float(first_row_c - second_row_c)
+        else:
+            y_spacing = (second_y - first_y) / max(self.rows - 1, 1)
+        return spatial_grid_from_spacing(
+            rows=self.rows,
+            columns=self.columns,
+            x_spacing=abs(x_spacing),
+            y_spacing=abs(y_spacing),
+            x_origin=int(np.floor(first_x - first_col_c * x_spacing)),
+            y_origin=int(np.floor(first_y - first_row_c * y_spacing)),
+            origin=self.origin,
+            ordering=self.ordering,
+            image_shape_yx=self.image_shape_yx,
+        )
+
+
+def spatial_grid_from_spacing(
+    *,
+    rows: int,
+    columns: int,
+    x_spacing: float,
+    y_spacing: float,
+    x_origin: float,
+    y_origin: float,
+    origin: SpatialGridOrigin,
+    ordering: SpatialGridOrdering,
+    image_shape_yx: tuple[int, int],
+) -> SpatialGrid:
+    """Build an OpenHCS SpatialGrid from CP DefineGrid spacing fields."""
+    total_width = int(abs(x_spacing) * columns)
+    total_height = int(abs(y_spacing) * rows)
+    return SpatialGrid(
+        name="grid_info",
+        rows=rows,
+        columns=columns,
+        x_spacing=abs(x_spacing),
+        y_spacing=abs(y_spacing),
+        x_origin=int(x_origin),
+        y_origin=int(y_origin),
+        total_width=total_width,
+        total_height=total_height,
+        origin=origin,
+        ordering=ordering,
+        x_locations=tuple(float(int(x_origin + index * abs(x_spacing))) for index in range(columns)),
+        y_locations=tuple(float(int(y_origin + index * abs(y_spacing))) for index in range(rows)),
+        source_spatial_shape_yx=image_shape_yx,
+    )
 
 
 @dataclass
@@ -429,6 +617,273 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
         )
 
 
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_outputs(
+    (
+        "grid_info",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "rows",
+                "columns",
+                "x_spacing",
+                "y_spacing",
+                "x_location_of_lowest_x_spot",
+                "y_location_of_lowest_y_spot",
+                "total_width",
+                "total_height",
+            ],
+            analysis_type="grid_definition",
+        ),
+    )
+)
+def define_grid_manual(
+    image: np.ndarray,
+    grid_rows: int = 8,
+    grid_columns: int = 12,
+    first_spot_x: int = 100,
+    first_spot_y: int = 100,
+    first_spot_row: int = 1,
+    first_spot_col: int = 1,
+    second_spot_x: int = 200,
+    second_spot_y: int = 200,
+    second_spot_row: int = 8,
+    second_spot_col: int = 12,
+    origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT,
+    ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
+) -> tuple[np.ndarray, SpatialGrid]:
+    """Define a CellProfiler grid manually from two spot references."""
+    grid = SpatialGridManualDefinition(
+        rows=grid_rows,
+        columns=grid_columns,
+        first_spot=GridSpotReference(
+            first_spot_x,
+            first_spot_y,
+            first_spot_row,
+            first_spot_col,
+        ),
+        second_spot=GridSpotReference(
+            second_spot_x,
+            second_spot_y,
+            second_spot_row,
+            second_spot_col,
+        ),
+        origin=coerce_cellprofiler_enum(SpatialGridOrigin, origin),
+        ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
+        image_shape_yx=tuple(int(value) for value in image.shape[-2:]),
+    ).spatial_grid()
+    return image, grid
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "grid_info",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "rows",
+                "columns",
+                "x_spacing",
+                "y_spacing",
+                "x_location_of_lowest_x_spot",
+                "y_location_of_lowest_y_spot",
+                "total_width",
+                "total_height",
+            ],
+            analysis_type="grid_definition",
+        ),
+    )
+)
+def define_grid_automatic(
+    image: np.ndarray,
+    labels: np.ndarray,
+    grid_rows: int = 8,
+    grid_columns: int = 12,
+    origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT,
+    ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
+) -> tuple[np.ndarray, SpatialGrid]:
+    """Define a CellProfiler grid from object-label centroid extrema."""
+    grid = SpatialGridAutomaticDefinition(
+        rows=grid_rows,
+        columns=grid_columns,
+        labels=labels,
+        origin=coerce_cellprofiler_enum(SpatialGridOrigin, origin),
+        ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
+        image_shape_yx=tuple(int(value) for value in image.shape[-2:]),
+    ).spatial_grid()
+    return image, grid
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+def draw_grid_overlay(
+    image: np.ndarray,
+    grid_rows: int = 8,
+    grid_columns: int = 12,
+    x_spacing: float = 50.0,
+    y_spacing: float = 50.0,
+    x_origin: float = 25.0,
+    y_origin: float = 25.0,
+    line_width: int = 1,
+) -> np.ndarray:
+    """Draw grid lines on an image plane."""
+    result = image.copy().astype(np.float32)
+    height, width = result.shape
+    if result.max() > 1.0:
+        result = result / result.max()
+
+    line_left_x = int(x_origin - x_spacing / 2)
+    line_top_y = int(y_origin - y_spacing / 2)
+    for index in range(grid_columns + 1):
+        x = int(line_left_x + index * x_spacing)
+        if 0 <= x < width:
+            y_start = max(0, line_top_y)
+            y_end = min(height, int(line_top_y + grid_rows * y_spacing))
+            for dx in range(-line_width // 2, line_width // 2 + 1):
+                if 0 <= x + dx < width:
+                    result[y_start:y_end, x + dx] = 1.0
+    for index in range(grid_rows + 1):
+        y = int(line_top_y + index * y_spacing)
+        if 0 <= y < height:
+            x_start = max(0, line_left_x)
+            x_end = min(width, int(line_left_x + grid_columns * x_spacing))
+            for dy in range(-line_width // 2, line_width // 2 + 1):
+                if 0 <= y + dy < height:
+                    result[y + dy, x_start:x_end] = 1.0
+    return result
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("grid")
+@special_outputs(
+    (
+        "grid_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "object_count",
+                "grid_rows",
+                "grid_columns",
+                "shape_type",
+            ],
+            analysis_type="grid_objects",
+        ),
+    ),
+    ("labels", segmentation_mask_rois()),
+)
+def identify_objects_in_grid(
+    image: np.ndarray,
+    grid: SpatialGrid | None = None,
+    grid_rows: int = 8,
+    grid_columns: int = 12,
+    x_spacing: float = 100.0,
+    y_spacing: float = 100.0,
+    x_origin: float = 50.0,
+    y_origin: float = 50.0,
+    shape_choice: ShapeChoice = ShapeChoice.RECTANGLE,
+    diameter_choice: DiameterChoice = DiameterChoice.MANUAL,
+    circle_diameter: int = 20,
+) -> tuple[np.ndarray, GridObjectStats, ObjectLabelPayload]:
+    """Identify objects within each section of a grid pattern."""
+    return IdentifyObjectsInGridRequest.from_runtime(
+        image=image,
+        grid=grid,
+        grid_rows=grid_rows,
+        grid_columns=grid_columns,
+        x_spacing=x_spacing,
+        y_spacing=y_spacing,
+        x_origin=x_origin,
+        y_origin=y_origin,
+        shape_choice=shape_choice,
+        diameter_choice=diameter_choice,
+        circle_diameter=circle_diameter,
+    ).execute()
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("grid", "guiding_labels")
+@special_outputs(
+    (
+        "grid_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "object_count",
+                "grid_rows",
+                "grid_columns",
+                "shape_type",
+            ],
+            analysis_type="grid_objects",
+        ),
+    ),
+    ("labels", segmentation_mask_rois()),
+)
+def identify_objects_in_grid_with_guides(
+    image: np.ndarray,
+    guiding_labels: np.ndarray,
+    grid: SpatialGrid | None = None,
+    grid_rows: int = 8,
+    grid_columns: int = 12,
+    x_spacing: float = 100.0,
+    y_spacing: float = 100.0,
+    x_origin: float = 50.0,
+    y_origin: float = 50.0,
+    shape_choice: ShapeChoice = ShapeChoice.CIRCLE_NATURAL,
+    diameter_choice: DiameterChoice = DiameterChoice.AUTOMATIC,
+    circle_diameter: int = 20,
+) -> tuple[np.ndarray, GridObjectStats, ObjectLabelPayload]:
+    """Identify grid objects using guiding objects for shape/location."""
+    return IdentifyObjectsInGridRequest.from_runtime(
+        image=image,
+        grid=grid,
+        grid_rows=grid_rows,
+        grid_columns=grid_columns,
+        x_spacing=x_spacing,
+        y_spacing=y_spacing,
+        x_origin=x_origin,
+        y_origin=y_origin,
+        shape_choice=shape_choice,
+        diameter_choice=diameter_choice,
+        circle_diameter=circle_diameter,
+        guiding_labels=guiding_labels,
+    ).execute()
+
+
+def prepare_identify_objects_in_grid() -> None:
+    """Compile grid-label kernels before timed execution."""
+    image = np.zeros((64, 64), dtype=np.float32)
+    grid = SpatialGrid(
+        name="Grid",
+        rows=4,
+        columns=4,
+        x_spacing=16.0,
+        y_spacing=16.0,
+        x_origin=8.0,
+        y_origin=8.0,
+    )
+    guide_labels = np.zeros((64, 64), dtype=np.int32)
+    guide_labels[8:18, 8:18] = 1
+    guide_labels[24:34, 24:34] = 2
+    identify_objects_in_grid.__wrapped__(
+        image,
+        grid=grid,
+        shape_choice=ShapeChoice.RECTANGLE,
+    )
+    identify_objects_in_grid_with_guides.__wrapped__(
+        image,
+        guide_labels,
+        grid=grid,
+        shape_choice=ShapeChoice.NATURAL,
+    )
+
+
+identify_objects_in_grid.__openhcs_prepare__ = prepare_identify_objects_in_grid
+identify_objects_in_grid_with_guides.__openhcs_prepare__ = (
+    prepare_identify_objects_in_grid
+)
+
+
 @njit(cache=True)
 def _fill_grid_numba(
     image_height: int,
@@ -682,3 +1137,28 @@ class NaturalGridShapeStrategy(GridShapeStrategy):
 
     def labels(self, request: GridShapeRequest) -> np.ndarray:
         return request.grid.labels_from_filtered_guides(request.required_filtered_guides)
+
+
+__all__ = [
+    "DiameterChoice",
+    "GridDefinition",
+    "GridInfo",
+    "GridObjectStats",
+    "GridShapeContext",
+    "GridShapeRequest",
+    "GridShapeStrategy",
+    "GridSpotReference",
+    "IdentifyObjectsInGridRequest",
+    "ShapeChoice",
+    "SpatialGridAutomaticDefinition",
+    "SpatialGridManualDefinition",
+    "centers_of_labels",
+    "define_grid_automatic",
+    "define_grid_manual",
+    "draw_grid_overlay",
+    "identify_objects_in_grid",
+    "identify_objects_in_grid_with_guides",
+    "label_centroid_extremes",
+    "prepare_identify_objects_in_grid",
+    "spatial_grid_from_spacing",
+]
