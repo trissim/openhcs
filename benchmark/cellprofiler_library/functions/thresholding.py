@@ -54,17 +54,45 @@ class CellProfilerAveragingMethod(Enum):
 
 
 class CellProfilerThresholdMethod(Enum):
-    OTSU = "Otsu"
-    MINIMUM_CROSS_ENTROPY = "Minimum Cross-Entropy"
-    ROBUST_BACKGROUND = "Robust Background"
-    MULTI_OTSU = "Multi-Otsu"
-    SAUVOLA = "Sauvola"
-    MAX_INTENSITY_PERCENTAGE = "Max Intensity Percentage"
-    MANUAL = "Manual"
-    MEASUREMENT = "Measurement"
-    LI = "Li"
-    TRIANGLE = "Triangle"
-    ISODATA = "Isodata"
+    OTSU = ("Otsu", True, False)
+    MINIMUM_CROSS_ENTROPY = ("Minimum Cross-Entropy", True, False)
+    ROBUST_BACKGROUND = ("Robust Background", False, False)
+    MULTI_OTSU = ("Multi-Otsu", False, True)
+    SAUVOLA = ("Sauvola", False, False)
+    MAX_INTENSITY_PERCENTAGE = ("Max Intensity Percentage", False, False)
+    MANUAL = ("Manual", False, False)
+    MEASUREMENT = ("Measurement", False, False)
+    LI = ("Li", True, False)
+    TRIANGLE = ("Triangle", False, False)
+    ISODATA = ("Isodata", False, False)
+
+    def __new__(
+        cls,
+        label: str,
+        uses_raw_global_threshold_source: bool,
+        uses_raw_global_threshold_source_when_log_transformed: bool,
+    ) -> "CellProfilerThresholdMethod":
+        member = object.__new__(cls)
+        member._value_ = label
+        member._uses_raw_global_threshold_source = uses_raw_global_threshold_source
+        member._uses_raw_global_threshold_source_when_log_transformed = (
+            uses_raw_global_threshold_source_when_log_transformed
+        )
+        return member
+
+    def global_threshold_selection(
+        self,
+        *,
+        log_transform: bool,
+        image: np.ndarray,
+        threshold_image: np.ndarray,
+    ) -> tuple[np.ndarray, dict[str, object]]:
+        """Return the source image and method kwargs for global threshold estimation."""
+        if self._uses_raw_global_threshold_source:
+            return np.asarray(image), {}
+        if self._uses_raw_global_threshold_source_when_log_transformed and log_transform:
+            return np.asarray(image), {"nbins": CELLPROFILER_LOG_MULTI_OTSU_BINS}
+        return threshold_image, {}
 
 
 class CellProfilerOtsuMethod(Enum):
@@ -601,38 +629,6 @@ def _clip_threshold(threshold: float, threshold_min: float, threshold_max: float
     return float(min(max(float(threshold), threshold_min), threshold_max))
 
 
-def _global_threshold_uses_raw_image(
-    *,
-    effective_method: CellProfilerThresholdMethod,
-    log_transform: bool,
-) -> bool:
-    if effective_method in (
-        CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY,
-        CellProfilerThresholdMethod.LI,
-        CellProfilerThresholdMethod.OTSU,
-    ):
-        return True
-    return effective_method is CellProfilerThresholdMethod.MULTI_OTSU and log_transform
-
-
-def _global_threshold_selection_image(
-    *,
-    effective_method: CellProfilerThresholdMethod,
-    log_transform: bool,
-    image: np.ndarray,
-    threshold_image: np.ndarray,
-) -> tuple[np.ndarray, dict[str, object]]:
-    """Return the image/kwargs used to estimate a global threshold."""
-    if _global_threshold_uses_raw_image(
-        effective_method=effective_method,
-        log_transform=log_transform,
-    ):
-        if effective_method is CellProfilerThresholdMethod.MULTI_OTSU:
-            return np.asarray(image), {"nbins": CELLPROFILER_LOG_MULTI_OTSU_BINS}
-        return np.asarray(image), {}
-    return threshold_image, {}
-
-
 def cellprofiler_threshold(
     image: np.ndarray,
     *,
@@ -777,13 +773,14 @@ def cellprofiler_threshold(
                 time.perf_counter() - phase_started_at,
                 function="cellprofiler_threshold",
                 method=effective_method.value,
-            )
+        )
         else:
-            selection_image, selection_kwargs = _global_threshold_selection_image(
-                effective_method=effective_method,
-                log_transform=log_transform,
-                image=image,
-                threshold_image=threshold_image,
+            selection_image, selection_kwargs = (
+                effective_method.global_threshold_selection(
+                    log_transform=log_transform,
+                    image=image,
+                    threshold_image=threshold_image,
+                )
             )
             phase_started_at = time.perf_counter()
             raw_threshold = cellprofiler_get_global_threshold(
