@@ -366,7 +366,11 @@ def _register_function_locations(
     replace_existing: bool,
     declared_only: bool,
 ) -> None:
-    declared_function_names = set(_default_function_contracts)
+    declared_function_names = {
+        function_name
+        for metadata in _contracts.values()
+        for function_name in metadata.declared_function_names
+    }
     for file_path in sorted(root.glob("*.py")):
         if file_path.name == "__init__.py":
             continue
