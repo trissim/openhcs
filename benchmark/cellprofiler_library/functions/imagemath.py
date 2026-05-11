@@ -9,6 +9,7 @@ min/max, standard deviation, inversion, log transform, and logical operations.
 
 import numpy as np
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from typing import Any, Callable, ClassVar, Tuple
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
@@ -92,26 +93,6 @@ class PairwiseNumpyImageMathOperationStrategy(ImageMathOperationStrategy):
         for pd in pixel_data[1:]:
             output_pixel_data = self.numpy_operator(output_pixel_data, pd)
         return output_pixel_data
-
-
-class AddImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
-    operation = MathOperation.ADD
-    numpy_operator = np.add
-
-
-class DivideImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
-    operation = MathOperation.DIVIDE
-    numpy_operator = np.divide
-
-
-class MinimumImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
-    operation = MathOperation.MINIMUM
-    numpy_operator = np.minimum
-
-
-class MaximumImageMathOperationStrategy(PairwiseNumpyImageMathOperationStrategy):
-    operation = MathOperation.MAXIMUM
-    numpy_operator = np.maximum
 
 
 class SubtractImageMathOperationStrategy(ImageMathOperationStrategy):
@@ -218,14 +199,6 @@ class InvertingImageMathOperationStrategy(ImageMathOperationStrategy):
         return skimage.util.invert(output_pixel_data)
 
 
-class InvertImageMathOperationStrategy(InvertingImageMathOperationStrategy):
-    operation = MathOperation.INVERT
-
-
-class ComplementImageMathOperationStrategy(InvertingImageMathOperationStrategy):
-    operation = MathOperation.COMPLEMENT
-
-
 class LogTransformImageMathOperationStrategy(ImageMathOperationStrategy):
     operation = MathOperation.LOG_TRANSFORM
     single_image = True
@@ -288,16 +261,6 @@ class LogicalReductionImageMathOperationStrategy(ImageMathOperationStrategy):
         return output_pixel_data.astype(np.float64)
 
 
-class OrImageMathOperationStrategy(LogicalReductionImageMathOperationStrategy):
-    operation = MathOperation.OR
-    logical_operator = np.logical_or
-
-
-class AndImageMathOperationStrategy(LogicalReductionImageMathOperationStrategy):
-    operation = MathOperation.AND
-    logical_operator = np.logical_and
-
-
 class NotImageMathOperationStrategy(ImageMathOperationStrategy):
     operation = MathOperation.NOT
     single_image = True
@@ -331,64 +294,150 @@ class EqualsImageMathOperationStrategy(ImageMathOperationStrategy):
         return result.astype(np.float64)
 
 
-def _apply_image_mask(pixel_data: np.ndarray, mask: Any | None) -> np.ndarray:
-    """Apply an image-validity mask using CellProfiler's output pixel semantics."""
-    if mask is None:
-        return pixel_data
+@dataclass(frozen=True)
+class ImageMathOperationStrategyDeclaration:
+    """Typed declaration for metadata-only ImageMath strategy leaves."""
 
-    mask_array = np.asarray(mask, dtype=bool)
-    if mask_array.shape == pixel_data.shape:
-        return pixel_data * mask_array
+    strategy_base: type[ImageMathOperationStrategy]
+    operation: MathOperation
+    numpy_operator: ImageMathBinaryOperator | None = None
+    logical_operator: ImageMathBinaryOperator | None = None
 
-    if pixel_data.ndim == 2:
-        if mask_array.ndim == 3 and mask_array.shape[0] == 1:
-            mask_array = mask_array[0]
-        if mask_array.shape == pixel_data.shape:
-            return pixel_data * mask_array
+    @property
+    def class_name(self) -> str:
+        operation_name = "".join(part.title() for part in self.operation.name.split("_"))
+        return f"{operation_name}ImageMathOperationStrategy"
 
-    if pixel_data.ndim == 3:
-        if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[:2]:
-            return pixel_data * mask_array[:, :, np.newaxis]
-        if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[1:]:
-            return pixel_data * mask_array[np.newaxis, :, :]
-        if mask_array.ndim == 3 and mask_array.shape[:2] == pixel_data.shape[:2] and pixel_data.shape[2] in (3, 4):
-            return pixel_data * mask_array[:, :, :1]
-
-    if pixel_data.ndim == 4:
-        if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[1:3]:
-            return pixel_data * mask_array[np.newaxis, :, :, np.newaxis]
-        if mask_array.ndim == 3 and mask_array.shape == pixel_data.shape[:3]:
-            return pixel_data * mask_array[:, :, :, np.newaxis]
-
-    return pixel_data * mask_array
+    def materialize(self) -> type[ImageMathOperationStrategy]:
+        namespace: dict[str, object] = {
+            "__module__": __name__,
+            "operation": self.operation,
+        }
+        if self.numpy_operator is not None:
+            namespace["numpy_operator"] = self.numpy_operator
+        if self.logical_operator is not None:
+            namespace["logical_operator"] = self.logical_operator
+        return type(self.class_name, (self.strategy_base,), namespace)
 
 
-def _image_math_operand_masks(source_payload: Any, operand_count: int) -> list[Any | None]:
-    """Return one CellProfiler mask domain per ImageMath operand."""
-    source_mask = image_payload_mask(source_payload)
-    if source_mask is None:
-        return [None] * operand_count
-    mask_array = np.asarray(source_mask, dtype=bool)
-    if mask_array.ndim >= 3 and mask_array.shape[0] >= operand_count:
-        return [mask_array[index] for index in range(operand_count)]
-    return [mask_array] + [None] * max(operand_count - 1, 0)
+IMAGE_MATH_OPERATION_STRATEGY_DECLARATIONS = (
+    ImageMathOperationStrategyDeclaration(
+        PairwiseNumpyImageMathOperationStrategy,
+        MathOperation.ADD,
+        numpy_operator=np.add,
+    ),
+    ImageMathOperationStrategyDeclaration(
+        PairwiseNumpyImageMathOperationStrategy,
+        MathOperation.DIVIDE,
+        numpy_operator=np.divide,
+    ),
+    ImageMathOperationStrategyDeclaration(
+        PairwiseNumpyImageMathOperationStrategy,
+        MathOperation.MINIMUM,
+        numpy_operator=np.minimum,
+    ),
+    ImageMathOperationStrategyDeclaration(
+        PairwiseNumpyImageMathOperationStrategy,
+        MathOperation.MAXIMUM,
+        numpy_operator=np.maximum,
+    ),
+    ImageMathOperationStrategyDeclaration(
+        InvertingImageMathOperationStrategy,
+        MathOperation.INVERT,
+    ),
+    ImageMathOperationStrategyDeclaration(
+        InvertingImageMathOperationStrategy,
+        MathOperation.COMPLEMENT,
+    ),
+    ImageMathOperationStrategyDeclaration(
+        LogicalReductionImageMathOperationStrategy,
+        MathOperation.OR,
+        logical_operator=np.logical_or,
+    ),
+    ImageMathOperationStrategyDeclaration(
+        LogicalReductionImageMathOperationStrategy,
+        MathOperation.AND,
+        logical_operator=np.logical_and,
+    ),
+)
+
+for image_math_operation_strategy_declaration in IMAGE_MATH_OPERATION_STRATEGY_DECLARATIONS:
+    globals()[image_math_operation_strategy_declaration.class_name] = (
+        image_math_operation_strategy_declaration.materialize()
+    )
 
 
-def _image_math_output_mask(
-    operand_masks: list[Any | None],
-    *,
-    ignore_masks: bool,
-) -> Any | None:
-    """Combine operand masks the same way CellProfiler ImageMath does."""
-    if ignore_masks:
-        return None
-    output_mask = operand_masks[0] if operand_masks else None
-    for mask in operand_masks[1:]:
+@dataclass(frozen=True)
+class ImageMathMaskPolicy:
+    """CellProfiler ImageMath mask projection and output-composition policy."""
+
+    ignore_masks: bool
+
+    def operand_masks(self, source_payload: Any, operand_count: int) -> tuple[Any | None, ...]:
+        source_mask = image_payload_mask(source_payload)
+        if source_mask is None:
+            return (None,) * operand_count
+        mask_array = np.asarray(source_mask, dtype=bool)
+        if mask_array.ndim >= 3 and mask_array.shape[0] >= operand_count:
+            return tuple(mask_array[index] for index in range(operand_count))
+        return (mask_array,) + (None,) * max(operand_count - 1, 0)
+
+    def output_mask(self, operand_masks: tuple[Any | None, ...]) -> Any | None:
+        if self.ignore_masks:
+            return None
+        output_mask = operand_masks[0] if operand_masks else None
+        for mask in operand_masks[1:]:
+            output_mask = self.combine_output_masks(output_mask, mask)
+        return output_mask
+
+    @staticmethod
+    def combine_output_masks(current_mask: Any | None, next_mask: Any | None) -> Any | None:
+        if current_mask is None:
+            return next_mask
+        if next_mask is None:
+            return current_mask
+        return np.asarray(current_mask, dtype=bool) & np.asarray(next_mask, dtype=bool)
+
+    def apply_output_mask(
+        self,
+        pixel_data: np.ndarray,
+        output_mask: Any | None,
+    ) -> np.ndarray:
         if output_mask is None:
-            output_mask = mask
-        elif mask is not None:
-            output_mask = np.asarray(output_mask, dtype=bool) & np.asarray(mask, dtype=bool)
-    return output_mask
+            return pixel_data
+        return pixel_data * self.project_mask_to_pixels(pixel_data, output_mask)
+
+    @staticmethod
+    def project_mask_to_pixels(pixel_data: np.ndarray, output_mask: Any) -> np.ndarray:
+        mask_array = np.asarray(output_mask, dtype=bool)
+        if mask_array.shape == pixel_data.shape:
+            return mask_array
+
+        if pixel_data.ndim == 2:
+            if mask_array.ndim == 3 and mask_array.shape[0] == 1:
+                mask_array = mask_array[0]
+            if mask_array.shape == pixel_data.shape:
+                return mask_array
+
+        if pixel_data.ndim == 3:
+            if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[:2]:
+                return mask_array[:, :, np.newaxis]
+            if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[1:]:
+                return mask_array[np.newaxis, :, :]
+            if (
+                mask_array.ndim == 3
+                and mask_array.shape[:2] == pixel_data.shape[:2]
+                and pixel_data.shape[2] in (3, 4)
+            ):
+                return mask_array[:, :, :1]
+
+        if pixel_data.ndim == 4:
+            if mask_array.ndim == 2 and mask_array.shape == pixel_data.shape[1:3]:
+                return mask_array[np.newaxis, :, :, np.newaxis]
+            if mask_array.ndim == 3 and mask_array.shape == pixel_data.shape[:3]:
+                return mask_array[:, :, :, np.newaxis]
+
+        return mask_array
 
 
 @numpy
@@ -426,6 +475,7 @@ def image_math(
         Processed image of shape (1, H, W).
     """
     operation_strategy = ImageMathOperationStrategy.coerce(operation)
+    mask_policy = ImageMathMaskPolicy(ignore_masks=ignore_masks)
     source_payload = image
     image = image_payload_data(image)
     
@@ -442,7 +492,7 @@ def image_math(
     # Apply factors to each image (except for binary output operations)
     pixel_data = []
     operand_count = 1 if operation_strategy.single_image else n_images
-    operand_masks = _image_math_operand_masks(source_payload, operand_count)
+    operand_masks = mask_policy.operand_masks(source_payload, operand_count)
     for i in range(operand_count):
         pd = image[i].astype(np.float64)
         if not operation_strategy.binary_output and factors[i] != 1.0:
@@ -475,12 +525,8 @@ def image_math(
     if output_pixel_data.ndim == 2:
         output_pixel_data = output_pixel_data[np.newaxis, :, :]
 
-    output_mask = _image_math_output_mask(
-        operand_masks,
-        ignore_masks=ignore_masks,
-    )
-    if output_mask is not None:
-        output_pixel_data = _apply_image_mask(output_pixel_data, output_mask)
+    output_mask = mask_policy.output_mask(operand_masks)
+    output_pixel_data = mask_policy.apply_output_mask(output_pixel_data, output_mask)
 
     output = output_pixel_data.astype(np.float32)
     if ignore_masks:
