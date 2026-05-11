@@ -138,17 +138,19 @@ def _make_processing_wrapper(
     return wrapper
 
 
-def _default_module_names_by_module_stem() -> dict[str, str]:
+def _default_module_names_by_function_name() -> dict[str, str]:
+    """Map each declared function to the CellProfiler module that owns it."""
     default_modules: dict[str, str] = {}
-    inventory = function_inventory()
     for module_name in list_modules():
         contract_payload = get_contract(module_name)
         if contract_payload is None:
             continue
-        location = inventory.get(str(contract_payload["function_name"]))
-        if location is None:
-            continue
-        default_modules.setdefault(location.module_stem, module_name)
+        function_names = (
+            str(contract_payload["function_name"]),
+            *(str(name) for name in contract_payload.get("function_variants", ())),
+        )
+        for function_name in function_names:
+            default_modules.setdefault(function_name, module_name)
     return default_modules
 
 
@@ -166,9 +168,9 @@ def _function_from_inventory(function_name: str) -> Callable[..., Any]:
 
 def _load_cellprofiler_functions() -> tuple[dict[str, Callable[..., Any]], dict[str, str]]:
     functions: dict[str, Callable[..., Any]] = {}
-    default_modules = _default_module_names_by_module_stem()
+    default_modules = _default_module_names_by_function_name()
     for function_name, location in function_inventory().items():
-        module_name = default_modules.get(location.module_stem, location.module_stem)
+        module_name = default_modules.get(function_name, location.module_stem)
         absorbed_function = _function_from_inventory(function_name)
 
         contract = _declared_processing_contract(

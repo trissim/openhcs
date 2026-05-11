@@ -1320,6 +1320,34 @@ class IdentifySecondaryObjectsModuleSettingsBindingStrategy(
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
 
+class IdentifyTertiaryObjectsModuleSettingsBindingStrategy(
+    GenericModuleSettingsBindingStrategy
+):
+    """Bind tertiary-object subtraction settings declared by CP UI rows."""
+
+    module_name = "IdentifyTertiaryObjects"
+    explicit_settings: ClassVar[Mapping[str, str]] = {
+        "Shrink smaller object prior to subtraction?": "shrink_primary",
+    }
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
+        kwargs = dict(bound.kwargs)
+        unmapped_kwargs = dict(bound.unmapped_kwargs)
+        for setting_name, parameter_name in type(self).explicit_settings.items():
+            value = optional_setting_value(module, setting_name)
+            if value is not None:
+                kwargs[parameter_name] = binder.parse_value(setting_name, value)
+            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+        return BoundModuleSettings(kwargs, unmapped_kwargs)
+
+
 class ScopedMeasurementModuleSettingsBindingStrategy(
     GenericModuleSettingsBindingStrategy
 ):
