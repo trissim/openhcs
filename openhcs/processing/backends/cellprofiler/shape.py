@@ -16,8 +16,19 @@ from numba import njit
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.runtime_semantics import (
+    MeasurementRowAxisField,
+    ObjectLabelRepresentation,
     ObjectShapeMeasurementFeature,
+    ShapeObjectFeatureValueTable,
+    dense_object_label_id_domain,
     indexed_measurement_feature_name,
+    object_shape_measurement_field_names,
+)
+from openhcs.core.runtime_values import (
+    ObjectLabelRuntimeSliceStackContract,
+    ObjectLabelSet,
+    SparseIJVLabelRows,
+    object_label_dense_array,
 )
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
@@ -36,6 +47,33 @@ from openhcs.processing.backends.cellprofiler.zernike import shape_zernike_momen
 _ZERNIKE_MAX_ORDER = 9
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
+ShapeFeatureArrays = tuple[dict[str, np.ndarray], np.ndarray]
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectSizeShapeFeatureArrayOwner(ABC, metaclass=AutoRegisterMeta):
+    """Shared AreaShape feature-array invocation policy for backend owners."""
+
+    __registry_key__ = "owner_key"
+    __skip_if_no_key__ = True
+    owner_key = None
+
+    calculate_advanced: bool
+    calculate_zernikes: bool
+    shape_backend_provider: BackendProviderInput
+    zernike_backend_provider: BackendProviderInput
+
+    def feature_arrays_for_labels(
+        self,
+        labels: np.ndarray,
+    ) -> ShapeFeatureArrays:
+        return measure_object_size_shape_feature_arrays(
+            labels,
+            calculate_advanced=self.calculate_advanced,
+            calculate_zernikes=self.calculate_zernikes,
+            shape_backend_provider=self.shape_backend_provider,
+            zernike_backend_provider=self.zernike_backend_provider,
+        )
 
 
 def _profile_enabled() -> bool:
@@ -50,16 +88,13 @@ def _log_profile(label: str, seconds: float, **fields: object) -> None:
 
 
 @dataclass(frozen=True, slots=True)
-class ObjectSizeShapeFeatureMeasurement:
+class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
     """Backend-owned CellProfiler AreaShape feature-array measurement."""
 
+    owner_key = "feature_measurement"
     labels: np.ndarray
-    calculate_advanced: bool
-    calculate_zernikes: bool
-    shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
-    zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 
-    def feature_arrays(self) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    def feature_arrays(self) -> ShapeFeatureArrays:
         """Return feature arrays and measured label ids for 2-D or 3-D labels."""
         label_array = np.asarray(self.labels, dtype=np.int32)
         if label_array.ndim == 2:
@@ -73,7 +108,7 @@ class ObjectSizeShapeFeatureMeasurement:
     def _feature_arrays_2d(
         self,
         labels: np.ndarray,
-    ) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    ) -> ShapeFeatureArrays:
         total_started_at = time.perf_counter()
         phase_started_at = time.perf_counter()
         shape_backend = ShapeMeasurementBackendStrategy.for_memory_type(
@@ -257,7 +292,7 @@ class ObjectSizeShapeFeatureMeasurement:
     def _feature_arrays_3d(
         self,
         labels: np.ndarray,
-    ) -> tuple[dict[str, np.ndarray], np.ndarray]:
+    ) -> ShapeFeatureArrays:
         shape_backend = ShapeMeasurementBackendStrategy.for_memory_type(
             backend_provider=self.shape_backend_provider,
         )
@@ -350,7 +385,7 @@ def measure_object_size_shape_feature_arrays(
     calculate_zernikes: bool,
     shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> tuple[dict[str, np.ndarray], np.ndarray]:
+) -> ShapeFeatureArrays:
     """Return CellProfiler AreaShape feature arrays for dense labels."""
     return ObjectSizeShapeFeatureMeasurement(
         labels=np.asarray(labels, dtype=np.int32),
@@ -359,6 +394,235 @@ def measure_object_size_shape_feature_arrays(
         shape_backend_provider=shape_backend_provider,
         zernike_backend_provider=zernike_backend_provider,
     ).feature_arrays()
+
+@dataclass(frozen=True, slots=True)
+class ObjectSizeShapeMeasurementRowsRequest(ObjectSizeShapeFeatureArrayOwner):
+    """Backend-owned AreaShape row request for dense and sparse label payloads."""
+
+    owner_key = "object_size_shape_rows"
+    labels: np.ndarray | ObjectLabelSet
+
+    def rows(self) -> list[dict[str, object]]:
+        dense_slice_count = (
+            ObjectLabelRuntimeSliceStackContract.runtime_slice_count(self.labels)
+            if isinstance(self.labels, ObjectLabelSet)
+            else None
+        )
+        if (
+            isinstance(self.labels, ObjectLabelSet)
+            and self.labels.representation is ObjectLabelRepresentation.DENSE_LABELS
+            and dense_slice_count is not None
+            and dense_slice_count > 1
+        ):
+            return DenseRuntimeSliceObjectSizeShapeMeasurement(
+                labels=self.labels,
+                slice_count=dense_slice_count,
+                calculate_advanced=self.calculate_advanced,
+                calculate_zernikes=self.calculate_zernikes,
+                shape_backend_provider=self.shape_backend_provider,
+                zernike_backend_provider=self.zernike_backend_provider,
+            ).rows()
+
+        if (
+            isinstance(self.labels, ObjectLabelSet)
+            and self.labels.representation is ObjectLabelRepresentation.SPARSE_IJV
+        ):
+            return SparseIJVObjectSizeShapeMeasurement(
+                labels=self.labels,
+                calculate_advanced=self.calculate_advanced,
+                calculate_zernikes=self.calculate_zernikes,
+                shape_backend_provider=self.shape_backend_provider,
+                zernike_backend_provider=self.zernike_backend_provider,
+            ).rows()
+
+        label_array = object_label_dense_array(self.labels, dtype=np.int32)
+        if not np.any(label_array > 0):
+            return []
+        feature_values, measured_labels = self.feature_arrays_for_labels(
+            label_array,
+        )
+        return ShapeObjectFeatureValueTable.from_feature_arrays(
+            feature_values,
+            measured_labels,
+            object_domain=dense_object_label_id_domain(self.labels),
+        ).rows()
+
+
+@dataclass(frozen=True, slots=True)
+class DenseRuntimeSliceObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwner):
+    """Per-plane 2D size/shape measurement for runtime-slice object domains."""
+
+    owner_key = "dense_runtime_slice"
+    labels: ObjectLabelSet
+    slice_count: int
+
+    def rows(self) -> list[dict[str, object]]:
+        label_stack = object_label_dense_array(self.labels, dtype=np.int32)
+        if label_stack.ndim != 3 or label_stack.shape[0] != self.slice_count:
+            raise ValueError(
+                "Dense runtime-slice object labels must have shape "
+                f"(slice, y, x), got {label_stack.shape!r} for "
+                f"{self.slice_count} runtime slices."
+            )
+        rows: list[dict[str, object]] = []
+        for slice_index in range(self.slice_count):
+            rows.extend(self.slice_rows(label_stack[slice_index], slice_index))
+        return rows
+
+    def slice_rows(
+        self,
+        labels_2d: np.ndarray,
+        slice_index: int,
+    ) -> list[dict[str, object]]:
+        feature_values, measured_labels = self.feature_arrays_for_labels(
+            labels_2d,
+        )
+        slice_domain = self.labels.object_label_domain().project_slice(
+            slice_index,
+            self.slice_count,
+        )
+        rows = ShapeObjectFeatureValueTable.from_feature_arrays(
+            feature_values,
+            measured_labels,
+            object_domain=dense_object_label_id_domain(
+                labels_2d,
+                declared_object_count=slice_domain.declared_object_count,
+                declared_object_ids=slice_domain.declared_object_ids,
+            ),
+        ).rows()
+        for row in rows:
+            row[MeasurementRowAxisField.SLICE_INDEX.value] = int(slice_index)
+        return rows
+
+
+@dataclass(frozen=True, slots=True)
+class SparseIJVObjectSizeShapeMeasurement(ObjectSizeShapeFeatureArrayOwner):
+    """AreaShape rows for sparse IJV object-label payloads."""
+
+    owner_key = "sparse_ijv"
+    labels: ObjectLabelSet
+
+    def rows(self) -> list[dict[str, object]]:
+        raw_labels = self.labels.labels
+        sparse_rows = (
+            raw_labels
+            if isinstance(raw_labels, SparseIJVLabelRows)
+            else SparseIJVLabelRows.from_yx_label(raw_labels)
+        )
+        if sparse_rows.as_array().size == 0:
+            return []
+        if sparse_rows.has_slice_index:
+            return self.slice_stack_rows(sparse_rows)
+        return self.plane_rows(np.asarray(sparse_rows.as_yx_label_array(), dtype=np.int32))
+
+    def slice_stack_rows(
+        self,
+        sparse_rows: SparseIJVLabelRows,
+    ) -> list[dict[str, object]]:
+        rows: list[dict[str, object]] = []
+        for slice_index in sparse_rows.slice_indices():
+            slice_ijv = np.asarray(
+                sparse_rows.slice(slice_index).as_array(),
+                dtype=np.int32,
+            )
+            for row in self.plane_rows(slice_ijv):
+                row[MeasurementRowAxisField.SLICE_INDEX.value] = int(slice_index)
+                rows.append(row)
+        return rows
+
+    def plane_rows(self, ijv: np.ndarray) -> list[dict[str, object]]:
+        object_ids = self.object_ids(ijv)
+        rows: list[dict[str, object]] = []
+        for object_id in object_ids:
+            rows.append(self.object_row(ijv, int(object_id)))
+        return rows
+
+    def object_ids(self, ijv: np.ndarray) -> np.ndarray:
+        if self.labels.declared_object_ids:
+            return np.asarray(self.labels.declared_object_ids, dtype=np.int32)
+        if self.labels.declared_object_count is not None:
+            return np.arange(1, self.labels.declared_object_count + 1, dtype=np.int32)
+        return np.unique(ijv[:, 2]).astype(np.int32, copy=False)
+
+    def object_row(self, ijv: np.ndarray, object_id: int) -> dict[str, object]:
+        object_pixels = ijv[ijv[:, 2] == object_id]
+        if object_pixels.size == 0:
+            return self.empty_row(object_id)
+        pixel_y = object_pixels[:, 0]
+        pixel_x = object_pixels[:, 1]
+        min_y = int(pixel_y.min())
+        min_x = int(pixel_x.min())
+        max_y = int(pixel_y.max()) + 1
+        max_x = int(pixel_x.max()) + 1
+        local = np.zeros((max_y - min_y, max_x - min_x), dtype=np.int32)
+        local[pixel_y - min_y, pixel_x - min_x] = object_id
+        feature_values, measured_labels = self.feature_arrays_for_labels(
+            local,
+        )
+        if len(measured_labels) == 0:
+            return self.empty_row(object_id)
+        SparseIJVShapeFeatureOffset(
+            feature_values=feature_values,
+            offset_y=min_y,
+            offset_x=min_x,
+        ).apply()
+        return ShapeObjectFeatureValueTable.from_feature_arrays(
+            feature_values,
+            np.asarray([object_id], dtype=np.int32),
+            object_domain=(object_id,),
+        ).rows()[0]
+
+    def empty_row(self, object_id: int) -> dict[str, object]:
+        axis_fields = {
+            MeasurementRowAxisField.SLICE_INDEX.value,
+            MeasurementRowAxisField.OBJECT_LABEL.value,
+        }
+        return ShapeObjectFeatureValueTable.from_feature_arrays(
+            {
+                field: np.asarray([], dtype=float)
+                for field in object_shape_measurement_field_names()
+                if field not in axis_fields
+            },
+            (),
+            object_domain=(object_id,),
+        ).rows()[0]
+
+
+@dataclass(frozen=True, slots=True)
+class SparseIJVShapeFeatureOffset:
+    """Translate local sparse-object AreaShape coordinates back to source XY."""
+
+    feature_values: dict[str, np.ndarray]
+    offset_y: int
+    offset_x: int
+
+    def apply(self) -> None:
+        for field in self.x_fields():
+            if field in self.feature_values:
+                self.feature_values[field] = (
+                    np.asarray(self.feature_values[field], dtype=float) + self.offset_x
+                )
+        for field in self.y_fields():
+            if field in self.feature_values:
+                self.feature_values[field] = (
+                    np.asarray(self.feature_values[field], dtype=float) + self.offset_y
+                )
+
+    @staticmethod
+    def x_fields() -> tuple[str, ...]:
+        return (
+            _shape_feature(ObjectShapeMeasurementFeature.CENTER_X),
+            _shape_feature(ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_X),
+            _shape_feature(ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_X),
+        )
+
+    @staticmethod
+    def y_fields() -> tuple[str, ...]:
+        return (
+            _shape_feature(ObjectShapeMeasurementFeature.CENTER_Y),
+            _shape_feature(ObjectShapeMeasurementFeature.BOUNDING_BOX_MINIMUM_Y),
+            _shape_feature(ObjectShapeMeasurementFeature.BOUNDING_BOX_MAXIMUM_Y),
+        )
 
 
 class ShapeMeasurementBackendStrategy(
