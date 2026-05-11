@@ -389,4 +389,3 @@ def prepare_generated_pipeline(
         output_path=output_path,
         generated_pipeline_backend=generated_pipeline_backend,
     ).prepare()
-
