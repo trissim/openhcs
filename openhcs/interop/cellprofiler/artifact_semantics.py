@@ -110,17 +110,46 @@ class ArtifactSettingClassifier(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "classifier_name"
     __skip_if_no_key__ = True
     classifier_name: ClassVar[str | None] = None
-    priority: ClassVar[int] = 100
 
     @classmethod
     def role_for(cls, setting: ModuleSetting) -> ArtifactSettingRole | None:
-        for classifier_type in sorted(
-            cls.__registry__.values(),
-            key=lambda candidate: candidate.priority,
-        ):
+        matches: list[tuple[type[ArtifactSettingClassifier], ArtifactSettingRole]] = []
+        for classifier_type in cls.classifier_types_by_mro():
             role = classifier_type().classify(setting)
             if role is not None:
-                return role
+                matches.append((classifier_type, role))
+        if not matches:
+            return None
+        role = matches[0][1]
+        conflicting = tuple(
+            classifier_type.__name__
+            for classifier_type, candidate_role in matches
+            if candidate_role is not role
+        )
+        if conflicting:
+            raise ValueError(
+                f"Ambiguous artifact setting role for {setting.name!r}: "
+                f"{', '.join(conflicting)}."
+            )
+        return role
+
+    @classmethod
+    def classifier_types_by_mro(
+        cls,
+    ) -> tuple[type["ArtifactSettingClassifier"], ...]:
+        registered = set(cls.__registry__.values())
+        ordered: list[type[ArtifactSettingClassifier]] = []
+        seen: set[type[ArtifactSettingClassifier]] = set()
+
+        def visit(owner: type[ArtifactSettingClassifier]) -> None:
+            for child in owner.__subclasses__():
+                visit(child)
+            if owner in registered and owner not in seen:
+                ordered.append(owner)
+                seen.add(owner)
+
+        visit(cls)
+        return tuple(ordered)
         return None
 
     @abstractmethod
@@ -132,7 +161,6 @@ class OutputImageSettingClassifier(ArtifactSettingClassifier):
     """Classify output image name settings."""
 
     classifier_name = "output_image"
-    priority = 10
 
     def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
         name = _normalized_setting(setting.name)
@@ -147,7 +175,6 @@ class OutputObjectsSettingClassifier(ArtifactSettingClassifier):
     """Classify output object-label name settings."""
 
     classifier_name = "output_objects"
-    priority = 20
 
     def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
         name = _normalized_setting(setting.name)
@@ -179,7 +206,6 @@ class OutputSpatialGridSettingClassifier(ArtifactSettingClassifier):
     """Classify named spatial-grid definitions."""
 
     classifier_name = "output_spatial_grid"
-    priority = 25
 
     def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
         if _normalized_setting(setting.name) == "name_the_grid":
@@ -191,7 +217,6 @@ class InputImageSettingClassifier(ArtifactSettingClassifier):
     """Classify source or produced image name inputs."""
 
     classifier_name = "input_image"
-    priority = 30
 
     def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
         name = _normalized_setting(setting.name)
@@ -217,7 +242,6 @@ class InputObjectsSettingClassifier(ArtifactSettingClassifier):
     """Classify object-label name inputs."""
 
     classifier_name = "input_objects"
-    priority = 40
 
     def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
         name = _normalized_setting(setting.name)
@@ -240,11 +264,10 @@ class InputObjectsSettingClassifier(ArtifactSettingClassifier):
         return ArtifactSettingRole.INPUT_OBJECTS
 
 
-class BareObjectsInputSettingClassifier(ArtifactSettingClassifier):
+class BareObjectsInputSettingClassifier(InputObjectsSettingClassifier):
     """Classify CellProfiler LabelSubscriber settings named simply ``Objects``."""
 
     classifier_name = "bare_input_objects"
-    priority = 41
 
     def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
         if _normalized_setting(setting.name) == "objects":
@@ -256,7 +279,6 @@ class InputSpatialGridSettingClassifier(ArtifactSettingClassifier):
     """Classify named spatial-grid inputs."""
 
     classifier_name = "input_spatial_grid"
-    priority = 35
 
     def classify(self, setting: ModuleSetting) -> ArtifactSettingRole | None:
         if _normalized_setting(setting.name) == "select_the_defined_grid":
