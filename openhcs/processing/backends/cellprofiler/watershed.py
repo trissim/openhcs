@@ -8,13 +8,17 @@ import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar
+from typing import ClassVar, Literal
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import relabel_dense_object_labels_consecutive
 from openhcs.core.runtime_values import object_label_dense_array
@@ -26,6 +30,13 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
+    StructuringElement,
+    adapt_structuring_element_rank,
+    build_structuring_element,
+)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
@@ -95,6 +106,15 @@ class WatershedBasicDefaults:
 
 
 CELLPROFILER_WATERSHED_BASIC_DEFAULTS = WatershedBasicDefaults()
+
+
+@dataclass
+class WatershedStats:
+    """Watershed object-count measurement row."""
+
+    slice_index: int
+    object_count: int
+    mean_area: float
 
 
 def coerce_watershed_method(value: WatershedMethod | str | None) -> WatershedMethod:
@@ -1074,6 +1094,110 @@ def cellprofiler_legacy_watershed(
     )
 
 
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("markers", "mask")
+@special_outputs(
+    (
+        "watershed_stats",
+        csv_materializer(
+            fields=["slice_index", "object_count", "mean_area"],
+            analysis_type="watershed",
+        ),
+    ),
+    ("labels", segmentation_mask_rois()),
+)
+def watershed(
+    image: np.ndarray,
+    markers: np.ndarray | None = None,
+    mask: np.ndarray | None = None,
+    watershed_method: Literal["distance", "intensity", "markers"] = "distance",
+    declump_method: Literal["shape", "intensity"] = "shape",
+    seed_method: Literal["local", "regional"] = "local",
+    use_advanced_settings: bool = True,
+    max_seeds: int = -1,
+    downsample: int = 1,
+    min_distance: int = 1,
+    min_intensity: float = 0.0,
+    footprint: int = 8,
+    connectivity: int = 1,
+    compactness: float = 0.0,
+    exclude_border: bool = False,
+    watershed_line: bool = False,
+    gaussian_sigma: float = 0.0,
+    structuring_element: Literal[
+        "ball", "cube", "diamond", "disk", "octahedron", "square", "star"
+    ] = "disk",
+    structuring_element_size: int = 1,
+    runtime_family: WatershedRuntimeFamily | str = WatershedRuntimeFamily.LIBRARY,
+) -> tuple[np.ndarray, WatershedStats, np.ndarray]:
+    """Apply watershed segmentation using the registered CP runtime family."""
+    from skimage.measure import regionprops
+
+    method = coerce_watershed_method(watershed_method)
+    resolved_declump_method = coerce_watershed_declump_method(declump_method)
+    if not use_advanced_settings:
+        defaults = CELLPROFILER_WATERSHED_BASIC_DEFAULTS
+        seed_method = defaults.seed_method
+        max_seeds = defaults.max_seeds
+        min_distance = defaults.min_distance
+        min_intensity = defaults.min_intensity
+        connectivity = defaults.connectivity
+        compactness = defaults.compactness
+        watershed_line = defaults.watershed_line
+        gaussian_sigma = defaults.gaussian_sigma
+
+    if not np.array_equal(image, image.astype(bool)):
+        raise ValueError("Watershed expects a thresholded image as input.")
+    structuring_element_array = adapt_structuring_element_rank(
+        build_structuring_element(
+            coerce_cellprofiler_enum(StructuringElement, structuring_element),
+            structuring_element_size,
+        ),
+        image.ndim,
+    )
+    if structuring_element_array.ndim != image.ndim:
+        raise ValueError(
+            "Watershed structuring element dimensionality must match the image; "
+            f"got structuring element ndim={structuring_element_array.ndim} for "
+            f"image ndim={image.ndim}."
+        )
+
+    labels = WatershedRuntimeStrategy.for_enum_member(
+        coerce_watershed_runtime_family(runtime_family)
+    ).labels(
+        image,
+        markers,
+        mask,
+        WatershedParameters(
+            method=method,
+            declump_method=resolved_declump_method,
+            seed_method=coerce_watershed_seed_method(seed_method),
+            use_advanced_settings=use_advanced_settings,
+            max_seeds=max_seeds,
+            downsample=downsample,
+            min_distance=min_distance,
+            min_intensity=min_intensity,
+            footprint=footprint,
+            connectivity=connectivity,
+            compactness=compactness,
+            exclude_border=exclude_border,
+            watershed_line=watershed_line,
+            gaussian_sigma=gaussian_sigma,
+            structuring_element=structuring_element_array,
+        ),
+    )
+
+    props = regionprops(labels)
+    stats = WatershedStats(
+        slice_index=0,
+        object_count=len(props),
+        mean_area=float(np.mean([prop.area for prop in props]) if props else 0.0),
+    )
+
+    return image, stats, labels.astype(np.int32)
+
+
 def _cellprofiler_legacy_watershed_numpy(
     image: np.ndarray,
     *,
@@ -1623,5 +1747,7 @@ __all__ = [
     "NumbaCellProfiler4DistanceMarkerBackendStrategy",
     "NumbaNumpyLegacyWatershedBackendStrategy",
     "NumpyLegacyWatershedBackendStrategy",
+    "WatershedStats",
     "cellprofiler_legacy_watershed",
+    "watershed",
 ]
