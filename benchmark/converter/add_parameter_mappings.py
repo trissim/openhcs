@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 import inspect
 
-from benchmark.converter.settings_binder import normalize_cellprofiler_setting_name
+from openhcs.interop.cellprofiler.settings_binder import normalize_cellprofiler_setting_name
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

@@ -225,7 +225,7 @@ class LibraryAbsorber:
             raise RuntimeError("LLM converter not initialized")
         
         # Create minimal module block for converter
-        from .parser import ModuleBlock
+        from openhcs.interop.cellprofiler.parser import ModuleBlock
         module_block = ModuleBlock(
             name=module_name,
             module_num=0,
@@ -534,4 +534,3 @@ class LibraryAbsorber:
         """Convert ModuleName to module_name (snake_case)."""
         # Insert underscore before capitals and lowercase
         return re.sub(r'([A-Z])', r'_\1', module_name).lower().lstrip('_')
-

@@ -18,7 +18,7 @@ from enum import Enum, auto
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .parser import ModuleBlock
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 from .source_locator import SourceLocation
 from .system_prompt import build_conversion_prompt
 
@@ -420,4 +420,3 @@ class LLMFunctionConverter:
             "confidence": 0.5,
             "reasoning": "Fallback - could not parse JSON response"
         }
-

@@ -149,7 +149,7 @@ def test_cellprofiler_pipeline_import_request_rejects_untyped_backend() -> None:
 
 
 def test_cellprofiler_pipeline_importer_is_dialect_compiler_contract() -> None:
-    from benchmark.converter.runtime_pipeline import (
+    from openhcs.interop.cellprofiler.runtime_pipeline import (
         BenchmarkCellProfilerDialectCompiler,
     )
 
@@ -171,7 +171,7 @@ def test_cellprofiler_dialect_compiler_registry_requires_typed_provider() -> Non
 
 
 def test_cellprofiler_dialect_compiler_registry_returns_explicit_provider() -> None:
-    from benchmark.converter.runtime_pipeline import (
+    from openhcs.interop.cellprofiler.runtime_pipeline import (
         BenchmarkCellProfilerDialectCompiler,
     )
 

@@ -5,12 +5,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from benchmark.converter.execution_validation import (
+from openhcs.interop.cellprofiler.execution_validation import (
     CPPipeExecutionValidationError,
     validate_cppipe_execution,
 )
-from benchmark.converter.parser import ModuleBlock
-from benchmark.converter.runtime_pipeline import DirectPipelineExecution
+from openhcs.interop.cellprofiler.parser import ModuleBlock
+from openhcs.interop.cellprofiler.runtime_pipeline import DirectPipelineExecution
 from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactScope, ArtifactSpec
 from openhcs.core.runtime_exports import RuntimeImageExportBitDepth
 from openhcs.core.runtime_semantics import FieldSpec

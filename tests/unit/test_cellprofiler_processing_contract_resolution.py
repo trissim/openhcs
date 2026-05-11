@@ -1,6 +1,6 @@
 import pytest
 
-from benchmark.converter.processing_contract_resolution import (
+from openhcs.interop.cellprofiler.processing_contract_resolution import (
     ProcessingContractResolutionSource,
     resolve_processing_contract,
 )

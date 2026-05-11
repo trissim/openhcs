@@ -24,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from .parser import ModuleBlock
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 
 logger = logging.getLogger(__name__)
 
@@ -172,4 +172,3 @@ class SourceLocator:
                 name = py_file.stem[1:].title()
                 modules.append(name)
         return sorted(modules)
-

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from benchmark.cellprofiler_comparison import load_comparison_cases
-from benchmark.converter.runtime_pipeline import prepare_generated_pipeline
+from openhcs.interop.cellprofiler.runtime_pipeline import prepare_generated_pipeline
 from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.constants.constants import Microscope
 from openhcs.core.config import (

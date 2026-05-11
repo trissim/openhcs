@@ -62,7 +62,7 @@ from benchmark.cellprofiler_library.functions.relateobjects import (
 from benchmark.cellprofiler_library.functions.resize import resize, resize_volumetric
 from benchmark.cellprofiler_library.functions.enhanceedges import enhance_edges
 from benchmark.cellprofiler_library.functions.smooth import smooth
-from benchmark.cellprofiler_library.functions.thresholding import (
+from openhcs.interop.cellprofiler.thresholding import (
     CellProfilerAveragingMethod,
     CellProfilerOtsuMethod,
     CellProfilerThresholdAssignment,
@@ -79,7 +79,7 @@ from benchmark.cellprofiler_library.functions.thresholding import (
 )
 from benchmark.cellprofiler_library.functions.threshold import threshold
 from benchmark.cellprofiler_library.functions.unmixcolors import unmix_colors
-from benchmark.cellprofiler_library.semantic_defaults import (
+from openhcs.interop.cellprofiler.semantic_defaults import (
     CellProfilerSemanticDefaultContract,
 )
 from benchmark.cellprofiler_semantics.crop import CropShape, RemovalMethod
@@ -916,7 +916,7 @@ def test_identify_primary_objects_basic_mode_fills_holes_like_cellprofiler():
 
 
 def test_cellprofiler_basic_threshold_uses_native_default_smoothing(monkeypatch):
-    from benchmark.cellprofiler_library.functions import thresholding as thresholding_module
+    from openhcs.interop.cellprofiler import thresholding as thresholding_module
 
     calls = {}
 
@@ -969,7 +969,7 @@ def test_cellprofiler_basic_threshold_uses_native_default_smoothing(monkeypatch)
 
 
 def test_cellprofiler_threshold_passes_mask_to_native_thresholds(monkeypatch):
-    from benchmark.cellprofiler_library.functions import thresholding as thresholding_module
+    from openhcs.interop.cellprofiler import thresholding as thresholding_module
 
     calls = []
     image = np.array([[0.0, 0.2], [0.8, 1.0]], dtype=np.float32)
@@ -1224,7 +1224,7 @@ def test_identify_primary_objects_declumping_footprint_respects_min_diameter():
 
 
 def test_cellprofiler_threshold_can_apply_unsmoothed_threshold(monkeypatch):
-    from benchmark.cellprofiler_library.functions import thresholding as thresholding_module
+    from openhcs.interop.cellprofiler import thresholding as thresholding_module
 
     calls = {}
 
@@ -1277,7 +1277,7 @@ def test_cellprofiler_threshold_can_apply_unsmoothed_threshold(monkeypatch):
 def test_cellprofiler_global_otsu_uses_raw_threshold_estimate(
     monkeypatch,
 ):
-    from benchmark.cellprofiler_library.functions import thresholding as thresholding_module
+    from openhcs.interop.cellprofiler import thresholding as thresholding_module
 
     calls = {}
 
@@ -1332,7 +1332,7 @@ def test_cellprofiler_global_otsu_uses_raw_threshold_estimate(
 def test_cellprofiler_global_robust_background_uses_raw_threshold_estimate(
     monkeypatch,
 ):
-    from benchmark.cellprofiler_library.functions import thresholding as thresholding_module
+    from openhcs.interop.cellprofiler import thresholding as thresholding_module
 
     calls = {}
 
@@ -1387,7 +1387,7 @@ def test_cellprofiler_global_robust_background_uses_raw_threshold_estimate(
 def test_cellprofiler_minimum_cross_entropy_uses_unsmoothed_threshold_estimate(
     monkeypatch,
 ):
-    from benchmark.cellprofiler_library.functions import thresholding as thresholding_module
+    from openhcs.interop.cellprofiler import thresholding as thresholding_module
 
     calls = {}
 

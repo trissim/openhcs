@@ -4,12 +4,12 @@ import csv
 import os
 from pathlib import Path
 
-from benchmark.converter.runtime_pipeline import (
+from openhcs.interop.cellprofiler.runtime_pipeline import (
     DirectPipelineExecution,
     execute_pipeline_direct,
     prepare_generated_pipeline,
 )
-from benchmark.converter.execution_validation import validate_cppipe_execution
+from openhcs.interop.cellprofiler.execution_validation import validate_cppipe_execution
 import numpy as np
 import pytest
 import tifffile

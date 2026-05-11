@@ -2,11 +2,11 @@ from pathlib import Path
 
 import pytest
 
-from benchmark.converter.parser import CPPipeParser, ModuleBlock, ModuleSetting
-from benchmark.converter.pipeline_generator import PipelineGenerator, python_literal
-from benchmark.converter.runtime_pipeline import partition_cppipe_modules
-from benchmark.converter.overlay_outlines_settings import overlay_outlines_bound_kwargs
-from benchmark.converter.symbol_table import (
+from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.pipeline_generator import PipelineGenerator, python_literal
+from openhcs.interop.cellprofiler.runtime_pipeline import partition_cppipe_modules
+from openhcs.interop.cellprofiler.overlay_outlines_settings import overlay_outlines_bound_kwargs
+from openhcs.interop.cellprofiler.symbol_table import (
     CellProfilerSymbolKind,
     CellProfilerSymbolTable,
 )

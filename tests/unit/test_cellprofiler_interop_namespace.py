@@ -2,9 +2,9 @@
 
 from benchmark.cellprofiler_compat import measurement_dialect as benchmark_dialect
 from benchmark.cellprofiler_compat import measurement_scope as benchmark_scope
-from benchmark.converter import parser as benchmark_parser
-from benchmark.converter import settings_binder as benchmark_settings_binder
-from benchmark.converter import source_schema as benchmark_source_schema
+from openhcs.interop.cellprofiler import parser as benchmark_parser
+from openhcs.interop.cellprofiler import settings_binder as benchmark_settings_binder
+from openhcs.interop.cellprofiler import source_schema as benchmark_source_schema
 from openhcs.interop import cellprofiler
 from openhcs.interop.cellprofiler import import_records
 from openhcs.interop.cellprofiler import measurement_dialect

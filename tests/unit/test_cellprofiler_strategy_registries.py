@@ -26,7 +26,7 @@ from benchmark.cellprofiler_library.functions.filterobjects import (
     PerObjectAssignmentStrategy,
 )
 from benchmark.cellprofiler_library.functions.graytocolor import GrayToColorSchemeRunner
-from benchmark.converter.image_math_settings import (
+from openhcs.interop.cellprofiler.image_math_settings import (
     ImageMathOperandFactorSettingResolver,
 )
 from openhcs.processing.backends.cellprofiler.image_math import (
@@ -35,7 +35,7 @@ from openhcs.processing.backends.cellprofiler.image_math import (
 from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     ExpandShrinkOperationModeBinding,
 )
-from benchmark.converter.module_runtime_semantics import ModuleRuntimeSemanticsBinding
+from openhcs.interop.cellprofiler.module_runtime_semantics import ModuleRuntimeSemanticsBinding
 from openhcs.interop.cellprofiler.module_semantics import (
     CellProfilerModuleSemanticTraits,
 )

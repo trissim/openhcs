@@ -10,7 +10,7 @@ from benchmark.converter.cppipe_corpus import (
     comparison_manifests_cppipe_corpus,
     in_tree_cppipe_corpus,
 )
-from benchmark.converter.runtime_pipeline import prepare_generated_pipeline
+from openhcs.interop.cellprofiler.runtime_pipeline import prepare_generated_pipeline
 from openhcs.interop.cellprofiler import CellProfilerModuleRole
 from openhcs.interop.cellprofiler import CellProfilerPipelineImportResult
 

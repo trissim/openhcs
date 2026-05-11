@@ -2,17 +2,17 @@ from enum import Enum
 
 import pytest
 
-from benchmark.converter.settings_binder import (
+from openhcs.interop.cellprofiler.settings_binder import (
     SettingToKeywordBinding,
     SettingsBinder,
     normalize_cellprofiler_setting_name,
     parse_cellprofiler_int,
 )
-from benchmark.converter.parser import ModuleBlock, ModuleSetting
-from benchmark.converter.module_settings_binding import ModuleUnmappedSettingIgnore
-from benchmark.converter.module_settings_binding import ModuleSettingsBindingStrategy
-from benchmark.converter.module_settings_binding import UnmappedModuleSettingsError
-from benchmark.converter.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
+from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.module_settings_binding import ModuleUnmappedSettingIgnore
+from openhcs.interop.cellprofiler.module_settings_binding import ModuleSettingsBindingStrategy
+from openhcs.interop.cellprofiler.module_settings_binding import UnmappedModuleSettingsError
+from openhcs.interop.cellprofiler.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
 from openhcs.interop.cellprofiler.setting_names import setting_names
 
 

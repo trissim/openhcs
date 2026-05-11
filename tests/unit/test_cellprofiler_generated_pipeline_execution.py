@@ -6,8 +6,8 @@ import numpy as np
 import tifffile
 
 from openhcs.interop.cellprofiler.runtime import cellprofiler_runtime_adapter_factory
-from benchmark.converter.parser import ModuleBlock
-from benchmark.converter.pipeline_generator import GeneratedPipeline, PipelineGenerator
+from openhcs.interop.cellprofiler.parser import ModuleBlock
+from openhcs.interop.cellprofiler.pipeline_generator import GeneratedPipeline, PipelineGenerator
 from openhcs.constants import Backend
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
@@ -847,7 +847,7 @@ def test_identify_primary_objects_uses_runtime_image_intensity_scale():
         WatershedMethod,
         identify_primary_objects,
     )
-    from benchmark.cellprofiler_library.functions.thresholding import (
+    from openhcs.interop.cellprofiler.thresholding import (
         CellProfilerThresholdMethod as ThresholdMethod,
     )
 

@@ -11,7 +11,7 @@ import time
 
 import numpy as np
 
-from benchmark.cellprofiler_library.functions.thresholding import (
+from openhcs.interop.cellprofiler.thresholding import (
     _threshold_application_smoothed_image,
     cellprofiler_threshold_diagnostics,
 )

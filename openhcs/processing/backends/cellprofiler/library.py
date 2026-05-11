@@ -20,6 +20,7 @@ _LIBRARY_ROOT = Path(__file__).parent
 _CONTRACTS_PATH = _LIBRARY_ROOT / "contracts.json"
 _FUNCTIONS_PACKAGE = "benchmark.cellprofiler_library.functions"
 _BACKEND_FUNCTIONS_PACKAGE = "openhcs.processing.backends.cellprofiler"
+_INTEROP_FUNCTIONS_PACKAGE = "openhcs.interop.cellprofiler"
 
 
 def _functions_root() -> Path:
@@ -385,17 +386,26 @@ def _discover_function_locations() -> Mapping[str, AbsorbedFunctionLocation]:
     locations: dict[str, AbsorbedFunctionLocation] = {}
     _register_function_locations(
         locations,
-        package=_FUNCTIONS_PACKAGE,
-        root=_FUNCTIONS_ROOT,
-        replace_existing=False,
-        declared_only=False,
-    )
-    _register_function_locations(
-        locations,
         package=_BACKEND_FUNCTIONS_PACKAGE,
         root=_LIBRARY_ROOT,
         replace_existing=False,
         declared_only=True,
+    )
+    interop_spec = importlib.util.find_spec(_INTEROP_FUNCTIONS_PACKAGE)
+    if interop_spec is not None and interop_spec.submodule_search_locations:
+        _register_function_locations(
+            locations,
+            package=_INTEROP_FUNCTIONS_PACKAGE,
+            root=Path(next(iter(interop_spec.submodule_search_locations))),
+            replace_existing=False,
+            declared_only=True,
+        )
+    _register_function_locations(
+        locations,
+        package=_FUNCTIONS_PACKAGE,
+        root=_FUNCTIONS_ROOT,
+        replace_existing=False,
+        declared_only=False,
     )
     return MappingProxyType(locations)
 

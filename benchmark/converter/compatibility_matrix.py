@@ -30,7 +30,7 @@ from .cppipe_corpus import (
     default_cppipe_corpus,
 )
 from .cppipe_module_roles import CPPipeModuleRole, cppipe_module_role
-from .processing_contract_resolution import (
+from openhcs.interop.cellprofiler.processing_contract_resolution import (
     ProcessingContractResolutionSource,
     resolve_processing_contract,
 )

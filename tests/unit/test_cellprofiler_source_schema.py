@@ -1,10 +1,10 @@
 import re
 from pathlib import Path
 
-from benchmark.converter.parser import CPPipeParser, ModuleBlock, ModuleSetting
-from benchmark.converter.pipeline_generator import PipelineGenerator
-from benchmark.converter.source_schema import compile_image_schema
-from benchmark.converter.symbol_table import CellProfilerSymbolTable
+from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
+from openhcs.interop.cellprofiler.pipeline_generator import PipelineGenerator
+from openhcs.interop.cellprofiler.source_schema import compile_image_schema
+from openhcs.interop.cellprofiler.symbol_table import CellProfilerSymbolTable
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import ImagePlaneSource, PipelineImageSchema

@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from benchmark.converter.parser import CPPipeParser
+from openhcs.interop.cellprofiler.parser import CPPipeParser
 from openhcs.constants import Backend
 
 

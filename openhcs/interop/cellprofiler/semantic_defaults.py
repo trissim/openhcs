@@ -21,7 +21,12 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import CallableContract
 
 
-SOURCE_MODULE_ROOT = Path(__file__).resolve().parents[1] / "cellprofiler_source" / "modules"
+SOURCE_MODULE_ROOT = (
+    Path(__file__).resolve().parents[3]
+    / "benchmark"
+    / "cellprofiler_source"
+    / "modules"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -271,7 +276,7 @@ class MedianFilterSemanticDefaultContract(SourceCallKeywordDefaultContract):
     source_filename = "medianfilter.py"
 
     def source_call_keywords(self) -> tuple[SourceCallKeyword, ...]:
-        from benchmark.cellprofiler_library.functions.medianfilter import medianfilter
+        from openhcs.processing.backends.cellprofiler.median_filter import medianfilter
 
         return (
             SourceCallKeyword(
@@ -290,7 +295,7 @@ class MedianFilterExecutionDomainContract(SourceVolumetricPixelDataExecutionCont
 
     @property
     def absorbed_callable(self) -> Callable[..., Any]:
-        from benchmark.cellprofiler_library.functions.medianfilter import medianfilter
+        from openhcs.processing.backends.cellprofiler.median_filter import medianfilter
 
         return medianfilter
 
@@ -302,7 +307,7 @@ class WatershedBasicSemanticDefaultContract(SourceDictSemanticDefaultContract):
     source_dict_name = "basic_mode_defaults"
 
     def source_dict_fields(self) -> tuple[SourceDictField, ...]:
-        from benchmark.cellprofiler_library.functions.watershed import (
+        from openhcs.processing.backends.cellprofiler.watershed import (
             CELLPROFILER_WATERSHED_BASIC_DEFAULTS,
         )
 
@@ -333,6 +338,6 @@ class WatershedExecutionDomainContract(SourceVolumetricPixelDataExecutionContrac
 
     @property
     def absorbed_callable(self) -> Callable[..., Any]:
-        from benchmark.cellprofiler_library.functions.watershed import watershed
+        from openhcs.processing.backends.cellprofiler.watershed import watershed
 
         return watershed
