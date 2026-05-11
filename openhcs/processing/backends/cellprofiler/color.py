@@ -11,7 +11,16 @@ from typing import Any, ClassVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
+from openhcs.core.image_shapes import (
+    is_channel_last_image_slice,
+    is_channel_last_image_stack,
+)
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_metadata,
+    with_image_payload_data,
+)
 from openhcs.interop.cellprofiler.gray_to_color_settings import (
     GrayToColorScheme,
     coerce_gray_to_color_scheme,
@@ -162,6 +171,17 @@ class StainDefinition:
         else:
             absorbance = self.stain.calibrated_absorbance
         return _normalized_absorbance(absorbance)
+
+
+class ImageChannelType(Enum):
+    RGB = "rgb"
+    HSV = "hsv"
+    CHANNELS = "channels"
+
+
+class ColorToGrayMode(Enum):
+    COMBINE = "combine"
+    SPLIT = "split"
 
 
 _COLOR_BY_NAME: dict[str, tuple[float, float, float]] = {
@@ -400,6 +420,143 @@ def gray_to_color(
         channel_weights=channel_weights,
     )
     return GrayToColorSchemeRunner.for_scheme(scheme).run(request)
+
+
+@numpy
+def color_to_gray(
+    image: np.ndarray,
+    mode: ColorToGrayMode | str = ColorToGrayMode.SPLIT,
+    image_type: ImageChannelType | str = ImageChannelType.RGB,
+    channel_indices: tuple[int, ...] = (0, 1, 2),
+    contributions: tuple[float, ...] = (1.0, 1.0, 1.0),
+) -> np.ndarray | tuple[np.ndarray, ...]:
+    """Convert a CellProfiler channel-last color payload to grayscale outputs."""
+    resolved_mode = coerce_cellprofiler_enum(ColorToGrayMode, mode)
+    resolved_image_type = coerce_cellprofiler_enum(ImageChannelType, image_type)
+    if resolved_mode is ColorToGrayMode.COMBINE:
+        output = combine_color_to_gray(image, channel_indices, contributions)
+        return with_image_payload_data(
+            image,
+            output,
+            metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
+        )
+    return tuple(
+        with_image_payload_data(image, output)
+        for output in split_color_to_gray(image, resolved_image_type, channel_indices)
+    )
+
+
+def combine_color_to_gray(
+    image: np.ndarray,
+    channel_indices: tuple[int, ...],
+    contributions: tuple[float, ...],
+) -> np.ndarray:
+    image_data = image_payload_data(image)
+    if len(channel_indices) != len(contributions):
+        raise ValueError("channel_indices and contributions must have same length.")
+    weights = normalized_color_to_gray_weights(contributions)
+    color_stack = nhwc_color_stack(image_data)
+    result = np.zeros(color_stack.shape[:3], dtype=np.float32)
+    for channel_index, weight in zip(channel_indices, weights, strict=True):
+        result += color_to_gray_channel(color_stack, channel_index).astype(np.float32) * weight
+    return restore_color_to_gray_shape(image_data, result)
+
+
+def split_color_to_gray(
+    image: np.ndarray,
+    image_type: ImageChannelType,
+    channel_indices: tuple[int, ...],
+) -> tuple[np.ndarray, ...]:
+    image_data = image_payload_data(image)
+    color_stack = nhwc_color_stack(image_data).astype(np.float32)
+    source_stack = (
+        rgb_to_hsv_stack(color_stack)
+        if image_type is ImageChannelType.HSV
+        else color_stack
+    )
+    return tuple(
+        restore_color_to_gray_shape(
+            image_data,
+            color_to_gray_channel(source_stack, index),
+        )
+        for index in channel_indices
+    )
+
+
+def color_to_gray_channel(
+    color_stack: np.ndarray,
+    channel_index: int,
+) -> np.ndarray:
+    if channel_index >= color_stack.shape[-1]:
+        raise ValueError(
+            f"ColorToGray channel index {channel_index} is outside payload "
+            f"with {color_stack.shape[-1]} channels."
+        )
+    return color_stack[..., channel_index]
+
+
+def nhwc_color_stack(image: np.ndarray) -> np.ndarray:
+    if is_channel_last_image_stack(image):
+        return image
+    if is_channel_last_image_slice(image):
+        return image[np.newaxis, ...]
+    raise ValueError(
+        "ColorToGray requires a channel-last image shaped (H, W, C) or "
+        f"(N, H, W, C), got {getattr(image, 'shape', 'unknown')}."
+    )
+
+
+def restore_color_to_gray_shape(
+    original: np.ndarray,
+    stack: np.ndarray,
+) -> np.ndarray:
+    if is_channel_last_image_slice(original):
+        return stack[0]
+    return stack
+
+
+def normalized_color_to_gray_weights(
+    contributions: tuple[float, ...],
+) -> tuple[float, ...]:
+    total = sum(contributions)
+    if total == 0:
+        raise ValueError("Contributions cannot all be zero.")
+    return tuple(float(contribution) / total for contribution in contributions)
+
+
+def rgb_to_hsv_stack(rgb_stack: np.ndarray) -> np.ndarray:
+    if rgb_stack.shape[-1] < 3:
+        raise ValueError("HSV conversion requires at least three RGB channels.")
+    rgb = rgb_stack[..., :3]
+    if rgb.size and np.nanmax(rgb) > 1.0:
+        rgb = rgb / 255.0
+    red = rgb[..., 0]
+    green = rgb[..., 1]
+    blue = rgb[..., 2]
+    max_channel = np.maximum(np.maximum(red, green), blue)
+    min_channel = np.minimum(np.minimum(red, green), blue)
+    delta = max_channel - min_channel
+    value = max_channel
+    saturation = np.divide(
+        delta,
+        max_channel,
+        out=np.zeros_like(delta),
+        where=max_channel != 0,
+    )
+    hue = np.zeros_like(red)
+    nonzero_delta = delta != 0
+    red_is_max = (max_channel == red) & nonzero_delta
+    green_is_max = (max_channel == green) & nonzero_delta
+    blue_is_max = (max_channel == blue) & nonzero_delta
+    hue[red_is_max] = ((green[red_is_max] - blue[red_is_max]) / delta[red_is_max]) % 6
+    hue[green_is_max] = (
+        (blue[green_is_max] - red[green_is_max]) / delta[green_is_max]
+    ) + 2
+    hue[blue_is_max] = (
+        (red[blue_is_max] - green[blue_is_max]) / delta[blue_is_max]
+    ) + 4
+    hue = hue / 6.0
+    return np.stack((hue, saturation, value), axis=-1).astype(np.float32)
 
 
 @numpy(contract=ProcessingContract.FLEXIBLE)
