@@ -93,6 +93,120 @@ class SmoothingBackendSelectionRequest:
         return self.effective_object_size / 2.35
 
 
+@dataclass(frozen=True, slots=True)
+class GaussianKernel1D:
+    """One-dimensional constant-boundary Gaussian kernel authority."""
+
+    sigma: float
+
+    @property
+    def array(self) -> np.ndarray:
+        sigma = float(self.sigma)
+        if sigma <= 0:
+            return np.ones((1,), dtype=np.float64)
+        radius = max(1, int(round(4.0 * sigma)))
+        coordinates = np.arange(-radius, radius + 1, dtype=np.float64)
+        kernel = np.exp(-0.5 * (coordinates / sigma) ** 2)
+        kernel /= np.sum(kernel)
+        return kernel.astype(np.float64, copy=False)
+
+
+@dataclass(frozen=True, slots=True)
+class MaskedFilterRequest(ABC):
+    """Shared pixel/mask state for mask-normalized filtering."""
+
+    pixels: np.ndarray
+    mask: np.ndarray | None
+
+    @property
+    def resolved_mask(self) -> np.ndarray:
+        if self.mask is None:
+            return np.ones(self.pixels.shape, dtype=bool)
+        return np.asarray(self.mask, dtype=bool)
+
+
+@dataclass(frozen=True, slots=True)
+class MaskedLinearFilterRequest(MaskedFilterRequest):
+    """Mask-normalized linear filtering request."""
+
+    operation: Callable[[np.ndarray], np.ndarray]
+
+    def apply(self) -> np.ndarray:
+        mask = self.resolved_mask
+        masked_image = np.zeros(self.pixels.shape, dtype=self.pixels.dtype)
+        masked_image[mask] = self.pixels[mask]
+        weights = self.operation(mask.astype(float))
+        filtered = self.operation(masked_image)
+        return filtered / (weights + np.finfo(float).eps)
+
+
+@dataclass(frozen=True, slots=True)
+class OpenCVMaskedGaussianFilterRequest(MaskedFilterRequest):
+    """OpenCV implementation of mask-normalized Gaussian smoothing."""
+
+    sigma: float
+
+    @property
+    def image_array(self) -> np.ndarray:
+        return np.ascontiguousarray(self.pixels, dtype=np.float32)
+
+    @property
+    def mask_array(self) -> np.ndarray:
+        image_array = self.image_array
+        if self.mask is None:
+            return np.ones(image_array.shape, dtype=np.float32)
+        mask_bool = np.asarray(self.mask, dtype=bool)
+        if mask_bool.shape != image_array.shape:
+            raise ValueError(
+                "Smoothing mask must match image shape; got "
+                f"{mask_bool.shape!r} for image {image_array.shape!r}."
+            )
+        return np.ascontiguousarray(mask_bool.astype(np.float32))
+
+    def apply(self) -> np.ndarray:
+        import cv2
+
+        image_array = self.image_array
+        mask_array = self.mask_array
+        kernel = GaussianKernel1D(self.sigma).array.astype(np.float32, copy=False)
+        masked_image = np.zeros(image_array.shape, dtype=np.float32)
+        np.copyto(masked_image, image_array, where=mask_array.astype(bool, copy=False))
+        filtered = cv2.sepFilter2D(
+            masked_image,
+            cv2.CV_32F,
+            kernel,
+            kernel,
+            borderType=cv2.BORDER_CONSTANT,
+        )
+        weights = cv2.sepFilter2D(
+            mask_array,
+            cv2.CV_32F,
+            kernel,
+            kernel,
+            borderType=cv2.BORDER_CONSTANT,
+        )
+        return filtered / (weights + np.finfo(np.float32).eps)
+
+    @classmethod
+    def apply_stack(
+        cls,
+        pixel_stack: np.ndarray,
+        mask_stack: np.ndarray | None,
+        sigma: float,
+    ) -> np.ndarray:
+        return np.stack(
+            [
+                cls(
+                    pixel_stack[index],
+                    None if mask_stack is None else mask_stack[index],
+                    sigma,
+                ).apply()
+                for index in range(pixel_stack.shape[0])
+            ],
+            axis=0,
+        )
+
+
 class SmoothingBackendProviderPolicy(
     EnumKeyedStrategyMixin[SmoothingMethod],
     ABC,
@@ -263,16 +377,16 @@ class NumpyGaussianSmoothingStrategy(SmoothingStrategyLeaf):
     def smooth(self, request: SmoothingRequest) -> np.ndarray:
         from scipy.ndimage import gaussian_filter
 
-        return _masked_linear_filter(
-            request.pixel_data,
-            request.mask,
-            lambda image: gaussian_filter(
+        return MaskedLinearFilterRequest(
+            pixels=request.pixel_data,
+            mask=request.mask,
+            operation=lambda image: gaussian_filter(
                 image,
                 request.sigma,
                 mode="constant",
                 cval=0,
             ),
-        )
+        ).apply()
 
     def smooth_stack(
         self,
@@ -282,16 +396,16 @@ class NumpyGaussianSmoothingStrategy(SmoothingStrategyLeaf):
     ) -> np.ndarray:
         from scipy.ndimage import gaussian_filter
 
-        return _masked_linear_filter_stack(
-            pixel_stack,
-            mask_stack,
-            lambda image: gaussian_filter(
+        return MaskedLinearFilterRequest(
+            pixels=pixel_stack,
+            mask=mask_stack,
+            operation=lambda image: gaussian_filter(
                 image,
                 (0.0, sigma, sigma),
                 mode="constant",
                 cval=0,
             ),
-        )
+        ).apply()
 
 
 class OpenCVGaussianSmoothingStrategy(SmoothingStrategyLeaf):
@@ -303,11 +417,11 @@ class OpenCVGaussianSmoothingStrategy(SmoothingStrategyLeaf):
         return True
 
     def smooth(self, request: SmoothingRequest) -> np.ndarray:
-        return _masked_gaussian_filter_opencv(
+        return OpenCVMaskedGaussianFilterRequest(
             request.pixel_data,
             request.mask,
             request.sigma,
-        )
+        ).apply()
 
     def smooth_stack(
         self,
@@ -315,7 +429,11 @@ class OpenCVGaussianSmoothingStrategy(SmoothingStrategyLeaf):
         mask_stack: np.ndarray | None,
         sigma: float,
     ) -> np.ndarray:
-        return _masked_gaussian_filter_stack_opencv(pixel_stack, mask_stack, sigma)
+        return OpenCVMaskedGaussianFilterRequest.apply_stack(
+            pixel_stack,
+            mask_stack,
+            sigma,
+        )
 
 
 class MedianSmoothingStrategy(SmoothingStrategyLeaf):
@@ -385,94 +503,6 @@ class SmoothToAverageStrategy(SmoothingStrategyLeaf):
         return np.full(request.pixel_data.shape, mean_value, dtype=np.float32)
 
 
-def _masked_linear_filter(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-    operation,
-) -> np.ndarray:
-    if mask is None:
-        mask = np.ones(image.shape, dtype=bool)
-    else:
-        mask = np.asarray(mask, dtype=bool)
-    masked_image = np.zeros(image.shape, dtype=image.dtype)
-    masked_image[mask] = image[mask]
-    weights = operation(mask.astype(float))
-    filtered = operation(masked_image)
-    return filtered / (weights + np.finfo(float).eps)
-
-
-def _masked_linear_filter_stack(
-    image_stack: np.ndarray,
-    mask_stack: np.ndarray | None,
-    operation,
-) -> np.ndarray:
-    if mask_stack is None:
-        mask_stack = np.ones(image_stack.shape, dtype=bool)
-    else:
-        mask_stack = np.asarray(mask_stack, dtype=bool)
-    masked_image = np.zeros(image_stack.shape, dtype=image_stack.dtype)
-    masked_image[mask_stack] = image_stack[mask_stack]
-    weights = operation(mask_stack.astype(float))
-    filtered = operation(masked_image)
-    return filtered / (weights + np.finfo(float).eps)
-
-
-def _masked_gaussian_filter_opencv(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-    sigma: float,
-) -> np.ndarray:
-    import cv2
-
-    image_array = np.ascontiguousarray(image, dtype=np.float32)
-    if mask is None:
-        mask_array = np.ones(image_array.shape, dtype=np.float32)
-    else:
-        mask_bool = np.asarray(mask, dtype=bool)
-        if mask_bool.shape != image_array.shape:
-            raise ValueError(
-                "Smoothing mask must match image shape; got "
-                f"{mask_bool.shape!r} for image {image_array.shape!r}."
-            )
-        mask_array = np.ascontiguousarray(mask_bool.astype(np.float32))
-    kernel = _gaussian_kernel_1d(sigma).astype(np.float32, copy=False)
-    masked_image = np.zeros(image_array.shape, dtype=np.float32)
-    np.copyto(masked_image, image_array, where=mask_array.astype(bool, copy=False))
-    filtered = cv2.sepFilter2D(
-        masked_image,
-        cv2.CV_32F,
-        kernel,
-        kernel,
-        borderType=cv2.BORDER_CONSTANT,
-    )
-    weights = cv2.sepFilter2D(
-        mask_array,
-        cv2.CV_32F,
-        kernel,
-        kernel,
-        borderType=cv2.BORDER_CONSTANT,
-    )
-    return filtered / (weights + np.finfo(np.float32).eps)
-
-
-def _masked_gaussian_filter_stack_opencv(
-    image_stack: np.ndarray,
-    mask_stack: np.ndarray | None,
-    sigma: float,
-) -> np.ndarray:
-    return np.stack(
-        [
-            _masked_gaussian_filter_opencv(
-                image_stack[index],
-                None if mask_stack is None else mask_stack[index],
-                sigma,
-            )
-            for index in range(image_stack.shape[0])
-        ],
-        axis=0,
-    )
-
-
 def _gaussian_filter_numba(
     image: np.ndarray,
     mask: np.ndarray | None,
@@ -483,7 +513,7 @@ def _gaussian_filter_numba(
         raise NotImplementedError(
             "Numba smoothing backend currently supports 2-D Gaussian planes."
         )
-    kernel = _gaussian_kernel_1d(sigma)
+    kernel = GaussianKernel1D(sigma).array
     contiguous_image = np.ascontiguousarray(image_array)
     if mask is None:
         return _separable_gaussian_normalized_constant_2d_numba(
@@ -502,17 +532,6 @@ def _gaussian_filter_numba(
         np.ascontiguousarray(mask_array),
         kernel,
     )
-
-
-def _gaussian_kernel_1d(sigma: float) -> np.ndarray:
-    sigma = float(sigma)
-    if sigma <= 0:
-        return np.ones((1,), dtype=np.float64)
-    radius = max(1, int(round(4.0 * sigma)))
-    coordinates = np.arange(-radius, radius + 1, dtype=np.float64)
-    kernel = np.exp(-0.5 * (coordinates / sigma) ** 2)
-    kernel /= np.sum(kernel)
-    return kernel.astype(np.float64, copy=False)
 
 
 @njit(cache=True)
