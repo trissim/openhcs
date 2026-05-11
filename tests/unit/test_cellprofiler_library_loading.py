@@ -2704,7 +2704,7 @@ def test_correct_illumination_background_uses_blockwise_minima():
 
 
 def test_correct_illumination_automatic_filter_size_matches_cellprofiler_source():
-    from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
+    from openhcs.processing.backends.cellprofiler.illumination import (
         AutomaticSmoothingFilterSizeStrategy,
         SmoothingFilterSizeRequest,
     )

@@ -4,14 +4,17 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 import logging
 import os
 import time
+from typing import ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
 from openhcs.constants.constants import MemoryType
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
@@ -107,6 +110,123 @@ class IlluminationGaussianFilter:
                 cval=0,
             ),
         ).apply()
+
+
+class IntensityChoice(Enum):
+    """CellProfiler CorrectIlluminationCalculate intensity source."""
+
+    REGULAR = "regular"
+    BACKGROUND = "background"
+
+
+class SmoothingMethod(Enum):
+    """CellProfiler CorrectIlluminationCalculate smoothing method."""
+
+    NONE = "none"
+    CONVEX_HULL = "convex_hull"
+    FIT_POLYNOMIAL = "fit_polynomial"
+    MEDIAN_FILTER = "median_filter"
+    GAUSSIAN_FILTER = "gaussian_filter"
+    TO_AVERAGE = "to_average"
+    SPLINES = "splines"
+
+
+class FilterSizeMethod(Enum):
+    """CellProfiler CorrectIlluminationCalculate filter-size mode."""
+
+    AUTOMATIC = "automatic"
+    OBJECT_SIZE = "object_size"
+    MANUALLY = "manually"
+
+
+class RescaleOption(Enum):
+    """CellProfiler CorrectIlluminationCalculate output rescale mode."""
+
+    YES = "yes"
+    NO = "no"
+    MEDIAN = "median"
+
+
+class SplineBgMode(Enum):
+    """CellProfiler CorrectIlluminationCalculate spline background mode."""
+
+    AUTO = "auto"
+    DARK = "dark"
+    BRIGHT = "bright"
+    GRAY = "gray"
+
+
+class CalculationScope(Enum):
+    """CellProfiler CorrectIlluminationCalculate image aggregation scope."""
+
+    EACH = "each"
+    ALL_FIRST_CYCLE = "all_first_cycle"
+    ALL_ACROSS_CYCLES = "all_across_cycles"
+
+    @property
+    def uses_all_images(self) -> bool:
+        return self in {
+            CalculationScope.ALL_FIRST_CYCLE,
+            CalculationScope.ALL_ACROSS_CYCLES,
+        }
+
+
+def coerce_illumination_enum(enum_type: type[Enum], value: object) -> Enum:
+    """Coerce CellProfiler UI literals for illumination-owned enums."""
+    return coerce_cellprofiler_enum(enum_type, value)
+
+
+@dataclass(frozen=True, slots=True)
+class SmoothingFilterSizeRequest:
+    """Inputs needed to derive a smoothing filter size."""
+
+    image_shape: tuple[int, ...]
+    object_width: int
+    manual_filter_size: int
+
+
+class SmoothingFilterSizeStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal filter-size derivation for one closed CellProfiler mode."""
+
+    __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
+    method_label: ClassVar[str | None] = None
+    method: ClassVar[FilterSizeMethod | None] = None
+
+    @classmethod
+    def for_method(
+        cls,
+        method: FilterSizeMethod,
+    ) -> "SmoothingFilterSizeStrategy":
+        return cls.__registry__[method.value]()
+
+    @abstractmethod
+    def calculate(self, request: SmoothingFilterSizeRequest) -> float:
+        """Return the smoothing filter size."""
+
+
+class ManualSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
+    method = FilterSizeMethod.MANUALLY
+    method_label = method.value
+
+    def calculate(self, request: SmoothingFilterSizeRequest) -> float:
+        return float(request.manual_filter_size)
+
+
+class ObjectWidthSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
+    method = FilterSizeMethod.OBJECT_SIZE
+    method_label = method.value
+
+    def calculate(self, request: SmoothingFilterSizeRequest) -> float:
+        return request.object_width * 2.35 / 3.5
+
+
+class AutomaticSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
+    method = FilterSizeMethod.AUTOMATIC
+    method_label = method.value
+
+    def calculate(self, request: SmoothingFilterSizeRequest) -> float:
+        return min(30.0, float(np.max(request.image_shape)) / 40.0)
 
 
 class ConvexHullSmoothingBackendStrategy(
