@@ -20,6 +20,8 @@ from .library_absorber import LibraryAbsorber
 from .contract_inference import ContractInference, infer_contract
 from .runtime_pipeline import (
     CPPipeModulePartition,
+    CPPipePipelineGenerationRequest,
+    CPPipePipelinePreparationRequest,
     DirectPipelineExecution,
     GeneratedCPPipePipeline,
     PreparedGeneratedPipeline,

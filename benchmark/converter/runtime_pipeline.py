@@ -61,6 +61,36 @@ class CPPipeModulePartition:
     infrastructure_modules: tuple[ModuleBlock, ...]
     disabled_modules: tuple[ModuleBlock, ...]
 
+    def provenance(self, cppipe_path: Path) -> CellProfilerPipelineProvenance:
+        """Build product provenance from the partitioned module roles."""
+        role_by_module_num = {
+            module.module_num: CellProfilerModuleRole.PROCESSING
+            for module in self.processing_modules
+        }
+        role_by_module_num.update(
+            {
+                module.module_num: CellProfilerModuleRole.INFRASTRUCTURE
+                for module in self.infrastructure_modules
+            }
+        )
+        role_by_module_num.update(
+            {
+                module.module_num: CellProfilerModuleRole.DISABLED
+                for module in self.disabled_modules
+            }
+        )
+        return CellProfilerPipelineProvenance(
+            cppipe_path=cppipe_path,
+            modules=tuple(
+                CellProfilerModuleReference(
+                    name=module.name,
+                    module_num=module.module_num,
+                    role=role_by_module_num[module.module_num],
+                )
+                for module in self.modules
+            ),
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CPPipePipelineArtifact(ABC):
@@ -116,6 +146,132 @@ class DirectPipelineExecution:
 
     compiled_contexts: dict[str, Any]
     execution_results: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class CPPipePipelineGenerationRequest:
+    """Nominal request for parsing and generating one CellProfiler pipeline."""
+
+    cppipe_path: Path
+    parser: CPPipeParser | None = None
+    generator: PipelineGenerator | None = None
+    infrastructure_module_names: frozenset[str] = INFRASTRUCTURE_MODULE_NAMES
+    prune_dead_unmaterialized_artifact_steps: bool = False
+    materialize_skipped_save_images: bool = True
+    filemanager: FileManagerLike | None = None
+    cppipe_backend: Backend = Backend.DISK
+
+    @property
+    def cppipe_parser(self) -> CPPipeParser:
+        return self.parser or CPPipeParser()
+
+    @property
+    def pipeline_generator(self) -> PipelineGenerator:
+        return self.generator or PipelineGenerator()
+
+    def parse_modules(self) -> tuple[ModuleBlock, ...]:
+        return tuple(
+            self.cppipe_parser.parse(
+                self.cppipe_path,
+                filemanager=self.filemanager,
+                backend=self.cppipe_backend,
+            )
+        )
+
+    def partition_modules(self) -> CPPipeModulePartition:
+        return partition_cppipe_modules(
+            self.parse_modules(),
+            infrastructure_module_names=self.infrastructure_module_names,
+        )
+
+    def generate(self) -> GeneratedCPPipePipeline:
+        """Parse and convert this request into generated OpenHCS pipeline code."""
+        partition = self.partition_modules()
+        pipeline_generator = self.pipeline_generator
+
+        missing_modules = tuple(
+            module.name
+            for module in partition.processing_modules
+            if not pipeline_generator.has_module(module.name)
+        )
+        if missing_modules:
+            raise ValueError(
+                "Missing modules from absorbed library: "
+                f"{sorted(missing_modules)}. Run `python -m benchmark.converter.absorb`."
+            )
+
+        generated_pipeline = pipeline_generator.generate_from_registry(
+            pipeline_name=self.cppipe_path.stem,
+            source_cppipe=self.cppipe_path,
+            modules=list(partition.processing_modules),
+            skipped_modules=list(partition.infrastructure_modules),
+            prune_dead_unmaterialized_artifact_steps=(
+                self.prune_dead_unmaterialized_artifact_steps
+            ),
+            materialize_skipped_save_images=self.materialize_skipped_save_images,
+        )
+        return GeneratedCPPipePipeline(
+            cppipe_path=self.cppipe_path,
+            modules=partition.modules,
+            processing_modules=partition.processing_modules,
+            infrastructure_modules=partition.infrastructure_modules,
+            disabled_modules=partition.disabled_modules,
+            source_schema=generated_pipeline.source_schema,
+            generated_pipeline=generated_pipeline,
+            provenance=partition.provenance(self.cppipe_path),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CPPipePipelinePreparationRequest:
+    """Nominal request for materializing and importing a generated pipeline."""
+
+    generation: CPPipePipelineGenerationRequest
+    output_path: Path
+    generated_pipeline_backend: Backend = Backend.DISK
+
+    def prepare(self) -> PreparedGeneratedPipeline:
+        """Generate, persist, import, and register the requested pipeline."""
+        converted = self.generation.generate()
+        converted.generated_pipeline.save(
+            self.output_path,
+            filemanager=self.generation.filemanager,
+            backend=self.generated_pipeline_backend,
+        )
+
+        module_name = generated_pipeline_module_name(
+            self.output_path,
+            converted.generated_pipeline.code,
+        )
+        module = load_generated_pipeline_module_from_source(
+            converted.generated_pipeline.code,
+            module_name=module_name,
+            filename=str(self.output_path),
+        )
+        materialize_generated_pipeline_import_module(
+            converted.generated_pipeline.code,
+            module_name=module_name,
+            output_dir=self.output_path.parent,
+        )
+        pipeline = pipeline_from_generated_module(
+            module,
+            pipeline_name=converted.generated_pipeline.name,
+        )
+        registered_functions = register_generated_pipeline_functions(module)
+        return PreparedGeneratedPipeline(
+            cppipe_path=converted.cppipe_path,
+            module_name=module_name,
+            module_path=self.output_path,
+            module=module,
+            pipeline=pipeline,
+            processing_modules=converted.processing_modules,
+            infrastructure_modules=converted.infrastructure_modules,
+            disabled_modules=converted.disabled_modules,
+            source_schema=converted.source_schema,
+            generated_pipeline=converted.generated_pipeline,
+            provenance=converted.provenance,
+            registered_functions=registered_functions,
+        )
 
 
 class BenchmarkCellProfilerDialectCompiler(CellProfilerPipelineImporter):
@@ -191,52 +347,18 @@ def generate_pipeline_from_cppipe(
     cppipe_backend: Backend = Backend.DISK,
 ) -> GeneratedCPPipePipeline:
     """Parse and convert a .cppipe file into generated OpenHCS pipeline code."""
-    cppipe_parser = parser or CPPipeParser()
-    modules = tuple(
-        cppipe_parser.parse(
-            cppipe_path,
-            filemanager=filemanager,
-            backend=cppipe_backend,
-        )
-    )
-    partition = partition_cppipe_modules(
-        modules,
+    return CPPipePipelineGenerationRequest(
+        cppipe_path=cppipe_path,
+        parser=parser,
+        generator=generator,
         infrastructure_module_names=infrastructure_module_names,
-    )
-    provenance = _provenance_from_partition(cppipe_path, partition)
-    pipeline_generator = generator or PipelineGenerator()
-
-    missing_modules = tuple(
-        module.name
-        for module in partition.processing_modules
-        if not pipeline_generator.has_module(module.name)
-    )
-    if missing_modules:
-        raise ValueError(
-            "Missing modules from absorbed library: "
-            f"{sorted(missing_modules)}. Run `python -m benchmark.converter.absorb`."
-        )
-
-    generated_pipeline = pipeline_generator.generate_from_registry(
-        pipeline_name=cppipe_path.stem,
-        source_cppipe=cppipe_path,
-        modules=list(partition.processing_modules),
-        skipped_modules=list(partition.infrastructure_modules),
         prune_dead_unmaterialized_artifact_steps=(
             prune_dead_unmaterialized_artifact_steps
         ),
         materialize_skipped_save_images=materialize_skipped_save_images,
-    )
-    return GeneratedCPPipePipeline(
-        cppipe_path=cppipe_path,
-        modules=partition.modules,
-        processing_modules=partition.processing_modules,
-        infrastructure_modules=partition.infrastructure_modules,
-        disabled_modules=partition.disabled_modules,
-        source_schema=generated_pipeline.source_schema,
-        generated_pipeline=generated_pipeline,
-        provenance=provenance,
-    )
+        filemanager=filemanager,
+        cppipe_backend=cppipe_backend,
+    ).generate()
 
 
 def prepare_generated_pipeline(
@@ -253,57 +375,22 @@ def prepare_generated_pipeline(
     generated_pipeline_backend: Backend = Backend.DISK,
 ) -> PreparedGeneratedPipeline:
     """Generate, import, and register a .cppipe-derived OpenHCS pipeline."""
-    converted = generate_pipeline_from_cppipe(
-        cppipe_path,
-        parser=parser,
-        generator=generator,
-        infrastructure_module_names=infrastructure_module_names,
-        prune_dead_unmaterialized_artifact_steps=(
-            prune_dead_unmaterialized_artifact_steps
+    return CPPipePipelinePreparationRequest(
+        generation=CPPipePipelineGenerationRequest(
+            cppipe_path=cppipe_path,
+            parser=parser,
+            generator=generator,
+            infrastructure_module_names=infrastructure_module_names,
+            prune_dead_unmaterialized_artifact_steps=(
+                prune_dead_unmaterialized_artifact_steps
+            ),
+            materialize_skipped_save_images=materialize_skipped_save_images,
+            filemanager=filemanager,
+            cppipe_backend=cppipe_backend,
         ),
-        materialize_skipped_save_images=materialize_skipped_save_images,
-        filemanager=filemanager,
-        cppipe_backend=cppipe_backend,
-    )
-    converted.generated_pipeline.save(
-        output_path,
-        filemanager=filemanager,
-        backend=generated_pipeline_backend,
-    )
-
-    module_name = generated_pipeline_module_name(
-        output_path,
-        converted.generated_pipeline.code,
-    )
-    module = load_generated_pipeline_module_from_source(
-        converted.generated_pipeline.code,
-        module_name=module_name,
-        filename=str(output_path),
-    )
-    materialize_generated_pipeline_import_module(
-        converted.generated_pipeline.code,
-        module_name=module_name,
-        output_dir=output_path.parent,
-    )
-    pipeline = pipeline_from_generated_module(
-        module,
-        pipeline_name=converted.generated_pipeline.name,
-    )
-    registered_functions = register_generated_pipeline_functions(module)
-    return PreparedGeneratedPipeline(
-        cppipe_path=converted.cppipe_path,
-        module_name=module_name,
-        module_path=output_path,
-        module=module,
-        pipeline=pipeline,
-        processing_modules=converted.processing_modules,
-        infrastructure_modules=converted.infrastructure_modules,
-        disabled_modules=converted.disabled_modules,
-        source_schema=converted.source_schema,
-        generated_pipeline=converted.generated_pipeline,
-        provenance=converted.provenance,
-        registered_functions=registered_functions,
-    )
+        output_path=output_path,
+        generated_pipeline_backend=generated_pipeline_backend,
+    ).prepare()
 
 
 def execute_pipeline_direct(
@@ -373,40 +460,6 @@ def execute_pipeline_direct(
         consumer.join(timeout=10)
         progress_queue.close()
         progress_queue.join_thread()
-
-
-def _provenance_from_partition(
-    cppipe_path: Path,
-    partition: CPPipeModulePartition,
-) -> CellProfilerPipelineProvenance:
-    """Build product provenance from benchmark-owned parsed module blocks."""
-    role_by_module_num = {
-        module.module_num: CellProfilerModuleRole.PROCESSING
-        for module in partition.processing_modules
-    }
-    role_by_module_num.update(
-        {
-            module.module_num: CellProfilerModuleRole.INFRASTRUCTURE
-            for module in partition.infrastructure_modules
-        }
-    )
-    role_by_module_num.update(
-        {
-            module.module_num: CellProfilerModuleRole.DISABLED
-            for module in partition.disabled_modules
-        }
-    )
-    return CellProfilerPipelineProvenance(
-        cppipe_path=cppipe_path,
-        modules=tuple(
-            CellProfilerModuleReference(
-                name=module.name,
-                module_num=module.module_num,
-                role=role_by_module_num[module.module_num],
-            )
-            for module in partition.modules
-        ),
-    )
 
 
 def _drain_progress_queue(queue: Any) -> None:
