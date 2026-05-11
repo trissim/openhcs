@@ -6,17 +6,30 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
+import warnings
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
+from openhcs.core.memory.decorators import numpy as numpy_decorator
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_mask,
+    image_payload_metadata,
+    with_image_payload_data,
+)
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     cellprofiler_backend_provider_selection,
 )
+from openhcs.processing.backends.cellprofiler.image_geometry import (
+    CellProfilerPlaneGeometry,
+)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 class EdgeMethod(Enum):
@@ -342,6 +355,62 @@ class NumpyKirschStrategy(EdgeEnhancementStrategyLeaf):
         return centrosome.kirsch.kirsch(request.image)
 
 
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def enhance_edges(
+    image: np.ndarray,
+    method: EdgeMethod = EdgeMethod.SOBEL,
+    direction: EdgeDirection = EdgeDirection.ALL,
+    edge_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    automatic_threshold: bool = True,
+    automatic_gaussian: bool = True,
+    sigma: float = 10.0,
+    manual_threshold: float = 0.2,
+    threshold_adjustment_factor: float = 1.0,
+    automatic_low_threshold: bool = True,
+    low_threshold: float = 0.1,
+) -> np.ndarray:
+    """Enhance edges using CellProfiler-compatible edge detection semantics."""
+    method = coerce_cellprofiler_enum(EdgeMethod, method)
+    direction = coerce_cellprofiler_enum(EdgeDirection, direction)
+    if not 0 <= low_threshold <= 1:
+        warnings.warn(
+            f"low_threshold value of {low_threshold} is outside of the [0-1] range.",
+            stacklevel=2,
+        )
+
+    pixel_data = np.asarray(image_payload_data(image), dtype=np.float32)
+    payload_mask = image_payload_mask(image)
+    operation_mask = (
+        np.ones(pixel_data.shape[:2], dtype=bool)
+        if payload_mask is None
+        else CellProfilerPlaneGeometry.from_image_plane(pixel_data).binary_mask(
+            np.asarray(payload_mask),
+        )
+    )
+    request = EdgeEnhancementRequest.build(
+        image=pixel_data,
+        mask=operation_mask,
+        method=method,
+        direction=direction,
+        backend_provider=edge_backend_provider,
+        automatic_threshold=automatic_threshold,
+        automatic_low_threshold=automatic_low_threshold,
+        sigma=sigma if not automatic_gaussian else 2.0,
+        low_threshold=low_threshold,
+        manual_threshold=manual_threshold,
+        threshold_adjustment_factor=threshold_adjustment_factor,
+    )
+    output = EdgeEnhancementStrategy.for_request(request).enhance(request).astype(
+        np.float32
+    )
+    return with_image_payload_data(
+        image,
+        output,
+        mask=operation_mask if payload_mask is not None else None,
+        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
+    )
+
+
 @njit(cache=True, parallel=True)
 def _sobel_numba_kernel(
     image: np.ndarray,
@@ -402,3 +471,13 @@ def _full_sobel_neighborhood_is_valid(
             if not mask[mask_row, mask_col]:
                 return False
     return True
+
+
+__all__ = [
+    "EdgeDirection",
+    "EdgeEnhancementRequest",
+    "EdgeEnhancementStrategy",
+    "EdgeEnhancementStrategyKey",
+    "EdgeMethod",
+    "enhance_edges",
+]
