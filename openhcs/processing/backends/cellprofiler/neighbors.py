@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
+from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -17,6 +21,231 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+
+
+class DistanceMethod(Enum):
+    """CellProfiler MeasureObjectNeighbors distance method."""
+
+    def __new__(
+        cls,
+        absorbed_value: str,
+        *cellprofiler_literals: str,
+    ) -> "DistanceMethod":
+        obj = object.__new__(cls)
+        obj._value_ = absorbed_value
+        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
+        return obj
+
+    ADJACENT = ("adjacent",)
+    EXPAND = ("expand", "Expand until adjacent")
+    WITHIN = ("within", "Within a specified distance")
+
+
+@dataclass(frozen=True, slots=True)
+class NeighborMeasurements:
+    """Per-object neighbor measurements."""
+
+    slice_index: int
+    object_id: int
+    scale: int | str
+    number_of_neighbors: int
+    percent_touching: float
+    first_closest_object_number: int
+    first_closest_distance: float
+    second_closest_object_number: int
+    second_closest_distance: float
+    angle_between_neighbors: float
+
+
+@dataclass(frozen=True, slots=True)
+class NeighborDistancePlan:
+    """Prepared label state for one neighbor distance method."""
+
+    working_labels: np.ndarray
+    distance: int
+    measurement_scale: int | str
+
+
+class NeighborDistancePlanner(
+    EnumKeyedStrategyMixin[DistanceMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Prepare neighbor-distance state for one closed distance method."""
+
+    __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+    __enum_label_attr__ = "method_label"
+    method_label: ClassVar[str | None] = None
+    method: ClassVar[DistanceMethod | None] = None
+
+    @classmethod
+    def for_method(cls, method: DistanceMethod | str) -> "NeighborDistancePlanner":
+        return cls.for_enum_member(coerce_cellprofiler_enum(DistanceMethod, method))
+
+    @abstractmethod
+    def plan(
+        self,
+        labels: np.ndarray,
+        neighbor_distance: int,
+    ) -> NeighborDistancePlan:
+        """Return working labels and neighborhood distance."""
+
+
+class AdjacentNeighborDistancePlanner(NeighborDistancePlanner):
+    """Adjacent-neighbor topology without label expansion."""
+
+    method = DistanceMethod.ADJACENT
+
+    def plan(
+        self,
+        labels: np.ndarray,
+        neighbor_distance: int,
+    ) -> NeighborDistancePlan:
+        del neighbor_distance
+        return NeighborDistancePlan(labels.copy(), 1, "Adjacent")
+
+
+class ExpandedNeighborDistancePlanner(NeighborDistancePlanner):
+    """Expand labels until adjacent before measuring neighbors."""
+
+    method = DistanceMethod.EXPAND
+
+    def plan(
+        self,
+        labels: np.ndarray,
+        neighbor_distance: int,
+    ) -> NeighborDistancePlan:
+        del neighbor_distance
+        from scipy.ndimage import distance_transform_edt
+
+        i, j = distance_transform_edt(
+            labels == 0,
+            return_distances=False,
+            return_indices=True,
+        )
+        return NeighborDistancePlan(labels[i, j], 1, "Expanded")
+
+
+class WithinNeighborDistancePlanner(NeighborDistancePlanner):
+    """Measure neighbors within a fixed distance."""
+
+    method = DistanceMethod.WITHIN
+
+    def plan(
+        self,
+        labels: np.ndarray,
+        neighbor_distance: int,
+    ) -> NeighborDistancePlan:
+        return NeighborDistancePlan(
+            labels.copy(),
+            neighbor_distance,
+            int(neighbor_distance),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NeighborRetainedImageRequest:
+    """Own sidecar image materialization and return ordering for neighbor metrics."""
+
+    labels: np.ndarray
+    retain_neighbor_count_image: bool
+    neighbor_count_colormap: str
+    retain_percent_touching_image: bool
+    percent_touching_colormap: str
+
+    def empty_metric_image(self) -> np.ndarray:
+        return np.zeros_like(self.labels, dtype=float)
+
+    def output(
+        self,
+        image: np.ndarray,
+        measurements: list,
+        *,
+        neighbor_count_image: np.ndarray,
+        percent_touching_image: np.ndarray,
+    ) -> tuple:
+        retained = self.retained_images(
+            neighbor_count_image=neighbor_count_image,
+            percent_touching_image=percent_touching_image,
+        )
+        if retained:
+            return (*retained, measurements)
+        return image, measurements
+
+    def retained_images(
+        self,
+        *,
+        neighbor_count_image: np.ndarray,
+        percent_touching_image: np.ndarray,
+    ) -> tuple[np.ndarray, ...]:
+        retained: list[np.ndarray] = []
+        if self.retain_neighbor_count_image:
+            retained.append(
+                self.colored_metric_image(
+                    neighbor_count_image,
+                    self.neighbor_count_colormap,
+                )
+            )
+        if self.retain_percent_touching_image:
+            retained.append(
+                self.colored_metric_image(
+                    percent_touching_image,
+                    self.percent_touching_colormap,
+                )
+            )
+        return tuple(retained)
+
+    def colored_metric_image(
+        self,
+        metric_image: np.ndarray,
+        colormap_name: str,
+    ) -> np.ndarray:
+        """Color one object metric image using CellProfiler-style masked RGB output."""
+        import matplotlib.cm
+
+        cmap_name = str(colormap_name).strip() or "Default"
+        if cmap_name.lower() == "default":
+            cmap_name = "viridis"
+        scalar_mappable = matplotlib.cm.ScalarMappable(
+            cmap=matplotlib.cm.get_cmap(cmap_name)
+        )
+        rgb = scalar_mappable.to_rgba(metric_image)[:, :, :3]
+        rgb[self.labels <= 0] = 0
+        return rgb
+
+
+def variant_numbers_for_final_labels(
+    final_labels: np.ndarray,
+    variant_labels: np.ndarray,
+    *,
+    neighbor_backend: "NeighborTopologyBackendStrategy | None" = None,
+) -> np.ndarray:
+    """Map each final object ID to the corresponding variant object ID."""
+    backend = neighbor_backend or neighbor_topology_backend()
+    return backend.variant_numbers_for_final_labels(final_labels, variant_labels)
+
+
+def labels_or_default(
+    labels: np.ndarray | None,
+    default: np.ndarray,
+) -> np.ndarray:
+    """Return a semantic label variant or the final labels when absent."""
+    return default if labels is None else labels
+
+
+def require_matching_shape(
+    labels: np.ndarray,
+    variant: np.ndarray,
+    variant_name: str,
+) -> None:
+    """Validate that one neighbor label variant shares the final label shape."""
+    if labels.shape != variant.shape:
+        raise ValueError(
+            f"{variant_name} shape {variant.shape!r} does not match final "
+            f"labels shape={labels.shape!r}."
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,9 +765,20 @@ def _closest_neighbors_numba(
 
 
 __all__ = [
+    "AdjacentNeighborDistancePlanner",
+    "DistanceMethod",
+    "ExpandedNeighborDistancePlanner",
+    "NeighborDistancePlan",
+    "NeighborDistancePlanner",
+    "NeighborMeasurements",
+    "NeighborRetainedImageRequest",
     "NeighborTopologyArrays",
     "NeighborClosestArrays",
     "NeighborTopologyBackendStrategy",
     "NumbaNumpyNeighborTopologyBackendStrategy",
+    "WithinNeighborDistancePlanner",
+    "labels_or_default",
     "neighbor_topology_backend",
+    "require_matching_shape",
+    "variant_numbers_for_final_labels",
 ]
