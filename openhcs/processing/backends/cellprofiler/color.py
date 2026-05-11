@@ -184,6 +184,13 @@ class ColorToGrayMode(Enum):
     SPLIT = "split"
 
 
+class OutputMode(Enum):
+    """InvertForPrinting output layout."""
+
+    COLOR = "color"
+    GRAYSCALE = "grayscale"
+
+
 _COLOR_BY_NAME: dict[str, tuple[float, float, float]] = {
     "white": (1.0, 1.0, 1.0),
     "black": (0.0, 0.0, 0.0),
@@ -444,6 +451,60 @@ def color_to_gray(
         with_image_payload_data(image, output)
         for output in split_color_to_gray(image, resolved_image_type, channel_indices)
     )
+
+
+@numpy
+def invert_for_printing(
+    image: np.ndarray,
+    output_mode: OutputMode = OutputMode.COLOR,
+    output_red: bool = True,
+    output_green: bool = True,
+    output_blue: bool = True,
+) -> np.ndarray:
+    """Invert fluorescent channels into CellProfiler brightfield-print colors."""
+    output_mode = coerce_cellprofiler_enum(OutputMode, output_mode)
+    image_data = np.asarray(image)
+    if image_data.ndim == 2:
+        image_data = image_data[np.newaxis, :, :]
+
+    channel_count = image_data.shape[0]
+    height, width = image_data.shape[1], image_data.shape[2]
+    red_image = (
+        image_data[0]
+        if channel_count >= 1
+        else np.zeros((height, width), dtype=image_data.dtype)
+    )
+    green_image = (
+        image_data[1]
+        if channel_count >= 2
+        else np.zeros((height, width), dtype=image_data.dtype)
+    )
+    blue_image = (
+        image_data[2]
+        if channel_count >= 3
+        else np.zeros((height, width), dtype=image_data.dtype)
+    )
+
+    inverted_red = (1.0 - green_image) * (1.0 - blue_image)
+    inverted_green = (1.0 - red_image) * (1.0 - blue_image)
+    inverted_blue = (1.0 - red_image) * (1.0 - green_image)
+
+    if output_mode is OutputMode.COLOR:
+        return np.stack(
+            [inverted_red, inverted_green, inverted_blue],
+            axis=0,
+        ).astype(np.float32)
+
+    output_channels = []
+    if output_red:
+        output_channels.append(inverted_red)
+    if output_green:
+        output_channels.append(inverted_green)
+    if output_blue:
+        output_channels.append(inverted_blue)
+    if not output_channels:
+        return np.zeros((1, height, width), dtype=np.float32)
+    return np.stack(output_channels, axis=0).astype(np.float32)
 
 
 def combine_color_to_gray(

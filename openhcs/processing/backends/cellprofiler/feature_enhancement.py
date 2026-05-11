@@ -106,6 +106,42 @@ def enhance_or_suppress_features(
     )
 
 
+@numpy
+def match_template(
+    image: np.ndarray,
+    template: np.ndarray | None = None,
+    pad_input: bool = True,
+) -> np.ndarray:
+    """Match an image template using normalized cross-correlation."""
+    from skimage.feature import match_template as skimage_match_template
+
+    if template is None:
+        if image.shape[0] < 2:
+            raise ValueError(
+                "When template is not provided, image must have at least 2 slices "
+                "in dimension 0: [input_image, template]."
+            )
+        output = skimage_match_template(
+            image=image[0],
+            template=image[1],
+            pad_input=pad_input,
+        )
+        return output[np.newaxis, ...].astype(np.float32)
+
+    template_2d = template[0] if template.ndim == 3 else template
+    return np.stack(
+        [
+            skimage_match_template(
+                image=input_slice,
+                template=template_2d,
+                pad_input=pad_input,
+            )
+            for input_slice in image
+        ],
+        axis=0,
+    ).astype(np.float32)
+
+
 @dataclass(frozen=True, slots=True)
 class FeatureEnhancementMaskContext:
     """Image/mask authority for CP feature enhancement background semantics."""

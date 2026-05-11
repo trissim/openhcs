@@ -15,6 +15,12 @@ from openhcs.core.registry_strategies import (
     RegisteredLeafClassSpec,
 )
 from openhcs.core.runtime_values import image_payload_mask
+from openhcs.core.memory.decorators import numpy as numpy_decorator
+from openhcs.core.runtime_values import (
+    image_payload_data,
+    image_payload_metadata,
+    image_payload_with_context,
+)
 from openhcs.interop.cellprofiler.image_math_settings import (
     ImageMathOperation as MathOperation,
 )
@@ -437,3 +443,75 @@ class ImageMathMaskPolicy:
                 return mask_array[:, :, :, np.newaxis]
 
         return mask_array
+
+
+@numpy_decorator
+def image_math(
+    image: np.ndarray,
+    operation: MathOperation = MathOperation.ADD,
+    factors: tuple[float, ...] = (1.0, 1.0),
+    exponent: float = 1.0,
+    after_factor: float = 1.0,
+    addend: float = 0.0,
+    truncate_low: bool = True,
+    truncate_high: bool = True,
+    replace_nan: bool = True,
+    ignore_masks: bool = False,
+) -> np.ndarray:
+    """Perform CellProfiler ImageMath through registered operation strategies."""
+    operation_strategy = ImageMathOperationStrategy.coerce(operation)
+    mask_policy = ImageMathMaskPolicy(ignore_masks=ignore_masks)
+    source_payload = image
+    image_data = image_payload_data(image)
+
+    if image_data.ndim == 2:
+        image_data = image_data[np.newaxis, :, :]
+
+    image_count = image_data.shape[0]
+    if len(factors) < image_count:
+        factors = tuple(factors) + (1.0,) * (image_count - len(factors))
+
+    pixel_data = []
+    operand_count = 1 if operation_strategy.single_image else image_count
+    operand_masks = mask_policy.operand_masks(source_payload, operand_count)
+    for index in range(operand_count):
+        pixel = image_data[index].astype(np.float64)
+        if not operation_strategy.binary_output and factors[index] != 1.0:
+            pixel = pixel * factors[index]
+        pixel_data.append(pixel)
+
+    output_pixel_data = operation_strategy.apply(
+        operation_strategy.prepare_initial_output(image_data, pixel_data, factors),
+        pixel_data,
+        factors,
+    )
+
+    if not operation_strategy.binary_output:
+        if exponent != 1.0:
+            output_pixel_data = output_pixel_data**exponent
+        if after_factor != 1.0:
+            output_pixel_data = output_pixel_data * after_factor
+        if addend != 0.0:
+            output_pixel_data = output_pixel_data + addend
+        if truncate_low:
+            output_pixel_data[output_pixel_data < 0] = 0
+        if truncate_high:
+            output_pixel_data[output_pixel_data > 1] = 1
+        if replace_nan:
+            output_pixel_data[np.isnan(output_pixel_data)] = 0
+
+    if output_pixel_data.ndim == 2:
+        output_pixel_data = output_pixel_data[np.newaxis, :, :]
+
+    output_mask = mask_policy.output_mask(operand_masks)
+    output_pixel_data = mask_policy.apply_output_mask(output_pixel_data, output_mask)
+    output = output_pixel_data.astype(np.float32)
+    if ignore_masks:
+        return output
+    return image_payload_with_context(
+        output,
+        mask=output_mask,
+        metadata=image_payload_metadata(
+            source_payload
+        ).without_unit_interval_intensity_scale(),
+    )

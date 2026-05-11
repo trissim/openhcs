@@ -717,6 +717,33 @@ def smooth(
     )
 
 
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def reducenoise(
+    image: np.ndarray,
+    patch_size: int = 5,
+    patch_distance: int = 6,
+    cutoff_distance: float = 0.1,
+) -> np.ndarray:
+    """Reduce image noise using CellProfiler-compatible non-local means."""
+    from skimage.restoration import denoise_nl_means, estimate_sigma
+
+    image_data = image
+    if image_data.dtype != np.float32 and image_data.dtype != np.float64:
+        image_data = image_data.astype(np.float32)
+
+    sigma_estimate = estimate_sigma(image_data)
+    h_value = cutoff_distance if cutoff_distance > 0.01 else sigma_estimate * 1.15
+    denoised = denoise_nl_means(
+        image_data,
+        h=h_value,
+        patch_size=patch_size,
+        patch_distance=patch_distance,
+        fast_mode=True,
+        channel_axis=None,
+    )
+    return denoised.astype(np.float32)
+
+
 def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
     slices_2d = request.slices_2d
     kwargs = request.kwargs
@@ -818,6 +845,7 @@ __all__ = [
     "SmoothingStrategy",
     "SmoothingStrategyKey",
     "prepare_smooth",
+    "reducenoise",
     "smooth",
     "smooth_batch",
     "smooth_image",
