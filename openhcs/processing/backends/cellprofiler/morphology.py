@@ -13,6 +13,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
+import logging
+import os
+import time
 from typing import Any, ClassVar
 
 import numpy as np
@@ -23,6 +26,10 @@ from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy as numpy_decorator
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.image_shapes import (
+    trailing_spatial_factors,
+    trailing_spatial_target_shape,
+)
 from openhcs.core.runtime_semantics import (
     ExplicitObjectLabelDomainDeclaration,
     ObjectLabelDomain,
@@ -31,6 +38,7 @@ from openhcs.core.runtime_semantics import (
     aligned_dense_object_labels_and_mask,
     dense_object_label_plane_id_domains,
     dense_object_label_max_present_id,
+    object_label_lineage_payload,
     relabel_dense_object_labels_consecutive,
 )
 from openhcs.core.runtime_values import (
@@ -52,6 +60,10 @@ from openhcs.interop.cellprofiler.mask_objects_settings import (
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
+)
+from openhcs.processing.backends.cellprofiler.structuring_elements import (
+    StructuringElement,
+    build_structuring_element,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -80,6 +92,8 @@ FOUR_CONNECTED_KERNEL = np.array(
     [[0, 1, 0], [1, 0, 1], [0, 1, 0]],
     dtype=np.uint8,
 )
+PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
 
 
 class MorphOperation(Enum):
@@ -111,6 +125,52 @@ class RepeatMode(Enum):
     ONCE = "once"
     FOREVER = "forever"
     CUSTOM = "custom"
+
+
+class ResizeObjectsMethod(Enum):
+    """CellProfiler ResizeObjects size policy."""
+
+    DIMENSIONS = ("dimensions", "to_size", "manual")
+    FACTOR = ("factor", "by_factor")
+
+    def __new__(cls, value: str, *cellprofiler_literals: str):
+        member = object.__new__(cls)
+        member._value_ = value
+        member.cellprofiler_literals = cellprofiler_literals
+        return member
+
+
+@dataclass(frozen=True, slots=True)
+class ResizeObjectsStats:
+    slice_index: int
+    original_height: int
+    original_width: int
+    new_height: int
+    new_width: int
+    object_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ErosionStats:
+    slice_index: int
+    input_object_count: int
+    output_object_count: int
+    objects_removed: int
+
+
+@dataclass(frozen=True, slots=True)
+class DilationStats:
+    slice_index: int
+    object_count: int
+    mean_area_before: float
+    mean_area_after: float
+
+
+@dataclass(frozen=True, slots=True)
+class DilationStats3D:
+    object_count: int
+    mean_volume_before: float
+    mean_volume_after: float
 
 
 @dataclass(frozen=True)
@@ -5022,6 +5082,457 @@ def filter_physical_border_objects_numba(
     return output, True
 
 
+def profile_function_runtime_enabled() -> bool:
+    return os.environ.get(PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def log_function_runtime_profile(label: str, seconds: float, **fields: object) -> None:
+    if not profile_function_runtime_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "erosion_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "input_object_count",
+                "output_object_count",
+                "objects_removed",
+            ],
+            analysis_type="erosion",
+        ),
+    ),
+    "parent_child_relationship",
+    ("eroded_labels", segmentation_mask_rois()),
+)
+def erode_objects(
+    image: np.ndarray,
+    labels: np.ndarray,
+    structuring_element: Any = "disk",
+    size: int = 1,
+    preserve_midpoints: bool = True,
+    relabel_objects: bool = False,
+) -> tuple[np.ndarray, ErosionStats, ParentChildRelationshipPayload, np.ndarray]:
+    """Erode CellProfiler object labels while preserving optional midpoints."""
+    from skimage.measure import label as relabel
+    from openhcs.processing.backends.cellprofiler.structuring_elements import (
+        adapt_structuring_element_rank,
+    )
+
+    total_started_at = time.perf_counter()
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    footprint = adapt_structuring_element_rank(
+        build_structuring_element(structuring_element, size),
+        labels.ndim,
+    )
+
+    phase_started_at = time.perf_counter()
+    input_labels = np.unique(labels)
+    input_labels = input_labels[input_labels != 0]
+    input_count = len(input_labels)
+    log_function_runtime_profile(
+        "erode_objects_input_labels",
+        time.perf_counter() - phase_started_at,
+    )
+
+    phase_started_at = time.perf_counter()
+    eroded = MorphologyBackendStrategy.for_memory_type().erode_labeled_objects(
+        labels,
+        footprint,
+    )
+    log_function_runtime_profile(
+        "erode_objects_backend",
+        time.perf_counter() - phase_started_at,
+    )
+
+    if preserve_midpoints:
+        phase_started_at = time.perf_counter()
+        missing_labels = np.setxor1d(labels, eroded)
+        preservation = MidpointPreservationPolicy.for_footprint(footprint)
+        eroded = preservation.preserve_missing_labels(
+            labels,
+            eroded,
+            missing_labels,
+        )
+        log_function_runtime_profile(
+            "erode_objects_preserve_midpoints",
+            time.perf_counter() - phase_started_at,
+            missing=len(missing_labels),
+            policy=type(preservation).__name__,
+        )
+
+    if relabel_objects:
+        phase_started_at = time.perf_counter()
+        eroded = relabel(eroded > 0).astype(labels.dtype)
+        log_function_runtime_profile(
+            "erode_objects_relabel",
+            time.perf_counter() - phase_started_at,
+        )
+
+    phase_started_at = time.perf_counter()
+    output_labels = np.unique(eroded)
+    output_labels = output_labels[output_labels != 0]
+    output_count = len(output_labels)
+    log_function_runtime_profile(
+        "erode_objects_output_labels",
+        time.perf_counter() - phase_started_at,
+    )
+
+    stats = ErosionStats(
+        slice_index=0,
+        input_object_count=input_count,
+        output_object_count=output_count,
+        objects_removed=input_count - output_count,
+    )
+
+    phase_started_at = time.perf_counter()
+    relationship = object_label_lineage_payload(labels, eroded)
+    log_function_runtime_profile(
+        "erode_objects_lineage",
+        time.perf_counter() - phase_started_at,
+    )
+    log_function_runtime_profile(
+        "erode_objects_total",
+        time.perf_counter() - total_started_at,
+    )
+    return image, stats, relationship, eroded
+
+
+class MidpointPreservationPolicy:
+    """CellProfiler midpoint preservation for labels lost during erosion."""
+
+    def preserve_missing_labels(
+        self,
+        labels: np.ndarray,
+        eroded: np.ndarray,
+        missing_labels: np.ndarray,
+    ) -> np.ndarray:
+        for label_id in missing_labels:
+            label_positions = np.argwhere(labels == label_id)
+            if label_positions.size == 0:
+                continue
+            lower = label_positions.min(axis=0)
+            upper = label_positions.max(axis=0) + 1
+            expanded_lower = np.maximum(lower - 1, 0)
+            expanded_upper = np.minimum(upper + 1, labels.shape)
+            expanded_slices = tuple(
+                slice(int(start), int(stop))
+                for start, stop in zip(expanded_lower, expanded_upper, strict=True)
+            )
+            inner_slices = tuple(
+                slice(int(start - expanded_start), int(stop - expanded_start))
+                for start, stop, expanded_start in zip(
+                    lower,
+                    upper,
+                    expanded_lower,
+                    strict=True,
+                )
+            )
+            output_slices = tuple(
+                slice(int(start), int(stop))
+                for start, stop in zip(lower, upper, strict=True)
+            )
+            binary = labels[expanded_slices] == label_id
+            midpoint = self.midpoint_distance(binary)[inner_slices]
+            eroded_region = eroded[output_slices]
+            eroded_region[midpoint == np.max(midpoint)] = label_id
+        return eroded
+
+    def midpoint_distance(self, binary: np.ndarray) -> np.ndarray:
+        import scipy.ndimage
+
+        return scipy.ndimage.distance_transform_edt(binary)
+
+    @classmethod
+    def for_footprint(cls, footprint: np.ndarray) -> "MidpointPreservationPolicy":
+        if SimpleDiskMidpointPreservationPolicy.matches(footprint):
+            return SimpleDiskMidpointPreservationPolicy()
+        return cls()
+
+
+class SimpleDiskMidpointPreservationPolicy(MidpointPreservationPolicy):
+    """CellProfiler's optimized disk-1 behavior restores entire missing labels."""
+
+    @classmethod
+    def matches(cls, footprint: np.ndarray) -> bool:
+        import skimage.morphology
+
+        return (
+            footprint.ndim == 2
+            and footprint.shape == (3, 3)
+            and np.array_equal(footprint, skimage.morphology.disk(1))
+        )
+
+    def preserve_missing_labels(
+        self,
+        labels: np.ndarray,
+        eroded: np.ndarray,
+        missing_labels: np.ndarray,
+    ) -> np.ndarray:
+        return eroded + labels * np.isin(labels, missing_labels)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "dilation_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "object_count",
+                "mean_area_before",
+                "mean_area_after",
+            ],
+            analysis_type="dilation",
+        ),
+    ),
+    ("dilated_labels", segmentation_mask_rois()),
+)
+def dilate_objects(
+    image: np.ndarray,
+    labels: np.ndarray,
+    structuring_element_shape: StructuringElement | str = StructuringElement.DISK,
+    structuring_element_size: int = 1,
+) -> tuple[np.ndarray, DilationStats, np.ndarray]:
+    """Dilate labels with CellProfiler's higher-label-overwrites policy."""
+    from scipy.ndimage import grey_dilation
+
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    props_before = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        label_array
+    )
+    mean_area_before = (
+        float(np.mean(props_before.area)) if props_before.label.size else 0.0
+    )
+    footprint = build_structuring_element(
+        structuring_element_shape,
+        structuring_element_size,
+    )
+    dilated_labels = grey_dilation(label_array, footprint=footprint)
+    props_after = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+        dilated_labels.astype(np.int32, copy=False)
+    )
+    mean_area_after = (
+        float(np.mean(props_after.area)) if props_after.label.size else 0.0
+    )
+    stats = DilationStats(
+        slice_index=0,
+        object_count=int(props_after.label.size),
+        mean_area_before=mean_area_before,
+        mean_area_after=mean_area_after,
+    )
+    return image, stats, dilated_labels.astype(np.float32)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_3D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "dilation_stats_3d",
+        csv_materializer(
+            fields=["object_count", "mean_volume_before", "mean_volume_after"],
+            analysis_type="dilation_3d",
+        ),
+    ),
+    ("dilated_labels", segmentation_mask_rois()),
+)
+def dilate_objects_3d(
+    image: np.ndarray,
+    labels: np.ndarray,
+    structuring_element_shape: StructuringElement | str = StructuringElement.BALL,
+    structuring_element_size: int = 1,
+) -> tuple[np.ndarray, DilationStats3D, np.ndarray]:
+    """Dilate 3D labels with CellProfiler's higher-label-overwrites policy."""
+    from scipy.ndimage import grey_dilation
+    from skimage.measure import regionprops
+
+    label_array = object_label_dense_array(labels, dtype=np.int32)
+    props_before = regionprops(label_array)
+    volumes_before = [prop.area for prop in props_before]
+    mean_volume_before = float(np.mean(volumes_before)) if volumes_before else 0.0
+    footprint = build_structuring_element(
+        structuring_element_shape,
+        structuring_element_size,
+    )
+    dilated_labels = grey_dilation(label_array, footprint=footprint)
+    props_after = regionprops(dilated_labels)
+    volumes_after = [prop.area for prop in props_after]
+    mean_volume_after = float(np.mean(volumes_after)) if volumes_after else 0.0
+    stats = DilationStats3D(
+        object_count=len(props_after),
+        mean_volume_before=mean_volume_before,
+        mean_volume_after=mean_volume_after,
+    )
+    return image, stats, dilated_labels.astype(np.float32)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "resize_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "original_height",
+                "original_width",
+                "new_height",
+                "new_width",
+                "object_count",
+            ],
+            analysis_type="resize_objects",
+        ),
+    ),
+    "parent_child_relationship",
+    ("resized_labels", segmentation_mask_rois()),
+)
+def resize_objects(
+    image: np.ndarray,
+    labels: np.ndarray,
+    method: ResizeObjectsMethod = ResizeObjectsMethod.FACTOR,
+    factor_x: float = 0.25,
+    factor_y: float = 0.25,
+    factor_z: float = 1.0,
+    width: int = 100,
+    height: int = 100,
+    planes: int = 10,
+) -> tuple[np.ndarray, ResizeObjectsStats, ParentChildRelationshipPayload, np.ndarray]:
+    """Resize object labels by CellProfiler nearest-neighbor label semantics."""
+    from scipy.ndimage import zoom
+
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    original_shape = labels.shape
+    method = coerce_cellprofiler_enum(ResizeObjectsMethod, method)
+
+    if method == ResizeObjectsMethod.DIMENSIONS:
+        target_size = resize_objects_target_shape(
+            labels.shape,
+            planes=planes,
+            height=height,
+            width=width,
+        )
+        zoom_factors = np.divide(np.multiply(1.0, target_size), labels.shape)
+    else:
+        zoom_factors = resize_objects_zoom_factors(
+            labels.ndim,
+            factor_z=factor_z,
+            factor_y=factor_y,
+            factor_x=factor_x,
+        )
+    resized_labels = zoom(labels, zoom_factors, order=0, mode="nearest").astype(
+        np.int32
+    )
+    unique_labels = np.unique(resized_labels)
+    object_count = len(unique_labels[unique_labels > 0])
+
+    stats = ResizeObjectsStats(
+        slice_index=0,
+        original_height=original_shape[-2],
+        original_width=original_shape[-1],
+        new_height=resized_labels.shape[-2],
+        new_width=resized_labels.shape[-1],
+        object_count=object_count,
+    )
+    relationship = object_label_lineage_payload(labels, resized_labels)
+    return image, stats, relationship, resized_labels
+
+
+def resize_objects_target_shape(
+    shape: tuple[int, ...],
+    *,
+    planes: int,
+    height: int,
+    width: int,
+) -> tuple[int, ...]:
+    spatial_shape = (planes, height, width) if len(shape) >= 3 else (height, width)
+    return trailing_spatial_target_shape(shape, spatial_shape)
+
+
+def resize_objects_zoom_factors(
+    ndim: int,
+    *,
+    factor_z: float,
+    factor_y: float,
+    factor_x: float,
+) -> tuple[float, ...]:
+    spatial_factors = (
+        (factor_z, factor_y, factor_x)
+        if ndim >= 3
+        else (factor_y, factor_x)
+    )
+    return trailing_spatial_factors(ndim, spatial_factors)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_3D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "resize_stats_3d",
+        csv_materializer(
+            fields=[
+                "original_depth",
+                "original_height",
+                "original_width",
+                "new_depth",
+                "new_height",
+                "new_width",
+                "object_count",
+            ],
+            analysis_type="resize_objects_3d",
+        ),
+    ),
+    "parent_child_relationship",
+    ("resized_labels", segmentation_mask_rois()),
+)
+def resize_objects_3d(
+    image: np.ndarray,
+    labels: np.ndarray,
+    method: ResizeObjectsMethod = ResizeObjectsMethod.FACTOR,
+    factor_x: float = 0.25,
+    factor_y: float = 0.25,
+    factor_z: float = 0.25,
+    width: int = 100,
+    height: int = 100,
+    planes: int = 10,
+) -> tuple[np.ndarray, dict, ParentChildRelationshipPayload, np.ndarray]:
+    """Resize 3D object labels by CellProfiler nearest-neighbor semantics."""
+    from scipy.ndimage import zoom
+
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    original_shape = labels.shape
+    method = coerce_cellprofiler_enum(ResizeObjectsMethod, method)
+
+    if method == ResizeObjectsMethod.DIMENSIONS:
+        target_size = (planes, height, width)
+        zoom_factors = np.divide(np.multiply(1.0, target_size), labels.shape)
+    else:
+        zoom_factors = (factor_z, factor_y, factor_x)
+    resized_labels = zoom(labels, zoom_factors, order=0, mode="nearest").astype(
+        np.int32
+    )
+    unique_labels = np.unique(resized_labels)
+    object_count = len(unique_labels[unique_labels > 0])
+
+    stats = {
+        "original_depth": original_shape[0],
+        "original_height": original_shape[1],
+        "original_width": original_shape[2],
+        "new_depth": resized_labels.shape[0],
+        "new_height": resized_labels.shape[1],
+        "new_width": resized_labels.shape[2],
+        "object_count": object_count,
+    }
+    relationship = object_label_lineage_payload(labels, resized_labels)
+    return image, stats, relationship, resized_labels
+
+
 __all__ = [
     "CentrosomeNumpyMorphologyBackendStrategy",
     "CellProfilerDeclumpMethod",
@@ -5045,8 +5556,14 @@ __all__ = [
     "NumpyMorphologyBackendStrategy",
     "RepeatMode",
     "RepeatModeStrategy",
+    "ResizeObjectsMethod",
+    "ResizeObjectsStats",
+    "DilationStats",
+    "DilationStats3D",
     "DistanceSplitOrMergeMergeMethodStrategy",
+    "ErosionStats",
     "MergeObjectsStrategy",
+    "MidpointPreservationPolicy",
     "ParentSplitOrMergeMergeMethodStrategy",
     "SplitObjectsStrategy",
     "SplitOrMergeConvexHull",
@@ -5061,6 +5578,9 @@ __all__ = [
     "SplitOrMergeStats",
     "apply_morph_operation",
     "dense_label_area_statistics",
+    "dilate_objects",
+    "dilate_objects_3d",
+    "erode_objects",
     "filter_border_objects",
     "filter_border_objects_planewise",
     "filter_labels_above_maximum_diameter",
@@ -5073,5 +5593,10 @@ __all__ = [
     "mask_planes_for_labels",
     "positive_dense_label_count",
     "prepare_expand_or_shrink_objects",
+    "resize_objects",
+    "resize_objects_3d",
+    "resize_objects_target_shape",
+    "resize_objects_zoom_factors",
+    "SimpleDiskMidpointPreservationPolicy",
     "split_or_merge_objects",
 ]
