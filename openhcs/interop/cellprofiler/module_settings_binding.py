@@ -2268,6 +2268,22 @@ class MeasureObjectNeighborsModuleSettingsBindingStrategy(
     """Bind retained neighbor-image settings alongside topology measurements."""
 
     module_name = "MeasureObjectNeighbors"
+    explicit_settings: ClassVar[tuple[SettingToKeywordBinding, ...]] = (
+        SettingToKeywordBinding(
+            "Method to determine neighbors",
+            "distance_method",
+        ),
+        SettingToKeywordBinding(
+            "Neighbor distance",
+            "neighbor_distance",
+            parse_cellprofiler_int,
+        ),
+        SettingToKeywordBinding(
+            "Consider objects discarded for touching image border?",
+            "consider_discarded_objects",
+            parse_cellprofiler_bool,
+        ),
+    )
 
     def _bind(
         self,
@@ -2283,6 +2299,8 @@ class MeasureObjectNeighborsModuleSettingsBindingStrategy(
         )
         colormaps = module.get_setting_values("Select colormap")
         kwargs = dict(bound.kwargs)
+        for setting_binding in type(self).explicit_settings:
+            setting_binding.bind(module, kwargs, binder)
         kwargs.update(
             {
                 "retain_neighbor_count_image": parse_cellprofiler_bool(
@@ -2312,6 +2330,9 @@ class MeasureObjectNeighborsModuleSettingsBindingStrategy(
             not in {
                 "retain_the_image_of_objects_colored_by_numbers_of_neighbors",
                 "retain_the_image_of_objects_colored_by_percent_of_touching_pixels",
+                "method_to_determine_neighbors",
+                "neighbor_distance",
+                "consider_objects_discarded_for_touching_image_border",
                 "name_the_output_image",
                 "select_colormap",
             }
