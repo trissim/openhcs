@@ -4,12 +4,16 @@ Original: expand_or_shrink_objects
 """
 
 from abc import ABC, abstractmethod
-from enum import Enum
+from collections.abc import Callable
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 from numba import njit
+from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
+    CellProfilerExpandShrinkOperation,
+    ExpandShrinkMode,
+)
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
@@ -30,30 +34,6 @@ from openhcs.processing.materialization import segmentation_mask_rois
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
-
-
-class ExpandShrinkMode(Enum):
-    EXPAND_DEFINED_PIXELS = "expand_defined_pixels"
-    EXPAND_INFINITE = "expand_infinite"
-    SHRINK_DEFINED_PIXELS = "shrink_defined_pixels"
-    SHRINK_TO_POINT = "shrink_to_point"
-    ADD_DIVIDING_LINES = "add_dividing_lines"
-    DESPUR = "despur"
-    SKELETONIZE = "skeletonize"
-
-
-class CellProfilerExpandShrinkOperation(str, Enum):
-    """Closed CellProfiler UI operation dialect for ExpandOrShrinkObjects."""
-
-    SHRINK_TO_POINT = "Shrink objects to a point"
-    EXPAND_UNTIL_TOUCHING = "Expand objects until touching"
-    ADD_DIVIDING_LINES = "Add partial dividing lines between objects"
-    SHRINK_DEFINED_PIXELS = "Shrink objects by a specified number of pixels"
-    SHRINK_BY_MEASUREMENT = "Shrink objects by a previous measurement"
-    EXPAND_DEFINED_PIXELS = "Expand objects by a specified number of pixels"
-    EXPAND_BY_MEASUREMENT = "Expand objects by a previous measurement"
-    SKELETONIZE = "Skeletonize each object"
-    DESPUR = "Remove spurs"
 
 
 class ExpandShrinkOperationStrategy(
@@ -95,6 +75,18 @@ class ExpandShrinkOperationStrategy(
             scope=ObjectLabelDomainScope.PLANE,
         )
 
+    @staticmethod
+    def apply_label_planes(
+        labels: np.ndarray,
+        operation: Callable[[np.ndarray], np.ndarray],
+    ) -> np.ndarray:
+        output = np.empty_like(labels, dtype=np.int32)
+        label_planes = labels.reshape((-1, *labels.shape[-2:]))
+        output_planes = output.reshape((-1, *output.shape[-2:]))
+        for plane_index in range(label_planes.shape[0]):
+            output_planes[plane_index] = operation(label_planes[plane_index])
+        return output
+
 
 class ExpandDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
     """Expand labeled objects by a fixed pixel radius."""
@@ -112,7 +104,36 @@ class ExpandDefinedPixelsStrategy(ExpandShrinkOperationStrategy):
         iterations: int,
         fill_holes: bool,
     ) -> np.ndarray:
-        return _expand_defined_pixels(labels, iterations)
+        return self.expand_defined_pixels(labels, iterations)
+
+    def expand_defined_pixels(
+        self,
+        labels: np.ndarray,
+        iterations: int,
+    ) -> np.ndarray:
+        """Expand labeled objects by a defined number of pixels."""
+        from scipy.ndimage import distance_transform_edt
+
+        if iterations <= 0:
+            return labels.copy()
+        labels_int = labels.astype(np.int32, copy=False)
+        if labels_int.ndim > 2:
+            return self.apply_label_planes(
+                labels_int,
+                lambda plane: self.expand_defined_pixels(plane, iterations),
+            )
+        if _labels_are_points_numba(np.ascontiguousarray(labels_int)):
+            return _expand_point_labels_defined_pixels_numba(
+                np.ascontiguousarray(labels_int),
+                int(iterations),
+            )
+
+        result = labels_int.copy()
+        background = labels_int == 0
+        distances, indices = distance_transform_edt(background, return_indices=True)
+        expand_mask = background & (distances <= iterations)
+        result[expand_mask] = labels_int[indices[0][expand_mask], indices[1][expand_mask]]
+        return result
 
 
 class ExpandInfiniteStrategy(ExpandShrinkOperationStrategy):
@@ -167,7 +188,23 @@ class ShrinkToPointStrategy(ExpandShrinkOperationStrategy):
         iterations: int,
         fill_holes: bool,
     ) -> np.ndarray:
-        return _shrink_to_point(labels, fill_holes)
+        return self.shrink_to_point(labels, fill_holes)
+
+    def shrink_to_point(
+        self,
+        labels: np.ndarray,
+        fill: bool,
+    ) -> np.ndarray:
+        """Shrink each labeled object to a single point at its centroid."""
+        labels_int = labels.astype(np.int32, copy=False)
+        if labels_int.ndim > 2:
+            return self.apply_label_planes(
+                labels_int,
+                lambda plane: self.shrink_to_point(plane, fill),
+            )
+        if labels_int.size == 0 or int(labels_int.max()) <= 0:
+            return np.zeros_like(labels_int)
+        return _shrink_to_point_numba(np.ascontiguousarray(labels_int))
 
 
 class AddDividingLinesStrategy(ExpandShrinkOperationStrategy):
@@ -218,32 +255,6 @@ class SkeletonizeStrategy(ExpandShrinkOperationStrategy):
         fill_holes: bool,
     ) -> np.ndarray:
         return _skeletonize_labels(labels)
-
-
-def _expand_defined_pixels(labels: np.ndarray, iterations: int) -> np.ndarray:
-    """Expand labeled objects by a defined number of pixels."""
-    from scipy.ndimage import distance_transform_edt
-    
-    if iterations <= 0:
-        return labels.copy()
-    labels_int = labels.astype(np.int32, copy=False)
-    if labels_int.ndim > 2:
-        return _apply_label_planes(
-            labels_int,
-            lambda plane: _expand_defined_pixels(plane, iterations),
-        )
-    if _labels_are_points_numba(np.ascontiguousarray(labels_int)):
-        return _expand_point_labels_defined_pixels_numba(
-            np.ascontiguousarray(labels_int),
-            int(iterations),
-        )
-
-    result = labels_int.copy()
-    background = labels_int == 0
-    distances, indices = distance_transform_edt(background, return_indices=True)
-    expand_mask = background & (distances <= iterations)
-    result[expand_mask] = labels_int[indices[0][expand_mask], indices[1][expand_mask]]
-    return result
 
 
 @njit(cache=True)
@@ -321,7 +332,10 @@ def _expand_until_touching(labels: np.ndarray) -> np.ndarray:
     from scipy.ndimage import distance_transform_edt
 
     if labels.ndim > 2:
-        return _apply_label_planes(labels, _expand_until_touching)
+        return ExpandShrinkOperationStrategy.apply_label_planes(
+            labels,
+            _expand_until_touching,
+        )
     
     if labels.max() == 0:
         return labels.copy()
@@ -343,7 +357,7 @@ def _shrink_defined_pixels(labels: np.ndarray, iterations: int, fill: bool) -> n
 
     original = labels.astype(np.int32, copy=False)
     if original.ndim > 2:
-        return _apply_label_planes(
+        return ExpandShrinkOperationStrategy.apply_label_planes(
             original,
             lambda plane: _shrink_defined_pixels(plane, iterations, fill),
         )
@@ -384,19 +398,6 @@ def _restore_eroded_objects_to_centroids(
         cy = int(region_props.centroid_y[index])
         cx = int(region_props.centroid_x[index])
         eroded[cy, cx] = label_int
-
-
-def _shrink_to_point(labels: np.ndarray, fill: bool) -> np.ndarray:
-    """Shrink each labeled object to a single point at its centroid."""
-    labels_int = labels.astype(np.int32, copy=False)
-    if labels_int.ndim > 2:
-        return _apply_label_planes(
-            labels_int,
-            lambda plane: _shrink_to_point(plane, fill),
-        )
-    if labels_int.size == 0 or int(labels_int.max()) <= 0:
-        return np.zeros_like(labels_int)
-    return _shrink_to_point_numba(np.ascontiguousarray(labels_int))
 
 
 @njit(cache=True)
@@ -445,7 +446,10 @@ def _add_dividing_lines(labels: np.ndarray) -> np.ndarray:
     from scipy.ndimage import maximum_filter, minimum_filter
 
     if labels.ndim > 2:
-        return _apply_label_planes(labels, _add_dividing_lines)
+        return ExpandShrinkOperationStrategy.apply_label_planes(
+            labels,
+            _add_dividing_lines,
+        )
     
     if labels.max() == 0:
         return labels.copy()
@@ -471,7 +475,7 @@ def _despur(labels: np.ndarray, iterations: int) -> np.ndarray:
     if iterations <= 0:
         return labels.copy()
     if labels.ndim > 2:
-        return _apply_label_planes(
+        return ExpandShrinkOperationStrategy.apply_label_planes(
             labels,
             lambda plane: _despur(plane, iterations),
         )
@@ -494,7 +498,10 @@ def _skeletonize_labels(labels: np.ndarray) -> np.ndarray:
     from skimage.morphology import skeletonize
 
     if labels.ndim > 2:
-        return _apply_label_planes(labels, _skeletonize_labels)
+        return ExpandShrinkOperationStrategy.apply_label_planes(
+            labels,
+            _skeletonize_labels,
+        )
     
     result = np.zeros_like(labels)
     
@@ -504,18 +511,6 @@ def _skeletonize_labels(labels: np.ndarray) -> np.ndarray:
         result[skeleton] = label_id
     
     return result
-
-
-def _apply_label_planes(
-    labels: np.ndarray,
-    operation,
-) -> np.ndarray:
-    output = np.empty_like(labels, dtype=np.int32)
-    label_planes = labels.reshape((-1, *labels.shape[-2:]))
-    output_planes = output.reshape((-1, *output.shape[-2:]))
-    for plane_index in range(label_planes.shape[0]):
-        output_planes[plane_index] = operation(label_planes[plane_index])
-    return output
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -563,8 +558,8 @@ def _prepare_expand_or_shrink_objects() -> None:
     labels = np.zeros((16, 16), dtype=np.int32)
     labels[2:5, 3:7] = 1
     labels[8:12, 9:14] = 2
-    points = _shrink_to_point(labels, False)
-    _expand_defined_pixels(points, 2)
+    points = ShrinkToPointStrategy().shrink_to_point(labels, False)
+    ExpandDefinedPixelsStrategy().expand_defined_pixels(points, 2)
 
 
 expand_or_shrink_objects.__openhcs_prepare__ = _prepare_expand_or_shrink_objects
