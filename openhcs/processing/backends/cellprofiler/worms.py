@@ -9,11 +9,12 @@ associating all of a worm's pieces together.
 
 import numpy as np
 import re
+import scipy.ndimage
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from heapq import heappop, heappush
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 from scipy.ndimage import (
@@ -34,17 +35,20 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelSet,
     SparseIJVLabelRows,
+    object_label_dense_array,
     object_label_payload_from_source_image,
     object_label_set_from_source_image,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler.worm_geometry import (
     branchpoints,
     calculate_cumulative_lengths,
+    control_points_for_label_image,
     endpoints,
     eight_connectivity,
     rebuild_worm_from_control_points_approx,
@@ -58,6 +62,496 @@ class OverlapStyle(str, Enum):
     WITH_OVERLAP = "with_overlap"
     WITHOUT_OVERLAP = "without_overlap"
     BOTH = "both"
+
+
+class FlipMode(Enum):
+    """StraightenWorms head/tail alignment policy."""
+
+    NONE = "do_not_align"
+    TOP = "top_brightest"
+    BOTTOM = "bottom_brightest"
+    MANUAL = "flip_manually"
+
+
+@dataclass(frozen=True, slots=True)
+class WormMeasurement:
+    """StraightenWorms per-object intensity row."""
+
+    slice_index: int
+    object_number: int
+    center_x: float
+    center_y: float
+    mean_intensity: float
+    std_intensity: float
+
+
+@dataclass(frozen=True, slots=True)
+class DeadWormStats:
+    """IdentifyDeadWorms summary row."""
+
+    slice_index: int
+    object_count: int
+    mean_center_x: float
+    mean_center_y: float
+    mean_angle: float
+
+
+@dataclass(frozen=True, slots=True)
+class StraightenedWormPlacement:
+    """Source-to-output mapping for one straightened worm block."""
+
+    object_number: int
+    output_y: slice
+    output_x: slice
+    source_y: np.ndarray
+    source_x: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class StraightenWormControlPoints:
+    """Control-point normalization policy for StraightenWorms."""
+
+    points: np.ndarray | None
+    labels: np.ndarray
+    num_control_points: int
+
+    @property
+    def normalized(self) -> np.ndarray:
+        if self.points is None:
+            return control_points_for_label_image(self.labels, self.num_control_points)
+        points = np.asarray(self.points, dtype=float)
+        if points.ndim != 3:
+            raise ValueError(
+                "StraightenWorms control_points must have shape "
+                "(objects, 2, control_points) or (2, control_points, objects)."
+            )
+        if points.shape[1] == 2:
+            normalized = points
+        elif points.shape[0] == 2:
+            normalized = points.transpose(2, 0, 1)
+        else:
+            raise ValueError(
+                "StraightenWorms control_points must include one coordinate axis "
+                "of length 2."
+            )
+        if normalized.shape[2] != self.num_control_points:
+            raise ValueError(
+                f"StraightenWorms expected {self.num_control_points} control points; "
+                f"got {normalized.shape[2]}."
+            )
+        return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class StraightenWormsSliceRequest:
+    """Executable StraightenWorms request for one 2-D runtime slice."""
+
+    image: np.ndarray
+    labels: np.ndarray
+    control_points: np.ndarray
+    worm_width: int
+    num_control_points: int
+    flip_mode: FlipMode
+    measure_intensity: bool
+    slice_index: int
+
+    @property
+    def half_width(self) -> int:
+        return self.worm_width // 2
+
+    @property
+    def output_width(self) -> int:
+        return 2 * self.half_width + 1
+
+    @property
+    def positive_labels(self) -> np.ndarray:
+        labels = np.unique(self.labels)
+        return labels[labels > 0]
+
+    def execute(self) -> tuple[np.ndarray, np.ndarray, list[WormMeasurement]]:
+        image = self.image
+        labels = self.labels
+        unique_labels = self.positive_labels
+        if len(unique_labels) == 0:
+            shape = (self.output_width, self.output_width)
+            return np.zeros(shape, dtype=image.dtype), np.zeros(shape, dtype=np.int32), []
+
+        lengths = self.worm_lengths(len(unique_labels))
+        if not lengths:
+            shape = (self.output_width, self.output_width)
+            return np.zeros(shape, dtype=image.dtype), np.zeros(shape, dtype=np.int32), []
+
+        shape = (max(lengths) + self.output_width, len(unique_labels) * self.output_width)
+        straightened_image = np.zeros(shape, dtype=image.dtype)
+        straightened_labels = np.zeros(shape, dtype=np.int32)
+        placements = self.placements(unique_labels, lengths)
+        self.apply_placements(straightened_image, straightened_labels, placements)
+        return (
+            straightened_image,
+            straightened_labels,
+            self.measurements(straightened_image, straightened_labels, placements),
+        )
+
+    def worm_lengths(self, worm_count: int) -> list[int]:
+        lengths: list[int] = []
+        for index in range(min(worm_count, self.control_points.shape[0])):
+            control_point = self.control_points[index]
+            lengths.append(int(np.ceil(calculate_cumulative_lengths(control_point.T)[-1])))
+        return lengths
+
+    def placements(
+        self,
+        unique_labels: np.ndarray,
+        lengths: list[int],
+    ) -> list[StraightenedWormPlacement]:
+        placements: list[StraightenedWormPlacement] = []
+        for index, object_number in enumerate(unique_labels):
+            if index >= len(lengths) or lengths[index] == 0:
+                continue
+            if index >= self.control_points.shape[0]:
+                continue
+            placements.append(
+                self.placement_for_object(
+                    object_number=int(object_number),
+                    object_index=index,
+                    length=lengths[index],
+                )
+            )
+        return placements
+
+    def placement_for_object(
+        self,
+        *,
+        object_number: int,
+        object_index: int,
+        length: int,
+    ) -> StraightenedWormPlacement:
+        control_point = self.control_points[object_index]
+        ii = control_point[0]
+        jj = control_point[1]
+        t_orig = np.linspace(0, length, self.num_control_points)
+        t_new = np.arange(0, length + 1)
+        ci = np.interp(t_new, t_orig, ii)
+        cj = np.interp(t_new, t_orig, jj)
+
+        di = np.diff(ci, prepend=ci[0])
+        dj = np.diff(cj, prepend=cj[0])
+        di[0] = di[1] if len(di) > 1 else 0
+        dj[0] = dj[1] if len(dj) > 1 else 0
+        norm = np.sqrt(di**2 + dj**2)
+        norm[norm == 0] = 1
+        ni = -dj / norm
+        nj = di / norm
+
+        half_width = self.half_width
+        ci_ext = np.concatenate(
+            [
+                np.arange(-half_width, 0) * nj[0] + ci[0],
+                ci,
+                np.arange(1, half_width + 1) * nj[-1] + ci[-1],
+            ]
+        )
+        cj_ext = np.concatenate(
+            [
+                np.arange(-half_width, 0) * (-ni[0]) + cj[0],
+                cj,
+                np.arange(1, half_width + 1) * (-ni[-1]) + cj[-1],
+            ]
+        )
+        ni_ext = np.concatenate([[ni[0]] * half_width, ni, [ni[-1]] * half_width])
+        nj_ext = np.concatenate([[nj[0]] * half_width, nj, [nj[-1]] * half_width])
+        iii, jjj = np.mgrid[0 : len(ci_ext), -half_width : (half_width + 1)]
+        source_y = ci_ext[iii] + ni_ext[iii] * jjj
+        source_x = cj_ext[iii] + nj_ext[iii] * jjj
+        if self.should_flip(object_number, ci_ext, cj_ext, ni_ext, nj_ext, iii, jjj):
+            iii_flip = len(ci_ext) - iii - 1
+            jjj_flip = -jjj
+            source_y = ci_ext[iii_flip] + ni_ext[iii_flip] * jjj_flip
+            source_x = cj_ext[iii_flip] + nj_ext[iii_flip] * jjj_flip
+        return StraightenedWormPlacement(
+            object_number=object_number,
+            output_y=slice(0, len(ci_ext)),
+            output_x=slice(
+                self.output_width * object_index,
+                self.output_width * (object_index + 1),
+            ),
+            source_y=np.ascontiguousarray(source_y, dtype=float),
+            source_x=np.ascontiguousarray(source_x, dtype=float),
+        )
+
+    def should_flip(
+        self,
+        object_number: int,
+        ci_ext: np.ndarray,
+        cj_ext: np.ndarray,
+        ni_ext: np.ndarray,
+        nj_ext: np.ndarray,
+        iii: np.ndarray,
+        jjj: np.ndarray,
+    ) -> bool:
+        if self.flip_mode is FlipMode.NONE:
+            return False
+        source_y = ci_ext[iii] + ni_ext[iii] * jjj
+        source_x = cj_ext[iii] + nj_ext[iii] * jjj
+        sampled_image = scipy.ndimage.map_coordinates(
+            self.image,
+            [source_y, source_x],
+            order=1,
+            mode="constant",
+        )
+        sampled_mask = scipy.ndimage.map_coordinates(
+            (self.labels == object_number).astype(np.float32),
+            [source_y, source_x],
+            order=0,
+        )
+        sampled_image = sampled_image * sampled_mask
+        halfway = len(ci_ext) // 2
+        area_top = np.sum(sampled_mask[:halfway, :])
+        area_bottom = np.sum(sampled_mask[halfway:, :])
+        if area_top <= 0 or area_bottom <= 0:
+            return False
+        top_intensity = np.sum(sampled_image[:halfway, :]) / area_top
+        bottom_intensity = np.sum(sampled_image[halfway:, :]) / area_bottom
+        return (
+            self.flip_mode is FlipMode.TOP
+            and top_intensity < bottom_intensity
+        ) or (
+            self.flip_mode is FlipMode.BOTTOM
+            and bottom_intensity < top_intensity
+        )
+
+    def apply_placements(
+        self,
+        straightened_image: np.ndarray,
+        straightened_labels: np.ndarray,
+        placements: list[StraightenedWormPlacement],
+    ) -> None:
+        if not placements:
+            return
+        flat_source_y = np.concatenate([placement.source_y.ravel() for placement in placements])
+        flat_source_x = np.concatenate([placement.source_x.ravel() for placement in placements])
+        flat_image = scipy.ndimage.map_coordinates(
+            self.image,
+            [flat_source_y, flat_source_x],
+            order=1,
+            mode="constant",
+        )
+        flat_labels = scipy.ndimage.map_coordinates(
+            self.labels,
+            [flat_source_y, flat_source_x],
+            order=0,
+            mode="constant",
+            cval=0,
+        )
+        offset = 0
+        for placement in placements:
+            block_shape = placement.source_y.shape
+            block_size = placement.source_y.size
+            next_offset = offset + block_size
+            image_block = flat_image[offset:next_offset].reshape(block_shape)
+            label_block = flat_labels[offset:next_offset].reshape(block_shape)
+            straightened_image[placement.output_y, placement.output_x] = image_block
+            output_label_block = straightened_labels[placement.output_y, placement.output_x]
+            output_label_block[label_block == placement.object_number] = placement.object_number
+            offset = next_offset
+
+    def measurements(
+        self,
+        straightened_image: np.ndarray,
+        straightened_labels: np.ndarray,
+        placements: list[StraightenedWormPlacement],
+    ) -> list[WormMeasurement]:
+        if not self.measure_intensity:
+            return []
+        measurements: list[WormMeasurement] = []
+        for placement in placements:
+            mask = (
+                straightened_labels[placement.output_y, placement.output_x]
+                == placement.object_number
+            )
+            if np.sum(mask) == 0:
+                continue
+            image_block = straightened_image[placement.output_y, placement.output_x]
+            values = image_block[mask]
+            center_y, center_x = scipy.ndimage.center_of_mass(mask.astype(float))
+            measurements.append(
+                WormMeasurement(
+                    slice_index=self.slice_index,
+                    object_number=placement.object_number,
+                    center_x=(
+                        float(center_x) + float(placement.output_x.start)
+                        if not np.isnan(center_x)
+                        else 0.0
+                    ),
+                    center_y=(
+                        float(center_y) + float(placement.output_y.start)
+                        if not np.isnan(center_y)
+                        else 0.0
+                    ),
+                    mean_intensity=float(np.mean(values)),
+                    std_intensity=float(np.std(values)),
+                )
+            )
+        return measurements
+
+
+@dataclass(frozen=True, slots=True)
+class DeadWormDiamondTemplate:
+    """Diamond-shaped dead-worm structuring element at one angle."""
+
+    worm_width: int
+    worm_length: int
+    angle: float
+
+    def footprint(self) -> np.ndarray:
+        from scipy.ndimage import binary_fill_holes
+
+        x0 = int(np.sin(self.angle) * self.worm_length / 2)
+        x1 = int(np.cos(self.angle) * self.worm_width / 2)
+        x2 = -x0
+        x3 = -x1
+        y2 = int(np.cos(self.angle) * self.worm_length / 2)
+        y1 = int(np.sin(self.angle) * self.worm_width / 2)
+        y0 = -y2
+        y3 = -y1
+        xmax = np.max(np.abs([x0, x1, x2, x3]))
+        ymax = np.max(np.abs([y0, y1, y2, y3]))
+        footprint = np.zeros((ymax * 2 + 1, xmax * 2 + 1), bool)
+        pts_y0 = np.array([y0, y1, y2, y3]) + ymax
+        pts_x0 = np.array([x0, x1, x2, x3]) + xmax
+        pts_y1 = np.array([y1, y2, y3, y0]) + ymax
+        pts_x1 = np.array([x1, x2, x3, x0]) + xmax
+        i_pts, j_pts = LineSegments.from_endpoints(
+            pts_y0,
+            pts_x0,
+            pts_y1,
+            pts_x1,
+        ).points()
+        valid = (
+            (i_pts >= 0)
+            & (i_pts < footprint.shape[0])
+            & (j_pts >= 0)
+            & (j_pts < footprint.shape[1])
+        )
+        footprint[i_pts[valid], j_pts[valid]] = True
+        return binary_fill_holes(footprint)
+
+
+@dataclass(frozen=True, slots=True)
+class LineSegments:
+    """Integer points along one or more line segments."""
+
+    y0: np.ndarray
+    x0: np.ndarray
+    y1: np.ndarray
+    x1: np.ndarray
+
+    @classmethod
+    def from_endpoints(
+        cls,
+        y0: np.ndarray,
+        x0: np.ndarray,
+        y1: np.ndarray,
+        x1: np.ndarray,
+    ) -> "LineSegments":
+        return cls(y0=y0, x0=x0, y1=y1, x1=x1)
+
+    def points(self) -> tuple[np.ndarray, np.ndarray]:
+        all_i: list[int] = []
+        all_j: list[int] = []
+        for index in range(len(self.y0)):
+            dy = abs(self.y1[index] - self.y0[index])
+            dx = abs(self.x1[index] - self.x0[index])
+            sy = 1 if self.y0[index] < self.y1[index] else -1
+            sx = 1 if self.x0[index] < self.x1[index] else -1
+            err = dx - dy
+            cy = self.y0[index]
+            cx = self.x0[index]
+            while True:
+                all_i.append(cy)
+                all_j.append(cx)
+                if cy == self.y1[index] and cx == self.x1[index]:
+                    break
+                e2 = 2 * err
+                if e2 > -dy:
+                    err -= dy
+                    cx += sx
+                if e2 < dx:
+                    err += dx
+                    cy += sy
+        return np.array(all_i), np.array(all_j)
+
+
+@dataclass(frozen=True, slots=True)
+class ConnectedComponentEdges:
+    """Union-find connected components for an integer edge list."""
+
+    first: np.ndarray
+    second: np.ndarray
+
+    def labels(self) -> np.ndarray:
+        if len(self.first) == 0:
+            return np.zeros(0, dtype=int)
+        vertex_count = max(np.max(self.first), np.max(self.second)) + 1
+        labels = np.arange(vertex_count)
+
+        def find(vertex: int) -> int:
+            root = vertex
+            while labels[root] != root:
+                root = labels[root]
+            while labels[vertex] != root:
+                next_vertex = labels[vertex]
+                labels[vertex] = root
+                vertex = next_vertex
+            return int(root)
+
+        def union(first: int, second: int) -> None:
+            first_root = find(first)
+            second_root = find(second)
+            if first_root != second_root:
+                labels[first_root] = second_root
+
+        for first, second in zip(self.first, self.second):
+            union(int(first), int(second))
+        for index in range(vertex_count):
+            labels[index] = find(index)
+        unique_labels = np.unique(labels)
+        label_map = {old: new for new, old in enumerate(unique_labels)}
+        return np.array([label_map[label] for label in labels])
+
+
+@dataclass(frozen=True, slots=True)
+class DeadWormAdjacencyPolicy:
+    """CP dead-worm hit grouping policy in spatial/angle space."""
+
+    i: np.ndarray
+    j: np.ndarray
+    angle: np.ndarray
+    space_dist: float
+    angle_dist: float
+
+    def edges(self) -> tuple[np.ndarray, np.ndarray]:
+        if len(self.i) < 2:
+            return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
+        order = np.lexsort((self.angle, self.j, self.i))
+        i_sorted = self.i[order]
+        j_sorted = self.j[order]
+        angle_sorted = self.angle[order]
+        first: list[int] = []
+        second: list[int] = []
+        for idx1 in range(len(self.i)):
+            for idx2 in range(idx1 + 1, len(self.i)):
+                spatial_dist_sq = (
+                    (i_sorted[idx1] - i_sorted[idx2]) ** 2
+                    + (j_sorted[idx1] - j_sorted[idx2]) ** 2
+                )
+                if spatial_dist_sq > self.space_dist**2:
+                    continue
+                angle_diff = abs(angle_sorted[idx1] - angle_sorted[idx2])
+                if angle_diff <= self.angle_dist or (np.pi - angle_diff) <= self.angle_dist:
+                    first.append(order[idx1])
+                    second.append(order[idx2])
+        return np.array(first, dtype=int), np.array(second, dtype=int)
 
 
 @dataclass(frozen=True, slots=True)
@@ -381,6 +875,188 @@ def untangle_worms(
     )
     
     return image, measurements, overlapping_labels, nonoverlapping_labels
+
+
+@numpy
+@special_inputs("worm_labels")
+@special_outputs(
+    ("straightened_labels", None),
+    (
+        "worm_measurements",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "object_number",
+                "center_x",
+                "center_y",
+                "mean_intensity",
+                "std_intensity",
+            ],
+            analysis_type="worm_measurements",
+        ),
+    ),
+)
+def straighten_worms(
+    image: np.ndarray,
+    worm_labels: np.ndarray,
+    control_points: np.ndarray | None = None,
+    worm_width: int = 20,
+    num_control_points: int = 21,
+    flip_mode: FlipMode = FlipMode.NONE,
+    number_of_segments: int = 4,
+    number_of_stripes: int = 3,
+    measure_intensity: bool = True,
+) -> tuple[Any, ...]:
+    """Straighten labeled worms using sampled or provided control points."""
+    del number_of_segments, number_of_stripes
+    flip_mode = coerce_cellprofiler_enum(FlipMode, flip_mode)
+    if flip_mode is FlipMode.MANUAL:
+        raise NotImplementedError("StraightenWorms manual flipping is interactive.")
+
+    image_stack = image[np.newaxis, :, :] if image.ndim == 2 else image
+    labels_stack = object_label_dense_array(worm_labels, dtype=np.int32)
+    if labels_stack.ndim == 2:
+        labels_stack = labels_stack[np.newaxis, :, :]
+
+    straightened_images: list[np.ndarray] = []
+    straightened_label_planes: list[np.ndarray] = []
+    all_measurements: list[WormMeasurement] = []
+    for slice_index in range(image_stack.shape[0]):
+        labels_slice = (
+            labels_stack[slice_index]
+            if slice_index < labels_stack.shape[0]
+            else labels_stack[0]
+        )
+        slice_image, slice_labels, measurements = StraightenWormsSliceRequest(
+            image=image_stack[slice_index],
+            labels=labels_slice,
+            control_points=StraightenWormControlPoints(
+                points=control_points,
+                labels=labels_slice,
+                num_control_points=num_control_points,
+            ).normalized,
+            worm_width=worm_width,
+            num_control_points=num_control_points,
+            flip_mode=flip_mode,
+            measure_intensity=measure_intensity,
+            slice_index=slice_index,
+        ).execute()
+        straightened_images.append(slice_image)
+        straightened_label_planes.append(slice_labels)
+        all_measurements.extend(measurements)
+
+    straightened_image_stack = np.stack(straightened_images, axis=0)
+    straightened_label_stack = np.stack(straightened_label_planes, axis=0)
+    return (
+        *tuple(
+            straightened_image_stack[index]
+            for index in range(straightened_image_stack.shape[0])
+        ),
+        straightened_label_stack,
+        all_measurements,
+    )
+
+
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_outputs(
+    (
+        "dead_worm_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "object_count",
+                "mean_center_x",
+                "mean_center_y",
+                "mean_angle",
+            ],
+            analysis_type="dead_worm_identification",
+        ),
+    ),
+    ("labels", segmentation_mask_rois()),
+)
+def identify_dead_worms(
+    image: np.ndarray,
+    worm_width: int = 10,
+    worm_length: int = 100,
+    angle_count: int = 32,
+    auto_distance: bool = True,
+    space_distance: float = 5.0,
+    angular_distance: float = 30.0,
+) -> tuple[np.ndarray, DeadWormStats, np.ndarray]:
+    """Identify straight dead worms by diamond-template matches across angles."""
+    from scipy.ndimage import binary_erosion
+
+    mask = image > 0
+    i_coords: list[np.ndarray] = []
+    j_coords: list[np.ndarray] = []
+    a_coords: list[np.ndarray] = []
+    ig, jg = np.mgrid[0 : mask.shape[0], 0 : mask.shape[1]]
+    for angle_index in range(angle_count):
+        angle = float(angle_index) * np.pi / float(angle_count)
+        footprint = DeadWormDiamondTemplate(
+            worm_width=worm_width,
+            worm_length=worm_length,
+            angle=angle,
+        ).footprint()
+        erosion = binary_erosion(mask, footprint)
+        point_count = np.sum(erosion)
+        if point_count <= 0:
+            continue
+        i_coords.append(ig[erosion])
+        j_coords.append(jg[erosion])
+        a_coords.append(np.ones(point_count) * angle)
+
+    if not i_coords:
+        labels = np.zeros(mask.shape, dtype=np.int32)
+        return image, DeadWormStats(0, 0, 0.0, 0.0, 0.0), labels
+
+    i = np.concatenate(i_coords)
+    j = np.concatenate(j_coords)
+    a = np.concatenate(a_coords)
+    if auto_distance:
+        space_dist = float(worm_width)
+        angle_dist = np.arctan2(worm_width, worm_length) + np.pi / angle_count
+    else:
+        space_dist = space_distance
+        angle_dist = angular_distance * np.pi / 180.0
+
+    first, second = DeadWormAdjacencyPolicy(
+        i=i,
+        j=j,
+        angle=a,
+        space_dist=space_dist,
+        angle_dist=angle_dist,
+    ).edges()
+    if len(first) > 0:
+        ij_labels = ConnectedComponentEdges(first, second).labels() + 1
+        label_count = int(np.max(ij_labels))
+        label_indexes = np.arange(1, label_count + 1)
+        center_x = np.array([np.mean(j[ij_labels == label]) for label in label_indexes])
+        center_y = np.array([np.mean(i[ij_labels == label]) for label in label_indexes])
+        angles = np.array([np.mean(a[ij_labels == label]) for label in label_indexes])
+        labels = np.zeros(mask.shape, dtype=np.int32)
+        labels[i, j] = ij_labels
+    else:
+        label_count = len(i)
+        labels = np.zeros(mask.shape, dtype=np.int32)
+        if label_count > 0:
+            labels[i, j] = np.arange(1, label_count + 1)
+            center_x = j.astype(float)
+            center_y = i.astype(float)
+            angles = a
+        else:
+            center_x = np.array([])
+            center_y = np.array([])
+            angles = np.array([])
+
+    stats = DeadWormStats(
+        slice_index=0,
+        object_count=int(label_count),
+        mean_center_x=float(np.mean(center_x)) if len(center_x) > 0 else 0.0,
+        mean_center_y=float(np.mean(center_y)) if len(center_y) > 0 else 0.0,
+        mean_angle=float(np.mean(angles) * 180 / np.pi) if len(angles) > 0 else 0.0,
+    )
+    return image, stats, labels
 
 
 @dataclass(frozen=True, slots=True)
