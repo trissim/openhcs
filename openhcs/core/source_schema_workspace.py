@@ -495,7 +495,6 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
 
     __registry_key__ = "__name__"
     component: ClassVar[AllComponents | None] = None
-    priority: ClassVar[int] = 100
     metadata_derived: ClassVar[bool] = True
 
     @classmethod
@@ -508,19 +507,22 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
         direct_value = cls.direct_metadata_value(component, metadata)
         if direct_value is not None:
             return direct_value
-        projection_types = sorted(
-            (
-                projection_type
-                for projection_type in cls.__registry__.values()
-                if projection_type.component is component
-            ),
-            key=lambda projection_type: projection_type.priority,
+        metadata_value = cls.resolve_from_registered_projections(
+            component,
+            metadata,
+            image_set_index,
+            metadata_derived=True,
         )
-        for projection_type in projection_types:
-            projection = projection_type()
-            value = projection.value(metadata, image_set_index)
-            if value is not None:
-                return value
+        if metadata_value is not None:
+            return metadata_value
+        fallback_value = cls.resolve_from_registered_projections(
+            component,
+            metadata,
+            image_set_index,
+            metadata_derived=False,
+        )
+        if fallback_value is not None:
+            return fallback_value
         raise ValueError(
             f"Could not project source metadata fields {sorted(metadata)} "
             f"onto OpenHCS component {component.value!r}."
@@ -535,22 +537,70 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
         direct_value = cls.direct_metadata_value(component, metadata)
         if direct_value is not None:
             return direct_value
-        projection_types = sorted(
-            (
-                projection_type
-                for projection_type in cls.__registry__.values()
-                if (
-                    projection_type.component is component
-                    and projection_type.metadata_derived
-                )
-            ),
-            key=lambda projection_type: projection_type.priority,
+        return cls.resolve_from_registered_projections(
+            component,
+            metadata,
+            0,
+            metadata_derived=True,
         )
-        for projection_type in projection_types:
-            value = projection_type().value(metadata, 0)
+
+    @classmethod
+    def resolve_from_registered_projections(
+        cls,
+        component: AllComponents,
+        metadata: Mapping[str, str],
+        image_set_index: int,
+        *,
+        metadata_derived: bool,
+    ) -> str | None:
+        matches: list[tuple[type[ComponentProjection], str]] = []
+        for projection_type in cls.projection_types_by_mro(
+            component,
+            metadata_derived=metadata_derived,
+        ):
+            value = projection_type().value(metadata, image_set_index)
             if value is not None:
-                return value
-        return None
+                matches.append((projection_type, value))
+        if not matches:
+            return None
+        value = matches[0][1]
+        conflicting = tuple(
+            projection_type.__name__
+            for projection_type, candidate_value in matches
+            if candidate_value != value
+        )
+        if conflicting:
+            raise ValueError(
+                f"Ambiguous source metadata projection for {component.value!r}: "
+                f"{', '.join(conflicting)}."
+            )
+        return value
+
+    @classmethod
+    def projection_types_by_mro(
+        cls,
+        component: AllComponents,
+        *,
+        metadata_derived: bool,
+    ) -> tuple[type["ComponentProjection"], ...]:
+        registered = set(cls.__registry__.values())
+        ordered: list[type[ComponentProjection]] = []
+        seen: set[type[ComponentProjection]] = set()
+
+        def visit(owner: type[ComponentProjection]) -> None:
+            for child in owner.__subclasses__():
+                visit(child)
+            if (
+                owner in registered
+                and owner not in seen
+                and owner.component is component
+                and owner.metadata_derived is metadata_derived
+            ):
+                ordered.append(owner)
+                seen.add(owner)
+
+        visit(cls)
+        return tuple(ordered)
 
     @staticmethod
     def direct_metadata_value(
@@ -570,7 +620,6 @@ class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
 
 class WellRowColumnMetadataProjection(ComponentProjection):
     component = AllComponents.WELL
-    priority = 20
 
     def value(
         self,
@@ -586,7 +635,6 @@ class WellRowColumnMetadataProjection(ComponentProjection):
 
 class SourceSchemaSingletonWellProjection(ComponentProjection):
     component = AllComponents.WELL
-    priority = 1000
     metadata_derived = False
 
     def value(
@@ -600,7 +648,6 @@ class SourceSchemaSingletonWellProjection(ComponentProjection):
 
 class ImageNumberSiteProjection(ComponentProjection):
     component = AllComponents.SITE
-    priority = 20
 
     def value(
         self,
@@ -612,7 +659,6 @@ class ImageNumberSiteProjection(ComponentProjection):
 
 class OrdinalSiteProjection(ComponentProjection):
     component = AllComponents.SITE
-    priority = 1000
     metadata_derived = False
 
     def value(
