@@ -2632,8 +2632,8 @@ def test_illumination_functions_accept_cellprofiler_enum_literals():
 
 
 def test_correct_illumination_fit_polynomial_matches_dense_design_matrix():
-    from benchmark.cellprofiler_library.functions.correctilluminationcalculate import (
-        _fit_polynomial_surface,
+    from openhcs.processing.backends.cellprofiler.illumination import (
+        fit_polynomial_surface,
     )
 
     image = (np.arange(48, dtype=np.float32).reshape(6, 8) / 47.0) ** 2
@@ -2672,7 +2672,7 @@ def test_correct_illumination_fit_polynomial_matches_dense_design_matrix():
     expected = (full_design @ coeffs).reshape(h, w)
 
     np.testing.assert_allclose(
-        _fit_polynomial_surface(image, mask),
+        fit_polynomial_surface(image, mask),
         expected,
         rtol=1e-10,
         atol=1e-10,

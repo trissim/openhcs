@@ -5,6 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
+from functools import lru_cache
 import logging
 import os
 import time
@@ -227,6 +228,302 @@ class AutomaticSmoothingFilterSizeStrategy(SmoothingFilterSizeStrategy):
 
     def calculate(self, request: SmoothingFilterSizeRequest) -> float:
         return min(30.0, float(np.max(request.image_shape)) / 40.0)
+
+
+@dataclass(frozen=True, slots=True)
+class SmoothingPlaneRequest:
+    """Authoritative smoothing context for illumination background estimation."""
+
+    pixel_data: np.ndarray
+    mask: np.ndarray | None
+    smoothing_method: SmoothingMethod
+    filter_size: float
+    spline_bg_mode: SplineBgMode
+    spline_points: int
+    spline_threshold: float
+    spline_rescale: float
+    spline_max_iterations: int
+    spline_convergence: float
+    automatic_splines: bool
+    morphology: object
+    convex_hull_backend_provider: CellProfilerBackendProvider | None
+    rank_median_backend_provider: CellProfilerBackendProvider | None
+
+    @property
+    def sigma(self) -> float:
+        return self.filter_size / 2.35
+
+
+class SmoothingPlaneStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal smoothing implementation for one closed CellProfiler mode."""
+
+    __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
+    method_label: ClassVar[str | None] = None
+    method: ClassVar[SmoothingMethod | None] = None
+
+    @classmethod
+    def for_method(cls, method: SmoothingMethod) -> "SmoothingPlaneStrategy":
+        return cls.__registry__[method.value]()
+
+    @abstractmethod
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        """Return the smoothed illumination plane."""
+
+
+class NoSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+    method = SmoothingMethod.NONE
+    method_label = method.value
+
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        return request.pixel_data
+
+
+class FitPolynomialSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+    method = SmoothingMethod.FIT_POLYNOMIAL
+    method_label = method.value
+
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        return fit_polynomial_surface(
+            request.pixel_data,
+            request.mask,
+        )
+
+
+class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+    method = SmoothingMethod.GAUSSIAN_FILTER
+    method_label = method.value
+
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        return IlluminationGaussianFilter(
+            request.pixel_data,
+            request.mask,
+            request.sigma,
+        ).apply()
+
+
+class MedianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+    method = SmoothingMethod.MEDIAN_FILTER
+    method_label = method.value
+
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        filter_sigma = max(1, int(request.sigma + 0.5))
+        return RankMedianSmoothingBackendStrategy.for_memory_type(
+            backend_provider=request.rank_median_backend_provider,
+        ).smooth_background_plane(
+            request.pixel_data,
+            mask=request.mask,
+            radius=filter_sigma,
+            morphology=request.morphology,
+        )
+
+
+class AverageSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+    method = SmoothingMethod.TO_AVERAGE
+    method_label = method.value
+
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        if request.mask is not None:
+            mean_val = np.mean(request.pixel_data[request.mask])
+        else:
+            mean_val = np.mean(request.pixel_data)
+        return np.full(
+            request.pixel_data.shape,
+            mean_val,
+            dtype=request.pixel_data.dtype,
+        )
+
+
+class ConvexHullSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+    method = SmoothingMethod.CONVEX_HULL
+    method_label = method.value
+
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        return ConvexHullSmoothingBackendStrategy.for_memory_type(
+            backend_provider=request.convex_hull_backend_provider,
+        ).smooth_background_plane(
+            request.pixel_data,
+            mask=request.mask,
+            filter_size=request.filter_size,
+            morphology=request.morphology,
+        )
+
+
+class SplinesSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+    method = SmoothingMethod.SPLINES
+    method_label = method.value
+
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        from scipy.interpolate import RectBivariateSpline
+
+        pixel_data = request.pixel_data
+        h, w = pixel_data.shape
+        if request.automatic_splines:
+            shortest_side = min(h, w)
+            scale = max(1, shortest_side // 200)
+            n_points = 5
+        else:
+            scale = int(request.spline_rescale)
+            n_points = request.spline_points
+        downsampled = pixel_data[::scale, ::scale]
+        dh, dw = downsampled.shape
+        y_points = np.linspace(0, dh - 1, n_points)
+        x_points = np.linspace(0, dw - 1, n_points)
+        yi = np.clip(np.round(y_points).astype(int), 0, dh - 1)
+        xi = np.clip(np.round(x_points).astype(int), 0, dw - 1)
+        spline = RectBivariateSpline(
+            y_points,
+            x_points,
+            downsampled[np.ix_(yi, xi)],
+            kx=3,
+            ky=3,
+        )
+        result = spline(
+            np.linspace(0, dh - 1, h),
+            np.linspace(0, dw - 1, w),
+        )
+        if request.mask is not None:
+            result[request.mask] -= np.mean(result[request.mask])
+        else:
+            result -= np.mean(result)
+        return result
+
+
+def fit_polynomial_surface(
+    pixel_data: np.ndarray,
+    mask: np.ndarray | None,
+) -> np.ndarray:
+    """Fit CP's quadratic illumination surface without dense design matrices."""
+    image = np.ascontiguousarray(pixel_data, dtype=np.float64)
+    if image.ndim != 2:
+        raise NotImplementedError(
+            "Fit-polynomial illumination smoothing currently supports 2-D "
+            f"NumPy planes, got shape {image.shape!r}."
+        )
+    mask_array = (
+        np.empty((0, 0), dtype=np.bool_)
+        if mask is None
+        else np.ascontiguousarray(mask, dtype=np.bool_)
+    )
+    if mask is not None and mask_array.shape != image.shape:
+        raise ValueError(
+            "Fit-polynomial illumination mask must match the image shape; got "
+            f"mask {mask_array.shape!r} for image {image.shape!r}."
+        )
+    if mask is None:
+        gram = fit_polynomial_unmasked_gram(image.shape[0], image.shape[1])
+        rhs = _fit_polynomial_unmasked_rhs_numba(image)
+    else:
+        gram, rhs = _fit_polynomial_normal_equations_numba(
+            image,
+            mask_array,
+            True,
+        )
+    coeffs = np.linalg.lstsq(gram, rhs, rcond=None)[0]
+    return _evaluate_polynomial_surface_numba(
+        image.shape[0],
+        image.shape[1],
+        np.ascontiguousarray(coeffs, dtype=np.float64),
+    )
+
+
+@lru_cache(maxsize=16)
+def fit_polynomial_unmasked_gram(height: int, width: int) -> np.ndarray:
+    return _fit_polynomial_unmasked_gram_numba(int(height), int(width))
+
+
+@njit(cache=True)
+def _fit_polynomial_unmasked_gram_numba(height: int, width: int) -> np.ndarray:
+    gram = np.zeros((6, 6), dtype=np.float64)
+    features = np.empty(6, dtype=np.float64)
+    for row in range(height):
+        y_value = row / height - 0.5
+        y2 = y_value * y_value
+        for col in range(width):
+            x_value = col / width - 0.5
+            features[0] = x_value * x_value
+            features[1] = y2
+            features[2] = x_value * y_value
+            features[3] = x_value
+            features[4] = y_value
+            features[5] = 1.0
+            for i in range(6):
+                for j in range(6):
+                    gram[i, j] += features[i] * features[j]
+    return gram
+
+
+@njit(cache=True)
+def _fit_polynomial_unmasked_rhs_numba(pixel_data: np.ndarray) -> np.ndarray:
+    height, width = pixel_data.shape
+    rhs = np.zeros(6, dtype=np.float64)
+    for row in range(height):
+        y_value = row / height - 0.5
+        y2 = y_value * y_value
+        for col in range(width):
+            x_value = col / width - 0.5
+            value = pixel_data[row, col]
+            rhs[0] += x_value * x_value * value
+            rhs[1] += y2 * value
+            rhs[2] += x_value * y_value * value
+            rhs[3] += x_value * value
+            rhs[4] += y_value * value
+            rhs[5] += value
+    return rhs
+
+
+@njit(cache=True)
+def _fit_polynomial_normal_equations_numba(
+    pixel_data: np.ndarray,
+    mask: np.ndarray,
+    has_mask: bool,
+) -> tuple[np.ndarray, np.ndarray]:
+    height, width = pixel_data.shape
+    gram = np.zeros((6, 6), dtype=np.float64)
+    rhs = np.zeros(6, dtype=np.float64)
+    features = np.empty(6, dtype=np.float64)
+    for row in range(height):
+        y_value = row / height - 0.5
+        y2 = y_value * y_value
+        for col in range(width):
+            if has_mask and not mask[row, col]:
+                continue
+            x_value = col / width - 0.5
+            features[0] = x_value * x_value
+            features[1] = y2
+            features[2] = x_value * y_value
+            features[3] = x_value
+            features[4] = y_value
+            features[5] = 1.0
+            value = pixel_data[row, col]
+            for i in range(6):
+                rhs[i] += features[i] * value
+                for j in range(6):
+                    gram[i, j] += features[i] * features[j]
+    return gram, rhs
+
+
+@njit(cache=True)
+def _evaluate_polynomial_surface_numba(
+    height: int,
+    width: int,
+    coeffs: np.ndarray,
+) -> np.ndarray:
+    output = np.empty((height, width), dtype=np.float64)
+    for row in range(height):
+        y_value = row / height - 0.5
+        y2 = y_value * y_value
+        for col in range(width):
+            x_value = col / width - 0.5
+            output[row, col] = (
+                coeffs[0] * x_value * x_value
+                + coeffs[1] * y2
+                + coeffs[2] * x_value * y_value
+                + coeffs[3] * x_value
+                + coeffs[4] * y_value
+                + coeffs[5]
+            )
+    return output
 
 
 class ConvexHullSmoothingBackendStrategy(
@@ -1416,12 +1713,37 @@ def _partition_uint16(
 
 
 __all__ = [
+    "AutomaticSmoothingFilterSizeStrategy",
+    "AverageSmoothingPlaneStrategy",
+    "CalculationScope",
     "ConvexHullSmoothingBackendStrategy",
+    "ConvexHullSmoothingPlaneStrategy",
     "ExactLevelSetNumpyConvexHullSmoothingBackendStrategy",
+    "FilterSizeMethod",
+    "FitPolynomialSmoothingPlaneStrategy",
+    "GaussianFilterSmoothingPlaneStrategy",
+    "IlluminationGaussianFilter",
+    "IlluminationMask",
+    "IntensityChoice",
     "LegacyFastNumpyConvexHullSmoothingBackendStrategy",
+    "ManualSmoothingFilterSizeStrategy",
+    "MedianFilterSmoothingPlaneStrategy",
     "NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy",
     "NativeNumpyRankMedianSmoothingBackendStrategy",
+    "NoSmoothingPlaneStrategy",
     "NumbaExactLevelSetNumpyConvexHullSmoothingBackendStrategy",
     "NumbaNumpyRankMedianSmoothingBackendStrategy",
+    "ObjectWidthSmoothingFilterSizeStrategy",
     "RankMedianSmoothingBackendStrategy",
+    "RescaleOption",
+    "SmoothingFilterSizeRequest",
+    "SmoothingFilterSizeStrategy",
+    "SmoothingMethod",
+    "SmoothingPlaneRequest",
+    "SmoothingPlaneStrategy",
+    "SplineBgMode",
+    "SplinesSmoothingPlaneStrategy",
+    "coerce_illumination_enum",
+    "fit_polynomial_surface",
+    "fit_polynomial_unmasked_gram",
 ]
