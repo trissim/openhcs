@@ -31,12 +31,13 @@ from benchmark.cellprofiler_library.functions.imagemath import image_math
 from benchmark.cellprofiler_library.functions.maskimage import mask_image
 from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
     FillHolesOption,
-    _filter_border_objects,
     identify_primary_objects,
 )
 from openhcs.processing.backends.cellprofiler.morphology import (
     CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE,
     DeclumpingMaximaGeometry,
+    filter_border_objects,
+    filter_labels_by_diameter_range,
     manual_declumping_size,
 )
 import benchmark.cellprofiler_library.functions.identifyprimaryobjects as identifyprimaryobjects_module
@@ -1459,7 +1460,7 @@ def test_identify_primary_objects_filters_crop_mask_border_objects():
     mask = np.zeros_like(labels, dtype=bool)
     mask[1:5, 1:5] = True
 
-    filtered = _filter_border_objects(labels, image_mask=mask)
+    filtered = filter_border_objects(labels, image_mask=mask)
 
     assert 1 in filtered
     assert 2 not in filtered
@@ -1474,7 +1475,7 @@ def test_identify_primary_objects_ignores_threshold_only_mask_border():
     mask[1:5, 1:5] = True
     metadata = ImagePayloadMetadata(mask_defines_border=False)
 
-    filtered = _filter_border_objects(
+    filtered = filter_border_objects(
         labels,
         image_mask=mask,
         image_metadata=metadata,
@@ -1496,7 +1497,7 @@ def test_identify_primary_objects_keeps_crop_local_nonphysical_edges():
         physical_border_edges_yx=(False, False, False, False),
     )
 
-    filtered = _filter_border_objects(
+    filtered = filter_border_objects(
         labels,
         image_mask=mask,
         image_metadata=metadata,
@@ -1517,7 +1518,7 @@ def test_identify_primary_objects_removes_true_physical_edge_objects():
         physical_border_edges_yx=(True, False, False, False),
     )
 
-    filtered = _filter_border_objects(
+    filtered = filter_border_objects(
         labels,
         image_mask=np.ones_like(labels, dtype=bool),
         image_metadata=metadata,
@@ -1534,7 +1535,7 @@ def test_identify_primary_objects_filters_stacked_label_sizes_planewise():
     labels[1, 1:4, 1:4] = 10
     labels[1, 4:6, 4:6] = 20
 
-    small_removed, final = identifyprimaryobjects_module._filter_labels_by_diameter_range(
+    small_removed, final = filter_labels_by_diameter_range(
         labels,
         min_diameter=2.5,
         max_diameter=3.5,
@@ -1557,7 +1558,7 @@ def test_identify_primary_objects_filters_stacked_border_objects_planewise():
     labels[1, 2:4, 2:4] = 10
     labels[1, 3:5, 0:2] = 20
 
-    filtered = _filter_border_objects(
+    filtered = filter_border_objects(
         labels,
         image_mask=np.ones_like(labels, dtype=bool),
     )

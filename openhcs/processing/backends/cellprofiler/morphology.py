@@ -31,6 +31,7 @@ from openhcs.core.runtime_semantics import (
     dense_object_label_max_present_id,
 )
 from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
     ObjectLabelPayload,
     ObjectLabelSet,
     object_label_payload_with_dense_labels,
@@ -4345,6 +4346,352 @@ def positive_dense_label_count(labels: np.ndarray) -> int:
     return int(len(np.unique(labels)) - (1 if 0 in labels else 0))
 
 
+def dense_label_area_statistics(labels: np.ndarray) -> tuple[float, float, float]:
+    """Return mean, median, and total positive-label area."""
+    areas = np.bincount(np.asarray(labels).ravel())[1:]
+    positive_areas = areas[areas > 0]
+    if positive_areas.size == 0:
+        return 0.0, 0.0, 0.0
+    return (
+        float(np.mean(positive_areas)),
+        float(np.median(positive_areas)),
+        float(np.sum(positive_areas)),
+    )
+
+
+def filter_labels_below_minimum_diameter(
+    labels: np.ndarray,
+    min_diameter: float,
+) -> np.ndarray:
+    min_area = np.pi * (float(min_diameter) ** 2) / 4.0
+    labels_array = np.ascontiguousarray(labels)
+    areas = np.bincount(np.asarray(labels_array).ravel())
+    return filter_labels_by_area_numba(
+        labels_array,
+        np.ascontiguousarray(areas),
+        float(min_area),
+        np.inf,
+    )
+
+
+def filter_labels_above_maximum_diameter(
+    labels: np.ndarray,
+    max_diameter: float,
+) -> np.ndarray:
+    max_area = np.pi * (float(max_diameter) ** 2) / 4.0
+    labels_array = np.ascontiguousarray(labels)
+    areas = np.bincount(np.asarray(labels_array).ravel())
+    return filter_labels_by_area_numba(
+        labels_array,
+        np.ascontiguousarray(areas),
+        0.0,
+        float(max_area),
+    )
+
+
+def filter_labels_by_diameter_range(
+    labels: np.ndarray,
+    min_diameter: float,
+    max_diameter: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    min_area = np.pi * (float(min_diameter) ** 2) / 4.0
+    max_area = np.pi * (float(max_diameter) ** 2) / 4.0
+    labels_array = np.ascontiguousarray(labels)
+    areas = np.ascontiguousarray(np.bincount(np.asarray(labels_array).ravel()))
+    return filter_labels_by_diameter_range_numba(
+        labels_array,
+        areas,
+        float(min_area),
+        float(max_area),
+    )
+
+
+def filter_labels_by_area_numba(
+    labels: np.ndarray,
+    areas: np.ndarray,
+    min_area: float,
+    max_area: float,
+) -> np.ndarray:
+    if labels.ndim == 2:
+        return _filter_labels_by_area_2d_numba(
+            labels,
+            areas,
+            min_area,
+            max_area,
+        )
+    if labels.ndim == 3:
+        return _filter_labels_by_area_3d_numba(
+            labels,
+            areas,
+            min_area,
+            max_area,
+        )
+    raise ValueError(
+        "IdentifyPrimaryObjects area filtering expects 2-D planes or stacked "
+        f"planes, got shape {labels.shape!r}."
+    )
+
+
+@njit(cache=True, parallel=True)
+def _filter_labels_by_area_2d_numba(
+    labels: np.ndarray,
+    areas: np.ndarray,
+    min_area: float,
+    max_area: float,
+) -> np.ndarray:
+    output = labels.copy()
+    height, width = labels.shape
+    for row in prange(height):
+        for col in range(width):
+            label = int(labels[row, col])
+            if label <= 0:
+                continue
+            area = float(areas[label])
+            if area < min_area or area > max_area:
+                output[row, col] = 0
+    return output
+
+
+@njit(cache=True, parallel=True)
+def _filter_labels_by_area_3d_numba(
+    labels: np.ndarray,
+    areas: np.ndarray,
+    min_area: float,
+    max_area: float,
+) -> np.ndarray:
+    output = labels.copy()
+    plane_count, height, width = labels.shape
+    for plane_index in prange(plane_count):
+        for row in range(height):
+            for col in range(width):
+                label = int(labels[plane_index, row, col])
+                if label <= 0:
+                    continue
+                area = float(areas[label])
+                if area < min_area or area > max_area:
+                    output[plane_index, row, col] = 0
+    return output
+
+
+def filter_labels_by_diameter_range_numba(
+    labels: np.ndarray,
+    areas: np.ndarray,
+    min_area: float,
+    max_area: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    if labels.ndim == 2:
+        return _filter_labels_by_diameter_range_2d_numba(
+            labels,
+            areas,
+            min_area,
+            max_area,
+        )
+    if labels.ndim == 3:
+        return _filter_labels_by_diameter_range_3d_numba(
+            labels,
+            areas,
+            min_area,
+            max_area,
+        )
+    raise ValueError(
+        "IdentifyPrimaryObjects size filtering expects 2-D planes or stacked "
+        f"planes, got shape {labels.shape!r}."
+    )
+
+
+@njit(cache=True, parallel=True)
+def _filter_labels_by_diameter_range_2d_numba(
+    labels: np.ndarray,
+    areas: np.ndarray,
+    min_area: float,
+    max_area: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    small_removed = labels.copy()
+    final = labels.copy()
+    height, width = labels.shape
+    for row in prange(height):
+        for col in range(width):
+            label = int(labels[row, col])
+            if label <= 0:
+                continue
+            area = float(areas[label])
+            if area < min_area:
+                small_removed[row, col] = 0
+                final[row, col] = 0
+            elif area > max_area:
+                final[row, col] = 0
+    return small_removed, final
+
+
+@njit(cache=True, parallel=True)
+def _filter_labels_by_diameter_range_3d_numba(
+    labels: np.ndarray,
+    areas: np.ndarray,
+    min_area: float,
+    max_area: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    small_removed = labels.copy()
+    final = labels.copy()
+    plane_count, height, width = labels.shape
+    for plane_index in prange(plane_count):
+        for row in range(height):
+            for col in range(width):
+                label = int(labels[plane_index, row, col])
+                if label <= 0:
+                    continue
+                area = float(areas[label])
+                if area < min_area:
+                    small_removed[plane_index, row, col] = 0
+                    final[plane_index, row, col] = 0
+                elif area > max_area:
+                    final[plane_index, row, col] = 0
+    return small_removed, final
+
+
+def filter_border_objects(
+    labeled_image: np.ndarray,
+    *,
+    image_mask: np.ndarray | None,
+    image_metadata: ImagePayloadMetadata = ImagePayloadMetadata(),
+) -> np.ndarray:
+    """Remove labels touching the physical border or masked image border."""
+    labeled_array = np.asarray(labeled_image)
+    if labeled_array.ndim > 2:
+        return filter_border_objects_planewise(
+            labeled_array,
+            image_mask=image_mask,
+            image_metadata=image_metadata,
+        )
+
+    height, width = labeled_array.shape[:2]
+    physical_edges = image_metadata.physical_border_edges_for_shape((height, width))
+    output, removed_physical = filter_physical_border_objects_numba(
+        np.ascontiguousarray(labeled_array),
+        bool(physical_edges[0]),
+        bool(physical_edges[1]),
+        bool(physical_edges[2]),
+        bool(physical_edges[3]),
+    )
+    if removed_physical:
+        return output
+
+    if image_mask is None or image_metadata.mask_defines_border is False:
+        return output
+
+    from scipy import ndimage as ndi
+
+    max_label = int(output.max())
+    if max_label <= 0:
+        return output
+    mask = np.asarray(image_mask, dtype=bool)
+    mask_border = np.logical_not(ndi.binary_erosion(mask, border_value=1)) & mask
+    masked_border_labels = output[mask_border].astype(np.int64, copy=False)
+    masked_border_histogram = np.bincount(
+        masked_border_labels,
+        minlength=max_label + 1,
+    )
+    labels_to_remove = np.flatnonzero(masked_border_histogram[1:] > 0) + 1
+    if labels_to_remove.size:
+        output[np.isin(output, labels_to_remove)] = 0
+    return output
+
+
+def filter_border_objects_planewise(
+    labeled_image: np.ndarray,
+    *,
+    image_mask: np.ndarray | None,
+    image_metadata: ImagePayloadMetadata,
+) -> np.ndarray:
+    output = np.empty_like(labeled_image)
+    label_planes = labeled_image.reshape((-1, *labeled_image.shape[-2:]))
+    output_planes = output.reshape((-1, *output.shape[-2:]))
+    mask_planes = mask_planes_for_labels(image_mask, label_planes.shape[0])
+    for plane_index in range(label_planes.shape[0]):
+        output_planes[plane_index] = filter_border_objects(
+            label_planes[plane_index],
+            image_mask=None if mask_planes is None else mask_planes[plane_index],
+            image_metadata=image_metadata.for_channel(plane_index),
+        )
+    return output
+
+
+def mask_planes_for_labels(
+    image_mask: np.ndarray | None,
+    plane_count: int,
+) -> np.ndarray | None:
+    if image_mask is None:
+        return None
+    mask = np.asarray(image_mask, dtype=bool)
+    if mask.ndim == 2:
+        return np.broadcast_to(mask, (plane_count, *mask.shape))
+    mask_planes = mask.reshape((-1, *mask.shape[-2:]))
+    if mask_planes.shape[0] == plane_count:
+        return mask_planes
+    if mask_planes.shape[0] == 1:
+        return np.broadcast_to(mask_planes[0], (plane_count, *mask_planes.shape[-2:]))
+    raise ValueError(
+        "IdentifyPrimaryObjects mask stack must align with label stack; got "
+        f"{mask.shape!r} for {plane_count} label planes."
+    )
+
+
+@njit(cache=True)
+def filter_physical_border_objects_numba(
+    labels: np.ndarray,
+    top: bool,
+    bottom: bool,
+    left: bool,
+    right: bool,
+) -> tuple[np.ndarray, bool]:
+    height, width = labels.shape
+    max_label = 0
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+    if max_label <= 0:
+        return labels, False
+
+    remove = np.zeros(max_label + 1, dtype=np.bool_)
+    if top and height > 0:
+        for x in range(width):
+            label = int(labels[0, x])
+            if label > 0:
+                remove[label] = True
+    if bottom and height > 0:
+        for x in range(width):
+            label = int(labels[height - 1, x])
+            if label > 0:
+                remove[label] = True
+    if left and width > 0:
+        for y in range(height):
+            label = int(labels[y, 0])
+            if label > 0:
+                remove[label] = True
+    if right and width > 0:
+        for y in range(height):
+            label = int(labels[y, width - 1])
+            if label > 0:
+                remove[label] = True
+
+    any_removed = False
+    for label in range(1, max_label + 1):
+        if remove[label]:
+            any_removed = True
+            break
+    if not any_removed:
+        return labels, False
+
+    output = labels.copy()
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > 0 and remove[label]:
+                output[y, x] = 0
+    return output, True
+
+
 __all__ = [
     "CentrosomeNumpyMorphologyBackendStrategy",
     "CellProfilerDeclumpMethod",
@@ -4369,7 +4716,17 @@ __all__ = [
     "RepeatMode",
     "RepeatModeStrategy",
     "apply_morph_operation",
+    "dense_label_area_statistics",
+    "filter_border_objects",
+    "filter_border_objects_planewise",
+    "filter_labels_above_maximum_diameter",
+    "filter_labels_below_minimum_diameter",
+    "filter_labels_by_area_numba",
+    "filter_labels_by_diameter_range",
+    "filter_labels_by_diameter_range_numba",
+    "filter_physical_border_objects_numba",
     "manual_declumping_size",
+    "mask_planes_for_labels",
     "positive_dense_label_count",
     "prepare_expand_or_shrink_objects",
 ]
