@@ -925,10 +925,6 @@ def test_cellprofiler_basic_threshold_uses_native_default_smoothing(monkeypatch)
 
     calls = {}
 
-    def smooth_image(pixel_data, mask, smoothing, **_kwargs):
-        calls["threshold_smoothing"] = smoothing
-        return np.asarray(pixel_data), smoothing
-
     def get_global_threshold(pixel_data, **kwargs):
         calls["threshold_method"] = kwargs["threshold_method"]
         return 0.25
@@ -937,11 +933,6 @@ def test_cellprofiler_basic_threshold_uses_native_default_smoothing(monkeypatch)
         calls["application_smoothing"] = smoothing
         return np.asarray(pixel_data) >= threshold, 0.0
 
-    monkeypatch.setattr(
-        thresholding_module,
-        "_threshold_smoothed_image",
-        smooth_image,
-    )
     monkeypatch.setattr(
         thresholding_module,
         "cellprofiler_get_global_threshold",
@@ -1325,13 +1316,7 @@ def test_cellprofiler_global_otsu_uses_raw_threshold_estimate(
 ):
     from benchmark.cellprofiler_library.functions import thresholding as thresholding_module
 
-    calls = {"smooth_count": 0}
-
-    def smooth_image(pixel_data, mask, smoothing, **_kwargs):
-        calls["smooth_count"] += 1
-        smoothed = np.asarray(pixel_data) + 1
-        calls["smoothed_pixels"] = smoothed
-        return smoothed, smoothing
+    calls = {}
 
     def get_global_threshold(pixel_data, **kwargs):
         calls["threshold_pixels"] = np.asarray(pixel_data).copy()
@@ -1342,11 +1327,6 @@ def test_cellprofiler_global_otsu_uses_raw_threshold_estimate(
         calls["application_smoothing"] = smoothing
         return np.asarray(pixel_data) >= threshold, 0.0
 
-    monkeypatch.setattr(
-        thresholding_module,
-        "_threshold_smoothed_image",
-        smooth_image,
-    )
     monkeypatch.setattr(
         thresholding_module,
         "cellprofiler_get_global_threshold",
@@ -1381,7 +1361,6 @@ def test_cellprofiler_global_otsu_uses_raw_threshold_estimate(
         smooth_threshold_application=True,
     )
 
-    assert calls["smooth_count"] == 0
     np.testing.assert_array_equal(calls["threshold_pixels"], image)
     np.testing.assert_array_equal(calls["application_pixels"], image)
     assert calls["application_smoothing"] == 2.0
@@ -1392,13 +1371,7 @@ def test_cellprofiler_global_robust_background_uses_raw_threshold_estimate(
 ):
     from benchmark.cellprofiler_library.functions import thresholding as thresholding_module
 
-    calls = {"smooth_count": 0}
-
-    def smooth_image(pixel_data, mask, smoothing, **_kwargs):
-        calls["smooth_count"] += 1
-        smoothed = np.asarray(pixel_data) + 1
-        calls["smoothed_pixels"] = smoothed
-        return smoothed, smoothing
+    calls = {}
 
     def get_global_threshold(pixel_data, **kwargs):
         calls["threshold_pixels"] = np.asarray(pixel_data).copy()
@@ -1409,11 +1382,6 @@ def test_cellprofiler_global_robust_background_uses_raw_threshold_estimate(
         calls["application_smoothing"] = smoothing
         return np.asarray(pixel_data) >= threshold, 0.0
 
-    monkeypatch.setattr(
-        thresholding_module,
-        "_threshold_smoothed_image",
-        smooth_image,
-    )
     monkeypatch.setattr(
         thresholding_module,
         "cellprofiler_get_global_threshold",
@@ -1448,7 +1416,6 @@ def test_cellprofiler_global_robust_background_uses_raw_threshold_estimate(
         smooth_threshold_application=True,
     )
 
-    assert calls["smooth_count"] == 0
     np.testing.assert_array_equal(calls["threshold_pixels"], image)
     np.testing.assert_array_equal(calls["application_pixels"], image)
     assert calls["application_smoothing"] == 2.0
@@ -1461,19 +1428,10 @@ def test_cellprofiler_minimum_cross_entropy_uses_unsmoothed_threshold_estimate(
 
     calls = {}
 
-    def smooth_image(pixel_data, mask, smoothing, **_kwargs):
-        calls["smoothed_pixels"] = np.asarray(pixel_data) + 1
-        return calls["smoothed_pixels"], smoothing
-
     def get_global_threshold(pixel_data, **kwargs):
         calls["threshold_pixels"] = np.asarray(pixel_data).copy()
         return 0.5
 
-    monkeypatch.setattr(
-        thresholding_module,
-        "_threshold_smoothed_image",
-        smooth_image,
-    )
     monkeypatch.setattr(
         thresholding_module,
         "cellprofiler_get_global_threshold",

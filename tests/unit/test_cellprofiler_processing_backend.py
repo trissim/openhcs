@@ -665,7 +665,7 @@ def test_threshold_application_smoothing_is_mask_normalized() -> None:
     import scipy.ndimage as ndi
 
     from benchmark.cellprofiler_library.functions.thresholding import (
-        _threshold_application_smoothed_image,
+        ThresholdApplicationSmoothing,
     )
 
     image = np.linspace(0.0, 1.0, 49, dtype=np.float64).reshape(7, 7)
@@ -673,7 +673,7 @@ def test_threshold_application_smoothing_is_mask_normalized() -> None:
     mask[:2, :] = False
     mask[:, :1] = False
 
-    smoothed, sigma = _threshold_application_smoothed_image(image, mask, 1.3488)
+    smoothed, sigma = ThresholdApplicationSmoothing(1.3488).smooth(image, mask)
     expected = centrosome.smooth.smooth_with_function_and_mask(
         image,
         lambda array: ndi.gaussian_filter(

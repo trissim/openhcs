@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
@@ -13,6 +14,7 @@ import numpy as np
 import scipy.interpolate
 
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from metaclass_registry import AutoRegisterMeta
 from openhcs.processing.backends.cellprofiler.perf_fixtures import (
     capture_array_fixture,
     capture_enabled,
@@ -27,6 +29,7 @@ CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
 CELLPROFILER_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET = 0.0
+SCIPY_CONSTANT_BOUNDARY_MODE = "constant"
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
 
@@ -110,6 +113,89 @@ class CellProfilerVarianceMethod(Enum):
     MEDIAN_ABSOLUTE_DEVIATION = "Median absolute deviation"
 
 
+class RobustBackgroundCenterStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal center estimator for CP robust-background thresholding."""
+
+    __registry_key__ = "averaging_method"
+    __skip_if_no_key__ = True
+    averaging_method: CellProfilerAveragingMethod | None = None
+
+    @classmethod
+    def for_averaging_method(
+        cls,
+        averaging_method: CellProfilerAveragingMethod | str,
+    ) -> "RobustBackgroundCenterStrategy":
+        resolved = coerce_cellprofiler_enum(
+            CellProfilerAveragingMethod,
+            averaging_method,
+        )
+        return cls.__registry__[resolved]()
+
+    @abstractmethod
+    def center(self, values: np.ndarray) -> float:
+        """Return the robust-background center for trimmed values."""
+
+
+class MeanRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
+    averaging_method = CellProfilerAveragingMethod.MEAN
+
+    def center(self, values: np.ndarray) -> float:
+        return float(np.mean(values))
+
+
+class MedianRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
+    averaging_method = CellProfilerAveragingMethod.MEDIAN
+
+    def center(self, values: np.ndarray) -> float:
+        return float(np.median(values))
+
+
+class ModeRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
+    averaging_method = CellProfilerAveragingMethod.MODE
+
+    def center(self, values: np.ndarray) -> float:
+        return float(threshold_primitives().binned_mode(values))
+
+
+class RobustBackgroundSpreadStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal spread estimator for CP robust-background thresholding."""
+
+    __registry_key__ = "variance_method"
+    __skip_if_no_key__ = True
+    variance_method: CellProfilerVarianceMethod | None = None
+
+    @classmethod
+    def for_variance_method(
+        cls,
+        variance_method: CellProfilerVarianceMethod | str,
+    ) -> "RobustBackgroundSpreadStrategy":
+        resolved = coerce_cellprofiler_enum(
+            CellProfilerVarianceMethod,
+            variance_method,
+        )
+        return cls.__registry__[resolved]()
+
+    @abstractmethod
+    def spread(self, values: np.ndarray) -> float:
+        """Return the robust-background spread for trimmed values."""
+
+
+class StandardDeviationRobustBackgroundSpreadStrategy(RobustBackgroundSpreadStrategy):
+    variance_method = CellProfilerVarianceMethod.STANDARD_DEVIATION
+
+    def spread(self, values: np.ndarray) -> float:
+        return float(np.std(values))
+
+
+class MedianAbsoluteDeviationRobustBackgroundSpreadStrategy(
+    RobustBackgroundSpreadStrategy
+):
+    variance_method = CellProfilerVarianceMethod.MEDIAN_ABSOLUTE_DEVIATION
+
+    def spread(self, values: np.ndarray) -> float:
+        return float(threshold_primitives().mad(values))
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerThresholdDiagnostics:
     """CellProfiler threshold measurements emitted as runtime facts."""
@@ -118,6 +204,132 @@ class CellProfilerThresholdDiagnostics:
     original_threshold: float
     weighted_variance: float
     sum_of_entropies: float
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdApplicationSmoothing:
+    """CP threshold-application smoothing policy."""
+
+    smoothing: float
+
+    @property
+    def sigma(self) -> float:
+        return float(self.smoothing) / CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE
+
+    @property
+    def enabled(self) -> bool:
+        return self.sigma > 0.0
+
+    def gaussian_filter(self, array: np.ndarray) -> np.ndarray:
+        from scipy import ndimage as ndi
+
+        return ndi.gaussian_filter(
+            array,
+            sigma=self.sigma,
+            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
+            cval=0,
+            truncate=4.0,
+        )
+
+    @staticmethod
+    @lru_cache(maxsize=32)
+    def full_mask_weight(shape: tuple[int, int], sigma: float) -> np.ndarray:
+        from scipy import ndimage as ndi
+
+        return ndi.gaussian_filter(
+            np.ones(shape, dtype=np.float64),
+            sigma=sigma,
+            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
+            cval=0,
+            truncate=4.0,
+        )
+
+    def smooth(self, image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, float]:
+        """Return the image CP thresholds against after threshold estimation."""
+        if not self.enabled:
+            return np.asarray(image), 0.0
+
+        image_array = np.asarray(image, dtype=np.float64)
+        mask_array = np.asarray(mask, dtype=bool)
+        if mask_array.shape != image_array.shape:
+            raise ValueError(
+                "Threshold application mask must match the image shape; got "
+                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
+            )
+
+        full_mask = bool(np.all(mask_array))
+        capture_array_fixture(
+            "threshold_application",
+            image=image_array,
+            mask=mask_array,
+            smoothing=np.asarray(self.smoothing, dtype=np.float64),
+        )
+        masked_image = image_array if full_mask else np.where(mask_array, image_array, 0.0)
+        smoothed_image = self.gaussian_filter(masked_image)
+        mask_weight = (
+            self.full_mask_weight(image_array.shape, self.sigma)
+            if full_mask
+            else self.gaussian_filter(mask_array.astype(np.float64))
+        )
+        if full_mask:
+            smoothed_image /= mask_weight
+            return smoothed_image, self.sigma
+
+        output = np.zeros_like(image_array)
+        valid = mask_weight != 0
+        output[valid] = smoothed_image[valid] / mask_weight[valid]
+        return output, self.sigma
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdApplicationRequest:
+    """Executable CP threshold application request."""
+
+    image: np.ndarray
+    threshold: float | np.ndarray
+    mask: np.ndarray | None = None
+    smoothing: float = 0.0
+
+    @property
+    def resolved_mask(self) -> np.ndarray:
+        return (
+            np.full(np.asarray(self.image).shape, True)
+            if self.mask is None
+            else np.asarray(self.mask, dtype=bool)
+        )
+
+    def apply(self) -> tuple[np.ndarray, float]:
+        if self.smoothing == 0:
+            thresholded = np.asarray(self.image) >= self.threshold
+            if self.mask is None:
+                return thresholded, 0.0
+            return thresholded & self.resolved_mask, 0.0
+
+        blurred_image, sigma = ThresholdApplicationSmoothing(self.smoothing).smooth(
+            self.image,
+            self.resolved_mask,
+        )
+        return (blurred_image >= self.threshold) & self.resolved_mask, sigma
+
+
+@dataclass(frozen=True, slots=True)
+class RobustBackgroundThresholdSettings:
+    """Settings meaningful to CP robust-background thresholding."""
+
+    lower_outlier_fraction: float
+    upper_outlier_fraction: float
+    averaging_method: CellProfilerAveragingMethod
+    variance_method: CellProfilerVarianceMethod
+    number_of_deviations: float
+
+    def as_kwargs(self) -> dict[str, object]:
+        return {
+            "lower_outlier_fraction": self.lower_outlier_fraction,
+            "upper_outlier_fraction": self.upper_outlier_fraction,
+            "averaging_method": self.averaging_method,
+            "variance_method": self.variance_method,
+            "number_of_deviations": self.number_of_deviations,
+        }
 
 
 def normalize_cellprofiler_image(image: np.ndarray) -> np.ndarray:
@@ -318,121 +530,12 @@ def cellprofiler_apply_threshold(
     smoothing: float = 0,
 ) -> tuple[np.ndarray, float]:
     """Apply threshold with CP's mask-aware smoothing convention."""
-    if smoothing == 0:
-        thresholded = np.asarray(image) >= threshold
-        if mask is None:
-            return thresholded, 0.0
-        return thresholded & np.asarray(mask, dtype=bool), 0.0
-
-    resolved_mask = _resolved_threshold_mask(image, mask)
-    blurred_image, sigma = _threshold_application_smoothed_image(
-        image,
-        resolved_mask,
-        smoothing,
-    )
-    return (blurred_image >= threshold) & resolved_mask, sigma
-
-
-def _resolved_threshold_mask(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-) -> np.ndarray:
-    return (
-        np.full(np.asarray(image).shape, True)
-        if mask is None
-        else np.asarray(mask, dtype=bool)
-    )
-
-
-def _threshold_smoothed_image(
-    image: np.ndarray,
-    mask: np.ndarray | None,
-    smoothing: float,
-    threshold_method: CellProfilerThresholdMethod | None = None,
-    log_transform: bool = False,
-) -> tuple[np.ndarray, float]:
-    resolved_mask = _resolved_threshold_mask(image, mask)
-    from openhcs.processing.backends.cellprofiler.thresholding import (
-        ThresholdSmoothingBackendStrategy,
-    )
-
-    return ThresholdSmoothingBackendStrategy.for_memory_type().smooth_threshold_image(
-        np.asarray(image),
-        resolved_mask,
-        smoothing,
-        threshold_method=threshold_method,
-        log_transform=log_transform,
-    )
-
-
-def _threshold_application_smoothed_image(
-    image: np.ndarray,
-    mask: np.ndarray,
-    smoothing: float,
-) -> tuple[np.ndarray, float]:
-    """Return the image CP thresholds against after threshold estimation."""
-    from scipy import ndimage as ndi
-
-    sigma = float(smoothing) / CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE
-    if sigma <= 0.0:
-        return np.asarray(image), 0.0
-    image_array = np.asarray(image, dtype=np.float64)
-    mask_array = np.asarray(mask, dtype=bool)
-    if mask_array.shape != image_array.shape:
-        raise ValueError(
-            "Threshold application mask must match the image shape; got "
-            f"mask {mask_array.shape!r} for image {image_array.shape!r}."
-        )
-    full_mask = bool(np.all(mask_array))
-    capture_array_fixture(
-        "threshold_application",
-        image=image_array,
-        mask=mask_array,
-        smoothing=np.asarray(smoothing, dtype=np.float64),
-    )
-    masked_image = image_array if full_mask else np.where(mask_array, image_array, 0.0)
-    smoothed_image = ndi.gaussian_filter(
-        masked_image,
-        sigma=sigma,
-        mode="constant",
-        cval=0,
-        truncate=4.0,
-    )
-    mask_weight = (
-        _full_threshold_mask_weight(image_array.shape, sigma)
-        if full_mask
-        else ndi.gaussian_filter(
-            mask_array.astype(np.float64),
-            sigma=sigma,
-            mode="constant",
-            cval=0,
-            truncate=4.0,
-        )
-    )
-    if full_mask:
-        smoothed_image /= mask_weight
-        return smoothed_image, sigma
-    output = np.zeros_like(image_array)
-    valid = mask_weight != 0
-    output[valid] = smoothed_image[valid] / mask_weight[valid]
-    return (
-        output,
-        sigma,
-    )
-
-
-@lru_cache(maxsize=32)
-def _full_threshold_mask_weight(shape: tuple[int, int], sigma: float) -> np.ndarray:
-    """Return CP's threshold-application boundary weights for a full mask."""
-    from scipy import ndimage as ndi
-
-    return ndi.gaussian_filter(
-        np.ones(shape, dtype=np.float64),
-        sigma=sigma,
-        mode="constant",
-        cval=0,
-        truncate=4.0,
-    )
+    return ThresholdApplicationRequest(
+        image=image,
+        threshold=threshold,
+        mask=mask,
+        smoothing=smoothing,
+    ).apply()
 
 
 def _threshold_multiotsu(values: np.ndarray, *, nbins: int) -> np.ndarray:
@@ -466,7 +569,6 @@ def _get_threshold_robust_background(
     number_of_deviations: float = 2,
     **_ignored: object,
 ) -> float:
-    primitives = threshold_primitives()
     averaging_method = coerce_cellprofiler_enum(
         CellProfilerAveragingMethod,
         averaging_method,
@@ -484,18 +586,12 @@ def _get_threshold_robust_background(
     low_chop = int(round(flat.size * lower_outlier_fraction))
     high_chop = flat.size - int(round(flat.size * upper_outlier_fraction))
     trimmed = flat if low_chop == 0 else flat[low_chop:high_chop]
-
-    if averaging_method is CellProfilerAveragingMethod.MEAN:
-        center = np.mean(trimmed)
-    elif averaging_method is CellProfilerAveragingMethod.MEDIAN:
-        center = np.median(trimmed)
-    else:
-        center = primitives.binned_mode(trimmed)
-
-    if variance_method is CellProfilerVarianceMethod.STANDARD_DEVIATION:
-        spread = np.std(trimmed)
-    else:
-        spread = primitives.mad(trimmed)
+    center = RobustBackgroundCenterStrategy.for_averaging_method(
+        averaging_method,
+    ).center(trimmed)
+    spread = RobustBackgroundSpreadStrategy.for_variance_method(
+        variance_method,
+    ).spread(trimmed)
     return float(center + spread * number_of_deviations)
 
 
@@ -580,18 +676,6 @@ def _block_threshold(
     )
 
 
-def _masked_linear_filter(
-    image: np.ndarray,
-    mask: np.ndarray,
-    operation,
-) -> np.ndarray:
-    masked_image = np.zeros(image.shape, dtype=image.dtype)
-    masked_image[mask] = image[mask]
-    weights = operation(mask.astype(float))
-    filtered = operation(masked_image)
-    return filtered / (weights + np.finfo(float).eps)
-
-
 def _threshold_method_for_class_count(
     threshold_method: CellProfilerThresholdMethod,
     otsu_class_count: CellProfilerOtsuMethod,
@@ -616,13 +700,13 @@ def _threshold_method_kwargs(
     """Return kwargs that are meaningful for the selected threshold algorithm."""
     if threshold_method is not CellProfilerThresholdMethod.ROBUST_BACKGROUND:
         return {}
-    return {
-        "lower_outlier_fraction": lower_outlier_fraction,
-        "upper_outlier_fraction": upper_outlier_fraction,
-        "averaging_method": averaging_method,
-        "variance_method": variance_method,
-        "number_of_deviations": number_of_deviations,
-    }
+    return RobustBackgroundThresholdSettings(
+        lower_outlier_fraction=lower_outlier_fraction,
+        upper_outlier_fraction=upper_outlier_fraction,
+        averaging_method=averaging_method,
+        variance_method=variance_method,
+        number_of_deviations=number_of_deviations,
+    ).as_kwargs()
 
 
 def _clip_threshold(threshold: float, threshold_min: float, threshold_max: float) -> float:
