@@ -97,10 +97,12 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
 )
 from benchmark.cellprofiler_library.functions.definegrid import define_grid_automatic
 from benchmark.cellprofiler_library.functions.identifyobjectsingrid import (
-    GridDefinition,
-    GridShapeRequest,
     identify_objects_in_grid,
     identify_objects_in_grid_with_guides,
+)
+from openhcs.processing.backends.cellprofiler.grid import (
+    GridDefinition,
+    GridShapeRequest,
     NaturalGridShapeStrategy,
 )
 from benchmark.cellprofiler_library.functions.measureobjectsizeshape import (
