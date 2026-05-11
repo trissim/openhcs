@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
@@ -19,6 +20,7 @@ from openhcs.core.runtime_artifact_queries import (
     ordered_measurement_feature_candidates,
 )
 from openhcs.core.runtime_semantics import (
+    DenseObjectLabelExtentDomainDeclaration,
     ObjectShapeMeasurementFeature,
     ObjectLabelMeasurementValues,
     ParentChildRelationshipPayload,
@@ -35,10 +37,15 @@ from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
 from openhcs.processing.backends.cellprofiler.shape import form_factor_values
+from openhcs.processing.backends.cellprofiler.relationships import (
+    ObjectRelationshipBackendStrategy,
+)
 from openhcs.core.runtime_values import (
     MeasurementTable,
+    ObjectLabelPayload,
     ObjectRelationship,
     object_label_dense_array,
+    object_label_payload_with_dense_labels,
 )
 
 
@@ -1010,6 +1017,120 @@ def selected_labels_to_list(selected: np.ndarray) -> list[int]:
     return np.flatnonzero(np.asarray(selected, dtype=bool)).astype(int).tolist()
 
 
+def filtered_object_payloads(
+    inputs: Sequence[np.ndarray],
+    outputs: Sequence[np.ndarray],
+) -> tuple[np.ndarray | ObjectLabelPayload, ...]:
+    """Return dense object payloads preserving the original object domain."""
+    return tuple(
+        filtered_object_payload(input_value, output_labels)
+        for input_value, output_labels in zip(inputs, outputs, strict=True)
+    )
+
+
+def filtered_object_payload(
+    input_value: np.ndarray,
+    output_labels: np.ndarray,
+) -> np.ndarray | ObjectLabelPayload:
+    """Wrap filtered labels with the input object's dense extent domain."""
+    return object_label_payload_with_dense_labels(
+        input_value,
+        output_labels,
+        domain_declaration=DenseObjectLabelExtentDomainDeclaration(),
+    )
+
+
+def filter_objects_relationship_tuple(
+    relationship: FilterObjectsParentChildRelationship | None,
+    relationships: Sequence[FilterObjectsParentChildRelationship],
+) -> FilterObjectsParentChildRelationships:
+    """Return stable relationship inputs without duplicate object-pair entries."""
+    ordered = (*(() if relationship is None else (relationship,)), *tuple(relationships))
+    unique: list[FilterObjectsParentChildRelationship] = []
+    seen: set[tuple[str, str] | int] = set()
+    for value in ordered:
+        key: tuple[str, str] | int
+        if isinstance(value, ObjectRelationship):
+            key = (value.source.name, value.target.name)
+        else:
+            key = id(value)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(value)
+    return tuple(unique)
+
+
+def relabel_overlapping_objects(
+    labels: np.ndarray,
+    filtered_primary_labels: np.ndarray,
+) -> np.ndarray:
+    """Relabel additional objects by overlap with retained primary objects."""
+    labels = labels.astype(np.int32)
+    retained_mask = filtered_primary_labels > 0
+    if labels.shape != retained_mask.shape:
+        raise ValueError(
+            "FilterObjects additional object labels must match primary labels."
+        )
+    retained_source_labels = np.unique(labels[retained_mask])
+    retained_source_labels = retained_source_labels[retained_source_labels > 0]
+    if retained_source_labels.size == 0:
+        return np.zeros_like(labels, dtype=np.int32)
+    mapping = np.zeros(labels.max() + 1, dtype=np.int32)
+    for new_idx, old_idx in enumerate(retained_source_labels, start=1):
+        mapping[int(old_idx)] = new_idx
+    return mapping[labels]
+
+
+def object_transform_relationships(
+    input_label_planes: tuple[np.ndarray, ...],
+    relabeled_objects: tuple[np.ndarray, ...],
+) -> tuple[ParentChildRelationshipPayload, ...]:
+    """Derive parent-child payloads between input and filtered object labels."""
+    if len(input_label_planes) != len(relabeled_objects):
+        raise ValueError(
+            "Object transform relationship derivation requires aligned input "
+            "and output label planes."
+        )
+    relationship_backend = ObjectRelationshipBackendStrategy.for_memory_type()
+    return tuple(
+        relationship_backend.parent_child_payload_from_labels(
+            np.asarray(input_labels),
+            np.asarray(output_labels),
+        )
+        for input_labels, output_labels in zip(
+            input_label_planes,
+            relabeled_objects,
+            strict=True,
+        )
+    )
+
+
+def filter_objects_outline_images(
+    relabeled_objects: tuple[np.ndarray, ...],
+    outline_object_indices: tuple[int, ...],
+) -> tuple[np.ndarray, ...]:
+    """Return requested FilterObjects outline sidecar images."""
+    return tuple(
+        filter_objects_outline_image(relabeled_objects[index])
+        for index in outline_object_indices
+    )
+
+
+def filter_objects_outline_image(labels: np.ndarray) -> np.ndarray:
+    """Return a binary outline image for dense 2-D object labels."""
+    labels = np.asarray(labels).astype(np.int32)
+    if labels.ndim != 2:
+        raise ValueError("FilterObjects outline images require 2D labels.")
+    boundary = np.zeros(labels.shape, dtype=bool)
+    boundary[:-1, :] |= labels[:-1, :] != labels[1:, :]
+    boundary[1:, :] |= labels[:-1, :] != labels[1:, :]
+    boundary[:, :-1] |= labels[:, :-1] != labels[:, 1:]
+    boundary[:, 1:] |= labels[:, :-1] != labels[:, 1:]
+    boundary &= labels > 0
+    return boundary.astype(np.uint8)
+
+
 __all__ = [
     "FilterMethod",
     "FilterMode",
@@ -1028,6 +1149,13 @@ __all__ = [
     "PerObjectAssignmentStrategy",
     "best_child_indexes_both_parents",
     "best_child_indexes_parent_with_most_overlap",
+    "filter_objects_outline_image",
+    "filter_objects_outline_images",
+    "filter_objects_relationship_tuple",
+    "filtered_object_payload",
+    "filtered_object_payloads",
     "keep_one_object",
+    "object_transform_relationships",
+    "relabel_overlapping_objects",
     "require_enclosing_labels",
 ]
