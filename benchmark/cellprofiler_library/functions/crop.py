@@ -32,6 +32,8 @@ from openhcs.core.runtime_values import (
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
+CropBoundaryPair = tuple[int | None, int | None] | None
+
 
 @dataclass(frozen=True, slots=True)
 class CropMeasurement:
@@ -51,8 +53,8 @@ class CropMaskRequest:
     mask_plane: np.ndarray | None
     crop_shape: CropShape
     cropping_method: CroppingMethod
-    left_right_rectangle_positions: tuple[int | None, int | None] | None
-    top_bottom_rectangle_positions: tuple[int | None, int | None] | None
+    left_right_rectangle_positions: CropBoundaryPair
+    top_bottom_rectangle_positions: CropBoundaryPair
     ellipse_center: tuple[float, float] | None
     ellipse_x_radius: float | None
     ellipse_y_radius: float | None
@@ -105,6 +107,20 @@ class CropShapeMaskStrategy(ABC, metaclass=AutoRegisterMeta):
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         """Return a boolean crop mask for one shape mode."""
 
+    def validate_crop_mask(
+        self,
+        mask: np.ndarray,
+        image: np.ndarray,
+    ) -> np.ndarray:
+        """Validate and normalize a shape-mode crop mask against input image XY."""
+        crop_mask = np.asarray(mask).astype(bool)
+        if crop_mask.shape != image.shape[:2]:
+            raise ValueError(
+                "Crop mask shape must match input image XY shape; "
+                f"got mask {crop_mask.shape!r} for image {image.shape[:2]!r}."
+            )
+        return crop_mask
+
 
 class PreviousCroppingMaskStrategy(CropShapeMaskStrategy):
     """Use the prior Crop sidecar mask."""
@@ -115,7 +131,7 @@ class PreviousCroppingMaskStrategy(CropShapeMaskStrategy):
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         if request.mask_plane is None:
             raise ValueError("Crop Previous cropping mode requires a crop-mask plane.")
-        return _validate_crop_mask(request.mask_plane, request.orig_image_pixels)
+        return self.validate_crop_mask(request.mask_plane, request.orig_image_pixels)
 
 
 class ImageMaskCropMaskStrategy(CropShapeMaskStrategy):
@@ -127,7 +143,7 @@ class ImageMaskCropMaskStrategy(CropShapeMaskStrategy):
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         if request.mask_plane is None:
             raise ValueError("Crop image-mask mode requires a mask-image plane.")
-        return _validate_crop_mask(request.mask_plane > 0, request.orig_image_pixels)
+        return self.validate_crop_mask(request.mask_plane > 0, request.orig_image_pixels)
 
 
 class ObjectMaskCropMaskStrategy(CropShapeMaskStrategy):
@@ -139,7 +155,7 @@ class ObjectMaskCropMaskStrategy(CropShapeMaskStrategy):
     def mask(self, request: CropMaskRequest) -> np.ndarray:
         if request.cropping_labels is None:
             raise ValueError("Crop object-mask mode requires cropping_labels.")
-        return _validate_crop_mask(
+        return self.validate_crop_mask(
             _object_label_crop_mask(request.cropping_labels, request.orig_image_pixels),
             request.orig_image_pixels,
         )
@@ -240,28 +256,31 @@ def _get_rectangle_cropping(
     return cropping
 
 
-def _crop_image(
-    image: np.ndarray,
-    crop_mask: np.ndarray,
-    *,
-    crop_internal: bool = False,
-) -> np.ndarray:
-    i_histogram = crop_mask.sum(axis=1)
-    i_cumsum = np.cumsum(i_histogram != 0)
-    j_histogram = crop_mask.sum(axis=0)
-    j_cumsum = np.cumsum(j_histogram != 0)
-    if i_cumsum[-1] == 0:
-        return np.zeros((0, 0), dtype=image.dtype)
-    if crop_internal:
-        i_keep = np.argwhere(i_histogram > 0).flatten()
-        j_keep = np.argwhere(j_histogram > 0).flatten()
-        return image[i_keep, :][:, j_keep].copy()
+@dataclass(frozen=True, slots=True)
+class CropImageRequest:
+    """Nominal request for CellProfiler Crop row/column projection."""
 
-    i_first = int(np.argwhere(i_cumsum == 1)[0][0])
-    i_last = int(np.argwhere(i_cumsum == i_cumsum.max())[0][0])
-    j_first = int(np.argwhere(j_cumsum == 1)[0][0])
-    j_last = int(np.argwhere(j_cumsum == j_cumsum.max())[0][0])
-    return image[i_first : i_last + 1, j_first : j_last + 1].copy()
+    image: np.ndarray
+    crop_mask: np.ndarray
+    crop_internal: bool = False
+
+    def cropped_pixels(self) -> np.ndarray:
+        i_histogram = self.crop_mask.sum(axis=1)
+        i_cumsum = np.cumsum(i_histogram != 0)
+        j_histogram = self.crop_mask.sum(axis=0)
+        j_cumsum = np.cumsum(j_histogram != 0)
+        if i_cumsum[-1] == 0:
+            return np.zeros((0, 0), dtype=self.image.dtype)
+        if self.crop_internal:
+            i_keep = np.argwhere(i_histogram > 0).flatten()
+            j_keep = np.argwhere(j_histogram > 0).flatten()
+            return self.image[i_keep, :][:, j_keep].copy()
+
+        i_first = int(np.argwhere(i_cumsum == 1)[0][0])
+        i_last = int(np.argwhere(i_cumsum == i_cumsum.max())[0][0])
+        j_first = int(np.argwhere(j_cumsum == 1)[0][0])
+        j_last = int(np.argwhere(j_cumsum == j_cumsum.max())[0][0])
+        return self.image[i_first : i_last + 1, j_first : j_last + 1].copy()
 
 
 def _get_cropped_mask(
@@ -273,11 +292,11 @@ def _get_cropped_mask(
         return cropping if mask is None else mask
     if mask is not None:
         return mask
-    return _crop_image(
-        cropping,
-        cropping,
+    return CropImageRequest(
+        image=cropping,
+        crop_mask=cropping,
         crop_internal=removal_method.removes_internal_empty_rows_or_columns,
-    )
+    ).cropped_pixels()
 
 
 def _get_cropped_image_pixels(
@@ -290,11 +309,11 @@ def _get_cropped_image_pixels(
         cropped_pixel_data = orig_image_pixels.copy()
         cropped_pixel_data[~cropping] = 0
         return cropped_pixel_data
-    cropped_pixel_data = _crop_image(
-        orig_image_pixels,
-        cropping,
+    cropped_pixel_data = CropImageRequest(
+        image=orig_image_pixels,
+        crop_mask=cropping,
         crop_internal=removal_method.removes_internal_empty_rows_or_columns,
-    )
+    ).cropped_pixels()
     if mask is not None:
         cropped_pixel_data[~mask.astype(bool)] = 0
     return cropped_pixel_data
@@ -390,8 +409,8 @@ def crop(
     crop_shape: CropShape | str = CropShape.RECTANGLE,
     cropping_method: CroppingMethod | str = CroppingMethod.COORDINATES,
     removal_method: RemovalMethod | str = RemovalMethod.NO,
-    left_right_rectangle_positions: tuple[int | None, int | None] | None = None,
-    top_bottom_rectangle_positions: tuple[int | None, int | None] | None = None,
+    left_right_rectangle_positions: CropBoundaryPair = None,
+    top_bottom_rectangle_positions: CropBoundaryPair = None,
     ellipse_center: tuple[float, float] | None = None,
     ellipse_x_radius: float | None = None,
     ellipse_y_radius: float | None = None,
@@ -472,19 +491,6 @@ def _split_crop_input(image: np.ndarray) -> tuple[np.ndarray, np.ndarray | None]
     )
 
 
-def _validate_crop_mask(
-    mask: np.ndarray,
-    image: np.ndarray,
-) -> np.ndarray:
-    crop_mask = np.asarray(mask).astype(bool)
-    if crop_mask.shape != image.shape[:2]:
-        raise ValueError(
-            "Crop mask shape must match input image XY shape; "
-            f"got mask {crop_mask.shape!r} for image {image.shape[:2]!r}."
-        )
-    return crop_mask
-
-
 def _object_label_crop_mask(labels: Any, image: np.ndarray) -> np.ndarray:
     """Return a 2-D foreground mask from dense object-label planes."""
     label_array = object_label_dense_array(labels)
@@ -497,7 +503,7 @@ def _object_label_crop_mask(labels: Any, image: np.ndarray) -> np.ndarray:
 
 
 def _rectangle_pair(
-    value: tuple[int | None, int | None] | None,
+    value: CropBoundaryPair,
     name: str,
 ) -> tuple[int | None, int | None]:
     if value is None:
