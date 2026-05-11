@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from numba import njit
 from scipy.interpolate import interp1d
@@ -16,6 +18,52 @@ def eight_connectivity() -> np.ndarray:
 def skeletonize_worm_mask(binary_image: np.ndarray) -> np.ndarray:
     """Skeletonize a worm mask using CellProfiler's ordered thinning semantics."""
     return _cellprofiler_skeletonize(binary_image > 0)
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerLookupTableProjection:
+    """One centrosome-compatible 3x3 lookup-table projection."""
+
+    table: np.ndarray
+    border_value: bool
+
+    def apply(self, image: np.ndarray) -> np.ndarray:
+        image = np.asarray(image, dtype=bool)
+        indexer = np.zeros(image.shape, dtype=np.int16)
+        indexer[1:, 1:] += image[:-1, :-1] * 2**0
+        indexer[1:, :] += image[:-1, :] * 2**1
+        indexer[1:, :-1] += image[:-1, 1:] * 2**2
+        indexer[:, 1:] += image[:, :-1] * 2**3
+        indexer[:, :] += image[:, :] * 2**4
+        indexer[:, :-1] += image[:, 1:] * 2**5
+        indexer[:-1, 1:] += image[1:, :-1] * 2**6
+        indexer[:-1, :] += image[1:, :] * 2**7
+        indexer[:-1, :-1] += image[1:, 1:] * 2**8
+        if self.border_value:
+            indexer[0, :] |= 2**0 + 2**1 + 2**2
+            indexer[-1, :] |= 2**6 + 2**7 + 2**8
+            indexer[:, 0] |= 2**0 + 2**3 + 2**6
+            indexer[:, -1] |= 2**2 + 2**5 + 2**8
+        return self.table[indexer]
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerLookupPattern:
+    """Boolean 3x3 neighborhood represented by one centrosome table index."""
+
+    index: int
+
+    @property
+    def array(self) -> np.ndarray:
+        index = self.index
+        return np.array(
+            [
+                [index & 2**0, index & 2**1, index & 2**2],
+                [index & 2**3, index & 2**4, index & 2**5],
+                [index & 2**6, index & 2**7, index & 2**8],
+            ],
+            bool,
+        )
 
 
 def _cellprofiler_skeletonize(
@@ -38,11 +86,10 @@ def _cellprofiler_skeletonize(
     else:
         distance = np.asarray(ordering)
 
-    corner_score = _table_lookup_once(
-        masked_image,
+    corner_score = CellProfilerLookupTableProjection(
         _CELLPROFILER_CORNERNESS_TABLE,
         border_value=False,
-    )
+    ).apply(masked_image)
     rows, cols = np.mgrid[0 : image.shape[0], 0 : image.shape[1]]
     result_mask = masked_image
     result = np.ascontiguousarray(result_mask, dtype=np.uint8)
@@ -73,34 +120,10 @@ def _cellprofiler_skeletonize(
     return skeleton
 
 
-def _table_lookup_once(
-    image: np.ndarray,
-    table: np.ndarray,
-    *,
-    border_value: bool,
-) -> np.ndarray:
-    """Apply a centrosome-compatible 3x3 lookup table for one iteration."""
-    image = np.asarray(image, dtype=bool)
-    indexer = np.zeros(image.shape, dtype=np.int16)
-    indexer[1:, 1:] += image[:-1, :-1] * 2**0
-    indexer[1:, :] += image[:-1, :] * 2**1
-    indexer[1:, :-1] += image[:-1, 1:] * 2**2
-    indexer[:, 1:] += image[:, :-1] * 2**3
-    indexer[:, :] += image[:, :] * 2**4
-    indexer[:, :-1] += image[:, 1:] * 2**5
-    indexer[:-1, 1:] += image[1:, :-1] * 2**6
-    indexer[:-1, :] += image[1:, :] * 2**7
-    indexer[:-1, :-1] += image[1:, 1:] * 2**8
-    if border_value:
-        indexer[0, :] |= 2**0 + 2**1 + 2**2
-        indexer[-1, :] |= 2**6 + 2**7 + 2**8
-        indexer[:, 0] |= 2**0 + 2**3 + 2**6
-        indexer[:, -1] |= 2**2 + 2**5 + 2**8
-    return table[indexer]
-
-
 def _cellprofiler_cornerness_table() -> np.ndarray:
-    return np.array([9 - np.sum(_pattern_of(index)) for index in range(512)])
+    return np.array(
+        [9 - np.sum(CellProfilerLookupPattern(index).array) for index in range(512)]
+    )
 
 
 def _cellprofiler_skeletonize_table_uint8() -> np.ndarray:
@@ -115,9 +138,12 @@ def _cellprofiler_skeletonize_table() -> np.ndarray:
     )
     return isolated_center & np.array(
         [
-            label(_pattern_of(index), eight_connectivity())[1]
-            != label(_pattern_of(index & ~(2**4)), eight_connectivity())[1]
-            or np.sum(_pattern_of(index)) < 3
+            label(CellProfilerLookupPattern(index).array, eight_connectivity())[1]
+            != label(
+                CellProfilerLookupPattern(index & ~(2**4)).array,
+                eight_connectivity(),
+            )[1]
+            or np.sum(CellProfilerLookupPattern(index).array) < 3
             for index in range(512)
         ],
         dtype=bool,
@@ -131,8 +157,11 @@ def _cellprofiler_branchpoints_table() -> np.ndarray:
     )
     return np.array(
         [
-            _pattern_of(index)[1, 1]
-            and label(_pattern_of(index - 2**4), four_connectivity)[1] > 2
+            CellProfilerLookupPattern(index).array[1, 1]
+            and label(
+                CellProfilerLookupPattern(index - 2**4).array,
+                four_connectivity,
+            )[1] > 2
             for index in range(512)
         ],
         dtype=bool,
@@ -142,21 +171,11 @@ def _cellprofiler_branchpoints_table() -> np.ndarray:
 def _cellprofiler_endpoints_table() -> np.ndarray:
     return np.array(
         [
-            _pattern_of(index)[1, 1] and np.sum(_pattern_of(index)) <= 2
+            CellProfilerLookupPattern(index).array[1, 1]
+            and np.sum(CellProfilerLookupPattern(index).array) <= 2
             for index in range(512)
         ],
         dtype=bool,
-    )
-
-
-def _pattern_of(index: int) -> np.ndarray:
-    return np.array(
-        [
-            [index & 2**0, index & 2**1, index & 2**2],
-            [index & 2**3, index & 2**4, index & 2**5],
-            [index & 2**6, index & 2**7, index & 2**8],
-        ],
-        bool,
     )
 
 
@@ -228,20 +247,18 @@ def _skeletonize_loop_numba(
 
 def branchpoints(skeleton: np.ndarray) -> np.ndarray:
     """Find branchpoints in a skeleton using CellProfiler's lookup semantics."""
-    return _table_lookup_once(
-        np.asarray(skeleton, dtype=bool),
+    return CellProfilerLookupTableProjection(
         _CELLPROFILER_BRANCHPOINTS_TABLE,
         border_value=False,
-    )
+    ).apply(skeleton)
 
 
 def endpoints(skeleton: np.ndarray) -> np.ndarray:
     """Find endpoints in a skeleton using CellProfiler's lookup semantics."""
-    return _table_lookup_once(
-        np.asarray(skeleton, dtype=bool),
+    return CellProfilerLookupTableProjection(
         _CELLPROFILER_ENDPOINTS_TABLE,
         border_value=False,
-    )
+    ).apply(skeleton)
 
 
 def trace_skeleton_path(skeleton: np.ndarray) -> np.ndarray:
@@ -565,201 +582,6 @@ def _write_expanded_segment_pixels(
                 expanded_cols[write_index] = current_j + disk_cols[disk_index]
                 write_index += 1
     return write_index
-
-
-def _rebuild_worm_from_control_points_python(
-    control_coords: np.ndarray,
-    worm_radii: np.ndarray,
-    shape: tuple[int, int],
-) -> tuple[np.ndarray, np.ndarray]:
-    """Reference CP-style implementation kept for parity debugging."""
-
-    index, count, rows, cols = _cellprofiler_line_points(
-        control_coords[:-1, 0],
-        control_coords[:-1, 1],
-        control_coords[1:, 0],
-        control_coords[1:, 1],
-    )
-    if len(rows) == 0:
-        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
-
-    rows = np.delete(rows, index[1:])
-    cols = np.delete(cols, index[1:])
-    index = index - np.arange(len(index))
-    count = count - 1
-    segment_keep = count != 0
-    index = index[segment_keep]
-    count = count[segment_keep]
-    if len(index) == 0:
-        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
-
-    segment_indexes = np.zeros(len(rows), dtype=int)
-    segment_indexes[index[1:]] = 1
-    segment_indexes = np.cumsum(segment_indexes)
-    order = np.arange(len(rows)) - index[segment_indexes]
-    fractions = order.astype(float) / count[segment_indexes].astype(float)
-
-    radii = np.asarray(worm_radii, dtype=float)
-    if len(radii) < len(control_coords):
-        radii = np.pad(radii, (0, len(control_coords) - len(radii)), mode="edge")
-    radius = (
-        radii[segment_indexes] * (1.0 - fractions)
-        + radii[segment_indexes + 1] * fractions
-    )
-    max_radius = int(np.max(np.ceil(radius))) if len(radius) else 0
-    if max_radius <= 0:
-        valid = (rows >= 0) & (cols >= 0) & (rows < shape[0]) & (cols < shape[1])
-        return rows[valid], cols[valid]
-
-    delta_rows, delta_cols = np.mgrid[
-        -max_radius : max_radius + 1,
-        -max_radius : max_radius + 1,
-    ]
-    distances = np.sqrt((delta_rows * delta_rows + delta_cols * delta_cols).astype(float))
-    disk = distances <= max_radius
-    delta_rows = delta_rows[disk]
-    delta_cols = delta_cols[disk]
-    distances = distances[disk]
-
-    expanded_rows = (rows[:, np.newaxis] + delta_rows[np.newaxis, :]).ravel()
-    expanded_cols = (cols[:, np.newaxis] + delta_cols[np.newaxis, :]).ravel()
-    keep = (radius[:, np.newaxis] >= distances[np.newaxis, :]).ravel()
-    expanded_rows = expanded_rows[keep]
-    expanded_cols = expanded_cols[keep]
-    valid = (
-        (expanded_rows >= 0)
-        & (expanded_cols >= 0)
-        & (expanded_rows < shape[0])
-        & (expanded_cols < shape[1])
-    )
-    order = np.lexsort((expanded_rows, expanded_cols))
-    expanded_rows = expanded_rows[order]
-    expanded_cols = expanded_cols[order]
-    unique = np.hstack(
-        (
-            [True],
-            (expanded_rows[:-1] != expanded_rows[1:])
-            | (expanded_cols[:-1] != expanded_cols[1:]),
-        )
-    )
-    expanded_rows = expanded_rows[unique]
-    expanded_cols = expanded_cols[unique]
-    valid = (
-        (expanded_rows >= 0)
-        & (expanded_cols >= 0)
-        & (expanded_rows < shape[0])
-        & (expanded_cols < shape[1])
-    )
-    coords = np.column_stack((expanded_rows[valid], expanded_cols[valid]))
-    if len(coords) == 0:
-        return np.zeros(0, dtype=int), np.zeros(0, dtype=int)
-    return coords[:, 0], coords[:, 1]
-
-
-def _cellprofiler_line_points(
-    pt0i: np.ndarray,
-    pt0j: np.ndarray,
-    pt1i: np.ndarray,
-    pt1j: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Return CP/centrosome Bresenham line points for vectorized segments."""
-    pt0i = np.asarray(pt0i, dtype=int)
-    pt0j = np.asarray(pt0j, dtype=int)
-    pt1i = np.asarray(pt1i, dtype=int)
-    pt1j = np.asarray(pt1j, dtype=int)
-    if len(pt0i) == 0:
-        empty = np.zeros(0, dtype=int)
-        return empty, empty, empty, empty
-
-    diff_i = np.abs(pt0i - pt1i)
-    diff_j = np.abs(pt0j - pt1j)
-    count = np.maximum(diff_i, diff_j).astype(int) + 1
-    index = np.cumsum(count) - count
-    step_i = (pt1i > pt0i).astype(int) * 2 - 1
-    step_j = (pt1j > pt0j).astype(int) * 2 - 1
-    n_points = int(index[-1] + count[-1])
-    rows = np.zeros(n_points, dtype=int)
-    cols = np.zeros(n_points, dtype=int)
-    rows[index] = pt0i
-    cols[index] = pt0j
-
-    mask = diff_i >= diff_j
-    if np.any(mask):
-        _fill_line_axis_major(
-            rows,
-            cols,
-            index[mask],
-            count[mask],
-            pt0i[mask],
-            pt0j[mask],
-            diff_i[mask],
-            diff_j[mask],
-            step_i[mask],
-            step_j[mask],
-            row_major=True,
-        )
-
-    mask = diff_j > diff_i
-    if np.any(mask):
-        _fill_line_axis_major(
-            rows,
-            cols,
-            index[mask],
-            count[mask],
-            pt0i[mask],
-            pt0j[mask],
-            diff_i[mask],
-            diff_j[mask],
-            step_i[mask],
-            step_j[mask],
-            row_major=False,
-        )
-    return index, count, rows, cols
-
-
-def _fill_line_axis_major(
-    rows: np.ndarray,
-    cols: np.ndarray,
-    index: np.ndarray,
-    count: np.ndarray,
-    current_i: np.ndarray,
-    current_j: np.ndarray,
-    diff_i: np.ndarray,
-    diff_j: np.ndarray,
-    step_i: np.ndarray,
-    step_j: np.ndarray,
-    *,
-    row_major: bool,
-) -> None:
-    last_n = int(np.max(count))
-    current_i = current_i.copy()
-    current_j = current_j.copy()
-    remainder = (diff_j * 2 - diff_i) if row_major else (diff_i * 2 - diff_j)
-    for n in range(1, last_n + 1):
-        active = count > n
-        remainder = remainder[active]
-        current_i = current_i[active]
-        current_j = current_j[active]
-        index = index[active]
-        count = count[active]
-        diff_i = diff_i[active]
-        diff_j = diff_j[active]
-        step_i = step_i[active]
-        step_j = step_j[active]
-
-        remainder_mask = remainder >= 0
-        if row_major:
-            current_j[remainder_mask] += step_j[remainder_mask]
-            remainder[remainder_mask] -= diff_i[remainder_mask] * 2
-            current_i += step_i
-            remainder += diff_j * 2
-        else:
-            current_i[remainder_mask] += step_i[remainder_mask]
-            remainder[remainder_mask] -= diff_j[remainder_mask] * 2
-            current_j += step_j
-            remainder += diff_i * 2
-        rows[index + n] = current_i
-        cols[index + n] = current_j
 
 
 def control_points_for_label_image(
