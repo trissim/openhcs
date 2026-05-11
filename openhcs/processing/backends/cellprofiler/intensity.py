@@ -14,10 +14,19 @@ import scipy.ndimage
 import skimage.segmentation
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.memory import numpy as numpy_decorator
+from openhcs.core.pipeline.function_contracts import (
+    ObjectLabelMeasurementExecution,
+    RuntimePure2DSliceBatchRequest,
+    object_label_measurement_execution,
+    pure_2d_batch_executor,
+)
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.runtime_values import (
+    DenseObjectLabelSliceStack,
     ObjectLabelPayload,
     ObjectLabelSet,
+    image_payload_data,
     object_label_dense_array,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -254,6 +263,15 @@ ObjectIntensityLabelInput = np.ndarray | ObjectLabelPayload | ObjectLabelSet
 
 
 @dataclass(frozen=True, slots=True)
+class ObjectIntensityResults:
+    """Collection of intensity measurements for all objects."""
+
+    slice_index: int
+    object_count: int
+    measurements: list["ObjectIntensityMeasurement"]
+
+
+@dataclass(frozen=True, slots=True)
 class ObjectIntensityMeasurementRequest:
     """Executable request for one object-intensity image/label plane."""
 
@@ -457,6 +475,99 @@ def object_intensity_backend(
         MemoryType.NUMPY,
         backend_provider=backend_provider,
     )
+
+
+def measure_object_intensity_batch(
+    request: RuntimePure2DSliceBatchRequest,
+) -> list[Any]:
+    kwargs = request.kwargs
+    label_stack = DenseObjectLabelSliceStack.from_payload(
+        kwargs["labels"],
+        slice_count=request.slice_count,
+        dtype=np.int32,
+    )
+    if label_stack is None:
+        return [
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
+        ]
+
+    backend_provider = kwargs.get("object_intensity_backend_provider")
+    results: list[Any] = []
+    for slice_index, slice_2d in enumerate(request.slices_2d):
+        measurements = ObjectIntensityMeasurementRequest(
+            image=image_payload_data(slice_2d),
+            labels=label_stack.slice(slice_index),
+            slice_index=slice_index,
+            backend_provider=backend_provider,
+        ).measurements()
+        results.append((slice_2d, measurements))
+    return results
+
+
+@numpy_decorator
+@object_label_measurement_execution(ObjectLabelMeasurementExecution.FULL_STACK)
+def measure_object_intensity(
+    image: np.ndarray,
+    labels: ObjectIntensityLabelInput,
+    object_intensity_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, list[ObjectIntensityMeasurement]]:
+    """Measure CellProfiler intensity features for identified objects."""
+    return image, ObjectIntensityMeasurementRequest(
+        image=image,
+        labels=labels,
+        slice_index=0,
+        backend_provider=object_intensity_backend_provider,
+    ).measurements()
+
+
+def prepare_measure_object_intensity() -> None:
+    """Compile object-intensity kernels before benchmark execution."""
+    image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
+    labels = np.zeros((64, 64), dtype=np.int32)
+    labels[8:24, 8:24] = 1
+    labels[32:56, 32:56] = 2
+    measure_object_intensity.__wrapped__(image, labels)
+
+
+@numpy_decorator
+def measure_image_intensity(
+    image: np.ndarray,
+    calculate_percentiles: bool = False,
+    percentiles: str = "10,90",
+) -> tuple[np.ndarray, ImageIntensityMeasurement]:
+    """Measure CellProfiler intensity features across an entire image."""
+    measurements = ImageIntensityMeasurement.from_pixels(
+        image.flatten(),
+        percentile_spec=ImageIntensityPercentileSpec(
+            enabled=calculate_percentiles,
+            raw_percentiles=percentiles,
+        ),
+    )
+    return image, measurements
+
+
+@numpy_decorator
+def measure_image_intensity_masked(
+    image: np.ndarray,
+    labels: np.ndarray,
+    calculate_percentiles: bool = False,
+    percentiles: str = "10,90",
+) -> tuple[np.ndarray, ImageIntensityMeasurement]:
+    """Measure aggregate image intensity within nonzero label regions."""
+    mask = labels > 0
+    measurements = ImageIntensityMeasurement.from_pixels(
+        image[mask].flatten(),
+        percentile_spec=ImageIntensityPercentileSpec(
+            enabled=calculate_percentiles,
+            raw_percentiles=percentiles,
+        ),
+    )
+    return image, measurements
+
+
+measure_object_intensity.__openhcs_prepare__ = prepare_measure_object_intensity
+pure_2d_batch_executor(measure_object_intensity_batch)(measure_object_intensity)
 
 
 def _empty_intensity_arrays(object_labels: np.ndarray) -> ObjectIntensityArrays:
@@ -1347,7 +1458,18 @@ def _is_inner_boundary_voxel(
 
 __all__ = [
     "NumbaNumpyObjectIntensityBackendStrategy",
+    "ImageIntensityMeasurement",
+    "ImageIntensityPercentileSpec",
+    "ObjectIntensityMeasurement",
+    "ObjectIntensityMeasurementRequest",
+    "ObjectIntensityResults",
     "ObjectIntensityArrays",
     "ObjectIntensityBackendStrategy",
+    "ObjectIntensityLabelInput",
+    "measure_image_intensity",
+    "measure_image_intensity_masked",
+    "measure_object_intensity",
+    "measure_object_intensity_batch",
     "object_intensity_backend",
+    "prepare_measure_object_intensity",
 ]
