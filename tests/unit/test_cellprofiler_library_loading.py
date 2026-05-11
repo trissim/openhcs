@@ -45,11 +45,11 @@ from benchmark.cellprofiler_library.functions.measurecolocalization import (
     ObjectColocalizationMeasurements,
     measure_colocalization,
     measure_colocalization_objects,
-    _bisection_costes,
     _costes_first_channel_bin_threshold,
     _divide_costes_measurements,
     _thresholded_colocalization_metrics_numba,
 )
+from openhcs.processing.backends.cellprofiler.colocalization import costes_backend
 from benchmark.cellprofiler_library.functions.opening import opening
 from benchmark.cellprofiler_library.functions.overlayobjects import overlay_objects
 from benchmark.cellprofiler_library.functions.overlayoutlines import overlay_outlines
@@ -673,7 +673,11 @@ def test_measure_colocalization_costes_matches_scaled_bin_semantics():
     first = np.array([0, 0, 0, 5, 10, 20, 50], dtype=np.float32) / 255
     second = np.array([2, 4, 5, 6, 10, 20, 40], dtype=np.float32) / 255
 
-    threshold_1, threshold_2 = _bisection_costes(first, second, 255)
+    threshold_1, threshold_2 = costes_backend().scaled_second_channel_costes(
+        first,
+        second,
+        255,
+    )
 
     assert threshold_1 == 0
     assert threshold_2 == 5 / 255

@@ -35,6 +35,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.cellprofiler.colocalization import (
     ColocalizationCostesBackendStrategy,
+    costes_backend,
 )
 from openhcs.processing.materialization import csv_materializer
 import scipy.ndimage
@@ -521,24 +522,6 @@ def _initial_costes_scale_index(
     return scale_index
 
 
-def _linear_costes(
-    fi: np.ndarray,
-    si: np.ndarray,
-    scale_max: int = 255,
-    fast_mode: bool = True,
-    *,
-    backend_provider: BackendProviderInput | None = None,
-) -> Tuple[float, float]:
-    """Find Costes Automatic Threshold using CellProfiler's linear algorithm."""
-    return ColocalizationCostesBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    ).linear_costes(
-        fi,
-        si,
-        scale_max,
-        fast_mode,
-    )
-
 def _linear_costes_numpy_reference(fi: np.ndarray, si: np.ndarray, scale_max: int = 255, fast_mode: bool = True) -> Tuple[float, float]:
     """Reference Python implementation used to validate backend semantics."""
     regression_line = _costes_regression_line(fi, si)
@@ -591,28 +574,6 @@ def _threshold_for_second_costes_bin(
     return max(0.0, (second_threshold - regression_line.intercept) / regression_line.slope)
 
 
-def _scaled_second_channel_costes(
-    fi: np.ndarray,
-    si: np.ndarray,
-    scale_max: int,
-    *,
-    backend_provider: BackendProviderInput | None = None,
-) -> Tuple[float, float]:
-    """Search Costes thresholds over scaled intensity bins.
-
-    CellProfiler's fast image-level Costes behavior is quantized by the image
-    intensity scale, and the second channel uses a low-bin floor when the fitted
-    first-channel threshold clips to zero.
-    """
-    return ColocalizationCostesBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    ).scaled_second_channel_costes(
-        fi,
-        si,
-        scale_max,
-    )
-
-
 def _scaled_second_channel_costes_numpy_reference(
     fi: np.ndarray,
     si: np.ndarray,
@@ -657,22 +618,6 @@ def _scaled_second_channel_costes_numpy_reference(
         selected_first_threshold = 0.0
 
     return selected_first_threshold, selected_second_threshold
-
-
-def _bisection_costes(
-    fi: np.ndarray,
-    si: np.ndarray,
-    scale_max: int = 255,
-    *,
-    backend_provider: BackendProviderInput | None = None,
-) -> Tuple[float, float]:
-    """Find Costes Automatic Threshold using CellProfiler's bisection algorithm."""
-    return _scaled_second_channel_costes(
-        fi,
-        si,
-        scale_max,
-        backend_provider=backend_provider,
-    )
 
 
 def _colocalization_measurement(
@@ -771,20 +716,22 @@ def _colocalization_measurement(
         if options.do_costes:
             phase_started_at = time.perf_counter()
             if options.costes_method == CostesMethod.FASTER:
-                thr_fi_c, thr_si_c = _bisection_costes(
+                thr_fi_c, thr_si_c = costes_backend(
+                    backend_provider=options.costes_backend_provider,
+                ).scaled_second_channel_costes(
                     fi,
                     si,
                     options.scale_max,
-                    backend_provider=options.costes_backend_provider,
                 )
             else:
                 fast_mode = options.costes_method == CostesMethod.FAST
-                thr_fi_c, thr_si_c = _linear_costes(
+                thr_fi_c, thr_si_c = costes_backend(
+                    backend_provider=options.costes_backend_provider,
+                ).linear_costes(
                     fi,
                     si,
                     options.scale_max,
                     fast_mode,
-                    backend_provider=options.costes_backend_provider,
                 )
             _log_profile(
                 "coloc_costes_thresholds",
@@ -1550,19 +1497,21 @@ def measure_colocalization_objects(
             threshold_c1 = costes_thresholds.first
             threshold_c2 = costes_thresholds.second
         elif options.costes_method == CostesMethod.FASTER:
-            threshold_c1, threshold_c2 = _bisection_costes(
+            threshold_c1, threshold_c2 = costes_backend(
+                backend_provider=options.costes_backend_provider,
+            ).scaled_second_channel_costes(
                 full_fi,
                 full_si,
                 options.scale_max,
-                backend_provider=options.costes_backend_provider,
             )
         else:
-            threshold_c1, threshold_c2 = _linear_costes(
+            threshold_c1, threshold_c2 = costes_backend(
+                backend_provider=options.costes_backend_provider,
+            ).linear_costes(
                 full_fi,
                 full_si,
                 options.scale_max,
                 options.costes_method == CostesMethod.FAST,
-                backend_provider=options.costes_backend_provider,
             )
         costes_threshold_1.fill(threshold_c1)
         costes_threshold_2.fill(threshold_c2)
@@ -1765,19 +1714,21 @@ class ColocalizationCostesThresholdRequest:
         if not first_pixels.size:
             return ColocalizationCostesThresholds(0.0, 0.0)
         if self.method is CostesMethod.FASTER:
-            first, second = _bisection_costes(
+            first, second = costes_backend(
+                backend_provider=self.backend_provider,
+            ).scaled_second_channel_costes(
                 first_pixels,
                 second_pixels,
                 self.scale_max,
-                backend_provider=self.backend_provider,
             )
         else:
-            first, second = _linear_costes(
+            first, second = costes_backend(
+                backend_provider=self.backend_provider,
+            ).linear_costes(
                 first_pixels,
                 second_pixels,
                 self.scale_max,
                 self.method is CostesMethod.FAST,
-                backend_provider=self.backend_provider,
             )
         return ColocalizationCostesThresholds(first, second)
 
