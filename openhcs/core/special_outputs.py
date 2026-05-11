@@ -15,6 +15,14 @@ from openhcs.processing.materialization import (
     TiffStackOptions,
 )
 
+SPATIAL_GRID_SPECIAL_OUTPUT_NAMES = frozenset(
+    {
+        "grid_info",
+        "grid_definition",
+        "spatial_grid",
+    }
+)
+
 
 class SpecialOutputKindClassifier(ABC, metaclass=AutoRegisterMeta):
     """Nominal classifier for function-declared special output specs."""
@@ -22,18 +30,46 @@ class SpecialOutputKindClassifier(ABC, metaclass=AutoRegisterMeta):
     __registry_key__ = "classifier_name"
     __skip_if_no_key__ = True
     classifier_name: ClassVar[str | None] = None
-    priority: ClassVar[int] = 100
 
     @classmethod
     def kind_for(cls, spec: object) -> ArtifactKind:
-        for classifier_type in sorted(
-            cls.__registry__.values(),
-            key=lambda candidate: candidate.priority,
-        ):
+        matches: list[tuple[type[SpecialOutputKindClassifier], ArtifactKind]] = []
+        for classifier_type in cls.classifier_types_by_mro():
             kind = classifier_type().classify(spec)
             if kind is not None:
-                return kind
-        raise ValueError(f"Cannot infer artifact kind for special output {spec!r}.")
+                matches.append((classifier_type, kind))
+        if not matches:
+            raise ValueError(f"Cannot infer artifact kind for special output {spec!r}.")
+        kind = matches[0][1]
+        conflicting = tuple(
+            classifier_type.__name__
+            for classifier_type, candidate_kind in matches
+            if candidate_kind is not kind
+        )
+        if conflicting:
+            raise ValueError(
+                f"Ambiguous artifact kind for special output {spec!r}: "
+                f"{', '.join(conflicting)}."
+            )
+        return kind
+
+    @classmethod
+    def classifier_types_by_mro(
+        cls,
+    ) -> tuple[type["SpecialOutputKindClassifier"], ...]:
+        registered = set(cls.__registry__.values())
+        ordered: list[type[SpecialOutputKindClassifier]] = []
+        seen: set[type[SpecialOutputKindClassifier]] = set()
+
+        def visit(owner: type[SpecialOutputKindClassifier]) -> None:
+            for child in owner.__subclasses__():
+                visit(child)
+            if owner in registered and owner not in seen:
+                ordered.append(owner)
+                seen.add(owner)
+
+        visit(cls)
+        return tuple(ordered)
 
     @abstractmethod
     def classify(self, spec: object) -> ArtifactKind | None:
@@ -44,11 +80,10 @@ class SpatialGridSpecialOutputKindClassifier(SpecialOutputKindClassifier):
     """Classify special outputs that carry grid geometry, not measurement rows."""
 
     classifier_name = "spatial_grid"
-    priority = 5
 
     def classify(self, spec: object) -> ArtifactKind | None:
         normalized = normalize_special_output_name(special_output_name(spec))
-        if normalized in {"grid_info", "grid_definition", "spatial_grid"}:
+        if normalized in SPATIAL_GRID_SPECIAL_OUTPUT_NAMES:
             return ArtifactKind.SPATIAL_GRID
         return None
 
@@ -57,7 +92,6 @@ class RoiSpecialOutputKindClassifier(SpecialOutputKindClassifier):
     """Classify ROI materialization specs as object labels."""
 
     classifier_name = "roi"
-    priority = 10
 
     def classify(self, spec: object) -> ArtifactKind | None:
         return kind_for_materialization_option(spec, ROIOptions, ArtifactKind.OBJECT_LABELS)
@@ -67,7 +101,6 @@ class CsvSpecialOutputKindClassifier(SpecialOutputKindClassifier):
     """Classify CSV materialization specs as measurement tables."""
 
     classifier_name = "csv"
-    priority = 20
 
     def classify(self, spec: object) -> ArtifactKind | None:
         return kind_for_materialization_option(spec, CsvOptions, ArtifactKind.MEASUREMENTS)
@@ -77,7 +110,6 @@ class TiffSpecialOutputKindClassifier(SpecialOutputKindClassifier):
     """Classify TIFF materialization specs as images."""
 
     classifier_name = "tiff"
-    priority = 30
 
     def classify(self, spec: object) -> ArtifactKind | None:
         return kind_for_materialization_option(spec, TiffStackOptions, ArtifactKind.IMAGE)
@@ -87,10 +119,13 @@ class NameSpecialOutputKindClassifier(SpecialOutputKindClassifier):
     """Name-based classifier for legacy special_outputs without materialization."""
 
     classifier_name = "name"
-    priority = 40
 
     def classify(self, spec: object) -> ArtifactKind | None:
+        if special_output_materialization(spec) is not None:
+            return None
         normalized = normalize_special_output_name(special_output_name(spec))
+        if normalized in SPATIAL_GRID_SPECIAL_OUTPUT_NAMES:
+            return None
         if "label" in normalized or "labels" in normalized:
             return ArtifactKind.OBJECT_LABELS
         if "relationship" in normalized:
