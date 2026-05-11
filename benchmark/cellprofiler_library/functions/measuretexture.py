@@ -79,19 +79,29 @@ def _texture_scales(scale: int | tuple[int, ...] | list[int]) -> tuple[int, ...]
     return (int(scale),)
 
 
-def _cellprofiler_pixel_data(image: np.ndarray, gray_levels: int) -> np.ndarray:
+@dataclass(frozen=True, slots=True)
+class CellProfilerTexturePixelDataRequest:
     """Quantize image data the same way CellProfiler MeasureTexture does."""
-    from skimage.exposure import rescale_intensity
-    from skimage.util import img_as_ubyte
 
-    pixel_data = image.copy() if image.dtype == np.uint8 else img_as_ubyte(image)
-    if gray_levels != 256:
-        pixel_data = rescale_intensity(
-            pixel_data,
-            in_range=(0, 255),
-            out_range=(0, gray_levels - 1),
-        ).astype(np.uint8)
-    return pixel_data
+    image: np.ndarray
+    gray_levels: int
+
+    def pixel_data(self) -> np.ndarray:
+        from skimage.exposure import rescale_intensity
+        from skimage.util import img_as_ubyte
+
+        pixel_data = (
+            self.image.copy()
+            if self.image.dtype == np.uint8
+            else img_as_ubyte(self.image)
+        )
+        if self.gray_levels != 256:
+            pixel_data = rescale_intensity(
+                pixel_data,
+                in_range=(0, 255),
+                out_range=(0, self.gray_levels - 1),
+            ).astype(np.uint8)
+        return pixel_data
 
 
 def _zero_feature_matrix() -> np.ndarray:
@@ -104,37 +114,39 @@ def _clean_feature_vector(features: np.ndarray) -> np.ndarray:
     return clean
 
 
-def _haralick_feature_matrix(
-    pixel_data: np.ndarray,
-    *,
-    scale: int,
-    ignore_zeros: bool,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> np.ndarray:
-    """Return CP-compatible Haralick rows using an explicit backend."""
-    from openhcs.processing.backends.cellprofiler.texture import (
-        HaralickTextureBackendStrategy,
-    )
+@dataclass(frozen=True, slots=True)
+class HaralickFeatureMatrixRequest:
+    """Request for CP-compatible Haralick rows using an explicit backend."""
 
-    pixel_data = np.asarray(pixel_data)
-    if not _haralick_has_valid_domain(
-        pixel_data,
-        scale=scale,
-        ignore_zeros=ignore_zeros,
-    ):
-        return _zero_feature_matrix()
+    pixel_data: np.ndarray
+    scale: int
+    ignore_zeros: bool
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 
-    backend = HaralickTextureBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    )
-    return np.asarray(
-        backend.haralick_features(
+    def feature_matrix(self) -> np.ndarray:
+        from openhcs.processing.backends.cellprofiler.texture import (
+            HaralickTextureBackendStrategy,
+        )
+
+        pixel_data = np.asarray(self.pixel_data)
+        if not _haralick_has_valid_domain(
             pixel_data,
-            scale=scale,
-            ignore_zeros=ignore_zeros,
-        ),
-        dtype=float,
-    )
+            scale=self.scale,
+            ignore_zeros=self.ignore_zeros,
+        ):
+            return _zero_feature_matrix()
+
+        backend = HaralickTextureBackendStrategy.for_memory_type(
+            backend_provider=self.backend_provider,
+        )
+        return np.asarray(
+            backend.haralick_features(
+                pixel_data,
+                scale=self.scale,
+                ignore_zeros=self.ignore_zeros,
+            ),
+            dtype=float,
+        )
 
 
 def _haralick_has_valid_domain(
@@ -261,16 +273,19 @@ def measure_texture(
         Tuple of (original image, list of TextureMeasurement for each direction)
     """
     gray_levels = _normalize_gray_levels(gray_levels)
-    pixel_data = _cellprofiler_pixel_data(image, gray_levels)
+    pixel_data = CellProfilerTexturePixelDataRequest(
+        image=image,
+        gray_levels=gray_levels,
+    ).pixel_data()
 
     measurements = []
     for texture_scale in _texture_scales(scale):
-        feature_matrix = _haralick_feature_matrix(
-            pixel_data,
+        feature_matrix = HaralickFeatureMatrixRequest(
+            pixel_data=pixel_data,
             scale=texture_scale,
             ignore_zeros=False,
             backend_provider=haralick_backend_provider,
-        )
+        ).feature_matrix()
 
         for direction in range(N_DIRECTIONS_2D):
             measurements.append(
@@ -323,7 +338,10 @@ def measure_texture_objects(
     )
 
     gray_levels = _normalize_gray_levels(gray_levels)
-    pixel_data = _cellprofiler_pixel_data(image, gray_levels)
+    pixel_data = CellProfilerTexturePixelDataRequest(
+        image=image,
+        gray_levels=gray_levels,
+    ).pixel_data()
     crop_backend = ObjectTextureCropBackendStrategy.for_callable(
         measure_texture_objects,
         backend_provider=texture_crop_backend_provider,
@@ -340,12 +358,12 @@ def measure_texture_objects(
 
     for object_label, label_data in zip(object_labels, intensity_crops, strict=True):
         for texture_scale in _texture_scales(scale):
-            feature_matrix = _haralick_feature_matrix(
-                label_data,
+            feature_matrix = HaralickFeatureMatrixRequest(
+                pixel_data=label_data,
                 scale=texture_scale,
                 ignore_zeros=True,
                 backend_provider=haralick_backend_provider,
-            )
+            ).feature_matrix()
 
             for direction in range(N_DIRECTIONS_2D):
                 measurements.append(
