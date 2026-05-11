@@ -12,7 +12,11 @@ from typing import Tuple, List
 from dataclasses import dataclass
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
@@ -114,7 +118,7 @@ def _haralick_feature_matrix(
     *,
     scale: int,
     ignore_zeros: bool,
-    backend_provider: CellProfilerBackendProvider | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> np.ndarray:
     """Return CP-compatible Haralick rows using an explicit backend."""
     from openhcs.processing.backends.cellprofiler.texture import (
@@ -249,7 +253,7 @@ def measure_texture(
     image: np.ndarray,
     scale: int | tuple[int, ...] | list[int] = 3,
     gray_levels: int = 256,
-    haralick_backend_provider: CellProfilerBackendProvider | None = None,
+    haralick_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, List[TextureMeasurement]]:
     """
     Measure Haralick texture features on a grayscale image.
@@ -305,8 +309,8 @@ def measure_texture_objects(
     labels: np.ndarray,
     scale: int | tuple[int, ...] | list[int] = 3,
     gray_levels: int = 256,
-    texture_crop_backend_provider: CellProfilerBackendProvider | None = None,
-    haralick_backend_provider: CellProfilerBackendProvider | None = None,
+    texture_crop_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    haralick_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, List[ObjectTextureMeasurement]]:
     """
     Measure Haralick texture features for each labeled object.

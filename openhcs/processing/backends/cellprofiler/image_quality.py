@@ -16,6 +16,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -235,7 +236,7 @@ class CentrosomeNumpyImageQualityBackendStrategy(ImageQualityBackendStrategy):
 
 def image_quality_backend(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> ImageQualityBackendStrategy:
     """Return the selected image-quality backend."""
     return ImageQualityBackendStrategy.for_memory_type(
@@ -271,7 +272,7 @@ def image_quality_haralick_correlation(
     pixel_data: np.ndarray,
     scale: int,
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> float:
     """Calculate CellProfiler's Haralick H3 image-quality correlation."""
     if pixel_data.size == 0:
@@ -284,7 +285,7 @@ def image_quality_haralick_correlation(
 def image_quality_power_spectrum_slope(
     pixel_data: np.ndarray,
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> float:
     """Calculate CellProfiler's log-log radial power spectrum slope."""
     if pixel_data.size == 0 or not image_quality_has_multiple_unique_values(pixel_data):

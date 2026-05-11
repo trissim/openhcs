@@ -11,6 +11,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -97,7 +98,7 @@ def cellprofiler_legacy_watershed(
     markers: np.ndarray,
     mask: np.ndarray,
     connectivity: int | np.ndarray = 1,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> np.ndarray:
     """Run CellProfiler 4.2/skimage 0.18 watershed semantics."""
     return LegacyWatershedBackendStrategy.for_memory_type(

@@ -12,8 +12,10 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
 from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
-    normalize_cellprofiler_backend_provider,
+    cellprofiler_backend_provider_selection,
 )
 
 
@@ -93,7 +95,7 @@ class EdgeEnhancementRequest:
         mask: np.ndarray,
         method: EdgeMethod,
         direction: EdgeDirection,
-        backend_provider: CellProfilerBackendProvider | None,
+        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
         automatic_threshold: bool,
         automatic_low_threshold: bool,
         sigma: float,
@@ -101,11 +103,9 @@ class EdgeEnhancementRequest:
         manual_threshold: float,
         threshold_adjustment_factor: float,
     ) -> "EdgeEnhancementRequest":
-        resolved_provider = (
-            method.default_backend_provider
-            if backend_provider is None
-            else normalize_cellprofiler_backend_provider(backend_provider)
-        )
+        resolved_provider = cellprofiler_backend_provider_selection(
+            backend_provider
+        ).provider_or(method.default_backend_provider)
         return cls(
             image=image,
             mask=mask,

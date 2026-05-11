@@ -20,6 +20,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -515,7 +516,7 @@ def shape_zernike_moments(
     measured_labels: np.ndarray,
     *,
     max_order: int,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[tuple[tuple[int, int], ...], np.ndarray]:
     """Return shape Zernike moments through the selected backend."""
     return ShapeZernikeBackendStrategy.for_memory_type(
@@ -534,7 +535,7 @@ def intensity_zernike_moments(
     measured_labels: np.ndarray,
     *,
     max_order: int,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[tuple[tuple[int, int], ...], np.ndarray, np.ndarray]:
     """Return intensity-weighted Zernike moments through the selected backend."""
     return ShapeZernikeBackendStrategy.for_memory_type(

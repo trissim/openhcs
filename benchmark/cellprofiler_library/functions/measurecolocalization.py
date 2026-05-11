@@ -33,6 +33,7 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 )
 from openhcs.processing.backends.cellprofiler.colocalization import (
     ColocalizationCostesBackendStrategy,
@@ -195,7 +196,7 @@ class ColocalizationMeasurementOptions:
     costes_method: CostesMethod
     scale_max: int
     unit_interval_intensity_scale: int | None = None
-    costes_backend_provider: BackendProviderInput | None = None
+    costes_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "costes_method", CostesMethod(self.costes_method))
@@ -592,7 +593,7 @@ def measure_colocalization(
     do_costes: bool = True,
     costes_method: CostesMethod = CostesMethod.FASTER,
     scale_max: int | None = None,
-    costes_backend_provider: BackendProviderInput | None = None,
+    costes_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, ColocalizationMeasurements]:
     """
     Measure colocalization between two channels from an N-channel image.
@@ -750,7 +751,7 @@ def measure_colocalization_objects(
     do_costes: bool = True,
     costes_method: CostesMethod = CostesMethod.FASTER,
     scale_max: int | None = None,
-    costes_backend_provider: BackendProviderInput | None = None,
+    costes_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     costes_thresholds: ColocalizationCostesThresholds | None = None,
     image_pair_context: ColocalizationImagePairContext | None = None,
     object_label_context: ColocalizationObjectLabelContext | None = None,

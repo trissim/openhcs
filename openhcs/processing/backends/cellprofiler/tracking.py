@@ -11,6 +11,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -132,7 +133,7 @@ class NumbaNumpyObjectTrackingBackendStrategy(ObjectTrackingBackendStrategy):
 
 def object_tracking_backend(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> ObjectTrackingBackendStrategy:
     """Return the selected CellProfiler TrackObjects backend."""
     return ObjectTrackingBackendStrategy.for_memory_type(

@@ -12,6 +12,7 @@ from numba import njit, prange
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -244,7 +245,7 @@ class NumbaSecondaryPropagationBackendStrategy(
 
 def secondary_propagation_backend(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> SecondaryPropagationBackendStrategy:
     """Return the selected secondary propagation backend."""
     return SecondaryPropagationBackendStrategy.for_memory_type(

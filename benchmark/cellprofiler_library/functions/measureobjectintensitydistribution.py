@@ -22,7 +22,11 @@ from openhcs.core.runtime_semantics import (
     indexed_object_intensity_zernike_feature_name,
 )
 from openhcs.core.runtime_values import image_payload_data, object_label_dense_array
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.intensity_distribution import (
     radial_distribution_backend,
 )
@@ -72,8 +76,8 @@ def measure_object_intensity_distribution(
     wants_zernikes: ZernikeMode = ZernikeMode.NONE,
     zernike_degree: int = 9,
     center_choice: CenterChoice = CenterChoice.SELF,
-    radial_distribution_backend_provider: CellProfilerBackendProvider | None = None,
-    zernike_backend_provider: CellProfilerBackendProvider | None = None,
+    radial_distribution_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, List[Any]]:
     """
     Measure the spatial distribution of intensities within each object.
@@ -309,7 +313,7 @@ def _zernike_measurement_rows(
     *,
     wants_zernikes: ZernikeMode,
     zernike_degree: int,
-    backend_provider: CellProfilerBackendProvider | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> list[ObjectMeasurementValueRow]:
     """Return CellProfiler-compatible long-form Zernike measurement rows."""
     labels_int = object_label_dense_array(labels, dtype=np.int32)

@@ -33,7 +33,11 @@ from openhcs.core.runtime_values import (
 from openhcs.processing.backends.cellprofiler.shape import (
     measure_object_size_shape_feature_arrays,
 )
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -65,8 +69,8 @@ def measure_object_size_shape(
     labels: np.ndarray | ObjectLabelSet,
     calculate_advanced: bool = True,
     calculate_zernikes: bool = True,
-    shape_backend_provider: CellProfilerBackendProvider | None = None,
-    zernike_backend_provider: CellProfilerBackendProvider | None = None,
+    shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[np.ndarray, list[dict[str, Any]]]:
     """
     Measure size and shape features of labeled objects.

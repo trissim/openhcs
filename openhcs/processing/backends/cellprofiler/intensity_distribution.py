@@ -18,6 +18,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -742,7 +743,7 @@ class NumbaNumpyRadialDistributionBackendStrategy(
 
 def radial_distribution_backend(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> RadialDistributionBackendStrategy:
     """Return the selected radial-distribution backend."""
     return RadialDistributionBackendStrategy.for_memory_type(

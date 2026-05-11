@@ -14,7 +14,11 @@ from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.classification import (
     ObjectClassificationBackendStrategy,
 )
@@ -77,7 +81,7 @@ def classify_objects_single_measurement(
     wants_high_bin: bool = False,
     custom_thresholds: str = "0,1",
     bin_names: Optional[str] = None,
-    classification_backend_provider: CellProfilerBackendProvider | None = None,
+    classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, ClassificationResult]:
     """
     Classify objects based on a single measurement into bins.
@@ -280,7 +284,7 @@ def classify_objects_two_measurements(
     low_high_name: str = "low_high",
     high_low_name: str = "high_low",
     high_high_name: str = "high_high",
-    classification_backend_provider: CellProfilerBackendProvider | None = None,
+    classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, ClassificationResult]:
     """
     Classify objects based on two measurements into four quadrants.
@@ -408,7 +412,7 @@ def classify_objects_by_intensity_bins(
     labels: np.ndarray,
     num_bins: int = 3,
     use_percentiles: bool = True,
-    classification_backend_provider: CellProfilerBackendProvider | None = None,
+    classification_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, ClassificationResult]:
     """
     Classify objects by mean intensity into evenly distributed bins.

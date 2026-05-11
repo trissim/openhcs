@@ -28,7 +28,11 @@ from openhcs.core.runtime_values import (
     object_label_dense_array,
     object_label_payload_with_dense_labels,
 )
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
@@ -226,7 +230,7 @@ def mask_objects(
     overlap_fraction: float = 0.5,
     numbering: NumberingChoice = NumberingChoice.RENUMBER,
     invert_mask: bool = False,
-    relationship_backend_provider: CellProfilerBackendProvider | None = None,
+    relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, MaskObjectsStats, ParentChildRelationshipPayload, np.ndarray]:
     """
     Mask objects based on a binary mask or masking objects.

@@ -7,7 +7,11 @@ import numpy as np
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import segmentation_mask_rois
@@ -29,7 +33,7 @@ def fill_objects(
     labels: np.ndarray,
     mode: FillMode = FillMode.HOLES,
     diameter: float = 64.0,
-    morphology_backend_provider: CellProfilerBackendProvider | None = None,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[np.ndarray, np.ndarray]:
     """
     Fill holes in objects or convert objects to their convex hulls.

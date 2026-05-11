@@ -24,7 +24,11 @@ from openhcs.core.runtime_values import (
     object_label_dense_array,
 )
 from openhcs.processing.backends.cellprofiler.image_geometry import cellprofiler_grayscale_plane
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.intensity import object_intensity_backend
 
 
@@ -151,7 +155,7 @@ def _measurements_from_arrays(arrays: Any, slice_index: int) -> list[ObjectInten
 def measure_object_intensity(
     image: np.ndarray,
     labels: ObjectIntensityLabelInput,
-    object_intensity_backend_provider: CellProfilerBackendProvider | None = None,
+    object_intensity_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, List[ObjectIntensityMeasurement]]:
     """
     Measure intensity features for identified objects.

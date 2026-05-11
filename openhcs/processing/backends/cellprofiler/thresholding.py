@@ -16,6 +16,7 @@ from numba import njit, prange
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -952,7 +953,7 @@ class CentrosomeNumpyThresholdPrimitiveBackendStrategy(
 
 def threshold_primitives(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> ThresholdPrimitiveBackendStrategy:
     """Return the selected threshold primitive backend."""
     return ThresholdPrimitiveBackendStrategy.for_memory_type(

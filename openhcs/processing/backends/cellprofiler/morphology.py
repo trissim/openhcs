@@ -21,6 +21,7 @@ from numba import njit, prange
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -112,12 +113,12 @@ class MorphologyBackendStrategy(
         cls,
         memory_type: MemoryType | str = MemoryType.NUMPY,
         *,
-        backend_provider: BackendProviderInput | None = None,
+        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
         prefer_centrosome: bool = False,
     ) -> "MorphologyBackendStrategy":
         if prefer_centrosome:
             if backend_provider not in (
-                None,
+                DEFAULT_CELLPROFILER_BACKEND_SELECTION,
                 CellProfilerBackendProvider.CENTROSOME,
             ):
                 raise ValueError(
@@ -135,12 +136,12 @@ class MorphologyBackendStrategy(
         cls,
         func: object,
         *,
-        backend_provider: BackendProviderInput | None = None,
+        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
         prefer_centrosome: bool = False,
     ) -> "MorphologyBackendStrategy":
         if prefer_centrosome:
             if backend_provider not in (
-                None,
+                DEFAULT_CELLPROFILER_BACKEND_SELECTION,
                 CellProfilerBackendProvider.CENTROSOME,
             ):
                 raise ValueError(

@@ -12,6 +12,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -182,7 +183,7 @@ class NumbaNumpyObjectRelationshipBackendStrategy(
 
 def object_relationship_backend(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> ObjectRelationshipBackendStrategy:
     """Return the selected CellProfiler object relationship backend."""
     return ObjectRelationshipBackendStrategy.for_memory_type(

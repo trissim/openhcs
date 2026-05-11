@@ -11,7 +11,11 @@ from enum import Enum
 from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.memory.decorators import numpy
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
@@ -590,7 +594,7 @@ def morph(
     custom_repeats: int = 2,
     rescale_values: bool = True,
     line_length: int = 3,
-    morphology_backend_provider: CellProfilerBackendProvider | None = None,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> np.ndarray:
     """
     Perform morphological operations on binary or grayscale images.

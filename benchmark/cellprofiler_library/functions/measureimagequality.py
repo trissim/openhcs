@@ -13,7 +13,10 @@ from typing import Tuple, Optional, List
 from dataclasses import dataclass, field
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.backends.cellprofiler._backend import BackendProviderInput
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+)
 from openhcs.processing.backends.cellprofiler.image_quality import (
     ThresholdMethod,
     image_quality_focus_score,
@@ -86,7 +89,7 @@ def measure_image_quality(
     calculate_threshold: bool = True,
     blur_scale: int = 20,
     threshold_method: ThresholdMethod = ThresholdMethod.OTSU,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, ImageQualityMetrics]:
     """
     Measure image quality metrics including blur, saturation, intensity, and threshold.

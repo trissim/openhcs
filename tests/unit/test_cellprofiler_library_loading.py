@@ -1690,6 +1690,7 @@ def test_cellprofiler4_marker_watershed_uses_legacy_priority_semantics():
 def test_cellprofiler_fast_legacy_watershed_matches_reference_path():
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     )
     from openhcs.processing.backends.cellprofiler.watershed import (
         cellprofiler_legacy_watershed,
@@ -1880,6 +1881,7 @@ def test_measure_texture_objects_uses_cellprofiler_object_backend(monkeypatch):
     )
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     )
 
     calls = []
@@ -3096,19 +3098,20 @@ def test_smooth_gaussian_default_provider_preserves_cellprofiler_semantics():
     )
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
+        DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     )
 
     assert (
         SmoothingBackendProviderPolicy.resolve(
             SmoothingMethod.GAUSSIAN_FILTER,
-            None,
+            DEFAULT_CELLPROFILER_BACKEND_SELECTION,
         )
         is CellProfilerBackendProvider.NATIVE
     )
     assert (
         SmoothingBackendProviderPolicy.resolve(
             SmoothingMethod.GAUSSIAN_FILTER,
-            None,
+            DEFAULT_CELLPROFILER_BACKEND_SELECTION,
             SmoothingBackendSelectionRequest(
                 method=SmoothingMethod.GAUSSIAN_FILTER,
                 auto_object_size=False,
@@ -3121,7 +3124,7 @@ def test_smooth_gaussian_default_provider_preserves_cellprofiler_semantics():
     assert (
         SmoothingBackendProviderPolicy.resolve(
             SmoothingMethod.GAUSSIAN_FILTER,
-            None,
+            DEFAULT_CELLPROFILER_BACKEND_SELECTION,
             SmoothingBackendSelectionRequest(
                 method=SmoothingMethod.GAUSSIAN_FILTER,
                 auto_object_size=False,

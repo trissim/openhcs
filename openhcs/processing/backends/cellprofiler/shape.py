@@ -24,6 +24,7 @@ from openhcs.processing.backends.analysis.region_properties import (
 )
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -55,8 +56,8 @@ class ObjectSizeShapeFeatureMeasurement:
     labels: np.ndarray
     calculate_advanced: bool
     calculate_zernikes: bool
-    shape_backend_provider: BackendProviderInput | None = None
-    zernike_backend_provider: BackendProviderInput | None = None
+    shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 
     def feature_arrays(self) -> tuple[dict[str, np.ndarray], np.ndarray]:
         """Return feature arrays and measured label ids for 2-D or 3-D labels."""
@@ -347,8 +348,8 @@ def measure_object_size_shape_feature_arrays(
     *,
     calculate_advanced: bool,
     calculate_zernikes: bool,
-    shape_backend_provider: BackendProviderInput | None = None,
-    zernike_backend_provider: BackendProviderInput | None = None,
+    shape_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    zernike_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Return CellProfiler AreaShape feature arrays for dense labels."""
     return ObjectSizeShapeFeatureMeasurement(
@@ -801,7 +802,7 @@ def _distance_to_edge_planewise(
 
 def shape_measurement_backend(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> ShapeMeasurementBackendStrategy:
     """Return the selected shape-measurement backend."""
     return ShapeMeasurementBackendStrategy.for_memory_type(
@@ -814,7 +815,7 @@ def form_factor_values(
     labels: np.ndarray,
     label_ids: np.ndarray,
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> np.ndarray:
     """Return CP-compatible AreaShape_FormFactor values through a backend."""
     return ShapeMeasurementBackendStrategy.for_memory_type(
@@ -1030,7 +1031,7 @@ def _zernike_features(
     labels: np.ndarray,
     measured_labels: np.ndarray,
     *,
-    backend_provider: BackendProviderInput | None,
+    backend_provider: BackendProviderInput,
 ) -> dict[str, np.ndarray]:
     zernike_numbers, zernike_values = shape_zernike_moments(
         labels,

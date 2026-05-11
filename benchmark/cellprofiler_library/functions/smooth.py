@@ -28,8 +28,10 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
-    normalize_cellprofiler_backend_provider,
+    cellprofiler_backend_provider_selection,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
@@ -101,12 +103,12 @@ class SmoothingBackendProviderPolicy(
     def resolve(
         cls,
         method: SmoothingMethod,
-        backend_provider: CellProfilerBackendProvider | None,
+        backend_provider: BackendProviderInput,
         selection_request: SmoothingBackendSelectionRequest | None = None,
     ) -> CellProfilerBackendProvider:
-        if backend_provider is not None:
-            return normalize_cellprofiler_backend_provider(backend_provider)
-        return cls.for_enum_member(method).default_provider(selection_request)
+        return cellprofiler_backend_provider_selection(backend_provider).provider_or(
+            cls.for_enum_member(method).default_provider(selection_request)
+        )
 
     @abstractmethod
     def default_provider(
@@ -594,7 +596,7 @@ def smooth(
     object_size: float = 16.0,
     edge_intensity_difference: float = 0.1,
     clip_polynomial: bool = True,
-    smoothing_backend_provider: CellProfilerBackendProvider | None = None,
+    smoothing_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> np.ndarray:
     """
     Smooth (blur) an image using various filtering methods.

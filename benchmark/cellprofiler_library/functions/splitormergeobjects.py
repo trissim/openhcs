@@ -13,7 +13,11 @@ from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
@@ -225,7 +229,7 @@ def split_or_merge_objects(
     minimum_intensity_fraction: float = 0.9,
     intensity_method: IntensityMethod = IntensityMethod.CENTROIDS,
     parent_labels: Optional[np.ndarray] = None,
-    morphology_backend_provider: CellProfilerBackendProvider | None = None,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, SplitOrMergeStats, np.ndarray]:
     """
     Split or merge objects based on various criteria.

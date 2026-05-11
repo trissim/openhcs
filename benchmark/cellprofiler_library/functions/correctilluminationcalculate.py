@@ -27,7 +27,11 @@ from openhcs.core.runtime_values import (
     project_image_mask_to_data_domain,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.materialization import csv_materializer
 
@@ -833,8 +837,8 @@ def correct_illumination_calculate(
     spline_max_iterations: int = 40,
     spline_convergence: float = 0.001,
     calculation_scope: CalculationScope | str = CalculationScope.EACH,
-    convex_hull_backend_provider: CellProfilerBackendProvider | None = None,
-    rank_median_backend_provider: CellProfilerBackendProvider | None = None,
+    convex_hull_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    rank_median_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[np.ndarray, IlluminationStats]:
     """
     Calculate an illumination correction function.

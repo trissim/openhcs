@@ -50,7 +50,11 @@ from openhcs.processing.backends.cellprofiler.image_geometry import (
     CellProfilerPlaneGeometry,
     collapse_singleton_plane_stack,
 )
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.secondary import (
     SecondaryDistanceTransformBackendStrategy,
@@ -167,8 +171,8 @@ class SecondarySegmentationRequest:
     distance_to_dilate: int
     regularization_factor: float
     watershed_backend_provider: CellProfilerBackendProvider | None
-    distance_backend_provider: CellProfilerBackendProvider | None = None
-    propagation_backend_provider: CellProfilerBackendProvider | None = None
+    distance_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    propagation_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
 
     @property
     def has_primary_objects(self) -> bool:
@@ -728,10 +732,10 @@ def identify_secondary_objects(
     regularization_factor: float = 0.05,
     fill_holes: bool = True,
     discard_edge_objects: bool = False,
-    watershed_backend_provider: CellProfilerBackendProvider | None = None,
-    morphology_backend_provider: CellProfilerBackendProvider | None = None,
-    distance_backend_provider: CellProfilerBackendProvider | None = None,
-    propagation_backend_provider: CellProfilerBackendProvider | None = None,
+    watershed_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    distance_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    propagation_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[
     np.ndarray,
     SecondaryObjectStats,

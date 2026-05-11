@@ -22,7 +22,11 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
 )
 from openhcs.processing.materialization import csv_materializer
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.alignment import AlignmentBackendStrategy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from scipy.fftpack import fft2, ifft2
@@ -95,7 +99,7 @@ def align(
     method: str = "Mutual Information",
     crop_mode: AlignCropMode | str = AlignCropMode.KEEP_SIZE,
     additional_alignment_modes: tuple[AlignAdditionalMode | str, ...] = (),
-    alignment_backend_provider: CellProfilerBackendProvider | None = None,
+    alignment_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[object, ...]:
     """Align primary images and apply declared additional-image shifts."""
     images = _image_payloads(image)

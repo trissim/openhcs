@@ -25,7 +25,11 @@ from openhcs.core.runtime_semantics import (
     aligned_dense_object_label_arrays,
 )
 from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
@@ -89,7 +93,7 @@ def relate_objects(
     calculate_distances: DistanceMethod | str = DistanceMethod.BOTH,
     calculate_per_parent_means: bool = False,
     save_children_with_parents: bool = False,
-    relationship_backend_provider: CellProfilerBackendProvider | None = None,
+    relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> RelateObjectsResult:
     """
     Relate child objects to parent objects based on spatial overlap.

@@ -13,7 +13,8 @@ from openhcs.core.runtime_values import (
     with_image_payload_data,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
-    CellProfilerBackendProvider,
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 )
 from openhcs.processing.backends.cellprofiler.edge import (
     EdgeDirection,
@@ -31,7 +32,7 @@ def enhance_edges(
     image: np.ndarray,
     method: EdgeMethod = EdgeMethod.SOBEL,
     direction: EdgeDirection = EdgeDirection.ALL,
-    edge_backend_provider: CellProfilerBackendProvider | None = None,
+    edge_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     automatic_threshold: bool = True,
     automatic_gaussian: bool = True,
     sigma: float = 10.0,

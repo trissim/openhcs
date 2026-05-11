@@ -14,6 +14,7 @@ import skimage.segmentation
 from openhcs.constants.constants import MemoryType
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -211,7 +212,7 @@ class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
 
 def object_intensity_backend(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> ObjectIntensityBackendStrategy:
     """Return the selected object-intensity backend."""
     return ObjectIntensityBackendStrategy.for_memory_type(

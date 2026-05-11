@@ -22,7 +22,11 @@ from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_MEASUREMENT_VALUE_FIELD,
     MEASUREMENT_OBJECT_LABEL_FIELD,
 )
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.tracking import (
     ObjectTrackingBackendStrategy,
 )
@@ -204,7 +208,7 @@ def track_objects(
     use_maximum_lifetime: bool = False,
     maximum_lifetime: int = 100,
     image_number_start: int = 1,
-    tracking_backend_provider: CellProfilerBackendProvider | None = None,
+    tracking_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     _tracking_state: Optional[Dict[str, Any]] = None
 ) -> Tuple[np.ndarray, list[dict[str, Any]]]:
     """
@@ -365,7 +369,7 @@ def _tracking_object_rows(
     parent_image_numbers: np.ndarray,
     previous_object_states: Dict[int, Dict[str, Any]],
     feature_suffix: str,
-    tracking_backend_provider: CellProfilerBackendProvider | None = None,
+    tracking_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> list[dict[str, Any]]:
     y_centers, x_centers = ObjectTrackingBackendStrategy.for_memory_type(
         backend_provider=tracking_backend_provider,

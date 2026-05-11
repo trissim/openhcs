@@ -30,7 +30,11 @@ from openhcs.core.runtime_values import (
     object_label_dense_array,
     object_label_payload_with_dense_labels,
 )
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.outlines import ObjectOutlineBackendStrategy
 
 
@@ -256,7 +260,7 @@ def identify_tertiary_objects(
     primary_labels: np.ndarray | ObjectLabelPayload,
     secondary_labels: np.ndarray | ObjectLabelPayload,
     shrink_primary: bool = True,
-    outline_backend_provider: CellProfilerBackendProvider | None = None,
+    outline_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[
     np.ndarray,
     ParentChildRelationshipPayload,

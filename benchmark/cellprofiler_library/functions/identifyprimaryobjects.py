@@ -44,7 +44,11 @@ from benchmark.cellprofiler_library.functions.watershed import (
 )
 from openhcs.processing.backends.cellprofiler.morphology import CellProfilerDeclumpMethod
 from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 
 CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE = 7.0
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
@@ -245,8 +249,8 @@ def identify_primary_objects(
     manual_threshold: float = 0.0,
     maximum_object_count: int = 500,
     limit_erase: ExcessObjectHandling = ExcessObjectHandling.CONTINUE,
-    morphology_backend_provider: CellProfilerBackendProvider | None = None,
-    watershed_backend_provider: CellProfilerBackendProvider | None = None,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    watershed_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     respect_source_border_metadata: bool = False,
 ) -> Tuple[np.ndarray, PrimaryObjectStats, np.ndarray]:
     """

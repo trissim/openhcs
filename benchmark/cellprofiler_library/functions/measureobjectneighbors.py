@@ -21,7 +21,11 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory import numpy
 from openhcs.core.runtime_values import object_label_dense_array
-from openhcs.processing.backends.cellprofiler._backend import CellProfilerBackendProvider
+from openhcs.processing.backends.cellprofiler._backend import (
+    BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    CellProfilerBackendProvider,
+)
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.neighbors import (
     NeighborTopologyBackendStrategy,
@@ -305,10 +309,10 @@ def measure_object_neighbors(
     neighbor_count_colormap: str = "Default",
     retain_percent_touching_image: bool = False,
     percent_touching_colormap: str = "Default",
-    neighbor_topology_backend_provider: CellProfilerBackendProvider | None = None,
-    outline_backend_provider: CellProfilerBackendProvider | None = None,
-    morphology_backend_provider: CellProfilerBackendProvider | None = None,
-    relationship_backend_provider: CellProfilerBackendProvider | None = None,
+    neighbor_topology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    outline_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    relationship_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> Tuple[np.ndarray, list]:
     """
     Measure neighbor relationships between objects.

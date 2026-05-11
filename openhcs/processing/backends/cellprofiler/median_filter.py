@@ -11,6 +11,7 @@ from openhcs.constants.constants import MemoryType
 from openhcs.core.pipeline.function_contracts import RuntimePure2DSliceBatchRequest
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
+    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -217,7 +218,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
 
 def median_filter_backend(
     *,
-    backend_provider: BackendProviderInput | None = None,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> MedianFilterBackendStrategy:
     """Return the selected median-filter backend."""
     return MedianFilterBackendStrategy.for_memory_type(
