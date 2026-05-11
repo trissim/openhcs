@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+import json
+from typing import Any
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -12,12 +14,21 @@ import scipy.ndimage
 import skimage.segmentation
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.image_shapes import is_color_image_slice
+from openhcs.core.runtime_values import (
+    ObjectLabelPayload,
+    ObjectLabelSet,
+    object_label_dense_array,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
+)
+from openhcs.processing.backends.cellprofiler.image_geometry import (
+    cellprofiler_grayscale_plane,
 )
 
 
@@ -47,6 +58,233 @@ class ObjectIntensityArrays:
     max_intensity_x: np.ndarray
     max_intensity_y: np.ndarray
     max_intensity_z: np.ndarray
+
+
+@dataclass(frozen=True, slots=True)
+class ImageIntensityPercentileSpec:
+    """Percentile calculation policy for image-intensity rows."""
+
+    enabled: bool = False
+    raw_percentiles: str = "10,90"
+
+    @property
+    def values(self) -> list[int]:
+        percentiles = []
+        for percentile in self.raw_percentiles.replace(" ", "").split(","):
+            if percentile == "":
+                continue
+            if percentile.isdigit() and 0 <= int(percentile) <= 100:
+                percentiles.append(int(percentile))
+        return sorted(set(percentiles))
+
+    def measurements_for(self, pixels: np.ndarray) -> dict[int, float]:
+        if not self.enabled:
+            return {}
+        parsed_percentiles = self.values
+        if pixels.size == 0:
+            return {percentile: 0.0 for percentile in parsed_percentiles}
+        if not parsed_percentiles:
+            return {}
+        percentile_results = np.percentile(pixels, parsed_percentiles)
+        return {
+            percentile: float(value)
+            for percentile, value in zip(parsed_percentiles, percentile_results)
+        }
+
+
+@dataclass
+class ImageIntensityMeasurement:
+    """CellProfiler-compatible intensity measurements for one image region."""
+
+    slice_index: int
+    total_intensity: float
+    mean_intensity: float
+    median_intensity: float
+    std_intensity: float
+    mad_intensity: float
+    min_intensity: float
+    max_intensity: float
+    total_area: int
+    percent_maximal: float
+    lower_quartile_intensity: float
+    upper_quartile_intensity: float
+    percentile_values: str
+
+    @classmethod
+    def from_pixels(
+        cls,
+        pixels: np.ndarray,
+        *,
+        percentile_spec: ImageIntensityPercentileSpec,
+    ) -> "ImageIntensityMeasurement":
+        """Build the authoritative image-intensity measurement row."""
+        pixels = pixels[np.isfinite(pixels)]
+        pixel_count = pixels.size
+        percentile_dict = percentile_spec.measurements_for(pixels)
+
+        if pixel_count == 0:
+            pixel_sum = 0.0
+            pixel_mean = 0.0
+            pixel_std = 0.0
+            pixel_mad = 0.0
+            pixel_median = 0.0
+            pixel_min = 0.0
+            pixel_max = 0.0
+            pixel_pct_max = 0.0
+            pixel_lower_qrt = 0.0
+            pixel_upper_qrt = 0.0
+        else:
+            pixel_sum = float(np.sum(pixels))
+            pixel_mean = pixel_sum / float(pixel_count)
+            pixel_std = float(np.std(pixels))
+            pixel_median = float(np.median(pixels))
+            pixel_mad = float(np.median(np.abs(pixels - pixel_median)))
+            pixel_min = float(np.min(pixels))
+            pixel_max = float(np.max(pixels))
+            pixel_pct_max = (
+                100.0 * float(np.sum(pixels == pixel_max)) / float(pixel_count)
+            )
+            quartiles = np.percentile(pixels, [25, 75])
+            pixel_lower_qrt = float(quartiles[0])
+            pixel_upper_qrt = float(quartiles[1])
+
+        return cls(
+            slice_index=0,
+            total_intensity=pixel_sum,
+            mean_intensity=pixel_mean,
+            median_intensity=pixel_median,
+            std_intensity=pixel_std,
+            mad_intensity=pixel_mad,
+            min_intensity=pixel_min,
+            max_intensity=pixel_max,
+            total_area=int(pixel_count),
+            percent_maximal=pixel_pct_max,
+            lower_quartile_intensity=pixel_lower_qrt,
+            upper_quartile_intensity=pixel_upper_qrt,
+            percentile_values=json.dumps(percentile_dict),
+        )
+
+
+@dataclass
+class ObjectIntensityMeasurement:
+    """Per-object CellProfiler-compatible intensity measurements."""
+
+    slice_index: int
+    object_label: int
+    integrated_intensity: float
+    mean_intensity: float
+    std_intensity: float
+    min_intensity: float
+    max_intensity: float
+    integrated_intensity_edge: float
+    mean_intensity_edge: float
+    std_intensity_edge: float
+    min_intensity_edge: float
+    max_intensity_edge: float
+    mass_displacement: float
+    lower_quartile_intensity: float
+    median_intensity: float
+    mad_intensity: float
+    upper_quartile_intensity: float
+    center_mass_intensity_x: float
+    center_mass_intensity_y: float
+    center_mass_intensity_z: float
+    max_intensity_x: float
+    max_intensity_y: float
+    max_intensity_z: float
+
+    @classmethod
+    def from_backend_arrays(
+        cls,
+        arrays: Any,
+        *,
+        index: int,
+        label: int,
+        slice_index: int,
+    ) -> "ObjectIntensityMeasurement":
+        """Materialize one CellProfiler object-intensity row from backend arrays."""
+        return cls(
+            slice_index=slice_index,
+            object_label=int(label),
+            integrated_intensity=float(arrays.integrated_intensity[index]),
+            mean_intensity=float(arrays.mean_intensity[index]),
+            std_intensity=float(arrays.std_intensity[index]),
+            min_intensity=float(arrays.min_intensity[index]),
+            max_intensity=float(arrays.max_intensity[index]),
+            integrated_intensity_edge=float(arrays.integrated_intensity_edge[index]),
+            mean_intensity_edge=float(arrays.mean_intensity_edge[index]),
+            std_intensity_edge=float(arrays.std_intensity_edge[index]),
+            min_intensity_edge=float(arrays.min_intensity_edge[index]),
+            max_intensity_edge=float(arrays.max_intensity_edge[index]),
+            mass_displacement=float(arrays.mass_displacement[index]),
+            lower_quartile_intensity=float(arrays.lower_quartile_intensity[index]),
+            median_intensity=float(arrays.median_intensity[index]),
+            mad_intensity=float(arrays.mad_intensity[index]),
+            upper_quartile_intensity=float(arrays.upper_quartile_intensity[index]),
+            center_mass_intensity_x=float(arrays.center_mass_intensity_x[index]),
+            center_mass_intensity_y=float(arrays.center_mass_intensity_y[index]),
+            center_mass_intensity_z=float(arrays.center_mass_intensity_z[index]),
+            max_intensity_x=float(arrays.max_intensity_x[index]),
+            max_intensity_y=float(arrays.max_intensity_y[index]),
+            max_intensity_z=float(arrays.max_intensity_z[index]),
+        )
+
+    @classmethod
+    def rows_from_backend_arrays(
+        cls,
+        arrays: Any,
+        *,
+        slice_index: int,
+    ) -> list["ObjectIntensityMeasurement"]:
+        """Materialize all CellProfiler object-intensity rows from backend arrays."""
+        if arrays.object_labels.size == 0:
+            return []
+        return [
+            cls.from_backend_arrays(
+                arrays,
+                index=index,
+                label=int(label),
+                slice_index=slice_index,
+            )
+            for index, label in enumerate(arrays.object_labels)
+        ]
+
+
+ObjectIntensityLabelInput = np.ndarray | ObjectLabelPayload | ObjectLabelSet
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectIntensityMeasurementRequest:
+    """Executable request for one object-intensity image/label plane."""
+
+    image: np.ndarray
+    labels: ObjectIntensityLabelInput
+    slice_index: int
+    backend_provider: CellProfilerBackendProvider | None
+
+    @property
+    def measurement_image(self) -> np.ndarray:
+        image = np.asarray(self.image)
+        if image.ndim == 3 and not is_color_image_slice(image):
+            return image
+        return cellprofiler_grayscale_plane(image, "image")
+
+    @property
+    def dense_labels(self) -> np.ndarray:
+        return object_label_dense_array(self.labels, dtype=np.int32)
+
+    def measurements(self) -> list[ObjectIntensityMeasurement]:
+        """Measure this image/label plane through the selected backend."""
+        intensity_arrays = object_intensity_backend(
+            backend_provider=self.backend_provider,
+        ).measure(
+            self.measurement_image,
+            self.dense_labels,
+        )
+        return ObjectIntensityMeasurement.rows_from_backend_arrays(
+            intensity_arrays,
+            slice_index=self.slice_index,
+        )
 
 
 class ObjectIntensityBackendStrategy(

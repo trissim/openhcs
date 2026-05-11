@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from functools import lru_cache
 import logging
 import os
 import time
@@ -24,12 +23,14 @@ from openhcs.core.runtime_values import image_intensity_scale_for_dtype
 from openhcs.core.runtime_values import image_payload_data
 from openhcs.core.runtime_values import normalize_image_payload_intensity
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
+from openhcs.processing.backends.cellprofiler.thresholding import (
+    CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE,
+    ThresholdApplicationRequest,
+)
 
-CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
 CELLPROFILER_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BINS = 128
 CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET = 0.0
-SCIPY_CONSTANT_BOUNDARY_MODE = "constant"
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
 
@@ -204,112 +205,6 @@ class CellProfilerThresholdDiagnostics:
     original_threshold: float
     weighted_variance: float
     sum_of_entropies: float
-
-
-@dataclass(frozen=True, slots=True)
-class ThresholdApplicationSmoothing:
-    """CP threshold-application smoothing policy."""
-
-    smoothing: float
-
-    @property
-    def sigma(self) -> float:
-        return float(self.smoothing) / CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE
-
-    @property
-    def enabled(self) -> bool:
-        return self.sigma > 0.0
-
-    def gaussian_filter(self, array: np.ndarray) -> np.ndarray:
-        from scipy import ndimage as ndi
-
-        return ndi.gaussian_filter(
-            array,
-            sigma=self.sigma,
-            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
-            cval=0,
-            truncate=4.0,
-        )
-
-    @staticmethod
-    @lru_cache(maxsize=32)
-    def full_mask_weight(shape: tuple[int, int], sigma: float) -> np.ndarray:
-        from scipy import ndimage as ndi
-
-        return ndi.gaussian_filter(
-            np.ones(shape, dtype=np.float64),
-            sigma=sigma,
-            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
-            cval=0,
-            truncate=4.0,
-        )
-
-    def smooth(self, image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, float]:
-        """Return the image CP thresholds against after threshold estimation."""
-        if not self.enabled:
-            return np.asarray(image), 0.0
-
-        image_array = np.asarray(image, dtype=np.float64)
-        mask_array = np.asarray(mask, dtype=bool)
-        if mask_array.shape != image_array.shape:
-            raise ValueError(
-                "Threshold application mask must match the image shape; got "
-                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
-            )
-
-        full_mask = bool(np.all(mask_array))
-        capture_array_fixture(
-            "threshold_application",
-            image=image_array,
-            mask=mask_array,
-            smoothing=np.asarray(self.smoothing, dtype=np.float64),
-        )
-        masked_image = image_array if full_mask else np.where(mask_array, image_array, 0.0)
-        smoothed_image = self.gaussian_filter(masked_image)
-        mask_weight = (
-            self.full_mask_weight(image_array.shape, self.sigma)
-            if full_mask
-            else self.gaussian_filter(mask_array.astype(np.float64))
-        )
-        if full_mask:
-            smoothed_image /= mask_weight
-            return smoothed_image, self.sigma
-
-        output = np.zeros_like(image_array)
-        valid = mask_weight != 0
-        output[valid] = smoothed_image[valid] / mask_weight[valid]
-        return output, self.sigma
-
-
-@dataclass(frozen=True, slots=True)
-class ThresholdApplicationRequest:
-    """Executable CP threshold application request."""
-
-    image: np.ndarray
-    threshold: float | np.ndarray
-    mask: np.ndarray | None = None
-    smoothing: float = 0.0
-
-    @property
-    def resolved_mask(self) -> np.ndarray:
-        return (
-            np.full(np.asarray(self.image).shape, True)
-            if self.mask is None
-            else np.asarray(self.mask, dtype=bool)
-        )
-
-    def apply(self) -> tuple[np.ndarray, float]:
-        if self.smoothing == 0:
-            thresholded = np.asarray(self.image) >= self.threshold
-            if self.mask is None:
-                return thresholded, 0.0
-            return thresholded & self.resolved_mask, 0.0
-
-        blurred_image, sigma = ThresholdApplicationSmoothing(self.smoothing).smooth(
-            self.image,
-            self.resolved_mask,
-        )
-        return (blurred_image >= self.threshold) & self.resolved_mask, sigma
 
 
 @dataclass(frozen=True, slots=True)

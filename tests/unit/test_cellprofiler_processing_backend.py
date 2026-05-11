@@ -664,7 +664,7 @@ def test_threshold_application_smoothing_is_mask_normalized() -> None:
     import centrosome.smooth
     import scipy.ndimage as ndi
 
-    from benchmark.cellprofiler_library.functions.thresholding import (
+    from openhcs.processing.backends.cellprofiler.thresholding import (
         ThresholdApplicationSmoothing,
     )
 

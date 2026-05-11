@@ -21,8 +21,11 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.perf_fixtures import capture_array_fixture
 
 
+CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
+SCIPY_CONSTANT_BOUNDARY_MODE = "constant"
 CELLPROFILER_THRESHOLD_SMOOTHING_TRUNCATE_SIGMAS = 4.0
 CELLPROFILER_THRESHOLD_SMOOTHING_HALF_MASS_FACTOR = 0.6744
 CELLPROFILER_LI_TOLERANCE = 0.5 / 65536.0
@@ -50,6 +53,112 @@ class RectangularMaskDomain:
     @property
     def slices(self) -> tuple[slice, slice]:
         return self.y, self.x
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdApplicationSmoothing:
+    """CellProfiler threshold-application smoothing policy."""
+
+    smoothing: float
+
+    @property
+    def sigma(self) -> float:
+        return float(self.smoothing) / CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE
+
+    @property
+    def enabled(self) -> bool:
+        return self.sigma > 0.0
+
+    def gaussian_filter(self, array: np.ndarray) -> np.ndarray:
+        from scipy import ndimage as ndi
+
+        return ndi.gaussian_filter(
+            array,
+            sigma=self.sigma,
+            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
+            cval=0,
+            truncate=4.0,
+        )
+
+    @staticmethod
+    @lru_cache(maxsize=32)
+    def full_mask_weight(shape: tuple[int, int], sigma: float) -> np.ndarray:
+        from scipy import ndimage as ndi
+
+        return ndi.gaussian_filter(
+            np.ones(shape, dtype=np.float64),
+            sigma=sigma,
+            mode=SCIPY_CONSTANT_BOUNDARY_MODE,
+            cval=0,
+            truncate=4.0,
+        )
+
+    def smooth(self, image: np.ndarray, mask: np.ndarray) -> tuple[np.ndarray, float]:
+        """Return the image CellProfiler thresholds against after estimation."""
+        if not self.enabled:
+            return np.asarray(image), 0.0
+
+        image_array = np.asarray(image, dtype=np.float64)
+        mask_array = np.asarray(mask, dtype=bool)
+        if mask_array.shape != image_array.shape:
+            raise ValueError(
+                "Threshold application mask must match the image shape; got "
+                f"mask {mask_array.shape!r} for image {image_array.shape!r}."
+            )
+
+        full_mask = bool(np.all(mask_array))
+        capture_array_fixture(
+            "threshold_application",
+            image=image_array,
+            mask=mask_array,
+            smoothing=np.asarray(self.smoothing, dtype=np.float64),
+        )
+        masked_image = image_array if full_mask else np.where(mask_array, image_array, 0.0)
+        smoothed_image = self.gaussian_filter(masked_image)
+        mask_weight = (
+            self.full_mask_weight(image_array.shape, self.sigma)
+            if full_mask
+            else self.gaussian_filter(mask_array.astype(np.float64))
+        )
+        if full_mask:
+            smoothed_image /= mask_weight
+            return smoothed_image, self.sigma
+
+        output = np.zeros_like(image_array)
+        valid = mask_weight != 0
+        output[valid] = smoothed_image[valid] / mask_weight[valid]
+        return output, self.sigma
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdApplicationRequest:
+    """Executable CellProfiler threshold application request."""
+
+    image: np.ndarray
+    threshold: float | np.ndarray
+    mask: np.ndarray | None = None
+    smoothing: float = 0.0
+
+    @property
+    def resolved_mask(self) -> np.ndarray:
+        return (
+            np.full(np.asarray(self.image).shape, True)
+            if self.mask is None
+            else np.asarray(self.mask, dtype=bool)
+        )
+
+    def apply(self) -> tuple[np.ndarray, float]:
+        if self.smoothing == 0:
+            thresholded = np.asarray(self.image) >= self.threshold
+            if self.mask is None:
+                return thresholded, 0.0
+            return thresholded & self.resolved_mask, 0.0
+
+        blurred_image, sigma = ThresholdApplicationSmoothing(self.smoothing).smooth(
+            self.image,
+            self.resolved_mask,
+        )
+        return (blurred_image >= self.threshold) & self.resolved_mask, sigma
 
 
 class ThresholdSmoothingBackendStrategy(

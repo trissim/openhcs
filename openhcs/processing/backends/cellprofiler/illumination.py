@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 import logging
 import os
 import time
@@ -16,9 +17,11 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.smoothing import MaskedLinearFilterRequest
 from openhcs.core.runtime_values import project_image_mask_to_data_domain
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+NDIMAGE_CONSTANT_MODE = "constant"
 logger = logging.getLogger(__name__)
 
 
@@ -31,6 +34,79 @@ def _log_profile(label: str, seconds: float, **fields: object) -> None:
         return
     field_text = " ".join(f"{key}={value}" for key, value in fields.items())
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationMask:
+    """Mask aligned with CellProfiler illumination input and stack slices."""
+
+    mask: object | None
+    pixel_data: np.ndarray
+
+    @property
+    def normalized(self) -> np.ndarray | None:
+        if self.mask is None:
+            return None
+        mask_array = np.asarray(self.mask, dtype=bool)
+        if mask_array.shape == self.pixel_data.shape:
+            return mask_array
+        if mask_array.shape == self.pixel_data.shape[-mask_array.ndim :]:
+            return mask_array
+        if (
+            self.pixel_data.ndim == 2
+            and mask_array.ndim == 3
+            and mask_array.shape[0] == 1
+        ):
+            return mask_array[0]
+        return mask_array
+
+    def for_stack_slice(self, slice_index: int) -> np.ndarray | None:
+        mask = self.normalized
+        if mask is None:
+            return None
+        if mask.ndim >= 3 and slice_index < mask.shape[0]:
+            return np.asarray(mask[slice_index], dtype=bool)
+        return mask
+
+    def for_output(self, illumination: np.ndarray) -> np.ndarray | None:
+        mask = self.normalized
+        if mask is None:
+            return None
+        if mask.shape == illumination.shape:
+            return mask
+        if illumination.ndim == 2 and mask.ndim >= 3:
+            return np.any(mask, axis=0)
+        return mask
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationGaussianFilter:
+    """Gaussian filtering semantics for illumination smoothing and dilation."""
+
+    pixel_data: np.ndarray
+    mask: np.ndarray | None
+    sigma: float
+
+    def apply(self) -> np.ndarray:
+        from scipy.ndimage import gaussian_filter
+
+        if self.mask is None:
+            return gaussian_filter(
+                self.pixel_data,
+                self.sigma,
+                mode=NDIMAGE_CONSTANT_MODE,
+                cval=0,
+            )
+        return MaskedLinearFilterRequest(
+            pixels=self.pixel_data,
+            mask=self.mask,
+            operation=lambda image: gaussian_filter(
+                image,
+                self.sigma,
+                mode=NDIMAGE_CONSTANT_MODE,
+                cval=0,
+            ),
+        ).apply()
 
 
 class ConvexHullSmoothingBackendStrategy(
