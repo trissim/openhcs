@@ -217,6 +217,39 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
     )
 
 
+def test_load_comparison_cases_resolves_declared_path_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manifest = tmp_path / "manifest.json"
+    monkeypatch.setenv("CP_EXAMPLES_ROOT", str(tmp_path / "examples"))
+    manifest.write_text(
+        json.dumps(
+            {
+                "path_roots": {
+                    "examples": {"env": "CP_EXAMPLES_ROOT"},
+                    "cache": {"default": str(tmp_path / "cache")},
+                },
+                "cases": [
+                    {
+                        "name": "ExampleHuman",
+                        "dataset_path_root": "examples",
+                        "dataset_path": "ExampleHuman/images",
+                        "cppipe_path_root": "cache",
+                        "cppipe_path": "ExampleHuman/ExampleHuman.cppipe",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    cases = load_comparison_cases(manifest)
+
+    assert cases[0].dataset_path == tmp_path / "examples" / "ExampleHuman/images"
+    assert cases[0].cppipe_path == tmp_path / "cache" / "ExampleHuman/ExampleHuman.cppipe"
+
+
 def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
     cppipe_path = tmp_path / "coverage.cppipe"
     cppipe_path.write_text(
@@ -262,6 +295,9 @@ def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
     setting_rows = _csv_rows(
         tmp_path / "artifacts" / "module_coverage_cppipe_settings.csv"
     )
+    semantic_rows = _csv_rows(
+        tmp_path / "artifacts" / "module_coverage_semantic_families.csv"
+    )
 
     assert summary["cppipe_case_count"] == 1
     assert summary["missing_processing_cppipe_module_count"] == 0
@@ -276,15 +312,26 @@ def test_write_module_coverage_artifacts_for_manifest(tmp_path: Path) -> None:
     assert {
         (row["module_name"], row["setting_name"], row["coverage"])
         for row in setting_rows
-        } == {
-            ("Images", "Filter images?", "infrastructure"),
-            ("IdentifyPrimaryObjects", "Select the input image", "bound"),
-            (
-                "IdentifyPrimaryObjects",
-                "Name the primary objects to be identified",
-                "bound",
-            ),
-        }
+    } == {
+        ("Images", "Filter images?", "infrastructure"),
+        ("IdentifyPrimaryObjects", "Select the input image", "bound"),
+        (
+            "IdentifyPrimaryObjects",
+            "Name the primary objects to be identified",
+            "bound",
+        ),
+    }
+    semantic_rows_by_module = {row["module_name"]: row for row in semantic_rows}
+    assert (
+        semantic_rows_by_module["IdentifyPrimaryObjects"]["family_coverage"]
+        == "direct_supported"
+    )
+    assert (
+        "IdentifyPrimaryObjects"
+        in semantic_rows_by_module["IdentifyPrimaryObjects"][
+            "family_supported_modules"
+        ]
+    )
 
 
 def test_discard_openhcs_benchmark_tree_requires_marker_and_suite_containment(

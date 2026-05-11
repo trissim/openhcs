@@ -16,6 +16,7 @@ from openhcs.processing.backends.cellprofiler import require_cellprofiler_functi
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
 )
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.module_settings_binding import (
     ModuleSettingCoverageRecord,
@@ -25,7 +26,10 @@ from openhcs.interop.cellprofiler.settings_binder import (
     normalize_cellprofiler_setting_name,
 )
 from openhcs.interop.cellprofiler.module_semantics import (
+    CellProfilerModuleCategory,
+    CellProfilerModuleDimensionality,
     CellProfilerModuleSemantics,
+    cellprofiler_module_semantics_family,
     cellprofiler_module_semantics,
 )
 from openhcs.interop.cellprofiler.pipeline_generator import PipelineGenerator
@@ -80,6 +84,14 @@ class SourceModuleCoverage(str, Enum):
     MISSING = "missing"
 
 
+class SemanticFamilyCoverageKind(str, Enum):
+    """How an absorbed module is covered by direct or family-level evidence."""
+
+    DIRECT_SUPPORTED = "direct_supported"
+    SEMANTIC_FAMILY_SUPPORTED = "semantic_family_supported"
+    NOT_SUPPORTED = "not_supported"
+
+
 class CPPipeSettingCoverage(str, Enum):
     """How one concrete .cppipe setting row is covered by OpenHCS import."""
 
@@ -98,9 +110,7 @@ class CPPipeSettingCoverage(str, Enum):
         member._covered = covered
         return member
 
-    @property
-    def is_covered(self) -> bool:
-        return self._covered
+    is_covered = AliasProperty[bool]("_covered")
 
 
 @dataclass(frozen=True, slots=True)
@@ -164,6 +174,28 @@ class SourceModuleCompatibilityCoverage:
     @property
     def is_missing(self) -> bool:
         return self.coverage is SourceModuleCoverage.MISSING
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticFamilyCompatibilityCoverage:
+    """Coverage evidence for one absorbed module's semantic family."""
+
+    module_name: str
+    family_name: str
+    category: CellProfilerModuleCategory | None
+    dimensionality: CellProfilerModuleDimensionality | None
+    respects_masks: bool
+    corpus_coverage: ModuleCorpusCoverage
+    family_supported_modules: tuple[str, ...]
+    family_absorbed_modules: tuple[str, ...]
+
+    @property
+    def family_coverage(self) -> SemanticFamilyCoverageKind:
+        if self.corpus_coverage is ModuleCorpusCoverage.SUPPORTED_CORPUS:
+            return SemanticFamilyCoverageKind.DIRECT_SUPPORTED
+        if self.family_supported_modules:
+            return SemanticFamilyCoverageKind.SEMANTIC_FAMILY_SUPPORTED
+        return SemanticFamilyCoverageKind.NOT_SUPPORTED
 
 
 @dataclass(frozen=True, slots=True)
@@ -324,6 +356,7 @@ class CellProfilerCompatibilityReport:
     cppipe_modules: tuple[CPPipeModuleCompatibilityCoverage, ...]
     cppipe_settings: tuple[CPPipeSettingCompatibilityCoverage, ...]
     source_modules: tuple[SourceModuleCompatibilityCoverage, ...]
+    semantic_families: tuple[SemanticFamilyCompatibilityCoverage, ...]
     benchmark_coverage: CellProfilerBenchmarkCoverageSummary
 
     @property
@@ -405,6 +438,7 @@ def build_cellprofiler_compatibility_report(
                 source_modules_root,
             )
         ),
+        semantic_families=_semantic_family_compatibility_coverage(modules),
         benchmark_coverage=_benchmark_coverage_summary(
             corpus_observations,
             modules,
@@ -528,6 +562,55 @@ def _source_module_compatibility_coverage(
         semantics=cellprofiler_module_semantics(module_name),
         coverage=coverage,
     )
+
+
+def _semantic_family_compatibility_coverage(
+    modules: Sequence[ModuleCompatibilityCoverage],
+) -> tuple[SemanticFamilyCompatibilityCoverage, ...]:
+    modules_by_name = {module.module_name: module for module in modules}
+    rows: list[SemanticFamilyCompatibilityCoverage] = []
+    for module in modules:
+        family = cellprofiler_module_semantics_family(module.module_name)
+        if family is None:
+            rows.append(
+                SemanticFamilyCompatibilityCoverage(
+                    module_name=module.module_name,
+                    family_name="",
+                    category=None,
+                    dimensionality=None,
+                    respects_masks=False,
+                    corpus_coverage=module.corpus_coverage,
+                    family_supported_modules=(),
+                    family_absorbed_modules=(module.module_name,),
+                )
+            )
+            continue
+        family_absorbed_modules = tuple(
+            family_module_name
+            for family_module_name in family.module_names
+            if family_module_name in modules_by_name
+        )
+        family_supported_modules = tuple(
+            family_module_name
+            for family_module_name in family_absorbed_modules
+            if (
+                modules_by_name[family_module_name].corpus_coverage
+                is ModuleCorpusCoverage.SUPPORTED_CORPUS
+            )
+        )
+        rows.append(
+            SemanticFamilyCompatibilityCoverage(
+                module_name=module.module_name,
+                family_name=family.family_name,
+                category=family.category,
+                dimensionality=family.dimensionality,
+                respects_masks=family.respects_masks,
+                corpus_coverage=module.corpus_coverage,
+                family_supported_modules=family_supported_modules,
+                family_absorbed_modules=family_absorbed_modules,
+            )
+        )
+    return tuple(rows)
 
 
 def _cellprofiler_source_module_names(

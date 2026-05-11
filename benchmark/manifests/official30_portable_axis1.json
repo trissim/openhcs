@@ -1,0 +1,368 @@
+{
+  "cases": [
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleColocalization/ExampleColocalization.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleColocalization",
+      "dataset_path": "ExampleColocalization/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleColocalization",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleCometAssay/ExampleCometAssay.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleCometAssay",
+      "dataset_path": "ExampleCometAssay/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleCometAssay",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleFly/ExampleFly.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleFly",
+      "dataset_path": "ExampleFly/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleFly",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "CellProfiler3Pipelines/ExampleFlyURL.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleFly",
+      "dataset_path": "ExampleFly/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleFlyURL",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleHuman/ExampleHuman.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleHuman",
+      "dataset_path": "ExampleHuman/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleHuman",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleIlluminationCorrection/ExampleIlluminationCorrection_Example1_AllMethod.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleIlluminationCorrection",
+      "dataset_path": "ExampleIlluminationCorrection/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleIlluminationCorrection_Example1_AllMethod",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleIlluminationCorrection/ExampleIlluminationCorrection_Example1_EachMethod.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleIlluminationCorrection",
+      "dataset_path": "ExampleIlluminationCorrection/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleIlluminationCorrection_Example1_EachMethod",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleIlluminationCorrection/ExampleIlluminationCorrection_Example2.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleIlluminationCorrection",
+      "dataset_path": "ExampleIlluminationCorrection/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleIlluminationCorrection_Example2",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleIlluminationCorrection/ExampleIlluminationCorrection_Example3.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleIlluminationCorrection",
+      "dataset_path": "ExampleIlluminationCorrection/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleIlluminationCorrection_Example3",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleImagingFlowCytometryObjectsInGrid/ExampleImagingFlowCytometryObjectsInGrid.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleImagingFlowCytometryObjectsInGrid",
+      "dataset_path": "ExampleImagingFlowCytometryObjectsInGrid/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleImagingFlowCytometryObjectsInGrid",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleNeighbors/ExampleNeighbors.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleNeighbors",
+      "dataset_path": "ExampleNeighbors/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleNeighbors",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExamplePercentPositive/ExamplePercentPositive.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExamplePercentPositive",
+      "dataset_path": "ExamplePercentPositive/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExamplePercentPositive",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleSpeckles/ExampleSpeckles.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleSpeckles",
+      "dataset_path": "ExampleSpeckles/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleSpeckles",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleTrackObjects/ExampleTrackObjects.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleTrackObjects",
+      "dataset_path": "ExampleTrackObjects/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleTrackObjects",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleTumor/ExampleTumor.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleTumor",
+      "dataset_path": "ExampleTumor/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleTumor",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleStraightenWorms/ExampleUntangleAndStraightenWorms.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleStraightenWorms",
+      "dataset_path": "ExampleStraightenWorms/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleUntangleAndStraightenWorms",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleUntangleWorms/ExampleUntangleWorms.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleUntangleWorms",
+      "dataset_path": "ExampleUntangleWorms/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleUntangleWorms",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleUntangleWormsBrightField/ExampleUntangleWormsBrightField.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleUntangleWormsBrightField",
+      "dataset_path": "ExampleUntangleWormsBrightField/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleUntangleWormsBrightField",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleVitraImages/ExampleVitra.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleVitraImages",
+      "dataset_path": "ExampleVitraImages/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleVitra",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleWoundHealing/ExampleWoundHealing.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleWoundHealing",
+      "dataset_path": "ExampleWoundHealing/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleWoundHealing",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleYeastColonies/ExampleYeastColonies.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleYeastColonies",
+      "dataset_path": "ExampleYeastColonies/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleYeastColonies",
+      "value_only": true
+    },
+    {
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "ExampleYeastPatches/ExampleYeastPatches.cppipe",
+      "cppipe_path_root": "cellprofiler_examples",
+      "dataset_id": "ExampleYeastPatches",
+      "dataset_path": "ExampleYeastPatches/images",
+      "dataset_path_root": "cellprofiler_examples",
+      "name": "ExampleYeastPatches",
+      "value_only": true
+    },
+    {
+      "assay_category": "3D monolayer morphology",
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "CellProfiler_tutorials/data/3d_monolayer/3d_monolayer_final.cppipe",
+      "cppipe_path_root": "dataset_cache",
+      "dataset_id": "CellProfiler_tutorials",
+      "dataset_path": "CellProfiler_tutorials/data/3d_monolayer/images",
+      "dataset_path_root": "dataset_cache",
+      "microscope_type": "cellprofiler_tutorials",
+      "module_category": "3D segmentation + measurement",
+      "name": "cp_tutorial_3d_monolayer",
+      "pipeline_params": {
+        "openhcs_max_axis_count": 2
+      },
+      "value_only": true
+    },
+    {
+      "assay_category": "Cell Painting morphology",
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "CellProfiler_tutorials/data/AdvancedSegmentation/BBBC022_Analysis_Final.cppipe",
+      "cppipe_path_root": "dataset_cache",
+      "dataset_id": "CellProfiler_tutorials",
+      "dataset_path": "advanced_axis1",
+      "dataset_path_root": "axis_one_subsets",
+      "microscope_type": "cellprofiler_tutorials",
+      "module_category": "Advanced segmentation + measurement",
+      "name": "cp_tutorial_advanced_segmentation_final",
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      },
+      "value_only": true
+    },
+    {
+      "assay_category": "Cell Painting quality control",
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "CellProfiler_tutorials/data/QualityControl/BBBC022_QC.cppipe",
+      "cppipe_path_root": "dataset_cache",
+      "dataset_id": "CellProfiler_tutorials",
+      "dataset_path": "quality_control_axis1",
+      "dataset_path_root": "axis_one_subsets",
+      "microscope_type": "cellprofiler_tutorials",
+      "module_category": "Image quality measurement",
+      "name": "cp_tutorial_quality_control",
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      },
+      "value_only": true
+    },
+    {
+      "assay_category": "Cell morphology",
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "CellProfiler_tutorials/data/BeginnerSegmentation/segmentation_final.cppipe",
+      "cppipe_path_root": "dataset_cache",
+      "dataset_id": "CellProfiler_tutorials",
+      "dataset_path": "beginner_axis1",
+      "dataset_path_root": "axis_one_subsets",
+      "microscope_type": "cellprofiler_tutorials",
+      "module_category": "Segmentation + intensity measurement",
+      "name": "cp_tutorial_beginner_segmentation_final",
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      },
+      "value_only": true
+    },
+    {
+      "assay_category": "Pixel classification",
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "CellProfiler_tutorials/data/PixelBasedClassification/pixel_based_classification_cho.cppipe",
+      "cppipe_path_root": "dataset_cache",
+      "dataset_id": "CellProfiler_tutorials",
+      "dataset_path": "pixel_axis1",
+      "dataset_path_root": "axis_one_subsets",
+      "microscope_type": "cellprofiler_tutorials",
+      "module_category": "Pixel classification",
+      "name": "cp_tutorial_pixel_based_classification",
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      },
+      "value_only": true
+    },
+    {
+      "assay_category": "Translocation assay",
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "CellProfiler_tutorials/data/Translocation/Translocation_final.cppipe",
+      "cppipe_path_root": "dataset_cache",
+      "dataset_id": "CellProfiler_tutorials",
+      "dataset_path": "translocation_axis1",
+      "dataset_path_root": "axis_one_subsets",
+      "microscope_type": "cellprofiler_tutorials",
+      "module_category": "Segmentation + classification",
+      "name": "cp_tutorial_translocation_final",
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      },
+      "value_only": true
+    },
+    {
+      "assay_category": "Object-combination benchmark",
+      "cellprofiler_timeout_seconds": 900.0,
+      "cppipe_path": "CellProfiler4_benchmark_supplement/data/CombineObjects/CombineObjectsDemo.cppipe",
+      "cppipe_path_root": "dataset_cache",
+      "dataset_id": "CellProfiler4_benchmark_supplement",
+      "dataset_path": "cp4_combine_objects_axis1",
+      "dataset_path_root": "axis_one_subsets",
+      "microscope_type": "cellprofiler4_benchmark",
+      "module_category": "Object set algebra",
+      "name": "cp4_supplement_combine_objects",
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      },
+      "value_only": true
+    },
+    {
+      "assay_category": "Translocation assay",
+      "cellprofiler_timeout_seconds": 300.0,
+      "cppipe_path": "CellProfiler_tutorials/data/Translocation/Translocation_start.cppipe",
+      "cppipe_path_root": "dataset_cache",
+      "dataset_id": "CellProfiler_tutorials",
+      "dataset_path": "translocation_axis1",
+      "dataset_path_root": "axis_one_subsets",
+      "microscope_type": "cellprofiler_tutorials",
+      "module_category": "Starter nuclei segmentation",
+      "name": "cp_tutorial_translocation_start",
+      "pipeline_params": {
+        "openhcs_max_axis_count": 1
+      },
+      "value_only": true
+    }
+  ],
+  "description": "Portable 30-case CellProfiler/OpenHCS benchmark manifest. Resolve roots with CELLPROFILER_EXAMPLES_ROOT, OPENHCS_BENCHMARK_DATASET_CACHE_ROOT, and OPENHCS_AXISONE_SUBSETS_ROOT.",
+  "manifest_version": 2,
+  "path_roots": {
+    "axis_one_subsets": {
+      "default": "/tmp/openhcs_axisone_subsets/current",
+      "env": "OPENHCS_AXISONE_SUBSETS_ROOT"
+    },
+    "cellprofiler_examples": {
+      "default": "/tmp/cellprofiler_examples",
+      "env": "CELLPROFILER_EXAMPLES_ROOT"
+    },
+    "dataset_cache": {
+      "default": "/tmp/openhcs_benchmark_dataset_cache_last8",
+      "env": "OPENHCS_BENCHMARK_DATASET_CACHE_ROOT"
+    }
+  }
+}

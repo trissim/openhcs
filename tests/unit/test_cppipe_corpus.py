@@ -45,6 +45,35 @@ def test_comparison_manifest_cppipe_corpus_projects_benchmark_cases(
     assert case.status is CPPipeCorpusStatus.SUPPORTED
 
 
+def test_comparison_manifest_cppipe_corpus_resolves_declared_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "root"
+    monkeypatch.setenv("CPPIPE_ROOT", str(root))
+    manifest_path = tmp_path / "manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "path_roots": {"cppipe": {"env": "CPPIPE_ROOT"}},
+                "cases": [
+                    {
+                        "name": "rooted_case",
+                        "cppipe_path_root": "cppipe",
+                        "cppipe_path": "pipeline.cppipe",
+                        "dataset_path": "/tmp/example",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    corpus = comparison_manifest_cppipe_corpus(manifest_path)
+
+    assert corpus[0].cppipe_path == root / "pipeline.cppipe"
+
+
 def test_comparison_manifests_cppipe_corpus_combines_manifests(
     tmp_path: Path,
 ) -> None:

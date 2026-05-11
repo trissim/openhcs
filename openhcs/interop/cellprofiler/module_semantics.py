@@ -9,6 +9,7 @@ from types import MappingProxyType
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -32,10 +33,7 @@ class CellProfilerModuleCategory(Enum):
         obj._is_infrastructure = is_infrastructure
         return obj
 
-    @property
-    def is_infrastructure(self) -> bool:
-        """Return whether OpenHCS handles this category as infrastructure."""
-        return self._is_infrastructure
+    is_infrastructure = AliasProperty[bool]("_is_infrastructure")
 
 
 class CellProfilerModuleDimensionality(Enum):
@@ -45,10 +43,7 @@ class CellProfilerModuleDimensionality(Enum):
     VOLUMETRIC = ProcessingContract.PURE_3D
     PLANAR_AND_VOLUMETRIC = ProcessingContract.FLEXIBLE
 
-    @property
-    def processing_contract(self) -> ProcessingContract:
-        """Return the closest OpenHCS processing contract for this support mode."""
-        return self.value
+    processing_contract = AliasProperty[ProcessingContract]("value")
 
     @property
     def supports_2d(self) -> bool:
@@ -103,6 +98,16 @@ def cellprofiler_module_semantics(
     if not normalized_name:
         raise ValueError("CellProfiler module name cannot be empty.")
     return CELLPROFILER_MODULE_SEMANTICS_BY_KEY.get(normalized_name.casefold())
+
+
+def cellprofiler_module_semantics_family(
+    module_name: str,
+) -> "CellProfilerModuleSemanticsFamilySpec | None":
+    """Return the declared semantic family for a CellProfiler module name."""
+    normalized_name = module_name.strip()
+    if not normalized_name:
+        raise ValueError("CellProfiler module name cannot be empty.")
+    return CELLPROFILER_MODULE_SEMANTICS_FAMILY_BY_KEY.get(normalized_name.casefold())
 
 
 @dataclass(frozen=True, slots=True)
@@ -446,6 +451,36 @@ CELLPROFILER_MODULE_SEMANTICS_BY_KEY: Mapping[
         },
         **{
             alias.casefold(): CELLPROFILER_MODULE_SEMANTICS[canonical]
+            for alias, canonical in _registered_aliases()
+        },
+    }
+)
+
+CELLPROFILER_MODULE_SEMANTICS_FAMILY_BY_CANONICAL: Mapping[
+    str,
+    CellProfilerModuleSemanticsFamilySpec,
+] = MappingProxyType(
+    {
+        module_name: family
+        for family in CELLPROFILER_MODULE_SEMANTICS_FAMILY_SPECS
+        for module_name in family.module_names
+    }
+)
+
+CELLPROFILER_MODULE_SEMANTICS_FAMILY_BY_KEY: Mapping[
+    str,
+    CellProfilerModuleSemanticsFamilySpec,
+] = MappingProxyType(
+    {
+        **{
+            module_name.casefold(): family
+            for family in CELLPROFILER_MODULE_SEMANTICS_FAMILY_SPECS
+            for module_name in family.module_names
+        },
+        **{
+            alias.casefold(): CELLPROFILER_MODULE_SEMANTICS_FAMILY_BY_CANONICAL[
+                canonical
+            ]
             for alias, canonical in _registered_aliases()
         },
     }

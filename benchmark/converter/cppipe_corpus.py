@@ -5,9 +5,10 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import Enum
-import json
 import os
 from pathlib import Path
+
+from benchmark.contracts.comparison_manifest import ComparisonManifest
 
 
 CELLPROFILER_EXAMPLES_ROOT_ENV = "CELLPROFILER_EXAMPLES_ROOT"
@@ -97,7 +98,8 @@ def comparison_manifest_cppipe_corpus(
 ) -> tuple[CPPipeCorpusCase, ...]:
     """Project a benchmark comparison manifest into .cppipe coverage cases."""
 
-    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest = ComparisonManifest.load(manifest_path)
+    payload = manifest.payload
     raw_cases = payload.get("cases")
     if not isinstance(raw_cases, Sequence):
         raise ValueError("Benchmark manifest must contain a 'cases' sequence.")
@@ -109,7 +111,7 @@ def comparison_manifest_cppipe_corpus(
         cases.append(
             CPPipeCorpusCase(
                 name=str(raw_case["name"]),
-                cppipe_path=Path(str(raw_case["cppipe_path"])),
+                cppipe_path=manifest.path_resolver.resolve(raw_case, "cppipe_path"),
                 status=CPPipeCorpusStatus.SUPPORTED,
             )
         )

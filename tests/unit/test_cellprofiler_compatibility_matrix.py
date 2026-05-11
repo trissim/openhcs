@@ -58,6 +58,15 @@ def test_compatibility_matrix_tracks_artifact_and_corpus_coverage() -> None:
     assert modules_by_name["Watershed"].semantics is not None
     assert modules_by_name["Watershed"].semantics.supports_3d is True
     assert modules_by_name["Watershed"].semantics.respects_masks is True
+    family_rows = {row.module_name: row for row in report.semantic_families}
+    assert family_rows["IdentifyPrimaryObjects"].family_name == "ObjectProcessingMasked2D"
+    assert (
+        family_rows["IdentifyPrimaryObjects"].family_coverage
+        == "direct_supported"
+    )
+    assert "IdentifyPrimaryObjects" in family_rows[
+        "IdentifySecondaryObjects"
+    ].family_supported_modules
 
 
 def test_compatibility_matrix_accepts_explicit_cppipe_corpus(

@@ -26,6 +26,7 @@ from benchmark.metrics.time import TimeMetric
 from benchmark.runner import CellProfilerCompatibilityResult
 from benchmark.runner import run_cellprofiler_cppipe_parity
 from benchmark.contracts.metric import MetricCollector
+from benchmark.contracts.comparison_manifest import ComparisonManifest
 
 if TYPE_CHECKING:
     from benchmark.converter.compatibility_matrix import CellProfilerCompatibilityReport
@@ -84,6 +85,13 @@ PROCESSING_CONTRACT_FIELD = "processing_contract"
 PROCESSING_CONTRACT_SOURCE_FIELD = "processing_contract_source"
 ARTIFACT_CONTRACT_COVERAGE_FIELD = "artifact_contract_coverage"
 SOURCE_COVERAGE_FIELD = "source_coverage"
+SEMANTIC_FAMILY_FIELD = "semantic_family"
+FAMILY_COVERAGE_FIELD = "family_coverage"
+FAMILY_SUPPORTED_MODULES_FIELD = "family_supported_modules"
+FAMILY_ABSORBED_MODULES_FIELD = "family_absorbed_modules"
+CATEGORY_FIELD = "category"
+DIMENSIONALITY_FIELD = "dimensionality"
+RESPECTS_MASKS_FIELD = "respects_masks"
 DEFAULT_SPEEDUP_TARGET = 5.0
 OPENHCS_BENCHMARK_CACHE_MARKER = ".openhcs_benchmark_cache.json"
 MODULE_COVERAGE_SUMMARY_JSON = "module_coverage_summary.json"
@@ -91,6 +99,7 @@ MODULE_COVERAGE_CPPIPE_MODULES_CSV = "module_coverage_cppipe_modules.csv"
 MODULE_COVERAGE_CPPIPE_SETTINGS_CSV = "module_coverage_cppipe_settings.csv"
 MODULE_COVERAGE_ABSORBED_MODULES_CSV = "module_coverage_absorbed_modules.csv"
 MODULE_COVERAGE_SOURCE_MODULES_CSV = "module_coverage_source_modules.csv"
+MODULE_COVERAGE_SEMANTIC_FAMILIES_CSV = "module_coverage_semantic_families.csv"
 CsvRow = Mapping[str, object]
 CsvRowBuilder = Callable[
     [Sequence["CellProfilerComparisonObservation"]],
@@ -160,6 +169,21 @@ class SourceModuleCoverageRow:
 
 
 @dataclass(frozen=True, slots=True)
+class SemanticFamilyCoverageRow:
+    """CSV row for semantic-family coverage evidence."""
+
+    module_name: str
+    semantic_family: str
+    family_coverage: str
+    corpus_coverage: str
+    category: str
+    dimensionality: str
+    respects_masks: bool
+    family_supported_modules: str
+    family_absorbed_modules: str
+
+
+@dataclass(frozen=True, slots=True)
 class CPPipeSettingCoverageRow:
     """CSV row for one concrete setting observed in benchmark .cppipe files."""
 
@@ -215,6 +239,7 @@ class ModuleCoverageArtifacts:
     cppipe_settings: tuple[CPPipeSettingCoverageRow, ...]
     absorbed_modules: tuple[AbsorbedModuleCoverageRow, ...]
     source_modules: tuple[SourceModuleCoverageRow, ...]
+    semantic_families: tuple[SemanticFamilyCoverageRow, ...]
 
     @classmethod
     def from_report(
@@ -324,6 +349,28 @@ class ModuleCoverageArtifacts:
                 )
                 for module in report.source_modules
             ),
+            semantic_families=tuple(
+                SemanticFamilyCoverageRow(
+                    module_name=family.module_name,
+                    semantic_family=family.family_name,
+                    family_coverage=family.family_coverage.value,
+                    corpus_coverage=family.corpus_coverage.value,
+                    category=(
+                        family.category.value if family.category is not None else ""
+                    ),
+                    dimensionality=(
+                        family.dimensionality.name
+                        if family.dimensionality is not None
+                        else ""
+                    ),
+                    respects_masks=family.respects_masks,
+                    family_supported_modules=";".join(
+                        family.family_supported_modules
+                    ),
+                    family_absorbed_modules=";".join(family.family_absorbed_modules),
+                )
+                for family in report.semantic_families
+            ),
         )
 
     def write_to(self, output_root: Path) -> None:
@@ -378,6 +425,21 @@ class ModuleCoverageArtifacts:
                 fieldnames=(MODULE_NAME_FIELD, SOURCE_COVERAGE_FIELD),
                 rows=self.source_modules,
             ),
+            CsvRowsArtifact(
+                filename=MODULE_COVERAGE_SEMANTIC_FAMILIES_CSV,
+                fieldnames=(
+                    MODULE_NAME_FIELD,
+                    SEMANTIC_FAMILY_FIELD,
+                    FAMILY_COVERAGE_FIELD,
+                    CORPUS_COVERAGE_FIELD,
+                    CATEGORY_FIELD,
+                    DIMENSIONALITY_FIELD,
+                    RESPECTS_MASKS_FIELD,
+                    FAMILY_SUPPORTED_MODULES_FIELD,
+                    FAMILY_ABSORBED_MODULES_FIELD,
+                ),
+                rows=self.semantic_families,
+            ),
         )
 
 
@@ -392,6 +454,27 @@ class ComparisonMetricPolicy:
         if self.collect_memory:
             collectors.append(MemoryMetric())
         return collectors
+
+
+@dataclass(frozen=True, slots=True)
+class ComparisonSuiteRunContext:
+    """Shared execution/provenance context for one comparison suite run."""
+
+    suite_id: str
+    speedup_target: float
+    reuse_openhcs_cache: bool
+    native_reference_root: Path | None
+    discard_openhcs_outputs: bool
+    continue_on_error: bool
+    openhcs_axis_filter: tuple[str, ...]
+    openhcs_max_axis_count: int | None
+    metric_policy: ComparisonMetricPolicy
+
+    def validate(self) -> None:
+        if self.speedup_target <= 0:
+            raise ValueError("speedup_target must be positive.")
+        if self.openhcs_max_axis_count is not None and self.openhcs_max_axis_count <= 0:
+            raise ValueError("openhcs_max_axis_count must be positive.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -524,7 +607,8 @@ class CachedNativeReferenceTimingPolicy:
 
 def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
     """Load benchmark cases from a JSON manifest."""
-    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    manifest = ComparisonManifest.load(path)
+    payload = manifest.payload
     raw_cases = payload.get("cases")
     if not isinstance(raw_cases, Sequence):
         raise ValueError("Benchmark manifest must contain a 'cases' sequence.")
@@ -540,8 +624,8 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
         cases.append(
             CellProfilerComparisonCase(
                 name=str(raw_case["name"]),
-                dataset_path=Path(str(raw_case["dataset_path"])),
-                cppipe_path=Path(str(raw_case["cppipe_path"])),
+                dataset_path=manifest.path_resolver.resolve(raw_case, "dataset_path"),
+                cppipe_path=manifest.path_resolver.resolve(raw_case, "cppipe_path"),
                 dataset_id=(
                     str(raw_case["dataset_id"])
                     if raw_case.get("dataset_id") is not None
@@ -598,10 +682,18 @@ def run_comparison_suite(
     """Run all cases and write raw benchmark observations."""
     if repeats < 1:
         raise ValueError("repeats must be at least 1.")
-    if speedup_target <= 0:
-        raise ValueError("speedup_target must be positive.")
-    if openhcs_max_axis_count is not None and openhcs_max_axis_count <= 0:
-        raise ValueError("openhcs_max_axis_count must be positive.")
+    context = ComparisonSuiteRunContext(
+        suite_id=suite_id,
+        speedup_target=speedup_target,
+        reuse_openhcs_cache=reuse_openhcs_cache,
+        native_reference_root=native_reference_root,
+        discard_openhcs_outputs=discard_openhcs_outputs,
+        continue_on_error=continue_on_error,
+        openhcs_axis_filter=tuple(openhcs_axis_filter),
+        openhcs_max_axis_count=openhcs_max_axis_count,
+        metric_policy=metric_policy,
+    )
+    context.validate()
     output_root.mkdir(parents=True, exist_ok=True)
     observations: list[CellProfilerComparisonObservation] = []
     for repetition in range(1, repeats + 1):
@@ -610,21 +702,15 @@ def run_comparison_suite(
                 result = _run_comparison_case(
                     case,
                     output_root=output_root,
-                    suite_id=suite_id,
                     repetition=repetition,
-                    reuse_openhcs_cache=reuse_openhcs_cache,
-                    native_reference_root=native_reference_root,
-                    discard_openhcs_outputs=discard_openhcs_outputs,
-                    openhcs_axis_filter=tuple(openhcs_axis_filter),
-                    openhcs_max_axis_count=openhcs_max_axis_count,
-                    metric_policy=metric_policy,
+                    context=context,
                 )
             except Exception as exc:
-                if not continue_on_error:
+                if not context.continue_on_error:
                     raise
                 result = _failed_comparison_observation(
                     case,
-                    suite_id=suite_id,
+                    suite_id=context.suite_id,
                     repetition=repetition,
                     error=exc,
                 )
@@ -638,18 +724,11 @@ def run_comparison_suite(
             write_summary_csv(
                 output_root / "summary.csv",
                 observations,
-                speedup_target=speedup_target,
+                speedup_target=context.speedup_target,
             )
             write_suite_metadata(
                 output_root / "suite_metadata.json",
-                suite_id=suite_id,
-                speedup_target=speedup_target,
-                native_reference_root=native_reference_root,
-                discard_openhcs_outputs=discard_openhcs_outputs,
-                continue_on_error=continue_on_error,
-                openhcs_axis_filter=tuple(openhcs_axis_filter),
-                openhcs_max_axis_count=openhcs_max_axis_count,
-                metric_policy=metric_policy,
+                context=context,
             )
     if coverage_manifest_path is not None:
         write_module_coverage_artifacts(
@@ -896,31 +975,26 @@ def _summary_table(speedup_target: float) -> CsvTableSpec:
 def write_suite_metadata(
     path: Path,
     *,
-    suite_id: str,
-    speedup_target: float = DEFAULT_SPEEDUP_TARGET,
-    native_reference_root: Path | None = None,
-    discard_openhcs_outputs: bool = False,
-    continue_on_error: bool = False,
-    openhcs_axis_filter: Sequence[str] = (),
-    openhcs_max_axis_count: int | None = None,
-    metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
+    context: ComparisonSuiteRunContext,
 ) -> None:
     """Write reproducibility metadata for the benchmark suite."""
     payload = {
-        "suite_id": suite_id,
-        "speedup_target": speedup_target,
+        "suite_id": context.suite_id,
+        "speedup_target": context.speedup_target,
         "created_at_epoch_seconds": time.time(),
         "python": sys.version,
         "platform": platform.platform(),
         "processor": platform.processor(),
         "native_reference_root": (
-            str(native_reference_root) if native_reference_root is not None else None
+            str(context.native_reference_root)
+            if context.native_reference_root is not None
+            else None
         ),
-        "discard_openhcs_outputs": discard_openhcs_outputs,
-        "continue_on_error": continue_on_error,
-        "collect_memory_metric": metric_policy.collect_memory,
-        OPENHCS_AXIS_FILTER_PARAM: tuple(openhcs_axis_filter),
-        OPENHCS_MAX_AXIS_COUNT_PARAM: openhcs_max_axis_count,
+        "discard_openhcs_outputs": context.discard_openhcs_outputs,
+        "continue_on_error": context.continue_on_error,
+        "collect_memory_metric": context.metric_policy.collect_memory,
+        OPENHCS_AXIS_FILTER_PARAM: context.openhcs_axis_filter,
+        OPENHCS_MAX_AXIS_COUNT_PARAM: context.openhcs_max_axis_count,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -930,34 +1004,28 @@ def _run_comparison_case(
     case: CellProfilerComparisonCase,
     *,
     output_root: Path,
-    suite_id: str,
     repetition: int,
-    reuse_openhcs_cache: bool,
-    native_reference_root: Path | None,
-    discard_openhcs_outputs: bool,
-    openhcs_axis_filter: Sequence[str],
-    openhcs_max_axis_count: int | None,
-    metric_policy: ComparisonMetricPolicy,
+    context: ComparisonSuiteRunContext,
 ) -> CellProfilerComparisonObservation:
-    native_reference = _native_reference_location(case, native_reference_root)
+    native_reference = _native_reference_location(case, context.native_reference_root)
     pipeline_params: dict[str, object] = {
         **case.pipeline_params,
         "compare_image_outputs": not case.value_only,
         "raise_on_equivalence_failure": False,
-        "cache_candidate_measurement_snapshot": not discard_openhcs_outputs,
+        "cache_candidate_measurement_snapshot": not context.discard_openhcs_outputs,
     }
     if case.cellprofiler_timeout_seconds is not None:
         pipeline_params["cellprofiler_timeout_seconds"] = (
             case.cellprofiler_timeout_seconds
         )
-    if openhcs_axis_filter:
-        pipeline_params[OPENHCS_AXIS_FILTER_PARAM] = tuple(openhcs_axis_filter)
-    if openhcs_max_axis_count is not None:
-        pipeline_params[OPENHCS_MAX_AXIS_COUNT_PARAM] = openhcs_max_axis_count
+    if context.openhcs_axis_filter:
+        pipeline_params[OPENHCS_AXIS_FILTER_PARAM] = context.openhcs_axis_filter
+    if context.openhcs_max_axis_count is not None:
+        pipeline_params[OPENHCS_MAX_AXIS_COUNT_PARAM] = context.openhcs_max_axis_count
     result = run_cellprofiler_cppipe_parity(
         case.dataset_path,
         case.cppipe_path,
-        metrics=metric_policy.collectors(),
+        metrics=context.metric_policy.collectors(),
         dataset_id=case.dataset_id,
         pipeline_name=case.name,
         microscope_type=case.microscope_type,
@@ -965,15 +1033,15 @@ def _run_comparison_case(
         output_root=output_root / "tool_outputs",
         equivalence_reference_output_dir=native_reference.reference_output_dir,
         native_cellprofiler_output_dir=native_reference.output_dir,
-        reuse_openhcs_cache=reuse_openhcs_cache,
+        reuse_openhcs_cache=context.reuse_openhcs_cache,
     )
     observation = comparison_observation_from_result(
         result,
         case=case,
-        suite_id=suite_id,
+        suite_id=context.suite_id,
         repetition=repetition,
     )
-    if discard_openhcs_outputs:
+    if context.discard_openhcs_outputs:
         _discard_successful_openhcs_benchmark_tree(
             observation,
             suite_output_root=output_root,
