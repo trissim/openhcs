@@ -48,8 +48,11 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
+    image_payload_data,
+    image_payload_metadata,
     object_label_dense_array,
     object_label_payload_with_dense_labels,
+    with_image_payload_data,
 )
 from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     CellProfilerExpandShrinkOperation,
@@ -66,6 +69,7 @@ from openhcs.processing.backends.cellprofiler.relationships import (
 )
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
+    apply_structuring_element,
     build_structuring_element,
 )
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -682,6 +686,202 @@ def apply_morph_operation(
             memory_type=memory_type,
         )
     )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def morph(
+    image: np.ndarray,
+    operation: MorphOperation = MorphOperation.THIN,
+    repeat_mode: RepeatMode = RepeatMode.ONCE,
+    custom_repeats: int = 2,
+    rescale_values: bool = True,
+    line_length: int = 3,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> np.ndarray:
+    """Decorated CellProfiler Morph entrypoint backed by registered strategies."""
+    return apply_morph_operation(
+        image=image,
+        operation=operation,
+        repeat_mode=repeat_mode,
+        custom_repeats=custom_repeats,
+        rescale_values=rescale_values,
+        line_length=line_length,
+        morphology_backend_provider=morphology_backend_provider,
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def closing(
+    image: np.ndarray,
+    structuring_element: StructuringElement = StructuringElement.DISK,
+    size: int = 3,
+    morphology_backend_provider: CellProfilerBackendProvider | None = (
+        CellProfilerBackendProvider.OPENCV
+    ),
+) -> np.ndarray:
+    """Apply CellProfiler-compatible grayscale closing to an image plane."""
+    pixel_data = image_payload_data(image)
+    morphology = MorphologyBackendStrategy.for_callable(
+        closing,
+        backend_provider=morphology_backend_provider,
+    )
+    result = apply_structuring_element(
+        pixel_data,
+        build_structuring_element(structuring_element, size),
+        morphology.grayscale_closing,
+    )
+    return with_image_payload_data(
+        image,
+        result.astype(pixel_data.dtype, copy=False),
+        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def opening(
+    image: np.ndarray,
+    structuring_element: StructuringElement = StructuringElement.DISK,
+    size: int = 3,
+    morphology_backend_provider: CellProfilerBackendProvider | None = (
+        CellProfilerBackendProvider.OPENCV
+    ),
+) -> np.ndarray:
+    """Apply CellProfiler-compatible grayscale opening to an image plane."""
+    pixel_data = image_payload_data(image)
+    morphology = MorphologyBackendStrategy.for_callable(
+        opening,
+        backend_provider=morphology_backend_provider,
+    )
+    result = apply_structuring_element(
+        pixel_data,
+        build_structuring_element(structuring_element, size),
+        morphology.grayscale_opening,
+    )
+    return with_image_payload_data(
+        image,
+        result.astype(pixel_data.dtype, copy=False),
+        metadata=image_payload_metadata(image).without_unit_interval_intensity_scale(),
+    )
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def dilate_image(
+    image: np.ndarray,
+    structuring_element: StructuringElement = StructuringElement.DISK,
+    size: int = 3,
+) -> np.ndarray:
+    """Apply grayscale dilation to an image plane."""
+    from skimage.morphology import dilation
+
+    dilated = apply_structuring_element(
+        image,
+        build_structuring_element(structuring_element, size),
+        lambda spatial_image, footprint: dilation(spatial_image, footprint),
+    )
+    return dilated.astype(image.dtype)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def erode_image(
+    image: np.ndarray,
+    structuring_element: StructuringElement | str = StructuringElement.DISK,
+    size: int = 3,
+) -> np.ndarray:
+    """Apply grayscale erosion to an image plane."""
+    from skimage.morphology import erosion
+
+    eroded = apply_structuring_element(
+        image,
+        build_structuring_element(structuring_element, size),
+        lambda spatial_image, footprint: erosion(spatial_image, footprint),
+    )
+    return eroded.astype(image.dtype)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def remove_holes(
+    image: np.ndarray,
+    diameter: float = 1.0,
+) -> np.ndarray:
+    """Fill binary holes smaller than the CellProfiler diameter threshold."""
+    return HoleRemovalDiameterPolicy(diameter=diameter, volumetric=False).apply(image)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_3D)
+def remove_holes_3d(
+    image: np.ndarray,
+    diameter: float = 1.0,
+) -> np.ndarray:
+    """Fill volumetric holes smaller than the CellProfiler diameter threshold."""
+    return HoleRemovalDiameterPolicy(diameter=diameter, volumetric=True).apply(image)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def morphological_skeleton_2d(image: np.ndarray) -> np.ndarray:
+    """Compute the 2-D morphological skeleton of a binary image."""
+    from skimage.morphology import skeletonize
+
+    return skeletonize(image > 0).astype(np.float32)
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_3D)
+def morphological_skeleton_3d(image: np.ndarray) -> np.ndarray:
+    """Compute the 3-D morphological skeleton of a binary volume."""
+    from skimage.morphology import skeletonize_3d
+
+    return skeletonize_3d(image > 0).astype(np.float32)
+
+
+@numpy_decorator
+def morphologicalskeleton(
+    image: np.ndarray,
+    volumetric: bool = False,
+) -> np.ndarray:
+    """Compute CellProfiler MorphologicalSkeleton on a stack or volume."""
+    from skimage.morphology import skeletonize
+
+    if volumetric:
+        return morphological_skeleton_3d(image)
+    binary = image > 0
+    result = np.zeros_like(image, dtype=np.float32)
+    for slice_index in range(image.shape[0]):
+        result[slice_index] = skeletonize(binary[slice_index]).astype(np.float32)
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class HoleRemovalDiameterPolicy:
+    """CellProfiler RemoveHoles diameter threshold semantics."""
+
+    diameter: float
+    volumetric: bool = False
+
+    @property
+    def threshold(self) -> int:
+        radius = self.diameter / 2.0
+        if self.volumetric:
+            threshold = (4.0 / 3.0) * np.pi * (radius**3)
+        else:
+            threshold = np.pi * (radius**2)
+        return max(1, int(threshold))
+
+    def binary_image(self, image: np.ndarray) -> np.ndarray:
+        from skimage import img_as_bool
+
+        if image.dtype.kind == "f":
+            return img_as_bool(image)
+        if image.dtype.kind in ("u", "i"):
+            return image > 0
+        return image.astype(bool)
+
+    def apply(self, image: np.ndarray) -> np.ndarray:
+        import skimage.morphology
+
+        result = skimage.morphology.remove_small_holes(
+            self.binary_image(image),
+            area_threshold=self.threshold,
+        )
+        return result.astype(np.float32)
 
 
 def face_connected_component_structure(ndim: int) -> np.ndarray:
@@ -5835,6 +6035,7 @@ __all__ = [
     "FillHolesOption",
     "FillMode",
     "HolePredicate",
+    "HoleRemovalDiameterPolicy",
     "MaskChoice",
     "MaskObjectsOutputLabels",
     "MaskObjectsPlaneOperation",
@@ -5869,9 +6070,12 @@ __all__ = [
     "SplitOrMergeRequest",
     "SplitOrMergeStats",
     "apply_morph_operation",
+    "closing",
     "dense_label_area_statistics",
+    "dilate_image",
     "dilate_objects",
     "dilate_objects_3d",
+    "erode_image",
     "erode_objects",
     "fill_objects",
     "filter_border_objects",
@@ -5885,12 +6089,19 @@ __all__ = [
     "manual_declumping_size",
     "mask_planes_for_labels",
     "mask_objects",
+    "morph",
+    "morphological_skeleton_2d",
+    "morphological_skeleton_3d",
+    "morphologicalskeleton",
+    "opening",
     "positive_dense_label_count",
     "prepare_expand_or_shrink_objects",
     "resize_objects",
     "resize_objects_3d",
     "resize_objects_target_shape",
     "resize_objects_zoom_factors",
+    "remove_holes",
+    "remove_holes_3d",
     "SimpleDiskMidpointPreservationPolicy",
     "shrink_to_object_centers",
     "shrink_to_object_centers_3d",

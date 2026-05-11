@@ -3,11 +3,22 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
 from enum import Enum
 from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
+
+from openhcs.core.memory import numpy as numpy_decorator
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.processing.backends.analysis.region_properties import (
+    LabelRegionPropertiesBackendStrategy,
+)
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 
 class ImageMode(Enum):
@@ -15,6 +26,16 @@ class ImageMode(Enum):
     GRAYSCALE = "grayscale"
     COLOR = "color"
     UINT16 = "uint16"
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectConversionStats:
+    """ConvertImageToObjects summary row."""
+
+    slice_index: int
+    object_count: int
+    mean_area: float
+    total_area: int
 
 
 class ImageModeRenderer(ABC, metaclass=AutoRegisterMeta):
@@ -113,3 +134,89 @@ def object_label_colormap(colormap_name: str, num_labels: int) -> np.ndarray:
     for index in range(1, num_labels + 1):
         colors[index] = cmap(index / max(num_labels, 1))[:3]
     return colors
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_outputs(
+    (
+        "conversion_stats",
+        csv_materializer(
+            fields=["slice_index", "object_count", "mean_area", "total_area"],
+            analysis_type="object_conversion",
+        ),
+    ),
+    ("labels", segmentation_mask_rois()),
+)
+def convert_image_to_objects(
+    image: np.ndarray,
+    cast_to_bool: bool = False,
+    preserve_label: bool = False,
+    background: int = 0,
+    connectivity: int = 1,
+) -> tuple[np.ndarray, ObjectConversionStats, np.ndarray]:
+    """Convert an image plane into CellProfiler-compatible object labels."""
+    from skimage.measure import label
+
+    working_image = image.copy()
+    if cast_to_bool:
+        working_image = (working_image != background).astype(np.uint8)
+
+    if preserve_label:
+        labels = working_image.astype(np.int32)
+        labels[labels == background] = 0
+    else:
+        labels = label(
+            working_image != background,
+            connectivity=connectivity,
+        ).astype(np.int32)
+
+    props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(labels)
+    object_count = int(props.label.size)
+    if object_count > 0:
+        mean_area = float(np.mean(props.area))
+        total_area = int(np.sum(props.area))
+    else:
+        mean_area = 0.0
+        total_area = 0
+    return (
+        image,
+        ObjectConversionStats(
+            slice_index=0,
+            object_count=object_count,
+            mean_area=mean_area,
+            total_area=total_area,
+        ),
+        labels,
+    )
+
+
+@numpy_decorator
+@special_inputs("labels")
+def convert_objects_to_image(
+    image: np.ndarray,
+    labels: np.ndarray,
+    image_mode: ImageMode = ImageMode.COLOR,
+    colormap_value: str = "jet",
+) -> np.ndarray:
+    """Render object labels into the requested CellProfiler image mode."""
+    del image
+    labels = object_label_dense_array(labels, dtype=np.int32)
+    resolved_image_mode = coerce_cellprofiler_enum(ImageMode, image_mode)
+    return ImageModeRenderer.for_image_mode(resolved_image_mode).render(
+        labels,
+        colormap_value=colormap_value,
+    )
+
+
+__all__ = [
+    "BinaryImageModeRenderer",
+    "ColorImageModeRenderer",
+    "GrayscaleImageModeRenderer",
+    "ImageMode",
+    "ImageModeRenderer",
+    "ObjectConversionStats",
+    "Uint16ImageModeRenderer",
+    "convert_image_to_objects",
+    "convert_objects_to_image",
+    "object_label_colormap",
+]

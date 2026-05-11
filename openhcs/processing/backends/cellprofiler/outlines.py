@@ -18,6 +18,7 @@ from skimage import img_as_float
 from openhcs.constants.constants import MemoryType
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -29,6 +30,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
 )
 from openhcs.processing.backends.cellprofiler.color import coerce_rgb_color
 from openhcs.processing.backends.cellprofiler.image_geometry import (
+    CellProfilerPlaneGeometry,
     align_binary_mask_to_shape,
     align_label_plane_to_shape,
     collapse_singleton_plane_stack,
@@ -306,6 +308,57 @@ def overlay_outlines(
     return context.render(image_sources)
 
 
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+def overlay_objects(
+    image: np.ndarray,
+    labels: np.ndarray,
+    opacity: float = 0.3,
+    max_label: int | None = None,
+    seed: int | None = None,
+    colormap: str = "jet",
+) -> np.ndarray:
+    """Overlay object labels onto an image plane using CellProfiler geometry."""
+    from matplotlib import colormaps
+    from skimage.color import label2rgb
+
+    if image.ndim == 3:
+        image_plane = np.mean(image, axis=-1)
+    else:
+        image_plane = image.copy()
+
+    if image_plane.max() > 1.0:
+        image_plane = image_plane / image_plane.max()
+
+    label_plane = CellProfilerPlaneGeometry.from_image_plane(image_plane).label_plane(
+        labels
+    )
+    if max_label is None:
+        max_label = int(label_plane.max())
+    if seed is not None:
+        np.random.seed(seed)
+
+    label_count = max_label + 1
+    colormap_object = colormaps.get_cmap(colormap)
+    colors = [
+        colormap_object(index / max(label_count - 1, 1))[:3]
+        for index in range(1, label_count)
+    ]
+    if colors:
+        overlay = label2rgb(
+            label_plane,
+            image=image_plane,
+            colors=colors,
+            alpha=opacity,
+            bg_label=0,
+            bg_color=None,
+            kind="overlay",
+        )
+    else:
+        overlay = np.stack([image_plane, image_plane, image_plane], axis=-1)
+    return np.clip(overlay, 0, 1).astype(np.float32)
+
+
 def _runtime_rows(
     source_kinds: Sequence[OutlineSourceKind | str],
     colors: Sequence[str | Sequence[float]],
@@ -508,5 +561,6 @@ __all__ = [
     "OverlayOutlineExecutionContext",
     "OverlayOutlineRuntimeRow",
     "object_outline_backend",
+    "overlay_objects",
     "overlay_outlines",
 ]
