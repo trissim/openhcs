@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -64,6 +64,536 @@ ConnectivityStructureBuilder = Callable[[int], np.ndarray]
 LabelBoundingBox = tuple[int, tuple[slice, ...]]
 LabelBoundingBoxes = list[LabelBoundingBox]
 SCIPY_CONSTANT_BOUNDARY_MODE = "constant"
+MORPH_CONVOLUTION_MODE = "constant"
+EIGHT_NEIGHBOR_KERNEL = np.array(
+    [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
+    dtype=np.uint8,
+)
+FOUR_CONNECTED_KERNEL = np.array(
+    [[0, 1, 0], [1, 0, 1], [0, 1, 0]],
+    dtype=np.uint8,
+)
+
+
+class MorphOperation(Enum):
+    """CellProfiler Morph operation names."""
+
+    BRANCHPOINTS = "branchpoints"
+    BRIDGE = "bridge"
+    CLEAN = "clean"
+    CONVEX_HULL = "convex_hull"
+    DIAG = "diag"
+    DISTANCE = "distance"
+    ENDPOINTS = "endpoints"
+    FILL = "fill"
+    HBREAK = "hbreak"
+    MAJORITY = "majority"
+    OPENLINES = "openlines"
+    REMOVE = "remove"
+    SHRINK = "shrink"
+    SKELPE = "skelpe"
+    SPUR = "spur"
+    THICKEN = "thicken"
+    THIN = "thin"
+    VBREAK = "vbreak"
+
+
+class RepeatMode(Enum):
+    """CellProfiler Morph repeat policies."""
+
+    ONCE = "once"
+    FOREVER = "forever"
+    CUSTOM = "custom"
+
+
+@dataclass(frozen=True)
+class MorphOperationRequest:
+    """Execution context shared by registered Morph operation strategies."""
+
+    image: np.ndarray
+    iterations: int
+    rescale_values: bool
+    line_length: int
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION
+    memory_type: MemoryType = MemoryType.NUMPY
+
+
+MorphOperationImplementation = Callable[[MorphOperationRequest], np.ndarray]
+RepeatCountResolver = Callable[[int], int]
+NeighborConvolutionTransition = Callable[[np.ndarray, np.ndarray], np.ndarray]
+OpenLineStructureBuilder = Callable[[int], np.ndarray]
+
+
+class RegisteredCallableStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Shared callback substrate for registered CellProfiler morphology families."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    registry_key: ClassVar[str | None] = None
+    callback: ClassVar[Callable[..., Any] | None] = None
+
+    @classmethod
+    def registered_type_for(cls, key: object, label: str) -> type:
+        strategy_type = cls.__registry__.get(key)
+        if strategy_type is None:
+            raise ValueError(f"Unknown {label}: {key}")
+        return strategy_type
+
+    def invoke(self, *args: object) -> Any:
+        callback = type(self).callback
+        if callback is None:
+            raise TypeError(f"{type(self).__name__} cannot invoke callback")
+        return callback(*args)
+
+
+class MorphOperationStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+    """Registered implementation authority for CellProfiler Morph operations."""
+
+    __registry_key__ = "operation"
+    __skip_if_no_key__ = True
+    operation: ClassVar[MorphOperation | None] = None
+    callback: ClassVar[MorphOperationImplementation | None] = None
+
+    @classmethod
+    def for_operation(cls, operation: MorphOperation) -> "MorphOperationStrategy":
+        return cls.registered_type_for(operation, "Morph operation")()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if (
+            cls.operation is not None
+            and cls.callback is None
+            and cls.apply is MorphOperationStrategy.apply
+        ):
+            raise TypeError(
+                f"{cls.__name__} must declare implementation or apply() for Morph"
+            )
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        return self.invoke(request)
+
+
+class RepeatModeStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+    """Registered iteration-count policy for CellProfiler Morph repeat modes."""
+
+    __registry_key__ = "repeat_mode"
+    __skip_if_no_key__ = True
+    repeat_mode: ClassVar[RepeatMode | None] = None
+    callback: ClassVar[RepeatCountResolver | None] = None
+
+    @classmethod
+    def for_repeat_mode(cls, repeat_mode: RepeatMode) -> "RepeatModeStrategy":
+        return cls.registered_type_for(repeat_mode, "Morph repeat mode")()
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.repeat_mode is not None and cls.callback is None:
+            raise TypeError(f"{cls.__name__} must declare callback for RepeatMode")
+
+    def repeat_count(self, custom_repeats: int) -> int:
+        return self.invoke(custom_repeats)
+
+
+class OnceRepeatModeStrategy(RepeatModeStrategy):
+    """Run a Morph operation once."""
+
+    repeat_mode = RepeatMode.ONCE
+    callback = staticmethod(lambda custom_repeats: 1)
+
+
+class ForeverRepeatModeStrategy(RepeatModeStrategy):
+    """CellProfiler's bounded approximation of FOREVER repeat mode."""
+
+    repeat_mode = RepeatMode.FOREVER
+    callback = staticmethod(lambda custom_repeats: 10000)
+
+
+class CustomRepeatModeStrategy(RepeatModeStrategy):
+    """Run a Morph operation a declared number of times."""
+
+    repeat_mode = RepeatMode.CUSTOM
+    callback = staticmethod(lambda custom_repeats: custom_repeats)
+
+
+def _ensure_binary(image: np.ndarray) -> np.ndarray:
+    if image.dtype != bool:
+        return image != 0
+    return image
+
+
+class IterativeConvolutionMorphOperationStrategy(MorphOperationStrategy):
+    """Template strategy for Morph operations driven by neighbor convolution."""
+
+    kernel: ClassVar[np.ndarray | None] = None
+    transition: ClassVar[NeighborConvolutionTransition | None] = None
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.operation is not None and (cls.kernel is None or cls.transition is None):
+            raise TypeError(
+                f"{cls.__name__} must declare kernel and transition for Morph"
+            )
+
+    def apply(self, request: MorphOperationRequest) -> np.ndarray:
+        from scipy.ndimage import convolve
+
+        kernel = type(self).kernel
+        transition = type(self).transition
+        if kernel is None or transition is None:
+            raise TypeError(f"{type(self).__name__} cannot run convolutional Morph")
+
+        result = _ensure_binary(request.image).astype(np.float32)
+        for _ in range(request.iterations):
+            neighbor_count = convolve(
+                result.astype(np.uint8),
+                kernel,
+                mode=MORPH_CONVOLUTION_MODE,
+                cval=0,
+            )
+            result = transition(result, neighbor_count)
+        return result
+
+
+def _branchpoints(image: np.ndarray) -> np.ndarray:
+    from scipy.ndimage import convolve
+
+    binary = _ensure_binary(image)
+    neighbor_count = convolve(
+        binary.astype(np.uint8),
+        EIGHT_NEIGHBOR_KERNEL,
+        mode=MORPH_CONVOLUTION_MODE,
+        cval=0,
+    )
+    return (binary & (neighbor_count > 2)).astype(np.float32)
+
+
+def _bridge(image: np.ndarray, iterations: int = 1) -> np.ndarray:
+    from scipy.ndimage import convolve
+
+    result = _ensure_binary(image).astype(np.float32)
+    patterns = [
+        np.array([[1, 0, 0], [0, 0, 0], [0, 0, 1]]),
+        np.array([[0, 0, 1], [0, 0, 0], [1, 0, 0]]),
+        np.array([[0, 1, 0], [0, 0, 0], [0, 1, 0]]),
+        np.array([[0, 0, 0], [1, 0, 1], [0, 0, 0]]),
+    ]
+
+    for _ in range(iterations):
+        for pattern in patterns:
+            match = convolve(result, pattern, mode=MORPH_CONVOLUTION_MODE, cval=0)
+            result = np.where(match == 2, 1.0, result)
+    return result
+
+
+def _convex_hull(image: np.ndarray, morphology: "MorphologyBackendStrategy") -> np.ndarray:
+    binary = _ensure_binary(image)
+    if not np.any(binary):
+        return np.zeros_like(image, dtype=np.float32)
+    return morphology.convex_hull_image(binary).astype(np.float32)
+
+
+def _diag(image: np.ndarray, iterations: int = 1) -> np.ndarray:
+    from scipy.ndimage import binary_dilation
+
+    result = _ensure_binary(image).astype(np.float32)
+    struct = np.array([[1, 0, 1], [0, 1, 0], [1, 0, 1]], dtype=bool)
+    for _ in range(iterations):
+        dilated = binary_dilation(result > 0, structure=struct)
+        result = np.maximum(result, dilated.astype(np.float32))
+    return result
+
+
+def _distance(image: np.ndarray, rescale: bool = True) -> np.ndarray:
+    from scipy.ndimage import distance_transform_edt
+
+    binary = _ensure_binary(image)
+    dist = distance_transform_edt(binary)
+    if rescale and dist.max() > 0:
+        dist = dist / dist.max()
+    return dist.astype(np.float32)
+
+
+def _endpoints(image: np.ndarray) -> np.ndarray:
+    from scipy.ndimage import convolve
+
+    binary = _ensure_binary(image)
+    neighbor_count = convolve(
+        binary.astype(np.uint8),
+        EIGHT_NEIGHBOR_KERNEL,
+        mode=MORPH_CONVOLUTION_MODE,
+        cval=0,
+    )
+    return (binary & (neighbor_count == 1)).astype(np.float32)
+
+
+def _hbreak(image: np.ndarray, iterations: int = 1) -> np.ndarray:
+    from scipy.ndimage import convolve
+
+    result = _ensure_binary(image).astype(np.float32)
+    pattern = np.array([[1, 1, 1], [0, 1, 0], [1, 1, 1]], dtype=np.float32)
+    for _ in range(iterations):
+        match = convolve(result, pattern, mode=MORPH_CONVOLUTION_MODE, cval=0)
+        result = np.where((match >= 6) & (result > 0), 0.0, result)
+    return result
+
+
+def _majority(image: np.ndarray, iterations: int = 1) -> np.ndarray:
+    from scipy.ndimage import convolve
+
+    result = _ensure_binary(image).astype(np.float32)
+    kernel = np.ones((3, 3), dtype=np.float32)
+    for _ in range(iterations):
+        neighbor_sum = convolve(result, kernel, mode=MORPH_CONVOLUTION_MODE, cval=0)
+        result = (neighbor_sum >= 5).astype(np.float32)
+    return result
+
+
+class OpenLineStructuringElement(RegisteredCallableStrategy, metaclass=AutoRegisterMeta):
+    """Registered structuring-element authority for Morph OPENLINES angles."""
+
+    __registry_key__ = "angle"
+    __skip_if_no_key__ = True
+    angle: ClassVar[int | None] = None
+    callback: ClassVar[OpenLineStructureBuilder | None] = None
+
+    @classmethod
+    def registered_elements(cls) -> tuple["OpenLineStructuringElement", ...]:
+        return tuple(strategy_type() for strategy_type in cls.__registry__.values())
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        if cls.angle is not None and cls.callback is None:
+            raise TypeError(
+                f"{cls.__name__} must declare callback for Morph OPENLINES"
+            )
+
+    def structure(self, line_length: int) -> np.ndarray:
+        return self.invoke(line_length)
+
+
+class HorizontalOpenLineStructuringElement(OpenLineStructuringElement):
+    """Horizontal OPENLINES structuring element."""
+
+    angle = 0
+    callback = staticmethod(lambda line_length: np.ones((1, line_length), dtype=bool))
+
+
+class RisingDiagonalOpenLineStructuringElement(OpenLineStructuringElement):
+    """Rising diagonal OPENLINES structuring element."""
+
+    angle = 45
+    callback = staticmethod(lambda line_length: np.eye(line_length, dtype=bool))
+
+
+class VerticalOpenLineStructuringElement(OpenLineStructuringElement):
+    """Vertical OPENLINES structuring element."""
+
+    angle = 90
+    callback = staticmethod(lambda line_length: np.ones((line_length, 1), dtype=bool))
+
+
+class FallingDiagonalOpenLineStructuringElement(OpenLineStructuringElement):
+    """Falling diagonal OPENLINES structuring element."""
+
+    angle = 135
+    callback = staticmethod(lambda line_length: np.fliplr(np.eye(line_length, dtype=bool)))
+
+
+def _openlines(image: np.ndarray, line_length: int = 3) -> np.ndarray:
+    from scipy.ndimage import binary_dilation, binary_erosion
+
+    binary = _ensure_binary(image)
+    result = np.zeros_like(binary)
+    for element in OpenLineStructuringElement.registered_elements():
+        struct = element.structure(line_length)
+        eroded = binary_erosion(binary, structure=struct)
+        dilated = binary_dilation(eroded, structure=struct)
+        result = result | dilated
+    return result.astype(np.float32)
+
+
+def _shrink(image: np.ndarray, iterations: int = 1) -> np.ndarray:
+    from skimage.morphology import thin
+
+    binary = _ensure_binary(image)
+    return thin(binary, max_num_iter=iterations).astype(np.float32)
+
+
+def _skelpe(image: np.ndarray) -> np.ndarray:
+    from skimage.morphology import skeletonize
+
+    binary = _ensure_binary(image)
+    return skeletonize(binary).astype(np.float32)
+
+
+def _thicken(image: np.ndarray, iterations: int = 1) -> np.ndarray:
+    from scipy.ndimage import binary_dilation
+
+    result = _ensure_binary(image)
+    for _ in range(iterations):
+        result = binary_dilation(result)
+    return result.astype(np.float32)
+
+
+def _thin(image: np.ndarray, iterations: int = 1) -> np.ndarray:
+    from skimage.morphology import thin
+
+    binary = _ensure_binary(image)
+    return thin(binary, max_num_iter=iterations).astype(np.float32)
+
+
+def _vbreak(image: np.ndarray, iterations: int = 1) -> np.ndarray:
+    from scipy.ndimage import convolve
+
+    result = _ensure_binary(image).astype(np.float32)
+    pattern = np.array([[1, 0, 1], [1, 1, 1], [1, 0, 1]], dtype=np.float32)
+    for _ in range(iterations):
+        match = convolve(result, pattern, mode=MORPH_CONVOLUTION_MODE, cval=0)
+        result = np.where((match >= 6) & (result > 0), 0.0, result)
+    return result
+
+
+def convex_hull_morph_operation(request: MorphOperationRequest) -> np.ndarray:
+    """Run Morph CONVEX_HULL through the configured morphology backend."""
+    morphology = MorphologyBackendStrategy.for_memory_type(
+        request.memory_type,
+        backend_provider=request.backend_provider,
+    )
+    return _convex_hull(request.image, morphology)
+
+
+class BranchpointsMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.BRANCHPOINTS
+    callback = staticmethod(lambda request: _branchpoints(request.image))
+
+
+class BridgeMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.BRIDGE
+    callback = staticmethod(lambda request: _bridge(request.image, request.iterations))
+
+
+class CleanMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
+    operation = MorphOperation.CLEAN
+    kernel = EIGHT_NEIGHBOR_KERNEL
+    transition = staticmethod(
+        lambda result, neighbor_count: np.where(neighbor_count == 0, 0.0, result)
+    )
+
+
+class ConvexHullMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.CONVEX_HULL
+    callback = staticmethod(convex_hull_morph_operation)
+
+
+class DiagMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.DIAG
+    callback = staticmethod(lambda request: _diag(request.image, request.iterations))
+
+
+class DistanceMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.DISTANCE
+    callback = staticmethod(
+        lambda request: _distance(request.image, request.rescale_values)
+    )
+
+
+class EndpointsMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.ENDPOINTS
+    callback = staticmethod(lambda request: _endpoints(request.image))
+
+
+class FillMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
+    operation = MorphOperation.FILL
+    kernel = EIGHT_NEIGHBOR_KERNEL
+    transition = staticmethod(
+        lambda result, neighbor_count: np.where(neighbor_count == 8, 1.0, result)
+    )
+
+
+class HBreakMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.HBREAK
+    callback = staticmethod(lambda request: _hbreak(request.image, request.iterations))
+
+
+class MajorityMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.MAJORITY
+    callback = staticmethod(lambda request: _majority(request.image, request.iterations))
+
+
+class OpenLinesMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.OPENLINES
+    callback = staticmethod(lambda request: _openlines(request.image, request.line_length))
+
+
+class RemoveMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
+    operation = MorphOperation.REMOVE
+    kernel = FOUR_CONNECTED_KERNEL
+    transition = staticmethod(
+        lambda result, neighbor_count: np.where(neighbor_count == 4, 0.0, result)
+    )
+
+
+class ShrinkMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.SHRINK
+    callback = staticmethod(lambda request: _shrink(request.image, request.iterations))
+
+
+class SkelpeMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.SKELPE
+    callback = staticmethod(lambda request: _skelpe(request.image))
+
+
+class SpurMorphOperationStrategy(IterativeConvolutionMorphOperationStrategy):
+    operation = MorphOperation.SPUR
+    kernel = EIGHT_NEIGHBOR_KERNEL
+    transition = staticmethod(
+        lambda result, neighbor_count: np.where(
+            (neighbor_count == 1) & (result > 0),
+            0.0,
+            result,
+        )
+    )
+
+
+class ThickenMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.THICKEN
+    callback = staticmethod(lambda request: _thicken(request.image, request.iterations))
+
+
+class ThinMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.THIN
+    callback = staticmethod(lambda request: _thin(request.image, request.iterations))
+
+
+class VBreakMorphOperationStrategy(MorphOperationStrategy):
+    operation = MorphOperation.VBREAK
+    callback = staticmethod(lambda request: _vbreak(request.image, request.iterations))
+
+
+def apply_morph_operation(
+    image: np.ndarray,
+    operation: MorphOperation = MorphOperation.THIN,
+    repeat_mode: RepeatMode = RepeatMode.ONCE,
+    custom_repeats: int = 2,
+    rescale_values: bool = True,
+    line_length: int = 3,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    memory_type: MemoryType = MemoryType.NUMPY,
+) -> np.ndarray:
+    """Apply one CellProfiler Morph operation through registered backend policies."""
+    iterations = RepeatModeStrategy.for_repeat_mode(repeat_mode).repeat_count(
+        custom_repeats
+    )
+    return MorphOperationStrategy.for_operation(operation).apply(
+        MorphOperationRequest(
+            image=image,
+            iterations=iterations,
+            rescale_values=rescale_values,
+            line_length=line_length,
+            backend_provider=morphology_backend_provider,
+            memory_type=memory_type,
+        )
+    )
 
 
 def face_connected_component_structure(ndim: int) -> np.ndarray:
@@ -3754,9 +4284,15 @@ __all__ = [
     "MaskObjectsPlaneOperation",
     "MaskObjectsPlaneResult",
     "MaskObjectsStats",
+    "MorphOperation",
+    "MorphOperationRequest",
+    "MorphOperationStrategy",
     "MorphologyBackendStrategy",
     "NumbaNumpyMorphologyBackendStrategy",
     "NumpyMorphologyBackendStrategy",
+    "RepeatMode",
+    "RepeatModeStrategy",
+    "apply_morph_operation",
     "positive_dense_label_count",
     "prepare_expand_or_shrink_objects",
 ]
