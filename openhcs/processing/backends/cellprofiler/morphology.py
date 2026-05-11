@@ -20,6 +20,8 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.memory.decorators import numpy as numpy_decorator
+from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import (
     ExplicitObjectLabelDomainDeclaration,
@@ -29,11 +31,13 @@ from openhcs.core.runtime_semantics import (
     aligned_dense_object_labels_and_mask,
     dense_object_label_plane_id_domains,
     dense_object_label_max_present_id,
+    relabel_dense_object_labels_consecutive,
 )
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ObjectLabelPayload,
     ObjectLabelSet,
+    object_label_dense_array,
     object_label_payload_with_dense_labels,
 )
 from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
@@ -59,6 +63,8 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 HolePredicate = Callable[[int, bool], bool]
 ConnectivityStructureBuilder = Callable[[int], np.ndarray]
@@ -4341,6 +4347,330 @@ class SegmentCombineObjectsStrategy(CombineObjectsStrategy):
         return watershed(-distance, markers, mask=binary_x).astype(np.int32)
 
 
+class SplitOrMergeOperation(Enum):
+    """CellProfiler SplitOrMergeObjects top-level operation."""
+
+    MERGE = "merge"
+    SPLIT = "split"
+
+
+class SplitOrMergeMergeMethod(Enum):
+    """CellProfiler SplitOrMergeObjects merge selection."""
+
+    DISTANCE = "distance"
+    PER_PARENT = "per_parent"
+
+
+class SplitOrMergeOutputObjectType(Enum):
+    """CellProfiler SplitOrMergeObjects per-parent output mode."""
+
+    DISCONNECTED = "disconnected"
+    CONVEX_HULL = "convex_hull"
+
+
+class SplitOrMergeIntensityMethod(Enum):
+    """CellProfiler SplitOrMergeObjects guide-image criterion."""
+
+    CENTROIDS = "centroids"
+    CLOSEST_POINT = "closest_point"
+
+
+@dataclass
+class SplitOrMergeStats:
+    """CellProfiler SplitOrMergeObjects summary row."""
+
+    slice_index: int
+    input_object_count: int
+    output_object_count: int
+    operation: str
+
+
+@dataclass(frozen=True, slots=True)
+class SplitOrMergeRequest:
+    """Complete semantic request for SplitOrMergeObjects."""
+
+    image: np.ndarray
+    labels: np.ndarray
+    operation: SplitOrMergeOperation
+    merge_method: SplitOrMergeMergeMethod
+    output_object_type: SplitOrMergeOutputObjectType
+    distance_threshold: int
+    use_guide_image: bool
+    minimum_intensity_fraction: float
+    intensity_method: SplitOrMergeIntensityMethod
+    parent_labels: np.ndarray | None
+    morphology_backend_provider: BackendProviderInput
+
+    @property
+    def input_object_count(self) -> int:
+        return positive_dense_label_count(self.labels)
+
+
+class SplitOrMergeOperationStrategy(
+    EnumKeyedStrategyMixin[SplitOrMergeOperation],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal implementation for one SplitOrMergeObjects operation."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "operation"
+
+    operation: ClassVar[SplitOrMergeOperation]
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_operation(
+        cls,
+        operation: SplitOrMergeOperation | str,
+    ) -> "SplitOrMergeOperationStrategy":
+        return cls.for_enum_member(
+            coerce_cellprofiler_enum(SplitOrMergeOperation, operation)
+        )
+
+    @abstractmethod
+    def execute(self, request: SplitOrMergeRequest) -> np.ndarray:
+        """Return output labels for the operation."""
+
+
+class SplitObjectsStrategy(SplitOrMergeOperationStrategy):
+    operation = SplitOrMergeOperation.SPLIT
+
+    def execute(self, request: SplitOrMergeRequest) -> np.ndarray:
+        from scipy.ndimage import label as scipy_label
+
+        output_labels, _ = scipy_label(
+            request.labels > 0,
+            structure=np.ones((3, 3), bool),
+        )
+        return output_labels
+
+
+class MergeObjectsStrategy(SplitOrMergeOperationStrategy):
+    operation = SplitOrMergeOperation.MERGE
+
+    def execute(self, request: SplitOrMergeRequest) -> np.ndarray:
+        return SplitOrMergeMergeMethodStrategy.for_method(
+            request.merge_method,
+        ).merge(request)
+
+
+class SplitOrMergeMergeMethodStrategy(
+    EnumKeyedStrategyMixin[SplitOrMergeMergeMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal implementation for one SplitOrMergeObjects merge method."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+
+    method: ClassVar[SplitOrMergeMergeMethod]
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_method(
+        cls,
+        method: SplitOrMergeMergeMethod | str,
+    ) -> "SplitOrMergeMergeMethodStrategy":
+        return cls.for_enum_member(
+            coerce_cellprofiler_enum(SplitOrMergeMergeMethod, method)
+        )
+
+    @abstractmethod
+    def merge(self, request: SplitOrMergeRequest) -> np.ndarray:
+        """Return output labels for the merge method."""
+
+
+class DistanceSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
+    method = SplitOrMergeMergeMethod.DISTANCE
+
+    def merge(self, request: SplitOrMergeRequest) -> np.ndarray:
+        from scipy.ndimage import distance_transform_edt, label as scipy_label
+
+        mask = request.labels > 0
+        if request.distance_threshold > 0:
+            distance = distance_transform_edt(~mask)
+            mask = distance < (request.distance_threshold / 2.0 + 1)
+
+        output_labels, _ = scipy_label(mask, structure=np.ones((3, 3), bool))
+        output_labels[request.labels == 0] = 0
+
+        if request.use_guide_image:
+            output_labels = SplitOrMergeGuideImageFilter().filter(
+                request.labels,
+                output_labels,
+                request.image,
+                request.minimum_intensity_fraction,
+                request.intensity_method,
+            )
+
+        return relabel_dense_object_labels_consecutive(output_labels)
+
+
+class ParentSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
+    method = SplitOrMergeMergeMethod.PER_PARENT
+
+    def merge(self, request: SplitOrMergeRequest) -> np.ndarray:
+        if request.parent_labels is None:
+            raise ValueError("parent_labels are required when merge_method is PER_PARENT")
+
+        from skimage.measure import regionprops
+
+        output_labels = np.zeros_like(request.labels)
+        for prop in regionprops(request.labels):
+            child_mask = request.labels == prop.label
+            parent_values = request.parent_labels[child_mask]
+            parent_values = parent_values[parent_values > 0]
+            if len(parent_values) > 0:
+                output_labels[child_mask] = np.bincount(parent_values).argmax()
+            else:
+                output_labels[child_mask] = prop.label
+
+        if request.output_object_type == SplitOrMergeOutputObjectType.CONVEX_HULL:
+            output_labels = SplitOrMergeConvexHull().labels(
+                output_labels,
+                MorphologyBackendStrategy.for_callable(
+                    split_or_merge_objects,
+                    backend_provider=request.morphology_backend_provider,
+                ),
+            )
+
+        return relabel_dense_object_labels_consecutive(output_labels)
+
+
+class SplitOrMergeGuideImageFilter:
+    """Guide-image filtering policy for distance-based object merging."""
+
+    def filter(
+        self,
+        original_labels: np.ndarray,
+        merged_labels: np.ndarray,
+        image: np.ndarray,
+        minimum_intensity_fraction: float,
+        intensity_method: SplitOrMergeIntensityMethod,
+    ) -> np.ndarray:
+        if intensity_method is not SplitOrMergeIntensityMethod.CLOSEST_POINT:
+            return merged_labels.copy()
+
+        from scipy.ndimage import distance_transform_edt, label as scipy_label
+
+        _, indices = distance_transform_edt(
+            original_labels == 0,
+            return_indices=True,
+        )
+        closest_i, closest_j = indices
+        object_intensity = image[closest_i, closest_j] * minimum_intensity_fraction
+        valid_mask = (original_labels > 0) | (image >= object_intensity)
+        output_labels, _ = scipy_label(
+            valid_mask & (merged_labels > 0),
+            structure=np.ones((3, 3), bool),
+        )
+        output_labels[original_labels == 0] = 0
+        return output_labels
+
+
+class SplitOrMergeConvexHull:
+    """Convex-hull fill policy for per-parent merged labels."""
+
+    def labels(
+        self,
+        labels: np.ndarray,
+        morphology: MorphologyBackendStrategy,
+    ) -> np.ndarray:
+        output = np.zeros_like(labels)
+        unique_labels = np.unique(labels)
+        unique_labels = unique_labels[unique_labels > 0]
+
+        for label_id in unique_labels:
+            mask = labels == label_id
+            coords = np.argwhere(mask)
+            if len(coords) < 3:
+                output[mask] = label_id
+                continue
+
+            min_row = int(coords[:, 0].min())
+            max_row = int(coords[:, 0].max()) + 1
+            min_col = int(coords[:, 1].min())
+            max_col = int(coords[:, 1].max()) + 1
+            hull = morphology.convex_hull_image(mask[min_row:max_row, min_col:max_col])
+            output[min_row:max_row, min_col:max_col][hull] = label_id
+
+        return output
+
+
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+@special_inputs("labels")
+@special_outputs(
+    (
+        "split_merge_stats",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "input_object_count",
+                "output_object_count",
+                "operation",
+            ],
+            analysis_type="split_or_merge",
+        ),
+    ),
+    ("output_labels", segmentation_mask_rois()),
+)
+def split_or_merge_objects(
+    image: np.ndarray,
+    labels: np.ndarray,
+    operation: SplitOrMergeOperation = SplitOrMergeOperation.MERGE,
+    merge_method: SplitOrMergeMergeMethod = SplitOrMergeMergeMethod.DISTANCE,
+    output_object_type: SplitOrMergeOutputObjectType = (
+        SplitOrMergeOutputObjectType.DISCONNECTED
+    ),
+    distance_threshold: int = 0,
+    use_guide_image: bool = False,
+    minimum_intensity_fraction: float = 0.9,
+    intensity_method: SplitOrMergeIntensityMethod = SplitOrMergeIntensityMethod.CENTROIDS,
+    parent_labels: np.ndarray | None = None,
+    morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, SplitOrMergeStats, np.ndarray]:
+    """Split or merge dense object labels."""
+    labels_array = object_label_dense_array(labels, dtype=np.int32)
+    parent_array = (
+        None
+        if parent_labels is None
+        else object_label_dense_array(parent_labels, dtype=np.int32)
+    )
+    request = SplitOrMergeRequest(
+        image=image,
+        labels=labels_array,
+        operation=coerce_cellprofiler_enum(SplitOrMergeOperation, operation),
+        merge_method=coerce_cellprofiler_enum(SplitOrMergeMergeMethod, merge_method),
+        output_object_type=coerce_cellprofiler_enum(
+            SplitOrMergeOutputObjectType,
+            output_object_type,
+        ),
+        distance_threshold=distance_threshold,
+        use_guide_image=use_guide_image,
+        minimum_intensity_fraction=minimum_intensity_fraction,
+        intensity_method=coerce_cellprofiler_enum(
+            SplitOrMergeIntensityMethod,
+            intensity_method,
+        ),
+        parent_labels=parent_array,
+        morphology_backend_provider=morphology_backend_provider,
+    )
+    output_labels = SplitOrMergeOperationStrategy.for_operation(
+        request.operation,
+    ).execute(request)
+    stats = SplitOrMergeStats(
+        slice_index=0,
+        input_object_count=int(request.input_object_count),
+        output_object_count=int(positive_dense_label_count(output_labels)),
+        operation=request.operation.value,
+    )
+    return image, stats, output_labels.astype(np.int32)
+
+
 def positive_dense_label_count(labels: np.ndarray) -> int:
     """Return the count of positive labels present in a dense label image."""
     return int(len(np.unique(labels)) - (1 if 0 in labels else 0))
@@ -4715,6 +5045,20 @@ __all__ = [
     "NumpyMorphologyBackendStrategy",
     "RepeatMode",
     "RepeatModeStrategy",
+    "DistanceSplitOrMergeMergeMethodStrategy",
+    "MergeObjectsStrategy",
+    "ParentSplitOrMergeMergeMethodStrategy",
+    "SplitObjectsStrategy",
+    "SplitOrMergeConvexHull",
+    "SplitOrMergeGuideImageFilter",
+    "SplitOrMergeIntensityMethod",
+    "SplitOrMergeMergeMethod",
+    "SplitOrMergeMergeMethodStrategy",
+    "SplitOrMergeOperation",
+    "SplitOrMergeOperationStrategy",
+    "SplitOrMergeOutputObjectType",
+    "SplitOrMergeRequest",
+    "SplitOrMergeStats",
     "apply_morph_operation",
     "dense_label_area_statistics",
     "filter_border_objects",
@@ -4729,4 +5073,5 @@ __all__ = [
     "mask_planes_for_labels",
     "positive_dense_label_count",
     "prepare_expand_or_shrink_objects",
+    "split_or_merge_objects",
 ]
