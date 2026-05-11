@@ -77,6 +77,97 @@ class PerObjectAssignment(Enum):
     PARENT_WITH_MOST_OVERLAP = "parent_with_most_overlap"
 
 
+FilterObjectsParentChildRelationship = (
+    ObjectRelationship | ParentChildRelationshipPayload
+)
+FilterObjectsParentChildRelationships = tuple[FilterObjectsParentChildRelationship, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsRelationshipEndpointIds:
+    """Dense integer ids carried by a FilterObjects relationship endpoint."""
+
+    values: object
+
+    @property
+    def ids(self) -> tuple[int, ...]:
+        return tuple(int(value) for value in np.asarray(self.values).reshape(-1))
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsLabelPlane:
+    """Dense label plane with FilterObjects projection/alignment semantics."""
+
+    labels: np.ndarray
+
+    @property
+    def projected(self) -> np.ndarray:
+        return project_dense_object_label_stack(
+            object_label_dense_array(self.labels, dtype=np.int32)
+        )
+
+    def aligned_to(self, reference_labels: np.ndarray) -> np.ndarray:
+        _aligned_reference, aligned_labels = aligned_dense_object_label_arrays(
+            reference_labels,
+            object_label_dense_array(self.labels, dtype=np.int32),
+        )
+        return aligned_labels.astype(np.int32, copy=False)
+
+    @classmethod
+    def optional_aligned_to(
+        cls,
+        reference_labels: np.ndarray,
+        labels: np.ndarray | None,
+    ) -> np.ndarray | None:
+        if labels is None:
+            return None
+        return cls(labels).aligned_to(reference_labels)
+
+
+@dataclass(frozen=True, slots=True)
+class FilterObjectsMeasurementLimitWindow:
+    """Object-id retention policy for FilterObjects measurement bounds."""
+
+    values: ObjectLabelMeasurementValues
+    min_value: float | None
+    max_value: float | None
+    use_minimum: bool
+    use_maximum: bool
+
+    @classmethod
+    def from_label_indexed_values(
+        cls,
+        values: np.ndarray,
+        *,
+        min_value: float | None,
+        max_value: float | None,
+        use_minimum: bool,
+        use_maximum: bool,
+    ) -> "FilterObjectsMeasurementLimitWindow":
+        object_ids = tuple(range(1, len(values) + 1))
+        return cls(
+            ObjectLabelMeasurementValues.from_label_indexed_values(
+                object_ids,
+                values,
+            ),
+            min_value=min_value,
+            max_value=max_value,
+            use_minimum=use_minimum,
+            use_maximum=use_maximum,
+        )
+
+    @property
+    def retained_ids(self) -> list[int]:
+        return list(
+            self.values.ids_within_limits(
+                min_value=self.min_value,
+                max_value=self.max_value,
+                use_minimum=self.use_minimum,
+                use_maximum=self.use_maximum,
+            )
+        )
+
+
 @dataclass
 class FilterObjectsStats:
     slice_index: int
@@ -115,11 +206,8 @@ class FilterObjectsSelectionRequest:
     measurement_use_maximum: tuple[bool, ...]
     measurement_tables: tuple[MeasurementTable, ...]
     enclosing_labels: np.ndarray | None
-    parent_child_relationship: ObjectRelationship | ParentChildRelationshipPayload | None
-    parent_child_relationships: tuple[
-        ObjectRelationship | ParentChildRelationshipPayload,
-        ...,
-    ]
+    parent_child_relationship: FilterObjectsParentChildRelationship | None
+    parent_child_relationships: FilterObjectsParentChildRelationships
     per_object_assignment: PerObjectAssignment
     min_value: float | None
     max_value: float | None
@@ -129,6 +217,54 @@ class FilterObjectsSelectionRequest:
     @property
     def num_objects_pre(self) -> int:
         return len(self.object_ids)
+
+    def measurement_values_for_feature(
+        self,
+        feature_name: str,
+    ) -> ObjectLabelMeasurementValues:
+        """Resolve one FilterObjects measurement rule through the nominal source chain."""
+        return FilterObjectsMeasurementValuesSource.resolve_feature(self, feature_name)
+
+    def first_measurement_values(self) -> ObjectLabelMeasurementValues:
+        if self.measurement_values is not None:
+            return self.measurement_values
+        if self.measurement_features:
+            return self.measurement_values_for_feature(self.measurement_features[0])
+        return self.area_measurement_values()
+
+    def area_measurement_values(self) -> ObjectLabelMeasurementValues:
+        return ObjectLabelMeasurementValues.from_label_indexed_values(
+            self.object_ids,
+            DerivedMeasurementValuesStrategy.for_enum_member(
+                ObjectShapeMeasurementFeature.AREA
+            ).values(self.labels),
+        )
+
+    def matching_measurement_rule_ids(self) -> list[int]:
+        self.validate_measurement_rule_lengths()
+        retained_ids = set(self.object_ids)
+        for index, feature_name in enumerate(self.measurement_features):
+            keep_ids = FilterObjectsMeasurementLimitWindow(
+                values=self.measurement_values_for_feature(feature_name),
+                min_value=self.measurement_min_values[index],
+                max_value=self.measurement_max_values[index],
+                use_minimum=self.measurement_use_minimum[index],
+                use_maximum=self.measurement_use_maximum[index],
+            )
+            retained_ids.intersection_update(keep_ids.retained_ids)
+        return sorted(retained_ids)
+
+    def validate_measurement_rule_lengths(self) -> None:
+        expected = len(self.measurement_features)
+        lengths = {
+            len(self.measurement_min_values),
+            len(self.measurement_max_values),
+            len(self.measurement_use_minimum),
+            len(self.measurement_use_maximum),
+        }
+        if lengths == {expected}:
+            return
+        raise ValueError("FilterObjects measurement rule kwargs must align by row.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -205,6 +341,137 @@ class FormFactorDerivedMeasurementValuesStrategy(DerivedMeasurementValuesStrateg
         return form_factor_values(labels.astype(np.int32, copy=False), label_ids)
 
 
+class FilterObjectsMeasurementValuesSource(ABC, metaclass=AutoRegisterMeta):
+    """MRO-ordered FilterObjects measurement-value source chain."""
+
+    __registry_key__ = "source_label"
+    __skip_if_no_key__ = True
+    source_label: ClassVar[str | None] = None
+
+    @classmethod
+    def active_source_type(cls) -> type["FilterObjectsMeasurementValuesSource"]:
+        """Return the most-derived registered source; MRO defines precedence."""
+        return max(
+            cls.__registry__.values(),
+            key=lambda source_type: len(source_type.__mro__),
+        )
+
+    @classmethod
+    def resolve_feature(
+        cls,
+        request: FilterObjectsSelectionRequest,
+        feature_name: str,
+    ) -> ObjectLabelMeasurementValues:
+        if cls is FilterObjectsMeasurementValuesSource:
+            return cls.active_source_type().resolve_feature(request, feature_name)
+        values = measurement_values_for_feature(
+            request.measurement_tables,
+            feature_name,
+            object_count=request.num_objects_pre,
+            object_ids=request.object_ids,
+            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+        )
+        return ObjectLabelMeasurementValues(request.object_ids, values)
+
+
+class DerivedFilterObjectsMeasurementValuesSource(FilterObjectsMeasurementValuesSource):
+    """Resolve label-intrinsic measurements before falling back to tables."""
+
+    source_label = "derived"
+
+    @classmethod
+    def resolve_feature(
+        cls,
+        request: FilterObjectsSelectionRequest,
+        feature_name: str,
+    ) -> ObjectLabelMeasurementValues:
+        strategy = DerivedMeasurementValuesStrategy.for_feature_name(feature_name)
+        if strategy is not None:
+            return ObjectLabelMeasurementValues.from_label_indexed_values(
+                request.object_ids,
+                strategy.values(request.labels),
+            )
+        return super().resolve_feature(request, feature_name)
+
+
+class TableFilterObjectsMeasurementValuesSource(
+    DerivedFilterObjectsMeasurementValuesSource
+):
+    """Resolve explicit measurement tables before label-derived fallbacks."""
+
+    source_label = "measurement_table"
+
+    @classmethod
+    def resolve_feature(
+        cls,
+        request: FilterObjectsSelectionRequest,
+        feature_name: str,
+    ) -> ObjectLabelMeasurementValues:
+        if request.measurement_tables:
+            value_index = optional_measurement_value_index(
+                request.measurement_tables,
+                feature_name,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            )
+            if value_index is not None:
+                values_by_label, positional_values = value_index
+                if values_by_label:
+                    return ObjectLabelMeasurementValues.from_value_mapping(
+                        request.object_ids,
+                        values_by_label,
+                    )
+                if positional_values:
+                    return ObjectLabelMeasurementValues.from_positional_values(
+                        request.object_ids,
+                        positional_values,
+                    )
+        return super().resolve_feature(request, feature_name)
+
+
+class RelationshipChildCountFilterObjectsMeasurementValuesSource(
+    TableFilterObjectsMeasurementValuesSource
+):
+    """Resolve Children_* measurement rules from parent-child relationships."""
+
+    source_label = "relationship_child_count"
+
+    @classmethod
+    def resolve_feature(
+        cls,
+        request: FilterObjectsSelectionRequest,
+        feature_name: str,
+    ) -> ObjectLabelMeasurementValues:
+        child_name = child_count_feature_child_name(feature_name)
+        if child_name is not None:
+            for relationship in request.parent_child_relationships:
+                parent_ids = cls.parent_ids_for_child(relationship, child_name)
+                if parent_ids is None:
+                    continue
+                counts_by_parent_id: dict[int, float] = {
+                    object_id: 0.0 for object_id in request.object_ids
+                }
+                for parent_id in parent_ids:
+                    if parent_id in counts_by_parent_id:
+                        counts_by_parent_id[parent_id] += 1.0
+                return ObjectLabelMeasurementValues.from_value_mapping(
+                    request.object_ids,
+                    counts_by_parent_id,
+                )
+        return super().resolve_feature(request, feature_name)
+
+    @classmethod
+    def parent_ids_for_child(
+        cls,
+        relationship: FilterObjectsParentChildRelationship,
+        child_name: str,
+    ) -> tuple[int, ...] | None:
+        if isinstance(relationship, ObjectRelationship):
+            if relationship.target.name != child_name:
+                return None
+            return FilterObjectsRelationshipEndpointIds(relationship.source_ids).ids
+        return FilterObjectsRelationshipEndpointIds(relationship.parent_ids).ids
+
+
 class FilterSelectionStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal retained-object selection for each FilterObjects behavior."""
 
@@ -246,7 +513,19 @@ class BorderFilterSelectionStrategy(FilterSelectionStrategy):
         self,
         request: FilterObjectsSelectionRequest,
     ) -> list[int]:
-        return _discard_border_objects(request.labels)
+        return self.discard_border_objects(request.labels)
+
+    @staticmethod
+    def discard_border_objects(labels: np.ndarray) -> list[int]:
+        from scipy import ndimage as ndi
+
+        interior_pixels = ndi.binary_erosion(np.ones_like(labels, dtype=bool))
+        border_labels = set(labels[~interior_pixels])
+        keep_labels = list(set(labels.ravel()).difference(border_labels))
+        if 0 in keep_labels:
+            keep_labels.remove(0)
+        keep_labels.sort()
+        return keep_labels
 
 
 class LimitsFilterSelectionStrategy(FilterSelectionStrategy):
@@ -260,17 +539,17 @@ class LimitsFilterSelectionStrategy(FilterSelectionStrategy):
         request: FilterObjectsSelectionRequest,
     ) -> list[int]:
         if request.measurement_features:
-            return _keep_matching_measurement_rules(request)
+            return request.matching_measurement_rule_ids()
         values = request.measurement_values
         if values is None:
-            values = _area_measurement_values(request.labels, request.object_ids)
-        return _keep_within_limits(
-            values,
-            request.min_value,
-            request.max_value,
-            request.use_minimum,
-            request.use_maximum,
-        )
+            values = request.area_measurement_values()
+        return FilterObjectsMeasurementLimitWindow(
+            values=values,
+            min_value=request.min_value,
+            max_value=request.max_value,
+            use_minimum=request.use_minimum,
+            use_maximum=request.use_maximum,
+        ).retained_ids
 
 
 class ExtremumFilterSelectionStrategy(FilterSelectionStrategy):
@@ -287,7 +566,7 @@ class ExtremumFilterSelectionStrategy(FilterSelectionStrategy):
             raise TypeError("ExtremumFilterSelectionStrategy must define keep_max.")
         values = request.measurement_values
         if values is None:
-            values = _first_measurement_values(request)
+            values = request.first_measurement_values()
         return _keep_one(values, keep_max=keep_max)
 
 
@@ -319,7 +598,7 @@ class PerObjectFilterSelectionStrategy(FilterSelectionStrategy):
         selection_key = type(self).selection_key
         if selection_key is None or selection_key.method is None:
             raise TypeError("PerObjectFilterSelectionStrategy must define method.")
-        values = _first_measurement_values(request).dense_label_indexed(
+        values = request.first_measurement_values().dense_label_indexed(
             max_label=int(request.labels.max()) if request.labels.size else 0
         )
         return PerObjectAssignmentStrategy.for_assignment(
@@ -365,7 +644,7 @@ class PerObjectAssignmentRequest:
     measurement_values: np.ndarray
     child_count: int
     keep_max: bool
-    parent_child_relationship: ObjectRelationship | ParentChildRelationshipPayload | None = None
+    parent_child_relationship: FilterObjectsParentChildRelationship | None = None
 
     def __post_init__(self) -> None:
         if self.child_labels.shape != self.enclosing_labels.shape:
@@ -398,14 +677,97 @@ class PerObjectAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
         return strategy_type()
 
     def indexes_to_keep(self, request: PerObjectAssignmentRequest) -> list[int]:
-        parent_children = (
-            _parent_children_from_relationship(request.parent_child_relationship)
-            or self.parent_children(request)
+        parent_children = self.parent_children_from_relationship(request) or (
+            self.parent_children(request)
         )
-        return _best_child_indexes_by_parent(
-            parent_children,
-            request.measurement_values,
-            request.keep_max,
+        return self.best_child_indexes_by_parent(parent_children, request)
+
+    def parent_children_from_relationship(
+        self,
+        request: PerObjectAssignmentRequest,
+    ) -> dict[int, set[int]]:
+        relationship = request.parent_child_relationship
+        if relationship is None:
+            return {}
+        if isinstance(relationship, ObjectRelationship):
+            parent_ids = relationship.source_ids
+            child_ids = relationship.target_ids
+        elif isinstance(relationship, ParentChildRelationshipPayload):
+            parent_ids = relationship.parent_ids
+            child_ids = relationship.child_ids
+        else:
+            raise TypeError(
+                "FilterObjects parent_child_relationship must be "
+                "ObjectRelationship or ParentChildRelationshipPayload, got "
+                f"{type(relationship).__name__}."
+            )
+
+        parent_children: dict[int, set[int]] = {}
+        for parent_id, child_id in zip(
+            FilterObjectsRelationshipEndpointIds(parent_ids).ids,
+            FilterObjectsRelationshipEndpointIds(child_ids).ids,
+            strict=True,
+        ):
+            if parent_id > 0 and child_id > 0:
+                parent_children.setdefault(parent_id, set()).add(child_id)
+        return parent_children
+
+    def best_child_indexes_by_parent(
+        self,
+        parent_children: dict[int, set[int]],
+        request: PerObjectAssignmentRequest,
+    ) -> list[int]:
+        selected: set[int] = set()
+        for child_ids in parent_children.values():
+            child_values = tuple(
+                (
+                    child_id,
+                    self.measurement_value_for_child(
+                        request.measurement_values,
+                        child_id,
+                    ),
+                )
+                for child_id in child_ids
+            )
+            finite_child_values = tuple(
+                (child_id, value)
+                for child_id, value in child_values
+                if np.isfinite(value)
+            )
+            if not finite_child_values:
+                continue
+            selected.add(
+                min(
+                    finite_child_values,
+                    key=(
+                        (lambda item: (-item[1], item[0]))
+                        if request.keep_max
+                        else (lambda item: (item[1], item[0]))
+                    ),
+                )[0]
+            )
+        return sorted(selected)
+
+    @staticmethod
+    def measurement_value_for_child(
+        measurement_values: np.ndarray,
+        child_id: int,
+    ) -> float:
+        value_index = child_id - 1
+        if value_index < 0 or value_index >= len(measurement_values):
+            return float("nan")
+        return float(measurement_values[value_index])
+
+    @staticmethod
+    def overlap_label_pairs(
+        request: PerObjectAssignmentRequest,
+    ) -> tuple[tuple[int, int], ...]:
+        overlap_mask = (request.child_labels > 0) & (request.enclosing_labels > 0)
+        child_ids = request.child_labels[overlap_mask].astype(np.int64, copy=False)
+        parent_ids = request.enclosing_labels[overlap_mask].astype(np.int64, copy=False)
+        return tuple(
+            (int(child_id), int(parent_id))
+            for child_id, parent_id in zip(child_ids, parent_ids, strict=True)
         )
 
     @abstractmethod
@@ -435,7 +797,7 @@ class BothParentsAssignmentStrategy(PerObjectAssignmentStrategy):
         request: PerObjectAssignmentRequest,
     ) -> dict[int, set[int]]:
         parent_children: dict[int, set[int]] = {}
-        for child_id, parent_id in _overlap_label_pairs(request):
+        for child_id, parent_id in self.overlap_label_pairs(request):
             parent_children.setdefault(parent_id, set()).add(child_id)
         return parent_children
 
@@ -447,14 +809,11 @@ class ParentWithMostOverlapAssignmentStrategy(PerObjectAssignmentStrategy):
     assignment_label = assignment.value
 
     def indexes_to_keep(self, request: PerObjectAssignmentRequest) -> list[int]:
-        parent_children = _parent_children_from_relationship(
-            request.parent_child_relationship
-        )
+        parent_children = self.parent_children_from_relationship(request)
         if parent_children:
-            return _best_child_indexes_by_parent(
+            return self.best_child_indexes_by_parent(
                 parent_children,
-                request.measurement_values,
-                request.keep_max,
+                request,
             )
         return _best_child_indexes_parent_with_most_overlap(
             request.child_labels,
@@ -468,7 +827,7 @@ class ParentWithMostOverlapAssignmentStrategy(PerObjectAssignmentStrategy):
         request: PerObjectAssignmentRequest,
     ) -> dict[int, set[int]]:
         counts_by_child: dict[int, dict[int, int]] = {}
-        for child_id, parent_id in _overlap_label_pairs(request):
+        for child_id, parent_id in self.overlap_label_pairs(request):
             parent_counts = counts_by_child.setdefault(child_id, {})
             parent_counts[parent_id] = parent_counts.get(parent_id, 0) + 1
 
@@ -503,13 +862,8 @@ def filter_objects(
     measurement_use_maximum: tuple[bool, ...] = (),
     measurement_tables: tuple[MeasurementTable, ...] = (),
     enclosing_object_labels: Optional[np.ndarray] = None,
-    parent_child_relationship: Optional[
-        ObjectRelationship | ParentChildRelationshipPayload
-    ] = None,
-    parent_child_relationships: tuple[
-        ObjectRelationship | ParentChildRelationshipPayload,
-        ...,
-    ] = (),
+    parent_child_relationship: Optional[FilterObjectsParentChildRelationship] = None,
+    parent_child_relationships: FilterObjectsParentChildRelationships = (),
     per_object_assignment: PerObjectAssignment = PerObjectAssignment.BOTH_PARENTS,
     min_value: Optional[float] = None,
     max_value: Optional[float] = None,
@@ -561,10 +915,10 @@ def filter_objects(
             "FilterObjects additional_object_count must match additional object "
             "label inputs."
         )
-    labels = _label_plane(object_labels[0])
+    labels = FilterObjectsLabelPlane(object_labels[0]).projected
     labels = labels.astype(np.int32)
     additional_label_planes = tuple(
-        _aligned_label_plane(labels, value)
+        FilterObjectsLabelPlane(value).aligned_to(labels)
         for value in object_labels[1:]
     )
     input_label_planes = (labels, *additional_label_planes)
@@ -618,7 +972,7 @@ def filter_objects(
             measurement_use_minimum=measurement_use_minimum,
             measurement_use_maximum=measurement_use_maximum,
             measurement_tables=measurement_tables,
-            enclosing_labels=_optional_aligned_label_plane(
+            enclosing_labels=FilterObjectsLabelPlane.optional_aligned_to(
                 labels,
                 enclosing_object_labels,
             ),
@@ -693,55 +1047,6 @@ def _filtered_object_payload(
     )
 
 
-def _discard_border_objects(labels: np.ndarray) -> list[int]:
-    """
-    Return indices of objects not touching the image border.
-    
-    Args:
-        labels: Label image
-    
-    Returns:
-        List of label indices to keep
-    """
-    from scipy import ndimage as ndi
-    
-    # Create interior mask (erode by 1 pixel)
-    interior_pixels = ndi.binary_erosion(np.ones_like(labels, dtype=bool))
-    border_pixels = ~interior_pixels
-    
-    # Find labels touching the border
-    border_labels = set(labels[border_pixels])
-    
-    # Get all labels and remove border-touching ones
-    all_labels = set(labels.ravel())
-    keep_labels = list(all_labels.difference(border_labels))
-    
-    # Remove background (0) if present
-    if 0 in keep_labels:
-        keep_labels.remove(0)
-    
-    keep_labels.sort()
-    return keep_labels
-
-
-def _keep_within_limits(
-    values: ObjectLabelMeasurementValues,
-    min_value: Optional[float],
-    max_value: Optional[float],
-    use_minimum: bool,
-    use_maximum: bool
-) -> list[int]:
-    """Keep objects whose measurements fall within specified limits."""
-    return list(
-        values.ids_within_limits(
-            min_value=min_value,
-            max_value=max_value,
-            use_minimum=use_minimum,
-            use_maximum=use_maximum,
-        )
-    )
-
-
 def _keep_one(
     values: ObjectLabelMeasurementValues,
     keep_max: bool = True,
@@ -758,18 +1063,6 @@ def _require_enclosing_labels(
         return request.enclosing_labels
     raise ValueError(
         "FilterObjects per-object filtering requires enclosing object labels."
-    )
-
-
-def _overlap_label_pairs(
-    request: PerObjectAssignmentRequest,
-) -> tuple[tuple[int, int], ...]:
-    overlap_mask = (request.child_labels > 0) & (request.enclosing_labels > 0)
-    child_ids = request.child_labels[overlap_mask].astype(np.int64, copy=False)
-    parent_ids = request.enclosing_labels[overlap_mask].astype(np.int64, copy=False)
-    return tuple(
-        (int(child_id), int(parent_id))
-        for child_id, parent_id in zip(child_ids, parent_ids, strict=True)
     )
 
 
@@ -988,144 +1281,12 @@ def _selected_labels_to_list(selected: np.ndarray) -> list[int]:
     return np.flatnonzero(np.asarray(selected, dtype=bool)).astype(int).tolist()
 
 
-def _best_child_indexes_by_parent(
-    parent_children: dict[int, set[int]],
-    measurement_values: np.ndarray,
-    keep_max: bool,
-) -> list[int]:
-    selected: set[int] = set()
-    for child_ids in parent_children.values():
-        child_values = tuple(
-            (child_id, _measurement_value_for_child(measurement_values, child_id))
-            for child_id in child_ids
-        )
-        finite_child_values = tuple(
-            (child_id, value)
-            for child_id, value in child_values
-            if np.isfinite(value)
-        )
-        if not finite_child_values:
-            continue
-        selected.add(
-            min(
-                finite_child_values,
-                key=(
-                    (lambda item: (-item[1], item[0]))
-                    if keep_max
-                    else (lambda item: (item[1], item[0]))
-                ),
-            )[0]
-        )
-    return sorted(selected)
-
-
-def _parent_children_from_relationship(
-    relationship: ObjectRelationship | ParentChildRelationshipPayload | None,
-) -> dict[int, set[int]]:
-    if relationship is None:
-        return {}
-    if isinstance(relationship, ObjectRelationship):
-        parent_ids = relationship.source_ids
-        child_ids = relationship.target_ids
-    elif isinstance(relationship, ParentChildRelationshipPayload):
-        parent_ids = relationship.parent_ids
-        child_ids = relationship.child_ids
-    else:
-        raise TypeError(
-            "FilterObjects parent_child_relationship must be "
-            "ObjectRelationship or ParentChildRelationshipPayload, got "
-            f"{type(relationship).__name__}."
-        )
-
-    parent_children: dict[int, set[int]] = {}
-    for parent_id, child_id in zip(
-        _relationship_ids(parent_ids),
-        _relationship_ids(child_ids),
-        strict=True,
-    ):
-        if parent_id > 0 and child_id > 0:
-            parent_children.setdefault(parent_id, set()).add(child_id)
-    return parent_children
-
-
-def _relationship_ids(values: object) -> tuple[int, ...]:
-    return tuple(int(value) for value in np.asarray(values).reshape(-1))
-
-
-def _measurement_value_for_child(
-    measurement_values: np.ndarray,
-    child_id: int,
-) -> float:
-    value_index = child_id - 1
-    if value_index < 0 or value_index >= len(measurement_values):
-        return float("nan")
-    return float(measurement_values[value_index])
-
-
-def _keep_matching_measurement_rules(
-    request: FilterObjectsSelectionRequest,
-) -> list[int]:
-    _validate_measurement_rule_lengths(request)
-    retained_ids = set(request.object_ids)
-    for index, feature_name in enumerate(request.measurement_features):
-        values = _selection_measurement_values(request, feature_name)
-        keep_ids = _keep_within_limits(
-            values,
-            request.measurement_min_values[index],
-            request.measurement_max_values[index],
-            request.measurement_use_minimum[index],
-            request.measurement_use_maximum[index],
-        )
-        retained_ids.intersection_update(keep_ids)
-    return sorted(retained_ids)
-
-
-def _first_measurement_values(
-    request: FilterObjectsSelectionRequest,
-) -> ObjectLabelMeasurementValues:
-    if request.measurement_values is not None:
-        return request.measurement_values
-    if request.measurement_features:
-        return _selection_measurement_values(request, request.measurement_features[0])
-    return _area_measurement_values(request.labels, request.object_ids)
-
-
-def _selection_measurement_values(
-    request: FilterObjectsSelectionRequest,
-    feature_name: str,
-) -> ObjectLabelMeasurementValues:
-    relationship_values = _relationship_child_count_values_or_none(
-        request,
-        feature_name,
-    )
-    if relationship_values is not None:
-        return relationship_values
-    table_values = _measurement_table_values_or_none(request, feature_name)
-    if table_values is not None:
-        return table_values
-    derived_values = _derived_measurement_values(
-        feature_name,
-        request.labels,
-        request.object_ids,
-    )
-    if derived_values is not None:
-        return derived_values
-    values = measurement_values_for_feature(
-        request.measurement_tables,
-        feature_name,
-        object_count=request.num_objects_pre,
-        object_ids=request.object_ids,
-        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-    )
-    return ObjectLabelMeasurementValues(request.object_ids, values)
-
-
 def _relationship_tuple(
-    relationship: ObjectRelationship | ParentChildRelationshipPayload | None,
-    relationships: Sequence[ObjectRelationship | ParentChildRelationshipPayload],
-) -> tuple[ObjectRelationship | ParentChildRelationshipPayload, ...]:
+    relationship: FilterObjectsParentChildRelationship | None,
+    relationships: Sequence[FilterObjectsParentChildRelationship],
+) -> FilterObjectsParentChildRelationships:
     ordered = (*(() if relationship is None else (relationship,)), *tuple(relationships))
-    unique: list[ObjectRelationship | ParentChildRelationshipPayload] = []
+    unique: list[FilterObjectsParentChildRelationship] = []
     seen: set[tuple[str, str] | int] = set()
     for value in ordered:
         key: tuple[str, str] | int
@@ -1138,140 +1299,6 @@ def _relationship_tuple(
         seen.add(key)
         unique.append(value)
     return tuple(unique)
-
-
-def _relationship_child_count_values_or_none(
-    request: FilterObjectsSelectionRequest,
-    feature_name: str,
-) -> ObjectLabelMeasurementValues | None:
-    child_name = child_count_feature_child_name(feature_name)
-    if child_name is None:
-        return None
-    for relationship in request.parent_child_relationships:
-        parent_ids = _relationship_parent_ids_for_child(relationship, child_name)
-        if parent_ids is None:
-            continue
-        counts_by_parent_id: dict[int, float] = {
-            object_id: 0.0 for object_id in request.object_ids
-        }
-        for parent_id in parent_ids:
-            if parent_id in counts_by_parent_id:
-                counts_by_parent_id[parent_id] += 1.0
-        return ObjectLabelMeasurementValues.from_value_mapping(
-            request.object_ids,
-            counts_by_parent_id,
-        )
-    return None
-
-
-def _relationship_parent_ids_for_child(
-    relationship: ObjectRelationship | ParentChildRelationshipPayload,
-    child_name: str,
-) -> tuple[int, ...] | None:
-    if isinstance(relationship, ObjectRelationship):
-        if relationship.target.name != child_name:
-            return None
-        return _relationship_ids(relationship.source_ids)
-    return _relationship_ids(relationship.parent_ids)
-
-
-def _measurement_table_values_or_none(
-    request: FilterObjectsSelectionRequest,
-    feature_name: str,
-) -> ObjectLabelMeasurementValues | None:
-    if not request.measurement_tables:
-        return None
-    value_index = optional_measurement_value_index(
-        request.measurement_tables,
-        feature_name,
-        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-    )
-    if value_index is None:
-        return None
-    values_by_label, positional_values = value_index
-    if values_by_label:
-        return ObjectLabelMeasurementValues.from_value_mapping(
-            request.object_ids,
-            values_by_label,
-        )
-    if positional_values:
-        return ObjectLabelMeasurementValues.from_positional_values(
-            request.object_ids,
-            positional_values,
-        )
-    return None
-
-
-def _derived_measurement_values(
-    feature_name: str,
-    labels: np.ndarray,
-    object_ids: tuple[int, ...],
-) -> ObjectLabelMeasurementValues | None:
-    """Return values for label-intrinsic features from current geometry."""
-    strategy = DerivedMeasurementValuesStrategy.for_feature_name(feature_name)
-    if strategy is None:
-        return None
-    return ObjectLabelMeasurementValues.from_label_indexed_values(
-        object_ids,
-        strategy.values(labels),
-    )
-
-
-def _area_measurement_values(
-    labels: np.ndarray,
-    object_ids: tuple[int, ...],
-) -> ObjectLabelMeasurementValues:
-    return ObjectLabelMeasurementValues.from_label_indexed_values(
-        object_ids,
-        DerivedMeasurementValuesStrategy.for_enum_member(
-            ObjectShapeMeasurementFeature.AREA
-        ).values(labels),
-    )
-
-
-def _validate_measurement_rule_lengths(
-    request: FilterObjectsSelectionRequest,
-) -> None:
-    expected = len(request.measurement_features)
-    lengths = {
-        len(request.measurement_min_values),
-        len(request.measurement_max_values),
-        len(request.measurement_use_minimum),
-        len(request.measurement_use_maximum),
-    }
-    if lengths == {expected}:
-        return
-    raise ValueError("FilterObjects measurement rule kwargs must align by row.")
-
-
-def _label_plane(labels: np.ndarray) -> np.ndarray:
-    """Return the label plane FilterObjects should operate on."""
-    return project_dense_object_label_stack(
-        object_label_dense_array(labels, dtype=np.int32)
-    )
-
-
-def _aligned_label_plane(
-    reference_labels: np.ndarray,
-    labels: np.ndarray,
-) -> np.ndarray:
-    """Return labels aligned to the primary FilterObjects label geometry."""
-    _aligned_reference, aligned_labels = aligned_dense_object_label_arrays(
-        reference_labels,
-        object_label_dense_array(labels, dtype=np.int32),
-    )
-    return aligned_labels.astype(np.int32, copy=False)
-
-
-def _optional_aligned_label_plane(
-    reference_labels: np.ndarray,
-    labels: np.ndarray | None,
-) -> np.ndarray | None:
-    if labels is None:
-        return None
-    return _aligned_label_plane(reference_labels, labels)
-
-
 def _relabel_overlapping_objects(
     labels: np.ndarray,
     filtered_primary_labels: np.ndarray,
@@ -1390,13 +1417,13 @@ def filter_objects_by_size(
     num_objects_pre = len(region_props.label)
     
     # Filter by area limits
-    indexes_to_keep = _keep_within_limits(
+    indexes_to_keep = FilterObjectsMeasurementLimitWindow.from_label_indexed_values(
         areas,
-        min_area,
-        max_area,
-        use_minimum,
-        use_maximum
-    )
+        min_value=min_area,
+        max_value=max_area,
+        use_minimum=use_minimum,
+        use_maximum=use_maximum,
+    ).retained_ids
     
     # Create new label image
     new_object_count = len(indexes_to_keep)
@@ -1452,7 +1479,7 @@ def filter_border_objects(
     unique_labels = unique_labels[unique_labels > 0]
     num_objects_pre = len(unique_labels)
     
-    indexes_to_keep = _discard_border_objects(labels)
+    indexes_to_keep = BorderFilterSelectionStrategy.discard_border_objects(labels)
     
     # Create new label image
     new_object_count = len(indexes_to_keep)
