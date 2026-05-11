@@ -7,12 +7,12 @@ defines the location of a grid that can be used by modules downstream.
 
 import numpy as np
 from typing import Tuple
-from numba import njit
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs, special_inputs
 from openhcs.core.runtime_semantics import SpatialGridOrdering, SpatialGridOrigin
 from openhcs.core.runtime_values import SpatialGrid, object_label_dense_array
+from openhcs.processing.backends.cellprofiler.grid import label_centroid_extremes
 from openhcs.processing.materialization import csv_materializer
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
@@ -164,7 +164,7 @@ def define_grid_automatic(
     origin = coerce_cellprofiler_enum(SpatialGridOrigin, origin)
     ordering = coerce_cellprofiler_enum(SpatialGridOrdering, ordering)
 
-    object_count, first_y, first_x, second_y, second_x = _label_centroid_extremes(
+    object_count, first_y, first_x, second_y, second_x = label_centroid_extremes(
         object_label_dense_array(labels, dtype=np.int32)
     )
     if object_count < 2:
@@ -239,66 +239,6 @@ def define_grid_automatic(
         source_spatial_shape_yx=tuple(int(value) for value in image.shape[-2:]),
     )
     return image, grid_topology
-
-
-def _label_centroid_extremes(labels: np.ndarray) -> tuple[int, float, float, float, float]:
-    label_array = np.ascontiguousarray(labels, dtype=np.int32)
-    if label_array.ndim != 2:
-        raise ValueError(f"Automatic grid labels must be 2D, got {label_array.ndim}D.")
-    return _label_centroid_extremes_numba(label_array)
-
-
-@njit(cache=True)
-def _label_centroid_extremes_numba(
-    labels: np.ndarray,
-) -> tuple[int, float, float, float, float]:
-    max_label = 0
-    height, width = labels.shape
-    for y in range(height):
-        for x in range(width):
-            label = int(labels[y, x])
-            if label > max_label:
-                max_label = label
-
-    if max_label <= 0:
-        return 0, 0.0, 0.0, 0.0, 0.0
-
-    counts = np.zeros(max_label + 1, dtype=np.int64)
-    y_sums = np.zeros(max_label + 1, dtype=np.float64)
-    x_sums = np.zeros(max_label + 1, dtype=np.float64)
-    for y in range(height):
-        for x in range(width):
-            label = int(labels[y, x])
-            if label <= 0:
-                continue
-            counts[label] += 1
-            y_sums[label] += float(y)
-            x_sums[label] += float(x)
-
-    object_count = 0
-    first_y = np.inf
-    first_x = np.inf
-    second_y = -np.inf
-    second_x = -np.inf
-    for label in range(1, max_label + 1):
-        count = counts[label]
-        if count == 0:
-            continue
-        object_count += 1
-        centroid_y = y_sums[label] / count
-        centroid_x = x_sums[label] / count
-        if centroid_y < first_y:
-            first_y = centroid_y
-        if centroid_y > second_y:
-            second_y = centroid_y
-        if centroid_x < first_x:
-            first_x = centroid_x
-        if centroid_x > second_x:
-            second_x = centroid_x
-
-    if object_count == 0:
-        return 0, 0.0, 0.0, 0.0, 0.0
-    return object_count, first_y, first_x, second_y, second_x
 
 
 @numpy(contract=ProcessingContract.PURE_2D)

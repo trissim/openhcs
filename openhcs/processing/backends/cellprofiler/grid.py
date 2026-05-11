@@ -20,6 +20,69 @@ from openhcs.core.runtime_values import (
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
 
+def label_centroid_extremes(
+    labels: np.ndarray,
+) -> tuple[int, float, float, float, float]:
+    """Return object count and min/max centroid coordinates for dense labels."""
+    label_array = np.ascontiguousarray(labels, dtype=np.int32)
+    if label_array.ndim != 2:
+        raise ValueError(f"Automatic grid labels must be 2D, got {label_array.ndim}D.")
+    return _label_centroid_extremes_numba(label_array)
+
+
+@njit(cache=True)
+def _label_centroid_extremes_numba(
+    labels: np.ndarray,
+) -> tuple[int, float, float, float, float]:
+    max_label = 0
+    height, width = labels.shape
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+
+    if max_label <= 0:
+        return 0, 0.0, 0.0, 0.0, 0.0
+
+    counts = np.zeros(max_label + 1, dtype=np.int64)
+    y_sums = np.zeros(max_label + 1, dtype=np.float64)
+    x_sums = np.zeros(max_label + 1, dtype=np.float64)
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label <= 0:
+                continue
+            counts[label] += 1
+            y_sums[label] += float(y)
+            x_sums[label] += float(x)
+
+    object_count = 0
+    first_y = np.inf
+    first_x = np.inf
+    second_y = -np.inf
+    second_x = -np.inf
+    for label in range(1, max_label + 1):
+        count = counts[label]
+        if count == 0:
+            continue
+        object_count += 1
+        centroid_y = y_sums[label] / count
+        centroid_x = x_sums[label] / count
+        if centroid_y < first_y:
+            first_y = centroid_y
+        if centroid_y > second_y:
+            second_y = centroid_y
+        if centroid_x < first_x:
+            first_x = centroid_x
+        if centroid_x > second_x:
+            second_x = centroid_x
+
+    if object_count == 0:
+        return 0, 0.0, 0.0, 0.0, 0.0
+    return object_count, first_y, first_x, second_y, second_x
+
+
 class ShapeChoice(Enum):
     RECTANGLE = "rectangle_forced_location"
     CIRCLE_FORCED = "circle_forced_location"
