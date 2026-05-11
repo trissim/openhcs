@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 import json
 from typing import Any
 
@@ -14,6 +15,8 @@ import scipy.ndimage
 import skimage.segmentation
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
+from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory import numpy as numpy_decorator
 from openhcs.core.pipeline.function_contracts import (
     ObjectLabelMeasurementExecution,
@@ -39,6 +42,27 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.cellprofiler.image_geometry import (
     cellprofiler_grayscale_plane,
 )
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+
+class RescaleMethod(Enum):
+    STRETCH = "stretch"
+    MANUAL_INPUT_RANGE = "manual_input_range"
+    MANUAL_IO_RANGE = "manual_io_range"
+    DIVIDE_BY_IMAGE_MINIMUM = "divide_by_image_minimum"
+    DIVIDE_BY_IMAGE_MAXIMUM = "divide_by_image_maximum"
+    DIVIDE_BY_VALUE = "divide_by_value"
+
+
+class AutomaticLow(Enum):
+    CUSTOM = "custom"
+    EACH_IMAGE = "each_image"
+
+
+class AutomaticHigh(Enum):
+    CUSTOM = "custom"
+    EACH_IMAGE = "each_image"
 
 
 @dataclass(frozen=True, slots=True)
@@ -564,6 +588,118 @@ def measure_image_intensity_masked(
         ),
     )
     return image, measurements
+
+
+@runtime_image_execution_mode(ImagePayloadExecutionMode.FULL_STACK)
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def rescale_intensity(
+    image: np.ndarray,
+    rescale_method: RescaleMethod = RescaleMethod.STRETCH,
+    automatic_low: AutomaticLow = AutomaticLow.EACH_IMAGE,
+    automatic_high: AutomaticHigh = AutomaticHigh.EACH_IMAGE,
+    source_low: float = 0.0,
+    source_high: float = 1.0,
+    dest_low: float = 0.0,
+    dest_high: float = 1.0,
+    divisor_value: float = 1.0,
+) -> np.ndarray:
+    """Rescale CellProfiler image intensity using its declared range policy."""
+    from skimage.exposure import rescale_intensity as skimage_rescale
+
+    rescale_method = coerce_cellprofiler_enum(RescaleMethod, rescale_method)
+    automatic_low = coerce_cellprofiler_enum(AutomaticLow, automatic_low)
+    automatic_high = coerce_cellprofiler_enum(AutomaticHigh, automatic_high)
+    data = image.astype(np.float64)
+
+    if rescale_method == RescaleMethod.STRETCH:
+        in_min = np.min(data)
+        in_max = np.max(data)
+        if in_min == in_max:
+            return np.zeros_like(data)
+        rescaled = skimage_rescale(
+            data,
+            in_range=(in_min, in_max),
+            out_range=(0.0, 1.0),
+        )
+    elif rescale_method == RescaleMethod.MANUAL_INPUT_RANGE:
+        rescaled = skimage_rescale(
+            data,
+            in_range=rescale_source_range(
+                data,
+                automatic_low,
+                automatic_high,
+                source_low,
+                source_high,
+            ),
+            out_range=(0.0, 1.0),
+        )
+    elif rescale_method == RescaleMethod.MANUAL_IO_RANGE:
+        rescaled = skimage_rescale(
+            data,
+            in_range=rescale_source_range(
+                data,
+                automatic_low,
+                automatic_high,
+                source_low,
+                source_high,
+            ),
+            out_range=(dest_low, dest_high),
+        )
+    elif rescale_method == RescaleMethod.DIVIDE_BY_IMAGE_MINIMUM:
+        src_min = np.min(data)
+        if src_min == 0.0:
+            raise ZeroDivisionError("Cannot divide pixel intensity by 0.")
+        rescaled = data / src_min
+    elif rescale_method == RescaleMethod.DIVIDE_BY_IMAGE_MAXIMUM:
+        src_max = np.max(data)
+        if src_max == 0.0:
+            src_max = 1.0
+        rescaled = data / src_max
+    elif rescale_method == RescaleMethod.DIVIDE_BY_VALUE:
+        if divisor_value == 0.0:
+            raise ZeroDivisionError("Cannot divide pixel intensity by 0.")
+        rescaled = data / divisor_value
+    else:
+        in_min = np.min(data)
+        in_max = np.max(data)
+        if in_min == in_max:
+            return np.zeros_like(data)
+        rescaled = skimage_rescale(
+            data,
+            in_range=(in_min, in_max),
+            out_range=(0.0, 1.0),
+        )
+
+    return rescaled.astype(np.float32)
+
+
+def rescale_source_range(
+    data: np.ndarray,
+    automatic_low: AutomaticLow,
+    automatic_high: AutomaticHigh,
+    source_low: float,
+    source_high: float,
+) -> tuple[float, float]:
+    """Determine the CellProfiler source intensity range from settings."""
+    src_min = float(np.min(data)) if automatic_low == AutomaticLow.EACH_IMAGE else source_low
+    src_max = float(np.max(data)) if automatic_high == AutomaticHigh.EACH_IMAGE else source_high
+    return src_min, src_max
+
+
+@numpy_decorator
+def rescale_intensity_match_maximum(
+    image: np.ndarray,
+) -> np.ndarray:
+    """Scale image[0] so its maximum matches image[1]'s maximum."""
+    input_data = image[0].astype(np.float64)
+    reference_data = image[1].astype(np.float64)
+    image_max = np.max(input_data)
+    reference_max = np.max(reference_data)
+    if image_max == 0:
+        result = input_data
+    else:
+        result = (input_data * reference_max) / image_max
+    return result.astype(np.float32)[np.newaxis, :, :]
 
 
 measure_object_intensity.__openhcs_prepare__ = prepare_measure_object_intensity
@@ -1458,11 +1594,14 @@ def _is_inner_boundary_voxel(
 
 __all__ = [
     "NumbaNumpyObjectIntensityBackendStrategy",
+    "AutomaticHigh",
+    "AutomaticLow",
     "ImageIntensityMeasurement",
     "ImageIntensityPercentileSpec",
     "ObjectIntensityMeasurement",
     "ObjectIntensityMeasurementRequest",
     "ObjectIntensityResults",
+    "RescaleMethod",
     "ObjectIntensityArrays",
     "ObjectIntensityBackendStrategy",
     "ObjectIntensityLabelInput",
@@ -1472,4 +1611,7 @@ __all__ = [
     "measure_object_intensity_batch",
     "object_intensity_backend",
     "prepare_measure_object_intensity",
+    "rescale_intensity",
+    "rescale_intensity_match_maximum",
+    "rescale_source_range",
 ]

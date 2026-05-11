@@ -6,12 +6,18 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar
+from typing import Any, ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
+from openhcs.core.callable_contract import processing_prepare
+from openhcs.core.memory.decorators import numpy as numpy_decorator
+from openhcs.core.pipeline.function_contracts import (
+    RuntimePure2DSliceBatchRequest,
+    pure_2d_batch_executor,
+)
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     image_payload_data,
@@ -26,6 +32,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendProvider,
     cellprofiler_backend_provider_selection,
 )
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
 
 class SmoothingMethod(Enum):
@@ -688,6 +695,111 @@ def smooth_image(
     )
 
 
+@numpy_decorator(contract=ProcessingContract.PURE_2D)
+def smooth(
+    image: np.ndarray,
+    smoothing_method: SmoothingMethod = SmoothingMethod.GAUSSIAN_FILTER,
+    auto_object_size: bool = True,
+    object_size: float = 16.0,
+    edge_intensity_difference: float = 0.1,
+    clip_polynomial: bool = True,
+    smoothing_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> np.ndarray:
+    """Smooth an image using CellProfiler-compatible filtering methods."""
+    return smooth_image(
+        image=image,
+        smoothing_method=smoothing_method,
+        auto_object_size=auto_object_size,
+        object_size=object_size,
+        edge_intensity_difference=edge_intensity_difference,
+        clip_polynomial=clip_polynomial,
+        smoothing_backend_provider=smoothing_backend_provider,
+    )
+
+
+def smooth_batch(request: RuntimePure2DSliceBatchRequest) -> list[Any]:
+    slices_2d = request.slices_2d
+    kwargs = request.kwargs
+    smoothing_method = coerce_cellprofiler_enum(
+        SmoothingMethod,
+        kwargs.get("smoothing_method", SmoothingMethod.GAUSSIAN_FILTER),
+    )
+    pixel_stack = np.ascontiguousarray(
+        np.stack(
+            [
+                np.asarray(image_payload_data(slice_2d), dtype=np.float32)
+                for slice_2d in slices_2d
+            ],
+            axis=0,
+        ),
+    )
+    selection_request = SmoothingBackendSelectionRequest(
+        method=smoothing_method,
+        auto_object_size=bool(kwargs.get("auto_object_size", True)),
+        object_size=float(kwargs.get("object_size", 16.0)),
+        image_shape=tuple(int(axis) for axis in pixel_stack.shape[1:]),
+    )
+    backend_provider = SmoothingBackendProviderPolicy.resolve(
+        smoothing_method,
+        kwargs.get(
+            "smoothing_backend_provider",
+            DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+        ),
+        selection_request,
+    )
+    strategy = SmoothingStrategy.for_key(
+        SmoothingStrategyKey(backend_provider, smoothing_method)
+    )
+    if not strategy.supports_stack_batch:
+        return [
+            request.execute_one(slice_index)
+            for slice_index in range(request.slice_count)
+        ]
+
+    masks = tuple(image_payload_mask(slice_2d) for slice_2d in slices_2d)
+    mask_stack = None
+    if any(mask is not None for mask in masks):
+        mask_stack = np.stack(
+            [
+                np.ones(pixel_stack.shape[1:], dtype=bool)
+                if mask is None
+                else np.asarray(mask, dtype=bool)
+                for mask in masks
+            ],
+            axis=0,
+        )
+
+    output_stack = strategy.smooth_stack(
+        pixel_stack,
+        mask_stack,
+        float(selection_request.sigma),
+    ).astype(
+        np.float32,
+        copy=False,
+    )
+
+    return [
+        image_payload_with_context(
+            output_stack[slice_index],
+            mask=masks[slice_index],
+            metadata=image_payload_metadata(
+                slice_2d
+            ).without_unit_interval_intensity_scale(),
+        )
+        for slice_index, slice_2d in enumerate(slices_2d)
+    ]
+
+
+@processing_prepare(smooth)
+def prepare_smooth() -> None:
+    """Compile default Gaussian smoothing before timed execution."""
+    image = np.linspace(0.0, 1.0, 64 * 64, dtype=np.float32).reshape((64, 64))
+    smooth.__wrapped__(image)
+
+
+pure_2d_batch_executor(smooth_batch)(smooth)
+
+
 __all__ = [
     "CircularAverageSmoothingBackendProviderPolicy",
     "EdgePreservingSmoothingBackendProviderPolicy",
@@ -705,5 +817,8 @@ __all__ = [
     "SmoothingRequest",
     "SmoothingStrategy",
     "SmoothingStrategyKey",
+    "prepare_smooth",
+    "smooth",
+    "smooth_batch",
     "smooth_image",
 ]
