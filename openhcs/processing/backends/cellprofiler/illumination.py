@@ -15,8 +15,10 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit, prange
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.callable_contract import processing_prepare
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
@@ -162,6 +164,13 @@ class RescaleOption(Enum):
     MEDIAN = "median"
 
 
+class IlluminationCorrectionMethod(Enum):
+    """CellProfiler CorrectIlluminationApply arithmetic mode."""
+
+    DIVIDE = "divide"
+    SUBTRACT = "subtract"
+
+
 class SplineBgMode(Enum):
     """CellProfiler CorrectIlluminationCalculate spline background mode."""
 
@@ -201,6 +210,248 @@ class IlluminationStats:
     mean_value: float
     calculation_type: str
     smoothing_method: str
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationCorrectionRequest:
+    """One image/function pair for CorrectIlluminationApply."""
+
+    image_pixels: np.ndarray
+    illumination_function: np.ndarray
+
+
+class IlluminationCorrectionStrategy(
+    EnumKeyedStrategyMixin[IlluminationCorrectionMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal correction implementation for one CellProfiler method."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+
+    method: ClassVar[IlluminationCorrectionMethod]
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_method(
+        cls,
+        method: IlluminationCorrectionMethod,
+    ) -> "IlluminationCorrectionStrategy":
+        return cls.for_enum_member(method)
+
+    @abstractmethod
+    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+        """Apply the correction method."""
+
+
+class DivideIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
+    method = IlluminationCorrectionMethod.DIVIDE
+
+    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+        output_dtype = np.result_type(
+            request.image_pixels,
+            request.illumination_function,
+            1e-10,
+        )
+        output = np.empty(request.image_pixels.shape, dtype=output_dtype)
+        nonzero = request.illumination_function != 0
+        np.divide(
+            request.image_pixels,
+            request.illumination_function,
+            out=output,
+            where=nonzero,
+        )
+        if not np.all(nonzero):
+            np.divide(
+                request.image_pixels,
+                output_dtype.type(1e-10),
+                out=output,
+                where=~nonzero,
+            )
+        return output
+
+
+class SubtractIlluminationCorrectionStrategy(IlluminationCorrectionStrategy):
+    method = IlluminationCorrectionMethod.SUBTRACT
+
+    def apply(self, request: IlluminationCorrectionRequest) -> np.ndarray:
+        output = np.empty(
+            request.image_pixels.shape,
+            dtype=np.result_type(
+                request.image_pixels,
+                request.illumination_function,
+                0.0,
+            ),
+        )
+        np.subtract(
+            request.image_pixels,
+            request.illumination_function,
+            out=output,
+        )
+        return output
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationCorrectionSettingSequence:
+    """Settings expanded to match every image/function pair."""
+
+    methods: tuple[IlluminationCorrectionMethod, ...]
+    truncate_low: tuple[bool, ...]
+    truncate_high: tuple[bool, ...]
+
+    @classmethod
+    def from_settings(
+        cls,
+        method: (
+            IlluminationCorrectionMethod
+            | str
+            | tuple[IlluminationCorrectionMethod | str, ...]
+        ),
+        truncate_low: bool | tuple[bool, ...],
+        truncate_high: bool | tuple[bool, ...],
+        pair_count: int,
+    ) -> "IlluminationCorrectionSettingSequence":
+        return cls(
+            methods=cls.methods_for_pair_count(method, pair_count),
+            truncate_low=cls.bool_setting_for_pair_count(
+                truncate_low,
+                pair_count,
+                parameter_name="truncate_low",
+            ),
+            truncate_high=cls.bool_setting_for_pair_count(
+                truncate_high,
+                pair_count,
+                parameter_name="truncate_high",
+            ),
+        )
+
+    @staticmethod
+    def methods_for_pair_count(
+        value: (
+            IlluminationCorrectionMethod
+            | str
+            | tuple[IlluminationCorrectionMethod | str, ...]
+        ),
+        pair_count: int,
+    ) -> tuple[IlluminationCorrectionMethod, ...]:
+        if isinstance(value, tuple):
+            if len(value) != pair_count:
+                raise ValueError(
+                    "CorrectIlluminationApply method count must match "
+                    f"image/function pair count; got {len(value)} methods for "
+                    f"{pair_count} pairs."
+                )
+            return tuple(
+                coerce_cellprofiler_enum(IlluminationCorrectionMethod, method)
+                for method in value
+            )
+        method = coerce_cellprofiler_enum(IlluminationCorrectionMethod, value)
+        return (method,) * pair_count
+
+    @staticmethod
+    def bool_setting_for_pair_count(
+        value: bool | tuple[bool, ...],
+        pair_count: int,
+        *,
+        parameter_name: str,
+    ) -> tuple[bool, ...]:
+        if isinstance(value, tuple):
+            if len(value) != pair_count:
+                raise ValueError(
+                    f"CorrectIlluminationApply {parameter_name} count must match "
+                    f"image/function pair count; got {len(value)} values for "
+                    f"{pair_count} pairs."
+                )
+            return tuple(bool(item) for item in value)
+        return (bool(value),) * pair_count
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationCorrectionInputStack:
+    """Stacked image/function pairs and source metadata for application."""
+
+    image: object
+    pixel_stack: np.ndarray
+
+    @classmethod
+    def from_image(cls, image: object) -> "IlluminationCorrectionInputStack":
+        pixel_stack = np.asarray(image_payload_data(image))
+        if pixel_stack.ndim < 3 or pixel_stack.shape[0] % 2 != 0:
+            raise ValueError(
+                "CorrectIlluminationApply requires stacked image/function pairs "
+                f"with shape (2*N, ...), got {pixel_stack.shape!r}."
+            )
+        return cls(image=image, pixel_stack=pixel_stack)
+
+    @property
+    def pair_count(self) -> int:
+        return int(self.pixel_stack.shape[0] // 2)
+
+    def image_pixels(self, pair_index: int) -> np.ndarray:
+        return self.pixel_stack[self.input_index(pair_index)]
+
+    def illumination_function(self, pair_index: int) -> np.ndarray:
+        return self.pixel_stack[self.input_index(pair_index) + 1]
+
+    @staticmethod
+    def input_index(pair_index: int) -> int:
+        return pair_index * 2
+
+    def input_mask(self, pair_index: int) -> object | None:
+        mask = image_payload_mask(self.image)
+        if mask is None:
+            return None
+        mask_array = np.asarray(mask, dtype=bool)
+        input_index = self.input_index(pair_index)
+        if mask_array.ndim == 3 and mask_array.shape[0] > 0:
+            return mask_array[input_index : input_index + 1]
+        return mask_array
+
+    def output_metadata(self, pair_index: int):
+        return (
+            image_payload_metadata(self.image)
+            .for_channel(self.input_index(pair_index))
+            .without_unit_interval_intensity_scale()
+        )
+
+
+class IlluminationCorrection:
+    """Load-bearing CorrectIlluminationApply execution policy."""
+
+    def apply_pair(
+        self,
+        source: IlluminationCorrectionInputStack,
+        pair_index: int,
+        *,
+        method: IlluminationCorrectionMethod,
+        truncate_low: bool,
+        truncate_high: bool,
+    ) -> np.ndarray:
+        image_pixels = source.image_pixels(pair_index)
+        illumination_function = source.illumination_function(pair_index)
+        if image_pixels.shape != illumination_function.shape:
+            raise ValueError(
+                f"Input image shape {image_pixels.shape} and illumination function "
+                f"shape {illumination_function.shape} must be equal."
+            )
+
+        output_pixels = IlluminationCorrectionStrategy.for_method(method).apply(
+            IlluminationCorrectionRequest(
+                image_pixels=image_pixels,
+                illumination_function=illumination_function,
+            )
+        )
+        if truncate_low:
+            np.maximum(output_pixels, 0.0, out=output_pixels)
+        if truncate_high:
+            np.minimum(output_pixels, 1.0, out=output_pixels)
+        return image_payload_with_context(
+            output_pixels[np.newaxis, ...].astype(np.float32, copy=False),
+            mask=source.input_mask(pair_index),
+            metadata=source.output_metadata(pair_index),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -644,6 +895,61 @@ def _prepare_correct_illumination_calculate() -> None:
 correct_illumination_calculate.__openhcs_prepare__ = (
     _prepare_correct_illumination_calculate
 )
+
+
+@numpy
+def correct_illumination_apply(
+    image: np.ndarray,
+    method: (
+        IlluminationCorrectionMethod
+        | str
+        | tuple[IlluminationCorrectionMethod | str, ...]
+    ) = IlluminationCorrectionMethod.DIVIDE,
+    truncate_low: bool | tuple[bool, ...] = True,
+    truncate_high: bool | tuple[bool, ...] = True,
+) -> np.ndarray | tuple[np.ndarray, ...]:
+    """Apply illumination correction to stacked image/function pairs."""
+    source = IlluminationCorrectionInputStack.from_image(image)
+    settings = IlluminationCorrectionSettingSequence.from_settings(
+        method,
+        truncate_low,
+        truncate_high,
+        source.pair_count,
+    )
+    correction = IlluminationCorrection()
+    outputs = tuple(
+        correction.apply_pair(
+            source,
+            pair_index,
+            method=settings.methods[pair_index],
+            truncate_low=settings.truncate_low[pair_index],
+            truncate_high=settings.truncate_high[pair_index],
+        )
+        for pair_index in range(source.pair_count)
+    )
+    if source.pair_count == 1:
+        return outputs[0]
+    return outputs
+
+
+@processing_prepare(correct_illumination_apply)
+def _prepare_correct_illumination_apply() -> None:
+    """Materialize correction strategy registry before timed execution."""
+    pixels = np.stack(
+        (
+            np.full((16, 16), 0.5, dtype=np.float32),
+            np.full((16, 16), 0.25, dtype=np.float32),
+        ),
+        axis=0,
+    )
+    correct_illumination_apply.__wrapped__(
+        pixels,
+        method=IlluminationCorrectionMethod.DIVIDE,
+    )
+    correct_illumination_apply.__wrapped__(
+        pixels,
+        method=IlluminationCorrectionMethod.SUBTRACT,
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -2187,10 +2493,17 @@ __all__ = [
     "CalculationScope",
     "ConvexHullSmoothingBackendStrategy",
     "ConvexHullSmoothingPlaneStrategy",
+    "DivideIlluminationCorrectionStrategy",
     "ExactLevelSetNumpyConvexHullSmoothingBackendStrategy",
     "FilterSizeMethod",
     "FitPolynomialSmoothingPlaneStrategy",
     "GaussianFilterSmoothingPlaneStrategy",
+    "IlluminationCorrection",
+    "IlluminationCorrectionInputStack",
+    "IlluminationCorrectionMethod",
+    "IlluminationCorrectionRequest",
+    "IlluminationCorrectionSettingSequence",
+    "IlluminationCorrectionStrategy",
     "IlluminationGaussianFilter",
     "IlluminationMask",
     "IlluminationStats",
@@ -2213,7 +2526,9 @@ __all__ = [
     "SmoothingPlaneStrategy",
     "SplineBgMode",
     "SplinesSmoothingPlaneStrategy",
+    "SubtractIlluminationCorrectionStrategy",
     "coerce_illumination_enum",
+    "correct_illumination_apply",
     "correct_illumination_calculate",
     "fit_polynomial_surface",
     "fit_polynomial_unmasked_gram",
