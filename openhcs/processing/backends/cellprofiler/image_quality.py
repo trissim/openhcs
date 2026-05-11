@@ -7,6 +7,9 @@ from collections.abc import Callable
 from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
+import logging
+import os
+import time
 from typing import ClassVar
 
 import numpy as np
@@ -14,6 +17,9 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.memory.decorators import numpy
+from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -22,6 +28,23 @@ from openhcs.processing.backends.cellprofiler._backend import (
     cellprofiler_backend_key,
 )
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
+from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+from openhcs.processing.materialization import csv_materializer
+
+
+_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+logger = logging.getLogger(__name__)
+
+
+def _runtime_profile_enabled() -> bool:
+    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
+
+
+def _log_profile(label: str, seconds: float, **fields: object) -> None:
+    if not _runtime_profile_enabled():
+        return
+    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 class ThresholdMethod(Enum):
@@ -50,6 +73,28 @@ class ImageQualityIntensityMetrics:
     mad_intensity: float
     min_intensity: float
     max_intensity: float
+
+
+@dataclass
+class ImageQualityMetrics:
+    """CellProfiler-compatible image-quality measurement row."""
+
+    slice_index: int = 0
+    focus_score: float = 0.0
+    local_focus_score: float = 0.0
+    correlation: float = 0.0
+    power_log_log_slope: float = 0.0
+    percent_maximal: float = 0.0
+    percent_minimal: float = 0.0
+    total_area: int = 0
+    total_intensity: float = 0.0
+    mean_intensity: float = 0.0
+    median_intensity: float = 0.0
+    std_intensity: float = 0.0
+    mad_intensity: float = 0.0
+    min_intensity: float = 0.0
+    max_intensity: float = 0.0
+    threshold_otsu: float = 0.0
 
 
 _RADIAL_SPECTRUM_GEOMETRY_CACHE: OrderedDict[
@@ -752,10 +797,159 @@ def _haralick_h3_numba(image: np.ndarray, scale: int) -> float:
     return 0.0
 
 
+@numpy(contract=ProcessingContract.PURE_2D)
+@special_outputs(
+    (
+        "quality_metrics",
+        csv_materializer(
+            fields=[
+                "slice_index",
+                "focus_score",
+                "local_focus_score",
+                "correlation",
+                "power_log_log_slope",
+                "percent_maximal",
+                "percent_minimal",
+                "total_area",
+                "total_intensity",
+                "mean_intensity",
+                "median_intensity",
+                "std_intensity",
+                "mad_intensity",
+                "min_intensity",
+                "max_intensity",
+                "threshold_otsu",
+            ],
+            analysis_type="image_quality",
+        ),
+    )
+)
+def measure_image_quality(
+    image: np.ndarray,
+    calculate_blur: bool = True,
+    calculate_saturation: bool = True,
+    calculate_intensity: bool = True,
+    calculate_threshold: bool = True,
+    blur_scale: int = 20,
+    threshold_method: ThresholdMethod = ThresholdMethod.OTSU,
+    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+) -> tuple[np.ndarray, ImageQualityMetrics]:
+    """Measure CellProfiler-compatible image-quality metrics."""
+    total_started_at = time.perf_counter()
+    metrics = ImageQualityMetrics(slice_index=0)
+
+    phase_started_at = time.perf_counter()
+    pixel_data = np.asarray(image, dtype=np.float32)
+    _log_profile(
+        "miq_prepare_image",
+        time.perf_counter() - phase_started_at,
+        function="measure_image_quality",
+    )
+
+    if calculate_blur:
+        phase_started_at = time.perf_counter()
+        metrics.focus_score = image_quality_focus_score(pixel_data)
+        _log_profile(
+            "miq_focus_score",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+        phase_started_at = time.perf_counter()
+        metrics.local_focus_score = image_quality_local_focus_score(
+            pixel_data,
+            blur_scale,
+        )
+        _log_profile(
+            "miq_local_focus_score",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+        phase_started_at = time.perf_counter()
+        metrics.correlation = image_quality_haralick_correlation(
+            pixel_data,
+            blur_scale,
+            backend_provider=backend_provider,
+        )
+        _log_profile(
+            "miq_correlation",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+        phase_started_at = time.perf_counter()
+        metrics.power_log_log_slope = image_quality_power_spectrum_slope(
+            pixel_data,
+            backend_provider=backend_provider,
+        )
+        _log_profile(
+            "miq_power_log_log_slope",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+
+    if calculate_saturation:
+        phase_started_at = time.perf_counter()
+        metrics.percent_maximal, metrics.percent_minimal = image_quality_saturation(
+            pixel_data
+        )
+        _log_profile(
+            "miq_saturation",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+
+    if calculate_intensity:
+        phase_started_at = time.perf_counter()
+        intensity_metrics = image_quality_intensity_metrics(pixel_data)
+        metrics.total_area = intensity_metrics.total_area
+        metrics.total_intensity = intensity_metrics.total_intensity
+        metrics.mean_intensity = intensity_metrics.mean_intensity
+        metrics.median_intensity = intensity_metrics.median_intensity
+        metrics.std_intensity = intensity_metrics.std_intensity
+        metrics.mad_intensity = intensity_metrics.mad_intensity
+        metrics.min_intensity = intensity_metrics.min_intensity
+        metrics.max_intensity = intensity_metrics.max_intensity
+        _log_profile(
+            "miq_intensity",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+        )
+
+    if calculate_threshold:
+        phase_started_at = time.perf_counter()
+        threshold_method = coerce_cellprofiler_enum(ThresholdMethod, threshold_method)
+        metrics.threshold_otsu = image_quality_threshold(pixel_data, threshold_method)
+        _log_profile(
+            "miq_threshold",
+            time.perf_counter() - phase_started_at,
+            function="measure_image_quality",
+            method=threshold_method.value,
+        )
+
+    _log_profile(
+        "miq_total",
+        time.perf_counter() - total_started_at,
+        function="measure_image_quality",
+    )
+    return image, metrics
+
+
+def _prepare_measure_image_quality() -> None:
+    sample = (
+        (np.arange(64 * 64, dtype=np.uint16) % 256)
+        .astype(np.float32)
+        .reshape((64, 64))
+    )
+    measure_image_quality.__wrapped__(sample)
+
+
+measure_image_quality.__openhcs_prepare__ = _prepare_measure_image_quality
+
+
 __all__ = [
     "CentrosomeNumpyImageQualityBackendStrategy",
     "ImageQualityBackendStrategy",
     "ImageQualityIntensityMetrics",
+    "ImageQualityMetrics",
     "ImageQualityThresholdStrategy",
     "NumbaNumpyImageQualityBackendStrategy",
     "NumpyImageQualityBackendStrategy",
@@ -769,4 +963,5 @@ __all__ = [
     "image_quality_power_spectrum_slope",
     "image_quality_saturation",
     "image_quality_threshold",
+    "measure_image_quality",
 ]
