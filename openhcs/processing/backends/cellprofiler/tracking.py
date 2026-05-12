@@ -132,6 +132,14 @@ class NumbaNumpyObjectTrackingBackendStrategy(ObjectTrackingBackendStrategy):
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        current = np.array([[0, 1], [2, 2]], dtype=np.int32)
+        previous = np.array([[0, 1], [1, 0]], dtype=np.int32)
+        old_numbers = np.array([0, 1], dtype=np.int32)
+        self.label_centers(current)
+        self.track_by_overlap(current, previous, old_numbers, 1)
+        self.track_by_distance(current, previous, old_numbers, 1, 5)
+
     def label_centers(self, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         labels_array = np.asarray(labels)
         label_count = int(labels_array.max()) if labels_array.size else 0

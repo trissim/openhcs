@@ -1040,6 +1040,20 @@ class NumbaNumpyShapeMeasurementBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = False
 
+    def prepare_backend(self) -> None:
+        labels = np.array([[0, 1, 1], [0, 1, 0], [2, 2, 0]], dtype=np.int32)
+        image = np.arange(9, dtype=np.float64).reshape((3, 3))
+        label_ids = np.array([1, 2], dtype=np.int32)
+        object_images = np.stack((labels == 1, labels == 2), axis=0)
+        self.radius_features(object_images, 2)
+        self.radius_features_from_labels(labels, label_ids)
+        self.distance_to_edge(labels)
+        self.maximum_position_of_labels(image, labels, label_ids)
+        self.axis_lengths_3d_from_inertia_eigvals(
+            np.array([[1.0, 1.0, 0.5]], dtype=np.float64)
+        )
+        self.zernike_indexes(2)
+
     def form_factor_values(
         self,
         labels: np.ndarray,

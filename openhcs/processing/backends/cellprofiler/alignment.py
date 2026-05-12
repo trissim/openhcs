@@ -70,6 +70,11 @@ class NumbaNumpyAlignmentBackendStrategy(AlignmentBackendStrategy):
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        pixels = np.arange(16, dtype=np.float64).reshape((4, 4))
+        mask = np.ones(pixels.shape, dtype=np.bool_)
+        self.mutual_information_offset(pixels, pixels, mask, mask)
+
     def mutual_information_offset(
         self,
         reference_pixels: np.ndarray,

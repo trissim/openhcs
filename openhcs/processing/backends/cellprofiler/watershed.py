@@ -961,6 +961,12 @@ class NumbaNumpyLegacyWatershedBackendStrategy(LegacyWatershedBackendStrategy):
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        image = np.arange(9, dtype=np.float64).reshape((3, 3))
+        markers = np.array([[1, 0, 0], [0, 0, 2], [0, 0, 0]], dtype=np.int32)
+        mask = np.ones(markers.shape, dtype=np.bool_)
+        self.legacy_watershed(image, markers=markers, mask=mask, connectivity=1)
+
     def legacy_watershed(
         self,
         image: np.ndarray,

@@ -221,6 +221,16 @@ _RuntimeMeasurementRowMergeCache = dict[
     _RuntimeMeasurementRowMergeKey,
     _RuntimeMeasurementRowMergeValue,
 ]
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementRowPriorityCacheKey:
+    """Identity for row-to-feature priority resolution within one equivalence pass."""
+
+    row_fields: tuple[str, ...]
+    long_form_feature: str | None
+    feature_key: RuntimeMeasurementFeatureKey
+
+
+_RuntimeMeasurementRowPriorityCache = dict[RuntimeMeasurementRowPriorityCacheKey, int]
 _RuntimeMeasurementPrimaryRowKey = tuple[
     RuntimeMeasurementSubjectKey,
     _RuntimeMeasurementRowIdentity,
@@ -751,6 +761,7 @@ _RuntimeMeasurementFactRecordingContext = _frozen_slots_record(
         ("explicit_measurement_keys", set[RuntimeMeasurementFeatureKey]),
         ("object_row_domain", RuntimeObjectMeasurementFactRowDomain),
         ("required_keys", _RuntimeRequiredMeasurementKeys),
+        ("row_priority_cache", _RuntimeMeasurementRowPriorityCache),
     ),
 )
 
@@ -3546,6 +3557,7 @@ def _record_static_wide_runtime_measurement_table(
         table_explicit_measurement_keys,
         object_row_domain or RuntimeObjectMeasurementFactRowDomain(),
         context.required_keys,
+        {},
     )
     row_projection_context = _StaticWideRuntimeRowProjectionContext(
         header,
@@ -3849,6 +3861,7 @@ def _record_runtime_measurement_facts_for_row(
         if row_merge_cache is None or row_mapping is None
         else _merge_runtime_row_measurement_facts(
             row_merge_cache,
+            fact_context.row_priority_cache,
             row_mapping,
             axis_key,
             row_facts,
@@ -3928,6 +3941,7 @@ def _dedupe_runtime_measurement_table_object_subtable(
 
 def _merge_runtime_row_measurement_facts(
     row_merge_cache: _RuntimeMeasurementRowMergeCache,
+    row_priority_cache: _RuntimeMeasurementRowPriorityCache,
     row_mapping: Mapping[str, object],
     axis_key: object | None,
     facts: Iterable[_RuntimeMeasurementFact],
@@ -3949,7 +3963,12 @@ def _merge_runtime_row_measurement_facts(
             remaining_facts.append((key, value))
             continue
         merge_key = (key, identity.row_identity)
-        priority = _runtime_row_measurement_fact_priority(row_mapping, key, policy)
+        priority = _runtime_row_measurement_fact_priority(
+            row_mapping,
+            key,
+            policy,
+            row_priority_cache,
+        )
         candidate = (
             priority,
             priority,
@@ -3997,10 +4016,19 @@ def _runtime_row_measurement_fact_priority(
     row_mapping: Mapping[str, object],
     key: RuntimeMeasurementFeatureKey,
     policy: RuntimeEquivalencePolicy,
+    row_priority_cache: _RuntimeMeasurementRowPriorityCache,
 ) -> int:
     """Return dialect category priority for the row field that produced ``key``."""
     candidates: list[str] = []
     long_form_feature = _first_row_value(row_mapping, _MEASUREMENT_FEATURE_NAME_FIELDS)
+    cache_key = RuntimeMeasurementRowPriorityCacheKey(
+        row_fields=tuple(row_mapping),
+        long_form_feature=str(long_form_feature) if long_form_feature is not None else None,
+        feature_key=key,
+    )
+    cached = row_priority_cache.get(cache_key)
+    if cached is not None:
+        return cached
     if long_form_feature is not None:
         candidates.append(str(long_form_feature))
     else:
@@ -4018,7 +4046,9 @@ def _runtime_row_measurement_fact_priority(
         )
         is not None
     )
-    return min(priorities, default=sys.maxsize)
+    priority = min(priorities, default=sys.maxsize)
+    row_priority_cache[cache_key] = priority
+    return priority
 
 
 def _measurement_feature_source_priority(
@@ -4047,14 +4077,6 @@ def _measurement_feature_source_priority(
     for index, prefix in enumerate(policy.measurement_dialect.category_prefixes):
         if _should_strip_measurement_category_prefix(parts, prefix):
             return index
-    canonical_feature_name, _canonical_source_name = (
-        _canonical_measurement_feature_name_and_source(
-            feature_name,
-            policy,
-            source_name=None,
-            known_source_names=(),
-        )
-    )
     return -1 if canonical_feature_name else None
 
 
@@ -4802,6 +4824,7 @@ class RuntimeMeasurementTableFactRecorder:
             self._explicit_measurement_keys,
             self.object_row_domain or RuntimeObjectMeasurementFactRowDomain(),
             self.context.required_keys,
+            {},
         )
         for row in iter_measurement_rows((table,)):
             self._record_row(

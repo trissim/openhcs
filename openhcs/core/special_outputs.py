@@ -103,6 +103,9 @@ class CsvSpecialOutputKindClassifier(SpecialOutputKindClassifier):
     classifier_name = "csv"
 
     def classify(self, spec: object) -> ArtifactKind | None:
+        normalized = normalize_special_output_name(special_output_name(spec))
+        if normalized in SPATIAL_GRID_SPECIAL_OUTPUT_NAMES:
+            return None
         return kind_for_materialization_option(spec, CsvOptions, ArtifactKind.MEASUREMENTS)
 
 

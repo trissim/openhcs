@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, fields, is_dataclass
+from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import lru_cache
 from typing import Any, ClassVar
@@ -1639,6 +1639,18 @@ class ObjectFeatureArrayDomainStrategy(
     def value_index(self, context: ObjectFeatureArrayDomainContext) -> int | None:
         """Return the value index for ``context.object_id``."""
 
+    def value_indexes(
+        self,
+        context: ObjectFeatureArrayDomainContext,
+    ) -> Mapping[int, int]:
+        """Return object-id to value-index mappings for a feature array."""
+        indexes: dict[int, int] = {}
+        for object_id in context.object_domain:
+            value_index = self.value_index(replace(context, object_id=object_id))
+            if value_index is not None:
+                indexes[object_id] = value_index
+        return indexes
+
     @abstractmethod
     def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
         """Return whether the feature array shape is valid for this domain."""
@@ -1659,6 +1671,16 @@ class MeasuredObjectFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy)
     def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
         return context.value_count == context.measured_object_count
 
+    def value_indexes(
+        self,
+        context: ObjectFeatureArrayDomainContext,
+    ) -> Mapping[int, int]:
+        return {
+            object_id: index
+            for index, object_id in enumerate(context.measured_object_ids)
+            if index < context.value_count
+        }
+
 
 class LabelIdFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
     """Feature arrays indexed by dense label ID minus one."""
@@ -1671,6 +1693,16 @@ class LabelIdFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
 
     def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
         return context.value_count >= context.measured_object_max
+
+    def value_indexes(
+        self,
+        context: ObjectFeatureArrayDomainContext,
+    ) -> Mapping[int, int]:
+        return {
+            object_id: object_id - 1
+            for object_id in context.object_domain
+            if 0 <= object_id - 1 < context.value_count
+        }
 
 
 class RowOrdinalFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
@@ -1687,6 +1719,16 @@ class RowOrdinalFeatureArrayDomainStrategy(ObjectFeatureArrayDomainStrategy):
 
     def accepts(self, context: ObjectFeatureArrayDomainContext) -> bool:
         return context.value_count <= len(context.object_domain)
+
+    def value_indexes(
+        self,
+        context: ObjectFeatureArrayDomainContext,
+    ) -> Mapping[int, int]:
+        return {
+            object_id: index
+            for index, object_id in enumerate(context.object_domain)
+            if index < context.value_count
+        }
 
 
 class ObjectFeatureMissingValueStrategy(
@@ -1792,35 +1834,53 @@ class ObjectFeatureValueTable(
                 np.asarray(values),
                 self.python_feature_values(values),
                 self.missing_feature_value(feature_name),
+                self.feature_value_indexes(feature_name, np.asarray(values)),
             )
             for feature_name, values in self.feature_values.items()
         )
-        for feature_name, values, _python_values, _missing_value in feature_items:
-            self.validate_feature_value_domain(
-                feature_name,
-                values,
-            )
         rows: list[dict[str, float | int]] = []
         for object_id in self.object_domain:
             row: dict[str, float | int] = {
                 self.slice_index_field: self.slice_index,
                 self.object_id_field: object_id,
             }
-            for feature_name, values, python_values, missing_value in feature_items:
+            for (
+                feature_name,
+                values,
+                python_values,
+                missing_value,
+                value_indexes,
+            ) in feature_items:
                 if values.ndim == 0:
                     row[feature_name] = python_values
                     continue
-                value_index = self.feature_value_index(
-                    feature_name,
-                    object_id,
-                    values=values,
-                )
+                value_index = value_indexes.get(object_id)
                 row[feature_name] = (
                     missing_value if value_index is None else python_values[value_index]
                 )
             self.complete_row(row)
             rows.append(row)
         return rows
+
+    def feature_value_indexes(
+        self,
+        feature_name: str,
+        values: np.ndarray,
+    ) -> Mapping[int, int]:
+        """Return object-id to feature-value indexes for one feature array."""
+        if values.ndim == 0:
+            return {}
+        self.validate_feature_value_domain(feature_name, values)
+        return ObjectFeatureArrayDomainStrategy.for_enum_member(
+            self.feature_array_domain(feature_name)
+        ).value_indexes(
+            ObjectFeatureArrayDomainContext(
+                object_id=0,
+                values=values,
+                measured_object_ids=self.measured_object_ids,
+                object_domain=self.object_domain,
+            )
+        )
 
     def feature_value_index(
         self,

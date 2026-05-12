@@ -12,7 +12,7 @@ from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from numba import njit, prange
+from numba import njit
 import scipy.interpolate
 
 from openhcs.constants.constants import MemoryType
@@ -448,6 +448,11 @@ class NumbaNumpyThresholdSmoothingBackendStrategy(ThresholdSmoothingBackendStrat
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        image = np.linspace(0.0, 1.0, 16, dtype=np.float64).reshape((4, 4))
+        mask = np.ones(image.shape, dtype=np.bool_)
+        self.smooth_threshold_image(image, mask, 1.0)
+
     def smooth_threshold_image(
         self,
         image: np.ndarray,
@@ -509,7 +514,7 @@ def _threshold_smoothing_kernel_parameters(smoothing: float) -> tuple[float, int
     return sigma, radius
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _masked_kernel_convolution_2d_numba(
     image: np.ndarray,
     mask: np.ndarray,
@@ -522,7 +527,7 @@ def _masked_kernel_convolution_2d_numba(
     output = np.empty((height, width), dtype=np.float64)
     eps = np.finfo(np.float64).eps
 
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             weighted_sum = 0.0
             weight = 0.0
@@ -723,6 +728,13 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
+
+    def prepare_backend(self) -> None:
+        image = np.linspace(0.0, 1.0, 16, dtype=np.float64).reshape((4, 4))
+        mask = np.ones(image.shape, dtype=np.bool_)
+        binary = image > 0.5
+        self.diagnostics(image, mask, binary)
+        self.diagnostics(image[None, ...], mask[None, ...], binary[None, ...])
 
     def diagnostics(
         self,
@@ -1055,6 +1067,24 @@ class NumbaNumpyThresholdPrimitiveBackendStrategy(ThresholdPrimitiveBackendStrat
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
+
+    def prepare_backend(self) -> None:
+        values = np.linspace(0.01, 1.0, 32, dtype=np.float64)
+        image = values[:25].reshape((5, 5))
+        transformed, conversion = self.log_transform(values.astype(np.float32))
+        self.inverse_log_transform(transformed, conversion)
+        self.binned_mode(values)
+        self.mad(values)
+        self.otsu_threshold(values)
+        self.weighted_otsu_threshold(values.astype(np.float32))
+        self.li_threshold(values)
+        self.triangle_threshold(values)
+        self.isodata_threshold(values)
+        self.mean_threshold(values)
+        self.yen_threshold(values)
+        self.multiotsu_thresholds(values, nbins=16)
+        self.sauvola_threshold_image(image, window_size=3)
+        self.minimum_cross_entropy_threshold(image)
 
     def log_transform(self, values: np.ndarray) -> tuple[np.ndarray, object]:
         values_array = np.asarray(values, dtype=np.float32)
@@ -4066,7 +4096,7 @@ def _minimum_cross_entropy_threshold_numba(
     return minimum + (float(best_index) + 0.5) * width
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _sauvola_threshold_image_numba(
     image: np.ndarray,
     window_size: int,
@@ -4106,7 +4136,7 @@ def _sauvola_threshold_image_numba(
     output = np.empty((height, width), dtype=np.float64)
     area = float(window_size * window_size)
 
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             y0 = y
             x0 = x

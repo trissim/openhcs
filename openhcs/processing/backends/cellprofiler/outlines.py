@@ -12,7 +12,7 @@ import numpy as np
 import skimage.color
 import skimage.segmentation
 from metaclass_registry import AutoRegisterMeta
-from numba import njit, prange
+from numba import njit
 from skimage import img_as_float
 
 from openhcs.constants.constants import MemoryType
@@ -66,6 +66,10 @@ class NumbaNumpyObjectOutlineBackendStrategy(ObjectOutlineBackendStrategy):
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        labels = np.array([[0, 1, 1], [0, 1, 0], [2, 2, 0]], dtype=np.int32)
+        self.outline(labels)
+
     def outline(self, labels: np.ndarray) -> np.ndarray:
         label_array = np.asarray(labels, dtype=np.int32)
         if label_array.ndim != 2:
@@ -100,11 +104,11 @@ def object_outline_backend(
     )
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _outline_numba(labels: np.ndarray) -> np.ndarray:
     height, width = labels.shape
     output = np.zeros((height, width), dtype=labels.dtype)
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             center = labels[y, x]
             if center <= 0:

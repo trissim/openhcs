@@ -25,11 +25,13 @@ class CellProfilerBackendProvider(str, Enum):
     CENTROSOME = "centrosome"
     OPENCV = "opencv"
     LEGACY_FAST = "legacy_fast"
-    EXACT = "exact"
-    NUMBA_EXACT = "numba_exact"
-    NATIVE_EXACT = "native_exact"
     CUCIM = "cucim"
     PYCLESPERANTO = "pyclesperanto"
+
+    @property
+    def requires_compiler_prewarm(self) -> bool:
+        """Return whether this provider compiles runtime-specialized kernels."""
+        return self is CellProfilerBackendProvider.NUMBA
 
 
 DEFAULT_CELLPROFILER_BACKEND_PROVIDER = CellProfilerBackendProvider.NATIVE
@@ -165,7 +167,7 @@ DEFAULT_CELLPROFILER_BACKEND_SELECTION = (
     DefaultCellProfilerBackendProviderSelection()
 )
 BackendProviderInput: TypeAlias = (
-    CellProfilerBackendProvider | CellProfilerBackendProviderSelection
+    CellProfilerBackendProvider | CellProfilerBackendProviderSelection | None
 )
 
 
@@ -192,6 +194,8 @@ def cellprofiler_backend_provider_selection(
     backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> CellProfilerBackendProviderSelection:
     """Return the nominal backend-provider selection policy."""
+    if backend_provider is None:
+        return DEFAULT_CELLPROFILER_BACKEND_SELECTION
     if isinstance(backend_provider, CellProfilerBackendProviderSelection):
         return backend_provider
     return ExplicitCellProfilerBackendProviderSelection(
@@ -240,6 +244,11 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
     def prepare_backend(self) -> None:
         """Prepare this concrete backend implementation."""
         return
+
+    @classmethod
+    def requires_explicit_prepare_backend(cls) -> bool:
+        """Return whether this provider must prewarm runtime-specialized code."""
+        return cls.backend_provider.requires_compiler_prewarm
 
     @classmethod
     def for_memory_type(
@@ -318,6 +327,17 @@ def _prepare_cellprofiler_backend_family_cached(
     snapshot: CellProfilerBackendRegistrySnapshot,
 ) -> None:
     for strategy_cls in snapshot.registry.values():
+        if (
+            strategy_cls.requires_explicit_prepare_backend()
+            and strategy_cls.prepare_backend
+            is CellProfilerBackendStrategyMixin.prepare_backend
+        ):
+            raise RuntimeError(
+                f"{strategy_cls.__module__}.{strategy_cls.__name__} uses the "
+                "NUMBA CellProfiler backend provider but does not implement "
+                "prepare_backend(). Numba specializations must be compiled "
+                "during OpenHCS compiler preparation, not first timed execution."
+            )
         strategy_cls().prepare_backend()
 
 

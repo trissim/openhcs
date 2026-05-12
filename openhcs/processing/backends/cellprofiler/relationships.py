@@ -125,6 +125,14 @@ class NumbaNumpyObjectRelationshipBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        parent_labels = np.array([[1, 1, 0], [0, 2, 2], [0, 0, 0]], dtype=np.int32)
+        child_labels = np.array([[1, 0, 0], [0, 2, 2], [0, 0, 3]], dtype=np.int32)
+        parents_of = self.relate_children_to_parents(parent_labels, child_labels, 3)
+        self.label_centers(parent_labels)
+        self.centroid_distances(parent_labels, child_labels, parents_of)
+        self.minimum_distances(parent_labels, child_labels, parents_of)
+
     def relate_children_to_parents(
         self,
         parent_labels: np.ndarray,

@@ -632,6 +632,9 @@
   },
   "Resize": {
     "function_name": "resize",
+    "function_variants": [
+      "resize_volumetric"
+    ],
     "contract": "unknown",
     "category": "image_operation",
     "confidence": 1.0,
@@ -640,6 +643,9 @@
   },
   "ResizeObjects": {
     "function_name": "resize_objects",
+    "function_variants": [
+      "resize_objects_3d"
+    ],
     "contract": "pure_2d",
     "category": "image_operation",
     "confidence": 1.0,

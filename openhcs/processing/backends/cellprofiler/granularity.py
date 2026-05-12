@@ -11,7 +11,7 @@ import os
 import time
 
 import numpy as np
-from numba import njit, prange
+from numba import njit
 
 from openhcs.core.measurement_schemas import (
     DataclassCompanionSchema,
@@ -436,7 +436,7 @@ def disk_offsets(radius: int) -> np.ndarray:
     return np.asarray(coords, dtype=np.int32)
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def resample_bilinear_numba(
     image: np.ndarray,
     output_height: int,
@@ -445,7 +445,7 @@ def resample_bilinear_numba(
     col_scale: float,
 ) -> np.ndarray:
     result = np.empty((output_height, output_width), dtype=np.float64)
-    for row in prange(output_height):
+    for row in range(output_height):
         sample_row = row * row_scale
         for col in range(output_width):
             result[row, col] = bilinear_sample_numba(
@@ -456,23 +456,23 @@ def resample_bilinear_numba(
     return result
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def clip_negative_inplace_numba(image: np.ndarray) -> None:
     height, width = image.shape
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             if image[row, col] < 0.0:
                 image[row, col] = 0.0
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def gray_erosion_offsets_reflect_numba(
     image: np.ndarray,
     offsets: np.ndarray,
 ) -> np.ndarray:
     height, width = image.shape
     result = np.empty((height, width), dtype=np.float64)
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             best = np.inf
             for offset_index in range(offsets.shape[0]):
@@ -485,14 +485,14 @@ def gray_erosion_offsets_reflect_numba(
     return result
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def gray_dilation_offsets_reflect_numba(
     image: np.ndarray,
     offsets: np.ndarray,
 ) -> np.ndarray:
     height, width = image.shape
     result = np.empty((height, width), dtype=np.float64)
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             best = -np.inf
             for offset_index in range(offsets.shape[0]):

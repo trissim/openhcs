@@ -10,7 +10,7 @@ import warnings
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from numba import njit, prange
+from numba import njit
 
 from openhcs.core.memory.decorators import numpy as numpy_decorator
 from openhcs.core.runtime_values import (
@@ -411,7 +411,7 @@ def enhance_edges(
     )
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _sobel_numba_kernel(
     image: np.ndarray,
     mask: np.ndarray,
@@ -423,7 +423,7 @@ def _sobel_numba_kernel(
     if height < 3 or width < 3:
         return output
 
-    for row in prange(1, height - 1):
+    for row in range(1, height - 1):
         for col in range(1, width - 1):
             if not _full_sobel_neighborhood_is_valid(mask, row, col):
                 continue

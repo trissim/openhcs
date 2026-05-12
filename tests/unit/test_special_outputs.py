@@ -31,6 +31,15 @@ def test_special_output_kind_classifier_uses_materialization_options() -> None:
     )
 
 
+def test_spatial_grid_name_owns_csv_materialized_grid_outputs() -> None:
+    assert (
+        SpecialOutputKindClassifier.kind_for(
+            ("grid_info", MaterializationSpec(CsvOptions()))
+        )
+        is ArtifactKind.SPATIAL_GRID
+    )
+
+
 def test_special_output_kind_classifier_preserves_legacy_name_semantics() -> None:
     assert SpecialOutputKindClassifier.kind_for("grid_definition") is ArtifactKind.SPATIAL_GRID
     assert SpecialOutputKindClassifier.kind_for("parent_relationship_rows") is ArtifactKind.RELATIONSHIPS

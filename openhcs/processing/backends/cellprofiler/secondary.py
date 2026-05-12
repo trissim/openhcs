@@ -12,7 +12,7 @@ from typing import Callable, ClassVar, Tuple
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from numba import njit, prange
+from numba import njit
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.callable_contract import processing_prepare
@@ -340,6 +340,11 @@ class NumbaSecondaryDistanceTransformBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        labels = np.array([[0, 1, 0], [0, 0, 2], [0, 0, 0]], dtype=np.int32)
+        self.distance_to_foreground(labels)
+        self.nearest_label_expansion(labels, 2.0)
+
     def distance_to_foreground(self, labels: np.ndarray) -> np.ndarray:
         label_array = np.asarray(labels, dtype=np.int32)
         if label_array.ndim != 2:
@@ -458,6 +463,12 @@ class NumbaSecondaryPropagationBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        image = np.arange(9, dtype=np.float64).reshape((3, 3))
+        labels = np.array([[1, 0, 0], [0, 0, 2], [0, 0, 0]], dtype=np.int32)
+        mask = np.ones(labels.shape, dtype=np.bool_)
+        self.propagate_result(image, labels, mask, 0.1)
+
     def propagate_result(
         self,
         image: np.ndarray,
@@ -499,13 +510,13 @@ def secondary_propagation_backend(
     )
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _distance_to_positive_labels_numba(labels: np.ndarray) -> np.ndarray:
     distances, _nearest_y, _nearest_x = _edt_feature_transform_numba(labels)
     return distances
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _nearest_label_expansion_numba(
     labels: np.ndarray,
     max_distance: float,
@@ -513,14 +524,14 @@ def _nearest_label_expansion_numba(
     distances, nearest_y, nearest_x = _edt_feature_transform_numba(labels)
     height, width = labels.shape
     output = np.zeros((height, width), dtype=np.int32)
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             if distances[y, x] <= max_distance:
                 output[y, x] = labels[nearest_y[y, x], nearest_x[y, x]]
     return output
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _edt_feature_transform_numba(
     labels: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -532,7 +543,7 @@ def _edt_feature_transform_numba(
     nearest_y = np.empty((height, width), dtype=np.int64)
     nearest_x = np.empty((height, width), dtype=np.int64)
 
-    for y in prange(height):
+    for y in range(height):
         source = np.empty(width, dtype=np.float64)
         for x in range(width):
             source[x] = 0.0 if labels[y, x] > 0 else inf
@@ -543,7 +554,7 @@ def _edt_feature_transform_numba(
             row_distances[y, x] = row_output[x]
             row_nearest_x[y, x] = row_arg[x]
 
-    for x in prange(width):
+    for x in range(width):
         source = np.empty(height, dtype=np.float64)
         for y in range(height):
             source[y] = row_distances[y, x]
@@ -557,7 +568,7 @@ def _edt_feature_transform_numba(
             nearest_x[y, x] = row_nearest_x[seed_y, x]
 
     distances = np.empty((height, width), dtype=np.float64)
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             distances[y, x] = np.sqrt(distances_sq[y, x])
     return distances, nearest_y, nearest_x

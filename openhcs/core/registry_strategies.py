@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
 from enum import Enum, EnumMeta
+from functools import lru_cache
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
 from metaclass_registry import AutoRegisterMeta
@@ -41,14 +42,36 @@ class EnumKeyedStrategyMixin(Generic[_EnumT]):
         member = getattr(cls, cls.__enum_member_attr__, None)
         if not isinstance(member, Enum):
             return
-        if getattr(cls, cls.__enum_label_attr__, None) is None:
-            setattr(cls, cls.__enum_label_attr__, member.value)
+        label_attr = cls._enum_label_attr()
+        if getattr(cls, label_attr, None) is None:
+            setattr(cls, label_attr, member.value)
+
+    @classmethod
+    def _enum_label_attr(cls) -> str:
+        """Return the class attribute AutoRegisterMeta should read as a key."""
+        label_attr = cls.__enum_label_attr__
+        registry_key = getattr(cls, "__registry_key__", None)
+        if (
+            label_attr == EnumKeyedStrategyMixin.__enum_label_attr__
+            and isinstance(registry_key, str)
+        ):
+            return registry_key
+        return label_attr
 
     @classmethod
     def for_enum_member(cls: type[_StrategyT], member: _EnumT) -> _StrategyT:
         """Instantiate the registered strategy for an enum member."""
-        strategy_type = cls.__registry__[member.value]
+        strategy_type = cls.strategy_type_for_enum_member(member)
         return cast(_StrategyT, strategy_type())
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def strategy_type_for_enum_member(
+        cls: type[_StrategyT],
+        member: _EnumT,
+    ) -> type[_StrategyT]:
+        """Return the registered strategy class for an enum member."""
+        return cast(type[_StrategyT], cls.__registry__[member.value])
 
     @classmethod
     def registered_strategy_types(

@@ -2821,6 +2821,21 @@ def test_correct_illumination_median_smoothing_uses_local_rank_structuring_disk(
     np.testing.assert_array_equal(illumination, expected)
 
 
+def test_correct_illumination_median_smoothing_default_uses_native_backend():
+    from openhcs.processing.backends.cellprofiler.illumination import (
+        NumbaNumpyRankMedianSmoothingBackendStrategy,
+        RankMedianSmoothingBackendStrategy,
+    )
+    from openhcs.processing.backends.cellprofiler._backend import (
+        CellProfilerBackendProvider,
+    )
+
+    backend = RankMedianSmoothingBackendStrategy.for_memory_type()
+
+    assert backend.backend_provider is CellProfilerBackendProvider.NATIVE
+    NumbaNumpyRankMedianSmoothingBackendStrategy().prepare_backend()
+
+
 def test_correct_illumination_median_smoothing_fast_minimum_majority_path():
     image = np.ones((16, 16), dtype=np.float32)
     image[1::4, 1::4] = 0.25
@@ -2882,7 +2897,7 @@ def test_correct_illumination_convex_hull_smoothing_suppresses_sparse_spikes():
         image,
         smoothing_method="Convex Hull",
         rescale_option="No",
-        convex_hull_backend_provider=CellProfilerBackendProvider.EXACT,
+        convex_hull_backend_provider=CellProfilerBackendProvider.NUMBA,
         dtype_config=DtypeConfig(),
     )
 
@@ -2906,14 +2921,14 @@ def test_correct_illumination_exact_convex_hull_matches_native_reference():
         image,
         smoothing_method="Convex Hull",
         rescale_option="No",
-        convex_hull_backend_provider=CellProfilerBackendProvider.EXACT,
+        convex_hull_backend_provider=CellProfilerBackendProvider.NUMBA,
         dtype_config=DtypeConfig(),
     )
     reference, _ = correct_illumination_calculate(
         image,
         smoothing_method="Convex Hull",
         rescale_option="No",
-        convex_hull_backend_provider=CellProfilerBackendProvider.NATIVE_EXACT,
+        convex_hull_backend_provider=CellProfilerBackendProvider.NATIVE,
         dtype_config=DtypeConfig(),
     )
 

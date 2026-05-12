@@ -20,7 +20,7 @@ from typing import Any, ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from numba import njit, prange
+from numba import njit
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy as numpy_decorator
@@ -1466,6 +1466,20 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        mask = np.array(
+            [[False, True, False], [True, True, False], [False, False, True]],
+            dtype=np.bool_,
+        )
+        labels = np.array([[0, 1, 0], [1, 1, 0], [0, 0, 2]], dtype=np.int32)
+        image = np.arange(9, dtype=np.float64).reshape((3, 3))
+        footprint = np.ones((3, 3), dtype=np.bool_)
+        self.connected_components(mask, connectivity=2)
+        self.fill_labeled_holes(labels)
+        self.erode_labeled_objects(labels, footprint)
+        self.local_maxima_by_label(image, labels, footprint)
+        self.smooth_image_for_declumping(image, mask, 1.0)
+
     def connected_components(
         self,
         mask: np.ndarray,
@@ -2757,7 +2771,7 @@ def _border_component_ids(component_labels: np.ndarray) -> set[int]:
     }
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _grayscale_morphology_2d_numba(
     image: np.ndarray,
     offset_rows: np.ndarray,
@@ -2768,7 +2782,7 @@ def _grayscale_morphology_2d_numba(
     intermediate = np.empty_like(image)
     output = np.empty_like(image)
     footprint_size = offset_rows.size
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             best = image[
                 _reflect_index_1d(row + int(offset_rows[0]), height),
@@ -2785,7 +2799,7 @@ def _grayscale_morphology_2d_numba(
                     best = value
             intermediate[row, col] = best
 
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             best = intermediate[
                 _reflect_index_1d(row + int(offset_rows[0]), height),
@@ -3139,7 +3153,7 @@ def _paint_convex_hull_line_mask_numba(
                 output[y, x] = True
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _local_maxima_by_label_numba(
     image: np.ndarray,
     labels: np.ndarray,
@@ -3148,7 +3162,7 @@ def _local_maxima_by_label_numba(
 ) -> np.ndarray:
     height, width = image.shape
     maxima = np.zeros((height, width), dtype=np.bool_)
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             label = labels[y, x]
             if label <= 0:
@@ -3174,7 +3188,7 @@ def _local_maxima_by_label_numba(
     return maxima
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _smooth_image_for_declumping_numba(
     image: np.ndarray,
     mask: np.ndarray,
@@ -3187,7 +3201,7 @@ def _smooth_image_for_declumping_numba(
     edge_array = np.empty((height, width), dtype=np.float64)
     smoothed_image = np.empty((height, width), dtype=np.float64)
 
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             edge_sum = 0.0
             image_sum = 0.0
@@ -3202,7 +3216,7 @@ def _smooth_image_for_declumping_numba(
             edge_vertical[y, x] = edge_sum
             image_vertical[y, x] = image_sum
 
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             edge_sum = 0.0
             image_sum = 0.0
@@ -3217,7 +3231,7 @@ def _smooth_image_for_declumping_numba(
             smoothed_image[y, x] = image_sum
 
     output = np.empty_like(image)
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             if mask[y, x]:
                 edge_value = edge_array[y, x]
@@ -3355,7 +3369,7 @@ def _hole_fill_flags_below_size_numba(
     return fill_flags
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _fill_binary_holes_from_components_numba(
     labels: np.ndarray,
     components: np.ndarray,
@@ -3371,7 +3385,7 @@ def _fill_binary_holes_from_components_numba(
         return labels
 
     output = labels.copy()
-    for y in prange(height):
+    for y in range(height):
         for x in range(width):
             component = components[y, x]
             if component > 0 and fill_flags[component]:
@@ -5232,7 +5246,7 @@ def filter_labels_by_area_numba(
     )
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _filter_labels_by_area_2d_numba(
     labels: np.ndarray,
     areas: np.ndarray,
@@ -5241,7 +5255,7 @@ def _filter_labels_by_area_2d_numba(
 ) -> np.ndarray:
     output = labels.copy()
     height, width = labels.shape
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             label = int(labels[row, col])
             if label <= 0:
@@ -5252,7 +5266,7 @@ def _filter_labels_by_area_2d_numba(
     return output
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _filter_labels_by_area_3d_numba(
     labels: np.ndarray,
     areas: np.ndarray,
@@ -5261,7 +5275,7 @@ def _filter_labels_by_area_3d_numba(
 ) -> np.ndarray:
     output = labels.copy()
     plane_count, height, width = labels.shape
-    for plane_index in prange(plane_count):
+    for plane_index in range(plane_count):
         for row in range(height):
             for col in range(width):
                 label = int(labels[plane_index, row, col])
@@ -5299,7 +5313,7 @@ def filter_labels_by_diameter_range_numba(
     )
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _filter_labels_by_diameter_range_2d_numba(
     labels: np.ndarray,
     areas: np.ndarray,
@@ -5309,7 +5323,7 @@ def _filter_labels_by_diameter_range_2d_numba(
     small_removed = labels.copy()
     final = labels.copy()
     height, width = labels.shape
-    for row in prange(height):
+    for row in range(height):
         for col in range(width):
             label = int(labels[row, col])
             if label <= 0:
@@ -5323,7 +5337,7 @@ def _filter_labels_by_diameter_range_2d_numba(
     return small_removed, final
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _filter_labels_by_diameter_range_3d_numba(
     labels: np.ndarray,
     areas: np.ndarray,
@@ -5333,7 +5347,7 @@ def _filter_labels_by_diameter_range_3d_numba(
     small_removed = labels.copy()
     final = labels.copy()
     plane_count, height, width = labels.shape
-    for plane_index in prange(plane_count):
+    for plane_index in range(plane_count):
         for row in range(height):
             for col in range(width):
                 label = int(labels[plane_index, row, col])

@@ -12,7 +12,7 @@ import time
 from typing import ClassVar
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
-from numba import njit, prange
+from numba import njit
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.callable_contract import processing_prepare
@@ -1355,6 +1355,33 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = False
 
+    def prepare_backend(self) -> None:
+        """Compile rank-median numba kernels during compiler preparation."""
+        footprint = np.ones((3, 3), dtype=np.bool_)
+        row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+        scaled = np.arange(16, dtype=np.uint16).reshape((4, 4))
+        code_image = np.arange(16, dtype=np.int32).reshape((4, 4))
+        mask = np.ones(scaled.shape, dtype=np.bool_)
+
+        _rank_median_global_minimum_is_majority_everywhere_numba(
+            scaled,
+            row_offsets_y,
+            row_radii_x,
+            np.uint16(0),
+        )
+        _rank_median_codes_2d_sliding_histogram_numba(
+            code_image,
+            row_offsets_y,
+            row_radii_x,
+            int(code_image.size),
+        )
+        _rank_median_uint16_2d_sliding_histogram_numba(
+            scaled,
+            mask,
+            row_offsets_y,
+            row_radii_x,
+        )
+
     def smooth_background_plane(
         self,
         pixel_data: np.ndarray,
@@ -1627,11 +1654,23 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
 
     backend_key = cellprofiler_backend_key(
         MemoryType.NUMPY,
-        CellProfilerBackendProvider.EXACT,
+        CellProfilerBackendProvider.NUMBA,
     )
     memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.EXACT
+    backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = False
+
+    def prepare_backend(self) -> None:
+        """Compile exact convex-hull smoothing kernels during compiler preparation."""
+        image = np.arange(16, dtype=np.float32).reshape((4, 4))
+        mask = np.ones(image.shape, dtype=np.bool_)
+        morphology = MorphologyBackendStrategy.for_memory_type()
+        self.smooth_background_plane(
+            image,
+            mask=mask,
+            filter_size=3,
+            morphology=morphology,
+        )
 
     def smooth_background_plane(
         self,
@@ -1686,20 +1725,6 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         )
 
 
-class NumbaExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
-    ExactLevelSetNumpyConvexHullSmoothingBackendStrategy,
-):
-    """Named alias for the accelerated exact NumPy provider."""
-
-    backend_key = cellprofiler_backend_key(
-        MemoryType.NUMPY,
-        CellProfilerBackendProvider.NUMBA_EXACT,
-    )
-    memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.NUMBA_EXACT
-    is_default_backend = False
-
-
 class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
     ConvexHullSmoothingBackendStrategy,
 ):
@@ -1707,10 +1732,10 @@ class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
 
     backend_key = cellprofiler_backend_key(
         MemoryType.NUMPY,
-        CellProfilerBackendProvider.NATIVE_EXACT,
+        CellProfilerBackendProvider.NATIVE,
     )
     memory_type = MemoryType.NUMPY
-    backend_provider = CellProfilerBackendProvider.NATIVE_EXACT
+    backend_provider = CellProfilerBackendProvider.NATIVE
     is_default_backend = False
 
     def smooth_background_plane(
@@ -2257,7 +2282,7 @@ def _rank_median_global_minimum_is_majority_everywhere_numba(
     return True
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _rank_median_codes_2d_sliding_histogram_numba(
     code_image: np.ndarray,
     row_offsets_y: np.ndarray,
@@ -2266,7 +2291,7 @@ def _rank_median_codes_2d_sliding_histogram_numba(
 ) -> np.ndarray:
     height, width = code_image.shape
     output = np.empty((height, width), dtype=np.int32)
-    for y in prange(height):
+    for y in range(height):
         tree = np.zeros(value_count + 1, dtype=np.int64)
         count = 0
 
@@ -2336,7 +2361,7 @@ def _fenwick_select_code(tree: np.ndarray, kth: int) -> int:
     return index
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _rank_median_uint16_2d_sliding_histogram_numba(
     image: np.ndarray,
     mask: np.ndarray,
@@ -2346,7 +2371,7 @@ def _rank_median_uint16_2d_sliding_histogram_numba(
     height, width = image.shape
     output = np.empty((height, width), dtype=np.uint16)
     histogram_size = 65536
-    for y in prange(height):
+    for y in range(height):
         tree = np.zeros(histogram_size + 1, dtype=np.int64)
         count = 0
 
@@ -2420,7 +2445,7 @@ def _fenwick_select_uint16(tree: np.ndarray, kth: int) -> np.uint16:
     return np.uint16(index)
 
 
-@njit(cache=True, parallel=True)
+@njit(cache=True)
 def _rank_median_uint16_2d_numba(
     image: np.ndarray,
     mask: np.ndarray,
@@ -2430,7 +2455,7 @@ def _rank_median_uint16_2d_numba(
     height, width = image.shape
     output = np.empty((height, width), dtype=np.uint16)
     footprint_size = offsets_y.shape[0]
-    for y in prange(height):
+    for y in range(height):
         values = np.empty(footprint_size, dtype=np.uint16)
         for x in range(width):
             count = 0

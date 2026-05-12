@@ -151,6 +151,11 @@ class NumbaNumpyObjectTextureCropBackendStrategy(ObjectTextureCropBackendStrateg
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        image = np.arange(9, dtype=np.float64).reshape((3, 3))
+        labels = np.array([[0, 1, 1], [0, 1, 0], [2, 2, 0]], dtype=np.int64)
+        self.object_intensity_crops(image, labels)
+
     def object_intensity_crops(
         self,
         image: np.ndarray,
@@ -190,6 +195,10 @@ class NumbaNumpyHaralickTextureBackendStrategy(HaralickTextureBackendStrategy):
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
+
+    def prepare_backend(self) -> None:
+        image = np.arange(25, dtype=np.int64).reshape((5, 5))
+        self.haralick_features(image, scale=1, ignore_zeros=False)
 
     def haralick_features(
         self,

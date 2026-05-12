@@ -397,6 +397,14 @@ class NumbaNumpyObjectClassificationBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        labels = np.array([[0, 1], [2, 2]], dtype=np.int32)
+        image = np.array([[0.0, 1.0], [2.0, 3.0]], dtype=np.float64)
+        label_ids = np.array([1, 2], dtype=np.int32)
+        object_bins = np.array([1, 2], dtype=np.int32)
+        self.mean_intensity_values(labels, image, label_ids)
+        self.apply_object_bins(labels, label_ids, object_bins)
+
     def positive_label_ids(self, labels: np.ndarray) -> np.ndarray:
         labels_array = np.asarray(labels, dtype=np.int32)
         if labels_array.size == 0:

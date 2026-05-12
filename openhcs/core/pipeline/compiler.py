@@ -1868,6 +1868,11 @@ class PipelineCompiler:
                 axis_request,
                 axis_values_to_process,
             )
+            from openhcs.core.steps.function_runtime import (
+                prepare_compiled_context_callables,
+            )
+
+            prepare_compiled_context_callables(compiled_contexts)
             worker_assignments = PipelineCompiler._calculate_worker_assignments(
                 list(compiled_contexts.keys()),
                 num_workers,

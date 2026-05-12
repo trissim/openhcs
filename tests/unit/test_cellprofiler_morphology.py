@@ -10,6 +10,7 @@ from openhcs.processing.backends.cellprofiler import morphology as morphology_mo
 from openhcs.processing.backends.cellprofiler.morphology import (
     CentrosomeNumpyMorphologyBackendStrategy,
     CellProfilerDeclumpMethod,
+    CombineObjectsStrategy,
     MorphologyBackendStrategy,
     NumbaNumpyMorphologyBackendStrategy,
     NumpyMorphologyBackendStrategy,
@@ -17,6 +18,20 @@ from openhcs.processing.backends.cellprofiler.morphology import (
 
 
 MORPHOLOGY = MorphologyBackendStrategy.for_memory_type(MemoryType.NUMPY)
+
+
+def test_combine_objects_strategies_are_registered_by_enum_value() -> None:
+    expected = {
+        "merge": "MergeCombineObjectsStrategy",
+        "preserve": "PreserveCombineObjectsStrategy",
+        "discard": "DiscardCombineObjectsStrategy",
+        "segment": "SegmentCombineObjectsStrategy",
+    }
+
+    assert {
+        key: type(CombineObjectsStrategy.for_method(key)).__name__
+        for key in expected
+    } == expected
 
 
 def test_fill_labeled_holes_fills_enclosed_background_only() -> None:

@@ -367,6 +367,39 @@ class NumbaNumpyNeighborTopologyBackendStrategy(NeighborTopologyBackendStrategy)
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        working = np.array([[0, 1, 1], [0, 0, 2], [3, 0, 0]], dtype=np.int32)
+        neighbor = np.array([[0, 1, 0], [2, 2, 0], [0, 3, 3]], dtype=np.int32)
+        outline = (working > 0).astype(np.int32)
+        object_numbers = np.array([1, 2, 3], dtype=np.int32)
+        footprint = np.ones((3, 3), dtype=np.bool_)
+        self.measure_topology(
+            working,
+            neighbor,
+            outline,
+            object_numbers,
+            distance=1,
+            neighbors_are_same_objects=False,
+            footprint=footprint,
+            touching_footprint=footprint,
+            variant_object_count=3,
+            variant_neighbor_count=3,
+        )
+        self.perimeter_counts(outline, variant_object_count=3)
+        self.variant_numbers_for_final_labels(working, neighbor)
+        self.closest_neighbors(
+            np.array([[0.0, 0.0], [1.0, 1.0], [2.0, 2.0], [3.0, 3.0]]),
+            np.array([[0.0, 0.0], [1.0, 2.0], [2.0, 1.0], [3.0, 2.0]]),
+            object_numbers,
+            object_numbers,
+            np.ones(4, dtype=np.bool_),
+            np.ones(4, dtype=np.bool_),
+            neighbors_are_same_objects=False,
+            variant_object_count=3,
+            variant_neighbor_count=3,
+            final_object_count=3,
+        )
+
     def measure_topology(
         self,
         working_labels: np.ndarray,

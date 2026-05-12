@@ -225,6 +225,10 @@ class NumbaNumpyImageQualityBackendStrategy(NumpyImageQualityBackendStrategy):
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        image = np.arange(25, dtype=np.float32).reshape((5, 5))
+        self.haralick_h3(image, scale=1)
+
     def haralick_h3(self, image: np.ndarray, *, scale: int) -> float:
         image_array = np.asarray(image, dtype=np.float32)
         if image_array.ndim != 2:

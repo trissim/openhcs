@@ -134,6 +134,34 @@ def test_cellprofiler_processing_backend_exports_module_function_variants() -> N
     assert getattr(function, PROCESSING_CONTRACT_ATTR) is ProcessingContract.PURE_2D
 
 
+def test_cellprofiler_processing_backend_exports_resize_volumetric_variant() -> None:
+    from openhcs.processing.backends import cellprofiler
+
+    function = cellprofiler.require_cellprofiler_function(
+        "Resize",
+        function_name="resize_volumetric",
+    )
+
+    assert function is cellprofiler.resize_volumetric
+    assert function.input_memory_type == MemoryType.NUMPY.value
+    assert function.output_memory_type == MemoryType.NUMPY.value
+    assert getattr(function, PROCESSING_CONTRACT_ATTR) is ProcessingContract.PURE_3D
+
+
+def test_cellprofiler_processing_backend_exports_resize_objects_volumetric_variant() -> None:
+    from openhcs.processing.backends import cellprofiler
+
+    function = cellprofiler.require_cellprofiler_function(
+        "ResizeObjects",
+        function_name="resize_objects_3d",
+    )
+
+    assert function is cellprofiler.resize_objects_3d
+    assert function.input_memory_type == MemoryType.NUMPY.value
+    assert function.output_memory_type == MemoryType.NUMPY.value
+    assert getattr(function, PROCESSING_CONTRACT_ATTR) is ProcessingContract.PURE_3D
+
+
 def test_cellprofiler_processing_backend_submodule_import_is_lazy() -> None:
     result = subprocess.run(
         [

@@ -14,7 +14,6 @@ from typing import Tuple
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
-from nominal_refactor_advisor.record_algebra import product_record
 
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory import numpy
@@ -424,7 +423,19 @@ def object_colocalization_threshold_reductions(
     costes_threshold_2: float,
     first_costes_denominator_threshold: float,
     object_count: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+) -> tuple[
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+    np.ndarray,
+]:
     total_first_threshold = np.zeros(object_count, dtype=np.float64)
     total_second_threshold = np.zeros(object_count, dtype=np.float64)
     threshold_sum1 = np.zeros(object_count, dtype=np.float64)
@@ -1321,12 +1332,41 @@ class ColocalizationMeasurementOptions:
         object.__setattr__(self, "costes_method", CostesMethod(self.costes_method))
 
 
-ColocalizationCostesThresholds = product_record(
-    "ColocalizationCostesThresholds",
-    "first: float; second: float",
-    doc="Precomputed Costes thresholds for one resolved image source pair.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class ColocalizationCostesThresholds:
+    """Precomputed Costes thresholds for one resolved image source pair."""
+
+    first: float
+    second: float
+
+
+@dataclass(frozen=True, slots=True)
+class ColocalizationImagePairCacheKey:
+    """Batch-local identity for one resolved colocalization image pair."""
+
+    image_data_id: int
+    channel_1: int
+    channel_2: int
+
+
+@dataclass(frozen=True, slots=True)
+class ColocalizationObjectLabelCacheKey:
+    """Batch-local identity for labels projected into one image-pair mask."""
+
+    label_data_id: int
+    pair_valid_mask_id: int
+
+
+@dataclass(frozen=True, slots=True)
+class ColocalizationCostesThresholdCacheKey:
+    """Batch-local identity for Costes thresholds over one image pair."""
+
+    image_data_id: int
+    channel_1: int
+    channel_2: int
+    method: CostesMethod
+    scale_max: int
+    backend_provider: object
 
 
 @dataclass(frozen=True, slots=True)
@@ -1979,7 +2019,10 @@ def measure_colocalization_objects(
             corr = centered_product / np.sqrt(centered_first * centered_second)
         corr[~np.isfinite(corr)] = np.nan
 
-    if any((options.do_manders, options.do_rwc, options.do_overlap)):
+    threshold_metrics_requested = any(
+        (options.do_manders, options.do_rwc, options.do_overlap)
+    )
+    if threshold_metrics_requested:
         threshold_1 = (
             options.threshold_percent / 100 * max1
         )
@@ -2021,7 +2064,7 @@ def measure_colocalization_objects(
             threshold_c1,
             options.scale_max,
         )
-    if any((options.do_manders, options.do_rwc, options.do_overlap)):
+    if threshold_metrics_requested:
         (
             total_first_threshold,
             total_second_threshold,
@@ -2160,9 +2203,9 @@ class ColocalizationCostesThresholdRequest:
     image_pair_context: ColocalizationImagePairContext | None = None
 
     @property
-    def cache_key(self) -> tuple[object, ...]:
+    def cache_key(self) -> ColocalizationCostesThresholdCacheKey:
         """Return the batch-local identity for this resolved source pair."""
-        return (
+        return ColocalizationCostesThresholdCacheKey(
             id(self.image_data),
             self.channel_1,
             self.channel_2,
@@ -2272,10 +2315,16 @@ class ColocalizationCostesThresholdBatch:
     """Batch-local Costes threshold cache keyed by resolved image-pair identity."""
 
     def __init__(self) -> None:
-        self._thresholds: dict[tuple[object, ...], ColocalizationCostesThresholds] = {}
-        self._image_pairs: dict[tuple[object, ...], ColocalizationImagePairContext] = {}
+        self._thresholds: dict[
+            ColocalizationCostesThresholdCacheKey,
+            ColocalizationCostesThresholds,
+        ] = {}
+        self._image_pairs: dict[
+            ColocalizationImagePairCacheKey,
+            ColocalizationImagePairContext,
+        ] = {}
         self._label_contexts: dict[
-            tuple[object, ...],
+            ColocalizationObjectLabelCacheKey,
             ColocalizationObjectLabelContext,
         ] = {}
 
@@ -2288,7 +2337,7 @@ class ColocalizationCostesThresholdBatch:
         image_data = image_payload_data(request.image)
         channel_1 = int(kwargs.get("channel_1", 0))
         channel_2 = int(kwargs.get("channel_2", 1))
-        key = (id(image_data), channel_1, channel_2)
+        key = ColocalizationImagePairCacheKey(id(image_data), channel_1, channel_2)
         context = self._image_pairs.get(key)
         if context is None:
             context = ColocalizationImagePairContext.from_request(
@@ -2307,7 +2356,10 @@ class ColocalizationCostesThresholdBatch:
         """Return the batch-local resolved object-label context."""
         labels = request.kwargs["labels"]
         label_array = object_label_dense_array(labels, dtype=np.int32)
-        key = (id(label_array), id(image_pair_context.pair_valid_mask))
+        key = ColocalizationObjectLabelCacheKey(
+            id(label_array),
+            id(image_pair_context.pair_valid_mask),
+        )
         context = self._label_contexts.get(key)
         if context is None:
             context = ColocalizationObjectLabelContext.from_dense_labels(
