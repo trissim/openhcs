@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 import shutil
 import urllib.request
 from abc import ABC, abstractmethod
@@ -57,6 +58,11 @@ SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE = "source"
 SOURCE_SCHEMA_IMAGE_TYPE_METADATA_FIELD = SOURCE_IMAGE_TYPE_METADATA_FIELD
 _AUXILIARY_PAYLOAD_CACHE_LIMIT = 64
 _AUXILIARY_PAYLOAD_CACHE: OrderedDict[str, object] = OrderedDict()
+_PLATE_WELL_TOKEN_PATTERN = re.compile(
+    r"(?:^|[_-])(?P<well>[A-P][0-9]{2})(?=(?:f[0-9])|[_\-.]|$)",
+    re.IGNORECASE,
+)
+_SITE_TOKEN_PATTERN = re.compile(r"(?:^|[_-])f(?P<site>[0-9]+)(?=[A-Za-z_\-.]|$)")
 
 
 def cache_source_schema_auxiliary_payload(path: str | Path, payload: object) -> None:
@@ -1175,6 +1181,7 @@ def _source_candidates(
             imported_metadata,
             path=relative_path,
         )
+        metadata = _metadata_with_filename_component_fallbacks(path.name, metadata)
         candidates.append(
             SourceSchemaCandidate(
                 path=path,
@@ -1183,6 +1190,31 @@ def _source_candidates(
             )
         )
     return tuple(candidates)
+
+
+def _metadata_with_filename_component_fallbacks(
+    filename: str,
+    metadata: Mapping[str, str],
+) -> Mapping[str, str]:
+    """Recover common plate well/site tokens when a pipeline lacks usable metadata."""
+    enriched = dict(metadata)
+    if source_metadata_value(enriched, AllComponents.WELL.value) is None:
+        well_match = _PLATE_WELL_TOKEN_PATTERN.search(filename)
+        if well_match is not None:
+            merge_source_metadata(
+                enriched,
+                {AllComponents.WELL.value: well_match.group("well").upper()},
+                path=filename,
+            )
+    if source_metadata_value(enriched, AllComponents.SITE.value) is None:
+        site_match = _SITE_TOKEN_PATTERN.search(filename)
+        if site_match is not None:
+            merge_source_metadata(
+                enriched,
+                {AllComponents.SITE.value: str(int(site_match.group("site")) + 1)},
+                path=filename,
+            )
+    return MappingProxyType(enriched)
 
 
 def _image_plane_source_candidates(

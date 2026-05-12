@@ -754,7 +754,10 @@ class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     ) -> None:
         """Bind CellProfiler threshold rows into absorbed threshold kwargs."""
         if include_advanced_setting:
-            value = _last_optional_setting_value(module, "Use advanced settings?")
+            value = LastRepeatedSettingValuePolicy().value(
+                module,
+                "Use advanced settings?",
+            )
             if value is not None:
                 kwargs["use_advanced_settings"] = binder.parse_value(
                     "Use advanced settings?",
@@ -766,7 +769,10 @@ class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
             )
 
         for setting_name, parameter_name in _CELLPROFILER_THRESHOLD_SETTINGS.items():
-            value = _active_threshold_setting_value(module, setting_name)
+            value = RepeatedSettingValuePolicy.for_setting(setting_name).value(
+                module,
+                setting_name,
+            )
             if value is not None:
                 kwargs[parameter_name] = _parse_cellprofiler_threshold_setting(
                     binder,
@@ -777,7 +783,7 @@ class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
         _upgrade_legacy_cellprofiler_threshold_kwargs(module, kwargs)
 
-        bounds = _last_optional_setting_value(
+        bounds = LastRepeatedSettingValuePolicy().value(
             module,
             "Lower and upper bounds on threshold",
         )
@@ -958,46 +964,13 @@ def _parse_cellprofiler_threshold_setting(
     return binder.parse_value(setting_name, value)
 
 
-def _last_optional_setting_value(
-    module: ModuleBlock,
-    setting_name: str | SettingNameFamily,
-) -> str | None:
-    """Return the last ordered value for legacy scalar settings."""
-    return LastRepeatedSettingValuePolicy().value(module, setting_name)
-
-
-def _active_setting_value(
-    module: ModuleBlock,
-    setting_name: str,
-) -> str | None:
-    """Return the active ordered value through registered repeated-row policy."""
-    return RepeatedSettingValuePolicy.for_setting(setting_name).value(
-        module,
-        setting_name,
-    )
-
-
 def _threshold_scope(module: ModuleBlock) -> CellProfilerThresholdScope | None:
-    value = _last_optional_setting_value(module, "Threshold strategy")
+    value = LastRepeatedSettingValuePolicy().value(module, "Threshold strategy")
     token = _cellprofiler_threshold_setting_token(value or "")
     for scope in CellProfilerThresholdScope:
         if token == scope.value:
             return scope
     return None
-
-
-def _active_threshold_setting_value(
-    module: ModuleBlock,
-    setting_name: str,
-) -> str | None:
-    """Return the active ordered value for threshold settings.
-
-    CellProfiler threshold settings can carry both the global and adaptive
-    threshold method rows in one module block. The active method is selected by
-    the threshold strategy: global uses the first method row, adaptive uses the
-    last method row.
-    """
-    return _active_setting_value(module, setting_name)
 
 
 def _cellprofiler_threshold_setting_token(value: Any) -> str:
@@ -2395,6 +2368,21 @@ class GaussianFilterModuleSettingsBindingStrategy(
     )
 
 
+class ReduceNoiseModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
+    """Bind ReduceNoise non-local means parameters."""
+
+    module_name = "ReduceNoise"
+    setting_bindings = (
+        SettingToKeywordBinding("Size", "patch_size", parse_cellprofiler_int),
+        SettingToKeywordBinding("Distance", "patch_distance", parse_cellprofiler_int),
+        SettingToKeywordBinding(
+            "Cut-off distance",
+            "cutoff_distance",
+            parse_cellprofiler_float,
+        ),
+    )
+
+
 class RemoveHolesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind RemoveHoles' diameter setting."""
 
@@ -2816,6 +2804,32 @@ class ErodeObjectsModuleSettingsBindingStrategy(StructuringElementModuleSettings
         bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         declarative_bound = binder.bind_declared(module, type(self).setting_bindings)
         return BoundModuleSettings({**bound.kwargs, **declarative_bound})
+
+
+class DilateObjectsModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
+    """Bind DilateObjects structuring-element settings to object-dilation kwargs."""
+
+    module_name = "DilateObjects"
+    structuring_element_binding = StructuringElementSettingBinding(
+        shape_keyword="structuring_element_shape",
+        size_keyword="structuring_element_size",
+    )
+
+    def _bind(
+        self,
+        module: ModuleBlock,
+        *,
+        binder: SettingsBinder,
+        param_mapping: Mapping[str, Any],
+    ) -> BoundModuleSettings:
+        del param_mapping
+        return BoundModuleSettings(
+            structuring_element_bound_kwargs(
+                module,
+                binder,
+                type(self).structuring_element_binding,
+            )
+        )
 
 
 class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):

@@ -11,7 +11,7 @@ from contextlib import ExitStack
 from dataclasses import dataclass
 from os import environ
 from pathlib import Path
-from typing import Any, ClassVar
+from typing import Any, ClassVar, Mapping
 from urllib.parse import quote
 
 from metaclass_registry import AutoRegisterMeta
@@ -20,6 +20,7 @@ from benchmark.adapters.cppipe_source import (
     CPPipeSourceResolution,
     resolve_cppipe_source,
 )
+from benchmark.adapters.openhcs import OpenHCSAxisSelection
 from benchmark.contracts.metric import MetricCollector
 from benchmark.contracts.tool_adapter import (
     BenchmarkResult,
@@ -35,6 +36,7 @@ from openhcs.core.source_schema_workspace import (
 from openhcs.core.runtime_equivalence import RuntimeOutputSnapshot
 from openhcs.interop.cellprofiler.parser import CPPipeParser
 from openhcs.interop.cellprofiler.source_schema import compile_image_schema
+from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"native_reference"})
@@ -42,6 +44,14 @@ CELLPROFILER_EXECUTABLE_ENV = "CELLPROFILER_EXECUTABLE"
 PYTHONHASHSEED_ENV = "PYTHONHASHSEED"
 DETERMINISTIC_PYTHONHASHSEED = "0"
 NATIVE_CELLPROFILER_SUCCESS_MARKER = ".cellprofiler_benchmark_reference.json"
+CELLPROFILER_FIRST_IMAGE_SET_PARAM = "cellprofiler_first_image_set"
+CELLPROFILER_LAST_IMAGE_SET_PARAM = "cellprofiler_last_image_set"
+CELLPROFILER_IMAGE_SET_BOUND_PARAMS = frozenset(
+    {
+        CELLPROFILER_FIRST_IMAGE_SET_PARAM,
+        CELLPROFILER_LAST_IMAGE_SET_PARAM,
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +76,24 @@ class CellProfilerRunRequest:
         return float(value)
 
     @property
+    def first_image_set(self) -> int | None:
+        return _optional_positive_int(
+            self.pipeline_params.get(CELLPROFILER_FIRST_IMAGE_SET_PARAM),
+            CELLPROFILER_FIRST_IMAGE_SET_PARAM,
+        )
+
+    @property
+    def last_image_set(self) -> int | None:
+        return _optional_positive_int(
+            self.pipeline_params.get(CELLPROFILER_LAST_IMAGE_SET_PARAM),
+            CELLPROFILER_LAST_IMAGE_SET_PARAM,
+        )
+
+    @property
+    def openhcs_axis_selection(self) -> OpenHCSAxisSelection:
+        return OpenHCSAxisSelection.from_pipeline_params(self.pipeline_params)
+
+    @property
     def cppipe_source(self) -> CPPipeSourceRequest:
         return CPPipeSourceRequest.from_pipeline_params(
             dataset_id=self.dataset_id,
@@ -81,11 +109,14 @@ class NativeCellProfilerInputDomain:
     cppipe_path: Path
     input_dir: Path
     provenance: dict[str, Any]
+    file_list_path: Path | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "cppipe_path", Path(self.cppipe_path))
         object.__setattr__(self, "input_dir", Path(self.input_dir))
         object.__setattr__(self, "provenance", dict(self.provenance))
+        if self.file_list_path is not None:
+            object.__setattr__(self, "file_list_path", Path(self.file_list_path))
 
 
 class NativeCellProfilerInputDomainStrategy(ABC, metaclass=AutoRegisterMeta):
@@ -146,6 +177,101 @@ class NativeCellProfilerInputDomainStrategy(ABC, metaclass=AutoRegisterMeta):
         """Return the concrete native CellProfiler input domain."""
 
 
+class SelectedWellSourceSchemaNativeCellProfilerInputDomainStrategy(
+    NativeCellProfilerInputDomainStrategy
+):
+    """Run native CellProfiler on the same source-schema wells selected for OpenHCS."""
+
+    strategy_key = "selected_source_schema_wells"
+
+    def accepts(
+        self,
+        request: CellProfilerRunRequest,
+        source: CPPipeSourceResolution,
+    ) -> bool:
+        modules = CPPipeParser().parse(source.path)
+        schema = compile_image_schema(modules)
+        selection = request.openhcs_axis_selection
+        return (
+            not schema.is_empty
+            and (bool(selection.axis_filter) or selection.max_axis_count is not None)
+        )
+
+    def prepare(
+        self,
+        request: CellProfilerRunRequest,
+        source: CPPipeSourceResolution,
+        execution_cppipe_path: Path,
+    ) -> NativeCellProfilerInputDomain:
+        modules = CPPipeParser().parse(source.path)
+        schema = compile_image_schema(modules)
+        workspace = materialize_source_schema_workspace(
+            request.dataset_path,
+            request.output_dir / "native_cellprofiler_selected_source_workspace",
+            schema,
+        )
+        selected_wells = request.openhcs_axis_selection.resolve(
+            _source_schema_workspace_wells(workspace)
+        )
+        selected_paths = _source_schema_workspace_paths_for_wells(
+            workspace,
+            selected_wells,
+        )
+        if not selected_paths:
+            raise ToolExecutionError(
+                f"Native CellProfiler selected no source files for wells {selected_wells!r}."
+            )
+        if schema.image_plane_sources:
+            embedded_strategy = EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy()
+            patched_cppipe_path = embedded_strategy.rewrite_embedded_image_plane_sources(
+                execution_cppipe_path,
+                request.output_dir / "native_cellprofiler_headless",
+                tuple(embedded_strategy.file_uri(path) for path in selected_paths),
+            )
+            input_dir = request.output_dir / "native_cellprofiler_empty_input"
+            if input_dir.exists():
+                shutil.rmtree(input_dir)
+            input_dir.mkdir(parents=True, exist_ok=True)
+            return NativeCellProfilerInputDomain(
+                cppipe_path=patched_cppipe_path,
+                input_dir=input_dir,
+                provenance={
+                    "native_input_domain_strategy": self.strategy_key,
+                    "native_source_workspace": str(workspace.workspace_root),
+                    "native_selected_wells": selected_wells,
+                    "native_selected_source_file_count": len(selected_paths),
+                    "native_selected_source_mode": "embedded_image_planes",
+                },
+            )
+        file_list_path = self._write_file_list(
+            request.output_dir / "native_cellprofiler_file_list.txt",
+            selected_paths,
+        )
+        return NativeCellProfilerInputDomain(
+            cppipe_path=execution_cppipe_path,
+            input_dir=request.dataset_path,
+            file_list_path=file_list_path,
+            provenance={
+                "native_input_domain_strategy": self.strategy_key,
+                "native_source_workspace": str(workspace.workspace_root),
+                "native_selected_wells": selected_wells,
+                "native_selected_source_file_count": len(selected_paths),
+                "native_selected_source_mode": "file_list",
+            },
+        )
+
+    def _write_file_list(self, path: Path, selected_paths: tuple[Path, ...]) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        uris = tuple(
+            EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy.file_uri(
+                source_path
+            )
+            for source_path in selected_paths
+        )
+        path.write_text("\n".join(uris) + "\n", encoding="utf-8")
+        return path
+
+
 class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
     NativeCellProfilerInputDomainStrategy
 ):
@@ -158,7 +284,8 @@ class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
         request: CellProfilerRunRequest,
         source: CPPipeSourceResolution,
     ) -> bool:
-        del request
+        if _request_has_openhcs_axis_selection(request):
+            return False
         modules = CPPipeParser().parse(source.path)
         return bool(compile_image_schema(modules).image_plane_sources)
 
@@ -175,10 +302,13 @@ class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
             request.output_dir / "native_cellprofiler_source_workspace",
             schema,
         )
-        patched_cppipe_path = self._rewrite_embedded_image_plane_sources(
+        patched_cppipe_path = self.rewrite_embedded_image_plane_sources(
             execution_cppipe_path,
             request.output_dir / "native_cellprofiler_headless",
-            workspace,
+            tuple(
+                self.file_uri((workspace.workspace_root / real_path).resolve())
+                for real_path in workspace.primary_mappings.values()
+            ),
         )
         input_dir = request.output_dir / "native_cellprofiler_empty_input"
         if input_dir.exists():
@@ -194,18 +324,14 @@ class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
             },
         )
 
-    def _rewrite_embedded_image_plane_sources(
+    def rewrite_embedded_image_plane_sources(
         self,
         cppipe_path: Path,
         target_dir: Path,
-        workspace: SourceSchemaWorkspaceMaterialization,
+        source_uris: tuple[str, ...],
     ) -> Path:
         source_text = cppipe_path.read_text(encoding="utf-8")
         lines = source_text.splitlines()
-        source_uris = tuple(
-            self._file_uri((workspace.workspace_root / real_path).resolve())
-            for real_path in workspace.primary_mappings.values()
-        )
         if not source_uris:
             raise ToolExecutionError(
                 "Embedded image-plane native input strategy requires at least one "
@@ -227,15 +353,13 @@ class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
             version_match = parser.IMAGE_PLANE_DETAILS_PATTERN.match(line.strip())
             if version_match is None:
                 continue
-            expected_count = int(version_match.group("count"))
-            if expected_count != len(source_uris):
-                raise ToolExecutionError(
-                    "Embedded image-plane count does not match materialized local "
-                    f"source count: cppipe={expected_count}, local={len(source_uris)}."
-                )
+            count_line = line.replace(
+                f'"PlaneCount":"{version_match.group("count")}"',
+                f'"PlaneCount":"{len(source_uris)}"',
+            )
             header_index = index + 1
             row_start = header_index + 1
-            row_stop = row_start + expected_count
+            row_stop = row_start + int(version_match.group("count"))
             if header_index >= len(lines) or row_stop > len(lines):
                 raise ToolExecutionError("Malformed embedded image-plane table.")
             header = self._csv_image_plane_row(lines[header_index])
@@ -249,13 +373,16 @@ class EmbeddedImagePlaneNativeCellProfilerInputDomainStrategy(
                 for source_uri in source_uris
             ]
             return [
-                *lines[:row_start],
+                *lines[:index],
+                count_line,
+                lines[header_index],
                 *replacement_rows,
                 *lines[row_stop:],
             ]
         raise ToolExecutionError("Pipeline has no embedded image-plane table to rewrite.")
 
-    def _file_uri(self, path: Path) -> str:
+    @staticmethod
+    def file_uri(path: Path) -> str:
         return "file://" + quote(str(path))
 
     def _csv_image_plane_row(self, line: str) -> list[str]:
@@ -362,7 +489,7 @@ class CellProfilerAdapter(ToolAdapter):
         if native_output_root.exists():
             shutil.rmtree(native_output_root)
         native_output_root.mkdir(parents=True, exist_ok=True)
-        command = (
+        command = [
             str(self._cellprofiler_executable()),
             "-c",
             "-r",
@@ -372,7 +499,13 @@ class CellProfilerAdapter(ToolAdapter):
             str(native_input_domain.input_dir),
             "-o",
             str(native_output_root),
-        )
+        ]
+        if request.first_image_set is not None:
+            command.extend(("--first-image-set", str(request.first_image_set)))
+        if request.last_image_set is not None:
+            command.extend(("--last-image-set", str(request.last_image_set)))
+        if native_input_domain.file_list_path is not None:
+            command.extend(("--file-list", str(native_input_domain.file_list_path)))
         subprocess_env = {
             **environ,
             PYTHONHASHSEED_ENV: environ.get(
@@ -425,6 +558,12 @@ class CellProfilerAdapter(ToolAdapter):
             "phase_timing_records": phase_timing.payloads(),
             **native_input_domain.provenance,
         }
+        if request.first_image_set is not None:
+            provenance[CELLPROFILER_FIRST_IMAGE_SET_PARAM] = request.first_image_set
+        if request.last_image_set is not None:
+            provenance[CELLPROFILER_LAST_IMAGE_SET_PARAM] = request.last_image_set
+        if native_input_domain.file_list_path is not None:
+            provenance["native_file_list_path"] = str(native_input_domain.file_list_path)
         if source.reference_url is not None:
             provenance["cppipe_reference_url"] = source.reference_url
         _write_native_reference_success_marker(native_output_root, provenance)
@@ -488,12 +627,96 @@ def _headless_cellprofiler_cppipe_path(cppipe_path: Path, output_dir: Path) -> P
     return patched_path
 
 
+def native_cellprofiler_image_set_scope_slug(
+    pipeline_params: Mapping[str, Any],
+) -> str | None:
+    """Return a stable native-reference scope suffix for bounded image-set runs."""
+    first_image_set = _optional_positive_int(
+        pipeline_params.get(CELLPROFILER_FIRST_IMAGE_SET_PARAM),
+        CELLPROFILER_FIRST_IMAGE_SET_PARAM,
+    )
+    last_image_set = _optional_positive_int(
+        pipeline_params.get(CELLPROFILER_LAST_IMAGE_SET_PARAM),
+        CELLPROFILER_LAST_IMAGE_SET_PARAM,
+    )
+    if first_image_set is None and last_image_set is None:
+        return None
+    parts = []
+    if first_image_set is not None:
+        parts.append(f"first{first_image_set}")
+    if last_image_set is not None:
+        parts.append(f"last{last_image_set}")
+    return "image_sets_" + "_".join(parts)
+
+
+def native_cellprofiler_sample_scope_slug(
+    pipeline_params: Mapping[str, Any],
+) -> str | None:
+    """Return a stable native-reference scope suffix for OpenHCS well selection."""
+    selection = OpenHCSAxisSelection.from_pipeline_params(pipeline_params)
+    parts: list[str] = []
+    if selection.axis_filter:
+        parts.append("wells_" + "_".join(selection.axis_filter))
+    if selection.max_axis_count is not None:
+        parts.append(f"first{selection.max_axis_count}wells")
+    if not parts:
+        return None
+    return "samples_" + "_".join(parts)
+
+
 def native_cellprofiler_output_root(request: CellProfilerRunRequest) -> Path:
     """Return the output directory owned by one native CellProfiler run."""
     return (
         request.output_dir
         / f"{request.dataset_path.name}_{request.pipeline_name}_native_cellprofiler"
     )
+
+
+def _optional_positive_int(value: Any, parameter_name: str) -> int | None:
+    if value is None:
+        return None
+    resolved_value = int(value)
+    if resolved_value <= 0:
+        raise ValueError(f"{parameter_name} must be positive.")
+    return resolved_value
+
+
+def _request_has_openhcs_axis_selection(request: CellProfilerRunRequest) -> bool:
+    selection = request.openhcs_axis_selection
+    return bool(selection.axis_filter) or selection.max_axis_count is not None
+
+
+def _source_schema_workspace_wells(
+    workspace: SourceSchemaWorkspaceMaterialization,
+) -> tuple[str, ...]:
+    parser = SourceSchemaFilenameParser()
+    wells: dict[str, None] = {}
+    for virtual_path in workspace.primary_mappings:
+        parsed = parser.parse_filename(virtual_path)
+        if parsed is None:
+            raise ToolExecutionError(
+                f"Cannot parse OpenHCS source workspace path {virtual_path!r}."
+            )
+        wells[str(parsed["well"])] = None
+    return tuple(wells)
+
+
+def _source_schema_workspace_paths_for_wells(
+    workspace: SourceSchemaWorkspaceMaterialization,
+    selected_wells: tuple[str, ...],
+) -> tuple[Path, ...]:
+    parser = SourceSchemaFilenameParser()
+    selected = set(selected_wells)
+    paths: list[Path] = []
+    for virtual_path, real_path in workspace.primary_mappings.items():
+        parsed = parser.parse_filename(virtual_path)
+        if parsed is None:
+            raise ToolExecutionError(
+                f"Cannot parse OpenHCS source workspace path {virtual_path!r}."
+            )
+        if str(parsed["well"]) in selected:
+            paths.append((workspace.workspace_root / real_path).resolve())
+    return tuple(dict.fromkeys(paths))
 
 
 def native_cellprofiler_reference_is_complete(reference_output_dir: Path) -> bool:

@@ -15,7 +15,10 @@ from openhcs.core.aligned_image_payload import (
     payload_slices_for_alignment,
 )
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
-from openhcs.core.runtime_artifact_queries import measurement_values_for_label_slices
+from openhcs.core.runtime_artifact_queries import (
+    measurement_table_for_slice,
+    measurement_values_for_label_slices,
+)
 from openhcs.constants.constants import MemoryType
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerMeasurementImage,
@@ -145,6 +148,7 @@ from openhcs.core.runtime_semantics import (
     object_shape_measurement_field_names,
 )
 from openhcs.core.runtime_values import (
+    ColumnarRows,
     FieldSpec,
     ImagePayloadMetadata,
     ImageMetadataPayload,
@@ -185,6 +189,11 @@ class _SyntheticAxisObjectMeasurement:
     image_number: int
     object_label: int
     value: float
+
+
+@dataclass(frozen=True, slots=True)
+class _ColumnarMeasurementRows(ColumnarRows):
+    columns: dict[str, tuple[object, ...]]
 
 
 def _synthetic_object_measurement_function(
@@ -4993,6 +5002,64 @@ def test_measurement_table_collection_slice_count_accepts_sharded_offsets() -> N
     )
 
     assert RuntimeSliceProjection.slice_count_from_values((first, second)) == 2
+
+
+def test_measurement_table_slice_count_accepts_columnar_rows() -> None:
+    table = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=_ColumnarMeasurementRows(
+            {
+                "slice_index": (0, 0, 1),
+                "object_label": (1, 2, 1),
+                "area": (11.0, 12.0, 13.0),
+            }
+        ),
+        object_name="Objects",
+    )
+
+    assert RuntimeSliceProjection.measurement_table_slice_count(table) == 2
+
+
+def test_measurement_table_for_slice_preserves_columnar_rows() -> None:
+    table = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=_ColumnarMeasurementRows(
+            {
+                "slice_index": (0, 0, 1),
+                "feature_name": ("Area", "MeanIntensity", "Area"),
+                "result_value": (11.0, 12.0, 13.0),
+            }
+        ),
+        fields=(
+            FieldSpec("slice_index"),
+            FieldSpec("feature_name"),
+            FieldSpec("result_value"),
+        ),
+        object_name="Objects",
+    )
+
+    sliced = measurement_table_for_slice(table, 1)
+
+    assert isinstance(sliced.rows, ColumnarRows)
+    assert tuple(sliced.rows.columns["slice_index"]) == (1,)
+    assert tuple(sliced.rows.columns["result_value"]) == (13.0,)
+
+
+def test_measurement_table_for_slice_normalizes_mixed_sequence_rows() -> None:
+    table = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=[
+            {"slice_index": 1, "feature_name": "Area", "result_value": 13.0},
+            {"slice_index": 1, "MeanIntensity": 17.0},
+        ],
+        object_name="Objects",
+    )
+
+    sliced = measurement_table_for_slice(table, 1)
+
+    assert sliced.fields == ()
+    assert all("feature_name" in row for row in sliced.rows)
+    assert all("result_value" in row for row in sliced.rows)
 
 
 def test_unstack_cellprofiler_image_slices_collapses_pairwise_slice_grid() -> None:

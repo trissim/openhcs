@@ -72,6 +72,14 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
         parser.add_argument("--manifest", type=Path, required=True)
         parser.add_argument("--output-dir", type=Path, required=True)
         parser.add_argument("--native-reference-root", type=Path)
+        parser.add_argument(
+            "--require-native-reference",
+            action="store_true",
+            help=(
+                "Fail or record a failed observation instead of running native "
+                "CellProfiler when a case is missing from --native-reference-root."
+            ),
+        )
         parser.add_argument("--discard-openhcs-outputs", action="store_true")
         parser.add_argument("--continue-on-error", action="store_true")
         parser.add_argument(
@@ -156,6 +164,7 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             reuse_openhcs_cache=not args.force_openhcs_run,
             speedup_target=args.speedup_target,
             native_reference_root=args.native_reference_root,
+            require_native_reference=args.require_native_reference,
             discard_openhcs_outputs=args.discard_openhcs_outputs,
             continue_on_error=args.continue_on_error,
             openhcs_axis_filter=tuple(args.openhcs_axis_filter or ()),

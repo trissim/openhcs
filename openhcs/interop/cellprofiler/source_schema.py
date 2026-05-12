@@ -648,13 +648,15 @@ class MetadataModuleCompiler(SetupModuleCompiler):
         module: ModuleBlock,
         state: PipelineImageSchemaBuilder,
     ) -> None:
-        if not _metadata_extraction_enabled(module):
-            return
         for block in repeating_setting_blocks(
             module.iter_settings(),
             start_name="Metadata extraction method",
         ):
-            _compile_metadata_block(block, state)
+            _compile_metadata_block(
+                block,
+                state,
+                require_enabled=_metadata_extraction_enabled(module),
+            )
 
 
 class NamesAndTypesModuleCompiler(SetupModuleCompiler):
@@ -1054,9 +1056,13 @@ def _metadata_extraction_enabled(module: ModuleBlock) -> bool:
 def _compile_metadata_block(
     block: Sequence[ModuleSetting],
     state: PipelineImageSchemaBuilder,
+    *,
+    require_enabled: bool,
 ) -> None:
     method = block_setting_value(block, "Metadata extraction method")
     if _is_imported_metadata_method(method):
+        if not require_enabled:
+            return
         state.add_imported_metadata_table(_imported_metadata_table(block))
         return
     if not _is_path_metadata_extraction_method(method):
@@ -1065,10 +1071,17 @@ def _compile_metadata_block(
     source = _metadata_source(
         block_setting_value(block, "Metadata source", default="File name")
     )
+    pattern = _metadata_pattern_for_block(block, source)
+    if not require_enabled and not pattern:
+        return
     state.add_metadata_rule(
         MetadataExtractionRule(
             source=source,
-            pattern=_required_metadata_pattern_for_block(block, source),
+            pattern=(
+                _required_metadata_pattern_for_block(block, source)
+                if require_enabled
+                else pattern
+            ),
             filters=(
                 cellprofiler_source_filter_criteria_parser()
                 .filter_clauses_from_criteria(

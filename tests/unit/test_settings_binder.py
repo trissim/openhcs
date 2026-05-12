@@ -223,6 +223,25 @@ def test_erode_objects_binds_preservation_settings():
     assert bound.kwargs["relabel_objects"] is False
 
 
+def test_dilate_objects_binds_structuring_element_to_object_dilation_kwargs():
+    module = ModuleBlock(
+        name="DilateObjects",
+        module_num=1,
+        settings={
+            "Structuring element": "octahedron,1",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("DilateObjects").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs["structuring_element_shape"] == "octahedron"
+    assert bound.kwargs["structuring_element_size"] == 1
+
+
 def test_gray_to_color_rescale_default_follows_cellprofiler_revision_upgrade():
     v3_module = ModuleBlock(
         name="GrayToColor",
@@ -1643,3 +1662,28 @@ def test_remove_holes_binds_hole_diameter():
     )
 
     assert bound.kwargs == {"diameter": 20.0}
+
+
+def test_reduce_noise_binds_non_local_means_parameters():
+    module = ModuleBlock(
+        name="ReduceNoise",
+        module_num=6,
+        settings={
+            "Size": "5",
+            "Distance": "2",
+            "Cut-off distance": "0.2",
+        },
+    )
+
+    bound = ModuleSettingsBindingStrategy.for_module("ReduceNoise").bind(
+        module,
+        binder=SettingsBinder(),
+        param_mapping={},
+    )
+
+    assert bound.kwargs == {
+        "patch_size": 5,
+        "patch_distance": 2,
+        "cutoff_distance": 0.2,
+    }
+    assert not bound.unmapped_kwargs

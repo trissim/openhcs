@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, Any
 
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.contracts.tool_adapter import ToolExecutionError
-from benchmark.adapters.cellprofiler import native_cellprofiler_reference_is_complete
+from benchmark.adapters.cellprofiler import (
+    native_cellprofiler_image_set_scope_slug,
+    native_cellprofiler_reference_is_complete,
+    native_cellprofiler_sample_scope_slug,
+)
 from benchmark.adapters.openhcs import OPENHCS_AXIS_FILTER_PARAM
 from benchmark.adapters.openhcs import OPENHCS_MAX_AXIS_COUNT_PARAM
 from benchmark.adapters.openhcs import OPENHCS_NUM_WORKERS_PARAM
@@ -466,6 +470,7 @@ class ComparisonSuiteRunContext:
     speedup_target: float
     reuse_openhcs_cache: bool
     native_reference_root: Path | None
+    require_native_reference: bool
     discard_openhcs_outputs: bool
     continue_on_error: bool
     openhcs_axis_filter: tuple[str, ...]
@@ -678,6 +683,7 @@ def run_comparison_suite(
     reuse_openhcs_cache: bool = True,
     speedup_target: float = DEFAULT_SPEEDUP_TARGET,
     native_reference_root: Path | None = None,
+    require_native_reference: bool = False,
     discard_openhcs_outputs: bool = False,
     continue_on_error: bool = False,
     openhcs_axis_filter: Sequence[str] = (),
@@ -695,6 +701,7 @@ def run_comparison_suite(
         speedup_target=speedup_target,
         reuse_openhcs_cache=reuse_openhcs_cache,
         native_reference_root=native_reference_root,
+        require_native_reference=require_native_reference,
         discard_openhcs_outputs=discard_openhcs_outputs,
         continue_on_error=continue_on_error,
         openhcs_axis_filter=tuple(openhcs_axis_filter),
@@ -1000,6 +1007,7 @@ def write_suite_metadata(
             if context.native_reference_root is not None
             else None
         ),
+        "require_native_reference": context.require_native_reference,
         "discard_openhcs_outputs": context.discard_openhcs_outputs,
         "continue_on_error": context.continue_on_error,
         "collect_memory_metric": context.metric_policy.collect_memory,
@@ -1019,7 +1027,6 @@ def _run_comparison_case(
     repetition: int,
     context: ComparisonSuiteRunContext,
 ) -> CellProfilerComparisonObservation:
-    native_reference = _native_reference_location(case, context.native_reference_root)
     pipeline_params: dict[str, object] = {
         **case.pipeline_params,
         "compare_image_outputs": not case.value_only,
@@ -1036,6 +1043,28 @@ def _run_comparison_case(
         pipeline_params[OPENHCS_MAX_AXIS_COUNT_PARAM] = context.openhcs_max_axis_count
     pipeline_params[OPENHCS_NUM_WORKERS_PARAM] = context.openhcs_num_workers
     pipeline_params[OPENHCS_START_METHOD_PARAM] = context.openhcs_start_method
+    native_reference = _native_reference_location(
+        case,
+        context.native_reference_root,
+        pipeline_params,
+    )
+    if (
+        context.require_native_reference
+        and context.native_reference_root is not None
+        and case.equivalence_reference_output_dir is None
+        and native_reference.reference_output_dir is None
+    ):
+        expected_reference = None
+        if native_reference.output_dir is not None:
+            resolved_dataset_path = resolve_visible_source_path(case.dataset_path)
+            expected_reference = (
+                native_reference.output_dir
+                / f"{resolved_dataset_path.name}_{case.name}_native_cellprofiler"
+            )
+        raise FileNotFoundError(
+            "Required cached native CellProfiler reference is missing or incomplete"
+            f" for case {case.name!r}: {expected_reference}"
+        )
     result = run_cellprofiler_cppipe_parity(
         case.dataset_path,
         case.cppipe_path,
@@ -1066,6 +1095,7 @@ def _run_comparison_case(
 def _native_reference_location(
     case: CellProfilerComparisonCase,
     native_reference_root: Path | None,
+    pipeline_params: Mapping[str, object] | None = None,
 ) -> NativeReferenceLocation:
     if case.equivalence_reference_output_dir is not None:
         return NativeReferenceLocation(
@@ -1074,8 +1104,16 @@ def _native_reference_location(
         )
     if native_reference_root is None:
         return NativeReferenceLocation(output_dir=None, reference_output_dir=None)
+    reference_scope_parts = [case.resolved_dataset_id, case.name]
+    effective_pipeline_params = pipeline_params or case.pipeline_params
+    for native_scope_slug in (
+        native_cellprofiler_sample_scope_slug(effective_pipeline_params),
+        native_cellprofiler_image_set_scope_slug(effective_pipeline_params),
+    ):
+        if native_scope_slug is not None:
+            reference_scope_parts.append(native_scope_slug)
     native_output_dir = Path(native_reference_root) / _benchmark_path_slug(
-        f"{case.resolved_dataset_id}_{case.name}"
+        "_".join(reference_scope_parts)
     )
     resolved_dataset_path = resolve_visible_source_path(case.dataset_path)
     expected_reference = (

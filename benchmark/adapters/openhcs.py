@@ -583,7 +583,6 @@ class OpenHCSAdapter(ToolAdapter):
                             source_workspace_path,
                             prepared.source_schema,
                             filemanager=self._filemanager,
-                            max_image_set_count=request.axis_selection.max_axis_count,
                         )
                 except Exception as exc:
                     raise ToolExecutionError(

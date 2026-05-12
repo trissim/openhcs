@@ -45,11 +45,12 @@ from benchmark.cellprofiler_library.functions.measurecolocalization import (
     ObjectColocalizationMeasurements,
     measure_colocalization,
     measure_colocalization_objects,
-    _costes_first_channel_bin_threshold,
     _divide_costes_measurements,
 )
 from openhcs.processing.backends.cellprofiler.colocalization import (
+    ColocalizationCostesThresholds,
     costes_backend,
+    object_colocalization_threshold_reductions,
     thresholded_colocalization_metrics,
 )
 from benchmark.cellprofiler_library.functions.opening import opening
@@ -638,6 +639,27 @@ def test_measure_colocalization_object_costes_preserves_undefined_ratios():
     assert row.costes_m2 == 0.5
 
 
+def test_object_costes_denominators_include_threshold_boundary():
+    reductions = object_colocalization_threshold_reductions(
+        np.array([1.0, 2.0, 3.0], dtype=np.float64),
+        np.array([1.0, 2.0, 3.0], dtype=np.float64),
+        np.array([1, 1, 1], dtype=np.int64),
+        np.array([0.0], dtype=np.float64),
+        np.array([0.0], dtype=np.float64),
+        2.0,
+        2.0,
+        2.0,
+        2.0,
+        1,
+    )
+    total_first_costes, total_second_costes, costes_sum1, costes_sum2 = reductions[-4:]
+
+    assert total_first_costes[0] == 5.0
+    assert total_second_costes[0] == 5.0
+    assert costes_sum1[0] == 3.0
+    assert costes_sum2[0] == 3.0
+
+
 def test_measure_colocalization_objects_accepts_unmasked_finite_images():
     image = np.stack(
         (
@@ -662,12 +684,27 @@ def test_measure_colocalization_objects_accepts_unmasked_finite_images():
 
 
 def test_measure_colocalization_costes_first_threshold_snaps_to_scale_bin():
-    assert (
-        _costes_first_channel_bin_threshold(0.06666672229766846, 255)
-        == 17 / 255
+    thresholds = ColocalizationCostesThresholds.from_thresholds(
+        0.06666672229766846,
+        0.08594463765621185,
+        scale_max=255,
     )
-    assert _costes_first_channel_bin_threshold(0.08594463765621185, 255) == (
-        0.08594463765621185
+    assert thresholds.first == float(
+        np.nextafter(np.float32(0.06666672229766846), np.float32(np.inf))
+    )
+    assert thresholds.first_denominator == 17 / 255
+    assert thresholds.second == float(
+        np.nextafter(np.float32(0.08594463765621185), np.float32(np.inf))
+    )
+    assert thresholds.second_denominator == 0.08594463765621185
+
+    assert (
+        ColocalizationCostesThresholds.from_thresholds(
+            0.08594463765621185,
+            0.0,
+            scale_max=255,
+        ).first_denominator
+        == 0.08594463765621185
     )
 
 

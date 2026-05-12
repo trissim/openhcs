@@ -1,9 +1,12 @@
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import ClassVar
 
 import pytest
 import numpy as np
 from scipy.io import savemat
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerModuleExecutor,
@@ -11,6 +14,9 @@ from openhcs.interop.cellprofiler.runtime import (
     CellProfilerRuntimeAdapter,
 )
 from openhcs.interop.cellprofiler.runtime.adapter import _single_spatial_grid
+from openhcs.interop.cellprofiler.measurement_dialect import (
+    CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+)
 from openhcs.core.runtime_artifact_queries import (
     measurement_values_for_label_slices,
     measurement_values_for_feature,
@@ -54,6 +60,7 @@ from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     MeasurementTable,
     ObjectLabelPayload,
+    ColumnarRows,
     RuntimeArrayPayload,
     SpatialGrid,
     image_payload_metadata,
@@ -78,6 +85,15 @@ IDENTIFY_TERTIARY_OBJECTS = "IdentifyTertiaryObjects"
 MEASURE_OBJECT_INTENSITY = "MeasureObjectIntensity"
 MEASURE_OBJECT_NEIGHBORS = "MeasureObjectNeighbors"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
+
+
+@dataclass(frozen=True, slots=True)
+class SimpleColumnarRows(ColumnarRows):
+    data: Mapping[str, tuple[object, ...]]
+
+    columns: ClassVar[AliasProperty[Mapping[str, tuple[object, ...]]]] = (
+        AliasProperty("data")
+    )
 MEASURE_COLOCALIZATION = "MeasureColocalization"
 MEASURE_IMAGE_INTENSITY = "MeasureImageIntensity"
 RELATE_OBJECTS = "RelateObjects"
@@ -2802,6 +2818,107 @@ def test_measurement_lookup_aligns_values_to_label_slices():
     np.testing.assert_array_equal(value_slices[1], np.array([300.0]))
 
 
+def test_measurement_lookup_does_not_stop_on_broad_cellprofiler_alias():
+    value_slices = measurement_values_for_label_slices(
+        (
+            MeasurementTable(
+                name=MEASUREMENTS,
+                rows=(
+                    {
+                        "object_name": NUCLEI,
+                        "object_label": 1,
+                        "Location_MaxIntensity_X_OrigGreen": 477.0,
+                    },
+                    {
+                        "object_name": NUCLEI,
+                        "object_label": 1,
+                        "Intensity_MaxIntensity_OrigGreen": 0.0549019612,
+                    },
+                    {
+                        "object_name": NUCLEI,
+                        "object_label": 2,
+                        "Intensity_MaxIntensity_OrigGreen": 0.9607843161,
+                    },
+                ),
+            ),
+        ),
+        "Intensity_MaxIntensity_OrigGreen",
+        np.array([[1, 2]], dtype=np.int32),
+        object_name=NUCLEI,
+    )
+
+    np.testing.assert_allclose(value_slices[0], [0.0549019612, 0.9607843161])
+
+
+def test_adapter_feature_prefilter_scans_heterogeneous_wide_rows():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        MEASUREMENTS,
+        (
+            {
+                "object_label": 1,
+                "Location_MaxIntensity_X_OrigGreen": 477.0,
+            },
+            {
+                "object_label": 1,
+                "Intensity_MaxIntensity_OrigGreen": 0.0549019612,
+            },
+            {
+                "object_label": 2,
+                "Intensity_MaxIntensity_OrigGreen": 0.9607843161,
+            },
+        ),
+        object_name=NUCLEI,
+        fields=(FieldSpec("object_label", int),),
+        object_id_field="object_label",
+    )
+
+    value_slices = adapter.measurement_values_for_label_slices(
+        NUCLEI,
+        "Intensity_MaxIntensity_OrigGreen",
+        labels,
+    )
+
+    np.testing.assert_allclose(value_slices[0], [0.0549019612, 0.9607843161])
+
+
+def test_measurement_lookup_filters_source_qualified_columnar_feature_rows():
+    values = measurement_values_for_feature(
+        (
+            MeasurementTable(
+                name=MEASURE_OBJECT_INTENSITY,
+                rows=SimpleColumnarRows(
+                    {
+                        "object_name": (NUCLEI, NUCLEI, NUCLEI, NUCLEI),
+                        "object_label": (1, 2, 1, 2),
+                        "source_image_name": (
+                            DNA_IMAGE,
+                            DNA_IMAGE,
+                            "OrigGreen",
+                            "OrigGreen",
+                        ),
+                        "max_intensity": (0.90, 0.95, 0.05, 0.80),
+                    }
+                ),
+            ),
+        ),
+        "Intensity_MaxIntensity_OrigGreen",
+        object_count=2,
+        object_ids=(1, 2),
+        object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    np.testing.assert_allclose(values, [0.05, 0.80])
+
+
 def test_measurement_lookup_broadcasts_singleton_indexed_slice_to_label_stack():
     value_slices = measurement_values_for_label_slices(
         (
@@ -3115,6 +3232,83 @@ def test_classify_objects_binds_runtime_measurement_values():
         (1, "Classify_Bin_2", 0),
         (2, "Classify_Bin_1", 0),
         (2, "Classify_Bin_2", 1),
+    }
+
+
+def test_classify_objects_binds_custom_threshold_and_named_low_high_bins():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2], [3, 0]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "object_name": NUCLEI,
+                "object_label": 1,
+                "feature_name": "Intensity_MaxIntensity_OrigGreen",
+                "result_value": 0.05,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 2,
+                "feature_name": "Intensity_MaxIntensity_OrigGreen",
+                "result_value": 0.15,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 3,
+                "feature_name": "Intensity_MaxIntensity_OrigGreen",
+                "result_value": 0.80,
+            },
+        ],
+        object_name=NUCLEI,
+    )
+    executor = _executor(
+        "ClassifyObjectsSingleMeasurement",
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+    )
+
+    executor.run(
+        get_function("ClassifyObjects"),
+        np.zeros((2, 2), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        measurement_feature="Intensity_MaxIntensity_OrigGreen",
+        bin_choice="custom",
+        bin_count=3,
+        low_threshold=0.0,
+        high_threshold=1.0,
+        wants_low_bin=True,
+        wants_high_bin=True,
+        custom_thresholds="0.2",
+        bin_names="PH3Neg,PH3Pos",
+        dtype_config=DtypeConfig(),
+    )
+    rows = adapter.get_measurements(MEASUREMENTS).rows
+
+    assert {
+        (row["feature_name"], row["result_value"])
+        for row in rows
+        if row.get("feature_name", "").endswith("NumObjectsPerBin")
+    } == {
+        ("Classify_PH3Neg_NumObjectsPerBin", 2),
+        ("Classify_PH3Pos_NumObjectsPerBin", 1),
+    }
+    assert {
+        (row["object_label"], row["feature_name"], row["result_value"])
+        for row in rows
+        if row.get("object_name") == NUCLEI and row["result_value"] == 1
+    } == {
+        (1, "Classify_PH3Neg", 1),
+        (2, "Classify_PH3Neg", 1),
+        (3, "Classify_PH3Pos", 1),
     }
 
 

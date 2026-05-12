@@ -19,7 +19,12 @@ from benchmark.adapters.openhcs import (
     _runtime_execution_cache_key_for_snapshot,
     _runtime_execution_cache_key_matches,
 )
-from benchmark.adapters.cellprofiler import NATIVE_CELLPROFILER_SUCCESS_MARKER
+from benchmark.adapters.cellprofiler import (
+    CELLPROFILER_FIRST_IMAGE_SET_PARAM,
+    CELLPROFILER_LAST_IMAGE_SET_PARAM,
+    NATIVE_CELLPROFILER_SUCCESS_MARKER,
+    native_cellprofiler_sample_scope_slug,
+)
 from benchmark.cellprofiler_comparison import (
     CellProfilerComparisonCase,
     _native_reference_location,
@@ -174,6 +179,50 @@ def test_native_reference_lookup_reuses_semantic_snapshot_without_marker(
     location = _native_reference_location(case, native_reference_root)
 
     assert location.reference_output_dir == reference_dir
+
+
+def test_native_reference_lookup_separates_bounded_image_set_scope(
+    tmp_path: Path,
+) -> None:
+    case = CellProfilerComparisonCase(
+        name="ExampleBounded",
+        dataset_path=tmp_path / "images",
+        cppipe_path=tmp_path / "pipeline.cppipe",
+        dataset_id="example",
+        pipeline_params={
+            CELLPROFILER_FIRST_IMAGE_SET_PARAM: 1,
+            CELLPROFILER_LAST_IMAGE_SET_PARAM: 1,
+        },
+    )
+    native_reference_root = tmp_path / "native_refs"
+
+    location = _native_reference_location(case, native_reference_root)
+
+    assert location.output_dir == (
+        native_reference_root
+        / "example_ExampleBounded_image_sets_first1_last1"
+    )
+
+
+def test_native_reference_lookup_separates_openhcs_sample_scope(tmp_path: Path) -> None:
+    case = CellProfilerComparisonCase(
+        name="ExampleOneWell",
+        dataset_path=tmp_path / "images",
+        cppipe_path=tmp_path / "pipeline.cppipe",
+        dataset_id="example",
+        pipeline_params={"openhcs_max_axis_count": 1},
+    )
+    native_reference_root = tmp_path / "native_refs"
+
+    location = _native_reference_location(case, native_reference_root)
+
+    assert native_cellprofiler_sample_scope_slug(case.pipeline_params) == (
+        "samples_first1wells"
+    )
+    assert location.output_dir == (
+        native_reference_root
+        / "example_ExampleOneWell_samples_first1wells"
+    )
 
 
 def test_cellprofiler_cppipe_parity_runner_reuses_cached_openhcs_output(

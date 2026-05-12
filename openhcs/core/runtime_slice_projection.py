@@ -14,19 +14,20 @@ from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_OBJECT_NAME_FIELD,
+    columnar_row_values,
     measurement_row_mapping,
     measurement_rows,
     measurement_table_for_slice,
     measurement_table_object_name,
 )
 from openhcs.core.runtime_semantics import (
-    MeasurementScope,
     MeasurementRowAxisField,
     ParentChildRelationshipPayload,
     RuntimePlaneAxis,
 )
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_values import (
+    ColumnarRows,
     MeasurementTable,
     ObjectLabelPayload,
     ObjectLabelSet,
@@ -354,7 +355,7 @@ class RuntimeSliceProjection:
             return RuntimeSliceProjection.measurement_table_collection_slice_count(value)
         if not isinstance(value, MeasurementTable):
             return None
-        if value.subject.scope not in (MeasurementScope.IMAGE, MeasurementScope.OBJECT):
+        if not value.subject.scope.projects_runtime_slices:
             return None
         slice_indices = RuntimeSliceProjection.measurement_table_slice_indices(value)
         if not slice_indices:
@@ -414,12 +415,22 @@ class RuntimeSliceProjection:
 
     @staticmethod
     def measurement_table_slice_indices(value: MeasurementTable) -> set[int]:
-        if value.subject.scope not in (MeasurementScope.IMAGE, MeasurementScope.OBJECT):
+        if not value.subject.scope.projects_runtime_slices:
             return set()
+        slice_field = MeasurementRowAxisField.SLICE_INDEX.value
+        if isinstance(value.rows, ColumnarRows):
+            column_names = tuple(str(column) for column in value.rows.columns)
+            if slice_field not in column_names:
+                return set()
+            return {
+                int(slice_index)
+                for slice_index in columnar_row_values(value.rows, slice_field)
+                if slice_index is not None
+            }
         return {
-            int(row["slice_index"])
+            int(row[slice_field])
             for row in value.rows
-            if isinstance(row, Mapping) and row.get("slice_index") is not None
+            if isinstance(row, Mapping) and row.get(slice_field) is not None
         }
 
     @staticmethod

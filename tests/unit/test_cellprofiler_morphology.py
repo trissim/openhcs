@@ -303,17 +303,17 @@ def test_declumping_footprint_uses_cellprofiler_suppression_disk() -> None:
 
 
 def test_declumping_smoothing_profile_matches_cellprofiler_source() -> None:
-    shape_kernel = morphology_module._declumping_smoothing_kernel(
+    shape_kernel = MORPHOLOGY.declumping_smoothing_kernel(
         4,
         declump_method=CellProfilerDeclumpMethod.SHAPE,
     )
-    intensity_below_minimum_kernel = morphology_module._declumping_smoothing_kernel(
+    intensity_below_minimum_kernel = MORPHOLOGY.declumping_smoothing_kernel(
         4,
         declump_method=CellProfilerDeclumpMethod.INTENSITY,
         suppress_size=4,
         min_diameter=5,
     )
-    intensity_at_minimum_kernel = morphology_module._declumping_smoothing_kernel(
+    intensity_at_minimum_kernel = MORPHOLOGY.declumping_smoothing_kernel(
         4,
         declump_method=CellProfilerDeclumpMethod.INTENSITY,
         suppress_size=4,

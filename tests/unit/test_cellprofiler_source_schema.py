@@ -252,6 +252,29 @@ def test_compile_image_schema_drops_empty_scalar_filter_clauses():
     assert schema.metadata_rules[0].filters == ()
 
 
+def test_compile_image_schema_preserves_disabled_path_metadata_for_source_projection():
+    metadata_module = _module_with_records(
+        1,
+        "Metadata",
+        [
+            ("Extract metadata?", "No"),
+            ("Metadata extraction method", "Extract from file/folder names"),
+            ("Metadata source", "File name"),
+            (
+                "Regular expression to extract from file name",
+                r"^(?P<Plate>.*)_(?P<Well>[A-P][0-9]{2})_s(?P<Site>[0-9])",
+            ),
+            ("Select the filtering criteria", 'and (file does contain "")'),
+        ],
+    )
+
+    schema = compile_image_schema([metadata_module])
+
+    assert len(schema.metadata_rules) == 1
+    assert schema.metadata_rules[0].source is MetadataSource.FILE_NAME
+    assert "Well" in schema.metadata_rules[0].pattern
+
+
 def test_compile_image_schema_combines_imported_metadata_location_and_filename():
     metadata_module = _module_with_records(
         1,

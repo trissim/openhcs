@@ -10,6 +10,7 @@ from benchmark.cellprofiler_comparison import (
     comparison_observation_from_result,
     load_comparison_cases,
     load_observations_jsonl,
+    run_comparison_suite,
     _discard_openhcs_benchmark_tree,
     _discard_successful_openhcs_benchmark_tree,
     write_module_coverage_artifacts,
@@ -104,6 +105,37 @@ def test_cached_native_reference_uses_timeout_as_conservative_speed_lower_bound(
     assert observation.native_cellprofiler.total_metric_seconds == 900.0
     assert observation.speedup == 450.0
     assert observation.total_phase_speedup == 450.0
+
+
+def test_required_native_reference_does_not_rerun_cellprofiler(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "ExampleFly" / "images"
+    dataset_path.mkdir(parents=True)
+    cppipe_path = tmp_path / "ExampleFly" / "ExampleFly.cppipe"
+    cppipe_path.write_text("CellProfiler Pipeline: http://www.cellprofiler.org\n")
+    case = CellProfilerComparisonCase(
+        name="ExampleFly",
+        dataset_path=dataset_path,
+        cppipe_path=cppipe_path,
+        dataset_id="ExampleFly",
+    )
+
+    observations = run_comparison_suite(
+        (case,),
+        output_root=tmp_path / "suite",
+        suite_id="suite-1",
+        native_reference_root=tmp_path / "native_refs",
+        require_native_reference=True,
+        continue_on_error=True,
+    )
+
+    assert len(observations) == 1
+    assert observations[0].native_cellprofiler.cached is False
+    assert observations[0].native_cellprofiler.success is False
+    assert "Required cached native CellProfiler reference" in (
+        observations[0].native_cellprofiler.error_message or ""
+    )
 
 
 def test_comparison_writers_emit_raw_phase_and_summary_tables(

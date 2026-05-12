@@ -11,6 +11,8 @@ from openhcs.core.equivalence import (
     RuntimeMeasurementSourceNameEncoding,
 )
 from openhcs.core.measurement_lookup_dialect import RuntimeMeasurementLookupDialect
+from openhcs.core.runtime_semantics import ImageAreaOccupiedMeasurementFeature
+from openhcs.core.runtime_semantics import ObjectIntensityMeasurementFeature
 from openhcs.core.runtime_semantics import PairMeasurementFeature
 from openhcs.core.runtime_semantics import MeasurementScope
 
@@ -46,6 +48,14 @@ CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES = MappingProxyType(
 CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT = RuntimeMeasurementLookupDialect(
     category_prefixes=CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES,
     feature_part_aliases=CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES,
+    source_qualified_feature_families=tuple(
+        tuple(feature.value.split("_"))
+        for feature in ObjectIntensityMeasurementFeature
+    )
+    + tuple(
+        tuple(feature.value.split("_"))
+        for feature in ImageAreaOccupiedMeasurementFeature
+    ),
 )
 CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
     category_prefixes=CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES,

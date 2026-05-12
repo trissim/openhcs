@@ -422,6 +422,7 @@ def object_colocalization_threshold_reductions(
     costes_threshold_1: float,
     costes_threshold_2: float,
     first_costes_denominator_threshold: float,
+    second_costes_denominator_threshold: float,
     object_count: int,
 ) -> tuple[
     np.ndarray,
@@ -475,7 +476,7 @@ def object_colocalization_threshold_reductions(
         )
         if first_value >= first_costes_denominator_threshold:
             total_first_costes[label_index] += first_value
-        if second_above_costes:
+        if second_value >= second_costes_denominator_threshold:
             total_second_costes[label_index] += second_value
         if first_above_costes and second_above_costes:
             costes_sum1[label_index] += first_value
@@ -1338,12 +1339,47 @@ class ColocalizationCostesThresholds:
 
     first: float
     second: float
+    first_denominator: float
+    second_denominator: float
+
+    @classmethod
+    def from_thresholds(
+        cls,
+        first: float,
+        second: float,
+        *,
+        scale_max: int,
+    ) -> "ColocalizationCostesThresholds":
+        first_denominator = float(first)
+        second_denominator = float(second)
+        first_threshold = float(
+            np.nextafter(np.float32(first_denominator), np.float32(np.inf))
+        )
+        second_threshold = float(
+            np.nextafter(np.float32(second_denominator), np.float32(np.inf))
+        )
+        scaled_first = first_denominator * scale_max
+        nearest_first_bin = round(scaled_first)
+        first_denominator = (
+            nearest_first_bin / scale_max
+            if scale_max > 0
+            and np.isfinite(first)
+            and np.isclose(scaled_first, nearest_first_bin, rtol=0.0, atol=1e-3)
+            else first_denominator
+        )
+        return cls(
+            first=first_threshold,
+            second=second_threshold,
+            first_denominator=float(first_denominator),
+            second_denominator=second_denominator,
+        )
 
 
 @dataclass(frozen=True, slots=True)
 class ColocalizationImagePairCacheKey:
     """Batch-local identity for one resolved colocalization image pair."""
 
+    image_payload_id: int
     image_data_id: int
     channel_1: int
     channel_2: int
@@ -1361,6 +1397,7 @@ class ColocalizationObjectLabelCacheKey:
 class ColocalizationCostesThresholdCacheKey:
     """Batch-local identity for Costes thresholds over one image pair."""
 
+    image_payload_id: int
     image_data_id: int
     channel_1: int
     channel_2: int
@@ -2040,10 +2077,10 @@ def measure_colocalization_objects(
     threshold_c1 = 0.0
     threshold_c2 = 0.0
     first_costes_denominator_threshold = 0.0
+    second_costes_denominator_threshold = 0.0
     if options.do_costes and full_fi.size:
         if costes_thresholds is not None:
-            threshold_c1 = costes_thresholds.first
-            threshold_c2 = costes_thresholds.second
+            resolved_costes_thresholds = costes_thresholds
         elif options.costes_method == CostesMethod.FASTER:
             threshold_c1, threshold_c2 = costes_backend(
                 backend_provider=options.costes_backend_provider,
@@ -2051,6 +2088,11 @@ def measure_colocalization_objects(
                 full_fi,
                 full_si,
                 options.scale_max,
+            )
+            resolved_costes_thresholds = ColocalizationCostesThresholds.from_thresholds(
+                threshold_c1,
+                threshold_c2,
+                scale_max=options.scale_max,
             )
         else:
             threshold_c1, threshold_c2 = costes_backend(
@@ -2061,12 +2103,21 @@ def measure_colocalization_objects(
                 options.scale_max,
                 options.costes_method == CostesMethod.FAST,
             )
+            resolved_costes_thresholds = ColocalizationCostesThresholds.from_thresholds(
+                threshold_c1,
+                threshold_c2,
+                scale_max=options.scale_max,
+            )
+        threshold_c1 = resolved_costes_thresholds.first
+        threshold_c2 = resolved_costes_thresholds.second
+        first_costes_denominator_threshold = (
+            resolved_costes_thresholds.first_denominator
+        )
+        second_costes_denominator_threshold = (
+            resolved_costes_thresholds.second_denominator
+        )
         costes_threshold_1.fill(threshold_c1)
         costes_threshold_2.fill(threshold_c2)
-        first_costes_denominator_threshold = _costes_first_channel_bin_threshold(
-            threshold_c1,
-            options.scale_max,
-        )
 
     threshold_reductions_requested = threshold_metrics_requested or (
         options.do_costes and full_fi.size
@@ -2096,6 +2147,7 @@ def measure_colocalization_objects(
             threshold_c1,
             threshold_c2,
             first_costes_denominator_threshold,
+            second_costes_denominator_threshold,
             max_label,
         )
 
@@ -2187,6 +2239,7 @@ class ColocalizationCostesThresholdRequest:
     def cache_key(self) -> ColocalizationCostesThresholdCacheKey:
         """Return the batch-local identity for this resolved source pair."""
         return ColocalizationCostesThresholdCacheKey(
+            id(self.image),
             id(self.image_data),
             self.channel_1,
             self.channel_2,
@@ -2271,7 +2324,11 @@ class ColocalizationCostesThresholdRequest:
         first_pixels = image_pair_context.full_first_pixels
         second_pixels = image_pair_context.full_second_pixels
         if not first_pixels.size:
-            return ColocalizationCostesThresholds(0.0, 0.0)
+            return ColocalizationCostesThresholds.from_thresholds(
+                0.0,
+                0.0,
+                scale_max=self.scale_max,
+            )
         if self.method is CostesMethod.FASTER:
             first, second = costes_backend(
                 backend_provider=self.backend_provider,
@@ -2289,7 +2346,11 @@ class ColocalizationCostesThresholdRequest:
                 self.scale_max,
                 self.method is CostesMethod.FAST,
             )
-        return ColocalizationCostesThresholds(first, second)
+        return ColocalizationCostesThresholds.from_thresholds(
+            first,
+            second,
+            scale_max=self.scale_max,
+        )
 
 
 class ColocalizationCostesThresholdBatch:
@@ -2318,7 +2379,12 @@ class ColocalizationCostesThresholdBatch:
         image_data = image_payload_data(request.image)
         channel_1 = int(kwargs.get("channel_1", 0))
         channel_2 = int(kwargs.get("channel_2", 1))
-        key = ColocalizationImagePairCacheKey(id(image_data), channel_1, channel_2)
+        key = ColocalizationImagePairCacheKey(
+            id(request.image),
+            id(image_data),
+            channel_1,
+            channel_2,
+        )
         context = self._image_pairs.get(key)
         if context is None:
             context = ColocalizationImagePairContext.from_request(
@@ -2425,6 +2491,7 @@ def _prepare_measure_colocalization_objects() -> None:
         0.1,
         0.1,
         0.1,
+        0.1,
         object_count,
     )
 
@@ -2448,16 +2515,6 @@ def _divide_costes_measurements(numerator: object, denominator: object) -> np.nd
     denominator_array = np.asarray(denominator, dtype=float)
     with np.errstate(divide="ignore", invalid="ignore"):
         return numerator_array / denominator_array
-
-
-def _costes_first_channel_bin_threshold(threshold: float, scale_max: int) -> float:
-    if scale_max <= 0 or not np.isfinite(threshold):
-        return float(threshold)
-    scaled_threshold = float(threshold) * scale_max
-    nearest_bin = round(scaled_threshold)
-    if np.isclose(scaled_threshold, nearest_bin, rtol=0.0, atol=1e-3):
-        return nearest_bin / scale_max
-    return float(threshold)
 
 
 __all__ = [

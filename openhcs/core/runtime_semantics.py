@@ -1039,21 +1039,32 @@ class SpatialGridOrigin(str, Enum):
 class MeasurementScope(str, Enum):
     """Semantic entity scope for measurement rows."""
 
-    def __new__(cls, value: str, requires_subject_name: bool = False):
+    def __new__(
+        cls,
+        value: str,
+        requires_subject_name: bool = False,
+        projects_runtime_slices: bool = False,
+    ):
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj._requires_subject_name = requires_subject_name
+        obj._projects_runtime_slices = projects_runtime_slices
         return obj
 
     ARTIFACT = ("artifact", False)
-    IMAGE = ("image", True)
-    OBJECT = ("object", True)
+    IMAGE = ("image", True, True)
+    OBJECT = ("object", True, True)
     RELATIONSHIP = ("relationship", True)
     EXPERIMENT = ("experiment", False)
 
     @property
     def requires_subject_name(self) -> bool:
         return self._requires_subject_name
+
+    @property
+    def projects_runtime_slices(self) -> bool:
+        """Return whether measurement rows at this scope can declare runtime slices."""
+        return self._projects_runtime_slices
 
 
 class PairMeasurementFeature(str, Enum):
@@ -1251,6 +1262,14 @@ class ObjectIntensityMeasurementFeature(str, Enum):
     MAX_INTENSITY_X = "MaxIntensity_X"
     MAX_INTENSITY_Y = "MaxIntensity_Y"
     MAX_INTENSITY_Z = "MaxIntensity_Z"
+
+
+class ImageAreaOccupiedMeasurementFeature(str, Enum):
+    """Canonical image area-occupied measurement field names."""
+
+    AREA_OCCUPIED = "AreaOccupied"
+    PERIMETER = "Perimeter"
+    TOTAL_AREA = "TotalArea"
 
 
 class ObjectShapeMeasurementFeature(str, Enum):

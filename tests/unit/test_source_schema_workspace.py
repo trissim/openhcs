@@ -922,6 +922,53 @@ def test_materialize_source_schema_workspace_projects_groups_to_well_axis(
     )
 
 
+def test_materialize_source_schema_workspace_recovers_plate_well_tokens_without_metadata_rules(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "source"
+    source_root.mkdir()
+    _write_image(source_root / "AS_09047_050428030001_O01f00d2.TIF", value=1)
+    _write_image(source_root / "AS_09047_050428030001_O01f01d2.TIF", value=2)
+    _write_image(source_root / "AS_09047_050428030001_O02f00d2.TIF", value=3)
+    _write_image(source_root / "AS_09047_050428030001_O02f01d2.TIF", value=4)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "workspace",
+        PipelineImageSchema(
+            assignments_by_alias={
+                "OrigGreen": ImageAssignment(
+                    alias="OrigGreen",
+                    image_type="Color image",
+                    selector=SourceSelector(
+                        filters=(
+                            SourceFilterClause(
+                                SourceFilterSubject.FILE,
+                                SourceFilterMatchType.CONTAINS,
+                                "AS_09047_",
+                            ),
+                        )
+                    ),
+                    origin=SourceBindingOrigin.PIPELINE_START,
+                ),
+            },
+            match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+        ),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert primary["wells"] == {"O01": None, "O02": None}
+    assert primary["sites"] == {"1": None, "2": None}
+    assert set(primary["workspace_mapping"]) == {
+        "O01_s001_w1_z001_t001.TIF",
+        "O01_s002_w1_z001_t001.TIF",
+        "O02_s001_w1_z001_t001.TIF",
+        "O02_s002_w1_z001_t001.TIF",
+    }
+
+
 def test_materialize_source_schema_workspace_joins_imported_metadata(
     tmp_path: Path,
 ) -> None:
