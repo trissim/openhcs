@@ -519,12 +519,15 @@ class ZMQExecutionServer(ExecutionServer):
         compile_artifact_id: str | None = None,
         request_signature: str | None = None,
     ):
+        from dataclasses import replace
         from pathlib import Path
-        import multiprocessing
         from openhcs.config_framework.lazy_factory import ensure_global_config_context
         from openhcs.core.config import GlobalPipelineConfig
         from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
         from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
+        from openhcs.core.steps.function_runtime import prepare_compiled_context_callables
+        from openhcs.core.worker_start_policy import WorkerStartExecutionFacts
+        from openhcs.core.worker_start_policy import resolve_worker_start_context
         from openhcs.constants import (
             AllComponents,
             VariableComponents,
@@ -532,12 +535,6 @@ class ZMQExecutionServer(ExecutionServer):
             MULTIPROCESSING_AXIS,
         )
         from polystore.base import reset_memory_backend, storage_registry
-
-        try:
-            if multiprocessing.get_start_method(allow_none=True) != "spawn":
-                multiprocessing.set_start_method("spawn", force=True)
-        except RuntimeError:
-            pass
 
         reset_memory_backend()
 
@@ -883,7 +880,30 @@ class ZMQExecutionServer(ExecutionServer):
             log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
 
-            worker_progress_queue = multiprocessing.get_context("spawn").Queue()
+            prepare_compiled_context_callables(compiled_contexts)
+
+            worker_start_decision = resolve_worker_start_context(
+                global_config,
+                server_mode=True,
+                gpu_enabled=WorkerStartExecutionFacts.from_compiled_contexts(
+                    compiled_contexts
+                ).gpu_enabled,
+            )
+            if worker_start_decision.changed:
+                global_config = replace(
+                    global_config,
+                    multiprocessing_start_method=worker_start_decision.resolved,
+                )
+                ensure_global_config_context(GlobalPipelineConfig, global_config)
+            logger.info(
+                "[%s] Worker start method requested=%s resolved=%s reason=%s",
+                execution_id,
+                worker_start_decision.requested.value,
+                worker_start_decision.resolved.value,
+                worker_start_decision.reason,
+            )
+
+            worker_progress_queue = worker_start_decision.context.Queue()
             progress_forwarder = threading.Thread(
                 target=self._forward_worker_progress,
                 args=(worker_progress_queue,),

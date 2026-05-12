@@ -2,16 +2,22 @@
 
 from __future__ import annotations
 
-import multiprocessing
 import threading
 import time
+from dataclasses import dataclass, replace
 from collections.abc import Sequence
 from typing import Any
 
 from openhcs.constants import MULTIPROCESSING_AXIS
+from openhcs.config_framework.global_config import get_current_global_config
+from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.progress import set_progress_queue
 from openhcs.core.steps.function_runtime import prepare_compiled_context_callables
+from openhcs.core.worker_start_policy import WorkerStartDecision
+from openhcs.core.worker_start_policy import WorkerStartExecutionFacts
+from openhcs.core.worker_start_policy import resolve_worker_start_context
 from openhcs.interop.cellprofiler.runtime_pipeline import (
     BenchmarkCellProfilerDialectCompiler,
     BenchmarkCellProfilerPipelineImporter,
@@ -33,6 +39,35 @@ from openhcs.interop.cellprofiler.runtime_pipeline import (
 from benchmark.timing import BenchmarkPhase, PhaseTimingTrace
 
 
+@dataclass
+class DirectExecutionProgressBridge:
+    """Progress queue lifecycle tied to the resolved worker-start context."""
+
+    decision: WorkerStartDecision
+    queue: Any
+    consumer: threading.Thread
+
+    @classmethod
+    def from_decision(
+        cls,
+        decision: WorkerStartDecision,
+    ) -> "DirectExecutionProgressBridge":
+        queue = decision.context.Queue()
+        consumer = threading.Thread(
+            target=_drain_progress_queue,
+            args=(queue,),
+            daemon=True,
+        )
+        consumer.start()
+        return cls(decision=decision, queue=queue, consumer=consumer)
+
+    def close(self) -> None:
+        self.queue.put(None)
+        self.consumer.join(timeout=10)
+        self.queue.close()
+        self.queue.join_thread()
+
+
 def execute_pipeline_direct(
     orchestrator: Any,
     pipeline: Pipeline,
@@ -45,17 +80,19 @@ def execute_pipeline_direct(
     if not wells:
         raise RuntimeError("No wells found for pipeline execution.")
 
-    mp_context = multiprocessing.get_context("spawn")
-    progress_queue = mp_context.Queue()
-    consumer = threading.Thread(
-        target=_drain_progress_queue,
-        args=(progress_queue,),
-        daemon=True,
+    global_config = get_current_global_config(GlobalPipelineConfig)
+    if global_config is None:
+        global_config = orchestrator.get_effective_config()
+    progress_bridge = DirectExecutionProgressBridge.from_decision(
+        resolve_worker_start_context(
+            global_config,
+            server_mode=False,
+            gpu_enabled=False,
+        )
     )
-    consumer.start()
 
     try:
-        set_progress_queue(progress_queue)
+        set_progress_queue(progress_bridge.queue)
         if phase_timing is None:
             compilation_result = orchestrator.compile_pipelines(
                 pipeline_definition=pipeline.steps,
@@ -68,16 +105,37 @@ def execute_pipeline_direct(
                     well_filter=wells,
                 )
         compiled_contexts = compilation_result["compiled_contexts"]
+        execution_facts = WorkerStartExecutionFacts.from_compiled_contexts(
+            compiled_contexts
+        )
+        execution_decision = resolve_worker_start_context(
+            global_config,
+            server_mode=False,
+            gpu_enabled=execution_facts.gpu_enabled,
+        )
+        if execution_decision.resolved is not progress_bridge.decision.resolved:
+            global_config = replace(
+                global_config,
+                multiprocessing_start_method=execution_decision.resolved,
+            )
+            ensure_global_config_context(GlobalPipelineConfig, global_config)
+            set_progress_queue(None)
+            progress_bridge.close()
+            progress_bridge = DirectExecutionProgressBridge.from_decision(
+                execution_decision
+            )
+            set_progress_queue(progress_bridge.queue)
         progress_context = {
             "execution_id": f"direct::{int(time.time() * 1_000_000)}",
             "plate_id": str(orchestrator.plate_path),
             "axis_id": "",
         }
         if phase_timing is None:
+            prepare_compiled_context_callables(compiled_contexts)
             execution_results = orchestrator.execute_compiled_plate(
                 pipeline_definition=pipeline.steps,
                 compiled_contexts=compiled_contexts,
-                progress_queue=progress_queue,
+                progress_queue=progress_bridge.queue,
                 progress_context=progress_context,
             )
         else:
@@ -87,7 +145,7 @@ def execute_pipeline_direct(
                 execution_results = orchestrator.execute_compiled_plate(
                     pipeline_definition=pipeline.steps,
                     compiled_contexts=compiled_contexts,
-                    progress_queue=progress_queue,
+                    progress_queue=progress_bridge.queue,
                     progress_context=progress_context,
                 )
         return DirectPipelineExecution(
@@ -96,10 +154,7 @@ def execute_pipeline_direct(
         )
     finally:
         set_progress_queue(None)
-        progress_queue.put(None)
-        consumer.join(timeout=10)
-        progress_queue.close()
-        progress_queue.join_thread()
+        progress_bridge.close()
 
 
 def _drain_progress_queue(queue: Any) -> None:
