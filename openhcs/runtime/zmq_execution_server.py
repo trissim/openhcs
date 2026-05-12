@@ -525,7 +525,6 @@ class ZMQExecutionServer(ExecutionServer):
         from openhcs.core.config import GlobalPipelineConfig
         from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
         from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-        from openhcs.core.steps.function_runtime import prepare_compiled_context_callables
         from openhcs.core.worker_start_policy import WorkerStartExecutionFacts
         from openhcs.core.worker_start_policy import resolve_worker_start_context
         from openhcs.constants import (
@@ -879,8 +878,6 @@ class ZMQExecutionServer(ExecutionServer):
 
             log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
             log_dir.mkdir(parents=True, exist_ok=True)
-
-            prepare_compiled_context_callables(compiled_contexts)
 
             worker_start_decision = resolve_worker_start_context(
                 global_config,

@@ -14,7 +14,6 @@ from openhcs.config_framework.lazy_factory import ensure_global_config_context
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.progress import set_progress_queue
-from openhcs.core.steps.function_runtime import prepare_compiled_context_callables
 from openhcs.core.worker_start_policy import WorkerStartDecision
 from openhcs.core.worker_start_policy import WorkerStartExecutionFacts
 from openhcs.core.worker_start_policy import resolve_worker_start_context
@@ -131,7 +130,6 @@ def execute_pipeline_direct(
             "axis_id": "",
         }
         if phase_timing is None:
-            prepare_compiled_context_callables(compiled_contexts)
             execution_results = orchestrator.execute_compiled_plate(
                 pipeline_definition=pipeline.steps,
                 compiled_contexts=compiled_contexts,
@@ -139,8 +137,6 @@ def execute_pipeline_direct(
                 progress_context=progress_context,
             )
         else:
-            with phase_timing.phase(BenchmarkPhase.COMPILE_OPENHCS):
-                prepare_compiled_context_callables(compiled_contexts)
             with phase_timing.phase(BenchmarkPhase.EXECUTE_OPENHCS):
                 execution_results = orchestrator.execute_compiled_plate(
                     pipeline_definition=pipeline.steps,
