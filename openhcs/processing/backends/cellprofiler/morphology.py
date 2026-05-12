@@ -1194,6 +1194,33 @@ class MorphologyBackendStrategy(
     ) -> np.ndarray:
         """Smooth an image using CP's mask-corrected declumping convention."""
 
+    def declumping_smoothing_kernel(
+        self,
+        filter_size: float,
+        *,
+        declump_method: CellProfilerDeclumpMethod = CellProfilerDeclumpMethod.SHAPE,
+        suppress_size: float | None = None,
+        min_diameter: float | None = None,
+    ) -> np.ndarray:
+        """Return the CP Gaussian kernel used for declumping smoothing."""
+        if filter_size == 0:
+            return np.empty((0,), dtype=np.float64)
+        sigma_divisor = _declumping_smoothing_sigma_divisor(
+            declump_method=declump_method,
+            suppress_size=suppress_size,
+            min_diameter=min_diameter,
+        )
+        sigma = float(filter_size) / sigma_divisor
+        half_width = max(int(float(filter_size) / 2.0), 1)
+        offsets = np.arange(-half_width, half_width + 1, dtype=np.float64)
+        kernel = (
+            1.0
+            / np.sqrt(2.0 * np.pi)
+            / sigma
+            * np.exp(-0.5 * offsets**2 / sigma**2)
+        )
+        return np.ascontiguousarray(kernel, dtype=np.float64)
+
     @abstractmethod
     def convex_hull_image(self, mask: np.ndarray) -> np.ndarray:
         """Return the binary convex hull of a 2-D mask."""
@@ -1344,10 +1371,12 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         return _scipy_smooth_image_for_declumping(
             image,
             mask,
-            filter_size,
-            declump_method=declump_method,
-            suppress_size=suppress_size,
-            min_diameter=min_diameter,
+            self.declumping_smoothing_kernel(
+                filter_size,
+                declump_method=declump_method,
+                suppress_size=suppress_size,
+                min_diameter=min_diameter,
+            ),
         )
 
     def convex_hull_image(self, mask: np.ndarray) -> np.ndarray:
@@ -1668,7 +1697,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
                 "Declumping smoothing mask must match the image shape; got "
                 f"mask {mask_array.shape!r} for image {image_array.shape!r}."
             )
-        kernel = _declumping_smoothing_kernel(
+        kernel = self.declumping_smoothing_kernel(
             filter_size,
             declump_method=declump_method,
             suppress_size=suppress_size,
@@ -2339,22 +2368,12 @@ def _scipy_local_maxima_by_label(
 def _scipy_smooth_image_for_declumping(
     image: np.ndarray,
     mask: np.ndarray,
-    filter_size: float,
-    *,
-    declump_method: CellProfilerDeclumpMethod = CellProfilerDeclumpMethod.SHAPE,
-    suppress_size: float | None = None,
-    min_diameter: float | None = None,
+    kernel: np.ndarray,
 ) -> np.ndarray:
     import scipy.ndimage
 
-    if filter_size == 0:
+    if kernel.size == 0:
         return image
-    kernel = _declumping_smoothing_kernel(
-        filter_size,
-        declump_method=declump_method,
-        suppress_size=suppress_size,
-        min_diameter=min_diameter,
-    )
 
     def convolve(array: np.ndarray) -> np.ndarray:
         output = scipy.ndimage.convolve1d(
@@ -2378,32 +2397,6 @@ def _scipy_smooth_image_for_declumping(
     valid = mask_array & (edge_array != 0)
     masked_image[valid] = smoothed_image[valid] / edge_array[valid]
     return masked_image
-
-
-def _declumping_smoothing_kernel(
-    filter_size: float,
-    *,
-    declump_method: CellProfilerDeclumpMethod = CellProfilerDeclumpMethod.SHAPE,
-    suppress_size: float | None = None,
-    min_diameter: float | None = None,
-) -> np.ndarray:
-    if filter_size == 0:
-        return np.empty((0,), dtype=np.float64)
-    sigma_divisor = _declumping_smoothing_sigma_divisor(
-        declump_method=declump_method,
-        suppress_size=suppress_size,
-        min_diameter=min_diameter,
-    )
-    sigma = float(filter_size) / sigma_divisor
-    half_width = max(int(float(filter_size) / 2.0), 1)
-    offsets = np.arange(-half_width, half_width + 1, dtype=np.float64)
-    kernel = (
-        1.0
-        / np.sqrt(2.0 * np.pi)
-        / sigma
-        * np.exp(-0.5 * offsets**2 / sigma**2)
-    )
-    return np.ascontiguousarray(kernel, dtype=np.float64)
 
 
 def _declumping_smoothing_sigma_divisor(

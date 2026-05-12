@@ -108,13 +108,48 @@ class SourceSchemaAuxiliaryMaterializer(ABC, metaclass=AutoRegisterMeta):
     @abstractmethod
     def materialize(
         self,
-        source_path: Path,
-        *,
-        workspace_root: Path,
-        alias: str,
-        index: int,
+        request: "SourceSchemaAuxiliaryMaterializationRequest",
     ) -> Path:
         """Return the workspace-local source path used by virtual mappings."""
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaAuxiliaryMaterializationRequest:
+    """IO context for materializing one auxiliary source into a workspace."""
+
+    source_path: Path
+    workspace_root: Path
+    filemanager: FileManagerLike | None
+    workspace_backend: str
+    alias: str
+    index: int
+
+    @property
+    def target_dir(self) -> Path:
+        return self.workspace_root / SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR / self.alias
+
+    def ensure_target_dir(self) -> None:
+        if self.filemanager is None:
+            self.target_dir.mkdir(parents=True, exist_ok=True)
+            return
+        self.filemanager.ensure_directory(str(self.target_dir), self.workspace_backend)
+
+    def target_path(self) -> Path:
+        return SourceSchemaAuxiliaryTargetPathPolicy.default_policy().target_path(
+            SourceSchemaAuxiliaryTargetPathRequest(
+                target_dir=self.target_dir,
+                source_path=self.source_path,
+                index=self.index,
+            )
+        )
+
+    def save_payload(self, target_path: Path, payload: object) -> None:
+        if self.filemanager is None:
+            import numpy as np
+
+            np.save(target_path, payload)
+            return
+        self.filemanager.save(payload, str(target_path), self.workspace_backend)
 
 
 @dataclass(frozen=True, slots=True)
@@ -161,11 +196,7 @@ class NumpyAuxiliaryMaterializer(SourceSchemaAuxiliaryMaterializer):
 
     def materialize(
         self,
-        source_path: Path,
-        *,
-        workspace_root: Path,
-        alias: str,
-        index: int,
+        request: SourceSchemaAuxiliaryMaterializationRequest,
     ) -> Path:
         import numpy as np
         from openhcs.core.memory import (
@@ -174,16 +205,10 @@ class NumpyAuxiliaryMaterializer(SourceSchemaAuxiliaryMaterializer):
             detect_memory_type,
         )
 
-        target_dir = workspace_root / SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR / alias
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target_path = SourceSchemaAuxiliaryTargetPathPolicy.default_policy().target_path(
-            SourceSchemaAuxiliaryTargetPathRequest(
-                target_dir=target_dir,
-                source_path=source_path,
-                index=index,
-            )
-        )
-        payload = np.load(source_path)
+        request.ensure_target_dir()
+        target_path = request.target_path()
+
+        payload = np.load(request.source_path)
         source_memory_type = detect_memory_type(payload)
         payload = convert_memory(
             payload,
@@ -191,8 +216,8 @@ class NumpyAuxiliaryMaterializer(SourceSchemaAuxiliaryMaterializer):
             MEMORY_TYPE_NUMPY,
             gpu_id=0,
         )
-        np.save(target_path, payload)
-        cache_source_schema_auxiliary_payload(source_path, payload)
+        request.save_payload(target_path, payload)
+        cache_source_schema_auxiliary_payload(request.source_path, payload)
         cache_source_schema_auxiliary_payload(target_path, payload)
         return target_path
 
@@ -860,6 +885,8 @@ def materialize_source_schema_workspace(
         workspace_root,
         auxiliary_candidates,
         {assignment.alias: assignment for assignment in auxiliary_assignments},
+        filemanager=filemanager,
+        workspace_backend=workspace_backend_name,
     )
     source_metadata = MappingProxyType(
         {
@@ -1866,6 +1893,9 @@ def _auxiliary_workspace_mappings(
     workspace_root: Path,
     auxiliary_candidates: Mapping[str, tuple[SourceSchemaCandidate, ...]],
     assignments_by_alias: Mapping[str, SourceAssignmentBase],
+    *,
+    filemanager: FileManagerLike | None,
+    workspace_backend: str,
 ) -> tuple[Mapping[str, str], Mapping[str, Mapping[str, str]]]:
     mappings: dict[str, str] = {}
     source_metadata: dict[str, Mapping[str, str]] = {}
@@ -1878,6 +1908,8 @@ def _auxiliary_workspace_mappings(
             source_path = _materialized_auxiliary_source_path(
                 candidate.path,
                 workspace_root=workspace_root,
+                filemanager=filemanager,
+                workspace_backend=workspace_backend,
                 alias=alias,
                 index=index,
             )
@@ -1905,6 +1937,8 @@ def _materialized_auxiliary_source_path(
     source_path: Path,
     *,
     workspace_root: Path,
+    filemanager: FileManagerLike | None,
+    workspace_backend: str,
     alias: str,
     index: int,
 ) -> Path:
@@ -1913,10 +1947,14 @@ def _materialized_auxiliary_source_path(
     if materializer is None:
         return source_path
     return materializer.materialize(
-        source_path,
-        workspace_root=workspace_root,
-        alias=alias,
-        index=index,
+        SourceSchemaAuxiliaryMaterializationRequest(
+            source_path=source_path,
+            workspace_root=workspace_root,
+            filemanager=filemanager,
+            workspace_backend=workspace_backend,
+            alias=alias,
+            index=index,
+        )
     )
 
 

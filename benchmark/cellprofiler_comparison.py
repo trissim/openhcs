@@ -20,6 +20,8 @@ from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.adapters.cellprofiler import native_cellprofiler_reference_is_complete
 from benchmark.adapters.openhcs import OPENHCS_AXIS_FILTER_PARAM
 from benchmark.adapters.openhcs import OPENHCS_MAX_AXIS_COUNT_PARAM
+from benchmark.adapters.openhcs import OPENHCS_NUM_WORKERS_PARAM
+from benchmark.adapters.openhcs import OPENHCS_START_METHOD_PARAM
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
@@ -468,6 +470,8 @@ class ComparisonSuiteRunContext:
     continue_on_error: bool
     openhcs_axis_filter: tuple[str, ...]
     openhcs_max_axis_count: int | None
+    openhcs_num_workers: int
+    openhcs_start_method: str
     metric_policy: ComparisonMetricPolicy
 
     def validate(self) -> None:
@@ -475,6 +479,8 @@ class ComparisonSuiteRunContext:
             raise ValueError("speedup_target must be positive.")
         if self.openhcs_max_axis_count is not None and self.openhcs_max_axis_count <= 0:
             raise ValueError("openhcs_max_axis_count must be positive.")
+        if self.openhcs_num_workers <= 0:
+            raise ValueError("openhcs_num_workers must be positive.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -676,6 +682,8 @@ def run_comparison_suite(
     continue_on_error: bool = False,
     openhcs_axis_filter: Sequence[str] = (),
     openhcs_max_axis_count: int | None = None,
+    openhcs_num_workers: int = 1,
+    openhcs_start_method: str = "fork",
     metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
     coverage_manifest_path: Path | None = None,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
@@ -691,6 +699,8 @@ def run_comparison_suite(
         continue_on_error=continue_on_error,
         openhcs_axis_filter=tuple(openhcs_axis_filter),
         openhcs_max_axis_count=openhcs_max_axis_count,
+        openhcs_num_workers=openhcs_num_workers,
+        openhcs_start_method=openhcs_start_method,
         metric_policy=metric_policy,
     )
     context.validate()
@@ -995,6 +1005,8 @@ def write_suite_metadata(
         "collect_memory_metric": context.metric_policy.collect_memory,
         OPENHCS_AXIS_FILTER_PARAM: context.openhcs_axis_filter,
         OPENHCS_MAX_AXIS_COUNT_PARAM: context.openhcs_max_axis_count,
+        OPENHCS_NUM_WORKERS_PARAM: context.openhcs_num_workers,
+        OPENHCS_START_METHOD_PARAM: context.openhcs_start_method,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -1022,6 +1034,8 @@ def _run_comparison_case(
         pipeline_params[OPENHCS_AXIS_FILTER_PARAM] = context.openhcs_axis_filter
     if context.openhcs_max_axis_count is not None:
         pipeline_params[OPENHCS_MAX_AXIS_COUNT_PARAM] = context.openhcs_max_axis_count
+    pipeline_params[OPENHCS_NUM_WORKERS_PARAM] = context.openhcs_num_workers
+    pipeline_params[OPENHCS_START_METHOD_PARAM] = context.openhcs_start_method
     result = run_cellprofiler_cppipe_parity(
         case.dataset_path,
         case.cppipe_path,

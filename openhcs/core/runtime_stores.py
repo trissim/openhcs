@@ -303,6 +303,21 @@ class RuntimeValueStore:
         """Return every runtime artifact write in insertion order."""
         return tuple(self._observation_records)
 
+    def merge_observed_values(
+        self,
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> None:
+        """Merge observed records produced across an execution boundary."""
+        if records and tuple(self._observation_records) == records:
+            return
+        for record in records:
+            key = (record.key, record.location)
+            self._records_by_location[key] = record
+            self._current_location_by_key[record.key] = record.location
+        if records:
+            self._observation_records.extend(records)
+            self._mark_mutated()
+
     def __len__(self) -> int:
         return len(self._records_by_location)
 

@@ -73,3 +73,20 @@ def test_runtime_value_store_replace_updates_current_binding_and_keeps_locations
         path="/other/measurements.pkl",
         backend="memory",
     ) == (replacement,)
+
+
+def test_runtime_value_store_merges_observed_records_from_worker_boundary():
+    worker_store = RuntimeValueStore()
+    value = _runtime_value()
+    record = worker_store.record(
+        value,
+        path="/memory/measurements.pkl",
+        backend="memory",
+    )
+
+    parent_store = RuntimeValueStore()
+    parent_store.merge_observed_values(worker_store.observed_values())
+    parent_store.merge_observed_values(worker_store.observed_values())
+
+    assert parent_store.get(value.key) == record
+    assert parent_store.observed_values() == (record,)

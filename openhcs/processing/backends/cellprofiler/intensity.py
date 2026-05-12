@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 import json
-from typing import Any
+from typing import Any, ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from numba import njit
 import scipy.ndimage
 import skimage.segmentation
@@ -26,6 +27,7 @@ from openhcs.core.pipeline.function_contracts import (
 )
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.runtime_values import (
+    ColumnarRows,
     DenseObjectLabelSliceStack,
     ObjectLabelPayload,
     ObjectLabelSet,
@@ -198,7 +200,7 @@ class ImageIntensityMeasurement:
         )
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class ObjectIntensityMeasurement:
     """Per-object CellProfiler-compatible intensity measurements."""
 
@@ -283,6 +285,70 @@ class ObjectIntensityMeasurement:
         ]
 
 
+@dataclass(frozen=True, slots=True)
+class ObjectIntensityMeasurementRows(ColumnarRows):
+    """Columnar object-intensity measurements for runtime lookup paths."""
+
+    arrays: ObjectIntensityArrays
+    slice_index: int
+    _columns: dict[str, Any] = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        row_count = len(self)
+        object.__setattr__(
+            self,
+            "_columns",
+            {
+                "slice_index": np.full(row_count, self.slice_index, dtype=np.int64),
+                "image_number": np.full(row_count, self.slice_index + 1, dtype=np.int64),
+                "object_label": self.arrays.object_labels,
+                "integrated_intensity": self.arrays.integrated_intensity,
+                "mean_intensity": self.arrays.mean_intensity,
+                "std_intensity": self.arrays.std_intensity,
+                "min_intensity": self.arrays.min_intensity,
+                "max_intensity": self.arrays.max_intensity,
+                "integrated_intensity_edge": self.arrays.integrated_intensity_edge,
+                "mean_intensity_edge": self.arrays.mean_intensity_edge,
+                "std_intensity_edge": self.arrays.std_intensity_edge,
+                "min_intensity_edge": self.arrays.min_intensity_edge,
+                "max_intensity_edge": self.arrays.max_intensity_edge,
+                "mass_displacement": self.arrays.mass_displacement,
+                "lower_quartile_intensity": self.arrays.lower_quartile_intensity,
+                "median_intensity": self.arrays.median_intensity,
+                "mad_intensity": self.arrays.mad_intensity,
+                "upper_quartile_intensity": self.arrays.upper_quartile_intensity,
+                "center_mass_intensity_x": self.arrays.center_mass_intensity_x,
+                "center_mass_intensity_y": self.arrays.center_mass_intensity_y,
+                "center_mass_intensity_z": self.arrays.center_mass_intensity_z,
+                "max_intensity_x": self.arrays.max_intensity_x,
+                "max_intensity_y": self.arrays.max_intensity_y,
+                "max_intensity_z": self.arrays.max_intensity_z,
+            },
+        )
+
+    columns: ClassVar[AliasProperty[dict[str, Any]]] = AliasProperty("_columns")
+
+    def __len__(self) -> int:
+        return int(self.arrays.object_labels.size)
+
+    def __iter__(self):
+        for row_index, label in enumerate(self.arrays.object_labels):
+            yield ObjectIntensityMeasurement.from_backend_arrays(
+                self.arrays,
+                index=row_index,
+                label=int(label),
+                slice_index=self.slice_index,
+            )
+
+    def __getitem__(self, index: int) -> ObjectIntensityMeasurement:
+        return ObjectIntensityMeasurement.from_backend_arrays(
+            self.arrays,
+            index=index,
+            label=int(self.arrays.object_labels[index]),
+            slice_index=self.slice_index,
+        )
+
+
 ObjectIntensityLabelInput = np.ndarray | ObjectLabelPayload | ObjectLabelSet
 
 
@@ -292,7 +358,7 @@ class ObjectIntensityResults:
 
     slice_index: int
     object_count: int
-    measurements: list["ObjectIntensityMeasurement"]
+    measurements: ObjectIntensityMeasurementRows
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,7 +381,7 @@ class ObjectIntensityMeasurementRequest:
     def dense_labels(self) -> np.ndarray:
         return object_label_dense_array(self.labels, dtype=np.int32)
 
-    def measurements(self) -> list[ObjectIntensityMeasurement]:
+    def measurements(self) -> ObjectIntensityMeasurementRows:
         """Measure this image/label plane through the selected backend."""
         intensity_arrays = object_intensity_backend(
             backend_provider=self.backend_provider,
@@ -323,10 +389,7 @@ class ObjectIntensityMeasurementRequest:
             self.measurement_image,
             self.dense_labels,
         )
-        return ObjectIntensityMeasurement.rows_from_backend_arrays(
-            intensity_arrays,
-            slice_index=self.slice_index,
-        )
+        return ObjectIntensityMeasurementRows(intensity_arrays, self.slice_index)
 
 
 class ObjectIntensityBackendStrategy(
@@ -535,7 +598,7 @@ def measure_object_intensity(
     image: np.ndarray,
     labels: ObjectIntensityLabelInput,
     object_intensity_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> tuple[np.ndarray, list[ObjectIntensityMeasurement]]:
+) -> tuple[np.ndarray, ObjectIntensityMeasurementRows]:
     """Measure CellProfiler intensity features for identified objects."""
     return image, ObjectIntensityMeasurementRequest(
         image=image,
@@ -1069,7 +1132,7 @@ def _quantile_from_dense_group_partition(
 
 @njit(cache=True)
 def _partition_value(values: np.ndarray, index: int) -> float:
-    partitioned = np.partition(values.copy(), index)
+    partitioned = np.partition(values, index)
     return float(partitioned[index])
 
 
@@ -1599,6 +1662,7 @@ __all__ = [
     "ImageIntensityMeasurement",
     "ImageIntensityPercentileSpec",
     "ObjectIntensityMeasurement",
+    "ObjectIntensityMeasurementRows",
     "ObjectIntensityMeasurementRequest",
     "ObjectIntensityResults",
     "RescaleMethod",

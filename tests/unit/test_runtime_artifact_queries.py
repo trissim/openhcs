@@ -7,6 +7,8 @@ import pytest
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
+    MeasurementTableObjectFeatureSemantics,
+    MeasurementTableObjectFeatureSemanticsCache,
     annotate_measurement_row_object,
     matching_measurement_field,
     measurement_feature_candidates,
@@ -16,7 +18,11 @@ from openhcs.core.runtime_artifact_queries import (
     runtime_measurement_tables_for_object,
     runtime_relationship,
 )
-from openhcs.core.runtime_semantics import RelationshipSemantics
+from openhcs.core.runtime_semantics import (
+    FieldSpec,
+    MeasurementRowMappingCache,
+    RelationshipSemantics,
+)
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_values import (
     MeasurementTable,
@@ -74,16 +80,32 @@ def test_runtime_measurement_query_matches_schema_and_row_object_subjects() -> N
 
 
 def test_measurement_row_mapping_accepts_slotted_dataclasses() -> None:
+    MeasurementRowMappingCache.process_cache().entries.clear()
     row = MeasurementRow(object_name="Nuclei", object_label=1)
+    mapping = measurement_row_mapping(row)
 
-    assert measurement_row_mapping(row) == {
+    assert dict(mapping) == {
         "object_name": "Nuclei",
         "object_label": 1,
     }
+    assert mapping["object_name"] == "Nuclei"
+    with pytest.raises(KeyError):
+        mapping["not_a_field"]
     assert annotate_measurement_row_object({"area": 42.0}, "Cells") == {
         "area": 42.0,
         "object_name": "Cells",
     }
+
+
+def test_measurement_row_mapping_cache_reuses_dataclass_rows() -> None:
+    cache = MeasurementRowMappingCache.process_cache()
+    cache.entries.clear()
+    row = MeasurementRow(object_name="Nuclei", object_label=1)
+
+    first = measurement_row_mapping(row)
+    second = measurement_row_mapping(row)
+
+    assert first is second
 
 
 def test_measurement_feature_query_uses_table_object_id_field() -> None:
@@ -105,6 +127,30 @@ def test_measurement_feature_query_uses_table_object_id_field() -> None:
     )
 
     assert values.tolist() == [10.0, 20.0]
+
+
+def test_measurement_table_semantics_cache_reuses_table_identity() -> None:
+    cache = MeasurementTableObjectFeatureSemanticsCache.process_cache()
+    cache.entries.clear()
+    table = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=(
+            {"object_name": "Cells", "object_label": 1, "area": 10.0},
+            {"object_name": "Cells", "object_label": 2, "area": 20.0},
+        ),
+        fields=(
+            FieldSpec("object_name"),
+            FieldSpec("object_label"),
+            FieldSpec("area"),
+        ),
+    )
+
+    first = MeasurementTableObjectFeatureSemantics.from_table(table)
+    second = MeasurementTableObjectFeatureSemantics.from_table(table)
+
+    assert first is second
+    assert first.object_names == ("Cells",)
+    assert "area" in first.feature_names
 
 
 def test_measurement_feature_candidates_match_cellprofiler_compact_metric_names() -> None:

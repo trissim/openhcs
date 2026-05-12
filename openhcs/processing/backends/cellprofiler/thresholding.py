@@ -3141,12 +3141,13 @@ def _smooth_with_deterministic_noise(image: np.ndarray, *, bits: int) -> np.ndar
     return result
 
 
-@lru_cache(maxsize=32)
 @lru_cache(maxsize=16)
 def _deterministic_normal_noise(shape: tuple[int, ...]) -> np.ndarray:
     random_state = np.random.RandomState()
     random_state.seed(0)
-    return random_state.normal(size=shape)
+    noise = random_state.normal(size=shape)
+    noise.setflags(write=False)
+    return noise
 
 
 @njit(cache=True)

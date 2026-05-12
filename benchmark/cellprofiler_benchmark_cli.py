@@ -114,6 +114,18 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             ),
         )
         parser.add_argument(
+            "--openhcs-start-method",
+            choices=("fork", "spawn", "forkserver"),
+            default="fork",
+            help="Multiprocessing start method for OpenHCS process workers.",
+        )
+        parser.add_argument(
+            "--openhcs-num-workers",
+            type=int,
+            default=1,
+            help="Number of OpenHCS workers. Use 1 for single-worker benchmarks.",
+        )
+        parser.add_argument(
             "--figures",
             action=argparse.BooleanOptionalAction,
             default=True,
@@ -148,6 +160,8 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             continue_on_error=args.continue_on_error,
             openhcs_axis_filter=tuple(args.openhcs_axis_filter or ()),
             openhcs_max_axis_count=args.openhcs_max_axis_count,
+            openhcs_num_workers=args.openhcs_num_workers,
+            openhcs_start_method=args.openhcs_start_method,
             metric_policy=ComparisonMetricPolicy(
                 collect_memory=not args.no_memory_metric,
             ),

@@ -9,6 +9,7 @@ import logging
 import os
 import time
 from dataclasses import dataclass, field
+from threading import Lock
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -55,6 +56,57 @@ from openhcs.core.runtime_semantics import RuntimePlaneProjection
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
 logger = logging.getLogger(__name__)
+
+
+class FunctionInvocationCallableResolver:
+    """Process-local resolver for compiled invocation callables.
+
+    The compiler stores picklable ``FunctionReference`` objects in compiled
+    invocations. Runtime execution needs actual callables. Resolving them during
+    compiler preparation lets fork workers inherit the resolved callable cache,
+    while spawn workers still resolve lazily in their own process.
+    """
+
+    _lock = Lock()
+    _cache: dict[object, Callable] = {}
+
+    @classmethod
+    def prepare(cls, invocation: CompiledFunctionInvocation) -> None:
+        """Resolve and cache one invocation callable before timed execution."""
+        cls.resolve(invocation)
+
+    @classmethod
+    def resolve(cls, invocation: CompiledFunctionInvocation) -> Callable:
+        """Return the callable for a compiled invocation."""
+        cache_key = cls.cache_key(invocation)
+        with cls._lock:
+            cached = cls._cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        from openhcs.core.pipeline.compiler import FunctionReference
+
+        if isinstance(invocation.func, FunctionReference):
+            resolved = invocation.func.resolve()
+        elif callable(invocation.func):
+            resolved = invocation.func
+        else:
+            raise TypeError(f"Invalid compiled invocation function: {invocation.func}")
+
+        with cls._lock:
+            cls._cache[cache_key] = resolved
+        return resolved
+
+    @classmethod
+    def cache_key(cls, invocation: CompiledFunctionInvocation) -> object:
+        """Return process-local callable cache key for one compiled invocation."""
+        from openhcs.core.pipeline.compiler import FunctionReference
+
+        if isinstance(invocation.func, FunctionReference):
+            return invocation.func.composite_key
+        if callable(invocation.func):
+            return id(invocation.func)
+        raise TypeError(f"Invalid compiled invocation function: {invocation.func}")
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 PROCESSING_CONTEXT_OWNER_NAME = ProcessingContext.__name__
 ArtifactInputPlans = Mapping[str, ArtifactInputPlan]
@@ -366,19 +418,14 @@ def _select_component_artifact_plans(
 
 def _resolve_invocation_callable(invocation: CompiledFunctionInvocation) -> Callable:
     """Resolve one compiled invocation to the callable used in this worker."""
-    from openhcs.core.pipeline.compiler import FunctionReference
-
-    if isinstance(invocation.func, FunctionReference):
-        return invocation.func.resolve()
-    if callable(invocation.func):
-        return invocation.func
-    raise TypeError(f"Invalid compiled invocation function: {invocation.func}")
+    return FunctionInvocationCallableResolver.resolve(invocation)
 
 
 def prepare_compiled_function_group(group: CompiledFunctionGroup) -> None:
     """Run optional preparation hooks for each callable in a compiled group."""
     for invocation in group.invocations:
         prepare_processing_callable(invocation.func)
+        FunctionInvocationCallableResolver.prepare(invocation)
 
 
 def prepare_compiled_context_callables(compiled_contexts: Mapping[str, Any]) -> None:

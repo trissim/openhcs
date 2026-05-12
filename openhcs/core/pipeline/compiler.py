@@ -73,6 +73,8 @@ from openhcs.constants.constants import (
     Backend,
 )
 from openhcs.core.callable_contract import RUNTIME_IMAGE_EXECUTION_MODE_ATTR
+from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
+from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.config import (
     MaterializationBackend,
@@ -1782,15 +1784,15 @@ class PipelineCompiler:
         axis_filter: Optional[List[str]] = None,
         enable_visualizer_override: bool = False,
         is_zmq_execution: bool = False,
-    ) -> Dict[str, ProcessingContext]:
+    ) -> Dict[str, Any]:
         """
-        Compile-all phase: Prepares frozen ProcessingContexts for each axis value.
+        Compile-all phase: prepares execution artifacts for each axis value.
 
         This method iterates through specified axis values, creates a ProcessingContext
         for each, and invokes various phases of PipelineCompiler to populate
         context's step_plans. After all compilation phases for an axis value are complete,
-        its context is frozen. Finally, attributes are stripped from the pipeline_definition,
-        making step objects stateless for execution phase.
+        its context is frozen. It also builds the worker-transport contexts and worker
+        ownership map that execution consumes without re-resolving lazy configuration.
 
         Args:
             orchestrator: The PipelineOrchestrator instance to use for compilation
@@ -1802,9 +1804,9 @@ class PipelineCompiler:
                               after resolution to free RAM (for ZMQ server mode).
 
         Returns:
-            A dictionary mapping axis values to their compiled and frozen ProcessingContexts.
-            The input `pipeline_definition` list (of step objects) is modified in-place
-            to become stateless.
+            A compilation result containing the compiler-owned
+            CompiledExecutionBundle plus compatibility projections for compiled
+            contexts, worker assignments, and the stateless pipeline definition.
         """
         PipelineCompiler._validate_compile_request(orchestrator, pipeline_definition)
         try:
@@ -1814,11 +1816,11 @@ class PipelineCompiler:
             )
             if not axis_values_to_process:
                 logger.warning("No axis values found to process based on filter.")
-                return {
-                    "pipeline_definition": pipeline_definition,
-                    "compiled_contexts": {},
-                    "worker_assignments": {},
-                }
+                return CompiledExecutionBundle.from_runtime_contexts(
+                    pipeline_definition=pipeline_definition,
+                    runtime_contexts={},
+                    worker_assignments={},
+                ).as_compilation_result()
 
             logger.info(
                 f"Starting compilation for axis values: {', '.join(axis_values_to_process)}"
@@ -1836,11 +1838,11 @@ class PipelineCompiler:
                     "All steps were disabled. Pipeline is empty after filtering."
                 )
                 PipelineCompiler._cleanup_compilation_object_states(orchestrator)
-                return {
-                    "pipeline_definition": pipeline_definition,
-                    "compiled_contexts": {},
-                    "worker_assignments": {},
-                }
+                return CompiledExecutionBundle.from_runtime_contexts(
+                    pipeline_definition=pipeline_definition,
+                    runtime_contexts={},
+                    worker_assignments={},
+                ).as_compilation_result()
             (
                 analysis_config,
                 plate_metadata_config,
@@ -1873,6 +1875,7 @@ class PipelineCompiler:
             )
 
             prepare_compiled_context_callables(compiled_contexts)
+            AutoRegisterRegistryPreparation.prepare_loaded_registries()
             worker_assignments = PipelineCompiler._calculate_worker_assignments(
                 list(compiled_contexts.keys()),
                 num_workers,
@@ -1882,10 +1885,11 @@ class PipelineCompiler:
                 pipeline_definition,
                 compiled_contexts,
             )
-            return {
-                "pipeline_definition": pipeline_definition,
-                "compiled_contexts": compiled_contexts,
-            }
+            return CompiledExecutionBundle.from_runtime_contexts(
+                pipeline_definition=pipeline_definition,
+                runtime_contexts=compiled_contexts,
+                worker_assignments=worker_assignments,
+            ).as_compilation_result()
         except Exception as e:
             orchestrator._state = OrchestratorState.COMPILE_FAILED
             logger.error(f"Failed to compile pipelines: {e}")

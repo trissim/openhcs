@@ -1,4 +1,4 @@
-﻿import re
+import re
 
 import cellprofiler_core.object
 import numpy

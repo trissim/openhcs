@@ -32,7 +32,6 @@ from openhcs.core.source_schema_workspace import (
     expand_source_schema_workspace_wells,
     materialize_source_schema_workspace,
 )
-from openhcs.core.steps.function_runtime import prepare_compiled_context_callables
 
 
 WELL_THROUGHPUT_ROWS_CSV = "well_throughput.csv"
@@ -92,6 +91,7 @@ def run_well_throughput_suite(
     case_names: Sequence[str] = (),
     well_counts: Sequence[int],
     worker_counts: Sequence[int],
+    start_method: MultiprocessingStartMethod = MultiprocessingStartMethod.FORK,
 ) -> tuple[WellThroughputResult, ...]:
     """Run converted cppipes as one OpenHCS plate with repeated virtual wells."""
     cases = load_comparison_cases(manifest_path)
@@ -109,6 +109,7 @@ def run_well_throughput_suite(
                     output_root=output_root / case.name / f"wells_{well_count}" / f"workers_{worker_count}",
                     well_count=well_count,
                     worker_count=worker_count,
+                    start_method=start_method,
                 )
                 results.append(result)
                 write_well_throughput_csv(output_root / WELL_THROUGHPUT_ROWS_CSV, results)
@@ -123,6 +124,7 @@ def run_case_well_throughput(
     output_root: Path,
     well_count: int,
     worker_count: int,
+    start_method: MultiprocessingStartMethod = MultiprocessingStartMethod.FORK,
 ) -> WellThroughputResult:
     """Run one converted cppipe over synthetic wells in a single OpenHCS execution."""
     if well_count < 1:
@@ -156,7 +158,7 @@ def run_case_well_throughput(
     global_config = GlobalPipelineConfig(
         num_workers=worker_count,
         use_threading=False,
-        multiprocessing_start_method=MultiprocessingStartMethod.FORK,
+        multiprocessing_start_method=start_method,
         analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
         materialize_runtime_artifacts=False,
         microscope=Microscope.AUTO,
@@ -204,19 +206,19 @@ def run_case_well_throughput(
             set_progress_queue(None)
         compile_seconds = time.perf_counter() - compile_started_at
 
-        compiled_contexts = compilation["compiled_contexts"]
+        execution_bundle = compilation["execution_bundle"]
+        compiled_contexts = execution_bundle.runtime_contexts
         pipeline_definition = compilation.get(
             "pipeline_definition",
             prepared.pipeline.steps,
         )
-        prepare_started_at = time.perf_counter()
-        prepare_compiled_context_callables(compiled_contexts)
-        prepare_seconds = time.perf_counter() - prepare_started_at
+        prepare_seconds = 0.0
 
         execute_started_at = time.perf_counter()
         execution_results = orchestrator.execute_compiled_plate(
             pipeline_definition=pipeline_definition,
             compiled_contexts=compiled_contexts,
+            execution_bundle=execution_bundle,
             progress_queue=progress_queue,
             progress_context=progress_context,
         )

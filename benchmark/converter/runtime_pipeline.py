@@ -44,7 +44,7 @@ class DirectExecutionProgressBridge:
 
     decision: WorkerStartDecision
     queue: Any
-    consumer: threading.Thread
+    consumer: threading.Thread | None = None
 
     @classmethod
     def from_decision(
@@ -61,10 +61,25 @@ class DirectExecutionProgressBridge:
         return cls(decision=decision, queue=queue, consumer=consumer)
 
     def close(self) -> None:
+        if self.consumer is None:
+            return
         self.queue.put(None)
         self.consumer.join(timeout=10)
         self.queue.close()
         self.queue.join_thread()
+
+
+class DirectExecutionProgressSink:
+    """Progress event sink used when direct benchmarking does not observe events."""
+
+    def put(self, _item: Any) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def join_thread(self) -> None:
+        pass
 
 
 def execute_pipeline_direct(
@@ -82,12 +97,14 @@ def execute_pipeline_direct(
     global_config = get_current_global_config(GlobalPipelineConfig)
     if global_config is None:
         global_config = orchestrator.get_effective_config()
-    progress_bridge = DirectExecutionProgressBridge.from_decision(
-        resolve_worker_start_context(
-            global_config,
-            server_mode=False,
-            gpu_enabled=False,
-        )
+    worker_start_decision = resolve_worker_start_context(
+        global_config,
+        server_mode=False,
+        gpu_enabled=False,
+    )
+    progress_bridge = DirectExecutionProgressBridge(
+        decision=worker_start_decision,
+        queue=DirectExecutionProgressSink(),
     )
 
     try:
@@ -103,7 +120,8 @@ def execute_pipeline_direct(
                     pipeline_definition=pipeline.steps,
                     well_filter=wells,
                 )
-        compiled_contexts = compilation_result["compiled_contexts"]
+        execution_bundle = compilation_result["execution_bundle"]
+        compiled_contexts = execution_bundle.runtime_contexts
         execution_facts = WorkerStartExecutionFacts.from_compiled_contexts(
             compiled_contexts
         )
@@ -120,8 +138,9 @@ def execute_pipeline_direct(
             ensure_global_config_context(GlobalPipelineConfig, global_config)
             set_progress_queue(None)
             progress_bridge.close()
-            progress_bridge = DirectExecutionProgressBridge.from_decision(
-                execution_decision
+            progress_bridge = DirectExecutionProgressBridge(
+                decision=execution_decision,
+                queue=DirectExecutionProgressSink(),
             )
             set_progress_queue(progress_bridge.queue)
         progress_context = {
@@ -130,17 +149,19 @@ def execute_pipeline_direct(
             "axis_id": "",
         }
         if phase_timing is None:
-            execution_results = orchestrator.execute_compiled_plate(
-                pipeline_definition=pipeline.steps,
-                compiled_contexts=compiled_contexts,
-                progress_queue=progress_bridge.queue,
-                progress_context=progress_context,
-            )
+                execution_results = orchestrator.execute_compiled_plate(
+                    pipeline_definition=pipeline.steps,
+                    compiled_contexts=compiled_contexts,
+                    execution_bundle=execution_bundle,
+                    progress_queue=progress_bridge.queue,
+                    progress_context=progress_context,
+                )
         else:
             with phase_timing.phase(BenchmarkPhase.EXECUTE_OPENHCS):
                 execution_results = orchestrator.execute_compiled_plate(
                     pipeline_definition=pipeline.steps,
                     compiled_contexts=compiled_contexts,
+                    execution_bundle=execution_bundle,
                     progress_queue=progress_bridge.queue,
                     progress_context=progress_context,
                 )

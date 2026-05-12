@@ -5,9 +5,11 @@ This module defines typed execution results to replace dict-based results,
 following OpenHCS standards for explicit contracts and type safety.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
+from typing import Mapping, Optional
+
+from openhcs.core.runtime_stores import StoredRuntimeValue, require_runtime_value_store
 
 
 class ExecutionStatus(Enum):
@@ -16,6 +18,31 @@ class ExecutionStatus(Enum):
     ERROR = "error"
     PENDING = "pending"
     CANCELLED = "cancelled"
+
+
+@dataclass(frozen=True)
+class RuntimeContextObservation:
+    """Runtime records produced for one compiled execution context."""
+
+    context_key: str
+    records: tuple[StoredRuntimeValue, ...]
+
+
+@dataclass(frozen=True)
+class RuntimeExecutionObservation:
+    """Runtime records returned from worker-owned execution contexts."""
+
+    contexts: tuple[RuntimeContextObservation, ...] = field(default_factory=tuple)
+
+    def merge_into(self, execution_contexts: Mapping[object, object]) -> None:
+        """Merge returned runtime records into parent-owned compiled contexts."""
+        for context_observation in self.contexts:
+            context = execution_contexts[context_observation.context_key]
+            store = require_runtime_value_store(
+                context,
+                owner_name=f"compiled context {context_observation.context_key!r}",
+            )
+            store.merge_observed_values(context_observation.records)
 
 
 @dataclass(frozen=True)
@@ -36,6 +63,9 @@ class ExecutionResult:
     axis_id: str
     failed_combination: Optional[str] = None
     error_message: Optional[str] = None
+    runtime_observation: RuntimeExecutionObservation = field(
+        default_factory=RuntimeExecutionObservation
+    )
     
     def is_success(self) -> bool:
         """Check if execution was successful."""
@@ -46,9 +76,17 @@ class ExecutionResult:
         return self.status == ExecutionStatus.ERROR
     
     @classmethod
-    def success(cls, axis_id: str) -> 'ExecutionResult':
+    def success(
+        cls,
+        axis_id: str,
+        runtime_observation: RuntimeExecutionObservation | None = None,
+    ) -> 'ExecutionResult':
         """Create a successful execution result."""
-        return cls(status=ExecutionStatus.SUCCESS, axis_id=axis_id)
+        return cls(
+            status=ExecutionStatus.SUCCESS,
+            axis_id=axis_id,
+            runtime_observation=runtime_observation or RuntimeExecutionObservation(),
+        )
     
     @classmethod
     def error(cls, axis_id: str, failed_combination: Optional[str] = None, 
@@ -60,4 +98,3 @@ class ExecutionResult:
             failed_combination=failed_combination,
             error_message=error_message
         )
-

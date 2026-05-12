@@ -7,6 +7,7 @@ a two-phase (compile-all-then-execute-all) pipeline execution model.
 
 import logging
 import concurrent.futures
+import contextlib
 import multiprocessing
 from dataclasses import fields
 from pathlib import Path
@@ -22,7 +23,8 @@ from openhcs.constants.constants import (
     VariableComponents,
 )
 from openhcs.constants import Microscope
-from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.compiled_execution import CompiledExecutionBundle
+from openhcs.core.config import GlobalPipelineConfig, MultiprocessingStartMethod
 from openhcs.config_framework.global_config import get_current_global_config
 
 
@@ -31,7 +33,13 @@ from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.components.validation import convert_enum_by_value
-from openhcs.core.orchestrator.execution_result import ExecutionResult, ExecutionStatus
+from openhcs.core.orchestrator.execution_result import (
+    ExecutionResult,
+    ExecutionStatus,
+    RuntimeContextObservation,
+    RuntimeExecutionObservation,
+)
+from openhcs.core.orchestrator.worker_profiling import CProfileWorkerProfilingPolicy
 from openhcs.core.progress import (
     emit,
     set_progress_queue,
@@ -39,6 +47,7 @@ from openhcs.core.progress import (
     ProgressStatus,
     create_event,
 )
+from openhcs.core.runtime_stores import require_runtime_value_store
 from polystore.filemanager import FileManager
 
 # Zarr backend is CPU-only; always import it (even in subprocess/no-GPU mode)
@@ -46,9 +55,6 @@ import os
 from polystore.zarr import ZarrStorageBackend
 
 # PipelineConfig now imported directly above
-from openhcs.config_framework.lazy_factory import (
-    resolve_lazy_configurations_for_serialization,
-)
 from openhcs.microscopes import create_microscope_handler
 from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
@@ -76,6 +82,161 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+
+
+class ForkInheritedWorkerExecutionState:
+    """Compiled execution state inherited by forked worker processes."""
+
+    _current: CompiledExecutionBundle | None = None
+
+    @classmethod
+    def install(cls, execution_bundle: CompiledExecutionBundle) -> None:
+        cls._current = execution_bundle
+
+    @classmethod
+    def clear(cls) -> None:
+        cls._current = None
+
+    @classmethod
+    def require_current(cls) -> CompiledExecutionBundle:
+        if cls._current is None:
+            raise RuntimeError(
+                "ForkInheritedWorkerExecutionState is not installed in this worker."
+            )
+        return cls._current
+
+    @classmethod
+    def resolve_lane_contexts(
+        cls,
+        lane_axis_context_keys: List[tuple[str, List[str]]],
+    ) -> List[tuple[str, List[tuple]]]:
+        contexts = cls.require_current().runtime_contexts
+        return [
+            (
+                axis_id,
+                [(context_key, contexts[context_key]) for context_key in context_keys],
+            )
+            for axis_id, context_keys in lane_axis_context_keys
+        ]
+
+
+def _execute_fork_inherited_worker_lane_process(
+    result_connection: Any,
+    lane_axis_context_keys: List[tuple[str, List[str]]],
+    visualizer: Optional["NapariVisualizerType"],
+    execution_id: str,
+    plate_id: str,
+    worker_slot: str,
+    owned_wells: List[str],
+) -> None:
+    """Process entrypoint for fork-inherited worker lane execution."""
+    profiling_policy = CProfileWorkerProfilingPolicy.from_environment()
+    try:
+        with profiling_policy.profile(
+            execution_id=execution_id,
+            plate_id=plate_id,
+            worker_slot=worker_slot,
+            owned_wells=owned_wells,
+        ):
+            result_connection.send(
+                (
+                    "result",
+                    _execute_fork_inherited_worker_lane_static(
+                        lane_axis_context_keys,
+                        visualizer,
+                        execution_id,
+                        plate_id,
+                        worker_slot,
+                        owned_wells,
+                    ),
+                )
+            )
+    except BaseException as exc:
+        import traceback
+
+        result_connection.send(("error", exc, traceback.format_exc()))
+    finally:
+        result_connection.close()
+
+
+class ForkInheritedWorkerLaneRunner:
+    """Runs fork-inherited worker lanes without executor serialization overhead."""
+
+    def __init__(self, multiprocessing_context: Any) -> None:
+        self._multiprocessing_context = multiprocessing_context
+
+    def run(
+        self,
+        lane_axis_contexts: Dict[str, List[tuple[str, List[str]]]],
+        *,
+        execution_id: str,
+        plate_id: str,
+        worker_assignments: Dict[str, List[str]],
+    ) -> Dict[str, ExecutionResult]:
+        processes: list[tuple[str, List[str], Any, Any]] = []
+        execution_results: Dict[str, ExecutionResult] = {}
+
+        for worker_slot, lane_contexts in lane_axis_contexts.items():
+            if not lane_contexts:
+                continue
+            owned_wells = list(worker_assignments[worker_slot])
+            result_reader, result_writer = self._multiprocessing_context.Pipe(
+                duplex=False
+            )
+            process = self._multiprocessing_context.Process(
+                target=_execute_fork_inherited_worker_lane_process,
+                args=(
+                    result_writer,
+                    lane_contexts,
+                    None,
+                    execution_id,
+                    plate_id,
+                    worker_slot,
+                    owned_wells,
+                ),
+            )
+            process.start()
+            result_writer.close()
+            processes.append((worker_slot, owned_wells, process, result_reader))
+
+        for worker_slot, owned_wells, process, result_reader in processes:
+            try:
+                message_kind, payload, *rest = result_reader.recv()
+            except EOFError as exc:
+                process.join()
+                raise RuntimeError(
+                    f"Fork worker lane {worker_slot} exited without returning "
+                    f"a result; exitcode={process.exitcode}."
+                ) from exc
+            finally:
+                result_reader.close()
+
+            process.join()
+            if process.exitcode != 0:
+                raise RuntimeError(
+                    f"Fork worker lane {worker_slot} exited with "
+                    f"exitcode={process.exitcode}."
+                )
+            if message_kind == "error":
+                traceback_text = rest[0] if rest else ""
+                raise RuntimeError(
+                    f"Fork worker lane {worker_slot} generated an exception: "
+                    f"{payload}\n{traceback_text}"
+                )
+            if message_kind != "result":
+                raise RuntimeError(
+                    f"Fork worker lane {worker_slot} returned unknown message "
+                    f"{message_kind!r}."
+                )
+
+            lane_results = payload
+            execution_results.update(lane_results)
+            for result in lane_results.values():
+                result.runtime_observation.merge_into(
+                    ForkInheritedWorkerExecutionState.require_current().runtime_contexts
+                )
+
+        return execution_results
 
 
 def _merge_nested_dataclass(pipeline_value, global_value):
@@ -233,6 +394,7 @@ def _execute_axis_with_sequential_combinations(
         owned_wells=owned_wells,
     )
 
+    runtime_observations: list[RuntimeContextObservation] = []
     for combo_idx, (context_key, frozen_context) in enumerate(axis_contexts):
         # Execute this combination
         result = _execute_single_axis_static(
@@ -243,6 +405,16 @@ def _execute_axis_with_sequential_combinations(
             plate_id,
             worker_slot,
             owned_wells,
+        )
+        runtime_store = require_runtime_value_store(
+            frozen_context,
+            owner_name=f"worker context {context_key!r}",
+        )
+        runtime_observations.append(
+            RuntimeContextObservation(
+                context_key=context_key,
+                records=runtime_store.observed_values(),
+            )
         )
 
         # Clear VFS after each combination to prevent memory accumulation
@@ -293,7 +465,12 @@ def _execute_axis_with_sequential_combinations(
         worker_slot=worker_slot,
         owned_wells=owned_wells,
     )
-    return ExecutionResult.success(axis_id=axis_id)
+    return ExecutionResult.success(
+        axis_id=axis_id,
+        runtime_observation=RuntimeExecutionObservation(
+            contexts=tuple(runtime_observations),
+        ),
+    )
 
 
 def _execute_single_axis_static(
@@ -423,6 +600,29 @@ def _execute_worker_lane_static(
             owned_wells=owned_wells,
         )
     return lane_results
+
+
+def _execute_fork_inherited_worker_lane_static(
+    lane_axis_context_keys: List[tuple[str, List[str]]],
+    visualizer: Optional["NapariVisualizerType"],
+    execution_id: str,
+    plate_id: str,
+    worker_slot: str,
+    owned_wells: List[str],
+) -> Dict[str, ExecutionResult]:
+    """Execute a worker lane using fork-inherited compiled contexts."""
+    execution_bundle = ForkInheritedWorkerExecutionState.require_current()
+    return _execute_worker_lane_static(
+        pipeline_definition=list(execution_bundle.pipeline_definition),
+        lane_axis_contexts=ForkInheritedWorkerExecutionState.resolve_lane_contexts(
+            lane_axis_context_keys
+        ),
+        visualizer=visualizer,
+        execution_id=execution_id,
+        plate_id=plate_id,
+        worker_slot=worker_slot,
+        owned_wells=owned_wells,
+    )
 
 
 def _configure_worker_logging(log_file_base: str):
@@ -1044,6 +1244,7 @@ class PipelineOrchestrator:
         progress_queue=None,
         progress_context=None,
         worker_assignments: Optional[Dict[str, List[str]]] = None,
+        execution_bundle: Optional[CompiledExecutionBundle] = None,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Execute-all phase: Runs the stateless pipeline against compiled contexts.
@@ -1207,6 +1408,21 @@ class PipelineOrchestrator:
             multiprocessing_context = multiprocessing.get_context(
                 effective_config.multiprocessing_start_method.value
             )
+            if execution_bundle is None:
+                execution_bundle = CompiledExecutionBundle.from_runtime_contexts(
+                    pipeline_definition=pipeline_definition,
+                    runtime_contexts=compiled_contexts,
+                    worker_assignments=worker_assignments or {},
+                )
+            if worker_assignments is None and execution_bundle.worker_assignments:
+                worker_assignments = dict(execution_bundle.worker_assignments)
+            fork_inherited_execution = (
+                not effective_config.use_threading
+                and effective_config.multiprocessing_start_method
+                is MultiprocessingStartMethod.FORK
+            )
+            if fork_inherited_execution:
+                ForkInheritedWorkerExecutionState.install(execution_bundle)
 
             # Choose executor type based on effective config for debugging support
             executor_type = (
@@ -1222,6 +1438,8 @@ class PipelineOrchestrator:
                 executor = concurrent.futures.ThreadPoolExecutor(
                     max_workers=actual_max_workers
                 )
+            elif fork_inherited_execution:
+                executor = None
             else:
                 # CRITICAL FIX: Use _configure_worker_with_gpu to ensure workers have function registry
                 # Workers need the function registry to access decorated functions with memory types
@@ -1259,15 +1477,14 @@ class PipelineOrchestrator:
             # Wrap executor context in try/except to handle BrokenProcessPool during exit
             # This can happen if workers are killed externally (e.g., during cancellation)
             try:
-                with executor:
-                    # NUCLEAR ERROR TRACING: Create snapshot of compiled_contexts to prevent iteration issues
-                    contexts_snapshot = dict(compiled_contexts.items())
-
-                    # CRITICAL FIX: Resolve all lazy dataclass instances before multiprocessing
-                    # This ensures that the contexts are safe for pickling in ProcessPoolExecutor
-                    # Note: Don't resolve pipeline_definition as it may overwrite collision-resolved configs
-                    contexts_snapshot = resolve_lazy_configurations_for_serialization(
-                        contexts_snapshot
+                executor_context = (
+                    executor if executor is not None else contextlib.nullcontext()
+                )
+                with executor_context:
+                    contexts_snapshot = dict(
+                        execution_bundle.runtime_contexts.items()
+                        if fork_inherited_execution
+                        else execution_bundle.transport_contexts.items()
                     )
 
                     future_to_worker_slot = {}
@@ -1282,13 +1499,13 @@ class PipelineOrchestrator:
                     from collections import defaultdict
 
                     contexts_by_axis = defaultdict(list)
-                    for context_key, context in contexts_snapshot.items():
+                    for context_key in contexts_snapshot:
                         # Extract axis_id from context_key (either "axis_id" or "axis_id__combo_N")
                         if "__combo_" in context_key:
                             axis_id = context_key.split("__combo_")[0]
-                            contexts_by_axis[axis_id].append((context_key, context))
+                            contexts_by_axis[axis_id].append(context_key)
                         else:
-                            contexts_by_axis[context_key].append((context_key, context))
+                            contexts_by_axis[context_key].append(context_key)
 
                     if worker_assignments is None:
                         generated: Dict[str, List[str]] = {
@@ -1323,109 +1540,124 @@ class PipelineOrchestrator:
                         for axis_id in owned:
                             axis_to_worker[axis_id] = worker_slot
 
-                    lane_axis_contexts: Dict[str, List[tuple[str, List[tuple]]]] = {
+                    lane_axis_contexts: Dict[str, List[tuple[str, List[Any]]]] = {
                         worker_slot: [] for worker_slot in worker_assignments.keys()
                     }
 
-                    for axis_id, axis_contexts in contexts_by_axis.items():
+                    for axis_id, axis_context_keys in contexts_by_axis.items():
                         try:
-                            # Resolve all contexts for this axis
-                            resolved_axis_contexts = [
-                                (
-                                    context_key,
-                                    resolve_lazy_configurations_for_serialization(
-                                        context
-                                    ),
-                                )
-                                for context_key, context in axis_contexts
-                            ]
-
                             worker_slot = axis_to_worker[axis_id]
-                            lane_axis_contexts[worker_slot].append(
-                                (axis_id, resolved_axis_contexts)
-                            )
+                            if fork_inherited_execution:
+                                lane_axis_contexts[worker_slot].append(
+                                    (axis_id, list(axis_context_keys))
+                                )
+                            else:
+                                lane_axis_contexts[worker_slot].append(
+                                    (
+                                        axis_id,
+                                        [
+                                            (context_key, contexts_snapshot[context_key])
+                                            for context_key in axis_context_keys
+                                        ],
+                                    )
+                                )
                         except Exception as submit_error:
                             error_msg = f"🔥 ORCHESTRATOR ERROR: Failed to submit task for {axis_name} {axis_id}: {submit_error}"
                             logger.error(error_msg, exc_info=True)
                             # FAIL-FAST: Re-raise task submission errors immediately
                             raise
 
-                    for worker_slot, lane_contexts in lane_axis_contexts.items():
-                        if not lane_contexts:
-                            continue
-                        owned_wells = list(worker_assignments[worker_slot])
-
-                        try:
-                            future = executor.submit(
-                                _execute_worker_lane_static,
-                                pipeline_definition,
-                                lane_contexts,
-                                None,  # visualizer
-                                execution_id,
-                                plate_id,
-                                worker_slot,
-                                owned_wells,
-                            )
-                            future_to_worker_slot[future] = (worker_slot, owned_wells)
-                        except Exception as submit_error:
-                            error_msg = f"🔥 ORCHESTRATOR ERROR: Failed to submit lane {worker_slot}: {submit_error}"
-                            logger.error(error_msg, exc_info=True)
-                            raise
-
-                    for future in concurrent.futures.as_completed(
-                        future_to_worker_slot
-                    ):
-                        worker_slot, owned_wells = future_to_worker_slot[future]
-
-                        try:
-                            lane_results = future.result()
-                            execution_results.update(lane_results)
-                        except Exception as exc:
-                            import traceback
-
-                            full_traceback = traceback.format_exc()
-                            error_msg = f"Worker lane {worker_slot} generated an exception during execution: {exc}"
-                            logger.error(
-                                f"🔥 ORCHESTRATOR ERROR: {error_msg}", exc_info=True
-                            )
-                            logger.error(
-                                f"🔥 ORCHESTRATOR FULL TRACEBACK for worker lane {worker_slot}:\n{full_traceback}"
-                            )
-                            failing_axis_id = owned_wells[0] if owned_wells else ""
-
-                            emit(
+                    if fork_inherited_execution:
+                        execution_results.update(
+                            ForkInheritedWorkerLaneRunner(multiprocessing_context).run(
+                                lane_axis_contexts,
                                 execution_id=execution_id,
                                 plate_id=plate_id,
-                                axis_id=failing_axis_id,
-                                step_name="pipeline",
-                                phase=ProgressPhase.AXIS_ERROR,
-                                status=ProgressStatus.ERROR,
-                                completed=0,
-                                total=len(pipeline_definition),
-                                percent=0.0,
-                                error=str(exc),
-                                traceback=full_traceback,
-                                worker_slot=worker_slot,
-                                owned_wells=owned_wells,
+                                worker_assignments=worker_assignments,
                             )
+                        )
+                    else:
+                        for worker_slot, lane_contexts in lane_axis_contexts.items():
+                            if not lane_contexts:
+                                continue
+                            owned_wells = list(worker_assignments[worker_slot])
 
-                            # FAIL-FAST: Re-raise immediately instead of storing error
-                            raise
+                            try:
+                                future = executor.submit(
+                                    _execute_worker_lane_static,
+                                    pipeline_definition,
+                                    lane_contexts,
+                                    None,  # visualizer
+                                    execution_id,
+                                    plate_id,
+                                    worker_slot,
+                                    owned_wells,
+                                )
+                                future_to_worker_slot[future] = (worker_slot, owned_wells)
+                            except Exception as submit_error:
+                                error_msg = f"🔥 ORCHESTRATOR ERROR: Failed to submit lane {worker_slot}: {submit_error}"
+                                logger.error(error_msg, exc_info=True)
+                                raise
+
+                        for future in concurrent.futures.as_completed(
+                            future_to_worker_slot
+                        ):
+                            worker_slot, owned_wells = future_to_worker_slot[future]
+
+                            try:
+                                lane_results = future.result()
+                                execution_results.update(lane_results)
+                                for result in lane_results.values():
+                                    result.runtime_observation.merge_into(
+                                        compiled_contexts
+                                    )
+                            except Exception as exc:
+                                import traceback
+
+                                full_traceback = traceback.format_exc()
+                                error_msg = f"Worker lane {worker_slot} generated an exception during execution: {exc}"
+                                logger.error(
+                                    f"🔥 ORCHESTRATOR ERROR: {error_msg}", exc_info=True
+                                )
+                                logger.error(
+                                    f"🔥 ORCHESTRATOR FULL TRACEBACK for worker lane {worker_slot}:\n{full_traceback}"
+                                )
+                                failing_axis_id = owned_wells[0] if owned_wells else ""
+
+                                emit(
+                                    execution_id=execution_id,
+                                    plate_id=plate_id,
+                                    axis_id=failing_axis_id,
+                                    step_name="pipeline",
+                                    phase=ProgressPhase.AXIS_ERROR,
+                                    status=ProgressStatus.ERROR,
+                                    completed=0,
+                                    total=len(pipeline_definition),
+                                    percent=0.0,
+                                    error=str(exc),
+                                    traceback=full_traceback,
+                                    worker_slot=worker_slot,
+                                    owned_wells=owned_wells,
+                                )
+
+                                # FAIL-FAST: Re-raise immediately instead of storing error
+                                raise
 
                     # Explicitly shutdown executor INSIDE the with block to avoid hang on context exit
                     # Handle BrokenProcessPool in case workers were killed externally (e.g., during cancellation)
-                    try:
-                        executor.shutdown(wait=True, cancel_futures=False)
-                    except concurrent.futures.process.BrokenProcessPool as e:
-                        logger.warning(
-                            f"🔥 ORCHESTRATOR: Executor shutdown failed due to broken process pool (workers were killed externally): {e}"
-                        )
-                        # Don't wait for broken workers - they're already dead
-                        # The with block exit will handle cleanup
-                    except Exception as e:
-                        logger.warning(
-                            f"🔥 ORCHESTRATOR: Executor shutdown failed: {e}"
-                        )
+                    if executor is not None:
+                        try:
+                            executor.shutdown(wait=True, cancel_futures=False)
+                        except concurrent.futures.process.BrokenProcessPool as e:
+                            logger.warning(
+                                f"🔥 ORCHESTRATOR: Executor shutdown failed due to broken process pool (workers were killed externally): {e}"
+                            )
+                            # Don't wait for broken workers - they're already dead
+                            # The with block exit will handle cleanup
+                        except Exception as e:
+                            logger.warning(
+                                f"🔥 ORCHESTRATOR: Executor shutdown failed: {e}"
+                            )
 
             except concurrent.futures.process.BrokenProcessPool as e:
                 # Workers were killed externally (e.g., during cancellation)
@@ -1434,6 +1666,9 @@ class PipelineOrchestrator:
                     f"🔥 ORCHESTRATOR: Executor context exit failed due to broken process pool (workers were killed externally): {e}"
                 )
                 # Continue execution - the workers are already dead, no cleanup needed
+            finally:
+                if fork_inherited_execution:
+                    ForkInheritedWorkerExecutionState.clear()
 
             # Determine if we're using multiprocessing (ProcessPoolExecutor) or threading
             effective_config = self.get_effective_config()

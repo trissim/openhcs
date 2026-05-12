@@ -3213,7 +3213,7 @@ class MeasurementTable(NativeRuntimeValue):
         normalized_rows = (
             self.rows
             if declared_layout is not None
-            else normalize_measurement_table_rows(self.rows)
+            else normalize_measurement_table_rows(self.rows, fields=self.fields)
         )
         if normalized_rows is not self.rows:
             object.__setattr__(self, "rows", normalized_rows)

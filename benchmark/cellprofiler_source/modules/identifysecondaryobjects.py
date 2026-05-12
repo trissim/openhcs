@@ -1,4 +1,4 @@
-﻿import centrosome.cpmorphology
+import centrosome.cpmorphology
 import centrosome.propagate
 import numpy
 import scipy.ndimage

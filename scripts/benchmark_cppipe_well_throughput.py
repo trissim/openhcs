@@ -18,6 +18,12 @@ def main() -> int:
     parser.add_argument("--wells", type=int, action="append", required=True)
     parser.add_argument("--workers", type=int, action="append", required=True)
     parser.add_argument(
+        "--start-method",
+        choices=("fork", "spawn", "forkserver"),
+        default="fork",
+        help="Multiprocessing start method used by OpenHCS worker execution.",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.environ.get("OPENHCS_BENCHMARK_LOG_LEVEL", "WARNING"),
     )
@@ -27,6 +33,7 @@ def main() -> int:
 
     from benchmark.well_throughput_scaling import WELL_THROUGHPUT_ROWS_CSV
     from benchmark.well_throughput_scaling import run_well_throughput_suite
+    from openhcs.core.config import MultiprocessingStartMethod
 
     results = run_well_throughput_suite(
         args.manifest,
@@ -34,6 +41,7 @@ def main() -> int:
         case_names=tuple(args.case_names or ()),
         well_counts=tuple(args.wells),
         worker_counts=tuple(args.workers),
+        start_method=MultiprocessingStartMethod(args.start_method),
     )
     csv_path = args.output_dir / WELL_THROUGHPUT_ROWS_CSV
     print(f"observations={len(results)}")

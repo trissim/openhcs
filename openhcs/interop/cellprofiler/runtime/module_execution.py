@@ -19,6 +19,7 @@ from types import MappingProxyType
 from typing import Any, ClassVar, get_args, get_origin, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from nominal_refactor_advisor.record_algebra import product_record
 import numpy as np
 from openhcs.core.aligned_image_payload import (
@@ -89,6 +90,7 @@ from openhcs.core.runtime_artifact_queries import (
     MeasurementRowOwnership,
     annotate_measurement_row_object,
     annotate_measurement_row_source_image,
+    columnar_row_values,
     measurement_object_label,
     measurement_row_has_object_identity,
     measurement_row_object_name,
@@ -129,6 +131,7 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.runtime_stores import require_runtime_value_store
 from openhcs.core.runtime_values import (
+    ColumnarRows,
     MeasurementTable,
     ObjectLabelDenseDataStrategy,
     ObjectLabelPayload,
@@ -947,6 +950,7 @@ class CellProfilerModuleExecutor:
         split_seconds = 0.0
         complete_rows_seconds = 0.0
         annotate_seconds = 0.0
+        columnar_rows: list[ColumnarRows] = []
         batch_executor = CallableContract.from_callable(func).runtime_batch_executor(
             RuntimeBatchExecutionDomain.MEASUREMENT_IMAGES
         )
@@ -970,16 +974,9 @@ class CellProfilerModuleExecutor:
                 _measurement_rows_from_output(artifact_values),
                 invocation,
             )
-            object_measurement_rows = [
-                row
-                for row in raw_measurement_rows
-                if measurement_row_policy.row_is_object_scoped(row)
-            ]
-            non_object_measurement_rows = [
-                row
-                for row in raw_measurement_rows
-                if not measurement_row_policy.row_is_object_scoped(row)
-            ]
+            object_measurement_rows, non_object_measurement_rows = (
+                measurement_row_policy.split_scoped_rows(raw_measurement_rows)
+            )
             combined_rows.extend(non_object_measurement_rows)
             complete_rows_started_at = time.perf_counter()
             measurement_rows = measurement_row_policy.complete_rows(
@@ -994,6 +991,19 @@ class CellProfilerModuleExecutor:
                 if row_source_names_required
                 else None
             )
+            if isinstance(measurement_rows, ColumnarRows):
+                owned_rows = MeasurementRowOwnership(
+                    object_name=object_spec.name,
+                    source_image_name=source_image_name,
+                ).annotate_rows(measurement_rows)
+                if not isinstance(owned_rows, ColumnarRows):
+                    raise TypeError(
+                        "Columnar measurement ownership annotation must preserve "
+                        f"ColumnarRows, got {type(owned_rows).__name__}."
+                    )
+                columnar_rows.append(owned_rows)
+                annotate_seconds += time.perf_counter() - annotate_started_at
+                return
             combined_rows.extend(
                 MeasurementRowOwnership(
                     object_name=(
@@ -1270,26 +1280,45 @@ class CellProfilerModuleExecutor:
         )
 
         record_started_at = time.perf_counter()
-        _record_measurements(
-            cellprofiler_runtime,
-            measurement_outputs[0].name,
-            combined_rows,
-            fields=CellProfilerMeasurementFieldSchema.for_record(
-                measurement_outputs[0], combined_rows, func
-            ),
-            object_name=(
-                None
-                if image_measurement_rows or requires_explicit_row_ownership
-                else object_inputs[0].name if len(object_inputs) == 1 else None
-            ),
-            source_image_name=combined_source_image_name,
-        )
+        if combined_rows:
+            _record_measurements(
+                cellprofiler_runtime,
+                measurement_outputs[0].name,
+                combined_rows,
+                fields=CellProfilerMeasurementFieldSchema.for_record(
+                    measurement_outputs[0], combined_rows, func
+                ),
+                object_name=(
+                    None
+                    if image_measurement_rows or requires_explicit_row_ownership
+                    else object_inputs[0].name if len(object_inputs) == 1 else None
+                ),
+                source_image_name=combined_source_image_name,
+            )
+        if columnar_rows:
+            measurement_rows = (
+                columnar_rows[0]
+                if len(columnar_rows) == 1
+                else ConcatenatedMeasurementColumnarRows(tuple(columnar_rows))
+            )
+            _record_measurements(
+                cellprofiler_runtime,
+                measurement_outputs[0].name,
+                measurement_rows,
+                fields=CellProfilerMeasurementFieldSchema.for_record(
+                    measurement_outputs[0],
+                    measurement_rows,
+                    func,
+                ),
+                object_name=None,
+                source_image_name=combined_source_image_name,
+            )
         _log_module_profile(
             "cp_per_object_record_measurements",
             time.perf_counter() - record_started_at,
             module=self.module_name,
             function=function_name,
-            rows=len(combined_rows),
+            rows=sum(len(rows) for rows in columnar_rows) + len(combined_rows),
         )
         return input_image
 
@@ -3349,12 +3378,30 @@ class CellProfilerObjectMeasurementRowPolicy(
 
     def project_rows(
         self,
-        rows: Sequence[Any],
+        rows: Sequence[Any] | ColumnarRows,
         invocation: ObjectMeasurementInvocation,
-    ) -> list[Any]:
+    ) -> Sequence[Any] | ColumnarRows:
         """Return emitted rows projected into this module's feature namespace."""
         del invocation
+        if isinstance(rows, ColumnarRows):
+            return rows
         return list(rows)
+
+    def split_scoped_rows(
+        self,
+        rows: Sequence[Any] | ColumnarRows,
+    ) -> tuple[Sequence[Any] | ColumnarRows, Sequence[Any]]:
+        """Partition object-scoped measurement rows from image-scoped rows."""
+        if isinstance(rows, ColumnarRows):
+            return rows, ()
+        object_rows: list[Any] = []
+        non_object_rows: list[Any] = []
+        for row in rows:
+            if self.row_is_object_scoped(row):
+                object_rows.append(row)
+            else:
+                non_object_rows.append(row)
+        return object_rows, non_object_rows
 
     def table_source_image_name(
         self,
@@ -3619,12 +3666,14 @@ class CellProfilerObjectMeasurementRowPolicy(
 
     def complete_rows(
         self,
-        rows: Sequence[Any],
+        rows: Sequence[Any] | ColumnarRows,
         *,
         label_payload: Any,
         func: Callable[..., Any],
-    ) -> list[Any]:
+    ) -> Sequence[Any] | ColumnarRows:
         """Pad per-object measurement rows across this policy's object domain."""
+        if isinstance(rows, ColumnarRows):
+            return rows
         schema = ObjectMeasurementRowCompletionSchema.from_rows(rows, func)
         object_identity = self.object_identity()
         projection_request = ObjectMeasurementRowIdentityProjectionRequest(
@@ -4838,7 +4887,7 @@ class CellProfilerMeasurementFieldSchema:
     def for_record(
         cls,
         spec: ArtifactSpec,
-        rows: Sequence[Any],
+        rows: Sequence[Any] | ColumnarRows,
         func: Callable[..., Any],
     ) -> tuple[FieldSpec, ...]:
         fields = cls.from_materialization(spec)
@@ -4847,6 +4896,8 @@ class CellProfilerMeasurementFieldSchema:
         fields = cls.from_callable_materialization(func)
         if fields:
             return fields
+        if isinstance(rows, ColumnarRows):
+            return tuple(FieldSpec(str(field_name)) for field_name in rows.columns)
         if cls.rows_have_inferable_fields(rows):
             return cls.from_row_mappings(
                 tuple(measurement_row_mapping(row) for row in rows)
@@ -4883,15 +4934,19 @@ class CellProfilerMeasurementFieldSchema:
         return tuple(FieldSpec(name) for name in field_sets[0])
 
     @staticmethod
-    def rows_have_inferable_fields(rows: Sequence[Any]) -> bool:
+    def rows_have_inferable_fields(rows: Sequence[Any] | ColumnarRows) -> bool:
+        if isinstance(rows, ColumnarRows):
+            return True
         if not rows:
             return False
         row = rows[0]
         return bool(is_dataclass(row) or (isinstance(row, Mapping) and row))
 
     @staticmethod
-    def rows_declare_object_name(rows: Sequence[Any]) -> bool:
+    def rows_declare_object_name(rows: Sequence[Any] | ColumnarRows) -> bool:
         """Return whether rows carry explicit object ownership."""
+        if isinstance(rows, ColumnarRows):
+            return MEASUREMENT_OBJECT_NAME_FIELD in rows.columns
         return any(
             measurement_row_mapping(row).get(MEASUREMENT_OBJECT_NAME_FIELD)
             not in (
@@ -4951,7 +5006,7 @@ class CellProfilerMeasurementFieldSchema:
 class CellProfilerMeasurementRecord:
     """Rows and semantic owner for one CellProfiler measurement output."""
 
-    rows: list[Any]
+    rows: Sequence[Any] | ColumnarRows
     object_name: str | None
     source_image_name: str | None
     source_image_payload: Any | None = None
@@ -4995,7 +5050,7 @@ class CellProfilerMeasurementRecord:
 class CellProfilerMeasurementRecordPartition:
     """One measurement table with coherent table and row-level ownership."""
 
-    rows: list[Any]
+    rows: Sequence[Any] | ColumnarRows
     object_name: str | None
     source_image_name: str | None
     source_image_payload: Any | None = None
@@ -6640,19 +6695,69 @@ def _split_cellprofiler_output(raw_output: Any) -> tuple[Any, tuple[Any, ...]]:
     return raw_output, ()
 
 
-def _measurement_rows_from_output(artifact_values: tuple[Any, ...]) -> list[Any]:
+def _measurement_rows_from_output(
+    artifact_values: tuple[Any, ...],
+) -> Sequence[Any] | ColumnarRows:
     if not artifact_values:
         return []
     rows = artifact_values[0]
     return _measurement_table_rows(rows)
 
 
-def _measurement_table_rows(rows: Any) -> list[Any]:
+def _measurement_table_rows(rows: Any) -> Sequence[Any] | ColumnarRows:
+    if isinstance(rows, ColumnarRows):
+        return rows
+    if isinstance(rows, RuntimeSliceAlignedValues) and all(
+        isinstance(row, ColumnarRows) for row in rows.slices
+    ):
+        return ConcatenatedMeasurementColumnarRows(rows.slices)
     if isinstance(rows, list):
+        if rows and all(isinstance(row, ColumnarRows) for row in rows):
+            return ConcatenatedMeasurementColumnarRows(tuple(rows))
         return rows
     if isinstance(rows, tuple):
+        if rows and all(isinstance(row, ColumnarRows) for row in rows):
+            return ConcatenatedMeasurementColumnarRows(rows)
         return list(rows)
     return [rows]
+
+
+@dataclass(frozen=True, slots=True)
+class ConcatenatedMeasurementColumnarRows(ColumnarRows):
+    """Columnar table view over per-slice measurement column batches."""
+
+    row_batches: tuple[ColumnarRows, ...]
+    _columns: Mapping[str, Sequence[Any]] = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
+
+    def __post_init__(self) -> None:
+        if not self.row_batches:
+            object.__setattr__(self, "_columns", {})
+            return
+        column_names = tuple(str(column) for column in self.row_batches[0].columns)
+        object.__setattr__(
+            self,
+            "_columns",
+            {
+                column_name: np.concatenate(
+                    [
+                        np.asarray(columnar_row_values(row_batch, column_name))
+                        for row_batch in self.row_batches
+                    ]
+                )
+                for column_name in column_names
+            },
+        )
+
+    columns: ClassVar[AliasProperty[Mapping[str, Sequence[Any]]]] = (
+        AliasProperty("_columns")
+    )
+
+    def __len__(self) -> int:
+        return sum(len(row_batch) for row_batch in self.row_batches)
 
 
 @dataclass(frozen=True, slots=True)
@@ -7130,7 +7235,7 @@ _MISSING_MEASUREMENT_OBJECT_NAME = object()
 def _record_measurements(
     adapter: CellProfilerRuntimeAdapter,
     name: str,
-    rows: Sequence[Any],
+    rows: Sequence[Any] | ColumnarRows,
     *,
     fields: tuple[FieldSpec, ...] = (),
     object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME,
@@ -7143,6 +7248,8 @@ def _record_measurements(
     if object_name is not _MISSING_MEASUREMENT_OBJECT_NAME:
         kwargs["object_name"] = object_name
     projection_started_at = time.perf_counter()
+    projected_rows: Sequence[Any] | ColumnarRows
+    projected_row_mappings: Sequence[Mapping[str, Any]] | ColumnarRows
     projected_rows, projected_row_mappings = _cellprofiler_global_image_number_rows(
         adapter,
         rows,
@@ -7182,11 +7289,19 @@ def _record_measurements(
 
 def _measurement_fields_covering_mappings(
     fields: tuple[FieldSpec, ...],
-    rows: Sequence[Mapping[str, Any]],
+    rows: Sequence[Mapping[str, Any]] | ColumnarRows,
 ) -> tuple[FieldSpec, ...]:
     """Preserve declared table order while retaining projected semantic fields."""
     if not fields:
         return fields
+    if isinstance(rows, ColumnarRows):
+        declared_names = {field.name for field in fields}
+        extra_names = tuple(
+            str(field_name)
+            for field_name in rows.columns
+            if str(field_name) not in declared_names
+        )
+        return (*fields, *(FieldSpec(field_name) for field_name in extra_names))
     declared_names = {field.name for field in fields}
     extra_names = tuple(
         dict.fromkeys(
@@ -7203,13 +7318,22 @@ def _measurement_fields_covering_mappings(
 
 def _cellprofiler_global_image_number_rows(
     adapter: CellProfilerRuntimeAdapter,
-    rows: Sequence[Any],
+    rows: Sequence[Any] | ColumnarRows,
     *,
     source_image_name: str | None,
     source_image_payload: Any | None = None,
     object_name: str | None | object,
     need_row_mappings: bool = True,
-) -> tuple[Sequence[Any], Sequence[Mapping[str, Any]]]:
+) -> tuple[Sequence[Any] | ColumnarRows, Sequence[Mapping[str, Any]] | ColumnarRows]:
+    if isinstance(rows, ColumnarRows):
+        columns = rows.columns
+        has_image_number = "image_number" in columns
+        has_slice_index = "slice_index" in columns
+        if not has_image_number and not has_slice_index:
+            return rows, rows if need_row_mappings else ()
+        if has_image_number:
+            return rows, rows if need_row_mappings else ()
+
     row_mappings: list[Mapping[str, Any]] = []
     has_image_number = False
     has_slice_index = False

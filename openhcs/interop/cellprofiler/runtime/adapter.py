@@ -426,7 +426,7 @@ class ObjectMeasurementTableCacheInvalidationPolicy(MeasurementQueryCacheInvalid
 
 
 class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
-    """Invalidate object-subject indexes touched by measurement-table writes."""
+    """Update cached object-subject indexes touched by measurement-table writes."""
 
     policy_name = "object_measurement_table_index"
 
@@ -436,7 +436,13 @@ class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutatio
             ObjectMeasurementTableIndexCacheKey(mutation.adapter.group_key, True),
             ObjectMeasurementTableIndexCacheKey(None, False),
         ):
-            object_table_index_cache.pop(cache_key, None)
+            object_table_index = object_table_index_cache.get(cache_key)
+            if object_table_index is None:
+                continue
+            object_table_index_cache[cache_key] = object_table_index.with_table(
+                mutation.table,
+                table_semantics=mutation.table_semantics,
+            )
 
 
 _OBJECT_MEASUREMENT_TABLE_PROCESS_CACHE: WeakKeyDictionary[
@@ -1423,12 +1429,28 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             count=sum(len(tables) for tables in tables_by_object.values()),
         )
         indexes_started_at = time.perf_counter()
-        value_indexes_by_object = measurement_value_indexes_for_object_feature_batch(
-            tables_by_object,
-            feature_name,
-            object_names=tuple(uncached_queries),
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
+        try:
+            value_indexes_by_object = measurement_value_indexes_for_object_feature_batch(
+                tables_by_object,
+                feature_name,
+                object_names=tuple(uncached_queries),
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            )
+        except ValueError as exc:
+            context = self._measurement_query_context(
+                group_key=group_key,
+                match_group=True,
+            )
+            all_tables = runtime_measurement_tables(context)
+            table_context = tuple(
+                f"{table.name}:{table.object_name or '<none>'}:"
+                f"{type(table.rows).__name__}"
+                for table in all_tables
+            )
+            raise ValueError(
+                f"{exc} Visible measurement tables in group "
+                f"{context.group_key!r}: {table_context!r}."
+            ) from exc
         _log_adapter_profile(
             "adapter_object_label_batch_indexes",
             time.perf_counter() - indexes_started_at,
@@ -1881,7 +1903,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             payload_type=type(runtime_value.data).__name__,
         )
         save_started_at = time.perf_counter()
-        self._save_payload(runtime_value.data, plan.path)
+        runtime_path = plan.path
+        self._save_payload(runtime_value.data, runtime_path)
         _log_adapter_profile(
             "adapter_save_payload",
             time.perf_counter() - save_started_at,
@@ -1892,7 +1915,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         replace_started_at = time.perf_counter()
         stored_value = self.runtime_value_store.replace(
             runtime_value,
-            path=plan.path,
+            path=runtime_path,
             backend=self.backend,
         )
         _log_adapter_profile(
@@ -1951,12 +1974,13 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         self._artifact_availability_cache.clear()
 
     def clear_measurement_query_cache(self) -> None:
-        """Clear cached measurement table queries after measurement writes."""
+        """Clear adapter-local measurement queries after measurement writes.
+
+        Process-wide object/feature measurement caches are mutated by
+        MeasurementTableCacheMutationPolicy implementations so unrelated
+        feature indexes survive derived-measurement writes.
+        """
         self._measurement_cache.clear()
-        self.object_feature_value_cache().clear()
-        self.object_label_measurement_values_cache().clear()
-        self.object_measurement_table_cache().clear()
-        self.object_measurement_table_index_cache().clear()
 
     def _require_output_plan(
         self,
@@ -2186,6 +2210,10 @@ class ImageRuntimeArtifactCacheInvalidationPolicy(FullRuntimeArtifactCacheInvali
 
     kind = ArtifactKind.IMAGE
 
+    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
+        adapter._image_cache.clear()
+        adapter._artifact_availability_cache.clear()
+
 
 class ObjectLabelRuntimeArtifactCacheInvalidationPolicy(
     FullRuntimeArtifactCacheInvalidationPolicy
@@ -2193,6 +2221,14 @@ class ObjectLabelRuntimeArtifactCacheInvalidationPolicy(
     """Object writes may affect label reads, label domains, and measurement alignment."""
 
     kind = ArtifactKind.OBJECT_LABELS
+
+    def invalidate(self, adapter: CellProfilerRuntimeAdapter) -> None:
+        adapter._object_cache.clear()
+        adapter._label_domain_cache.clear()
+        adapter.object_feature_value_cache().clear()
+        adapter.object_label_measurement_values_cache().clear()
+        adapter._measurement_cache.clear()
+        adapter._artifact_availability_cache.clear()
 
 
 class MeasurementRuntimeArtifactCacheInvalidationPolicy(

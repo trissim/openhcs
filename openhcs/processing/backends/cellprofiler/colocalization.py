@@ -2037,6 +2037,9 @@ def measure_colocalization_objects(
         si_thresh = second_pixels[combined_threshold]
         threshold_aggregation = label_aggregation.subset(combined_threshold)
 
+    threshold_c1 = 0.0
+    threshold_c2 = 0.0
+    first_costes_denominator_threshold = 0.0
     if options.do_costes and full_fi.size:
         if costes_thresholds is not None:
             threshold_c1 = costes_thresholds.first
@@ -2064,7 +2067,14 @@ def measure_colocalization_objects(
             threshold_c1,
             options.scale_max,
         )
-    if threshold_metrics_requested:
+
+    threshold_reductions_requested = threshold_metrics_requested or (
+        options.do_costes and full_fi.size
+    )
+    if threshold_reductions_requested:
+        if not threshold_metrics_requested:
+            threshold_1 = np.zeros(max_label, dtype=float)
+            threshold_2 = np.zeros(max_label, dtype=float)
         (
             total_first_threshold,
             total_second_threshold,
@@ -2073,19 +2083,19 @@ def measure_colocalization_objects(
             threshold_sum1_sq,
             threshold_sum2_sq,
             threshold_product_sum,
-            _total_first_costes,
-            _total_second_costes,
-            _costes_sum1,
-            _costes_sum2,
+            total_first_costes,
+            total_second_costes,
+            costes_sum1,
+            costes_sum2,
         ) = object_colocalization_threshold_reductions(
             first_pixels,
             second_pixels,
             object_labels,
             threshold_1,
             threshold_2,
-            0.0,
-            0.0,
-            0.0,
+            threshold_c1,
+            threshold_c2,
+            first_costes_denominator_threshold,
             max_label,
         )
 
@@ -2094,20 +2104,16 @@ def measure_colocalization_objects(
         manders_m2 = _divide_measurements(threshold_sum2, total_second_threshold)
 
     if options.do_rwc:
-        rank1 = np.lexsort((object_labels, first_pixels))
-        rank2 = np.lexsort((object_labels, second_pixels))
-        rank1_unique = np.hstack(
-            [[False], first_pixels[rank1[:-1]] != first_pixels[rank1[1:]]]
+        rank_image_1 = UnitIntervalDenseRankSemantics.ranks(
+            first_pixels,
+            preferred_scale=options.scale_max,
+            proven_unit_interval_scale=options.unit_interval_intensity_scale,
         )
-        rank2_unique = np.hstack(
-            [[False], second_pixels[rank2[:-1]] != second_pixels[rank2[1:]]]
+        rank_image_2 = UnitIntervalDenseRankSemantics.ranks(
+            second_pixels,
+            preferred_scale=options.scale_max,
+            proven_unit_interval_scale=options.unit_interval_intensity_scale,
         )
-        rank1_serial = np.cumsum(rank1_unique)
-        rank2_serial = np.cumsum(rank2_unique)
-        rank_image_1 = np.zeros(first_pixels.shape, dtype=int)
-        rank_image_2 = np.zeros(second_pixels.shape, dtype=int)
-        rank_image_1[rank1] = rank1_serial
-        rank_image_2[rank2] = rank2_serial
 
         max_rank = max(rank_image_1.max(), rank_image_2.max()) + 1
         rank_delta = abs(rank_image_1 - rank_image_2)
@@ -2132,33 +2138,8 @@ def measure_colocalization_objects(
         k2 = _divide_measurements(threshold_product_sum, threshold_sum2_sq)
 
     if options.do_costes and full_fi.size:
-        first_above_costes = costes_above_threshold_mask(first_pixels, threshold_c1)
-        second_above_costes = costes_above_threshold_mask(second_pixels, threshold_c2)
-        combined_costes = first_above_costes & second_above_costes
-        total_first_costes = (
-            label_aggregation.subset(
-                first_pixels >= first_costes_denominator_threshold
-            ).sum(first_pixels[first_pixels >= first_costes_denominator_threshold])
-            if np.any(first_above_costes)
-            else np.zeros(max_label, dtype=float)
-        )
-        total_second_costes = (
-            label_aggregation.subset(second_pixels >= threshold_c2).sum(
-                second_pixels[second_pixels >= threshold_c2]
-            )
-            if np.any(second_above_costes)
-            else np.zeros(max_label, dtype=float)
-        )
-        if np.any(combined_costes):
-            costes_aggregation = label_aggregation.subset(combined_costes)
-            costes_m1 = _divide_costes_measurements(
-                costes_aggregation.sum(first_pixels[combined_costes]),
-                total_first_costes,
-            )
-            costes_m2 = _divide_costes_measurements(
-                costes_aggregation.sum(second_pixels[combined_costes]),
-                total_second_costes,
-            )
+        costes_m1 = _divide_costes_measurements(costes_sum1, total_first_costes)
+        costes_m2 = _divide_costes_measurements(costes_sum2, total_second_costes)
 
     return (
         ImagePayloadChannelProjection.from_channel(

@@ -345,23 +345,23 @@ def identify_primary_objects(
             if input_mask is None
             else np.asarray(input_mask, dtype=bool)
         )
-        phase_started_at = time.perf_counter()
-        smoothed = morphology.smooth_image_for_declumping(
-            img,
-            image_mask,
-            smooth_size,
-            declump_method=declump_backend_method,
-            suppress_size=suppress_size,
-            min_diameter=min_diameter,
-        )
-        _log_profile(
-            "ipo_declump_smooth",
-            time.perf_counter() - phase_started_at,
-            function="identify_primary_objects",
-        )
         distance = None
         if unclump_method == UnclumpMethod.INTENSITY:
+            phase_started_at = time.perf_counter()
+            smoothed = morphology.smooth_image_for_declumping(
+                img,
+                image_mask,
+                smooth_size,
+                declump_method=declump_backend_method,
+                suppress_size=suppress_size,
+                min_diameter=min_diameter,
+            )
             maxima_image = smoothed
+            _log_profile(
+                "ipo_declump_smooth",
+                time.perf_counter() - phase_started_at,
+                function="identify_primary_objects",
+            )
         else:
             phase_started_at = time.perf_counter()
             distance = shape_measurement_backend().distance_to_edge(

@@ -680,13 +680,14 @@ class ZMQExecutionServer(ExecutionServer):
                         f"{artifact[MessageFields.PLATE_ID]}, not {plate_id}"
                     )
 
-                compiled_contexts = artifact["compiled_contexts"]
+                execution_bundle = artifact["execution_bundle"]
+                compiled_contexts = execution_bundle.runtime_contexts
                 if compiled_contexts is None:
                     raise ValueError("Compile artifact missing compiled_contexts")
                 compiled_pipeline_definition = artifact.get(
                     "compiled_pipeline_definition"
                 )  # Get the stripped pipeline_definition from artifact
-                worker_assignments = artifact["worker_assignments"]
+                worker_assignments = dict(execution_bundle.worker_assignments)
                 self._worker_assignments_by_execution[execution_id] = worker_assignments
                 compiled_axis_ids = self._extract_compiled_axis_ids(compiled_contexts)
 
@@ -744,10 +745,11 @@ class ZMQExecutionServer(ExecutionServer):
 
                 if (
                     not isinstance(compilation, dict)
-                    or "compiled_contexts" not in compilation
+                    or "execution_bundle" not in compilation
                 ):
-                    raise ValueError("Compilation did not return compiled_contexts")
-                compiled_contexts = compilation["compiled_contexts"]
+                    raise ValueError("Compilation did not return execution_bundle")
+                execution_bundle = compilation["execution_bundle"]
+                compiled_contexts = execution_bundle.runtime_contexts
                 # CRITICAL: Use the returned pipeline_definition, not the original pipeline_steps
                 # The compiler modifies pipeline_definition in-place (converts functions to FunctionReference)
                 # and returns the modified version
@@ -857,9 +859,8 @@ class ZMQExecutionServer(ExecutionServer):
                     "created_at": time.time(),
                     "request_signature": request_signature,
                     MessageFields.PLATE_ID: str(plate_id),
-                    "compiled_contexts": compiled_contexts,
+                    "execution_bundle": execution_bundle,
                     "compiled_pipeline_definition": compiled_pipeline_definition,  # Store the stripped pipeline_definition
-                    "worker_assignments": worker_assignments,
                     "output_plate_root": self.active_executions[execution_id].get_extra(
                         "output_plate_root"
                     ),
@@ -952,6 +953,7 @@ class ZMQExecutionServer(ExecutionServer):
             return orchestrator.execute_compiled_plate(
                 pipeline_definition=steps_to_execute,
                 compiled_contexts=compiled_contexts,
+                execution_bundle=execution_bundle,
                 log_file_base=str(log_dir / f"zmq_worker_exec_{execution_id}"),
                 progress_queue=worker_progress_queue,
                 progress_context=progress_context,

@@ -386,6 +386,8 @@ class SecondaryPropagationBackendStrategy(
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
+        *,
+        max_distance: float | None = None,
     ) -> LabelPropagationResult:
         """Propagate seed labels through a mask and retain cumulative distances."""
 
@@ -399,7 +401,13 @@ class SecondaryPropagationBackendStrategy(
         max_distance: float | None = None,
     ) -> np.ndarray:
         """Propagate seed labels through a mask."""
-        result = self.propagate_result(image, labels, mask, regularization)
+        result = self.propagate_result(
+            image,
+            labels,
+            mask,
+            regularization,
+            max_distance=max_distance,
+        )
         propagated = np.asarray(result.labels, dtype=np.int32)
         if max_distance is None:
             return propagated
@@ -429,7 +437,10 @@ class CentrosomeSecondaryPropagationBackendStrategy(
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
+        *,
+        max_distance: float | None = None,
     ) -> LabelPropagationResult:
+        del max_distance
         import centrosome.propagate
 
         if np.max(labels) == 0:
@@ -468,6 +479,7 @@ class NumbaSecondaryPropagationBackendStrategy(
         labels = np.array([[1, 0, 0], [0, 0, 2], [0, 0, 0]], dtype=np.int32)
         mask = np.ones(labels.shape, dtype=np.bool_)
         self.propagate_result(image, labels, mask, 0.1)
+        self.propagate_result(image, labels, mask, 1.0, max_distance=2.0)
 
     def propagate_result(
         self,
@@ -475,6 +487,8 @@ class NumbaSecondaryPropagationBackendStrategy(
         labels: np.ndarray,
         mask: np.ndarray,
         regularization: float,
+        *,
+        max_distance: float | None = None,
     ) -> LabelPropagationResult:
         image_array = np.asarray(image, dtype=np.float64)
         label_array = np.asarray(labels, dtype=np.int32)
@@ -495,6 +509,7 @@ class NumbaSecondaryPropagationBackendStrategy(
             np.ascontiguousarray(label_array),
             np.ascontiguousarray(mask_array),
             float(regularization),
+            -1.0 if max_distance is None else float(max_distance),
         )
         return LabelPropagationResult(labels=propagated, distances=distances)
 
@@ -800,6 +815,7 @@ def _propagate_labels_numba(
         seed_labels,
         mask,
         weight,
+        max_distance,
     )
     if max_distance >= 0.0:
         height, width = output.shape
@@ -816,6 +832,7 @@ def _propagate_labels_and_distances_numba(
     seed_labels: np.ndarray,
     mask: np.ndarray,
     weight: float,
+    max_distance: float,
 ) -> tuple[np.ndarray, np.ndarray]:
     height, width = image.shape
     output = np.zeros((height, width), dtype=np.int32)
@@ -863,6 +880,8 @@ def _propagate_labels_and_distances_numba(
             heap_xs,
             heap_size,
         )
+        if max_distance >= 0.0 and _value > max_distance:
+            break
         if output[y1, x1] != 0:
             continue
         output[y1, x1] = label
@@ -882,6 +901,8 @@ def _propagate_labels_and_distances_numba(
                 x2,
                 weight,
             ) + d0
+            if max_distance >= 0.0 and distance > max_distance:
+                continue
             if distances[y2, x2] == -1.0 or distances[y2, x2] > distance:
                 distances[y2, x2] = distance
                 heap_size = _propagation_heap_push(

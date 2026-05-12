@@ -18,6 +18,7 @@ from openhcs.core.registry_strategies import (
     MostDerivedContextStrategyMixin,
     NominalTypeKeyedStrategyMixin,
 )
+from openhcs.core.process_local_cache import ProcessLocalBoundedCache
 
 
 @dataclass(frozen=True, slots=True)
@@ -2082,13 +2083,38 @@ def measurement_row_mapping(row: object) -> Mapping[str, object]:
     if isinstance(row, Mapping):
         return row
     if is_dataclass(row):
-        return {name: getattr(row, name) for name in _dataclass_field_names(type(row))}
+        return MeasurementRowMappingCache.process_cache().mapping(row)
     try:
         return vars(row)
     except TypeError as exc:
         raise TypeError(
             f"Unsupported measurement row type {type(row).__name__}."
         ) from exc
+
+
+@dataclass(slots=True)
+class MeasurementRowMappingCache(
+    ProcessLocalBoundedCache[int, tuple[object, Mapping[str, object]]]
+):
+    """Bounded process-local cache for immutable dataclass measurement rows."""
+
+    max_entries: int = 262_144
+
+    def mapping(self, row: object) -> Mapping[str, object]:
+        row_id = id(row)
+        cached = self.cached_value(row_id)
+        if cached is not None:
+            cached_row, row_mapping = cached
+            if cached_row is row:
+                return row_mapping
+            del self.entries[row_id]
+
+        row_mapping = {
+            field_name: getattr(row, field_name)
+            for field_name in _dataclass_field_names(type(row))
+        }
+        self.store_value(row_id, (row, row_mapping))
+        return row_mapping
 
 
 def measurement_table_row_layout(rows: object) -> MeasurementTableRowLayout:

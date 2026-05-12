@@ -48,6 +48,7 @@ from benchmark.contracts.metric import MetricCollector
 from openhcs.constants import MULTIPROCESSING_AXIS
 from openhcs.constants.constants import Microscope
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
+from openhcs.core.config import MultiprocessingStartMethod
 from openhcs.core.equivalence import RuntimeEquivalencePolicy
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.runtime_equivalence import (
@@ -97,6 +98,37 @@ _MICROSCOPES_BY_NORMALIZED_LITERAL = {
 }
 OPENHCS_AXIS_FILTER_PARAM = "openhcs_axis_filter"
 OPENHCS_MAX_AXIS_COUNT_PARAM = "openhcs_max_axis_count"
+OPENHCS_NUM_WORKERS_PARAM = "openhcs_num_workers"
+OPENHCS_START_METHOD_PARAM = "openhcs_start_method"
+
+
+@dataclass(frozen=True, slots=True)
+class OpenHCSBenchmarkExecutionConfig:
+    """OpenHCS runtime config requested by the benchmark harness."""
+
+    num_workers: int = 1
+    multiprocessing_start_method: MultiprocessingStartMethod = (
+        MultiprocessingStartMethod.FORK
+    )
+
+    @classmethod
+    def from_pipeline_params(
+        cls,
+        pipeline_params: Mapping[str, Any],
+    ) -> "OpenHCSBenchmarkExecutionConfig":
+        num_workers = int(pipeline_params.get(OPENHCS_NUM_WORKERS_PARAM, 1))
+        if num_workers <= 0:
+            raise ValueError("openhcs num workers must be positive.")
+        start_method = pipeline_params.get(
+            OPENHCS_START_METHOD_PARAM,
+            MultiprocessingStartMethod.FORK,
+        )
+        if not isinstance(start_method, MultiprocessingStartMethod):
+            start_method = MultiprocessingStartMethod(str(start_method))
+        return cls(
+            num_workers=num_workers,
+            multiprocessing_start_method=start_method,
+        )
 
 
 class MeasurementSnapshotCacheKind(Enum):
@@ -560,9 +592,14 @@ class OpenHCSAdapter(ToolAdapter):
                     ) from exc
                 execution_plate_path = source_workspace.workspace_root
 
+            execution_config = OpenHCSBenchmarkExecutionConfig.from_pipeline_params(
+                request.pipeline_params
+            )
             global_config = GlobalPipelineConfig(
-                num_workers=1,
-                use_threading=True,
+                num_workers=execution_config.num_workers,
+                multiprocessing_start_method=(
+                    execution_config.multiprocessing_start_method
+                ),
                 analysis_consolidation_config=AnalysisConsolidationConfig(
                     enabled=False,
                 ),
@@ -797,15 +834,14 @@ class OpenHCSAdapter(ToolAdapter):
                 f"{type(prepared.source_schema).__name__}."
             )
         known_source_names = prepared.source_schema.measurement_source_names
-        cache_root = _measurement_snapshot_cache_root(request)
+        measurement_snapshot_cache = MeasurementSnapshotCacheStore.for_request(request)
         reference_key = _reference_measurement_snapshot_cache_key(
             equivalence_reference,
             policy=equivalence_policy,
             known_source_names=known_source_names,
         )
         with phase_timing.phase(BenchmarkPhase.COMPARE_EQUIVALENCE):
-            reference_measurements = _load_or_create_measurement_snapshot(
-                cache_root,
+            reference_measurements = measurement_snapshot_cache.load_or_create(
                 prefix=_RUNTIME_REFERENCE_MEASUREMENT_SNAPSHOT_PREFIX,
                 cache_key=reference_key,
                 create=lambda: RuntimeMeasurementSnapshot.from_output_snapshot(
@@ -883,14 +919,10 @@ class OpenHCSAdapter(ToolAdapter):
                     required_measurement_keys=required_measurement_keys,
                     selected_axes=selected_axes,
                 )
-                _write_measurement_snapshot_cache(
-                    _measurement_snapshot_cache_path(
-                        cache_root,
-                        _RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
-                        candidate_key,
-                    ),
-                    candidate_key,
-                    candidate_snapshot,
+                measurement_snapshot_cache.try_write(
+                    prefix=_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
+                    cache_key=candidate_key,
+                    snapshot=candidate_snapshot,
                 )
             report = runtime_measurement_equivalence(
                 reference_measurements,
@@ -1013,14 +1045,13 @@ class OpenHCSAdapter(ToolAdapter):
         known_source_names = runtime_artifact_measurement_source_names(
             validation.observation
         )
-        cache_root = _measurement_snapshot_cache_root(request)
+        measurement_snapshot_cache = MeasurementSnapshotCacheStore.for_request(request)
         reference_key = _reference_measurement_snapshot_cache_key(
             equivalence_reference,
             policy=policy,
             known_source_names=known_source_names,
         )
-        reference_measurements = _load_or_create_measurement_snapshot(
-            cache_root,
+        reference_measurements = measurement_snapshot_cache.load_or_create(
             prefix=_RUNTIME_REFERENCE_MEASUREMENT_SNAPSHOT_PREFIX,
             cache_key=reference_key,
             create=lambda: RuntimeMeasurementSnapshot.from_output_snapshot(
@@ -1050,8 +1081,7 @@ class OpenHCSAdapter(ToolAdapter):
                 required_measurement_keys=required_measurement_keys,
             )
         if request.cache_candidate_measurement_snapshot:
-            candidate_measurements = _load_or_create_measurement_snapshot(
-                cache_root,
+            candidate_measurements = measurement_snapshot_cache.load_or_create(
                 prefix=_RUNTIME_CANDIDATE_MEASUREMENT_SNAPSHOT_PREFIX,
                 cache_key=candidate_key,
                 create=candidate_create,
@@ -1425,93 +1455,121 @@ def _cache_payload_path(
     return manifest_path.parent / path
 
 
-def _measurement_snapshot_cache_root(request: OpenHCSRunRequest) -> Path:
-    """Return the directory that owns semantic equivalence snapshot caches."""
-    manifest_path = request.runtime_execution_cache_manifest
-    if manifest_path is not None:
-        return manifest_path.parent / _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_DIR
-    return request.output_dir / _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_DIR
+@dataclass(frozen=True, slots=True)
+class MeasurementSnapshotCacheStore:
+    """Best-effort semantic measurement snapshot cache."""
 
+    root: Path
 
-def _load_or_create_measurement_snapshot(
-    cache_root: Path,
-    *,
-    prefix: str,
-    cache_key: object,
-    create: Callable[[], RuntimeMeasurementSnapshot],
-) -> RuntimeMeasurementSnapshot:
-    """Load or populate a generic semantic measurement snapshot cache."""
-    path = _measurement_snapshot_cache_path(cache_root, prefix, cache_key)
-    snapshot = _load_measurement_snapshot_cache(path, cache_key)
-    if snapshot is not None:
-        logger.info("Loaded semantic measurement snapshot cache %s", path)
+    @classmethod
+    def for_request(cls, request: OpenHCSRunRequest) -> "MeasurementSnapshotCacheStore":
+        manifest_path = request.runtime_execution_cache_manifest
+        if manifest_path is not None:
+            return cls(manifest_path.parent / _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_DIR)
+        return cls(request.output_dir / _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_DIR)
+
+    def load_or_create(
+        self,
+        *,
+        prefix: str,
+        cache_key: object,
+        create: Callable[[], RuntimeMeasurementSnapshot],
+    ) -> RuntimeMeasurementSnapshot:
+        path = self.path(prefix=prefix, cache_key=cache_key)
+        snapshot = self.load(path=path, cache_key=cache_key)
+        if snapshot is not None:
+            logger.info("Loaded semantic measurement snapshot cache %s", path)
+            return snapshot
+
+        started_at = time.perf_counter()
+        snapshot = create()
+        if self.try_write(prefix=prefix, cache_key=cache_key, snapshot=snapshot):
+            logger.info(
+                "Wrote semantic measurement snapshot cache %s in %.3fs "
+                "(features=%d).",
+                path,
+                time.perf_counter() - started_at,
+                len(snapshot.values_by_feature),
+            )
         return snapshot
 
-    started_at = time.perf_counter()
-    snapshot = create()
-    _write_measurement_snapshot_cache(path, cache_key, snapshot)
-    logger.info(
-        "Wrote semantic measurement snapshot cache %s in %.3fs "
-        "(features=%d).",
-        path,
-        time.perf_counter() - started_at,
-        len(snapshot.values_by_feature),
-    )
-    return snapshot
+    def try_write(
+        self,
+        *,
+        prefix: str,
+        cache_key: object,
+        snapshot: RuntimeMeasurementSnapshot,
+    ) -> bool:
+        path = self.path(prefix=prefix, cache_key=cache_key)
+        try:
+            self.write(path=path, cache_key=cache_key, snapshot=snapshot)
+        except OSError:
+            logger.exception(
+                "Failed to write semantic measurement snapshot cache %s; "
+                "continuing with in-memory snapshot.",
+                path,
+            )
+            return False
+        return True
 
+    def load(
+        self,
+        *,
+        path: Path,
+        cache_key: object,
+    ) -> RuntimeMeasurementSnapshot | None:
+        if not path.exists():
+            return None
+        try:
+            with path.open("rb") as handle:
+                payload = pickle.load(handle)
+        except Exception:
+            logger.exception("Failed to load semantic measurement snapshot cache %s", path)
+            return None
+        if not isinstance(payload, Mapping):
+            return None
+        if (
+            payload.get("schema_version")
+            != _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION
+        ):
+            return None
+        if payload.get("cache_key") != _cache_jsonable(cache_key):
+            return None
+        snapshot_payload = payload.get("snapshot")
+        if snapshot_payload is None:
+            return None
+        return RuntimeMeasurementSnapshot.from_cache_payload(snapshot_payload)
 
-def _load_measurement_snapshot_cache(
-    path: Path,
-    cache_key: object,
-) -> RuntimeMeasurementSnapshot | None:
-    if not path.exists():
-        return None
-    try:
-        with path.open("rb") as handle:
-            payload = pickle.load(handle)
-    except Exception:
-        logger.exception("Failed to load semantic measurement snapshot cache %s", path)
-        return None
-    if not isinstance(payload, Mapping):
-        return None
-    if (
-        payload.get("schema_version")
-        != _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION
-    ):
-        return None
-    if payload.get("cache_key") != _cache_jsonable(cache_key):
-        return None
-    snapshot_payload = payload.get("snapshot")
-    if snapshot_payload is None:
-        return None
-    return RuntimeMeasurementSnapshot.from_cache_payload(snapshot_payload)
+    def write(
+        self,
+        *,
+        path: Path,
+        cache_key: object,
+        snapshot: RuntimeMeasurementSnapshot,
+    ) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary_path = path.with_name(f"{path.name}.tmp-{os.getpid()}")
+        try:
+            with temporary_path.open("wb") as handle:
+                pickle.dump(
+                    {
+                        "schema_version": (
+                            _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION
+                        ),
+                        "cache_key": _cache_jsonable(cache_key),
+                        "snapshot": snapshot.to_cache_payload(),
+                    },
+                    handle,
+                    protocol=pickle.HIGHEST_PROTOCOL,
+                )
+            temporary_path.replace(path)
+        except OSError:
+            temporary_path.unlink(missing_ok=True)
+            raise
 
-
-def _write_measurement_snapshot_cache(
-    path: Path,
-    cache_key: object,
-    snapshot: RuntimeMeasurementSnapshot,
-) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("wb") as handle:
-        pickle.dump(
-            {
-                "schema_version": _RUNTIME_MEASUREMENT_SNAPSHOT_CACHE_SCHEMA_VERSION,
-                "cache_key": _cache_jsonable(cache_key),
-                "snapshot": snapshot.to_cache_payload(),
-            },
-            handle,
-            protocol=pickle.HIGHEST_PROTOCOL,
-        )
-
-
-def _measurement_snapshot_cache_path(
-    cache_root: Path,
-    prefix: str,
-    cache_key: object,
-) -> Path:
-    digest = _cache_key_digest(cache_key)
-    return cache_root / f"{prefix}_{digest}.pkl"
+    def path(self, *, prefix: str, cache_key: object) -> Path:
+        digest = _cache_key_digest(cache_key)
+        return self.root / f"{prefix}_{digest}.pkl"
 
 
 def _reference_measurement_snapshot_cache_key(
