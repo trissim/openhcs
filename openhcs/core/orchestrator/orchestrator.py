@@ -8,6 +8,7 @@ a two-phase (compile-all-then-execute-all) pipeline execution model.
 import logging
 import concurrent.futures
 import contextlib
+import gc
 import multiprocessing
 from dataclasses import fields
 from pathlib import Path
@@ -38,6 +39,7 @@ from openhcs.core.orchestrator.execution_result import (
     ExecutionStatus,
     RuntimeContextObservation,
     RuntimeExecutionObservation,
+    RuntimeObservationMode,
 )
 from openhcs.core.orchestrator.worker_profiling import CProfileWorkerProfilingPolicy
 from openhcs.core.progress import (
@@ -128,6 +130,7 @@ def _execute_fork_inherited_worker_lane_process(
     plate_id: str,
     worker_slot: str,
     owned_wells: List[str],
+    runtime_observation_mode: RuntimeObservationMode,
 ) -> None:
     """Process entrypoint for fork-inherited worker lane execution."""
     profiling_policy = CProfileWorkerProfilingPolicy.from_environment()
@@ -148,6 +151,7 @@ def _execute_fork_inherited_worker_lane_process(
                         plate_id,
                         worker_slot,
                         owned_wells,
+                        runtime_observation_mode,
                     ),
                 )
             )
@@ -172,6 +176,7 @@ class ForkInheritedWorkerLaneRunner:
         execution_id: str,
         plate_id: str,
         worker_assignments: Dict[str, List[str]],
+        runtime_observation_mode: RuntimeObservationMode,
     ) -> Dict[str, ExecutionResult]:
         processes: list[tuple[str, List[str], Any, Any]] = []
         execution_results: Dict[str, ExecutionResult] = {}
@@ -193,6 +198,7 @@ class ForkInheritedWorkerLaneRunner:
                     plate_id,
                     worker_slot,
                     owned_wells,
+                    runtime_observation_mode,
                 ),
             )
             process.start()
@@ -231,10 +237,11 @@ class ForkInheritedWorkerLaneRunner:
 
             lane_results = payload
             execution_results.update(lane_results)
-            for result in lane_results.values():
-                result.runtime_observation.merge_into(
-                    ForkInheritedWorkerExecutionState.require_current().runtime_contexts
-                )
+            if runtime_observation_mode.collects_records:
+                for result in lane_results.values():
+                    result.runtime_observation.merge_into(
+                        ForkInheritedWorkerExecutionState.require_current().runtime_contexts
+                    )
 
         return execution_results
 
@@ -352,6 +359,7 @@ def _execute_axis_with_sequential_combinations(
     plate_id: str,
     worker_slot: str,
     owned_wells: List[str],
+    runtime_observation_mode: RuntimeObservationMode,
 ) -> ExecutionResult:
     """
     Execute all sequential combinations for a single axis in order.
@@ -406,16 +414,22 @@ def _execute_axis_with_sequential_combinations(
             worker_slot,
             owned_wells,
         )
-        runtime_store = require_runtime_value_store(
-            frozen_context,
-            owner_name=f"worker context {context_key!r}",
-        )
-        runtime_observations.append(
-            RuntimeContextObservation(
-                context_key=context_key,
-                records=runtime_store.observed_values(),
+        if runtime_observation_mode.collects_records:
+            runtime_store = require_runtime_value_store(
+                frozen_context,
+                owner_name=f"worker context {context_key!r}",
             )
-        )
+            runtime_observations.append(
+                RuntimeContextObservation(
+                    context_key=context_key,
+                    records=runtime_store.observed_values(),
+                )
+            )
+        elif runtime_observation_mode.releases_worker_records:
+            require_runtime_value_store(
+                frozen_context,
+                owner_name=f"worker context {context_key!r}",
+            ).clear()
 
         # Clear VFS after each combination to prevent memory accumulation
         # This must happen REGARDLESS of success/failure to prevent memory leaks
@@ -426,6 +440,7 @@ def _execute_axis_with_sequential_combinations(
         reset_memory_backend()
         if cleanup_all_gpu_frameworks:
             cleanup_all_gpu_frameworks()
+        gc.collect()
 
         # Check if this combination failed (after cleanup to prevent memory leaks)
         if not result.is_success():
@@ -586,6 +601,7 @@ def _execute_worker_lane_static(
     plate_id: str,
     worker_slot: str,
     owned_wells: List[str],
+    runtime_observation_mode: RuntimeObservationMode = RuntimeObservationMode.MERGE_INTO_PARENT,
 ) -> Dict[str, ExecutionResult]:
     """Execute a deterministic worker lane: wells sequentially within one slot."""
     lane_results: Dict[str, ExecutionResult] = {}
@@ -598,6 +614,7 @@ def _execute_worker_lane_static(
             plate_id=plate_id,
             worker_slot=worker_slot,
             owned_wells=owned_wells,
+            runtime_observation_mode=runtime_observation_mode,
         )
     return lane_results
 
@@ -609,6 +626,7 @@ def _execute_fork_inherited_worker_lane_static(
     plate_id: str,
     worker_slot: str,
     owned_wells: List[str],
+    runtime_observation_mode: RuntimeObservationMode,
 ) -> Dict[str, ExecutionResult]:
     """Execute a worker lane using fork-inherited compiled contexts."""
     execution_bundle = ForkInheritedWorkerExecutionState.require_current()
@@ -622,6 +640,7 @@ def _execute_fork_inherited_worker_lane_static(
         plate_id=plate_id,
         worker_slot=worker_slot,
         owned_wells=owned_wells,
+        runtime_observation_mode=runtime_observation_mode,
     )
 
 
@@ -1245,6 +1264,7 @@ class PipelineOrchestrator:
         progress_context=None,
         worker_assignments: Optional[Dict[str, List[str]]] = None,
         execution_bundle: Optional[CompiledExecutionBundle] = None,
+        runtime_observation_mode: RuntimeObservationMode = RuntimeObservationMode.MERGE_INTO_PARENT,
     ) -> Dict[str, Dict[str, Any]]:
         """
         Execute-all phase: Runs the stateless pipeline against compiled contexts.
@@ -1574,6 +1594,7 @@ class PipelineOrchestrator:
                                 execution_id=execution_id,
                                 plate_id=plate_id,
                                 worker_assignments=worker_assignments,
+                                runtime_observation_mode=runtime_observation_mode,
                             )
                         )
                     else:
@@ -1592,6 +1613,7 @@ class PipelineOrchestrator:
                                     plate_id,
                                     worker_slot,
                                     owned_wells,
+                                    runtime_observation_mode,
                                 )
                                 future_to_worker_slot[future] = (worker_slot, owned_wells)
                             except Exception as submit_error:
@@ -1607,10 +1629,11 @@ class PipelineOrchestrator:
                             try:
                                 lane_results = future.result()
                                 execution_results.update(lane_results)
-                                for result in lane_results.values():
-                                    result.runtime_observation.merge_into(
-                                        compiled_contexts
-                                    )
+                                if runtime_observation_mode.collects_records:
+                                    for result in lane_results.values():
+                                        result.runtime_observation.merge_into(
+                                            compiled_contexts
+                                        )
                             except Exception as exc:
                                 import traceback
 

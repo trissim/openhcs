@@ -60,7 +60,11 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
-from openhcs.core.runtime_semantics import RuntimePlaneProjection
+from openhcs.core.runtime_semantics import (
+    ObjectLabelDomainScope,
+    RuntimePlaneAxis,
+    RuntimePlaneProjection,
+)
 from openhcs.core.runtime_values import (
     FieldSpec,
     ImagePayloadMetadata,
@@ -392,6 +396,128 @@ def test_cellprofiler_adapter_reads_declared_inputs_by_compiled_location():
     )
 
     assert consumer.get_objects(NUCLEI).labels is labels
+
+
+def test_cellprofiler_adapter_resolves_current_image_object_input_by_artifact_group():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    second_group = "B01"
+    first_labels = np.full((2, 2), 1, dtype=np.int32)
+    second_labels = np.full((2, 2), 2, dtype=np.int32)
+    group_paths = {
+        AXIS_ID: "/memory/Nuclei_A01.pkl",
+        second_group: "/memory/Nuclei_B01.pkl",
+    }
+    for group_key, labels in (
+        (AXIS_ID, first_labels),
+        (second_group, second_labels),
+    ):
+        producer = CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_id=AXIS_ID,
+            group_key=group_key,
+            artifact_outputs={
+                NUCLEI: ArtifactOutputPlan(
+                    name=NUCLEI,
+                    path=group_paths[group_key],
+                    kind=ArtifactKind.OBJECT_LABELS,
+                    group_keys=(group_key,),
+                    paths_by_group={group_key: group_paths[group_key]},
+                )
+            },
+            filemanager=filemanager,
+        )
+        producer.add_objects(NUCLEI, labels)
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_inputs={
+            NUCLEI: ArtifactInputPlan(
+                name=NUCLEI,
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=(AXIS_ID, second_group),
+                paths_by_group=group_paths,
+            )
+        },
+        filemanager=filemanager,
+    )
+    current_image = image_payload_with_context(
+        np.zeros((2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            source_path="/plate/Images/A01_s001_w1_z001_t001.tif",
+        ),
+    )
+
+    objects = consumer.get_objects(NUCLEI, current_image=current_image)
+
+    np.testing.assert_array_equal(objects.labels, first_labels)
+
+
+def test_cellprofiler_adapter_projects_default_runtime_slice_output_to_group_paths():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    group_paths = {
+        "1": "/memory/Nuclei_s1.pkl",
+        "2": "/memory/Nuclei_s2.pkl",
+    }
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_outputs={
+            NUCLEI: ArtifactOutputPlan(
+                name=NUCLEI,
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=("1", "2"),
+                paths_by_group=group_paths,
+            )
+        },
+        filemanager=filemanager,
+    )
+    labels = ObjectLabelPayload(
+        labels=np.stack(
+            (
+                np.full((2, 2), 1, dtype=np.int32),
+                np.full((2, 2), 2, dtype=np.int32),
+            )
+        ),
+        declared_object_id_domains=((1,), (2,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+    )
+
+    producer.add_objects(NUCLEI, labels)
+
+    assert ("memory", group_paths["1"]) in filemanager.saved
+    assert ("memory", group_paths["2"]) in filemanager.saved
+    assert ("memory", "/memory/Nuclei.pkl") not in filemanager.saved
+
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_inputs={
+            NUCLEI: ArtifactInputPlan(
+                name=NUCLEI,
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=("1", "2"),
+                paths_by_group=group_paths,
+            )
+        },
+        filemanager=filemanager,
+    )
+
+    objects = consumer.get_objects(NUCLEI)
+
+    assert objects.labels.shape == (2, 2, 2)
+    assert objects.declared_object_id_domains == ((1,), (2,))
+    np.testing.assert_array_equal(objects.labels[0], np.full((2, 2), 1))
+    np.testing.assert_array_equal(objects.labels[1], np.full((2, 2), 2))
 
 
 def test_cellprofiler_adapter_stacks_unplanned_global_grouped_images():
@@ -3027,6 +3153,89 @@ def test_adapter_feature_prefilter_scans_heterogeneous_wide_rows():
     )
 
     np.testing.assert_allclose(value_slices[0], [0.0549019612, 0.9607843161])
+
+
+def test_adapter_measurement_vector_scope_uses_feature_bearing_axis_projection():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        MEASUREMENTS,
+        (
+            {
+                "image_number": 1,
+                "object_label": 1,
+                "Intensity_MaxIntensity_OrigGreen": 0.25,
+            },
+            {
+                "image_number": 1,
+                "object_label": 2,
+                "Intensity_MaxIntensity_OrigGreen": 0.75,
+            },
+        ),
+        object_name=NUCLEI,
+        object_id_field="object_label",
+    )
+
+    value_slices = adapter.measurement_values_for_label_slices(
+        NUCLEI,
+        "Intensity_MaxIntensity_OrigGreen",
+        labels,
+        image_number=99,
+    )
+
+    np.testing.assert_allclose(value_slices[0], [0.25, 0.75])
+
+
+def test_adapter_measurement_vector_scope_searches_axis_when_group_has_no_table():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    producer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="producer",
+        artifact_outputs={
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        },
+        filemanager=filemanager,
+    )
+    labels = np.array([[1, 2]], dtype=np.int32)
+    producer.add_objects(NUCLEI, labels)
+    producer.add_measurements(
+        MEASUREMENTS,
+        (
+            {
+                "object_label": 1,
+                "Intensity_MaxIntensity_OrigGreen": 0.25,
+            },
+            {
+                "object_label": 2,
+                "Intensity_MaxIntensity_OrigGreen": 0.75,
+            },
+        ),
+        object_name=NUCLEI,
+        object_id_field="object_label",
+    )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="consumer",
+        filemanager=filemanager,
+    )
+
+    value_slices = consumer.measurement_values_for_label_slices(
+        NUCLEI,
+        "Intensity_MaxIntensity_OrigGreen",
+        labels,
+    )
+
+    np.testing.assert_allclose(value_slices[0], [0.25, 0.75])
 
 
 def test_measurement_lookup_filters_source_qualified_columnar_feature_rows():

@@ -283,6 +283,26 @@ class ArtifactOutputPlan(ArtifactPlan):
             raise RuntimeError("ArtifactOutputPlan group resolution must be total.")
         return plan
 
+    def runtime_slice_group_keys(
+        self,
+        *,
+        requested_group_key: str | None,
+        slice_count: int | None,
+    ) -> tuple[str | None, ...]:
+        """Return output groups that should receive projected runtime slices."""
+        if requested_group_key not in (None, "default"):
+            return (requested_group_key,)
+        group_keys = tuple(self.group_keys or (None,))
+        if (
+            slice_count is not None
+            and len(group_keys) == slice_count
+            and all(group_key is not None for group_key in group_keys)
+            and self.paths_by_group is not None
+            and all(group_key in self.paths_by_group for group_key in group_keys)
+        ):
+            return group_keys
+        return (requested_group_key,)
+
 
 @dataclass(frozen=True)
 class ArtifactInputPlan(ArtifactPlan):
@@ -290,6 +310,22 @@ class ArtifactInputPlan(ArtifactPlan):
 
     source_step_id: int | str | None = None
     source_step_scope_id: str | None = None
+
+    def group_key_for_axis(
+        self,
+        *,
+        axis_id: str,
+        requested_group_key: str | None,
+    ) -> str | None:
+        """Return the input group key selected for one execution axis."""
+        if requested_group_key not in (None, "default"):
+            return requested_group_key
+        axis_group_key = str(axis_id)
+        if axis_group_key in (self.group_keys or ()) and (
+            not self.paths_by_group or axis_group_key in self.paths_by_group
+        ):
+            return axis_group_key
+        return requested_group_key
 
     def for_group(self, group_key: str | None) -> "ArtifactInputPlan | None":
         """Return a group-specific input plan, or None if not available."""

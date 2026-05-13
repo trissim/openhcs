@@ -287,7 +287,89 @@ class BenchmarkFigureStyle:
         fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
 
 
+@dataclass(frozen=True)
+class LinearAxisBreakPolicy:
+    """Automatic linear-axis break policy for extreme benchmark outliers."""
+
+    outlier_ratio: float = 3.0
+    max_upper_fraction: float = 0.35
+    lower_reference_quantile: float = 0.75
+    lower_padding: float = 1.18
+    upper_window_bottom: float = 0.92
+    break_gap_padding: float = 1.08
+    upper_padding: float = 1.06
+    marker_size: float = 0.008
+
+    def range_for(self, values: Sequence[float]) -> tuple[float, float, float] | None:
+        present = sorted(
+            value for value in values if math.isfinite(value) and value > 0.0
+        )
+        if len(present) < 2:
+            return None
+        split_index = self._outlier_split_index(present)
+        if split_index is None:
+            return None
+        low_top = present[split_index - 1] * self.lower_padding
+        high_bottom = low_top * self.break_gap_padding
+        high_top = present[-1] * self.upper_padding
+        if high_bottom <= low_top:
+            return None
+        return low_top, high_bottom, high_top
+
+    def _outlier_split_index(self, present: Sequence[float]) -> int | None:
+        max_upper_count = max(1, math.floor(len(present) * self.max_upper_fraction))
+        candidates: list[tuple[float, int]] = []
+        for index in range(1, len(present)):
+            upper_count = len(present) - index
+            if upper_count > max_upper_count:
+                continue
+            lower_values = present[:index]
+            reference_index = min(
+                len(lower_values) - 1,
+                max(0, math.floor((len(lower_values) - 1) * self.lower_reference_quantile)),
+            )
+            lower_reference = lower_values[reference_index]
+            upper_bottom = present[index]
+            if upper_bottom < lower_reference * self.outlier_ratio:
+                continue
+            if upper_bottom * self.upper_window_bottom <= present[index - 1] * self.lower_padding:
+                continue
+            candidates.append((upper_bottom / lower_reference, index))
+        if candidates:
+            return max(candidates)[1]
+        return None
+
+    def mark(self, top_axis, bottom_axis) -> None:
+        top_axis.spines.bottom.set_visible(False)
+        bottom_axis.spines.top.set_visible(False)
+        top_axis.tick_params(labeltop=False, bottom=False)
+        bottom_axis.xaxis.tick_bottom()
+        marker_kwargs = dict(transform=top_axis.transAxes, color="k", clip_on=False)
+        top_axis.plot(
+            (-self.marker_size, +self.marker_size),
+            (-self.marker_size, +self.marker_size),
+            **marker_kwargs,
+        )
+        top_axis.plot(
+            (1 - self.marker_size, 1 + self.marker_size),
+            (-self.marker_size, +self.marker_size),
+            **marker_kwargs,
+        )
+        marker_kwargs.update(transform=bottom_axis.transAxes)
+        bottom_axis.plot(
+            (-self.marker_size, +self.marker_size),
+            (1 - self.marker_size, 1 + self.marker_size),
+            **marker_kwargs,
+        )
+        bottom_axis.plot(
+            (1 - self.marker_size, 1 + self.marker_size),
+            (1 - self.marker_size, 1 + self.marker_size),
+            **marker_kwargs,
+        )
+
+
 FIGURE_STYLE = BenchmarkFigureStyle()
+LINEAR_AXIS_BREAK_POLICY = LinearAxisBreakPolicy()
 SUMMARY_ROW_NUMERICS = SummaryRowNumerics()
 METRIC_PROJECTION = BenchmarkMetricProjection()
 PIPELINE_LABEL_LAYOUT = PipelineLabelLayout()
@@ -297,7 +379,7 @@ FIGURE_METRICS = (
     FigureMetricSpec(
         "accuracy_fraction",
         "cppipe_accuracy",
-        "Semantic parity accuracy",
+        "Parity accuracy",
         "Parity accuracy (%)",
         percentage=True,
         target_line=100.0,
@@ -719,6 +801,17 @@ def _plot_grouped_metric(
     metric: FigureMetricSpec,
     log_y: bool,
 ) -> tuple[Path, ...]:
+    broken_range = (
+        LINEAR_AXIS_BREAK_POLICY.range_for(_grouped_metric_values(request, metric))
+        if not log_y and not metric.percentage
+        else None
+    )
+    if broken_range is not None:
+        return _plot_grouped_metric_broken(
+            request,
+            metric=metric,
+            broken_range=broken_range,
+        )
     panels = PIPELINE_LABEL_LAYOUT.panels(request.pipeline_names, request.wrap_after)
     fig_width = max(
         8.0,
@@ -796,6 +889,93 @@ def _plot_grouped_metric(
         filename_stem = f"{metric.filename_stem}_log" if log_y else metric.filename_stem
         for output_format in request.output_formats:
             output_path = request.output_dir / f"{filename_stem}.{output_format}"
+            FIGURE_STYLE.save(fig, output_path)
+            outputs.append(output_path)
+        plt.close(fig)
+        return tuple(outputs)
+
+
+def _plot_grouped_metric_broken(
+    request: GroupedFigureRequest,
+    *,
+    metric: FigureMetricSpec,
+    broken_range: tuple[float, float, float],
+) -> tuple[Path, ...]:
+    panels = PIPELINE_LABEL_LAYOUT.panels(request.pipeline_names, request.wrap_after)
+    fig_width = max(
+        8.0,
+        max(len(panel) for panel in panels) * request.group_width_inches,
+    )
+    with FIGURE_STYLE.context():
+        fig, axes = plt.subplots(
+            len(panels) * 2,
+            1,
+            figsize=(fig_width, 5.7 * len(panels)),
+            gridspec_kw={"height_ratios": tuple((1.0, 3.2) * len(panels))},
+            sharex=False,
+            layout="constrained",
+        )
+        all_axes = tuple(axes.flat)
+        width = _bar_width(len(request.methods))
+        offsets = _bar_offsets(len(request.methods), width)
+        row_index = {(row.pipeline_name, row.method): row for row in request.rows}
+
+        for panel_index, panel_names in enumerate(panels):
+            top_axis = all_axes[panel_index * 2]
+            bottom_axis = all_axes[panel_index * 2 + 1]
+            x_positions = tuple(range(len(panel_names)))
+            for axis in (top_axis, bottom_axis):
+                for method_index, method in enumerate(request.methods):
+                    values = [
+                        METRIC_PROJECTION.plot_value(
+                            METRIC_PROJECTION.value(
+                                row_index.get((pipeline_name, method)),
+                                metric,
+                            )
+                        )
+                        for pipeline_name in panel_names
+                    ]
+                    axis.bar(
+                        [x + offsets[method_index] for x in x_positions],
+                        values,
+                        width=width,
+                        label=(
+                            method
+                            if panel_index == 0 and axis is top_axis
+                            else None
+                        ),
+                        color=FIGURE_STYLE.color_for_method(method_index),
+                        edgecolor=FIGURE_STYLE.background,
+                        linewidth=0.55,
+                    )
+                _draw_reference_lines(axis, metric=metric, log_y=False)
+                FIGURE_STYLE.decorate_axis(axis, metric=metric, panel_index=panel_index)
+                axis.set_ylabel(metric.ylabel)
+                axis.set_xticks(list(x_positions))
+                axis.margins(x=0.01)
+
+            top_axis.set_ylim(broken_range[1], broken_range[2])
+            bottom_axis.set_ylim(
+                metric.minimum_ylim if metric.minimum_ylim is not None else 0.0,
+                broken_range[0],
+            )
+            top_axis.set_xticklabels(())
+            bottom_axis.set_xticklabels(
+                [PIPELINE_LABEL_LAYOUT.split_label(name) for name in panel_names],
+                rotation=42,
+                ha="right",
+                fontsize=PIPELINE_LABEL_FONT_SIZE,
+            )
+            LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
+
+        all_axes[0].legend(
+            frameon=False,
+            ncol=min(len(request.methods), 5),
+            loc="upper left",
+        )
+        outputs: list[Path] = []
+        for output_format in request.output_formats:
+            output_path = request.output_dir / f"{metric.filename_stem}.{output_format}"
             FIGURE_STYLE.save(fig, output_path)
             outputs.append(output_path)
         plt.close(fig)
@@ -880,7 +1060,7 @@ def _plot_accuracy_zoom(
             )
             zoom_axis.margins(x=0.01)
             context_axis.margins(x=0.01)
-            _mark_axis_break(zoom_axis, context_axis)
+            LINEAR_AXIS_BREAK_POLICY.mark(zoom_axis, context_axis)
 
         all_axes[0].legend(
             frameon=False,
@@ -1085,6 +1265,19 @@ def _deterministic_jitter(index: int, count: int) -> float:
     return ((index / (count - 1)) - 0.5) * spread
 
 
+def _grouped_metric_values(
+    request: GroupedFigureRequest,
+    metric: FigureMetricSpec,
+) -> tuple[float, ...]:
+    return tuple(
+        value
+        for row in request.rows
+        if (value := METRIC_PROJECTION.value(row, metric)) is not None
+        and math.isfinite(value)
+        and value > 0.0
+    )
+
+
 def _draw_reference_lines(axis, *, metric: FigureMetricSpec, log_y: bool) -> None:
     if metric.baseline_line is not None:
         axis.axhline(
@@ -1116,33 +1309,6 @@ def _draw_reference_lines(axis, *, metric: FigureMetricSpec, log_y: bool) -> Non
         fontsize=7.8,
         color=FIGURE_STYLE.target_color,
     )
-
-
-def _mark_axis_break(top_axis, bottom_axis) -> None:
-    top_axis.spines.bottom.set_visible(False)
-    bottom_axis.spines.top.set_visible(False)
-    top_axis.tick_params(labeltop=False, bottom=False)
-    bottom_axis.xaxis.tick_bottom()
-    marker_size = 0.008
-    marker_kwargs = dict(transform=top_axis.transAxes, color="k", clip_on=False)
-    top_axis.plot((-marker_size, +marker_size), (-marker_size, +marker_size), **marker_kwargs)
-    top_axis.plot(
-        (1 - marker_size, 1 + marker_size),
-        (-marker_size, +marker_size),
-        **marker_kwargs,
-    )
-    marker_kwargs.update(transform=bottom_axis.transAxes)
-    bottom_axis.plot(
-        (-marker_size, +marker_size),
-        (1 - marker_size, 1 + marker_size),
-        **marker_kwargs,
-    )
-    bottom_axis.plot(
-        (1 - marker_size, 1 + marker_size),
-        (1 - marker_size, 1 + marker_size),
-        **marker_kwargs,
-    )
-
 
 def _plain_log_tick_label(value: float, position: int) -> str:
     del position
@@ -1189,7 +1355,7 @@ def _write_benchmark_figure_index(path: Path, outputs: Sequence[Path]) -> None:
         "",
         "## Manuscript Benchmark Panels",
         "",
-        "- `cppipe_accuracy.*`: semantic parity across imported `.cppipe` workflows.",
+        "- `cppipe_accuracy.*`: parity across imported `.cppipe` workflows.",
         "- `cppipe_accuracy_zoom.*`: broken-axis parity view for tiny numeric drift near 100%.",
         "- `cppipe_raw_seconds.*`: single-thread execution runtime in seconds.",
         "- `cppipe_raw_seconds_log.*`: runtime on a log scale for mixed short and long pipelines.",

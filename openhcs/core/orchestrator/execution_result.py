@@ -5,11 +5,39 @@ This module defines typed execution results to replace dict-based results,
 following OpenHCS standards for explicit contracts and type safety.
 """
 
+import copyreg
 from dataclasses import dataclass, field
 from enum import Enum
+from types import MappingProxyType
 from typing import Mapping, Optional
 
 from openhcs.core.runtime_stores import StoredRuntimeValue, require_runtime_value_store
+
+
+class RuntimeExecutionTransportSerialization:
+    """Pickle reducers required for worker-to-parent execution results."""
+
+    @staticmethod
+    def mapping_proxy_from_dict(value: dict) -> MappingProxyType:
+        """Rebuild an immutable mapping view from transport state."""
+        return MappingProxyType(value)
+
+    @staticmethod
+    def reduce_mapping_proxy(
+        value: MappingProxyType,
+    ) -> tuple[object, tuple[dict]]:
+        """Serialize immutable mapping views as immutable mapping views."""
+        return RuntimeExecutionTransportSerialization.mapping_proxy_from_dict, (
+            dict(value),
+        )
+
+    @classmethod
+    def register(cls) -> None:
+        """Install execution-result transport reducers in this interpreter."""
+        copyreg.pickle(type(MappingProxyType({})), cls.reduce_mapping_proxy)
+
+
+RuntimeExecutionTransportSerialization.register()
 
 
 class ExecutionStatus(Enum):
@@ -43,6 +71,21 @@ class RuntimeExecutionObservation:
                 owner_name=f"compiled context {context_observation.context_key!r}",
             )
             store.merge_observed_values(context_observation.records)
+
+
+class RuntimeObservationMode(Enum):
+    """Controls whether worker runtime records are returned to the parent."""
+
+    MERGE_INTO_PARENT = "merge_into_parent"
+    OMIT = "omit"
+
+    @property
+    def collects_records(self) -> bool:
+        return self is RuntimeObservationMode.MERGE_INTO_PARENT
+
+    @property
+    def releases_worker_records(self) -> bool:
+        return self is RuntimeObservationMode.OMIT
 
 
 @dataclass(frozen=True)

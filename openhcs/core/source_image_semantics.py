@@ -15,6 +15,7 @@ from openhcs.core.pipeline_image_schema import (
     ImageTypeSourceRole,
     ImageStackSourceRole,
     MonochromeImageStackSourceRole,
+    ObjectLabelsImageTypeSourceRole,
     SOURCE_IMAGE_TYPE_METADATA_FIELD,
 )
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
@@ -218,3 +219,33 @@ class MonochromeImageStackSourcePayloadRoleStrategy(
         from skimage.color import rgb2gray
 
         return rgb2gray(rgb_data)
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectLabelsSourcePayloadRoleStrategy(DeclaredSourceImagePayloadRoleStrategy):
+    """Payload behavior for externally supplied object-label source images."""
+
+    value_type = ObjectLabelsImageTypeSourceRole
+
+    def source_data(self, payload: Any) -> Any:
+        data = np.asarray(image_payload_data(payload))
+        if is_color_image_stack(data):
+            return np.stack(
+                tuple(self.color_label_plane_to_ids(plane) for plane in data),
+                axis=0,
+            )
+        if is_color_image_slice(data):
+            return self.color_label_plane_to_ids(data)
+        return data
+
+    @staticmethod
+    def color_label_plane_to_ids(plane: Any) -> np.ndarray:
+        """Convert CellProfiler color object-label images into dense label IDs."""
+        rgb = np.asarray(plane)
+        flat = rgb[..., :3].reshape(-1, 3)
+        labels = np.zeros(flat.shape[0], dtype=np.int32)
+        foreground = np.any(flat != 0, axis=1)
+        if np.any(foreground):
+            _colors, inverse = np.unique(flat[foreground], axis=0, return_inverse=True)
+            labels[foreground] = inverse.astype(np.int32, copy=False) + 1
+        return labels.reshape(rgb.shape[:2])

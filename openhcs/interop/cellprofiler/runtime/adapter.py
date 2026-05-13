@@ -78,6 +78,7 @@ from openhcs.core.runtime_artifact_queries import (
     measurement_values_for_label_slices,
     measurement_tables_for_image_number,
     measurement_tables_for_slice,
+    optional_measurement_value_index,
     normalize_measurement_token,
     runtime_measurement_tables,
     runtime_measurement_tables_for_scope,
@@ -104,6 +105,7 @@ from openhcs.core.runtime_values import (
     MeasurementTable,
     NamedImage,
     ObjectLabelPayload,
+    ObjectLabelPure2DSliceAggregator,
     ObjectLabelSet,
     ObjectLabelRepresentation,
     ObjectRelationship,
@@ -1091,8 +1093,14 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         name: str,
         *,
         group_key: str | None = None,
+        current_image: Any | None = None,
     ) -> ObjectLabelSet:
-        resolved_group_key = self.group_key if group_key is None else group_key
+        resolved_group_key = self.runtime_input_group_key(
+            name=name,
+            kind=ArtifactKind.OBJECT_LABELS,
+            group_key=group_key,
+            current_image=current_image,
+        )
         cache_key = (resolved_group_key, name)
         cached = self._object_cache.get(cache_key)
         if cached is not None:
@@ -1101,6 +1109,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             name=name,
             kind=ArtifactKind.OBJECT_LABELS,
             group_key=group_key,
+            current_image=current_image,
         )
         objects = (
             _stack_object_label_records(records)
@@ -1109,6 +1118,62 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         )
         self._object_cache[cache_key] = objects
         return objects
+
+    def runtime_input_group_key(
+        self,
+        *,
+        name: str,
+        kind: ArtifactKind,
+        group_key: str | None = None,
+        current_image: Any | None = None,
+    ) -> str | None:
+        """Return the artifact input group for this adapter/runtime context."""
+        requested_group_key = self.group_key if group_key is None else group_key
+        input_plan = self.artifact_inputs.get(name)
+        if input_plan is None or input_plan.kind is not kind:
+            return requested_group_key
+        selected = input_plan.group_key_for_axis(
+            axis_id=self.axis_id,
+            requested_group_key=requested_group_key,
+        )
+        if selected not in (None, "default") or current_image is None:
+            return selected
+        group_keys = {str(group_key) for group_key in (input_plan.group_keys or ())}
+        if not group_keys:
+            return selected
+        for candidate in self.source_candidates(
+            self.source_binding_context.step_input_files
+        ):
+            if not self.current_image_matches_source_candidate(current_image, candidate):
+                continue
+            for value in candidate.metadata.values():
+                normalized = str(value)
+                if normalized in group_keys:
+                    return normalized
+        return selected
+
+    def current_image_matches_source_candidate(
+        self,
+        current_image: Any,
+        candidate: "ParsedSourceCandidate",
+    ) -> bool:
+        """Return whether the payload metadata names a parsed source candidate."""
+        metadata = image_payload_metadata(current_image)
+        source_paths = tuple(
+            str(path)
+            for path in (*metadata.channel_source_paths, metadata.source_path)
+            if path is not None and str(path)
+        )
+        if not source_paths:
+            return False
+        candidate_paths = {
+            self.cellprofiler_source_order_path(candidate.path),
+            self.cellprofiler_source_order_path(candidate.resolved_path),
+        }
+        return any(
+            self.cellprofiler_source_order_path(path) in candidate_paths
+            for path in source_paths
+        )
 
     def add_measurements(
         self,
@@ -1265,6 +1330,46 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             )
         return tables
 
+    def measurement_tables_for_object_feature_axis_scope(
+        self,
+        object_name: str,
+        feature_name: str,
+        *,
+        group_key: str | None = None,
+        image_number: int | None = None,
+    ) -> tuple[MeasurementTable, ...]:
+        """Return feature-bearing object tables in their declared runtime axis scope."""
+        scoped_table_sets = (
+            self.measurement_tables_for_object_feature(
+                object_name,
+                feature_name,
+                group_key=group_key,
+            ),
+            self.measurement_tables_for_object_feature(
+                object_name,
+                feature_name,
+                group_key=group_key,
+                match_group=False,
+            ),
+        )
+        runtime_slice_plane_index = self.runtime_slice_plane_index()
+        candidates: list[tuple[MeasurementTable, ...]] = []
+        for tables in scoped_table_sets:
+            if image_number is not None:
+                candidates.append(measurement_tables_for_image_number(tables, image_number))
+            if runtime_slice_plane_index is not None:
+                candidates.append(measurement_tables_for_slice(tables, runtime_slice_plane_index))
+            candidates.append(tables)
+        for candidate_tables in candidates:
+            if optional_measurement_value_index(
+                candidate_tables,
+                feature_name,
+                object_name=object_name,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            ) is not None:
+                return candidate_tables
+        return scoped_table_sets[0]
+
     def measurement_values_for_label_slices(
         self,
         object_name: str,
@@ -1320,19 +1425,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             return cached
         if label_array.ndim <= 2:
             tables_started_at = time.perf_counter()
-            tables = self.measurement_tables_for_object_feature(
+            tables = self.measurement_tables_for_object_feature_axis_scope(
                 object_name,
                 feature_name,
                 group_key=group_key,
+                image_number=image_number,
             )
-            runtime_slice_plane_index = self.runtime_slice_plane_index()
-            if image_number is not None:
-                tables = measurement_tables_for_image_number(tables, image_number)
-            elif runtime_slice_plane_index is not None:
-                tables = measurement_tables_for_slice(
-                    tables,
-                    runtime_slice_plane_index,
-                )
             _log_adapter_profile(
                 "adapter_object_label_query_tables",
                 time.perf_counter() - tables_started_at,
@@ -1382,7 +1480,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             count=len(tables),
         )
         extract_started_at = time.perf_counter()
-        if image_number is None:
+        if image_number is None or label_array.ndim > 2:
             values = measurement_values_for_label_slices(
                 tables,
                 feature_name,
@@ -1505,26 +1603,15 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             return MappingProxyType(values_by_object)
 
         tables_started_at = time.perf_counter()
-        runtime_slice_plane_index = self.runtime_slice_plane_index()
         tables_by_object = {
-            object_name: (
-                measurement_tables_for_image_number(tables, image_number)
-                if image_number is not None
-                else (
-                    measurement_tables_for_slice(tables, runtime_slice_plane_index)
-                    if runtime_slice_plane_index is not None
-                    else tables
-                )
+            object_name: self.measurement_tables_for_object_feature_axis_scope(
+                object_name,
+                feature_name,
+                group_key=group_key,
+                image_number=image_number,
             )
             for object_name in uncached_queries
             for image_number in (requests[object_name][2],)
-            for tables in (
-                self.measurement_tables_for_object_feature(
-                    object_name,
-                    feature_name,
-                    group_key=group_key,
-                ),
-            )
         }
         _log_adapter_profile(
             "adapter_object_label_batch_tables",
@@ -1986,62 +2073,89 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     ) -> StoredRuntimeValue:
         total_started_at = time.perf_counter()
         plan_started_at = time.perf_counter()
-        plan = self._require_output_plan(name, expected_kind).for_group(self.group_key)
+        output_plan = self._require_output_plan(name, expected_kind)
+        slice_count = RuntimeSliceProjection.slice_count_from_values((native_value,))
+        output_group_keys = output_plan.runtime_slice_group_keys(
+            requested_group_key=self.group_key,
+            slice_count=slice_count,
+        )
         _log_adapter_profile(
             "adapter_require_output_plan",
             time.perf_counter() - plan_started_at,
             artifact=name,
             kind=expected_kind.value,
         )
-        normalize_started_at = time.perf_counter()
-        runtime_value = normalize_artifact_value(
-            plan,
-            native_value,
-            axis_id=self.axis_id,
-        )
-        _log_adapter_profile(
-            "adapter_normalize_artifact_value",
-            time.perf_counter() - normalize_started_at,
-            artifact=name,
-            kind=expected_kind.value,
-            payload_type=type(runtime_value.data).__name__,
-        )
-        save_started_at = time.perf_counter()
-        runtime_path = plan.path
-        self._save_payload(runtime_value.data, runtime_path)
-        _log_adapter_profile(
-            "adapter_save_payload",
-            time.perf_counter() - save_started_at,
-            artifact=name,
-            kind=expected_kind.value,
-        )
         store_started_at = time.perf_counter()
-        replace_started_at = time.perf_counter()
-        stored_value = self.runtime_value_store.replace(
-            runtime_value,
-            path=runtime_path,
-            backend=self.backend,
-        )
-        _log_adapter_profile(
-            "adapter_runtime_store_replace_only",
-            time.perf_counter() - replace_started_at,
-            artifact=name,
-            kind=expected_kind.value,
-        )
-        if expected_kind is ArtifactKind.MEASUREMENTS:
-            table_started_at = time.perf_counter()
-            measurement_table = MeasurementTable.from_runtime_value(runtime_value)
-            _log_adapter_profile(
-                "adapter_measurement_table_from_runtime_value",
-                time.perf_counter() - table_started_at,
-                artifact=name,
+        stored_value: StoredRuntimeValue | None = None
+        for slice_index, output_group_key in enumerate(output_group_keys):
+            plan = output_plan.for_group(output_group_key)
+            group_native_value = (
+                RuntimeSliceProjection.value_for_slice(
+                    native_value,
+                    slice_index,
+                    slice_count,
+                )
+                if slice_count is not None and len(output_group_keys) > 1
+                else native_value
             )
-            cache_mutation_started_at = time.perf_counter()
-            self.apply_measurement_table_cache_mutation(measurement_table)
+            normalize_started_at = time.perf_counter()
+            runtime_value = normalize_artifact_value(
+                plan,
+                group_native_value,
+                axis_id=self.axis_id,
+            )
             _log_adapter_profile(
-                "adapter_measurement_cache_mutation",
-                time.perf_counter() - cache_mutation_started_at,
+                "adapter_normalize_artifact_value",
+                time.perf_counter() - normalize_started_at,
                 artifact=name,
+                kind=expected_kind.value,
+                payload_type=type(runtime_value.data).__name__,
+                group_key=output_group_key,
+            )
+            save_started_at = time.perf_counter()
+            runtime_path = plan.path
+            self._save_payload(runtime_value.data, runtime_path)
+            _log_adapter_profile(
+                "adapter_save_payload",
+                time.perf_counter() - save_started_at,
+                artifact=name,
+                kind=expected_kind.value,
+                group_key=output_group_key,
+            )
+            replace_started_at = time.perf_counter()
+            stored_value = self.runtime_value_store.replace(
+                runtime_value,
+                path=runtime_path,
+                backend=self.backend,
+            )
+            _log_adapter_profile(
+                "adapter_runtime_store_replace_only",
+                time.perf_counter() - replace_started_at,
+                artifact=name,
+                kind=expected_kind.value,
+                group_key=output_group_key,
+            )
+            if expected_kind is ArtifactKind.MEASUREMENTS:
+                table_started_at = time.perf_counter()
+                measurement_table = MeasurementTable.from_runtime_value(runtime_value)
+                _log_adapter_profile(
+                    "adapter_measurement_table_from_runtime_value",
+                    time.perf_counter() - table_started_at,
+                    artifact=name,
+                    group_key=output_group_key,
+                )
+                cache_mutation_started_at = time.perf_counter()
+                self.apply_measurement_table_cache_mutation(measurement_table)
+                _log_adapter_profile(
+                    "adapter_measurement_cache_mutation",
+                    time.perf_counter() - cache_mutation_started_at,
+                    artifact=name,
+                    group_key=output_group_key,
+                )
+        if stored_value is None:
+            raise RuntimeError(
+                f"No runtime artifact groups were selected for '{name}' "
+                f"({expected_kind.value})."
             )
         invalidation_started_at = time.perf_counter()
         self.invalidate_runtime_query_caches_for_kind(expected_kind)
@@ -2121,11 +2235,13 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         name: str,
         kind: ArtifactKind,
         group_key: str | None = None,
+        current_image: Any | None = None,
     ) -> StoredRuntimeValue:
         records = self._resolve_runtime_records(
             name=name,
             kind=kind,
             group_key=group_key,
+            current_image=current_image,
         )
         if len(records) != 1:
             raise RuntimeError(
@@ -2140,9 +2256,15 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         name: str,
         kind: ArtifactKind,
         group_key: str | None = None,
+        current_image: Any | None = None,
     ) -> tuple[StoredRuntimeValue, ...]:
         input_plan = self.artifact_inputs.get(name)
-        resolved_group_key = self.group_key if group_key is None else group_key
+        resolved_group_key = self.runtime_input_group_key(
+            name=name,
+            kind=kind,
+            group_key=group_key,
+            current_image=current_image,
+        )
         if input_plan is not None:
             if input_plan.kind is not kind:
                 raise ValueError(
@@ -2165,7 +2287,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             return (
                 self.runtime_value_store.resolve(
                     _runtime_query_for_input_plan(
-                        input_plan,
+                        input_plan.for_group(resolved_group_key) or input_plan,
                         axis_id=self.axis_id,
                         group_key=resolved_group_key,
                         backend=self.backend,
@@ -2676,74 +2798,9 @@ def _stack_object_label_records(
     representations = {value.representation for value in values}
     if len(representations) != 1:
         raise ValueError("Cannot stack grouped object labels with mixed representations.")
-    representation = first.representation
-    declared_counts = {value.declared_object_count for value in values}
-    declared_ids = {value.declared_object_ids for value in values}
-    declared_id_domains = ObjectLabelDomain.explicit_plane_id_domains(
-        value.object_label_domain() for value in values
-    )
-    domain_scope = (
-        ObjectLabelDomainScope.PLANE
-        if len(values) > 1
-        else ObjectLabelDomainScope.common(value.domain_scope for value in values)
-    )
-    if representation is ObjectLabelRepresentation.SPARSE_IJV:
-        labels = SparseIJVLabelRows.from_slices(
-            tuple(
-                value.labels
-                if isinstance(value.labels, SparseIJVLabelRows)
-                else SparseIJVLabelRows.from_yx_label(value.labels)
-                for value in values
-            )
-        )
-        return ObjectLabelSet(
-            name=first.name,
-            labels=labels,
-            representation=representation,
-            dimensions=first.dimensions,
-            declared_object_count=(
-                declared_counts.pop() if len(declared_counts) == 1 else None
-            ),
-            declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
-            declared_object_id_domains=declared_id_domains,
-            domain_scope=domain_scope,
-            source_image_name=_single_or_none(value.source_image_name for value in values),
-        )
-
-    memory_type = detect_memory_type(values[0].labels)
-    labels = stack_slices([value.labels for value in values], memory_type, 0)
-    unedited_labels = (
-        stack_slices(
-            [value.labels_for_variant("unedited") for value in values],
-            memory_type,
-            0,
-        )
-        if any(value.unedited_labels is not None for value in values)
-        else None
-    )
-    small_removed_labels = (
-        stack_slices(
-            [value.labels_for_variant("small_removed") for value in values],
-            memory_type,
-            0,
-        )
-        if any(value.small_removed_labels is not None for value in values)
-        else None
-    )
-    return ObjectLabelSet(
-        name=first.name,
-        labels=labels,
-        unedited_labels=unedited_labels,
-        small_removed_labels=small_removed_labels,
-        declared_object_count=(
-            declared_counts.pop() if len(declared_counts) == 1 else None
-        ),
-        declared_object_ids=declared_ids.pop() if len(declared_ids) == 1 else (),
-        declared_object_id_domains=declared_id_domains,
-        domain_scope=domain_scope,
-        representation=representation,
-        dimensions=first.dimensions,
-        source_image_name=_single_or_none(value.source_image_name for value in values),
+    return ObjectLabelPure2DSliceAggregator.aggregate(
+        values,
+        detect_memory_type(first.labels),
     )
 
 

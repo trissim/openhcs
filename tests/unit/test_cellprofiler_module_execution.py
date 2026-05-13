@@ -39,6 +39,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerMeasurementFieldSchema,
     CellProfilerMeasurementRecordBuilder,
     ClassifyObjectsMeasurementFeatureTemplate,
+    CombineObjectsInputPolicy,
     MeasurementLabelSourceAlignmentStrategy,
     CellProfilerMeasurementImageDomain,
     CellProfilerModuleExecutor,
@@ -297,7 +298,13 @@ class _FakeCellProfilerRuntime:
             ),
         )
 
-    def get_objects(self, name: str) -> ObjectLabelSet:
+    def get_objects(
+        self,
+        name: str,
+        *,
+        current_image: object | None = None,
+    ) -> ObjectLabelSet:
+        del current_image
         return self.runtime_objects[name]
 
     def measurement_tables_for_object(self, name: str) -> tuple[object, ...]:
@@ -360,7 +367,13 @@ class _CalculateMathObjectOperandAdapter:
         self.labels = labels
         self.feature_requests: list[tuple[str, str, object]] = []
 
-    def get_objects(self, name: str) -> ObjectLabelSet:
+    def get_objects(
+        self,
+        name: str,
+        *,
+        current_image: object | None = None,
+    ) -> ObjectLabelSet:
+        del current_image
         return ObjectLabelSet(name=name, labels=self.labels)
 
     def resolve_source_objects(
@@ -434,6 +447,57 @@ def test_calculate_math_object_operands_preserve_label_slice_domain() -> None:
     assert adapter.feature_requests == [
         ("Nuclei", "Intensity_MeanIntensity_DNA", labels)
     ]
+
+
+class _CombineObjectsAdapter:
+    def __init__(self, payloads):
+        self.payloads = payloads
+
+    def get_objects(self, name, *, current_image):
+        del current_image
+        return self.payloads[name]
+
+
+def test_combine_objects_broadcasts_2d_labels_to_runtime_slice_domain() -> None:
+    stacked_labels = np.asarray(
+        [
+            [[0, 1], [0, 0]],
+            [[0, 0], [2, 0]],
+        ],
+        dtype=np.int32,
+    )
+    plane_labels = np.asarray([[0, 3], [0, 0]], dtype=np.int32)
+    adapter = _CombineObjectsAdapter(
+        {
+            "Primary": ObjectLabelSet(
+                name="Primary",
+                labels=ObjectLabelPayload(labels=stacked_labels),
+            ),
+            "Secondary": ObjectLabelSet(
+                name="Secondary",
+                labels=ObjectLabelPayload(labels=plane_labels),
+            ),
+        }
+    )
+    request = ObjectInputBindingRequest(
+        module_name="CombineObjects",
+        object_inputs=(
+            ArtifactSpec("Primary", ArtifactKind.OBJECT_LABELS),
+            ArtifactSpec("Secondary", ArtifactKind.OBJECT_LABELS),
+        ),
+        adapter=adapter,
+        kwargs={},
+        current_image=np.zeros((2, 2), dtype=np.float32),
+        external_object_names=frozenset(),
+    )
+
+    primary, secondary = CombineObjectsInputPolicy().label_pair_payload(request)
+
+    assert primary.shape == (2, 2, 2)
+    assert secondary.shape == (2, 2, 2)
+    np.testing.assert_array_equal(primary, stacked_labels)
+    np.testing.assert_array_equal(secondary[0], plane_labels)
+    np.testing.assert_array_equal(secondary[1], plane_labels)
 
 
 def test_special_inputs_bind_from_declared_role_order_not_runtime_dedup_order() -> None:
@@ -566,6 +630,12 @@ def test_cellprofiler_contract_executor_slices_high_rank_labels_by_runtime_axis(
     assert result_image.shape == (3, 4, 5)
     assert result_labels.shape == (3, 2, 4, 5)
     np.testing.assert_array_equal(result_labels, labels)
+
+
+def test_runtime_slice_projection_counts_high_rank_kwargs_by_first_axis_for_2d_image():
+    labels = np.zeros((3, 2, 4, 5), dtype=np.int32)
+
+    assert RuntimeSliceProjection.first_axis_slice_count_from_values((labels,)) == 3
 
 
 def test_cellprofiler_contract_executor_projects_flat_grouped_label_kwargs():
@@ -2388,6 +2458,37 @@ def test_pure_2d_object_label_set_slice_projects_plane_domain() -> None:
     assert sliced.declared_object_ids == (1, 2)
     assert sliced.declared_object_id_domains == ()
     assert sliced.domain_scope is ObjectLabelDomainScope.PLANE
+
+
+def test_pure_2d_object_label_payload_slice_projects_grouped_plane_domains() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.zeros((2, 3, 4, 5), dtype=np.int32),
+        declared_object_id_domains=((1,), (2,), (3,), (4,), (5,), (6,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    sliced = RuntimeSliceProjection.value_for_slice(payload, slice_index=1, slice_count=2)
+
+    assert isinstance(sliced, ObjectLabelPayload)
+    assert sliced.labels.shape == (3, 4, 5)
+    assert sliced.declared_object_ids == ()
+    assert sliced.declared_object_id_domains == ((4,), (5,), (6,))
+    assert sliced.domain_scope is ObjectLabelDomainScope.PLANE
+
+
+def test_runtime_slice_count_allows_grouped_object_label_planes() -> None:
+    parent = ObjectLabelPayload(
+        labels=np.zeros((2, 3, 4, 5), dtype=np.int32),
+        declared_object_id_domains=((1,), (2,), (3,), (4,), (5,), (6,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+    child = ObjectLabelPayload(
+        labels=np.zeros((6, 4, 5), dtype=np.int32),
+        declared_object_id_domains=((1,), (2,), (3,), (4,), (5,), (6,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    assert RuntimeSliceProjection.slice_count_from_values((parent, child)) == 2
 
 
 def test_identify_tertiary_batch_aligns_cropped_primary_labels_to_secondary_domain():
@@ -6072,6 +6173,40 @@ def test_filterobjects_uses_named_measurement_feature_rules() -> None:
         measurement_use_maximum=(False,),
         measurement_tables=(
             MeasurementTable(name="NucleiMeasurements", rows=measurement_rows),
+        ),
+        dtype_config=DtypeConfig(),
+    )
+
+    _output_image, stats, filtered_primary = result[:3]
+
+    assert stats.objects_pre_filter == 2
+    assert stats.objects_post_filter == 1
+    assert filtered_primary[1, 1] == 0
+    assert filtered_primary[3, 3] == 1
+
+
+def test_filterobjects_feature_rules_use_bound_measurement_values() -> None:
+    image = np.zeros((5, 5), dtype=np.float32)
+    primary = np.zeros((5, 5), dtype=np.int32)
+    primary[1:3, 1:3] = 1
+    primary[3:5, 3:5] = 2
+
+    result = filter_objects(
+        image,
+        mode=FilterMode.MEASUREMENTS,
+        filter_method=FilterMethod.LIMITS,
+        object_labels=(primary,),
+        measurement_values=np.array([0.1, 0.8], dtype=np.float64),
+        measurement_features=("Intensity_LowerQuartileIntensity_DNA",),
+        measurement_min_values=(0.2,),
+        measurement_max_values=(None,),
+        measurement_use_minimum=(True,),
+        measurement_use_maximum=(False,),
+        measurement_tables=(
+            MeasurementTable(
+                name="UnrelatedMeasurements",
+                rows=({"object_label": 1, "AreaShape_Area": 4.0},),
+            ),
         ),
         dtype_config=DtypeConfig(),
     )

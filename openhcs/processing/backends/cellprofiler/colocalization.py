@@ -16,7 +16,10 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
-from openhcs.core.aligned_image_payload import AlignedImageStack
+from openhcs.core.aligned_image_payload import (
+    AlignedImageStack,
+    AlignedImageStackKwargResolver,
+)
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import (
     measurement_image_batch_executor,
@@ -24,6 +27,7 @@ from openhcs.core.pipeline.function_contracts import (
     special_outputs,
 )
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     DenseObjectLabelAggregation,
     ImagePayloadChannelProjection,
@@ -2447,7 +2451,7 @@ class ColocalizationCostesThresholdBatch:
     ) -> dict[str, object]:
         """Return request kwargs with source-pair thresholds materialized once."""
         if ColocalizationImagePairContext.requires_slice_local_context(request.image):
-            return dict(request.kwargs)
+            return self.slice_aligned_request_kwargs(request)
         image_pair_context = self.image_pair_context(request)
         object_label_context = self.object_label_context(request, image_pair_context)
         threshold_request = ColocalizationCostesThresholdRequest.from_batch_request(
@@ -2468,6 +2472,62 @@ class ColocalizationCostesThresholdBatch:
         }
         if thresholds is not None:
             kwargs["costes_thresholds"] = thresholds
+        return kwargs
+
+    def slice_aligned_request_kwargs(
+        self,
+        request: RuntimeBatchInvocationRequest,
+    ) -> dict[str, object]:
+        """Return kwargs carrying one cached context per aligned image slice."""
+        image_data = image_payload_data(request.image)
+        if not isinstance(image_data, AlignedImageStack):
+            return dict(request.kwargs)
+
+        image_pair_contexts: list[ColocalizationImagePairContext] = []
+        object_label_contexts: list[ColocalizationObjectLabelContext] = []
+        costes_thresholds: list[ColocalizationCostesThresholds | None] = []
+        has_thresholds = False
+        for slice_index, slice_payload in enumerate(image_data.slices):
+            resolver = AlignedImageStackKwargResolver(
+                slice_index=slice_index,
+                slice_count=len(image_data.slices),
+                reference_payload=slice_payload,
+            )
+            slice_kwargs = {
+                **request.kwargs,
+                "labels": resolver.resolve(request.kwargs["labels"]),
+            }
+            slice_request = replace(request, image=slice_payload, kwargs=slice_kwargs)
+            image_pair_context = self.image_pair_context(slice_request)
+            object_label_context = self.object_label_context(
+                slice_request,
+                image_pair_context,
+            )
+            threshold_request = ColocalizationCostesThresholdRequest.from_batch_request(
+                slice_request,
+                image_pair_context,
+            )
+            thresholds = None
+            if threshold_request is not None:
+                key = threshold_request.cache_key
+                thresholds = self._thresholds.get(key)
+                if thresholds is None:
+                    thresholds = threshold_request.thresholds()
+                    self._thresholds[key] = thresholds
+                has_thresholds = True
+            image_pair_contexts.append(image_pair_context)
+            object_label_contexts.append(object_label_context)
+            costes_thresholds.append(thresholds)
+
+        kwargs: dict[str, object] = {
+            **request.kwargs,
+            "image_pair_context": RuntimeSliceAlignedValues(tuple(image_pair_contexts)),
+            "object_label_context": RuntimeSliceAlignedValues(tuple(object_label_contexts)),
+        }
+        if has_thresholds:
+            kwargs["costes_thresholds"] = RuntimeSliceAlignedValues(
+                tuple(costes_thresholds)
+            )
         return kwargs
 
 
@@ -2497,6 +2557,7 @@ measurement_image_batch_executor(measure_colocalization_objects_batch)(
 
 def _prepare_measure_colocalization_objects() -> None:
     """Compile object-colocalization reduction kernels before measured execution."""
+    _prepare_measure_colocalization()
     first_pixels = np.linspace(0.0, 1.0, 16, dtype=np.float64)
     second_pixels = np.linspace(1.0, 0.0, 16, dtype=np.float64)
     object_labels = np.repeat(np.arange(1, 5, dtype=np.int32), 4)
@@ -2523,6 +2584,15 @@ def _prepare_measure_colocalization_objects() -> None:
     )
 
 
+def _prepare_measure_colocalization() -> None:
+    """Compile image-colocalization kernels before measured execution."""
+    first_pixels = np.linspace(0.0, 1.0, 64, dtype=np.float64)
+    second_pixels = np.linspace(1.0, 0.0, 64, dtype=np.float64)
+    costes_backend().prepare_backend()
+    _costes_manders_numba(first_pixels, second_pixels, 0.25, 0.25)
+
+
+measure_colocalization.__openhcs_prepare__ = _prepare_measure_colocalization
 measure_colocalization_objects.__openhcs_prepare__ = (
     _prepare_measure_colocalization_objects
 )

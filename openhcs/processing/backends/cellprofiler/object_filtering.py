@@ -227,6 +227,12 @@ class FilterObjectsSelectionRequest:
         feature_name: str,
     ) -> ObjectLabelMeasurementValues:
         """Resolve one FilterObjects measurement rule through the nominal source chain."""
+        if (
+            self.measurement_values is not None
+            and self.measurement_features
+            and feature_name == self.measurement_features[0]
+        ):
+            return self.measurement_values
         return FilterObjectsMeasurementValuesSource.resolve_feature(self, feature_name)
 
     def first_measurement_values(self) -> ObjectLabelMeasurementValues:

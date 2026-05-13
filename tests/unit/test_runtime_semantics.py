@@ -109,6 +109,57 @@ def test_object_label_domain_project_slice_broadcasts_single_declared_plane_doma
     assert projected.scope is ObjectLabelDomainScope.PLANE
 
 
+def test_object_label_domain_project_slice_selects_grouped_plane_domains() -> None:
+    domain = ObjectLabelDomain(
+        declared_object_id_domains=((1,), (2,), (3,), (4,)),
+        scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    projected = domain.project_slice(slice_index=1, slice_count=2)
+
+    assert projected.declared_object_ids == ()
+    assert projected.declared_object_id_domains == ((3,), (4,))
+    assert projected.scope is ObjectLabelDomainScope.PLANE
+
+
+def test_object_label_domain_project_slice_repeats_declared_plane_domains() -> None:
+    domain = ObjectLabelDomain(
+        declared_object_id_domains=((1,), (2,)),
+        scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    projected = domain.project_slice(slice_index=3, slice_count=4)
+
+    assert projected.declared_object_ids == (2,)
+    assert projected.declared_object_id_domains == ()
+    assert projected.scope is ObjectLabelDomainScope.PLANE
+
+
+def test_object_label_domain_project_planes_selects_noncontiguous_domains() -> None:
+    domain = ObjectLabelDomain(
+        declared_object_id_domains=((1,), (2,), (3,), (4,)),
+        scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    projected = domain.project_planes((1, 3))
+
+    assert projected.declared_object_ids == ()
+    assert projected.declared_object_id_domains == ((2,), (4,))
+    assert projected.scope is ObjectLabelDomainScope.PLANE
+
+
+def test_plane_domain_strategy_rederives_single_output_plane_from_labels() -> None:
+    labels = np.array([[0, 2], [3, 0]], dtype=np.int32)
+
+    domains = dense_object_label_plane_id_domains(
+        labels,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+        declared_object_id_domains=((1,), (2,), (3,)),
+    )
+
+    assert domains == ((2, 3),)
+
+
 def test_object_label_domain_project_slice_rejects_mismatched_plane_domains() -> None:
     domain = ObjectLabelDomain(
         declared_object_id_domains=((1, 2), (1, 2, 3, 4)),

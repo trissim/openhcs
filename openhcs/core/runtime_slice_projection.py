@@ -225,7 +225,7 @@ class RuntimeSliceProjection:
             for count in (cls.relationship_slice_count(value),)
             if count is not None and count > 1
         )
-        tensor_slice_count = cls.single_slice_count(
+        tensor_slice_count = cls.compatible_runtime_slice_count(
             tensor_slice_counts,
             source_description="tensor/vector values",
         )
@@ -245,6 +245,24 @@ class RuntimeSliceProjection:
         ):
             return 1
         return None
+
+    @classmethod
+    def first_axis_slice_count_from_values(cls, values: Any) -> int | None:
+        """Return runtime count for high-rank values beside one 2D image plane."""
+        slice_counts = {
+            int(array.shape[0])
+            for value in values
+            for array in (image_payload_data(value),)
+            if isinstance(array, np.ndarray)
+            and array.ndim > 3
+            and array.shape[0] > 1
+            and not is_color_image_slice(array)
+            and not is_color_image_stack(array)
+        }
+        return cls.single_slice_count(
+            slice_counts,
+            source_description="high-rank first-axis values",
+        )
 
     @classmethod
     def stack_views(cls, value: Any) -> tuple[np.ndarray, ...]:
@@ -295,8 +313,37 @@ class RuntimeSliceProjection:
                 flattened = array.reshape((-1, *array.shape[-2:]))
                 if flattened.shape[0] == slice_count:
                     return flattened
-            return array
+                return array
         return array.reshape((-1, *array.shape[-2:]))
+
+    @classmethod
+    def plane_indices_for_slice(
+        cls,
+        value: Any,
+        context: RuntimeSliceProjectionContext,
+    ) -> tuple[int, ...] | None:
+        """Return source plane indexes represented by one runtime-slice projection."""
+        array = image_payload_data(value)
+        if is_color_image_slice(array) or is_color_image_stack(array):
+            return None
+        if not isinstance(array, np.ndarray) or array.ndim < 3:
+            return None
+        if array.ndim > 3 and array.shape[0] == context.slice_count:
+            planes_per_slice = int(np.prod(array.shape[1:-2]))
+            start = context.slice_index * planes_per_slice
+            return tuple(range(start, start + planes_per_slice))
+        stack = cls.grayscale_plane_stack_view(
+            value,
+            slice_count=context.slice_count,
+            flatten_high_rank=True,
+        )
+        if stack is None:
+            return None
+        if stack.shape[0] == context.slice_count:
+            return (context.slice_index,)
+        if stack.shape[0] > context.slice_count and stack.shape[0] % context.slice_count == 0:
+            return tuple(range(context.slice_index, stack.shape[0], context.slice_count))
+        return None
 
     @classmethod
     def first_axis_slice_if_aligned(
@@ -337,6 +384,27 @@ class RuntimeSliceProjection:
         if np.issubdtype(dtype, np.bool_):
             return np.any(grouped, axis=0)
         return np.max(grouped, axis=0).astype(dtype, copy=False)
+
+    @classmethod
+    def repeated_label_stack_slice(
+        cls,
+        stack: np.ndarray,
+        context: RuntimeSliceProjectionContext,
+    ) -> Any | None:
+        """Project label planes repeated across a larger runtime-slice domain."""
+        if stack.shape[0] >= context.slice_count:
+            return None
+        if context.slice_count % stack.shape[0] != 0:
+            return None
+        dtype = getattr(stack, "dtype", None)
+        if dtype is None:
+            return None
+        if not (
+            np.issubdtype(dtype, np.integer)
+            or np.issubdtype(dtype, np.bool_)
+        ):
+            return None
+        return stack[context.slice_index % stack.shape[0]]
 
     @staticmethod
     def relationship_slice_count(
@@ -571,6 +639,25 @@ class RuntimeSliceProjection:
             )
         return next(iter(slice_counts))
 
+    @staticmethod
+    def compatible_runtime_slice_count(
+        slice_counts: set[int],
+        *,
+        source_description: str,
+    ) -> int | None:
+        """Return a runtime count when larger counts are grouped planes per slice."""
+        if not slice_counts:
+            return None
+        if len(slice_counts) == 1:
+            return next(iter(slice_counts))
+        smallest = min(slice_counts)
+        if smallest > 0 and all(count % smallest == 0 for count in slice_counts):
+            return smallest
+        return RuntimeSliceProjection.single_slice_count(
+            slice_counts,
+            source_description=source_description,
+        )
+
 
 class RuntimeSliceAlignedValueProjectionStrategy(RuntimeSliceProjectionStrategy):
     """Project nominal slice-aligned value sets through their own contract."""
@@ -730,9 +817,14 @@ class ObjectLabelSetRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrateg
             raise TypeError("ObjectLabelSetRuntimeSliceProjectionStrategy requires ObjectLabelSet.")
         if value.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
             return value
-        slice_domain = value.object_label_domain().project_slice(
-            context.slice_index,
-            context.slice_count,
+        plane_indices = RuntimeSliceProjection.plane_indices_for_slice(value, context)
+        slice_domain = (
+            value.object_label_domain().project_planes(plane_indices)
+            if plane_indices is not None
+            else value.object_label_domain().project_slice(
+                context.slice_index,
+                context.slice_count,
+            )
         )
         return ObjectLabelSet(
             name=value.name,
@@ -793,9 +885,14 @@ class ObjectLabelPayloadRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStr
             raise TypeError("ObjectLabelPayloadRuntimeSliceProjectionStrategy requires ObjectLabelPayload.")
         if value.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
             return value
-        slice_domain = value.object_label_domain().project_slice(
-            context.slice_index,
-            context.slice_count,
+        plane_indices = RuntimeSliceProjection.plane_indices_for_slice(value, context)
+        slice_domain = (
+            value.object_label_domain().project_planes(plane_indices)
+            if plane_indices is not None
+            else value.object_label_domain().project_slice(
+                context.slice_index,
+                context.slice_count,
+            )
         )
         return ObjectLabelPayload(
             labels=RuntimeSliceProjection.value_for_slice(
@@ -836,12 +933,23 @@ class ObjectLabelPayloadRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStr
         if value.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE:
             return ()
         values = (value.labels, value.unedited_labels, value.small_removed_labels)
-        return tuple(
-            stack
-            for item in values
-            if item is not None
-            if (stack := RuntimeSliceProjection.stack_view(item)) is not None
-        )
+        stacks: list[np.ndarray] = []
+        for item in values:
+            if item is None:
+                continue
+            array = image_payload_data(item)
+            if (
+                isinstance(array, np.ndarray)
+                and array.ndim > 3
+                and not is_color_image_slice(array)
+                and not is_color_image_stack(array)
+            ):
+                stacks.append(array)
+                continue
+            stack = RuntimeSliceProjection.stack_view(item)
+            if stack is not None:
+                stacks.append(stack)
+        return tuple(stacks)
 
 
 class SequenceRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
@@ -929,6 +1037,12 @@ class DefaultRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
         )
         if grouped_slice is not None:
             return grouped_slice
+        repeated_slice = RuntimeSliceProjection.repeated_label_stack_slice(
+            stack,
+            context,
+        )
+        if repeated_slice is not None:
+            return repeated_slice
         return value
 
 

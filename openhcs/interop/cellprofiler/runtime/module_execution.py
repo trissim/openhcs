@@ -137,6 +137,7 @@ from openhcs.core.runtime_values import (
     ColumnarRows,
     MeasurementTable,
     ObjectLabelDenseDataStrategy,
+    DenseObjectLabelSliceStack,
     ObjectLabelPayload,
     ObjectLabelPure2DSliceAggregator,
     ObjectLabelRuntimeSliceStackContract,
@@ -1316,7 +1317,11 @@ class CellProfilerModuleExecutor:
                     measurement_rows,
                     func,
                 ),
-                object_name=None,
+                object_name=(
+                    object_inputs[0].name
+                    if len(object_inputs) == 1 and not requires_explicit_row_ownership
+                    else None
+                ),
                 source_image_name=combined_source_image_name,
             )
         _log_module_profile(
@@ -1693,7 +1698,7 @@ class CellProfilerModuleExecutor:
                 spec.name,
                 current_image,
             )
-        return adapter.get_objects(spec.name)
+        return adapter.get_objects(spec.name, current_image=current_image)
 
     def _runtime_input_kwargs(
         self,
@@ -2858,7 +2863,10 @@ class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
             )
         return collapse_singleton_object_label_stack(
             _object_label_runtime_payload(
-                request.adapter.get_objects(request.spec.name)
+                request.adapter.get_objects(
+                    request.spec.name,
+                    current_image=request.current_image,
+                )
             )
         )
 
@@ -2868,7 +2876,10 @@ class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
     ) -> str | None:
         if request.spec.name in request.external_object_names:
             return request.spec.name
-        return request.adapter.get_objects(request.spec.name).source_image_name
+        return request.adapter.get_objects(
+            request.spec.name,
+            current_image=request.current_image,
+        ).source_image_name
 
     def source_image_payload(
         self,
@@ -3011,7 +3022,9 @@ class RuntimeInputBindingRequestBase(ABC, metaclass=AutoRegisterMeta):
                     self.current_image,
                 )
             )
-        return _object_label_runtime_payload(self.adapter.get_objects(spec.name))
+        return _object_label_runtime_payload(
+            self.adapter.get_objects(spec.name, current_image=self.current_image)
+        )
 
     def artifact_input_request(self, spec: ArtifactSpec) -> RuntimeArtifactInputRequest:
         """Return the nominal artifact request for this binding context."""
@@ -4559,10 +4572,7 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicy):
         request: ObjectInputBindingRequest,
     ) -> dict[str, Any]:
         request.require_exact_object_count(2)
-        label_planes = tuple(
-            np.asarray(request.labels_for(spec), dtype=np.int32)
-            for spec in request.object_inputs
-        )
+        label_planes = self.label_pair_payload(request)
         shapes = {tuple(labels.shape) for labels in label_planes}
         if len(shapes) != 1:
             raise ValueError(
@@ -4575,6 +4585,60 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicy):
                 ImagePayloadExecutionMode.FULL_STACK
             ),
         }
+
+    def label_pair_payload(
+        self,
+        request: ObjectInputBindingRequest,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return the two CombineObjects inputs in a shared dense slice domain."""
+        label_payloads = tuple(
+            request.label_payload_for(spec)
+            for spec in request.object_inputs
+        )
+        slice_counts = tuple(
+            count
+            for payload in label_payloads
+            for count in (self.runtime_slice_count(payload),)
+            if count is not None
+        )
+        if not slice_counts:
+            return tuple(
+                np.asarray(collapse_singleton_object_label_stack(payload), dtype=np.int32)
+                for payload in label_payloads
+            )
+        slice_count_set = set(slice_counts)
+        if len(slice_count_set) != 1:
+            raise ValueError(
+                "CombineObjects requires compatible object-label runtime slice "
+                f"domains, got slice counts {sorted(slice_count_set)!r}."
+            )
+        slice_count = slice_count_set.pop()
+        stacks = tuple(
+            DenseObjectLabelSliceStack.from_payload(
+                payload,
+                slice_count=slice_count,
+                dtype=np.int32,
+            )
+            for payload in label_payloads
+        )
+        if any(stack is None for stack in stacks):
+            shapes = [
+                tuple(object_label_dense_array(payload, dtype=np.int32).shape)
+                for payload in label_payloads
+            ]
+            raise ValueError(
+                "CombineObjects requires object-label inputs compatible with "
+                f"runtime slice count {slice_count}, got shapes {shapes!r}."
+            )
+        return tuple(stack.labels for stack in stacks if stack is not None)
+
+    def runtime_slice_count(self, payload: object) -> int | None:
+        """Return the declared or dense object-label slice count for CombineObjects."""
+        declared_count = ObjectLabelRuntimeSliceStackContract.runtime_slice_count(payload)
+        if declared_count is not None:
+            return declared_count
+        label_array = object_label_dense_array(payload, dtype=np.int32)
+        return label_array.shape[0] if label_array.ndim == 3 else None
 
 
 def _filter_objects_child_count_object_names(
@@ -8214,7 +8278,9 @@ def _object_input_labels(
         return _label_payload_final(
             adapter.resolve_source_objects(spec.name, current_image)
         )
-    return _label_payload_final(adapter.get_objects(spec.name))
+    return _label_payload_final(
+        adapter.get_objects(spec.name, current_image=current_image)
+    )
 
 
 def _measurement_object_name(
@@ -10061,7 +10127,12 @@ class CellProfilerFunctionContractExecutor:
         prepare_started_at = time.perf_counter()
         memory_type = detect_memory_type(image_data)
         if image_data.ndim == 2:
-            slice_count = _slice_count_from_pure_2d_kwargs(kwargs)
+            slice_count = (
+                RuntimeSliceProjection.first_axis_slice_count_from_values(
+                    kwargs.values()
+                )
+                or _slice_count_from_pure_2d_kwargs(kwargs)
+            )
             if slice_count is None:
                 return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
                     func,

@@ -90,3 +90,16 @@ def test_runtime_value_store_merges_observed_records_from_worker_boundary():
 
     assert parent_store.get(value.key) == record
     assert parent_store.observed_values() == (record,)
+
+
+def test_runtime_value_store_clear_releases_records_and_advances_revision():
+    store = RuntimeValueStore()
+    value = _runtime_value()
+    store.record(value, path="/memory/measurements.pkl", backend="memory")
+    revision = store.revision
+
+    store.clear()
+
+    assert store.revision > revision
+    assert store.values() == ()
+    assert store.observed_values() == ()

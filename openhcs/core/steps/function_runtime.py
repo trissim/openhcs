@@ -243,6 +243,17 @@ class VirtualWorkspaceSourceProjection:
         )
         return self.source_metadata_by_path.get(source_path)
 
+    def pipeline_start_files(self) -> tuple[str, ...]:
+        """Return loadable virtual source paths that preserve per-file metadata."""
+        absolute_virtual_paths = tuple(
+            virtual_path
+            for virtual_path in self.source_paths_by_virtual_path
+            if Path(virtual_path).is_absolute()
+        )
+        if absolute_virtual_paths:
+            return tuple(dict.fromkeys(absolute_virtual_paths))
+        return tuple(dict.fromkeys(self.source_paths_by_virtual_path))
+
 
 @dataclass(slots=True)
 class SourceBindingExecutionCache:
@@ -959,7 +970,7 @@ class PatternGroupRuntime:
         pipeline_input_files, pipeline_input_backend = (
             self._pipeline_start_source_universe(
                 source_backend,
-                step_input_source_paths=step_input_source_paths,
+                source_projection=source_projection,
             )
         )
         return SourceBindingRuntimeContext(
@@ -975,7 +986,7 @@ class PatternGroupRuntime:
         self,
         source_backend: str,
         *,
-        step_input_source_paths: Mapping[str, str],
+        source_projection: VirtualWorkspaceSourceProjection | None,
     ) -> tuple[tuple[str, ...], str]:
         if not self._requires_full_pipeline_source_universe():
             return (
@@ -983,10 +994,13 @@ class PatternGroupRuntime:
                 source_backend,
             )
 
-        if source_backend == Backend.VIRTUAL_WORKSPACE.value:
+        if (
+            source_backend == Backend.VIRTUAL_WORKSPACE.value
+            and source_projection is not None
+        ):
             return (
-                self._virtual_workspace_real_source_files(step_input_source_paths),
-                Backend.DISK.value,
+                source_projection.pipeline_start_files(),
+                Backend.VIRTUAL_WORKSPACE.value,
             )
 
         universe_backend = (

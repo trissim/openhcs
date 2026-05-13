@@ -584,14 +584,53 @@ class ObjectLabelDomain:
                 declared_object_ids=self.declared_object_id_domains[0],
                 scope=ObjectLabelDomainScope.PLANE,
             )
+        if len(self.declared_object_id_domains) % normalized_count == 0:
+            domains_per_slice = len(self.declared_object_id_domains) // normalized_count
+            start = normalized_index * domains_per_slice
+            return self.project_planes(range(start, start + domains_per_slice))
+        if normalized_count % len(self.declared_object_id_domains) == 0:
+            return self.project_planes(
+                (normalized_index % len(self.declared_object_id_domains),)
+            )
         if len(self.declared_object_id_domains) != normalized_count:
             raise ValueError(
                 "Plane-scoped object-label domains must match PURE_2D slice "
                 f"count: {len(self.declared_object_id_domains)} domains for "
                 f"{normalized_count} slices."
             )
+        return self.project_planes((normalized_index,))
+
+    def project_planes(self, plane_indices: Iterable[int]) -> "ObjectLabelDomain":
+        """Return the object-label domain carried by selected plane indexes."""
+        normalized_indices = tuple(int(index) for index in plane_indices)
+        if not normalized_indices:
+            return ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE)
+        if not self.declared_object_id_domains:
+            return self
+        if len(self.declared_object_id_domains) == 1:
+            return ObjectLabelDomain(
+                declared_object_ids=self.declared_object_id_domains[0],
+                scope=ObjectLabelDomainScope.PLANE,
+            )
+        if any(
+            index < 0 or index >= len(self.declared_object_id_domains)
+            for index in normalized_indices
+        ):
+            raise ValueError(
+                "Object-label plane projection index is outside declared "
+                f"domain count {len(self.declared_object_id_domains)}: "
+                f"{normalized_indices!r}."
+            )
+        domains = tuple(
+            self.declared_object_id_domains[index] for index in normalized_indices
+        )
+        if len(domains) == 1:
+            return ObjectLabelDomain(
+                declared_object_ids=domains[0],
+                scope=ObjectLabelDomainScope.PLANE,
+            )
         return ObjectLabelDomain(
-            declared_object_ids=self.declared_object_id_domains[normalized_index],
+            declared_object_id_domains=domains,
             scope=ObjectLabelDomainScope.PLANE,
         )
 
@@ -1008,6 +1047,8 @@ class PlaneObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
         label_array = np.asarray(labels)
         if declared_object_id_domains:
             plane_count = 1 if label_array.ndim <= 2 else label_array.shape[0]
+            if plane_count == 1 and len(declared_object_id_domains) != 1:
+                return (dense_object_label_id_domain(labels),)
             if len(declared_object_id_domains) != plane_count:
                 raise ValueError(
                     "Plane-scoped object-label domains must match dense label "

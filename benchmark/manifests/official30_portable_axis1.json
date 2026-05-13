@@ -354,6 +354,13 @@
   ],
   "description": "Portable 30-case CellProfiler/OpenHCS benchmark manifest. Resolve roots with CELLPROFILER_EXAMPLES_ROOT, OPENHCS_BENCHMARK_DATASET_CACHE_ROOT, and OPENHCS_AXISONE_SUBSETS_ROOT.",
   "manifest_version": 2,
+  "well_throughput_modes": [
+    "1w_1t",
+    "8w_2c",
+    "12w_3c",
+    "16w_4c"
+  ],
+  "well_throughput_start_method": "fork",
   "path_roots": {
     "axis_one_subsets": {
       "default": "/tmp/openhcs_axisone_subsets/current",

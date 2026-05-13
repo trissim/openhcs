@@ -303,6 +303,13 @@ class RuntimeValueStore:
         """Return every runtime artifact write in insertion order."""
         return tuple(self._observation_records)
 
+    def clear(self) -> None:
+        """Release every runtime artifact record owned by this execution context."""
+        self._records_by_location.clear()
+        self._observation_records.clear()
+        self._current_location_by_key.clear()
+        self._mark_mutated()
+
     def merge_observed_values(
         self,
         records: tuple[StoredRuntimeValue, ...],

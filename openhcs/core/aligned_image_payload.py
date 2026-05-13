@@ -550,6 +550,14 @@ class RuntimeSliceAlignedValueKwargResolutionStrategy(
 
     value_type = RuntimeSliceAlignedValueSet
 
+    def matches(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> bool:
+        del resolver
+        return isinstance(value, RuntimeSliceAlignedValueSet)
+
     def resolve(
         self,
         value: Any,
@@ -963,7 +971,11 @@ def compose_aligned_image_payload(
 
 def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
     """Return payload slices used for multi-source alignment."""
-    data = image_payload_data(payload)
+    data = (
+        object_label_dense_data(payload)
+        if isinstance(payload, (ObjectLabelPayload, ObjectLabelSet))
+        else image_payload_data(payload)
+    )
     mask = image_payload_mask(payload)
     metadata = image_payload_metadata(payload)
     if is_pairwise_slice_grid(data):

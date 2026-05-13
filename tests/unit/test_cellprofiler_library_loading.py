@@ -52,6 +52,7 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
     ColocalizationCostesThresholdBatch,
     ColocalizationCostesThresholds,
     ColocalizationImagePairContext,
+    ColocalizationObjectLabelContext,
     costes_backend,
     object_colocalization_threshold_reductions,
     thresholded_colocalization_metrics,
@@ -90,6 +91,7 @@ from benchmark.cellprofiler_semantics.crop import CropShape, RemovalMethod
 from openhcs.core.aligned_image_payload import AlignedImageStack
 from openhcs.core.config import DtypeConfig
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ImageMetadataPayload,
@@ -727,7 +729,7 @@ def test_colocalization_image_pair_context_accepts_aligned_image_stack() -> None
     np.testing.assert_array_equal(context.second_image, aligned.slices[1])
 
 
-def test_colocalization_threshold_batch_defers_aligned_image_stack_context() -> None:
+def test_colocalization_threshold_batch_aligns_aligned_image_stack_context() -> None:
     aligned = AlignedImageStack(
         (
             np.ones((2, 2), dtype=np.float32),
@@ -748,8 +750,18 @@ def test_colocalization_threshold_batch_defers_aligned_image_stack_context() -> 
 
     kwargs = ColocalizationCostesThresholdBatch().request_kwargs(request)
 
-    assert "image_pair_context" not in kwargs
-    assert "object_label_context" not in kwargs
+    assert isinstance(kwargs["image_pair_context"], RuntimeSliceAlignedValues)
+    assert isinstance(kwargs["object_label_context"], RuntimeSliceAlignedValues)
+    assert kwargs["image_pair_context"].slice_count == 2
+    assert kwargs["object_label_context"].slice_count == 2
+    assert isinstance(
+        kwargs["image_pair_context"].value_for_slice(0),
+        ColocalizationImagePairContext,
+    )
+    assert isinstance(
+        kwargs["object_label_context"].value_for_slice(0),
+        ColocalizationObjectLabelContext,
+    )
 
 
 def test_measure_colocalization_costes_first_threshold_snaps_to_scale_bin():
@@ -3401,6 +3413,23 @@ def test_mask_image_applies_2d_object_mask_to_singleton_image_stack():
     assert np.count_nonzero(image_payload_data(masked)[0]) == 9
     assert np.all(image_payload_data(masked)[0, labels == 0] == 0)
     assert np.array_equal(image_payload_mask(masked), (labels > 0)[np.newaxis, ...])
+
+
+def test_mask_image_accepts_object_label_payload_mask():
+    image = np.ones((1, 5, 6), dtype=np.float32)
+    labels = np.zeros((5, 6), dtype=np.int32)
+    labels[1:4, 2:5] = 1
+
+    masked = mask_image(
+        image,
+        ObjectLabelPayload(labels=labels),
+        mask_source="objects",
+        dtype_config=DtypeConfig(),
+    )
+
+    assert isinstance(masked, MaskedImagePayload)
+    assert np.count_nonzero(image_payload_data(masked)[0]) == 9
+    np.testing.assert_array_equal(image_payload_mask(masked), (labels > 0)[None, ...])
 
 
 def test_mask_image_accepts_source_backed_singleton_image_plane():
