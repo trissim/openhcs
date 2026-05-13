@@ -14,10 +14,10 @@ from openhcs.core.image_shapes import is_color_image_slice, is_color_image_stack
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_OBJECT_NAME_FIELD,
-    columnar_row_values,
     measurement_row_mapping,
     measurement_rows,
     measurement_table_for_slice,
+    measurement_table_slice_indices as runtime_measurement_table_slice_indices,
     measurement_table_object_name,
 )
 from openhcs.core.runtime_semantics import (
@@ -27,7 +27,6 @@ from openhcs.core.runtime_semantics import (
 )
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_values import (
-    ColumnarRows,
     MeasurementTable,
     ObjectLabelPayload,
     ObjectLabelSet,
@@ -415,23 +414,7 @@ class RuntimeSliceProjection:
 
     @staticmethod
     def measurement_table_slice_indices(value: MeasurementTable) -> set[int]:
-        if not value.subject.scope.projects_runtime_slices:
-            return set()
-        slice_field = MeasurementRowAxisField.SLICE_INDEX.value
-        if isinstance(value.rows, ColumnarRows):
-            column_names = tuple(str(column) for column in value.rows.columns)
-            if slice_field not in column_names:
-                return set()
-            return {
-                int(slice_index)
-                for slice_index in columnar_row_values(value.rows, slice_field)
-                if slice_index is not None
-            }
-        return {
-            int(row[slice_field])
-            for row in value.rows
-            if isinstance(row, Mapping) and row.get(slice_field) is not None
-        }
+        return runtime_measurement_table_slice_indices(value)
 
     @staticmethod
     def measurement_table_matches_object(

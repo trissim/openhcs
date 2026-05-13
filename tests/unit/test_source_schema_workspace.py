@@ -38,7 +38,9 @@ from openhcs.core.source_bindings import (
     SourceSelector,
 )
 from openhcs.core.source_schema_workspace import (
+    ImageSetRecord,
     SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR,
+    SourceSchemaImageSetSelection,
     expand_source_schema_workspace_wells,
     materialize_source_schema_workspace,
 )
@@ -278,6 +280,60 @@ def test_materialize_source_schema_workspace_projects_cellprofiler_sources(
         f"{SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR}/IllumGFP/001_Channel2ILLUM.mat"
     }
     assert not (source_root / "openhcs_metadata.json").exists()
+    assert result.primary_wells() == ("A01",)
+    source_universe = {
+        path.name
+        for path in result.source_paths_for_primary_wells(result.primary_wells())
+    }
+    assert source_universe == {
+        "Channel1-01-A-01.tif",
+        "Channel2-01-A-01.tif",
+        "Channel2ILLUM.mat",
+    }
+
+
+def test_materialize_source_schema_workspace_selects_sample_before_projection(
+    tmp_path: Path,
+) -> None:
+    source_root = tmp_path / "cellprofiler_source"
+    source_root.mkdir()
+    _write_image(source_root / "Channel1-01-A-01.tif", value=1)
+    _write_image(source_root / "Channel2-01-A-01.tif", value=2)
+    _write_image(source_root / "Channel1-01-B-01.tif", value=3)
+    _write_image(source_root / "Channel2-01-B-01.tif", value=4)
+
+    result = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "openhcs_workspace",
+        _example_sbs_source_schema(),
+        image_set_selection=SourceSchemaImageSetSelection(well_filter=("B01",)),
+    )
+
+    metadata = json.loads(result.metadata_path.read_text())
+    primary = metadata["subdirectories"]["."]
+
+    assert set(primary["workspace_mapping"]) == {
+        "B01_s001_w1_z001_t001.tif",
+        "B01_s001_w2_z001_t001.tif",
+    }
+    assert primary["wells"] == {"B01": None}
+    assert set(result.primary_mappings) == set(primary["workspace_mapping"])
+
+
+def test_source_schema_image_set_selection_keeps_all_sites_for_selected_sample() -> None:
+    schema = PipelineImageSchema()
+    image_sets = (
+        ImageSetRecord(0, {}, {"ImageNumber": "1"}),
+        ImageSetRecord(1, {}, {"ImageNumber": "2"}),
+        ImageSetRecord(2, {}, {"ImageNumber": "3"}),
+    )
+
+    selected = SourceSchemaImageSetSelection(max_image_set_count=1).apply(
+        schema,
+        image_sets,
+    )
+
+    assert selected == image_sets
 
 
 def test_materialize_source_schema_workspace_derives_well_match_field(
@@ -325,10 +381,10 @@ def test_materialize_source_schema_workspace_applies_images_rule(
     primary = metadata["subdirectories"]["."]
 
     assert set(primary["workspace_mapping"]) == {
-        "source_s001_w1_z001_t001.tif",
-        "source_s001_w2_z001_t001.tif",
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w2_z001_t001.tif",
     }
-    assert primary["wells"] == {"source": None}
+    assert primary["wells"] == {"A01": None}
 
 
 def test_materialize_source_schema_workspace_uses_single_default_well_for_ordered_sets(
@@ -379,7 +435,7 @@ def test_materialize_source_schema_workspace_uses_single_default_well_for_ordere
         )
 
 
-def test_materialize_source_schema_workspace_broadcasts_ordered_singleton_alias(
+def test_materialize_source_schema_workspace_uses_complete_ordered_image_sets(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -429,10 +485,11 @@ def test_materialize_source_schema_workspace_broadcasts_ordered_singleton_alias(
     metadata = json.loads(result.metadata_path.read_text())
     mapping = metadata["subdirectories"]["."]["workspace_mapping"]
 
+    assert set(mapping) == {
+        "source_s001_w1_z001_t001.png",
+        "source_s001_w2_z001_t001.tiff",
+    }
     assert mapping["source_s001_w2_z001_t001.tiff"].endswith(
-        "source/shared-probabilities.tiff"
-    )
-    assert mapping["source_s002_w2_z001_t001.tiff"].endswith(
         "source/shared-probabilities.tiff"
     )
 

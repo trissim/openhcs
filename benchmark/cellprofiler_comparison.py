@@ -18,14 +18,14 @@ from typing import TYPE_CHECKING, Any
 from benchmark.contracts.tool_adapter import BenchmarkResult
 from benchmark.contracts.tool_adapter import ToolExecutionError
 from benchmark.adapters.cellprofiler import (
-    native_cellprofiler_image_set_scope_slug,
     native_cellprofiler_reference_is_complete,
-    native_cellprofiler_sample_scope_slug,
+    native_cellprofiler_reference_scope_slugs,
 )
 from benchmark.adapters.openhcs import OPENHCS_AXIS_FILTER_PARAM
 from benchmark.adapters.openhcs import OPENHCS_MAX_AXIS_COUNT_PARAM
 from benchmark.adapters.openhcs import OPENHCS_NUM_WORKERS_PARAM
 from benchmark.adapters.openhcs import OPENHCS_START_METHOD_PARAM
+from benchmark.adapters.openhcs import OPENHCS_USE_THREADING_PARAM
 from benchmark.datasets.visible_source import resolve_visible_source_path
 from benchmark.metrics.memory import MemoryMetric
 from benchmark.metrics.time import TimeMetric
@@ -477,6 +477,7 @@ class ComparisonSuiteRunContext:
     openhcs_max_axis_count: int | None
     openhcs_num_workers: int
     openhcs_start_method: str
+    openhcs_use_threading: bool
     metric_policy: ComparisonMetricPolicy
 
     def validate(self) -> None:
@@ -530,6 +531,77 @@ class NativeReferenceLocation:
 
     output_dir: Path | None
     reference_output_dir: Path | None
+
+
+@dataclass(frozen=True, slots=True)
+class NativeCellProfilerReferenceScope:
+    """Native CellProfiler reference directory identity for one benchmark case."""
+
+    case: CellProfilerComparisonCase
+    native_reference_root: Path
+    pipeline_params: Mapping[str, object]
+
+    @property
+    def output_dir(self) -> Path:
+        reference_scope_parts = [self.case.resolved_dataset_id, self.case.name]
+        effective_pipeline_params = {
+            "dataset_id": self.case.resolved_dataset_id,
+            "cppipe_path": str(self.case.cppipe_path),
+            **dict(self.pipeline_params),
+        }
+        reference_scope_parts.extend(
+            native_cellprofiler_reference_scope_slugs(
+                dataset_path=self.case.dataset_path,
+                pipeline_name=self.case.name,
+                pipeline_params=effective_pipeline_params,
+                output_dir=Path(self.native_reference_root)
+                / _benchmark_path_slug(
+                    "_".join([self.case.resolved_dataset_id, self.case.name])
+                ),
+            )
+        )
+        return Path(self.native_reference_root) / _benchmark_path_slug(
+            "_".join(reference_scope_parts)
+        )
+
+    @property
+    def expected_reference(self) -> Path:
+        resolved_dataset_path = resolve_visible_source_path(self.case.dataset_path)
+        return (
+            self.output_dir
+            / f"{resolved_dataset_path.name}_{self.case.name}_native_cellprofiler"
+        )
+
+    def resolve(self) -> NativeReferenceLocation:
+        expected_reference = self.expected_reference
+        if native_cellprofiler_reference_is_complete(expected_reference):
+            return NativeReferenceLocation(
+                output_dir=self.output_dir,
+                reference_output_dir=expected_reference,
+            )
+
+        discovered_reference = self._unique_completed_reference()
+        return NativeReferenceLocation(
+            output_dir=self.output_dir,
+            reference_output_dir=discovered_reference,
+        )
+
+    def _unique_completed_reference(self) -> Path | None:
+        if not self.output_dir.is_dir():
+            return None
+        candidates = tuple(
+            path
+            for path in sorted(self.output_dir.iterdir())
+            if path.is_dir()
+            and path.name.endswith("_native_cellprofiler")
+            and native_cellprofiler_reference_is_complete(path)
+        )
+        if len(candidates) > 1:
+            raise RuntimeError(
+                "Native CellProfiler reference scope is ambiguous for "
+                f"{self.case.name!r}: {candidates!r}."
+            )
+        return candidates[0] if candidates else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -623,6 +695,9 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
     raw_cases = payload.get("cases")
     if not isinstance(raw_cases, Sequence):
         raise ValueError("Benchmark manifest must contain a 'cases' sequence.")
+    default_pipeline_params = payload.get("default_pipeline_params", {})
+    if not isinstance(default_pipeline_params, Mapping):
+        raise ValueError("Benchmark manifest default_pipeline_params must be an object.")
     cases: list[CellProfilerComparisonCase] = []
     for raw_case in raw_cases:
         if not isinstance(raw_case, Mapping):
@@ -668,7 +743,10 @@ def load_comparison_cases(path: Path) -> tuple[CellProfilerComparisonCase, ...]:
                     if raw_case.get("cellprofiler_timeout_seconds") is not None
                     else None
                 ),
-                pipeline_params=dict(raw_pipeline_params),
+                pipeline_params={
+                    **dict(default_pipeline_params),
+                    **dict(raw_pipeline_params),
+                },
             )
         )
     return tuple(cases)
@@ -690,6 +768,7 @@ def run_comparison_suite(
     openhcs_max_axis_count: int | None = None,
     openhcs_num_workers: int = 1,
     openhcs_start_method: str = "fork",
+    openhcs_use_threading: bool = False,
     metric_policy: ComparisonMetricPolicy = ComparisonMetricPolicy(),
     coverage_manifest_path: Path | None = None,
 ) -> tuple[CellProfilerComparisonObservation, ...]:
@@ -708,6 +787,7 @@ def run_comparison_suite(
         openhcs_max_axis_count=openhcs_max_axis_count,
         openhcs_num_workers=openhcs_num_workers,
         openhcs_start_method=openhcs_start_method,
+        openhcs_use_threading=openhcs_use_threading,
         metric_policy=metric_policy,
     )
     context.validate()
@@ -1015,6 +1095,7 @@ def write_suite_metadata(
         OPENHCS_MAX_AXIS_COUNT_PARAM: context.openhcs_max_axis_count,
         OPENHCS_NUM_WORKERS_PARAM: context.openhcs_num_workers,
         OPENHCS_START_METHOD_PARAM: context.openhcs_start_method,
+        OPENHCS_USE_THREADING_PARAM: context.openhcs_use_threading,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
@@ -1029,6 +1110,8 @@ def _run_comparison_case(
 ) -> CellProfilerComparisonObservation:
     pipeline_params: dict[str, object] = {
         **case.pipeline_params,
+        "dataset_id": case.resolved_dataset_id,
+        "cppipe_path": str(case.cppipe_path),
         "compare_image_outputs": not case.value_only,
         "raise_on_equivalence_failure": False,
         "cache_candidate_measurement_snapshot": not context.discard_openhcs_outputs,
@@ -1043,6 +1126,7 @@ def _run_comparison_case(
         pipeline_params[OPENHCS_MAX_AXIS_COUNT_PARAM] = context.openhcs_max_axis_count
     pipeline_params[OPENHCS_NUM_WORKERS_PARAM] = context.openhcs_num_workers
     pipeline_params[OPENHCS_START_METHOD_PARAM] = context.openhcs_start_method
+    pipeline_params[OPENHCS_USE_THREADING_PARAM] = context.openhcs_use_threading
     native_reference = _native_reference_location(
         case,
         context.native_reference_root,
@@ -1104,31 +1188,12 @@ def _native_reference_location(
         )
     if native_reference_root is None:
         return NativeReferenceLocation(output_dir=None, reference_output_dir=None)
-    reference_scope_parts = [case.resolved_dataset_id, case.name]
     effective_pipeline_params = pipeline_params or case.pipeline_params
-    for native_scope_slug in (
-        native_cellprofiler_sample_scope_slug(effective_pipeline_params),
-        native_cellprofiler_image_set_scope_slug(effective_pipeline_params),
-    ):
-        if native_scope_slug is not None:
-            reference_scope_parts.append(native_scope_slug)
-    native_output_dir = Path(native_reference_root) / _benchmark_path_slug(
-        "_".join(reference_scope_parts)
-    )
-    resolved_dataset_path = resolve_visible_source_path(case.dataset_path)
-    expected_reference = (
-        native_output_dir
-        / f"{resolved_dataset_path.name}_{case.name}_native_cellprofiler"
-    )
-    if native_cellprofiler_reference_is_complete(expected_reference):
-        return NativeReferenceLocation(
-            output_dir=native_output_dir,
-            reference_output_dir=expected_reference,
-        )
-    return NativeReferenceLocation(
-        output_dir=native_output_dir,
-        reference_output_dir=None,
-    )
+    return NativeCellProfilerReferenceScope(
+        case=case,
+        native_reference_root=Path(native_reference_root),
+        pipeline_params=effective_pipeline_params,
+    ).resolve()
 
 
 def _failed_comparison_observation(

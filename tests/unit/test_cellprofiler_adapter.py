@@ -13,10 +13,12 @@ from benchmark.adapters.cellprofiler import (
     CELLPROFILER_FIRST_IMAGE_SET_PARAM,
     CELLPROFILER_LAST_IMAGE_SET_PARAM,
     DETERMINISTIC_PYTHONHASHSEED,
+    HeadlessCellProfilerPipelinePolicy,
+    NativeCellProfilerInputDomainStrategyKey,
+    NativeCellProfilerProvenanceField,
     PYTHONHASHSEED_ENV,
     CellProfilerAdapter,
     native_cellprofiler_reference_is_complete,
-    _headless_cellprofiler_cppipe_path,
 )
 from benchmark.contracts.tool_adapter import ToolNotInstalledError
 
@@ -292,8 +294,15 @@ def test_cellprofiler_adapter_file_list_preserves_selected_well_sites_and_channe
     assert any("_s1_gfp" in entry for entry in file_list)
     assert any("_s2_dapi" in entry for entry in file_list)
     assert any("_s2_gfp" in entry for entry in file_list)
-    assert result.provenance["native_selected_wells"] == ("A01",)
-    assert result.provenance["native_selected_source_file_count"] == 4
+    assert result.provenance[NativeCellProfilerProvenanceField.SELECTED_WELLS] == (
+        "A01",
+    )
+    assert (
+        result.provenance[
+            NativeCellProfilerProvenanceField.SELECTED_SOURCE_FILE_COUNT
+        ]
+        == 4
+    )
 
 
 def test_cellprofiler_adapter_isolates_embedded_image_plane_input_domain(
@@ -397,8 +406,11 @@ def test_cellprofiler_adapter_isolates_embedded_image_plane_input_domain(
     assert '"file://' in patched_text
     assert "url_D.TIF" in patched_text
     assert "url_F.TIF" in patched_text
-    assert result.provenance["native_input_domain_strategy"] == "embedded_image_planes"
-    assert result.provenance["native_source_plane_count"] == 2
+    assert (
+        result.provenance[NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY]
+        is NativeCellProfilerInputDomainStrategyKey.EMBEDDED_IMAGE_PLANES
+    )
+    assert result.provenance[NativeCellProfilerProvenanceField.SOURCE_PLANE_COUNT] == 2
 
 
 def test_native_reference_completeness_rejects_stale_embedded_plane_domain(
@@ -430,7 +442,9 @@ def test_native_reference_completeness_rejects_stale_embedded_plane_domain(
                 "schema_version": 1,
                 "provenance": {
                     "cppipe_path": str(cppipe_path),
-                    "native_input_domain_strategy": "dataset_folder",
+                    NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
+                        NativeCellProfilerInputDomainStrategyKey.DATASET_FOLDER
+                    ),
                 },
             }
         ),
@@ -438,6 +452,47 @@ def test_native_reference_completeness_rejects_stale_embedded_plane_domain(
     )
 
     assert native_cellprofiler_reference_is_complete(reference_dir) is False
+
+
+def test_native_reference_completeness_accepts_selected_source_schema_domain(
+    tmp_path: Path,
+) -> None:
+    cppipe_path = tmp_path / "url_planes.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            [
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Version:3",
+                "HasImagePlaneDetails:True",
+                "",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:Images only",
+                "",
+                '"Version":"1","PlaneCount":"1"',
+                '"URL","Series","Index","Channel"',
+                '"https://example.invalid/data/url_D.TIF",,,',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    reference_dir = tmp_path / "reference"
+    reference_dir.mkdir()
+    (reference_dir / ".cellprofiler_benchmark_reference.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "provenance": {
+                    "cppipe_path": str(cppipe_path),
+                    NativeCellProfilerProvenanceField.INPUT_DOMAIN_STRATEGY: (
+                        NativeCellProfilerInputDomainStrategyKey.SELECTED_SOURCE_SCHEMA_WELLS
+                    ),
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    assert native_cellprofiler_reference_is_complete(reference_dir) is True
 
 
 def test_headless_cellprofiler_cppipe_enables_saveimages_overwrite(
@@ -451,7 +506,7 @@ def test_headless_cellprofiler_cppipe_enables_saveimages_overwrite(
         encoding="utf-8",
     )
 
-    execution_path = _headless_cellprofiler_cppipe_path(
+    execution_path = HeadlessCellProfilerPipelinePolicy.execution_path(
         cppipe_path,
         tmp_path / "outputs",
     )

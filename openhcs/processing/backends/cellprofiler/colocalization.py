@@ -16,6 +16,7 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.aligned_image_payload import AlignedImageStack
 from openhcs.core.memory import numpy
 from openhcs.core.pipeline.function_contracts import (
     measurement_image_batch_executor,
@@ -1462,8 +1463,8 @@ class ColocalizationImagePairContext:
         channel_1: int,
         channel_2: int,
     ) -> "ColocalizationImagePairContext":
-        image_data = image_payload_data(image)
-        image_float = _cellprofiler_float_pixels(image_data)
+        image_data = cls.measurement_pixels(image)
+        image_float = cls.cellprofiler_float_pixels(image)
         first_image = image_float[channel_1]
         second_image = image_float[channel_2]
         pair_valid_mask = cls.valid_mask(
@@ -1487,6 +1488,30 @@ class ColocalizationImagePairContext:
             full_first_pixels=full_first_pixels,
             full_second_pixels=full_second_pixels,
         )
+
+    @staticmethod
+    def requires_slice_local_context(image: object) -> bool:
+        """Return whether context resolution must happen after slice projection."""
+        return isinstance(image_payload_data(image), AlignedImageStack)
+
+    @staticmethod
+    def measurement_pixels(image: object) -> np.ndarray:
+        """Return stacked image pixels for colocalization measurement."""
+        image_data = image_payload_data(image)
+        if isinstance(image_data, AlignedImageStack):
+            return np.stack(
+                tuple(
+                    np.asarray(image_payload_data(slice_payload))
+                    for slice_payload in image_data.slices
+                ),
+                axis=0,
+            )
+        return np.asarray(image_data)
+
+    @classmethod
+    def cellprofiler_float_pixels(cls, image: object) -> np.ndarray:
+        """Return image pixels in CellProfiler's native float image domain."""
+        return np.asarray(cls.measurement_pixels(image), dtype=np.float32)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1751,7 +1776,7 @@ def _pixel_dtype_threshold(pixels: np.ndarray, threshold: float) -> float:
 
 def _cellprofiler_float_pixels(image: np.ndarray) -> np.ndarray:
     """Return image pixels in CellProfiler's native float image domain."""
-    return np.asarray(image_payload_data(image), dtype=np.float32)
+    return ColocalizationImagePairContext.cellprofiler_float_pixels(image)
 
 
 def _colocalization_unit_interval_scale(
@@ -2421,6 +2446,8 @@ class ColocalizationCostesThresholdBatch:
         request: RuntimeBatchInvocationRequest,
     ) -> dict[str, object]:
         """Return request kwargs with source-pair thresholds materialized once."""
+        if ColocalizationImagePairContext.requires_slice_local_context(request.image):
+            return dict(request.kwargs)
         image_pair_context = self.image_pair_context(request)
         object_label_context = self.object_label_context(request, image_pair_context)
         threshold_request = ColocalizationCostesThresholdRequest.from_batch_request(

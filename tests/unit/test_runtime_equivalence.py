@@ -18,6 +18,7 @@ from openhcs.core.runtime_equivalence import (
     RuntimeMeasurementSnapshot,
     RuntimeMeasurementSubjectKey,
     RuntimeOutputSnapshot,
+    ObjectInstanceKeyPlaneAlignmentStrategy,
     runtime_artifact_execution_equivalence,
     runtime_measurement_equivalence,
     runtime_output_equivalence as _runtime_output_equivalence,
@@ -43,6 +44,7 @@ from openhcs.core.runtime_semantics import (
     MeasurementStatistic,
     MeasurementScope,
     MeasurementSubject,
+    ObjectInstanceKey,
     ObjectCoreMeasurementFeature,
     ObjectMeasurementFeatureRole,
     ObjectLabelDomainScope,
@@ -3546,6 +3548,785 @@ def test_runtime_reference_artifact_equivalence_derives_relationship_child_means
     assert report.is_equivalent
 
 
+def test_runtime_reference_artifact_equivalence_derives_relationship_child_location_means_with_canonical_endpoint_names(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Nuclei.csv").write_text(
+        "ImageNumber,ObjectNumber,"
+        "Mean_H2AX_Location_Center_X,"
+        "Mean_H2AX_Location_Center_Y,"
+        "Mean_H2AX_Location_Center_Z\n"
+        "1,1,1.0,2.0,0.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    child_table = MeasurementTable(
+        name="MeasureObjectLocation",
+        rows=(
+            {
+                "object_name": "h_2_ax",
+                "object_label": 1,
+                ObjectCoreMeasurementFeature.CENTER_X.value: 0.0,
+                ObjectCoreMeasurementFeature.CENTER_Y.value: 1.0,
+                ObjectCoreMeasurementFeature.CENTER_Z.value: 0.0,
+            },
+            {
+                "object_name": "h_2_ax",
+                "object_label": 2,
+                ObjectCoreMeasurementFeature.CENTER_X.value: 2.0,
+                ObjectCoreMeasurementFeature.CENTER_Y.value: 3.0,
+                ObjectCoreMeasurementFeature.CENTER_Z.value: 0.0,
+            },
+        ),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/MeasureObjectLocation.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Nuclei", "H2AX")
+    relationship = ObjectRelationship(
+        name="Nuclei_H2AX_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1),
+        target_ids=(1, 2),
+        relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Nuclei_H2AX_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_derives_relationship_child_location_means_from_object_labels(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Nuclei.csv").write_text(
+        "ImageNumber,ObjectNumber,"
+        "Mean_H2AX_Location_Center_X,"
+        "Mean_H2AX_Location_Center_Y,"
+        "Mean_H2AX_Location_Center_Z\n"
+        "1,1,1.0,0.5,0.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    h2ax = ObjectLabelSet(
+        name="H2AX",
+        labels=np.asarray(
+            (
+                (1, 1, 0),
+                (0, 2, 2),
+            ),
+            dtype=np.uint16,
+        ),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=h2ax.name,
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=h2ax.runtime_payload(),
+            schema=h2ax.runtime_schema(h2ax.runtime_payload()),
+        ),
+        path="/memory/H2AX.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Nuclei", "H2AX")
+    relationship = ObjectRelationship(
+        name="Nuclei_H2AX_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1),
+        target_ids=(1, 2),
+        relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Nuclei_H2AX_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_derives_relationship_child_location_means_from_multiplane_object_labels(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Nuclei.csv").write_text(
+        "ImageNumber,ObjectNumber,"
+        "Mean_H2AX_Location_Center_X,"
+        "Mean_H2AX_Location_Center_Y,"
+        "Mean_H2AX_Location_Center_Z\n"
+        "1,1,1.0,0.5,0.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    h2ax = ObjectLabelSet(
+        name="H2AX",
+        labels=np.asarray(
+            (
+                (
+                    (1, 1, 0),
+                    (0, 0, 0),
+                ),
+                (
+                    (0, 0, 0),
+                    (0, 2, 2),
+                ),
+            ),
+            dtype=np.uint16,
+        ),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=h2ax.name,
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=h2ax.runtime_payload(),
+            schema=h2ax.runtime_schema(h2ax.runtime_payload()),
+        ),
+        path="/memory/H2AX.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Nuclei", "H2AX")
+    relationship = ObjectRelationship(
+        name="Nuclei_H2AX_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1),
+        target_ids=(1, 2),
+        relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Nuclei_H2AX_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+        policy=cellprofiler_runtime_equivalence_policy(),
+    )
+
+    assert report.is_equivalent
+
+
+def test_object_instance_plane_alignment_preserves_scoped_relationship_children_when_unscoping_values() -> None:
+    child_ids_by_parent = {
+        ObjectInstanceKey(1, slice_index=0): (
+            ObjectInstanceKey(1, slice_index=0),
+            ObjectInstanceKey(2, slice_index=0),
+        ),
+        ObjectInstanceKey(1): (),
+    }
+    values_by_child_id = {
+        ObjectInstanceKey(1): 0.0,
+        ObjectInstanceKey(2): 2.0,
+    }
+
+    aligned = ObjectInstanceKeyPlaneAlignmentStrategy.align_child_ids_by_parent(
+        child_ids_by_parent,
+        values_by_child_id,
+    )
+
+    assert aligned == {
+        ObjectInstanceKey(1): (
+            ObjectInstanceKey(1),
+            ObjectInstanceKey(2),
+        ),
+    }
+
+
+def test_runtime_reference_artifact_equivalence_uses_sparse_object_identity_domain_for_relationship_means(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nuclei_Intensity_IntegratedIntensity_Green\n"
+        "1,1,2.0\n"
+        "1,3,6.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    cells = ObjectLabelSet(
+        name="Cells",
+        labels=np.asarray(
+            (
+                (1, 1, 0),
+                (0, 3, 3),
+            ),
+            dtype=np.uint16,
+        ),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=cells.name,
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=cells.runtime_payload(),
+            schema=cells.runtime_schema(cells.runtime_payload()),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    child_table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=(
+            {
+                "object_name": "Nuclei",
+                "object_label": 1,
+                "integrated_intensity": 2.0,
+            },
+            {
+                "object_name": "Nuclei",
+                "object_label": 2,
+                "integrated_intensity": 6.0,
+            },
+        ),
+        source_image_name="Green",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/MeasureObjectIntensity.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    relationship = ObjectRelationship(
+        name="Cells_Nuclei_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 3),
+        target_ids=(1, 2),
+        relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Cells_Nuclei_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_uses_represented_relationship_sources_without_declared_object_domain(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nuclei_Intensity_IntegratedIntensity_Green\n"
+        "1,1,2.0\n"
+        "1,3,6.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    child_table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=(
+            {
+                "object_name": "Nuclei",
+                "object_label": 1,
+                "integrated_intensity": 2.0,
+            },
+            {
+                "object_name": "Nuclei",
+                "object_label": 2,
+                "integrated_intensity": 6.0,
+            },
+        ),
+        source_image_name="Green",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/MeasureObjectIntensity.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    relationship = ObjectRelationship(
+        name="Cells_Nuclei_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 3),
+        target_ids=(1, 2),
+        relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Cells_Nuclei_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_omits_missing_relationship_child_means(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nuclei_Intensity_IntegratedIntensity_Green\n"
+        "1,1,2.0\n"
+        "1,2,\n"
+        "1,3,6.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    cells = ObjectLabelSet(
+        name="Cells",
+        labels=np.asarray(
+            (
+                (1, 1, 0),
+                (2, 2, 0),
+                (3, 3, 0),
+            ),
+            dtype=np.uint16,
+        ),
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=cells.name,
+                kind=ArtifactKind.OBJECT_LABELS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=cells.runtime_payload(),
+            schema=cells.runtime_schema(cells.runtime_payload()),
+        ),
+        path="/memory/Cells.pkl",
+        backend="memory",
+    )
+    child_table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=(
+            {
+                "object_name": "Nuclei",
+                "object_label": 1,
+                "integrated_intensity": 2.0,
+            },
+            {
+                "object_name": "Nuclei",
+                "object_label": 2,
+                "integrated_intensity": 6.0,
+            },
+        ),
+        source_image_name="Green",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/MeasureObjectIntensity.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    relationship = ObjectRelationship(
+        name="Cells_Nuclei_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 3),
+        target_ids=(1, 2),
+        relationship_type=semantics.relationship_type,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Cells_Nuclei_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_aligns_image_numbered_child_rows_to_relationship_slices(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nuclei_Intensity_IntegratedIntensity_Green\n"
+        "1,1,10.0\n"
+        "2,1,100.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    child_table = MeasurementTable(
+        name="MeasureObjectIntensity",
+        rows=(
+            {
+                "image_number": 1,
+                "object_name": "Nuclei",
+                "object_label": 1,
+                "integrated_intensity": 10.0,
+            },
+            {
+                "image_number": 2,
+                "object_name": "Nuclei",
+                "object_label": 1,
+                "integrated_intensity": 100.0,
+            },
+        ),
+        source_image_name="Green",
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=child_table.name,
+                kind=ArtifactKind.MEASUREMENTS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=child_table.rows,
+            schema=child_table.runtime_schema(child_table.rows),
+        ),
+        path="/memory/MeasureObjectIntensity.pkl",
+        backend="memory",
+    )
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    relationship = ObjectRelationship(
+        name="Cells_Nuclei_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1),
+        target_ids=(1, 1),
+        relationship_type=semantics.relationship_type,
+        slice_indices=(0, 1),
+        slice_count=2,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Cells_Nuclei_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_aligns_scoped_child_rows_to_relationship_slices(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nuclei_Intensity_IntegratedIntensity_Green\n"
+        "1,1,10.0\n"
+        "2,1,100.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    for group_key, value in (("site0", 10.0), ("site1", 100.0)):
+        child_table = MeasurementTable(
+            name="MeasureObjectIntensity",
+            rows=(
+                {
+                    "object_name": "Nuclei",
+                    "object_label": 1,
+                    "integrated_intensity": value,
+                },
+            ),
+            source_image_name="Green",
+        )
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=child_table.name,
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01", group_key=group_key),
+                ),
+                data=child_table.rows,
+                schema=child_table.runtime_schema(child_table.rows),
+            ),
+            path=f"/memory/MeasureObjectIntensity_{group_key}.pkl",
+            backend="memory",
+        )
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    relationship = ObjectRelationship(
+        name="Cells_Nuclei_relationships",
+        source=semantics.source,
+        target=semantics.target,
+        source_ids=(1, 1),
+        target_ids=(1, 1),
+        relationship_type=semantics.relationship_type,
+        slice_indices=(0, 1),
+        slice_count=2,
+    )
+    store.record(
+        RuntimeValue(
+            key=ArtifactKey(
+                name=relationship.name,
+                kind=ArtifactKind.RELATIONSHIPS,
+                scope=ArtifactScope(axis_id="A01"),
+            ),
+            data=relationship.runtime_payload(),
+            schema=relationship.runtime_schema(relationship.runtime_payload()),
+        ),
+        path="/memory/Cells_Nuclei_relationships.pkl",
+        backend="memory",
+    )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
+def test_runtime_reference_artifact_equivalence_aligns_scoped_relationships_to_child_rows(
+    tmp_path: Path,
+) -> None:
+    reference_root = tmp_path / "native"
+    candidate_root = tmp_path / "candidate"
+    reference_root.mkdir()
+    candidate_root.mkdir()
+    (reference_root / "Cells.csv").write_text(
+        "ImageNumber,ObjectNumber,Mean_Nuclei_Intensity_IntegratedIntensity_Green\n"
+        "1,1,10.0\n"
+        "2,1,100.0\n",
+        encoding="utf-8",
+    )
+    store = RuntimeValueStore()
+    semantics = RelationshipSemantics.parent_child("Cells", "Nuclei")
+    for group_key, value in (("site0", 10.0), ("site1", 100.0)):
+        child_table = MeasurementTable(
+            name="MeasureObjectIntensity",
+            rows=(
+                {
+                    "object_name": "Nuclei",
+                    "object_label": 1,
+                    "integrated_intensity": value,
+                },
+            ),
+            source_image_name="Green",
+        )
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=child_table.name,
+                    kind=ArtifactKind.MEASUREMENTS,
+                    scope=ArtifactScope(axis_id="A01", group_key=group_key),
+                ),
+                data=child_table.rows,
+                schema=child_table.runtime_schema(child_table.rows),
+            ),
+            path=f"/memory/MeasureObjectIntensity_{group_key}.pkl",
+            backend="memory",
+        )
+        relationship = ObjectRelationship(
+            name="Cells_Nuclei_relationships",
+            source=semantics.source,
+            target=semantics.target,
+            source_ids=(1,),
+            target_ids=(1,),
+            relationship_type=semantics.relationship_type,
+        )
+        store.record(
+            RuntimeValue(
+                key=ArtifactKey(
+                    name=relationship.name,
+                    kind=ArtifactKind.RELATIONSHIPS,
+                    scope=ArtifactScope(axis_id="A01", group_key=group_key),
+                ),
+                data=relationship.runtime_payload(),
+                schema=relationship.runtime_schema(relationship.runtime_payload()),
+            ),
+            path=f"/memory/Cells_Nuclei_relationships_{group_key}.pkl",
+            backend="memory",
+        )
+    observation = RuntimeArtifactExecutionObservation.from_contexts(
+        {"A01": SimpleNamespace(runtime_value_store=store)},
+        candidate_root,
+    )
+
+    report = runtime_reference_artifact_equivalence(
+        RuntimeOutputSnapshot.from_output_root(reference_root),
+        observation,
+    )
+
+    assert report.is_equivalent
+
+
 def test_runtime_reference_artifact_equivalence_keys_relationship_child_means_by_slice(
     tmp_path: Path,
 ) -> None:
@@ -4979,8 +5760,14 @@ def test_runtime_reference_artifact_equivalence_allows_threshold_sensitive_pair_
     candidate_root.mkdir()
     (reference_root / "Image.csv").write_text(
         "ImageNumber,Correlation_Costes_Stain1_Stain2,"
-        "Correlation_Costes_Stain2_Stain1\n"
-        "1,0.207,0.588\n",
+        "Correlation_Costes_Stain2_Stain1,"
+        "Correlation_Manders_Stain1_Stain2,"
+        "Correlation_Manders_Stain2_Stain1,"
+        "Correlation_RWC_Stain1_Stain2,"
+        "Correlation_RWC_Stain2_Stain1,"
+        "Correlation_K_Stain1_Stain2,"
+        "Correlation_K_Stain2_Stain1\n"
+        "1,0.207,0.588,0.407,0.688,0.307,0.788,1.207,1.588\n",
         encoding="utf-8",
     )
     store = RuntimeValueStore()
@@ -4990,6 +5777,12 @@ def test_runtime_reference_artifact_equivalence_allows_threshold_sensitive_pair_
             {
                 "costes_m1": 0.223,
                 "costes_m2": 0.572,
+                "manders_m1": 0.423,
+                "manders_m2": 0.672,
+                "rwc1": 0.323,
+                "rwc2": 0.772,
+                "k1": 1.223,
+                "k2": 1.572,
             },
         ),
         source_image_name="Stain1__Stain2",
@@ -5027,6 +5820,12 @@ def test_runtime_reference_artifact_equivalence_allows_threshold_sensitive_pair_
     assert strict_report.failure_messages() == (
         "measurement feature image:image/costes_stain_1_stain_2 values differ",
         "measurement feature image:image/costes_stain_2_stain_1 values differ",
+        "measurement feature image:image/k_stain_1_stain_2 values differ",
+        "measurement feature image:image/k_stain_2_stain_1 values differ",
+        "measurement feature image:image/manders_stain_1_stain_2 values differ",
+        "measurement feature image:image/manders_stain_2_stain_1 values differ",
+        "measurement feature image:image/rwc_stain_1_stain_2 values differ",
+        "measurement feature image:image/rwc_stain_2_stain_1 values differ",
     )
     assert threshold_pair_report.is_equivalent
 

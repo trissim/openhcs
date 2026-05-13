@@ -184,10 +184,15 @@ def test_native_reference_lookup_reuses_semantic_snapshot_without_marker(
 def test_native_reference_lookup_separates_bounded_image_set_scope(
     tmp_path: Path,
 ) -> None:
+    cppipe_path = tmp_path / "pipeline.cppipe"
+    cppipe_path.write_text(
+        "CellProfiler Pipeline: http://www.cellprofiler.org\n",
+        encoding="utf-8",
+    )
     case = CellProfilerComparisonCase(
         name="ExampleBounded",
         dataset_path=tmp_path / "images",
-        cppipe_path=tmp_path / "pipeline.cppipe",
+        cppipe_path=cppipe_path,
         dataset_id="example",
         pipeline_params={
             CELLPROFILER_FIRST_IMAGE_SET_PARAM: 1,
@@ -205,10 +210,41 @@ def test_native_reference_lookup_separates_bounded_image_set_scope(
 
 
 def test_native_reference_lookup_separates_openhcs_sample_scope(tmp_path: Path) -> None:
+    cppipe_path = tmp_path / "pipeline.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            [
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:Images only",
+                "    Select the rule criteria:and (extension does isimage)",
+                "Metadata:[module_num:2|enabled:True]",
+                "    Extract metadata?:Yes",
+                "    Metadata source:File name",
+                "    Regular expression to extract from file name:^(?P<Well>[A-Z][0-9]{2})_s(?P<Site>[0-9]+)_w(?P<Channel>[0-9]+)",
+                "NamesAndTypes:[module_num:3|enabled:True]",
+                "    Assign a name to:Images matching rules",
+                "    Select the image type:Grayscale image",
+                "    Name to assign these images:DNA",
+                "    Match metadata:[]",
+                "    Image set matching method:Order",
+                "    Assignments count:1",
+                "    Single images count:0",
+                "    Maximum intensity:255.0",
+                "    Process as 3D?:No",
+                "    Relative pixel spacing in X:1.0",
+                "    Relative pixel spacing in Y:1.0",
+                "    Relative pixel spacing in Z:1.0",
+                "    Select the rule criteria:and (file does contain \"\")",
+                "    Name to assign these images:DNA",
+            ]
+        ),
+        encoding="utf-8",
+    )
     case = CellProfilerComparisonCase(
         name="ExampleOneWell",
         dataset_path=tmp_path / "images",
-        cppipe_path=tmp_path / "pipeline.cppipe",
+        cppipe_path=cppipe_path,
         dataset_id="example",
         pipeline_params={"openhcs_max_axis_count": 1},
     )

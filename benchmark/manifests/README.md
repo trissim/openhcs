@@ -7,8 +7,10 @@ benchmark manifest. It avoids case-level absolute paths by declaring named roots
   example pipelines and datasets. Defaults to `/tmp/cellprofiler_examples`.
 - `OPENHCS_BENCHMARK_DATASET_CACHE_ROOT`: dataset cache containing registry-backed
   tutorial/supplement sources. Defaults to `/tmp/openhcs_benchmark_dataset_cache_last8`.
-- `OPENHCS_AXISONE_SUBSETS_ROOT`: one-axis dataset subsets used for the large
-  tutorial cases. Defaults to `/tmp/openhcs_axisone_subsets/current`.
+- `OPENHCS_AXISONE_SUBSETS_ROOT`: compatibility root for older axis-one
+  manifests. The official 30-case manifest uses full dataset-cache roots and
+  applies `openhcs_max_axis_count` as a well/sample selector so all sites and
+  channels for the selected sample remain present.
 
 Build or refresh registry-backed datasets with:
 

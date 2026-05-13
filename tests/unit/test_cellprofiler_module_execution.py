@@ -7,6 +7,7 @@ import skimage.morphology
 
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
+    ImagePayloadSliceProjector,
     ImagePayloadExecutionMode,
     compose_aligned_image_payload,
     compose_one_image_bundle,
@@ -16,9 +17,11 @@ from openhcs.core.aligned_image_payload import (
 )
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_artifact_queries import (
+    columnar_row_values,
     measurement_table_for_slice,
     measurement_values_for_label_slices,
 )
+from openhcs.core.runtime_semantics import MeasurementRowAxisField
 from openhcs.constants.constants import MemoryType
 from openhcs.interop.cellprofiler.runtime.invocation import (
     CellProfilerMeasurementImage,
@@ -52,7 +55,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerOutputRecorder,
     CellProfilerPure2DOutputAggregator,
     CallableInvocationKwargSpec,
-    _cellprofiler_global_image_number_rows,
+    CellProfilerGlobalImageNumberProjection,
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_measurement_image,
@@ -233,10 +236,14 @@ class _FakeCellProfilerRuntime:
         images: dict[str, _FakeRuntimeImage],
         objects: dict[str, ObjectLabelSet] | None = None,
         measurement_tables: dict[str, tuple[MeasurementTable, ...]] | None = None,
+        image_number_start: int = 1,
+        ordered_pipeline_image_paths: tuple[str, ...] = (),
     ) -> None:
         self.images = images
         self.runtime_objects = objects or {}
         self.runtime_measurement_tables = measurement_tables or {}
+        self.image_number_start = image_number_start
+        self.ordered_pipeline_image_paths = ordered_pipeline_image_paths
         self.measurements: list[tuple[str, list[object], dict[str, object]]] = []
         self.objects: list[tuple[str, np.ndarray, dict[str, object]]] = []
         self.spatial_grids: dict[str, SpatialGrid] = {}
@@ -248,13 +255,25 @@ class _FakeCellProfilerRuntime:
             raise AssertionError(f"Unexpected missing image aliases: {missing!r}")
 
     def cellprofiler_ordered_pipeline_image_paths(self) -> tuple[str, ...]:
-        return ()
+        return self.ordered_pipeline_image_paths
 
     def cellprofiler_source_order_path(self, path: str) -> str:
         return path
 
+    def cellprofiler_image_number_for_source_paths(
+        self,
+        source_paths: tuple[str, ...],
+    ) -> int | None:
+        if not source_paths:
+            return None
+        first_source_path = self.cellprofiler_source_order_path(source_paths[0])
+        try:
+            return self.ordered_pipeline_image_paths.index(first_source_path) + 1
+        except ValueError:
+            return None
+
     def cellprofiler_axis_image_number_start(self) -> int:
-        return 1
+        return self.image_number_start
 
     def resolve_source_image(self, alias: str, current_image: object) -> np.ndarray:
         del current_image
@@ -291,8 +310,9 @@ class _FakeCellProfilerRuntime:
         labels: object,
         *,
         group_key: str | None = None,
+        image_number: int | None = None,
     ) -> tuple[object, ...]:
-        del group_key
+        del group_key, image_number
         return measurement_values_for_label_slices(
             self.runtime_measurement_tables.get(object_name, ()),
             feature_name,
@@ -358,8 +378,9 @@ class _CalculateMathObjectOperandAdapter:
         labels: object,
         *,
         group_key: str | None = None,
+        image_number: int | None = None,
     ) -> tuple[np.ndarray, ...]:
-        del group_key
+        del group_key, image_number
         self.feature_requests.append((object_name, feature_name, labels))
         return (
             np.asarray([1.0, 2.0], dtype=float),
@@ -687,16 +708,83 @@ def test_global_image_number_projection_ignores_missing_axis_values() -> None:
         {"slice_index": np.nan, "object_label": 2, "value": np.nan},
     ]
 
-    projected, projected_mappings = _cellprofiler_global_image_number_rows(
-        _FakeCellProfilerRuntime({}),
-        rows,
+    projected, projected_mappings = CellProfilerGlobalImageNumberProjection(
+        adapter=_FakeCellProfilerRuntime({}),
+        rows=rows,
         source_image_name=None,
         object_name=None,
-    )
+        source_image_payload=None,
+        need_row_mappings=True,
+    ).apply()
 
     assert projected is projected_mappings
     assert projected[0]["image_number"] == 1
     assert "image_number" not in projected[1]
+
+
+def test_global_image_number_projection_applies_to_columnar_rows() -> None:
+    rows = _ColumnarMeasurementRows(
+        {
+            MeasurementRowAxisField.IMAGE_NUMBER.value: (1, 2, np.nan),
+            "object_label": (1, 2, 3),
+            "value": (10.0, 20.0, 30.0),
+        }
+    )
+
+    projected, projected_mappings = CellProfilerGlobalImageNumberProjection(
+        adapter=_FakeCellProfilerRuntime(
+            {},
+            image_number_start=23,
+            ordered_pipeline_image_paths=("well-a",),
+        ),
+        rows=rows,
+        source_image_name=None,
+        object_name=None,
+        source_image_payload=None,
+        need_row_mappings=True,
+    ).apply()
+
+    assert projected is projected_mappings
+    assert tuple(
+        columnar_row_values(projected, MeasurementRowAxisField.IMAGE_NUMBER.value)
+    )[:2] == (23, 24)
+    assert np.isnan(
+        columnar_row_values(projected, MeasurementRowAxisField.IMAGE_NUMBER.value)[2]
+    )
+
+
+def test_global_image_number_projection_uses_source_payload_for_columnar_rows() -> None:
+    rows = _ColumnarMeasurementRows(
+        {
+            MeasurementRowAxisField.IMAGE_NUMBER.value: (1,),
+            "object_label": (1,),
+            "value": (10.0,),
+        }
+    )
+    source_payload = image_payload_with_context(
+        np.zeros((1, 1), dtype=np.float32),
+        metadata=ImagePayloadMetadata(source_path="well-h12-w1.tif"),
+    )
+
+    projected, _projected_mappings = CellProfilerGlobalImageNumberProjection(
+        adapter=_FakeCellProfilerRuntime(
+            {},
+            image_number_start=1,
+            ordered_pipeline_image_paths=(
+                "well-a01-w1.tif",
+                "well-h12-w1.tif",
+            ),
+        ),
+        rows=rows,
+        source_image_name="rawGFP",
+        object_name=None,
+        source_image_payload=source_payload,
+        need_row_mappings=True,
+    ).apply()
+
+    assert tuple(
+        columnar_row_values(projected, MeasurementRowAxisField.IMAGE_NUMBER.value)
+    ) == (2,)
 
 
 def test_measure_object_intensity_zero_fills_missing_positive_extent() -> None:
@@ -2333,6 +2421,28 @@ def test_identify_tertiary_batch_aligns_cropped_primary_labels_to_secondary_doma
     )
 
     tertiary = results[0][-1]
+    assert tertiary.shape == secondary.shape
+    assert tertiary[2, 3] == 0
+    assert tertiary[2, 4] == 5
+
+
+def test_identify_tertiary_single_slice_aligns_payload_domains_before_dense_extraction():
+    primary = ObjectLabelPayload(
+        labels=np.array([[1, 0], [0, 0]], dtype=np.int32),
+        spatial_origin_yx=(2, 3),
+        source_spatial_shape_yx=(6, 7),
+    )
+    secondary = np.zeros((6, 7), dtype=np.int32)
+    secondary[2, 3] = 5
+    secondary[2, 4] = 5
+
+    _, _, _, _, tertiary = ito.identify_tertiary_objects.__wrapped__(
+        np.zeros((6, 7), dtype=np.float32),
+        primary_labels=primary,
+        secondary_labels=secondary,
+        shrink_primary=False,
+    )
+
     assert tertiary.shape == secondary.shape
     assert tertiary[2, 3] == 0
     assert tertiary[2, 4] == 5
@@ -4670,6 +4780,86 @@ def test_relateobjects_relationship_rows_project_distances_nominally() -> None:
     )
 
 
+def test_relateobjects_relationship_rows_project_distances_from_slice_measurements() -> None:
+    parent_labels = np.zeros((2, 6, 6), dtype=np.int32)
+    child_labels = np.zeros((2, 6, 6), dtype=np.int32)
+    parent_labels[:, 1:5, 1:5] = 1
+    child_labels[:, 2:4, 2:4] = 1
+    runtime = _FakeCellProfilerRuntime(
+        {"Carrier": _FakeRuntimeImage(np.zeros((2, 6, 6), dtype=np.float32))},
+        objects={
+            "Parents": ObjectLabelSet(name="Parents", labels=parent_labels),
+            "Children": ObjectLabelSet(name="Children", labels=child_labels),
+        },
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="RelateObjects",
+            inputs=(
+                ArtifactSpec("Parents", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Children", ArtifactKind.OBJECT_LABELS),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Parents", ArtifactKind.OBJECT_LABELS),
+                ArtifactSpec("Children", ArtifactKind.OBJECT_LABELS),
+            ),
+            outputs=(
+                ArtifactSpec(
+                    "Parents_Children_relationships",
+                    ArtifactKind.RELATIONSHIPS,
+                ),
+            ),
+        )
+    )
+    payload = ParentChildRelationshipPayload(
+        parent_ids=(1, 1),
+        child_ids=(1, 1),
+        slice_indices=(0, 1),
+        slice_count=2,
+    )
+    request = CellProfilerOutputRecordRequest(
+        executor=executor,
+        adapter=runtime,
+        spec=executor.outputs[0],
+        value=[
+            RelationshipMeasurements(
+                slice_index=0,
+                parent_object_count=1,
+                child_object_count=1,
+                children_with_parents_count=1,
+                mean_children_per_parent=1.0,
+                mean_centroid_distance=0.0,
+                mean_minimum_distance=1.0,
+            ),
+            RelationshipMeasurements(
+                slice_index=1,
+                parent_object_count=1,
+                child_object_count=1,
+                children_with_parents_count=1,
+                mean_children_per_parent=1.0,
+                mean_centroid_distance=0.0,
+                mean_minimum_distance=1.0,
+            ),
+        ],
+        output_values={executor.outputs[0].name: payload},
+        source_image_name=None,
+        func=lambda image: image,
+    )
+
+    rows = RelationshipMeasurementRows.for_request(request).rows()
+
+    distance_rows = [
+        row
+        for row in rows
+        if row.get("object_name") == "Children"
+        and "Distance_Centroid_Parents" in row
+    ]
+    assert {(row["slice_index"], row["object_label"]) for row in distance_rows} == {
+        (0, 1),
+        (1, 1),
+    }
+
+
 def test_object_relationship_backend_uses_sparse_ijv_contract_nominally() -> None:
     parent_dense = np.zeros((8, 8), dtype=np.int32)
     child_dense = np.zeros((8, 8), dtype=np.int32)
@@ -5089,6 +5279,35 @@ def test_unstack_cellprofiler_image_slices_projects_singleton_volume_stack_mask(
     np.testing.assert_array_equal(image_payload_data(slices[2]), data[0, 2])
     np.testing.assert_array_equal(image_payload_mask(slices[1]), mask[0, 1])
     np.testing.assert_array_equal(image_payload_mask(slices[2]), mask[0, 2])
+
+
+def test_unstack_cellprofiler_image_slices_projects_high_rank_plane_mask() -> None:
+    data = np.arange(2 * 3 * 4 * 5, dtype=np.float32).reshape(2, 3, 4, 5)
+    mask = np.ones((2, 3, 4, 5), dtype=bool)
+    mask[1, 2] = False
+    payload = image_payload_with_context(data, mask=mask)
+
+    slices = _unstack_cellprofiler_image_slices(payload, MemoryType.NUMPY.value)
+
+    assert len(slices) == 6
+    np.testing.assert_array_equal(image_payload_data(slices[5]), data[1, 2])
+    np.testing.assert_array_equal(image_payload_mask(slices[5]), mask[1, 2])
+
+
+def test_unstack_cellprofiler_image_slices_projects_source_axis_mask_to_plane() -> None:
+    data_slice = np.arange(4 * 5, dtype=np.float32).reshape(4, 5)
+    mask = np.ones((2, 4, 5), dtype=bool)
+    mask[1] = False
+
+    payload = ImagePayloadSliceProjector(
+        mask=mask,
+        metadata=ImagePayloadMetadata(),
+    ).payload_for_slice(data_slice, 2)
+
+    np.testing.assert_array_equal(
+        image_payload_mask(payload),
+        np.zeros((4, 5), dtype=bool),
+    )
 
 
 def test_cellprofiler_contract_executor_rejects_uncoerced_unknown_absorbed_contract():

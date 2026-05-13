@@ -36,6 +36,7 @@ from benchmark.cellprofiler_library.functions.identifyprimaryobjects import (
 from openhcs.processing.backends.cellprofiler.morphology import (
     CELLPROFILER_LOW_RES_AUTO_MAXIMA_SUPPRESSION_SIZE,
     DeclumpingMaximaGeometry,
+    dilate_objects,
     filter_border_objects,
     filter_labels_by_diameter_range,
     manual_declumping_size,
@@ -48,7 +49,9 @@ from benchmark.cellprofiler_library.functions.measurecolocalization import (
     _divide_costes_measurements,
 )
 from openhcs.processing.backends.cellprofiler.colocalization import (
+    ColocalizationCostesThresholdBatch,
     ColocalizationCostesThresholds,
+    ColocalizationImagePairContext,
     costes_backend,
     object_colocalization_threshold_reductions,
     thresholded_colocalization_metrics,
@@ -84,13 +87,17 @@ from openhcs.interop.cellprofiler.semantic_defaults import (
     CellProfilerSemanticDefaultContract,
 )
 from benchmark.cellprofiler_semantics.crop import CropShape, RemovalMethod
+from openhcs.core.aligned_image_payload import AlignedImageStack
 from openhcs.core.config import DtypeConfig
+from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ImageMetadataPayload,
     MaskedImagePayload,
+    ObjectLabelPayload,
     image_payload_with_context,
 )
+from openhcs.core.runtime_semantics import ObjectLabelDomainScope
 from openhcs.core.runtime_values import image_payload_data, image_payload_mask
 from openhcs.processing.backends.lib_registry.openhcs_registry import OpenHCSRegistry
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -609,6 +616,24 @@ def test_cellprofiler_structuring_element_rank_adapts_by_center_section():
     )
 
 
+def test_dilate_objects_adapts_volumetric_structuring_element_for_2d_labels():
+    image = np.zeros((7, 7), dtype=np.float32)
+    labels = np.zeros((7, 7), dtype=np.int32)
+    labels[3, 3] = 1
+
+    output, stats, dilated = dilate_objects.__wrapped__(
+        image,
+        labels=labels,
+        structuring_element_shape="ball",
+        structuring_element_size=1,
+    )
+
+    assert output is image
+    assert stats.object_count == 1
+    assert dilated.shape == labels.shape
+    assert np.count_nonzero(dilated) > np.count_nonzero(labels)
+
+
 def test_examplefly_absorbed_functions_import_cleanly():
     function_names = (
         "IdentifyPrimaryObjects",
@@ -681,6 +706,50 @@ def test_measure_colocalization_objects_accepts_unmasked_finite_images():
     assert np.array_equal(output, image[0:1])
     assert [row.object_label for row in rows] == [1, 2]
     assert all(np.isfinite(row.correlation) for row in rows)
+
+
+def test_colocalization_image_pair_context_accepts_aligned_image_stack() -> None:
+    aligned = AlignedImageStack(
+        (
+            np.array([[0.0, 0.5], [1.0, 0.25]], dtype=np.float32),
+            np.array([[1.0, 0.5], [0.0, 0.75]], dtype=np.float32),
+        )
+    )
+
+    context = ColocalizationImagePairContext.from_request(
+        aligned,
+        channel_1=0,
+        channel_2=1,
+    )
+
+    assert context.image_float.shape == (2, 2, 2)
+    np.testing.assert_array_equal(context.first_image, aligned.slices[0])
+    np.testing.assert_array_equal(context.second_image, aligned.slices[1])
+
+
+def test_colocalization_threshold_batch_defers_aligned_image_stack_context() -> None:
+    aligned = AlignedImageStack(
+        (
+            np.ones((2, 2), dtype=np.float32),
+            np.zeros((2, 2), dtype=np.float32),
+        )
+    )
+    request = RuntimeBatchInvocationRequest(
+        source_image_name=None,
+        image=aligned,
+        kwargs={
+            "labels": np.ones((2, 2), dtype=np.int32),
+            "channel_1": 0,
+            "channel_2": 1,
+        },
+        batch_index=0,
+        batch_count=1,
+    )
+
+    kwargs = ColocalizationCostesThresholdBatch().request_kwargs(request)
+
+    assert "image_pair_context" not in kwargs
+    assert "object_label_context" not in kwargs
 
 
 def test_measure_colocalization_costes_first_threshold_snaps_to_scale_bin():
@@ -3490,6 +3559,75 @@ def test_relate_objects_aligns_parent_label_stack_to_child_plane():
     assert relationships.child_ids == (1, 2)
     assert measurements.parent_object_count == 2
     assert measurements.child_object_count == 2
+
+
+def test_relate_objects_preserves_child_object_label_domain_metadata():
+    parent_plane = np.array(
+        [
+            [1, 1, 0],
+            [0, 2, 2],
+        ],
+        dtype=np.int32,
+    )
+    child_plane = np.array(
+        [
+            [1, 1, 0],
+            [0, 2, 2],
+        ],
+        dtype=np.int32,
+    )
+    child_payload = ObjectLabelPayload(
+        labels=child_plane,
+        declared_object_count=4,
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    output, _relationships, _measurements = relate_objects.__wrapped__(
+        np.zeros_like(child_plane, dtype=np.float32),
+        parent_plane,
+        child_payload,
+        calculate_distances=DistanceMethod.NONE,
+    )
+
+    assert isinstance(output, ObjectLabelPayload)
+    assert output.declared_object_count == 4
+    assert output.domain_scope is ObjectLabelDomainScope.PLANE
+    np.testing.assert_array_equal(output.labels, child_plane)
+
+
+def test_relate_objects_preserves_plane_scoped_relationship_payload_identity():
+    parent_stack = ObjectLabelPayload(
+        labels=np.asarray(
+            (
+                ((1, 1, 0), (0, 0, 0)),
+                ((2, 2, 0), (0, 0, 0)),
+            ),
+            dtype=np.int32,
+        ),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+    child_stack = ObjectLabelPayload(
+        labels=np.asarray(
+            (
+                ((1, 1, 0), (0, 0, 0)),
+                ((1, 1, 0), (0, 0, 0)),
+            ),
+            dtype=np.int32,
+        ),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    _output, relationships, _measurements = relate_objects.__wrapped__(
+        np.zeros((2, 2, 3), dtype=np.float32),
+        parent_stack,
+        child_stack,
+        calculate_distances=DistanceMethod.NONE,
+    )
+
+    assert relationships.parent_ids == (1, 2)
+    assert relationships.child_ids == (1, 1)
+    assert relationships.slice_indices == (0, 1)
+    assert relationships.slice_count == 2
 
 
 def test_relate_objects_numba_distance_measurements():

@@ -12,6 +12,7 @@ from typing import ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.pipeline_image_schema import (
     GroupingPlan,
@@ -1068,20 +1069,20 @@ def _compile_metadata_block(
     if not _is_path_metadata_extraction_method(method):
         raise ValueError(f"Unsupported CellProfiler metadata extraction method: {method!r}.")
 
+    if not require_enabled and not DisabledPathMetadataRulePolicy.for_block(block).preserve:
+        return
+
     source = _metadata_source(
         block_setting_value(block, "Metadata source", default="File name")
     )
-    pattern = _metadata_pattern_for_block(block, source)
+    pattern_block = CellProfilerMetadataPatternBlock(block, source)
+    pattern = pattern_block.pattern
     if not require_enabled and not pattern:
         return
     state.add_metadata_rule(
         MetadataExtractionRule(
             source=source,
-            pattern=(
-                _required_metadata_pattern_for_block(block, source)
-                if require_enabled
-                else pattern
-            ),
+            pattern=pattern_block.required_pattern if require_enabled else pattern,
             filters=(
                 cellprofiler_source_filter_criteria_parser()
                 .filter_clauses_from_criteria(
@@ -1090,6 +1091,77 @@ def _compile_metadata_block(
             ),
         )
     )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerMetadataPatternBlock:
+    """Typed access to CP metadata regex settings for one source domain."""
+
+    block: Sequence[ModuleSetting]
+    source: MetadataSource
+
+    @property
+    def pattern(self) -> str:
+        if self.source is MetadataSource.FOLDER_NAME:
+            folder_pattern = block_setting_value(
+                self.block,
+                "Regular expression to extract from folder name",
+            )
+            return decode_cellprofiler_setting_literal(
+                folder_pattern or _legacy_regex_value(self.block, index=1)
+            )
+        file_pattern = block_setting_value(
+            self.block,
+            "Regular expression to extract from file name",
+        )
+        return decode_cellprofiler_setting_literal(
+            file_pattern or _legacy_regex_value(self.block, index=0)
+        )
+
+    @property
+    def required_pattern(self) -> str:
+        pattern = self.pattern
+        if not pattern:
+            raise ValueError(
+                "CellProfiler path metadata extraction requires a non-empty "
+                f"{self.source.value} regular expression."
+            )
+        return pattern
+
+
+@dataclass(frozen=True, slots=True)
+class DisabledPathMetadataRulePolicy:
+    """Preservation policy for disabled CP metadata rules needed by source binding."""
+
+    pattern: str
+
+    @classmethod
+    def for_block(
+        cls,
+        block: Sequence[ModuleSetting],
+    ) -> "DisabledPathMetadataRulePolicy":
+        source = _metadata_source(
+            block_setting_value(block, "Metadata source", default="File name")
+        )
+        return cls(CellProfilerMetadataPatternBlock(block, source).pattern)
+
+    @property
+    def preserve(self) -> bool:
+        fields = self.capture_fields
+        if not fields:
+            return False
+        components = tuple(source_metadata_component(field) for field in fields)
+        return (
+            any(component is None for component in components)
+            and all(component is not AllComponents.CHANNEL for component in components)
+        )
+
+    @property
+    def capture_fields(self) -> tuple[str, ...]:
+        try:
+            return tuple(re.compile(self.pattern).groupindex)
+        except re.error:
+            return ()
 
 
 def _is_path_metadata_extraction_method(value: str) -> bool:
@@ -1183,40 +1255,6 @@ def _imported_metadata_joins(
             )
         )
     return tuple(joins)
-
-
-def _required_metadata_pattern_for_block(
-    block: Sequence[ModuleSetting],
-    source: MetadataSource,
-) -> str:
-    pattern = _metadata_pattern_for_block(block, source)
-    if not pattern:
-        raise ValueError(
-            "CellProfiler path metadata extraction requires a non-empty "
-            f"{source.value} regular expression."
-        )
-    return pattern
-
-
-def _metadata_pattern_for_block(
-    block: Sequence[ModuleSetting],
-    source: MetadataSource,
-) -> str:
-    if source is MetadataSource.FOLDER_NAME:
-        folder_pattern = block_setting_value(
-            block,
-            "Regular expression to extract from folder name",
-        )
-        return decode_cellprofiler_setting_literal(
-            folder_pattern or _legacy_regex_value(block, index=1)
-        )
-    file_pattern = block_setting_value(
-        block,
-        "Regular expression to extract from file name",
-    )
-    return decode_cellprofiler_setting_literal(
-        file_pattern or _legacy_regex_value(block, index=0)
-    )
 
 
 def _legacy_regex_value(

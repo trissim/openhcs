@@ -66,6 +66,7 @@ from openhcs.core.runtime_equivalence import (
 from openhcs.core.runtime_execution_validation import runtime_output_roots
 from openhcs.core.runtime_exports import RuntimeExportObservation
 from openhcs.core.source_schema_workspace import materialize_source_schema_workspace
+from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,7 @@ OPENHCS_AXIS_FILTER_PARAM = "openhcs_axis_filter"
 OPENHCS_MAX_AXIS_COUNT_PARAM = "openhcs_max_axis_count"
 OPENHCS_NUM_WORKERS_PARAM = "openhcs_num_workers"
 OPENHCS_START_METHOD_PARAM = "openhcs_start_method"
+OPENHCS_USE_THREADING_PARAM = "openhcs_use_threading"
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +109,7 @@ class OpenHCSBenchmarkExecutionConfig:
     """OpenHCS runtime config requested by the benchmark harness."""
 
     num_workers: int = 1
+    use_threading: bool = False
     multiprocessing_start_method: MultiprocessingStartMethod = (
         MultiprocessingStartMethod.FORK
     )
@@ -127,6 +130,7 @@ class OpenHCSBenchmarkExecutionConfig:
             start_method = MultiprocessingStartMethod(str(start_method))
         return cls(
             num_workers=num_workers,
+            use_threading=bool(pipeline_params.get(OPENHCS_USE_THREADING_PARAM, False)),
             multiprocessing_start_method=start_method,
         )
 
@@ -179,6 +183,13 @@ class OpenHCSAxisSelection:
         if not selected:
             raise ValueError("OpenHCS axis selection resolved to no axes.")
         return selected
+
+    def source_schema_selection(self) -> SourceSchemaImageSetSelection:
+        """Return equivalent pre-materialization source-schema selection."""
+        return SourceSchemaImageSetSelection(
+            well_filter=self.axis_filter,
+            max_image_set_count=self.max_axis_count,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -583,6 +594,9 @@ class OpenHCSAdapter(ToolAdapter):
                             source_workspace_path,
                             prepared.source_schema,
                             filemanager=self._filemanager,
+                            image_set_selection=(
+                                request.axis_selection.source_schema_selection()
+                            ),
                         )
                 except Exception as exc:
                     raise ToolExecutionError(
@@ -596,6 +610,7 @@ class OpenHCSAdapter(ToolAdapter):
             )
             global_config = GlobalPipelineConfig(
                 num_workers=execution_config.num_workers,
+                use_threading=execution_config.use_threading,
                 multiprocessing_start_method=(
                     execution_config.multiprocessing_start_method
                 ),

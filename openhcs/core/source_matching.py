@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, ClassVar, Mapping
@@ -350,6 +351,75 @@ def source_paths_equal(left: str, right: str) -> bool:
     """Return whether two source paths identify the same source-binding path."""
 
     return source_path_identity_key(left) == source_path_identity_key(right)
+
+
+class SourceImageSetComponentRole(Enum):
+    """Semantic role of a source metadata component within an image set."""
+
+    IMAGE_SET_AXIS = "image_set_axis"
+    IMAGE_PLANE_MEMBER = "image_plane_member"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceImageSetIdentityPolicy:
+    """Nominal policy for reducing source plane metadata to image-set identity."""
+
+    plane_member_component: AllComponents = AllComponents.CHANNEL
+
+    def role(self, component: AllComponents) -> SourceImageSetComponentRole:
+        """Return whether a component identifies the image set or a plane in it."""
+        if component is self.plane_member_component:
+            return SourceImageSetComponentRole.IMAGE_PLANE_MEMBER
+        return SourceImageSetComponentRole.IMAGE_SET_AXIS
+
+    def identity_components(self) -> tuple[AllComponents, ...]:
+        """Return generated source components that identify one image set."""
+        return tuple(
+            component
+            for component in AllComponents
+            if self.role(component) is SourceImageSetComponentRole.IMAGE_SET_AXIS
+        )
+
+    def is_identity_component(self, component: AllComponents) -> bool:
+        """Return whether a metadata component participates in image-set identity."""
+        return self.role(component) is SourceImageSetComponentRole.IMAGE_SET_AXIS
+
+
+@dataclass(frozen=True, slots=True)
+class SourceImageSetIdentity:
+    """Image-set identity from source metadata under a typed component policy."""
+
+    DEFAULT_POLICY: ClassVar[SourceImageSetIdentityPolicy] = (
+        SourceImageSetIdentityPolicy()
+    )
+
+    components: tuple[tuple[str, str], ...]
+
+    @classmethod
+    def from_metadata(
+        cls,
+        metadata: Mapping[str, Any],
+        *,
+        fallback_source_path: str,
+        policy: SourceImageSetIdentityPolicy = DEFAULT_POLICY,
+    ) -> "SourceImageSetIdentity":
+        """Return the source image-set identity represented by one image plane."""
+        component_values = {
+            component.value: str(value)
+            for field_name, value in normalized_source_metadata_items(metadata)
+            for component in (source_metadata_component(field_name),)
+            if component is not None
+            and policy.is_identity_component(component)
+            and value is not None
+        }
+        ordered_components = tuple(
+            (component.value, component_values[component.value])
+            for component in policy.identity_components()
+            if component.value in component_values
+        )
+        if ordered_components:
+            return cls(ordered_components)
+        return cls((("source_path", source_path_identity_key(fallback_source_path)),))
 
 
 def merge_source_metadata(

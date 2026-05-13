@@ -134,6 +134,15 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             help="Number of OpenHCS workers. Use 1 for single-worker benchmarks.",
         )
         parser.add_argument(
+            "--openhcs-use-threading",
+            action=argparse.BooleanOptionalAction,
+            default=False,
+            help=(
+                "Use OpenHCS ThreadPoolExecutor mode instead of process workers. "
+                "With --openhcs-num-workers 1 this is single-process execution."
+            ),
+        )
+        parser.add_argument(
             "--figures",
             action=argparse.BooleanOptionalAction,
             default=True,
@@ -171,6 +180,7 @@ class RunBenchmarkCommand(BenchmarkCliCommand):
             openhcs_max_axis_count=args.openhcs_max_axis_count,
             openhcs_num_workers=args.openhcs_num_workers,
             openhcs_start_method=args.openhcs_start_method,
+            openhcs_use_threading=args.openhcs_use_threading,
             metric_policy=ComparisonMetricPolicy(
                 collect_memory=not args.no_memory_metric,
             ),

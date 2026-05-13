@@ -579,6 +579,11 @@ class ObjectLabelDomain:
             )
         if not self.declared_object_id_domains:
             return self
+        if len(self.declared_object_id_domains) == 1:
+            return ObjectLabelDomain(
+                declared_object_ids=self.declared_object_id_domains[0],
+                scope=ObjectLabelDomainScope.PLANE,
+            )
         if len(self.declared_object_id_domains) != normalized_count:
             raise ValueError(
                 "Plane-scoped object-label domains must match PURE_2D slice "
@@ -633,6 +638,7 @@ class RuntimeObjectLabelMeasurementQuery(RuntimeObjectMeasurementQuery):
     object_name: str
     feature_name: str
     label_domain: tuple[int, ...]
+    image_number: int | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "axis_id", str(self.axis_id))
@@ -645,6 +651,8 @@ class RuntimeObjectLabelMeasurementQuery(RuntimeObjectMeasurementQuery):
         )
         if self.group_key is not None:
             object.__setattr__(self, "group_key", str(self.group_key))
+        if self.image_number is not None:
+            object.__setattr__(self, "image_number", int(self.image_number))
 
 
 class ObjectLabelDomainMetadata(ABC):
@@ -2749,6 +2757,16 @@ class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
     ) -> ParentChildRelationshipPayload:
         from openhcs.core.runtime_values import object_label_dense_array
 
+        slice_count = self.relationship_slice_count(context)
+        if slice_count is not None:
+            aligned_stacks = aligned_dense_object_label_stacks(
+                context.parent_labels,
+                context.child_labels,
+                slice_count=slice_count,
+            )
+            if aligned_stacks is not None:
+                return self.stack_payload(context, *aligned_stacks)
+
         parent_array, child_array = (
             object_label_dense_array(labels, dtype=np.int32)
             for labels in aligned_dense_object_label_arrays(
@@ -2769,6 +2787,73 @@ class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
             copy=False,
         )
         return self.related_payload_from_parents_of(parents_of, present_children)
+
+    def relationship_slice_count(
+        self,
+        context: ObjectRelationshipPayloadRequest,
+    ) -> int | None:
+        """Return the plane count for plane-scoped label relationships."""
+        domains = tuple(
+            ObjectLabelDomainMetadataStrategy.for_value(labels).object_label_domain(
+                labels,
+            )
+            for labels in (context.parent_labels, context.child_labels)
+        )
+        if (
+            ObjectLabelDomainScope.common(domain.scope for domain in domains)
+            is not ObjectLabelDomainScope.PLANE
+        ):
+            return None
+        leading_plane_counts = tuple(
+            int(label_array.shape[0])
+            for label_array in (
+                np.asarray(context.parent_labels),
+                np.asarray(context.child_labels),
+            )
+            if label_array.ndim == 3
+        )
+        if not leading_plane_counts:
+            return None
+        return max(leading_plane_counts)
+
+    def stack_payload(
+        self,
+        context: ObjectRelationshipPayloadRequest,
+        parent_stack: np.ndarray,
+        child_stack: np.ndarray,
+    ) -> ParentChildRelationshipPayload:
+        """Return parent-child ids with explicit runtime-slice identity."""
+        parent_ids: list[int] = []
+        child_ids: list[int] = []
+        slice_indices: list[int] = []
+        for slice_index, (parent_plane, child_plane) in enumerate(
+            zip(parent_stack, child_stack, strict=True)
+        ):
+            child_count = int(child_plane.max()) if child_plane.size else 0
+            if child_count <= 0:
+                continue
+            parents_of = context.kernel.relate_children_to_parents(
+                parent_plane,
+                child_plane,
+                child_count,
+            )
+            present_children = np.unique(child_plane[child_plane > 0]).astype(
+                np.int32,
+                copy=False,
+            )
+            payload = self.related_payload_from_parents_of(
+                parents_of,
+                present_children,
+            )
+            parent_ids.extend(payload.parent_ids)
+            child_ids.extend(payload.child_ids)
+            slice_indices.extend(slice_index for _child_id in payload.child_ids)
+        return ParentChildRelationshipPayload(
+            parent_ids=tuple(parent_ids),
+            child_ids=tuple(child_ids),
+            slice_indices=tuple(slice_indices),
+            slice_count=int(parent_stack.shape[0]),
+        )
 
 
 class SparseIJVObjectRelationshipPayloadStrategy(DenseObjectRelationshipPayloadStrategy):
@@ -2940,9 +3025,16 @@ class ObjectInstanceKey:
         row: Mapping[str, Any],
         object_id: int,
         *,
+        image_number_offset: float = 1.0,
+        image_number_field: MeasurementRowAxisField = MeasurementRowAxisField.IMAGE_NUMBER,
         slice_index_field: MeasurementRowAxisField = MeasurementRowAxisField.SLICE_INDEX,
     ) -> "ObjectInstanceKey":
         """Build object identity from the row's nominal axis fields."""
+        raw_image_number = row.get(image_number_field.value)
+        if raw_image_number is not None and str(raw_image_number).strip() != "":
+            slice_index = int(float(raw_image_number) - float(image_number_offset) - 1)
+            if slice_index >= 0:
+                return cls(object_id, slice_index=slice_index)
         raw_slice_index = row.get(slice_index_field.value)
         if raw_slice_index is None or str(raw_slice_index).strip() == "":
             return cls(object_id)
@@ -3081,6 +3173,17 @@ class ObjectInstanceRelationship:
             return tuple(
                 sorted(
                     merged,
+                    key=lambda key: (
+                        key.slice_index is None,
+                        key.slice_index or -1,
+                        key.object_id,
+                    ),
+                )
+            )
+        if object_count <= 0 and keys:
+            return tuple(
+                sorted(
+                    dict.fromkeys(keys),
                     key=lambda key: (
                         key.slice_index is None,
                         key.slice_index or -1,

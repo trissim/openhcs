@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
-import re
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import Enum
-from functools import lru_cache
 from types import MappingProxyType
 from typing import Annotated, ClassVar, get_args, get_origin, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.runtime_identifier import (
+    normalize_runtime_identifier,
+    normalize_runtime_source_name,
+    runtime_source_name_tokens,
+)
 from openhcs.core.runtime_semantics import MeasurementScope
 
 
@@ -53,54 +56,6 @@ class RuntimeMeasurementSourceQualifiedFeature:
 _EMPTY_FEATURE_ALIASES = MappingProxyType({})
 _EMPTY_PAIR_FEATURE_ALIASES = MappingProxyType({})
 _EMPTY_NUMBERED_FEATURE_PREFIX_ALIASES = MappingProxyType({})
-_IDENTIFIER_INITIALISM_BOUNDARY_RE = re.compile(r"([A-Z]+)([A-Z][a-z])")
-_IDENTIFIER_LOWER_UPPER_BOUNDARY_RE = re.compile(r"([a-z0-9])([A-Z])")
-_IDENTIFIER_ALPHA_NUMBER_BOUNDARY_RE = re.compile(r"([A-Za-z])([0-9])")
-_IDENTIFIER_NUMBER_ALPHA_BOUNDARY_RE = re.compile(r"([0-9])([A-Za-z])")
-_IDENTIFIER_NON_ALNUM_RE = re.compile(r"[^A-Za-z0-9]+")
-
-
-def normalize_runtime_identifier(value: object) -> str:
-    """Return OpenHCS' canonical identifier token for runtime comparison."""
-    return _normalize_identifier_text(str(value).strip())
-
-
-def normalize_runtime_source_name(source_name: str | None) -> str | None:
-    """Return canonical source-image identity for runtime comparison."""
-    if source_name is None:
-        return None
-    normalized = "__".join(
-        part
-        for part in (
-            normalize_runtime_identifier(part)
-            for part in str(source_name).split("__")
-        )
-        if part
-    )
-    return normalized or None
-
-
-def runtime_source_name_tokens(source_name: str) -> tuple[str, ...]:
-    """Return canonical source-name tokens used by measurement dialects."""
-    normalized = normalize_runtime_source_name(source_name)
-    if normalized is None:
-        return ()
-    return tuple(
-        token
-        for part in normalized.split("__")
-        for token in part.split("_")
-        if token
-    )
-
-
-@lru_cache(maxsize=32768)
-def _normalize_identifier_text(text: str) -> str:
-    text = _IDENTIFIER_INITIALISM_BOUNDARY_RE.sub(r"\1_\2", text)
-    text = _IDENTIFIER_LOWER_UPPER_BOUNDARY_RE.sub(r"\1_\2", text)
-    text = _IDENTIFIER_ALPHA_NUMBER_BOUNDARY_RE.sub(r"\1_\2", text)
-    text = _IDENTIFIER_NUMBER_ALPHA_BOUNDARY_RE.sub(r"\1_\2", text)
-    text = _IDENTIFIER_NON_ALNUM_RE.sub("_", text)
-    return text.strip("_").lower()
 
 
 class RuntimeMeasurementQualifierValueMode(str, Enum):

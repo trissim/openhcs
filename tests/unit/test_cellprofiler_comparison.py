@@ -6,6 +6,7 @@ from pathlib import Path
 
 from benchmark.cellprofiler_comparison import (
     CellProfilerComparisonCase,
+    NativeCellProfilerReferenceScope,
     append_observations_jsonl,
     comparison_observation_from_result,
     load_comparison_cases,
@@ -138,6 +139,62 @@ def test_required_native_reference_does_not_rerun_cellprofiler(
     )
 
 
+def test_native_reference_scope_discovers_completed_reference_with_dataset_alias(
+    tmp_path: Path,
+) -> None:
+    dataset_path = tmp_path / "tutorial" / "translocation_axis1_20260512"
+    dataset_path.mkdir(parents=True)
+    cppipe_path = tmp_path / "pipeline.cppipe"
+    cppipe_path.write_text(
+        "\n".join(
+            [
+                "CellProfiler Pipeline: http://www.cellprofiler.org",
+                "Images:[module_num:1|enabled:True]",
+                "    Filter images?:Images only",
+                "Metadata:[module_num:2|enabled:True]",
+                "    Extract metadata?:Yes",
+                "    Metadata source:File name",
+                "    Regular expression to extract from file name:^(?P<Well>[A-Z][0-9]{2})_s(?P<Site>[0-9]+)_w(?P<Channel>[0-9]+)",
+                "NamesAndTypes:[module_num:3|enabled:True]",
+                "    Assign a name to:Images matching rules",
+                "    Select the image type:Grayscale image",
+                "    Name to assign these images:DNA",
+                "    Image set matching method:Order",
+                "    Assignments count:1",
+                "    Single images count:0",
+                "    Select the rule criteria:and (file does contain \"\")",
+                "    Name to assign these images:DNA",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    case = CellProfilerComparisonCase(
+        name="cp_tutorial_translocation_final",
+        dataset_path=dataset_path,
+        cppipe_path=cppipe_path,
+        dataset_id="CellProfiler_tutorials",
+    )
+    scope = NativeCellProfilerReferenceScope(
+        case=case,
+        native_reference_root=tmp_path / "native_refs",
+        pipeline_params={"openhcs_max_axis_count": 1},
+    )
+    reference = (
+        scope.output_dir
+        / "TranslocationData_cp_tutorial_translocation_final_native_cellprofiler"
+    )
+    reference.mkdir(parents=True)
+    (reference / ".cellprofiler_benchmark_reference.json").write_text(
+        json.dumps({"schema_version": 1, "provenance": {}}),
+        encoding="utf-8",
+    )
+
+    location = scope.resolve()
+
+    assert location.output_dir == scope.output_dir
+    assert location.reference_output_dir == reference
+
+
 def test_comparison_writers_emit_raw_phase_and_summary_tables(
     tmp_path: Path,
 ) -> None:
@@ -210,6 +267,7 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
     manifest.write_text(
         json.dumps(
             {
+                "default_pipeline_params": {"openhcs_max_axis_count": 1},
                 "cases": [
                     {
                         "name": "ExampleHuman",
@@ -222,7 +280,7 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
                         "value_only": True,
                         "equivalence_reference_output_dir": "native/human",
                         "cellprofiler_timeout_seconds": 120,
-                        "pipeline_params": {"openhcs_max_axis_count": 2},
+                        "pipeline_params": {"compare_image_outputs": False},
                     }
                 ]
             }
@@ -244,7 +302,10 @@ def test_load_comparison_cases_from_manifest(tmp_path: Path) -> None:
             value_only=True,
             equivalence_reference_output_dir=Path("native/human"),
             cellprofiler_timeout_seconds=120.0,
-            pipeline_params={"openhcs_max_axis_count": 2},
+            pipeline_params={
+                "openhcs_max_axis_count": 1,
+                "compare_image_outputs": False,
+            },
         ),
     )
 

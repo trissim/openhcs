@@ -10,11 +10,17 @@ from openhcs.core.equivalence import (
     RuntimeMeasurementDialect,
     RuntimeMeasurementSourceNameEncoding,
 )
-from openhcs.core.measurement_lookup_dialect import RuntimeMeasurementLookupDialect
+from openhcs.core.measurement_lookup_dialect import (
+    RuntimeMeasurementFeatureLookup,
+    RuntimeMeasurementLookupDialect,
+    RuntimeMeasurementObjectDomainPolicy,
+)
 from openhcs.core.runtime_semantics import ImageAreaOccupiedMeasurementFeature
+from openhcs.core.runtime_semantics import ObjectCoreMeasurementFeature
 from openhcs.core.runtime_semantics import ObjectIntensityMeasurementFeature
 from openhcs.core.runtime_semantics import PairMeasurementFeature
 from openhcs.core.runtime_semantics import MeasurementScope
+from openhcs.interop.cellprofiler.measurement_lookup import child_count_feature_child_name
 
 
 BENCHMARK_CACHE_DOMAINS = frozenset({"parity"})
@@ -43,8 +49,32 @@ CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES = MappingProxyType(
         ("number", "object", "number"): ("object", "number"),
         ("original", "area"): ("crop", "original", "image", "area"),
         ("otsu",): ("threshold", "otsu"),
+        **{
+            tuple(feature.value.split("_")): tuple(feature.value.split("_"))
+            for feature in (
+                ObjectCoreMeasurementFeature.CENTER_X,
+                ObjectCoreMeasurementFeature.CENTER_Y,
+                ObjectCoreMeasurementFeature.CENTER_Z,
+            )
+        },
     }
 )
+
+
+class CellProfilerMeasurementObjectDomainPolicy(RuntimeMeasurementObjectDomainPolicy):
+    """Object-domain semantics for CellProfiler measurement rows."""
+
+    def query_object_name(
+        self,
+        lookup: RuntimeMeasurementFeatureLookup,
+        object_name: str | None,
+    ) -> str | None:
+        """Return the CellProfiler row object constraint for a feature lookup."""
+        if child_count_feature_child_name(lookup.feature_name) is not None:
+            return None
+        return object_name
+
+
 CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT = RuntimeMeasurementLookupDialect(
     category_prefixes=CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES,
     feature_part_aliases=CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES,
@@ -56,6 +86,7 @@ CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT = RuntimeMeasurementLookupDialect(
         tuple(feature.value.split("_"))
         for feature in ImageAreaOccupiedMeasurementFeature
     ),
+    object_domain_policy=CellProfilerMeasurementObjectDomainPolicy(),
 )
 CELLPROFILER_MEASUREMENT_DIALECT = RuntimeMeasurementDialect(
     category_prefixes=CELLPROFILER_MEASUREMENT_CATEGORY_PREFIXES,

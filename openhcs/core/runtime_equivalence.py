@@ -11,6 +11,7 @@ from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, make_dataclass
+from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
 from types import MappingProxyType, ModuleType
@@ -25,7 +26,7 @@ from nominal_refactor_advisor.record_algebra import product_record
 import openhcs.core.runtime_artifact_queries as runtime_artifact_queries
 import openhcs.core.equivalence.measurement_features as measurement_features
 import openhcs.core.runtime_semantics as runtime_semantics
-from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.artifacts import ArtifactKind, ArtifactScope
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_FEATURE_NAME_FIELDS,
     MEASUREMENT_OBJECT_ID_FIELDS,
@@ -807,6 +808,196 @@ _RuntimeMeasurementTableProjectionContext = _frozen_slots_record(
         ("required_keys", _RuntimeRequiredMeasurementKeys),
     ),
 )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeRecordPlaneIdentity:
+    """Plane identity contributed by runtime record scope rather than row payload."""
+
+    slice_index: int
+    authority: "RuntimeRecordPlaneIdentityAuthority"
+
+    def object_instance_key(
+        self,
+        row: Mapping[str, Any],
+        object_id: int,
+        *,
+        image_number_offset: float,
+    ) -> ObjectInstanceKey:
+        if (
+            self.authority
+            is RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY
+        ):
+            return ObjectInstanceKey(object_id, slice_index=self.slice_index)
+        key = ObjectInstanceKey.from_measurement_row(
+            row,
+            object_id,
+            image_number_offset=image_number_offset,
+        )
+        if key.slice_index is None:
+            return ObjectInstanceKey(object_id, slice_index=self.slice_index)
+        return key
+
+    def relationship_for_projection(
+        self,
+        relationship: ObjectRelationship,
+    ) -> ObjectRelationship:
+        if (
+            relationship.slice_indices
+            and self.authority
+            is RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY
+        ):
+            return relationship
+        source_ids = tuple(
+            int(value) for value in np.asarray(relationship.source_ids).ravel()
+        )
+        slice_count = max(
+            relationship.slice_count or 0,
+            self.slice_index + 1,
+        )
+        return ObjectRelationship(
+            name=relationship.name,
+            source=relationship.source,
+            target=relationship.target,
+            source_ids=relationship.source_ids,
+            target_ids=relationship.target_ids,
+            relationship_type=relationship.relationship_type,
+            slice_indices=tuple(self.slice_index for _ in source_ids),
+            slice_count=slice_count,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeScopedMeasurementTable:
+    """Measurement table plus runtime record-plane identity used for joins."""
+
+    table: MeasurementTable
+    plane_identity: RuntimeRecordPlaneIdentity | None = None
+
+    def object_instance_key(
+        self,
+        row: Mapping[str, Any],
+        object_id: int,
+        *,
+        image_number_offset: float,
+    ) -> ObjectInstanceKey:
+        if self.plane_identity is None:
+            return ObjectInstanceKey.from_measurement_row(
+                row,
+                object_id,
+                image_number_offset=image_number_offset,
+            )
+        return self.plane_identity.object_instance_key(
+            row,
+            object_id,
+            image_number_offset=image_number_offset,
+        )
+
+
+class RuntimeRecordPlaneIdentityAuthority(Enum):
+    """How runtime record identity should interact with row-local identity."""
+
+    FILL_MISSING_ROW_IDENTITY = auto()
+    OVERRIDE_ROW_IDENTITY = auto()
+
+
+@dataclass(slots=True)
+class RuntimeAxisGroupPlaneIndex:
+    """Stable per-axis mapping from runtime group scope to plane identity."""
+
+    indices_by_group_key: dict[object, int] = field(default_factory=dict)
+
+    def slice_index_for_scope(self, scope: ArtifactScope) -> int | None:
+        if scope.group_key is None:
+            return None
+        return self.indices_by_group_key.setdefault(
+            scope.group_key,
+            len(self.indices_by_group_key),
+        )
+
+
+@dataclass(slots=True)
+class RuntimeAxisRepeatedArtifactPlaneIndex:
+    """Assign plane identity to repeated records without distinct runtime scope."""
+
+    next_index_by_artifact_key: dict[tuple[ArtifactKind, str], int] = field(
+        default_factory=dict
+    )
+
+    def plane_identity_for_record(
+        self,
+        *,
+        kind: ArtifactKind,
+        name: str,
+    ) -> RuntimeRecordPlaneIdentity:
+        key = (kind, name)
+        slice_index = self.next_index_by_artifact_key.get(key, 0)
+        self.next_index_by_artifact_key[key] = slice_index + 1
+        return RuntimeRecordPlaneIdentity(
+            slice_index,
+            RuntimeRecordPlaneIdentityAuthority.OVERRIDE_ROW_IDENTITY,
+        )
+
+
+@dataclass(slots=True)
+class RuntimeAxisRecordPlaneIdentityResolver:
+    """Resolve runtime record plane identity from scope and repeated artifacts."""
+
+    repeated_artifact_counts: Counter[tuple[ArtifactKind, str]]
+    group_plane_index: RuntimeAxisGroupPlaneIndex = field(
+        default_factory=RuntimeAxisGroupPlaneIndex
+    )
+    repeated_artifact_plane_index: RuntimeAxisRepeatedArtifactPlaneIndex = field(
+        default_factory=RuntimeAxisRepeatedArtifactPlaneIndex
+    )
+
+    @classmethod
+    def from_records(
+        cls,
+        records: Iterable[object],
+    ) -> "RuntimeAxisRecordPlaneIdentityResolver":
+        return cls(
+            Counter(
+                (record.key.kind, record.key.name)
+                for record in records
+                if record.key.kind
+                in (ArtifactKind.MEASUREMENTS, ArtifactKind.RELATIONSHIPS)
+            )
+        )
+
+    def plane_identity_for_record(
+        self,
+        *,
+        kind: ArtifactKind,
+        name: str,
+        scope: ArtifactScope,
+    ) -> RuntimeRecordPlaneIdentity | None:
+        artifact_key = (kind, name)
+        if self.repeated_artifact_counts[artifact_key] > 1:
+            return self.repeated_artifact_plane_index.plane_identity_for_record(
+                kind=kind,
+                name=name,
+            )
+        slice_index = self.group_plane_index.slice_index_for_scope(scope)
+        if slice_index is None:
+            return None
+        return RuntimeRecordPlaneIdentity(
+            slice_index,
+            RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeScopedObjectRelationship:
+    """Object relationship plus runtime scope identity used for relationship joins."""
+
+    relationship: ObjectRelationship
+    plane_identity: RuntimeRecordPlaneIdentity | None = None
+
+    def relationship_for_projection(self) -> ObjectRelationship:
+        if self.plane_identity is None:
+            return self.relationship
+        return self.plane_identity.relationship_for_projection(self.relationship)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1887,13 +2078,17 @@ class RuntimeMeasurementSnapshot:
         object_row_domain = RuntimeObjectMeasurementFactRowDomain()
         object_label_records = []
         object_label_records_by_axis: dict[object, list[object]] = {}
-        relationship_records_by_axis: dict[object, list[object]] = {}
-        measurement_tables_by_axis: dict[object, list[MeasurementTable]] = {}
+        relationship_records_by_axis: dict[object, list[RuntimeScopedObjectRelationship]] = {}
+        measurement_tables_by_axis: dict[object, list[RuntimeScopedMeasurementTable]] = {}
         seen_aggregate_measurement_tables: set[RuntimeMeasurementTableIdentity] = set()
         for axis_key, records in observation.records_by_axis.items():
+            axis_records = tuple(records)
+            plane_identity_resolver = (
+                RuntimeAxisRecordPlaneIdentityResolver.from_records(axis_records)
+            )
             seen_exact_measurement_tables: set[tuple[object, ...]] = set()
             seen_object_subtables: _RuntimeMeasurementObjectSubtableSet = set()
-            for record in records:
+            for record in axis_records:
                 if record.key.kind is ArtifactKind.SPATIAL_GRID:
                     record_measurement_facts(
                         values_by_feature,
@@ -1919,7 +2114,17 @@ class RuntimeMeasurementSnapshot:
                             if aggregate_table_key in seen_aggregate_measurement_tables:
                                 continue
                             seen_aggregate_measurement_tables.add(aggregate_table_key)
-                    measurement_tables_by_axis.setdefault(axis_key, []).append(table)
+                    plane_identity = plane_identity_resolver.plane_identity_for_record(
+                        kind=record.key.kind,
+                        name=record.key.name,
+                        scope=record.key.scope,
+                    )
+                    measurement_tables_by_axis.setdefault(axis_key, []).append(
+                        RuntimeScopedMeasurementTable(
+                            table,
+                            plane_identity=plane_identity,
+                        )
+                    )
                     table_projection_context = _RuntimeMeasurementTableProjectionContext(
                         table,
                         policy,
@@ -1948,7 +2153,17 @@ class RuntimeMeasurementSnapshot:
                     object_label_records_by_axis.setdefault(axis_key, []).append(record)
                     continue
                 if record.key.kind is ArtifactKind.RELATIONSHIPS:
-                    relationship_records_by_axis.setdefault(axis_key, []).append(record)
+                    plane_identity = plane_identity_resolver.plane_identity_for_record(
+                        kind=record.key.kind,
+                        name=record.key.name,
+                        scope=record.key.scope,
+                    )
+                    relationship_records_by_axis.setdefault(axis_key, []).append(
+                        RuntimeScopedObjectRelationship(
+                            ObjectRelationship.from_runtime_value(record.value),
+                            plane_identity=plane_identity,
+                        )
+                    )
         object_identifier_subjects = object_measurement_subjects_with_role(
             values_by_feature,
             ObjectMeasurementFeatureRole.IDENTIFIER,
@@ -2104,8 +2319,8 @@ class RuntimeMeasurementSnapshot:
                 child_measurement_values_by_object[cache_key] = values
                 return values
 
-            for record in relationship_records:
-                relationship = ObjectRelationship.from_runtime_value(record.value)
+            for scoped_relationship in relationship_records:
+                relationship = scoped_relationship.relationship_for_projection()
                 relationship_measurement = RelationshipMeasurementSemantics(
                     relationship
                 )
@@ -6582,7 +6797,7 @@ class RuntimeObjectLabelInstanceCatalog:
             named_plane_domains.append(
                 (
                     object_labels.name,
-                    dense_object_label_plane_id_domains(
+                    dense_object_label_identity_domains(
                         object_labels.labels,
                         domain_scope=ObjectLabelDomainScope.PLANE,
                     ),
@@ -6746,6 +6961,40 @@ class SingleSliceValueObjectInstanceKeyPlaneAlignmentStrategy(
         }
 
 
+class MultiSliceValueObjectInstanceKeyPlaneAlignmentStrategy(
+    UnmodifiedObjectInstanceKeyPlaneAlignmentStrategy
+):
+    """Expand unscoped relationship identities across measured child planes."""
+
+    strategy_key = "multi_slice_value"
+
+    def matches(
+        self,
+        context: ObjectInstanceKeyPlaneAlignmentContext,
+    ) -> bool:
+        return (
+            context.child_slice_indices == frozenset({None})
+            and None not in context.value_slice_indices
+            and len(context.value_slice_indices) > 1
+        )
+
+    def align(
+        self,
+        context: ObjectInstanceKeyPlaneAlignmentContext,
+    ) -> Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
+        value_keys_by_object_id: dict[int, list[ObjectInstanceKey]] = {}
+        for value_key in context.values_by_child_id:
+            value_keys_by_object_id.setdefault(value_key.object_id, []).append(value_key)
+        return {
+            parent_id: tuple(
+                value_key
+                for child_id in child_ids
+                for value_key in value_keys_by_object_id.get(child_id.object_id, ())
+            )
+            for parent_id, child_ids in context.child_ids_by_parent.items()
+        }
+
+
 class UnscopedValueObjectInstanceKeyPlaneAlignmentStrategy(
     UnmodifiedObjectInstanceKeyPlaneAlignmentStrategy
 ):
@@ -6766,11 +7015,15 @@ class UnscopedValueObjectInstanceKeyPlaneAlignmentStrategy(
         self,
         context: ObjectInstanceKeyPlaneAlignmentContext,
     ) -> Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
-        return {
-            ObjectInstanceKey(parent_id.object_id): tuple(
+        unscoped_children_by_parent: dict[ObjectInstanceKey, list[ObjectInstanceKey]] = {}
+        for parent_id, child_ids in context.child_ids_by_parent.items():
+            parent_key = ObjectInstanceKey(parent_id.object_id)
+            unscoped_children_by_parent.setdefault(parent_key, []).extend(
                 ObjectInstanceKey(child_id.object_id) for child_id in child_ids
             )
-            for parent_id, child_ids in context.child_ids_by_parent.items()
+        return {
+            parent_id: tuple(child_ids)
+            for parent_id, child_ids in unscoped_children_by_parent.items()
         }
 
 
@@ -7335,11 +7588,14 @@ class RelationshipMeasurementSemantics:
                 values_by_child_id,
             )
             for _parent_id, child_ids in aligned_child_ids_by_parent.items():
+                aggregate_value = aggregate_values_by_parent[child_ids]
+                if not math.isfinite(aggregate_value):
+                    continue
                 aggregate_facts.append(
                     (
                         aggregate_key,
                         _cell_signature(
-                            str(aggregate_values_by_parent[child_ids]),
+                            str(aggregate_value),
                             policy,
                         ),
                     )
@@ -7434,7 +7690,7 @@ class RelationshipMeasurementSemantics:
 
 
 def _object_measurement_values_by_label(
-    measurement_tables: tuple[MeasurementTable, ...],
+    measurement_tables: tuple[RuntimeScopedMeasurementTable, ...],
     object_name: str,
     policy: RuntimeEquivalencePolicy,
     *,
@@ -7453,7 +7709,8 @@ def _object_measurement_values_by_label(
     long_form_key_cache: _RuntimeMeasurementLongFormKeyCache = {}
     qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache = {}
     padding_group_cache: _RuntimeMeasurementPaddingGroupCache = {}
-    for table in measurement_tables:
+    for scoped_table in measurement_tables:
+        table = scoped_table.table
         table_subject = RuntimeMeasurementSubjectKey.from_table_subject(table.subject)
         table_object_subject = (
             table_subject if table_subject.scope is MeasurementScope.OBJECT else None
@@ -7513,9 +7770,10 @@ def _object_measurement_values_by_label(
                 if key.statistic != "value":
                     continue
                 values_by_feature.setdefault(key, {})[
-                    ObjectInstanceKey.from_measurement_row(
+                    scoped_table.object_instance_key(
                         row_mapping,
                         object_label,
+                        image_number_offset=image_number_offset,
                     )
                 ] = value
     return values_by_feature
@@ -8389,7 +8647,19 @@ _PAIR_CORRELATION_FEATURE = PairMeasurementFeature.CORRELATION.value
 _PAIR_REGRESSION_SLOPE_FEATURE = PairMeasurementFeature.REGRESSION_SLOPE.value
 _PAIR_OVERLAP_FEATURE = PairMeasurementFeature.OVERLAP.value
 _PAIR_COSTES_MANDERS_FEATURE = PairMeasurementFeature.COSTES_MANDERS.value
+_PAIR_MANDERS_FEATURE = PairMeasurementFeature.MANDERS.value
+_PAIR_RANK_WEIGHTED_COLOCALIZATION_FEATURE = (
+    PairMeasurementFeature.RANK_WEIGHTED_COLOCALIZATION.value
+)
+_PAIR_OVERLAP_K_FEATURE = PairMeasurementFeature.OVERLAP_K.value
 _UNDIRECTED_PAIR_FEATURES = frozenset(
     (_PAIR_CORRELATION_FEATURE, _PAIR_OVERLAP_FEATURE)
 )
-_THRESHOLD_SENSITIVE_PAIR_FEATURES = frozenset((_PAIR_COSTES_MANDERS_FEATURE,))
+_THRESHOLD_SENSITIVE_PAIR_FEATURES = frozenset(
+    (
+        _PAIR_COSTES_MANDERS_FEATURE,
+        _PAIR_MANDERS_FEATURE,
+        _PAIR_RANK_WEIGHTED_COLOCALIZATION_FEATURE,
+        _PAIR_OVERLAP_K_FEATURE,
+    )
+)

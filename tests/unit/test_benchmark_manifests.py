@@ -18,6 +18,16 @@ def test_official30_portable_manifest_declares_roots_without_absolute_cases() ->
     }
     assert all(not Path(case["dataset_path"]).is_absolute() for case in payload["cases"])
     assert all(not Path(case["cppipe_path"]).is_absolute() for case in payload["cases"])
+    sample_limited_cases = [
+        case
+        for case in payload["cases"]
+        if case.get("pipeline_params", {}).get("openhcs_max_axis_count") is not None
+    ]
+    assert sample_limited_cases
+    assert all(
+        case.get("dataset_path_root") != "axis_one_subsets"
+        for case in sample_limited_cases
+    )
 
     cases = load_comparison_cases(manifest_path)
 

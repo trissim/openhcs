@@ -38,6 +38,7 @@ from openhcs.core.runtime_semantics import (
     object_label_parent_child_payload,
 )
 from openhcs.core.runtime_values import object_label_dense_array
+from openhcs.core.runtime_values import object_label_payload_with_dense_labels
 from openhcs.processing.materialization import csv_dataclass_materializer
 
 
@@ -378,13 +379,23 @@ def relate_objects(
         if parent_idx > 0
     )
 
-    parent_child_relationship = ParentChildRelationshipPayload(
-        parent_ids=related_parent_ids,
-        child_ids=related_child_ids,
+    if (
+        parent_child_relationship.slice_indices
+        or parent_child_relationship.slice_count is not None
+    ):
+        related_relationship = parent_child_relationship
+    else:
+        related_relationship = ParentChildRelationshipPayload(
+            parent_ids=related_parent_ids,
+            child_ids=related_child_ids,
+        )
+    output_labels = object_label_payload_with_dense_labels(
+        raw_child_labels,
+        output_labels.astype(np.float32),
     )
     return RelateObjectsResult(
-        output_labels.astype(np.float32),
-        parent_child_relationship,
+        output_labels,
+        related_relationship,
         measurements,
         saved_child_relationship=saved_child_relationship,
     )

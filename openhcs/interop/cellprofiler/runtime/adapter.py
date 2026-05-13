@@ -43,6 +43,7 @@ from openhcs.core.source_matching import (
     merge_source_metadata,
     metadata_from_rules,
     source_filters_match,
+    SourceImageSetIdentity,
     source_component_metadata_values,
     semantic_source_metadata_value,
     source_metadata_component,
@@ -63,6 +64,10 @@ from openhcs.core.runtime_slice_projection import (
     MeasurementTableRepeatedScalarGroupKey,
     RuntimeSliceProjection,
 )
+from openhcs.core.measurement_lookup_dialect import (
+    RuntimeMeasurementLookupDialectLike,
+    resolve_runtime_measurement_lookup_dialect,
+)
 from openhcs.core.runtime_artifact_queries import (
     MeasurementTableObjectFeatureSemantics,
     RuntimeArtifactQueryContext,
@@ -71,6 +76,8 @@ from openhcs.core.runtime_artifact_queries import (
     measurement_values_for_feature,
     measurement_values_for_label_plane,
     measurement_values_for_label_slices,
+    measurement_tables_for_image_number,
+    measurement_tables_for_slice,
     normalize_measurement_token,
     runtime_measurement_tables,
     runtime_measurement_tables_for_scope,
@@ -148,6 +155,7 @@ ObjectMeasurementTableIndexCacheKey = product_record(
 class ObjectMeasurementTableIndex:
     """Nominal object-subject measurement table index."""
 
+    tables: tuple[MeasurementTable, ...]
     tables_by_object: Mapping[str, tuple[MeasurementTable, ...]]
     feature_names_by_table: Mapping[int, frozenset[str]] = field(
         default_factory=lambda: MappingProxyType({})
@@ -194,7 +202,10 @@ class ObjectMeasurementTableIndex:
                     table_semantics.feature_names
                 )
         return cls(
-            MappingProxyType(indexed_tables),
+            tables=RuntimeSliceProjection.measurement_tables_with_repeated_scalar_slice_offsets(
+                tables
+            ),
+            tables_by_object=MappingProxyType(indexed_tables),
             feature_names_by_table=MappingProxyType(feature_names_by_table),
             repeated_scalar_group_sizes=MappingProxyType(group_sizes),
             complete=True,
@@ -215,14 +226,25 @@ class ObjectMeasurementTableIndex:
         self,
         object_name: str,
         feature_name: str,
+        *,
+        dialect: RuntimeMeasurementLookupDialectLike = (
+            CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT
+        ),
     ) -> tuple[MeasurementTable, ...] | None:
         """Return indexed object tables that may carry one feature."""
-        tables = self.for_object(object_name)
+        query_object_name = resolve_runtime_measurement_lookup_dialect(
+            dialect
+        ).feature_lookup(feature_name).query_object_name(object_name)
+        tables = (
+            self.tables
+            if query_object_name is None
+            else self.for_object(query_object_name)
+        )
         if tables is None:
             return None
         candidates = measurement_feature_candidates(
             feature_name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            dialect=dialect,
         )
         return tuple(
             table
@@ -246,49 +268,6 @@ class ObjectMeasurementTableIndex:
             normalize_measurement_token(feature_name) in candidates
             for feature_name in feature_names
         )
-
-    def with_table(
-        self,
-        table: MeasurementTable,
-        *,
-        object_names: tuple[str, ...] | None = None,
-        table_semantics: MeasurementTableObjectFeatureSemantics | None = None,
-    ) -> "ObjectMeasurementTableIndex":
-        """Return this index updated with one object-subject measurement table."""
-        if table_semantics is None:
-            table_semantics = MeasurementTableObjectFeatureSemantics.from_table(table)
-        object_names = table_semantics.object_names if object_names is None else object_names
-        if not object_names:
-            return self
-        group_key = RuntimeSliceProjection.measurement_table_repeated_scalar_group_key(table)
-        scalar_group_size = self.repeated_scalar_group_sizes.get(group_key, 0)
-        projected_table = table
-        if (
-            scalar_group_size
-            and RuntimeSliceProjection.measurement_table_effective_slice_count(table) == 1
-        ):
-            projected_table = RuntimeSliceProjection.measurement_table_with_slice_offset(
-                table,
-                scalar_group_size,
-            )
-        repeated_scalar_group_sizes = dict(self.repeated_scalar_group_sizes)
-        repeated_scalar_group_sizes[group_key] = scalar_group_size + 1
-        tables_by_object = dict(self.tables_by_object)
-        for object_name in object_names:
-            existing_tables = tables_by_object.get(object_name, ())
-            tables_by_object[object_name] = (
-                *existing_tables,
-                projected_table,
-            )
-        feature_names_by_table = dict(self.feature_names_by_table)
-        feature_names_by_table[id(projected_table)] = table_semantics.feature_names
-        return ObjectMeasurementTableIndex(
-            MappingProxyType(tables_by_object),
-            feature_names_by_table=MappingProxyType(feature_names_by_table),
-            repeated_scalar_group_sizes=MappingProxyType(repeated_scalar_group_sizes),
-            complete=self.complete,
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class MeasurementTableCacheMutation:
@@ -426,7 +405,7 @@ class ObjectMeasurementTableCacheInvalidationPolicy(MeasurementQueryCacheInvalid
 
 
 class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
-    """Update cached object-subject indexes touched by measurement-table writes."""
+    """Invalidate object-subject indexes touched by measurement-table writes."""
 
     policy_name = "object_measurement_table_index"
 
@@ -436,13 +415,7 @@ class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutatio
             ObjectMeasurementTableIndexCacheKey(mutation.adapter.group_key, True),
             ObjectMeasurementTableIndexCacheKey(None, False),
         ):
-            object_table_index = object_table_index_cache.get(cache_key)
-            if object_table_index is None:
-                continue
-            object_table_index_cache[cache_key] = object_table_index.with_table(
-                mutation.table,
-                table_semantics=mutation.table_semantics,
-            )
+            object_table_index_cache.pop(cache_key, None)
 
 
 _OBJECT_MEASUREMENT_TABLE_PROCESS_CACHE: WeakKeyDictionary[
@@ -691,6 +664,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         cached = self._source_order_cache.get(cache_key)
         if cached is not None:
             return int(cached)
+        if self.processing_context is None:
+            self._source_order_cache[cache_key] = 1
+            return 1
 
         axis_id = str(self.axis_id)
         metadata_by_path = self.source_binding_context.source_metadata_by_path
@@ -719,6 +695,85 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         self._source_order_cache[cache_key] = 1
         return 1
 
+    def cellprofiler_image_number_for_source_paths(
+        self,
+        source_paths: tuple[str, ...],
+    ) -> int | None:
+        """Return the CellProfiler ImageNumber for source paths in image-set order."""
+        if not source_paths:
+            return None
+        pipeline_paths = tuple(
+            path
+            for path in self.source_binding_context.pipeline_input_files
+            if is_image_path(path)
+        )
+        if not pipeline_paths:
+            return None
+        first_source_path = self.cellprofiler_source_order_path(source_paths[0])
+        candidates = self.source_candidates(pipeline_paths)
+        matched_candidate = next(
+            (
+                candidate
+                for candidate in candidates
+                if first_source_path
+                in {
+                    self.cellprofiler_source_order_path(candidate.path),
+                    self.cellprofiler_source_order_path(candidate.resolved_path),
+                }
+            ),
+            None,
+        )
+        if matched_candidate is None:
+            return None
+
+        image_numbers_by_set: dict[SourceImageSetIdentity, int] = {}
+        for candidate in _ordered_source_candidates(candidates):
+            image_set_key = SourceImageSetIdentity.from_metadata(
+                candidate.metadata,
+                fallback_source_path=candidate.resolved_path,
+            )
+            if image_set_key not in image_numbers_by_set:
+                image_numbers_by_set[image_set_key] = len(image_numbers_by_set) + 1
+        return image_numbers_by_set.get(
+            SourceImageSetIdentity.from_metadata(
+                matched_candidate.metadata,
+                fallback_source_path=matched_candidate.resolved_path,
+            )
+        )
+
+    def cellprofiler_image_number_for_payload(
+        self,
+        payload: Any,
+    ) -> int | None:
+        """Return the CellProfiler ImageNumber for a payload carrying source paths."""
+        metadata = image_payload_metadata(payload)
+        source_paths = tuple(
+            str(path)
+            for path in metadata.channel_source_paths
+            if path is not None and str(path)
+        )
+        if not source_paths and metadata.source_path:
+            source_paths = (metadata.source_path,)
+        return self.cellprofiler_image_number_for_source_paths(source_paths)
+
+    def source_image_payload_for_name(
+        self,
+        image_name: str,
+        current_image: Any | None,
+    ) -> Any | None:
+        """Resolve an image name through source bindings or runtime image records."""
+        if current_image is not None and self.has_source_binding(
+            image_name,
+            ArtifactKind.IMAGE,
+        ):
+            return self.resolve_source_image(image_name, current_image)
+        if not self.has_runtime_artifact(name=image_name, kind=ArtifactKind.IMAGE):
+            return None
+        try:
+            return self.get_image(image_name).data
+        except RuntimeError:
+            return None
+
     def invalidate_runtime_query_caches_for_kind(self, kind: ArtifactKind) -> None:
         """Invalidate adapter caches whose semantic domain can change for ``kind``."""
         RuntimeArtifactCacheInvalidationPolicy.for_kind(kind).invalidate(self)
@@ -739,6 +794,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             return
         self._resolve_runtime_record(name=name, kind=kind)
         self._artifact_availability_cache[cache_key] = True
+
+    def has_runtime_artifact(self, *, name: str, kind: ArtifactKind) -> bool:
+        """Return whether this execution scope contains a runtime artifact."""
+        return bool(self._query_context().find(name=name, kind=kind))
 
     def resolve_source_image(
         self,
@@ -1213,6 +1272,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         labels: object,
         *,
         group_key: str | None = None,
+        image_number: int | None = None,
     ) -> tuple[Any, ...]:
         """Return object measurements aligned to label planes with adapter caching."""
         started_at = time.perf_counter()
@@ -1234,6 +1294,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             object_name=object_name,
             feature_name=feature_name,
             label_domain=label_domain,
+            image_number=image_number,
         )
         cached = self._measurement_cache.get(query)
         if cached is not None:
@@ -1259,10 +1320,19 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             return cached
         if label_array.ndim <= 2:
             tables_started_at = time.perf_counter()
-            tables = self.measurement_tables_for_object(
+            tables = self.measurement_tables_for_object_feature(
                 object_name,
+                feature_name,
                 group_key=group_key,
             )
+            runtime_slice_plane_index = self.runtime_slice_plane_index()
+            if image_number is not None:
+                tables = measurement_tables_for_image_number(tables, image_number)
+            elif runtime_slice_plane_index is not None:
+                tables = measurement_tables_for_slice(
+                    tables,
+                    runtime_slice_plane_index,
+                )
             _log_adapter_profile(
                 "adapter_object_label_query_tables",
                 time.perf_counter() - tables_started_at,
@@ -1312,13 +1382,32 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             count=len(tables),
         )
         extract_started_at = time.perf_counter()
-        values = measurement_values_for_label_slices(
-            tables,
-            feature_name,
-            labels,
-            object_name=object_name,
-            dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
-        )
+        if image_number is None:
+            values = measurement_values_for_label_slices(
+                tables,
+                feature_name,
+                labels,
+                object_name=object_name,
+                dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+            )
+        else:
+            label_planes = tuple(
+                label_array[index] for index in range(label_array.shape[0])
+            )
+            values = tuple(
+                measurement_values_for_feature(
+                    measurement_tables_for_image_number(
+                        tables,
+                        image_number + slice_index,
+                    ),
+                    feature_name,
+                    object_count=len(self._dense_label_domain(label_plane)),
+                    object_ids=self._dense_label_domain(label_plane),
+                    object_name=object_name,
+                    dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+                )
+                for slice_index, label_plane in enumerate(label_planes)
+            )
         _log_adapter_profile(
             "adapter_object_label_query_extract",
             time.perf_counter() - extract_started_at,
@@ -1339,7 +1428,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
 
     def measurement_values_for_label_slice_batch(
         self,
-        requests: Mapping[str, tuple[str, object]],
+        requests: Mapping[str, tuple[str, object, int | None]],
         *,
         feature_name: str,
         group_key: str | None = None,
@@ -1356,7 +1445,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         values_by_object: dict[str, tuple[Any, ...]] = {}
         object_label_values_cache = self.object_label_measurement_values_cache()
         cache_started_at = time.perf_counter()
-        for object_name, (_feature_name, labels) in requests.items():
+        for object_name, (_feature_name, labels, image_number) in requests.items():
             label_array = np.asarray(labels)
             label_arrays[object_name] = label_array
             label_domain = self._dense_label_domain(labels)
@@ -1367,6 +1456,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 object_name=object_name,
                 feature_name=feature_name,
                 label_domain=label_domain,
+                image_number=image_number,
             )
             cached = self._measurement_cache.get(query)
             if cached is None:
@@ -1402,6 +1492,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                     feature_name,
                     requests[object_name][1],
                     group_key=group_key,
+                    image_number=requests[object_name][2],
                 )
             _log_adapter_profile(
                 "adapter_object_label_batch_values",
@@ -1414,13 +1505,26 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             return MappingProxyType(values_by_object)
 
         tables_started_at = time.perf_counter()
+        runtime_slice_plane_index = self.runtime_slice_plane_index()
         tables_by_object = {
-            object_name: self.measurement_tables_for_object_feature(
-                object_name,
-                feature_name,
-                group_key=group_key,
+            object_name: (
+                measurement_tables_for_image_number(tables, image_number)
+                if image_number is not None
+                else (
+                    measurement_tables_for_slice(tables, runtime_slice_plane_index)
+                    if runtime_slice_plane_index is not None
+                    else tables
+                )
             )
             for object_name in uncached_queries
+            for image_number in (requests[object_name][2],)
+            for tables in (
+                self.measurement_tables_for_object_feature(
+                    object_name,
+                    feature_name,
+                    group_key=group_key,
+                ),
+            )
         }
         _log_adapter_profile(
             "adapter_object_label_batch_tables",

@@ -69,6 +69,7 @@ from openhcs.processing.backends.cellprofiler.relationships import (
 )
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
+    adapt_structuring_element_rank,
     apply_structuring_element,
     build_structuring_element,
 )
@@ -5732,6 +5733,7 @@ def dilate_objects(
         structuring_element_shape,
         structuring_element_size,
     )
+    footprint = adapt_structuring_element_rank(footprint, label_array.ndim)
     dilated_labels = grey_dilation(label_array, footprint=footprint)
     props_after = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
         dilated_labels.astype(np.int32, copy=False)

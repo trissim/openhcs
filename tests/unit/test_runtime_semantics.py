@@ -96,6 +96,19 @@ def test_object_label_domain_project_slice_selects_declared_plane_domain() -> No
     assert projected.scope is ObjectLabelDomainScope.PLANE
 
 
+def test_object_label_domain_project_slice_broadcasts_single_declared_plane_domain() -> None:
+    domain = ObjectLabelDomain(
+        declared_object_id_domains=((1, 2),),
+        scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    projected = domain.project_slice(slice_index=1, slice_count=2)
+
+    assert projected.declared_object_ids == (1, 2)
+    assert projected.declared_object_id_domains == ()
+    assert projected.scope is ObjectLabelDomainScope.PLANE
+
+
 def test_object_label_domain_project_slice_rejects_mismatched_plane_domains() -> None:
     domain = ObjectLabelDomain(
         declared_object_id_domains=((1, 2), (1, 2, 3, 4)),
@@ -103,7 +116,7 @@ def test_object_label_domain_project_slice_rejects_mismatched_plane_domains() ->
     )
 
     with pytest.raises(ValueError, match="must match PURE_2D slice count"):
-        domain.project_slice(slice_index=0, slice_count=1)
+        domain.project_slice(slice_index=0, slice_count=3)
 
 
 def test_compose_one_image_bundle_preserves_shared_crop_domain() -> None:
@@ -217,6 +230,36 @@ def test_object_label_parent_child_payload_aligns_parent_stack_to_child_plane() 
 
     assert payload.parent_ids == (1, 2)
     assert payload.child_ids == (1, 2)
+
+
+def test_object_label_parent_child_payload_preserves_plane_scoped_stack_identity() -> None:
+    parent_stack = ObjectLabelPayload(
+        labels=np.asarray(
+            (
+                ((1, 1, 0), (0, 0, 0)),
+                ((2, 2, 0), (0, 0, 0)),
+            ),
+            dtype=np.int32,
+        ),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+    child_stack = ObjectLabelPayload(
+        labels=np.asarray(
+            (
+                ((1, 1, 0), (0, 0, 0)),
+                ((1, 1, 0), (0, 0, 0)),
+            ),
+            dtype=np.int32,
+        ),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    payload = object_label_parent_child_payload(parent_stack, child_stack)
+
+    assert payload.parent_ids == (1, 2)
+    assert payload.child_ids == (1, 1)
+    assert payload.slice_indices == (0, 1)
+    assert payload.slice_count == 2
 
 
 def test_aligned_dense_object_label_arrays_applies_payload_domain_to_matching_raw_labels() -> None:

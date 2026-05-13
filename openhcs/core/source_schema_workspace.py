@@ -268,6 +268,48 @@ class SourceSchemaWorkspaceMaterialization:
             ),
         )
 
+    def primary_wells(self) -> tuple[str, ...]:
+        """Return sample identities represented by primary image mappings."""
+        parser = SourceSchemaFilenameParser()
+        wells: dict[str, None] = {}
+        for virtual_path in self.primary_mappings:
+            parsed = parser.parse_filename(virtual_path)
+            if parsed is None:
+                raise ValueError(
+                    f"Cannot parse source-schema virtual filename {virtual_path!r}."
+                )
+            wells[str(parsed["well"])] = None
+        return tuple(wells)
+
+    def source_paths_for_primary_wells(
+        self,
+        well_ids: Iterable[str],
+    ) -> tuple[Path, ...]:
+        """Return the complete source universe required for selected wells.
+
+        Primary mappings define the selected sample identities. Auxiliary mappings are
+        source artifacts, not sample-defining image sets, so they remain available to
+        native consumers that need illumination images or object seeds.
+        """
+        selected_wells = set(str(well_id) for well_id in well_ids)
+        if not selected_wells:
+            raise ValueError("well_ids must contain at least one well.")
+        parser = SourceSchemaFilenameParser()
+        paths: list[Path] = []
+        for virtual_path, real_path in self.primary_mappings.items():
+            parsed = parser.parse_filename(virtual_path)
+            if parsed is None:
+                raise ValueError(
+                    f"Cannot parse source-schema virtual filename {virtual_path!r}."
+                )
+            if str(parsed["well"]) in selected_wells:
+                paths.append((self.workspace_root / real_path).resolve())
+        paths.extend(
+            (self.workspace_root / real_path).resolve()
+            for real_path in self.auxiliary_mappings.values()
+        )
+        return tuple(dict.fromkeys(paths))
+
 
 @dataclass(frozen=True, slots=True)
 class SourceSchemaCandidate:
@@ -519,6 +561,109 @@ class ImageSetRecord:
             MappingProxyType(dict(self.candidates_by_alias)),
         )
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaImageSetSelection:
+    """Nominal source-schema sample selection before workspace materialization."""
+
+    well_filter: tuple[str, ...] = ()
+    max_image_set_count: int | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "well_filter",
+            tuple(dict.fromkeys(str(well) for well in self.well_filter)),
+        )
+        if self.max_image_set_count is not None and self.max_image_set_count <= 0:
+            raise ValueError("max_image_set_count must be positive.")
+
+    def apply(
+        self,
+        schema: PipelineImageSchema,
+        image_sets: tuple[ImageSetRecord, ...],
+    ) -> tuple[ImageSetRecord, ...]:
+        """Return image sets selected by source-schema well identity."""
+        selected = image_sets
+        if self.well_filter:
+            requested = set(self.well_filter)
+            selected = tuple(
+                image_set
+                for image_set in selected
+                if SourceSchemaImageSetIdentity(schema, image_set).well in requested
+            )
+            selected_wells = {
+                SourceSchemaImageSetIdentity(schema, image_set).well
+                for image_set in selected
+            }
+            missing = tuple(
+                well for well in self.well_filter if well not in selected_wells
+            )
+            if missing:
+                raise ValueError(
+                    "Requested source-schema wells are not available: "
+                    + ", ".join(missing)
+                )
+        if self.max_image_set_count is not None:
+            selected = self._limit_by_sample_count(
+                schema,
+                selected,
+                self.max_image_set_count,
+            )
+        if not selected:
+            raise ValueError("Source-schema image-set selection resolved to no images.")
+        return selected
+
+    def _limit_by_sample_count(
+        self,
+        schema: PipelineImageSchema,
+        image_sets: tuple[ImageSetRecord, ...],
+        max_sample_count: int,
+    ) -> tuple[ImageSetRecord, ...]:
+        """Keep all image sets belonging to the first selected sample identities."""
+        selected_wells: dict[str, None] = {}
+        for image_set in image_sets:
+            well = SourceSchemaImageSetIdentity(schema, image_set).well
+            selected_wells.setdefault(well, None)
+            if len(selected_wells) >= max_sample_count:
+                break
+        return tuple(
+            image_set
+            for image_set in image_sets
+            if SourceSchemaImageSetIdentity(schema, image_set).well in selected_wells
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaImageSetIdentity:
+    """Projected OpenHCS component identity for one source-schema image set."""
+
+    schema: PipelineImageSchema
+    image_set: ImageSetRecord
+
+    @property
+    def well(self) -> str:
+        grouping = self.schema.grouping
+        if grouping is None or not grouping.metadata_fields:
+            return ComponentProjection.resolve(
+                AllComponents.WELL,
+                self.image_set.metadata,
+                self.image_set.index,
+            )
+
+        group_metadata = _grouping_metadata(
+            self.image_set.metadata,
+            grouping.metadata_fields,
+        )
+        if _grouping_fields_project_to_well(grouping.metadata_fields):
+            projected = ComponentProjection.resolve_from_metadata(
+                AllComponents.WELL,
+                group_metadata,
+            )
+            if projected is not None:
+                return projected
+        return _grouping_axis_value(group_metadata, grouping.metadata_fields)
 
 
 class ComponentProjection(ABC, metaclass=AutoRegisterMeta):
@@ -782,29 +927,27 @@ class OrderImageSetAssembler(ImageSetAssembler):
     method = SourceBindingMatchMethod.ORDER
     method_key = SourceBindingMatchMethod.ORDER.value
 
+    def image_set_count(
+        self,
+        candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+    ) -> int:
+        """Return the count of complete CellProfiler order-matched image sets."""
+        return min(
+            (len(candidates) for candidates in candidates_by_alias.values()),
+            default=0,
+        )
+
     def image_sets(
         self,
         schema: PipelineImageSchema,
         candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
     ) -> tuple[ImageSetRecord, ...]:
         aliases = tuple(candidates_by_alias)
-        lengths = {alias: len(candidates_by_alias[alias]) for alias in aliases}
-        image_set_count = max(lengths.values(), default=0)
-        non_singleton_lengths = {
-            length for length in lengths.values() if length not in (0, 1)
-        }
-        if len(non_singleton_lengths) > 1:
-            raise ValueError(
-                "Order-based source projection requires each image alias to match "
-                "the same number of files, except singleton aliases that can be "
-                f"broadcast across image sets; got {lengths!r}."
-            )
+        image_set_count = self.image_set_count(candidates_by_alias)
         image_sets: list[ImageSetRecord] = []
         for index in range(image_set_count):
             candidates = {
-                alias: candidates_by_alias[alias][
-                    0 if len(candidates_by_alias[alias]) == 1 else index
-                ]
+                alias: candidates_by_alias[alias][index]
                 for alias in aliases
             }
             image_sets.append(
@@ -826,6 +969,7 @@ def materialize_source_schema_workspace(
     source_backend: Backend | str = Backend.DISK,
     workspace_backend: Backend | str = Backend.DISK,
     max_image_set_count: int | None = None,
+    image_set_selection: SourceSchemaImageSetSelection | None = None,
 ) -> SourceSchemaWorkspaceMaterialization:
     """Create an OpenHCS virtual workspace from typed source-schema semantics."""
 
@@ -837,6 +981,9 @@ def materialize_source_schema_workspace(
     workspace_backend_name = _backend_name(workspace_backend)
     if max_image_set_count is not None and max_image_set_count <= 0:
         raise ValueError("max_image_set_count must be positive.")
+    selection = image_set_selection or SourceSchemaImageSetSelection(
+        max_image_set_count=max_image_set_count,
+    )
     if not _vfs_is_dir(source_root, filemanager=filemanager, backend=source_backend_name):
         raise FileNotFoundError(f"Source root does not exist: {source_root}")
     _vfs_ensure_directory(
@@ -871,8 +1018,7 @@ def materialize_source_schema_workspace(
             schema,
             stack_candidates,
         )
-        if max_image_set_count is not None:
-            image_sets = image_sets[:max_image_set_count]
+        image_sets = selection.apply(schema, image_sets)
         primary_mappings, primary_source_metadata, component_values = _primary_workspace_mappings(
             workspace_root,
             schema,
@@ -1181,7 +1327,9 @@ def _source_candidates(
             imported_metadata,
             path=relative_path,
         )
-        metadata = _metadata_with_filename_component_fallbacks(path.name, metadata)
+        metadata = SourceSchemaFilenameComponentFallbackPolicy.for_schema(
+            schema
+        ).metadata(path.name, metadata)
         candidates.append(
             SourceSchemaCandidate(
                 path=path,
@@ -1190,6 +1338,30 @@ def _source_candidates(
             )
         )
     return tuple(candidates)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaFilenameComponentFallbackPolicy:
+    """Recover missing component tokens from common source filename conventions."""
+
+    enabled: bool
+
+    @classmethod
+    def for_schema(
+        cls,
+        schema: PipelineImageSchema,
+    ) -> "SourceSchemaFilenameComponentFallbackPolicy":
+        del schema
+        return cls(enabled=True)
+
+    def metadata(
+        self,
+        filename: str,
+        metadata: Mapping[str, str],
+    ) -> Mapping[str, str]:
+        if not self.enabled:
+            return MappingProxyType(dict(metadata))
+        return _metadata_with_filename_component_fallbacks(filename, metadata)
 
 
 def _metadata_with_filename_component_fallbacks(
@@ -1641,7 +1813,7 @@ def _primary_workspace_mappings(
     site_indexes_by_well: dict[str, int] = {}
     used_paths_by_well_channel: dict[tuple[str, int], set[str]] = {}
     for image_set in image_sets:
-        well = _workspace_well(schema, image_set)
+        well = SourceSchemaImageSetIdentity(schema, image_set).well
         site_index = site_indexes_by_well.get(well, 0)
         site = ComponentProjection.resolve(
             AllComponents.SITE,
@@ -1815,29 +1987,6 @@ def _collision_free_site_component(
             used_paths.add(ordinal_path)
             return ordinal_component
         ordinal_component += 1
-
-
-def _workspace_well(
-    schema: PipelineImageSchema,
-    image_set: ImageSetRecord,
-) -> str:
-    grouping = schema.grouping
-    if grouping is None or not grouping.metadata_fields:
-        return ComponentProjection.resolve(
-            AllComponents.WELL,
-            image_set.metadata,
-            image_set.index,
-        )
-
-    group_metadata = _grouping_metadata(image_set.metadata, grouping.metadata_fields)
-    if _grouping_fields_project_to_well(grouping.metadata_fields):
-        projected = ComponentProjection.resolve_from_metadata(
-            AllComponents.WELL,
-            group_metadata,
-        )
-        if projected is not None:
-            return projected
-    return _grouping_axis_value(group_metadata, grouping.metadata_fields)
 
 
 def _grouping_metadata(

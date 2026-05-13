@@ -24,6 +24,7 @@ from openhcs.core.image_shapes import (
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import MEMORY_TYPE_NUMPY, convert_memory, detect_memory_type
 from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
+from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_semantics import (
     SourceSpatialDomain,
     SourceSpatialDomainAdapter,
@@ -39,6 +40,7 @@ from openhcs.core.runtime_values import (
     image_payload_metadata,
     image_payload_data,
     image_payload_mask,
+    project_image_mask_to_data_domain,
     object_label_dense_data,
     object_label_payload_with_measurement_labels,
     image_payload_with_context,
@@ -237,6 +239,9 @@ class ImagePayloadSliceProjector:
             candidate_shape = tuple(candidate.shape)
             if candidate_shape == data_shape or candidate_shape == spatial_shape:
                 return candidate
+            projected_mask = project_image_mask_to_data_domain(candidate, data_slice)
+            if projected_mask is not None:
+                return projected_mask
         raise ValueError(
             "Image payload mask cannot be projected into slice domain; "
             f"got mask {mask_array.shape!r} for slice {data_shape!r}."
@@ -244,14 +249,23 @@ class ImagePayloadSliceProjector:
 
     @staticmethod
     def _mask_candidates(mask: np.ndarray, index: int) -> tuple[np.ndarray, ...]:
-        candidates: list[np.ndarray] = [mask]
+        candidates: list[np.ndarray] = []
         if mask.ndim >= 3 and mask.shape[0] > index:
             candidates.append(mask[index])
+        from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+
+        plane_stack = RuntimeSliceProjection.grayscale_plane_stack_view(
+            mask,
+            flatten_high_rank=True,
+        )
+        if plane_stack is not None and plane_stack.shape[0] > index:
+            candidates.append(plane_stack[index])
         if mask.ndim >= 3 and mask.shape[0] == 1:
             child = mask[0]
             candidates.append(child)
             if child.ndim >= 3 and child.shape[0] > index:
                 candidates.append(child[index])
+        candidates.append(mask)
         return tuple(candidates)
 
 
@@ -527,6 +541,33 @@ class PayloadSliceAlignedKwargResolutionStrategy(
                 slices[resolver.slice_index]
             )
         return resolver.without_slice_context().resolve(slices[0])
+
+
+class RuntimeSliceAlignedValueKwargResolutionStrategy(
+    AlignedImageStackKwargResolutionStrategy
+):
+    """Select non-image values that explicitly declare runtime-slice alignment."""
+
+    value_type = RuntimeSliceAlignedValueSet
+
+    def resolve(
+        self,
+        value: Any,
+        resolver: AlignedImageStackKwargResolver,
+    ) -> Any:
+        if not isinstance(value, RuntimeSliceAlignedValueSet):
+            raise TypeError(
+                "RuntimeSliceAlignedValueKwargResolutionStrategy requires "
+                "RuntimeSliceAlignedValueSet."
+            )
+        if value.slice_count == resolver.slice_count:
+            return value.value_for_slice(resolver.slice_index)
+        if value.slice_count == 1:
+            return value.value_for_slice(0)
+        raise ValueError(
+            "Runtime-slice-aligned kwarg has incompatible slice count "
+            f"{value.slice_count}; expected 1 or {resolver.slice_count}."
+        )
 
 
 class PassThroughAlignedKwargResolutionStrategy(AlignedImageStackKwargResolutionStrategy):

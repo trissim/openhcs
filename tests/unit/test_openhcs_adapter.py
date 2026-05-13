@@ -7,7 +7,10 @@ from types import SimpleNamespace
 from benchmark.adapters.openhcs import (
     OPENHCS_AXIS_FILTER_PARAM,
     OPENHCS_MAX_AXIS_COUNT_PARAM,
+    OPENHCS_NUM_WORKERS_PARAM,
+    OPENHCS_USE_THREADING_PARAM,
     OpenHCSAxisSelection,
+    OpenHCSBenchmarkExecutionConfig,
     OpenHCSRunRequest,
     RuntimeExecutionCacheWritePolicy,
     _cacheable_runtime_records,
@@ -49,6 +52,18 @@ def test_openhcs_axis_selection_treats_single_string_as_one_axis() -> None:
     )
 
     assert selection.resolve(("B01", "B02")) == ("B02",)
+
+
+def test_openhcs_benchmark_execution_config_supports_threaded_single_process() -> None:
+    config = OpenHCSBenchmarkExecutionConfig.from_pipeline_params(
+        {
+            OPENHCS_NUM_WORKERS_PARAM: 1,
+            OPENHCS_USE_THREADING_PARAM: True,
+        }
+    )
+
+    assert config.num_workers == 1
+    assert config.use_threading is True
 
 
 def test_runtime_execution_cache_policy_disables_discarded_candidate_runs() -> None:

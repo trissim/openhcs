@@ -1705,16 +1705,16 @@ class TertiaryObjectInputs:
         primary_labels: np.ndarray | ObjectLabelPayload,
         secondary_labels: np.ndarray | ObjectLabelPayload,
     ) -> "TertiaryObjectInputs":
-        primary_array = object_label_dense_array(primary_labels, dtype=np.int32)
-        secondary_array = object_label_dense_array(secondary_labels, dtype=np.int32)
+        primary_array, secondary_array = aligned_dense_object_label_arrays(
+            primary_labels,
+            secondary_labels,
+        )
+        primary_array = np.asarray(primary_array, dtype=np.int32)
+        secondary_array = np.asarray(secondary_array, dtype=np.int32)
         if primary_array.ndim == 3:
             primary_array = primary_array[0]
         if secondary_array.ndim == 3:
             secondary_array = secondary_array[0]
-        primary_array, secondary_array = aligned_dense_object_label_arrays(
-            primary_array,
-            secondary_array,
-        )
         if primary_array.shape != secondary_array.shape:
             raise ValueError(
                 f"Primary and secondary label shapes must match. "

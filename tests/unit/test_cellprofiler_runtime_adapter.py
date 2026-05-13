@@ -14,12 +14,17 @@ from openhcs.interop.cellprofiler.runtime import (
     CellProfilerRuntimeAdapter,
 )
 from openhcs.interop.cellprofiler.runtime.adapter import _single_spatial_grid
+from openhcs.interop.cellprofiler.runtime.module_execution import (
+    ConcatenatedMeasurementColumnarRows,
+)
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
 )
 from openhcs.core.runtime_artifact_queries import (
+    measurement_rows,
     measurement_values_for_label_slices,
     measurement_values_for_feature,
+    measurement_tables_for_image_number,
 )
 from benchmark.cellprofiler_library import get_function
 from openhcs.core.artifacts import (
@@ -55,6 +60,7 @@ from openhcs.core.source_bindings import (
 )
 from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
+from openhcs.core.runtime_semantics import RuntimePlaneProjection
 from openhcs.core.runtime_values import (
     FieldSpec,
     ImagePayloadMetadata,
@@ -1017,6 +1023,55 @@ def test_cellprofiler_adapter_measurement_query_cache_is_store_scoped():
         )[0],
         [4.0, 12.0],
     )
+
+
+def test_cellprofiler_adapter_projects_duplicate_object_labels_to_current_runtime_slice():
+    filemanager = FileManagerStub()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=RuntimeValueStore(),
+        axis_id=AXIS_ID,
+        artifact_outputs={
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            NUCLEI_MEASUREMENTS: _plan(NUCLEI_MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        },
+        source_binding_plan=CompiledSourceBindingPlan.from_config(
+            StepSourceBindingsConfig(
+                groups=(
+                    GroupedSourceBindings(
+                        bindings=(NamedSourceBinding(alias=DNA_IMAGE),)
+                    ),
+                )
+            )
+        ),
+        filemanager=filemanager,
+        plane_projection=RuntimePlaneProjection.group(1),
+    )
+    labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        NUCLEI_MEASUREMENTS,
+        [
+            {
+                "slice_index": slice_index,
+                "object_name": NUCLEI,
+                "object_label": object_label,
+                "feature_name": "AreaShape_Area",
+                "result_value": value,
+            }
+            for slice_index, values in enumerate(((100.0, 200.0), (500.0, 600.0)))
+            for object_label, value in enumerate(values, start=1)
+        ],
+        object_name=NUCLEI,
+    )
+
+    value_slices = adapter.measurement_values_for_label_slices(
+        NUCLEI,
+        "AreaShape_Area",
+        labels,
+    )
+
+    assert len(value_slices) == 1
+    np.testing.assert_allclose(value_slices[0], [500.0, 600.0])
 
 
 def test_cellprofiler_adapter_adds_relationships_after_objects_exist():
@@ -2811,6 +2866,7 @@ def test_measurement_lookup_aligns_values_to_label_slices():
             dtype=np.int32,
         ),
         object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
     )
 
     assert len(value_slices) == 2
@@ -2848,6 +2904,90 @@ def test_measurement_lookup_does_not_stop_on_broad_cellprofiler_alias():
     )
 
     np.testing.assert_allclose(value_slices[0], [0.0549019612, 0.9607843161])
+
+
+def test_measurement_lookup_uses_canonical_runtime_identifier_for_numbered_features():
+    values = measurement_values_for_feature(
+        (
+            MeasurementTable(
+                name=MEASUREMENTS,
+                rows=(
+                    {"Children_PH3_Count": 2.0},
+                    {"Children_PH3_Count": 5.0},
+                ),
+            ),
+        ),
+        "Children_PH3_Count",
+        object_count=2,
+        object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    np.testing.assert_array_equal(values, np.array([2.0, 5.0]))
+
+
+def test_cellprofiler_child_count_lookup_uses_parent_row_domain():
+    lookup = CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT.feature_lookup(
+        "Children_PH3_Count"
+    )
+
+    assert lookup.query_object_name(NUCLEI) is None
+
+
+def test_adapter_batch_child_count_lookup_uses_parent_row_domain():
+    adapter, _filemanager = _adapter(
+        {
+            "PH3": _plan("PH3", ArtifactKind.OBJECT_LABELS),
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2]], dtype=np.int32)
+    adapter.add_objects("PH3", labels)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        MEASUREMENTS,
+        (
+            {"object_name": NUCLEI, "object_label": 1, "Children_PH3_Count": 2.0},
+            {"object_name": NUCLEI, "object_label": 2, "Children_PH3_Count": 5.0},
+        ),
+        fields=(
+            FieldSpec("object_name", str),
+            FieldSpec("object_label", int),
+            FieldSpec("Children_PH3_Count", float),
+        ),
+        object_name=NUCLEI,
+        object_id_field="object_label",
+    )
+
+    values_by_object = adapter.measurement_values_for_label_slice_batch(
+        {"PH3": ("Children_PH3_Count", labels, None)},
+        feature_name="Children_PH3_Count",
+    )
+
+    np.testing.assert_allclose(values_by_object["PH3"][0], [2.0, 5.0])
+
+
+def test_child_count_lookup_tolerates_heterogeneous_relationship_summary_rows():
+    table = MeasurementTable(
+        name=RELATE_OBJECTS,
+        rows=(
+            {"image_number": 1, "child_object_count": 2},
+            {"object_name": NUCLEI, "object_label": 1, "Children_PH3_Count": 2.0},
+            {"object_name": NUCLEI, "object_label": 2, "Children_PH3_Count": 0.0},
+        ),
+    )
+    projected_table = measurement_tables_for_image_number((table,), 1)[0]
+
+    values = measurement_values_for_feature(
+        (projected_table,),
+        "Children_PH3_Count",
+        object_count=2,
+        object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    np.testing.assert_allclose(values, [2.0, 0.0])
 
 
 def test_adapter_feature_prefilter_scans_heterogeneous_wide_rows():
@@ -2919,6 +3059,185 @@ def test_measurement_lookup_filters_source_qualified_columnar_feature_rows():
     np.testing.assert_allclose(values, [0.05, 0.80])
 
 
+def test_measurement_lookup_preserves_heterogeneous_columnar_batch_features():
+    rows = ConcatenatedMeasurementColumnarRows(
+        (
+            SimpleColumnarRows(
+                {
+                    "object_name": (NUCLEI, NUCLEI),
+                    "object_label": (1, 2),
+                    "source_image_name": (DNA_IMAGE, DNA_IMAGE),
+                    "mean_intensity": (0.90, 0.95),
+                }
+            ),
+            SimpleColumnarRows(
+                {
+                    "object_name": (NUCLEI, NUCLEI),
+                    "object_label": (1, 2),
+                    "source_image_name": ("rawGFP", "rawGFP"),
+                    "MeanIntensity_rawGFP": (0.05, 0.80),
+                }
+            ),
+        )
+    )
+
+    values = measurement_values_for_feature(
+        (MeasurementTable(name=MEASURE_OBJECT_INTENSITY, rows=rows),),
+        "Intensity_MeanIntensity_rawGFP",
+        object_count=2,
+        object_ids=(1, 2),
+        object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    np.testing.assert_allclose(values, [0.05, 0.80])
+
+
+def test_measurement_image_number_projection_keeps_axis_invariant_columnar_rows():
+    rows = ConcatenatedMeasurementColumnarRows(
+        (
+            SimpleColumnarRows(
+                {
+                    "object_name": (NUCLEI,),
+                    "object_label": (1,),
+                    "image_number": (23,),
+                    "source_image_name": (DNA_IMAGE,),
+                    "mean_intensity": (0.90,),
+                }
+            ),
+            SimpleColumnarRows(
+                {
+                    "object_name": (NUCLEI,),
+                    "object_label": (1,),
+                    "source_image_name": ("rawGFP",),
+                    "mean_intensity": (0.05,),
+                }
+            ),
+        )
+    )
+    table = MeasurementTable(name=MEASURE_OBJECT_INTENSITY, rows=rows)
+
+    values = measurement_values_for_feature(
+        measurement_tables_for_image_number((table,), 23),
+        "Intensity_MeanIntensity_rawGFP",
+        object_count=1,
+        object_ids=(1,),
+        object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    np.testing.assert_allclose(values, [0.05])
+
+
+def test_measurement_image_number_projection_treats_singleton_axis_as_invariant():
+    rows = SimpleColumnarRows(
+        {
+            "object_name": (NUCLEI,),
+            "object_label": (1,),
+            "image_number": (1,),
+            "source_image_name": ("rawGFP",),
+            "mean_intensity": (0.05,),
+        }
+    )
+    table = MeasurementTable(name=MEASURE_OBJECT_INTENSITY, rows=rows)
+
+    values = measurement_values_for_feature(
+        measurement_tables_for_image_number((table,), 23),
+        "Intensity_MeanIntensity_rawGFP",
+        object_count=1,
+        object_ids=(1,),
+        object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    np.testing.assert_allclose(values, [0.05])
+
+
+def test_measurement_image_number_projection_does_not_treat_row_sequence_singleton_axis_as_invariant():
+    table = MeasurementTable(
+        name=MEASURE_OBJECT_INTENSITY,
+        rows=[
+            {
+                "object_name": NUCLEI,
+                "object_label": 1,
+                "image_number": 1,
+                "mean_intensity": 0.05,
+            },
+        ],
+    )
+
+    projected = measurement_tables_for_image_number((table,), 23)
+
+    assert measurement_rows(projected) == ()
+
+
+def test_measurement_lookup_allows_empty_multiplane_label_planes():
+    labels = np.array(
+        [
+            [[0, 0]],
+            [[1, 2]],
+        ],
+        dtype=np.int32,
+    )
+    measurement_rows = SimpleColumnarRows(
+        {
+            "slice_index": (1, 1),
+            "object_name": (NUCLEI, NUCLEI),
+            "object_label": (1, 2),
+            "source_image_name": ("rawGFP", "rawGFP"),
+            "mean_intensity": (0.25, 0.75),
+        }
+    )
+
+    value_slices = measurement_values_for_label_slices(
+        (
+            MeasurementTable(
+                name=MEASURE_OBJECT_INTENSITY,
+                rows=measurement_rows,
+            ),
+        ),
+        "Intensity_MeanIntensity_rawGFP",
+        labels,
+        object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    assert value_slices[0].size == 0
+    np.testing.assert_allclose(value_slices[1], [0.25, 0.75])
+
+
+def test_measurement_lookup_broadcasts_singleton_columnar_slice_to_label_stack():
+    value_slices = measurement_values_for_label_slices(
+        (
+            MeasurementTable(
+                name=MEASURE_OBJECT_INTENSITY,
+                rows=SimpleColumnarRows(
+                    {
+                        "slice_index": (0, 0),
+                        "object_name": (NUCLEI, NUCLEI),
+                        "object_label": (1, 2),
+                        "source_image_name": ("rawGFP", "rawGFP"),
+                        "mean_intensity": (0.25, 0.75),
+                    }
+                ),
+            ),
+        ),
+        "Intensity_MeanIntensity_rawGFP",
+        np.array(
+            [
+                [[1, 0], [0, 0]],
+                [[2, 0], [0, 0]],
+            ],
+            dtype=np.int32,
+        ),
+        object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
+    )
+
+    np.testing.assert_allclose(value_slices[0], [0.25])
+    np.testing.assert_allclose(value_slices[1], [0.75])
+
+
 def test_measurement_lookup_broadcasts_singleton_indexed_slice_to_label_stack():
     value_slices = measurement_values_for_label_slices(
         (
@@ -2950,6 +3269,7 @@ def test_measurement_lookup_broadcasts_singleton_indexed_slice_to_label_stack():
             dtype=np.int32,
         ),
         object_name=NUCLEI,
+        dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
     )
 
     assert len(value_slices) == 2
@@ -3048,6 +3368,62 @@ def test_calculate_math_records_object_indexed_measurements():
             object_name=NUCLEI,
         ),
         np.array([0.5, 0.25]),
+    )
+
+
+def test_calculate_math_pads_missing_same_object_operand_values():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2], [0, 0]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "object_name": NUCLEI,
+                "object_label": 1,
+                "mean_intensity": 10.0,
+                "area": 20.0,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 2,
+                "mean_intensity": 20.0,
+            },
+        ],
+        object_name=NUCLEI,
+    )
+    executor = _executor(
+        CALCULATE_MATH,
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+    )
+
+    executor.run(
+        get_function(CALCULATE_MATH),
+        np.zeros((2, 2), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        output_name="Ratio",
+        operation="Divide",
+        operand1_feature="Intensity_MeanIntensity_CropBlue",
+        operand2_feature="AreaShape_Area",
+        operand1_object_name=NUCLEI,
+        operand2_object_name=NUCLEI,
+        dtype_config=DtypeConfig(),
+    )
+
+    measurements = adapter.get_measurements(MEASUREMENTS)
+    assert [row["object_label"] for row in measurements.rows] == [1, 2]
+    np.testing.assert_allclose(
+        [row["result_value"] for row in measurements.rows],
+        [0.5, np.nan],
+        equal_nan=True,
     )
 
 
@@ -3232,6 +3608,63 @@ def test_classify_objects_binds_runtime_measurement_values():
         (1, "Classify_Bin_2", 0),
         (2, "Classify_Bin_1", 0),
         (2, "Classify_Bin_2", 1),
+    }
+
+
+def test_classify_objects_area_shape_uses_current_label_domain():
+    adapter, _filemanager = _adapter(
+        {
+            NUCLEI: _plan(NUCLEI, ArtifactKind.OBJECT_LABELS),
+            "PriorMeasurements": _plan("PriorMeasurements", ArtifactKind.MEASUREMENTS),
+            MEASUREMENTS: _plan(MEASUREMENTS, ArtifactKind.MEASUREMENTS),
+        }
+    )
+    labels = np.array([[1, 2], [0, 2]], dtype=np.int32)
+    adapter.add_objects(NUCLEI, labels)
+    adapter.add_measurements(
+        "PriorMeasurements",
+        [
+            {
+                "object_name": NUCLEI,
+                "object_label": 1,
+                "feature_name": "AreaShape_Area",
+                "result_value": 99.0,
+            },
+            {
+                "object_name": NUCLEI,
+                "object_label": 2,
+                "feature_name": "AreaShape_Area",
+                "result_value": 99.0,
+            },
+        ],
+        object_name=NUCLEI,
+    )
+    executor = _executor(
+        "ClassifyObjectsSingleMeasurement",
+        (ArtifactSpec(MEASUREMENTS, ArtifactKind.MEASUREMENTS),),
+        inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+        runtime_artifact_inputs=(ArtifactSpec(NUCLEI, ArtifactKind.OBJECT_LABELS),),
+    )
+
+    executor.run(
+        get_function("ClassifyObjects"),
+        np.zeros((2, 2), dtype=np.float32),
+        cellprofiler_runtime=adapter,
+        measurement_feature="AreaShape_Area",
+        bin_choice="even",
+        bin_count=2,
+        low_threshold=0.0,
+        high_threshold=2.0,
+        dtype_config=DtypeConfig(),
+    )
+
+    assert {
+        (row["feature_name"], row["result_value"])
+        for row in adapter.get_measurements(MEASUREMENTS).rows
+        if row.get("feature_name", "").endswith("NumObjectsPerBin")
+    } == {
+        ("Classify_Bin_1_NumObjectsPerBin", 1),
+        ("Classify_Bin_2_NumObjectsPerBin", 1),
     }
 
 
