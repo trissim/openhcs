@@ -922,32 +922,10 @@ def _plot_grouped_metric_broken(
     metric: FigureMetricSpec,
     broken_range: tuple[float, float, float],
 ) -> tuple[Path, ...]:
-    del broken_range
-    panels = PIPELINE_LABEL_LAYOUT.panels(request.pipeline_names, request.wrap_after)
+    panels = (tuple(request.pipeline_names),)
     row_index = {(row.pipeline_name, row.method): row for row in request.rows}
-    panel_breaks = tuple(
-        LINEAR_AXIS_BREAK_POLICY.range_for(
-            tuple(
-                value
-                for pipeline_name in panel
-                for method in request.methods
-                if (
-                    value := METRIC_PROJECTION.value(
-                        row_index.get((pipeline_name, method)),
-                        metric,
-                    )
-                )
-                is not None
-            )
-        )
-        for panel in panels
-    )
-    panel_axis_counts = tuple(2 if panel_break is not None else 1 for panel_break in panel_breaks)
-    height_ratios = tuple(
-        ratio
-        for panel_break in panel_breaks
-        for ratio in ((1.0, 3.2) if panel_break is not None else (3.2,))
-    )
+    panel_axis_counts = (2,)
+    height_ratios = (1.0, 3.2)
     fig_width = max(
         8.0,
         max(len(panel) for panel in panels) * request.group_width_inches,
@@ -958,11 +936,10 @@ def _plot_grouped_metric_broken(
             1,
             figsize=(
                 fig_width,
-                sum(5.7 if panel_break is not None else 4.8 for panel_break in panel_breaks)
-                + 1.5,
+                7.2,
             ),
             gridspec_kw={"height_ratios": height_ratios},
-            sharex=False,
+            sharex=True,
             layout="constrained",
         )
         all_axes = (axes,) if sum(panel_axis_counts) == 1 else tuple(axes.flat)
@@ -971,17 +948,11 @@ def _plot_grouped_metric_broken(
 
         axis_offset = 0
         for panel_index, panel_names in enumerate(panels):
-            panel_break = panel_breaks[panel_index]
-            if panel_break is None:
-                panel_axes = (all_axes[axis_offset],)
-                axis_offset += 1
-                label_axis = panel_axes[0]
-            else:
-                top_axis = all_axes[axis_offset]
-                bottom_axis = all_axes[axis_offset + 1]
-                axis_offset += 2
-                panel_axes = (top_axis, bottom_axis)
-                label_axis = bottom_axis
+            top_axis = all_axes[axis_offset]
+            bottom_axis = all_axes[axis_offset + 1]
+            axis_offset += 2
+            panel_axes = (top_axis, bottom_axis)
+            label_axis = bottom_axis
             x_positions = tuple(range(len(panel_names)))
             for axis in panel_axes:
                 for method_index, method in enumerate(request.methods):
@@ -1018,17 +989,13 @@ def _plot_grouped_metric_broken(
                 axis.set_xticks(list(x_positions))
                 axis.margins(x=0.01)
 
-            if panel_break is not None:
-                top_axis, bottom_axis = panel_axes
-                top_axis.set_ylim(panel_break[1], panel_break[2])
-                bottom_axis.set_ylim(
-                    metric.minimum_ylim if metric.minimum_ylim is not None else 0.0,
-                    panel_break[0],
-                )
-                top_axis.set_xticklabels(())
-                LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
-            elif metric.minimum_ylim is not None:
-                label_axis.set_ylim(bottom=metric.minimum_ylim)
+            top_axis.set_ylim(broken_range[1], broken_range[2])
+            bottom_axis.set_ylim(
+                metric.minimum_ylim if metric.minimum_ylim is not None else 0.0,
+                broken_range[0],
+            )
+            top_axis.set_xticklabels(())
+            LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
             label_axis.set_xticklabels(
                 [PIPELINE_LABEL_LAYOUT.split_label(name) for name in panel_names],
                 rotation=42,

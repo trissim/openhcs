@@ -5,6 +5,8 @@ from pathlib import Path
 
 from benchmark.reports.cppipe_figures import LINEAR_AXIS_BREAK_POLICY
 from benchmark.well_throughput_scaling import (
+    ModuleAbstractionCoverageKind,
+    ModuleAbstractionCoverageTable,
     NativeCellProfilerExecutionBaseline,
     PresentationAxisBand,
     PresentationAxisBandPolicy,
@@ -738,3 +740,80 @@ def test_well_throughput_presentation_report_uses_existing_figure_pack(
     assert len(summary_rows) == 9
     assert summary_rows[0]["worker_count"] == "2"
     assert summary_rows[0]["wells_per_core"] == "2"
+
+
+def test_module_abstraction_coverage_table_maps_existing_family_coverage(
+    tmp_path: Path,
+) -> None:
+    coverage_csv = tmp_path / "module_coverage_semantic_families.csv"
+    with coverage_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=(
+                "module_name",
+                "semantic_family",
+                "family_coverage",
+                "corpus_coverage",
+                "category",
+                "dimensionality",
+                "respects_masks",
+                "family_supported_modules",
+                "family_absorbed_modules",
+            ),
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "module_name": "MeasureObjectSizeShape",
+                "semantic_family": "measure_objects",
+                "family_coverage": "direct_supported",
+                "corpus_coverage": "supported_corpus",
+                "category": "measurement",
+                "dimensionality": "TWO_D",
+                "respects_masks": "True",
+                "family_supported_modules": "MeasureObjectSizeShape",
+                "family_absorbed_modules": "MeasureObjectSizeShape;MeasureObjectIntensity",
+            }
+        )
+        writer.writerow(
+            {
+                "module_name": "MeasureObjectIntensity",
+                "semantic_family": "measure_objects",
+                "family_coverage": "semantic_family_supported",
+                "corpus_coverage": "not_in_corpus",
+                "category": "measurement",
+                "dimensionality": "TWO_D",
+                "respects_masks": "True",
+                "family_supported_modules": "MeasureObjectSizeShape",
+                "family_absorbed_modules": "MeasureObjectSizeShape;MeasureObjectIntensity",
+            }
+        )
+        writer.writerow(
+            {
+                "module_name": "UncoveredModule",
+                "semantic_family": "uncovered",
+                "family_coverage": "not_supported",
+                "corpus_coverage": "not_in_corpus",
+                "category": "",
+                "dimensionality": "",
+                "respects_masks": "False",
+                "family_supported_modules": "",
+                "family_absorbed_modules": "UncoveredModule",
+            }
+        )
+
+    table = ModuleAbstractionCoverageTable.from_semantic_family_csv(coverage_csv)
+    grouped_rows = table.grouped_rows()
+
+    assert tuple(
+        row.module_name
+        for row in grouped_rows[ModuleAbstractionCoverageKind.EXPLICIT]
+    ) == ("MeasureObjectSizeShape",)
+    assert tuple(
+        row.module_name
+        for row in grouped_rows[ModuleAbstractionCoverageKind.SHARED_ABSTRACTION]
+    ) == ("MeasureObjectIntensity",)
+    assert tuple(
+        row.module_name
+        for row in grouped_rows[ModuleAbstractionCoverageKind.UNCOVERED]
+    ) == ("UncoveredModule",)

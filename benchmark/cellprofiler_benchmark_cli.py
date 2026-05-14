@@ -335,10 +335,41 @@ class PlotWellThroughputPresentationCommand(BenchmarkCliCommand):
             action="append",
             default=[],
         )
+        parser.add_argument(
+            "--module-coverage-semantic-families-csv",
+            type=Path,
+            help=(
+                "Existing module_coverage_semantic_families.csv to include in "
+                "the presentation pack."
+            ),
+        )
+        parser.add_argument(
+            "--module-coverage-manifest",
+            type=Path,
+            default=Path("benchmark/manifests/official30_portable_axis1.json"),
+            help=(
+                "Manifest used to generate module coverage artifacts when "
+                "--module-coverage-semantic-families-csv is absent."
+            ),
+        )
         parser.add_argument("--output-dir", type=Path, required=True)
 
     def run(self, args: argparse.Namespace) -> int:
         configure_headless_cpu_benchmark_runtime(args.log_level)
+        semantic_families_csv = args.module_coverage_semantic_families_csv
+        if semantic_families_csv is None and args.module_coverage_manifest.exists():
+            from benchmark.cellprofiler_comparison import (
+                MODULE_COVERAGE_SEMANTIC_FAMILIES_CSV,
+                write_module_coverage_artifacts,
+            )
+
+            write_module_coverage_artifacts(
+                args.output_dir,
+                manifest_path=args.module_coverage_manifest,
+            )
+            semantic_families_csv = (
+                args.output_dir / MODULE_COVERAGE_SEMANTIC_FAMILIES_CSV
+            )
         from benchmark.well_throughput_scaling import (
             WellThroughputPresentationReport,
             WellThroughputPresentationSources,
@@ -352,6 +383,7 @@ class PlotWellThroughputPresentationCommand(BenchmarkCliCommand):
                 additional_wells_per_core_csvs=tuple(
                     args.additional_wells_per_core_csv
                 ),
+                module_coverage_semantic_families_csv=semantic_families_csv,
             ),
             output_dir=args.output_dir,
         )

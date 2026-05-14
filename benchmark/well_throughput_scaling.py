@@ -228,6 +228,7 @@ class WellThroughputPresentationSources:
     core_scaling_csv: Path
     wells_per_core_csv: Path
     additional_wells_per_core_csvs: tuple[Path, ...] = ()
+    module_coverage_semantic_families_csv: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +239,110 @@ class WellThroughputPresentationMode:
     label: str
     worker_count: int
     wells_per_core: int
+
+
+class ModuleAbstractionCoverageKind(StrEnum):
+    """Presentation coverage state for one absorbed CellProfiler module."""
+
+    EXPLICIT = "explicitly_covered"
+    SHARED_ABSTRACTION = "covered_by_shared_abstraction"
+    UNCOVERED = "not_covered"
+
+    @property
+    def label(self) -> str:
+        """Return the publication label for this coverage kind."""
+        return {
+            ModuleAbstractionCoverageKind.EXPLICIT: "Explicitly covered",
+            ModuleAbstractionCoverageKind.SHARED_ABSTRACTION: (
+                "Covered by shared abstraction"
+            ),
+            ModuleAbstractionCoverageKind.UNCOVERED: "Not covered",
+        }[self]
+
+    @property
+    def sort_key(self) -> int:
+        """Return stable presentation order."""
+        return {
+            ModuleAbstractionCoverageKind.EXPLICIT: 0,
+            ModuleAbstractionCoverageKind.SHARED_ABSTRACTION: 1,
+            ModuleAbstractionCoverageKind.UNCOVERED: 2,
+        }[self]
+
+    @classmethod
+    def from_family_coverage(cls, family_coverage: str) -> "ModuleAbstractionCoverageKind":
+        """Map compatibility-matrix family coverage to presentation coverage."""
+        if family_coverage == "direct_supported":
+            return cls.EXPLICIT
+        if family_coverage == "semantic_family_supported":
+            return cls.SHARED_ABSTRACTION
+        if family_coverage == "not_supported":
+            return cls.UNCOVERED
+        raise ValueError(f"Unsupported module family coverage: {family_coverage!r}")
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleAbstractionCoverageRow:
+    """Presentation row for one absorbed CellProfiler module."""
+
+    module_name: str
+    coverage: ModuleAbstractionCoverageKind
+    abstraction_family: str
+    evidence_modules: tuple[str, ...]
+
+    @property
+    def evidence_text(self) -> str:
+        """Return the semicolon-delimited coverage evidence text."""
+        return ";".join(self.evidence_modules)
+
+
+@dataclass(frozen=True, slots=True)
+class ModuleAbstractionCoverageTable:
+    """Module coverage projection for presentation figures and tables."""
+
+    rows: tuple[ModuleAbstractionCoverageRow, ...]
+
+    @classmethod
+    def from_semantic_family_csv(cls, path: Path) -> "ModuleAbstractionCoverageTable":
+        """Build presentation coverage from the compatibility matrix CSV."""
+        rows: list[ModuleAbstractionCoverageRow] = []
+        with path.open(encoding="utf-8", newline="") as handle:
+            for raw_row in csv.DictReader(handle):
+                evidence_modules = tuple(
+                    module
+                    for module in raw_row.get("family_supported_modules", "").split(";")
+                    if module
+                )
+                rows.append(
+                    ModuleAbstractionCoverageRow(
+                        module_name=raw_row["module_name"],
+                        coverage=ModuleAbstractionCoverageKind.from_family_coverage(
+                            raw_row["family_coverage"]
+                        ),
+                        abstraction_family=raw_row["semantic_family"],
+                        evidence_modules=evidence_modules,
+                    )
+                )
+        return cls(
+            tuple(
+                sorted(
+                    rows,
+                    key=lambda row: (
+                        row.coverage.sort_key,
+                        row.abstraction_family,
+                        row.module_name,
+                    ),
+                )
+            )
+        )
+
+    def grouped_rows(
+        self,
+    ) -> Mapping[ModuleAbstractionCoverageKind, tuple[ModuleAbstractionCoverageRow, ...]]:
+        """Return rows grouped by presentation coverage kind."""
+        return {
+            coverage: tuple(row for row in self.rows if row.coverage is coverage)
+            for coverage in ModuleAbstractionCoverageKind
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -340,6 +445,7 @@ class WellThroughputPresentationReport:
         outputs.extend(self.generate_parity_figures(summary_rows))
         outputs.extend(self.generate_core_scaling_figures(core_rows, summary_rows))
         outputs.extend(self.generate_wells_per_core_figures(core_rows, wells_per_core_rows))
+        outputs.extend(self.generate_module_coverage_figures())
         return tuple(outputs)
 
     def single_process_summary_rows(self) -> tuple[Mapping[str, str], ...]:
@@ -368,6 +474,17 @@ class WellThroughputPresentationReport:
     def write_source_index(self) -> tuple[Path, ...]:
         """Write a compact manifest for the generated figure pack."""
         path = self.output_dir / "presentation_figure_index.md"
+        module_coverage_lines = (
+            (
+                "- Module coverage: "
+                f"`{self.sources.module_coverage_semantic_families_csv}`"
+            ),
+        ) if self.sources.module_coverage_semantic_families_csv is not None else ()
+        module_coverage_figure_lines = (
+            ("- `06_module_coverage_by_abstraction.*`",)
+            if self.sources.module_coverage_semantic_families_csv is not None
+            else ()
+        )
         path.write_text(
             "\n".join(
                 (
@@ -381,6 +498,7 @@ class WellThroughputPresentationReport:
                         f"- Additional wells/core comparison: `{path}`"
                         for path in self.sources.additional_wells_per_core_csvs
                     ),
+                    *module_coverage_lines,
                     "",
                     "Figure groups:",
                     "- `01_parity_by_pipeline.*`",
@@ -389,6 +507,7 @@ class WellThroughputPresentationReport:
                     "- `04_core_scaling_by_pipeline_plus_average_ram.*` for per-pipeline RAM.",
                     "- `04_core_scaling_average_with_pipeline_points_ram.*` for aggregate RAM.",
                     "- `05_speedup_summary_by_core_and_wells_per_core.*`",
+                    *module_coverage_figure_lines,
                     "",
                     "Interpretation notes:",
                     "- The `1 core` point is same-process, single-well execution latency.",
@@ -558,6 +677,7 @@ class WellThroughputPresentationReport:
         from benchmark.reports.cppipe_figures import FIGURE_STYLE
         from benchmark.reports.cppipe_figures import FIGURE_DPI
         from benchmark.reports.cppipe_figures import DEFAULT_WRAP_AFTER
+        from benchmark.reports.cppipe_figures import LINEAR_AXIS_BREAK_POLICY
         from benchmark.reports.cppipe_figures import PIPELINE_LABEL_FONT_SIZE
         from benchmark.reports.cppipe_figures import PIPELINE_LABEL_LAYOUT
         from benchmark.reports.cppipe_figures import SPEEDUP_TARGET
@@ -568,16 +688,22 @@ class WellThroughputPresentationReport:
         offsets = _bar_offsets(len(methods), width)
         outputs: list[Path] = []
 
+        global_bands = self.speedup_axis_band_policy.bands_for(
+            tuple(row.speedup for row in rows if row.speedup is not None)
+        )
         panel_bands = tuple(
-            self.speedup_axis_band_policy.bands_for(
-                tuple(
-                    row.speedup
+            tuple(
+                band
+                for band in global_bands
+                if any(
+                    band.contains(row.speedup)
                     for pipeline_name in panel
                     for method in methods
                     if (row := row_index.get((pipeline_name, method))) is not None
                     and row.speedup is not None
                 )
             )
+            or (global_bands[0],)
             for panel in panels
         )
         with FIGURE_STYLE.context():
@@ -587,13 +713,13 @@ class WellThroughputPresentationReport:
                     (1.0,) * (len(bands) - 1) + (3.0,)
                 ):
                     axis_row_specs.append((panel_index, band_index, ratio))
-                if panel_index < len(panel_bands) - 1:
+                if panel_index < len(panels) - 1:
                     axis_row_specs.append((None, None, 0.35))
 
             fig = plt.figure(
                 figsize=(
                     max(8.0, max(len(panel) for panel in panels) * 0.98),
-                    7.4 * len(panels),
+                    sum(4.8 + 1.35 * (len(bands) - 1) for bands in panel_bands),
                 ),
                 layout="constrained",
             )
@@ -610,7 +736,9 @@ class WellThroughputPresentationReport:
                     continue
                 axes_by_panel[panel_index].append(axis)
 
-            for panel_index, (panel, bands) in enumerate(zip(panels, panel_bands, strict=True)):
+            for panel_index, (panel, bands) in enumerate(
+                zip(panels, panel_bands, strict=True)
+            ):
                 panel_axes = tuple(axes_by_panel[panel_index])
                 x_positions = tuple(range(len(panel)))
                 visible_bands = tuple(reversed(bands))
@@ -671,9 +799,9 @@ class WellThroughputPresentationReport:
                             rotation=42,
                             ha="right",
                             fontsize=PIPELINE_LABEL_FONT_SIZE,
-                        )
+                    )
                     if band_index > 0:
-                        self.mark_axis_break(panel_axes[band_index - 1], axis)
+                        LINEAR_AXIS_BREAK_POLICY.mark(panel_axes[band_index - 1], axis)
                     if panel_index == 0 and band_index == 0:
                         axis.set_title(
                             "Execution speedup by pipeline and core count",
@@ -764,42 +892,194 @@ class WellThroughputPresentationReport:
             plt.close(fig)
         return tuple(outputs)
 
+    def generate_module_coverage_figures(self) -> tuple[Path, ...]:
+        """Generate module coverage pie chart and detailed coverage tables."""
+        if self.sources.module_coverage_semantic_families_csv is None:
+            return ()
+        coverage_csv = self.sources.module_coverage_semantic_families_csv
+        if not coverage_csv.exists():
+            return ()
+
+        table = ModuleAbstractionCoverageTable.from_semantic_family_csv(coverage_csv)
+        outputs = [
+            self.write_module_coverage_csv(
+                self.output_dir / "06_module_coverage_by_abstraction_modules.csv",
+                table,
+            ),
+            self.write_module_coverage_markdown(
+                self.output_dir / "06_module_coverage_by_abstraction_modules.md",
+                table,
+            ),
+        ]
+        outputs.extend(self.generate_module_coverage_pie_figure(table))
+        return tuple(outputs)
+
     @staticmethod
-    def mark_axis_break(upper_axis, lower_axis) -> None:
-        """Draw diagonal cut marks between adjacent y-axis bands."""
-        marker_size = 0.008
-        upper_axis.plot(
-            (-marker_size, +marker_size),
-            (-marker_size, +marker_size),
-            transform=upper_axis.transAxes,
-            color="black",
-            clip_on=False,
-            linewidth=1.0,
+    def write_module_coverage_csv(
+        path: Path,
+        table: ModuleAbstractionCoverageTable,
+    ) -> Path:
+        """Write one row per module for presentation coverage claims."""
+        fieldnames = (
+            "module_name",
+            "coverage",
+            "coverage_label",
+            "abstraction_family",
+            "evidence_modules",
         )
-        upper_axis.plot(
-            (1 - marker_size, 1 + marker_size),
-            (-marker_size, +marker_size),
-            transform=upper_axis.transAxes,
-            color="black",
-            clip_on=False,
-            linewidth=1.0,
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in table.rows:
+                writer.writerow(
+                    {
+                        "module_name": row.module_name,
+                        "coverage": row.coverage.value,
+                        "coverage_label": row.coverage.label,
+                        "abstraction_family": row.abstraction_family,
+                        "evidence_modules": row.evidence_text,
+                    }
+                )
+        return path
+
+    @staticmethod
+    def write_module_coverage_markdown(
+        path: Path,
+        table: ModuleAbstractionCoverageTable,
+    ) -> Path:
+        """Write explicit module lists grouped by presentation coverage state."""
+        grouped_rows = table.grouped_rows()
+        lines = ["# Module Coverage by Shared Abstractions", ""]
+        for coverage in ModuleAbstractionCoverageKind:
+            rows = grouped_rows[coverage]
+            lines.extend((f"## {coverage.label} ({len(rows)})", ""))
+            if not rows:
+                lines.extend(("_None_", ""))
+                continue
+            lines.extend(
+                f"- `{row.module_name}`"
+                + (
+                    f" via `{row.abstraction_family}`"
+                    if row.abstraction_family
+                    else ""
+                )
+                + (
+                    f" from {row.evidence_text}"
+                    if row.coverage is ModuleAbstractionCoverageKind.SHARED_ABSTRACTION
+                    and row.evidence_text
+                    else ""
+                )
+                for row in rows
+            )
+            lines.append("")
+        path.write_text("\n".join(lines), encoding="utf-8")
+        return path
+
+    def generate_module_coverage_pie_figure(
+        self,
+        table: ModuleAbstractionCoverageTable,
+    ) -> tuple[Path, ...]:
+        """Plot module coverage shares with a summary count table."""
+        import matplotlib.pyplot as plt
+
+        from benchmark.reports.cppipe_figures import FIGURE_DPI
+        from benchmark.reports.cppipe_figures import FIGURE_STYLE
+
+        grouped_rows = table.grouped_rows()
+        labels = tuple(coverage.label for coverage in ModuleAbstractionCoverageKind)
+        counts = tuple(len(grouped_rows[coverage]) for coverage in ModuleAbstractionCoverageKind)
+        total = sum(counts)
+        if total == 0:
+            return ()
+        colors = ("#008b8b", "#d95f02", "#7a7f88")
+        table_rows = tuple(
+            (
+                label,
+                str(count),
+                f"{count / total * 100.0:.1f}%",
+            )
+            for label, count in zip(labels, counts, strict=True)
+        ) + (("Total", str(total), "100.0%"),)
+        uncovered_rows = tuple(
+            (row.module_name,)
+            for row in grouped_rows[ModuleAbstractionCoverageKind.UNCOVERED]
         )
-        lower_axis.plot(
-            (-marker_size, +marker_size),
-            (1 - marker_size, 1 + marker_size),
-            transform=lower_axis.transAxes,
-            color="black",
-            clip_on=False,
-            linewidth=1.0,
-        )
-        lower_axis.plot(
-            (1 - marker_size, 1 + marker_size),
-            (1 - marker_size, 1 + marker_size),
-            transform=lower_axis.transAxes,
-            color="black",
-            clip_on=False,
-            linewidth=1.0,
-        )
+
+        outputs: list[Path] = []
+        with FIGURE_STYLE.context():
+            fig, (pie_axis, summary_axis, uncovered_axis) = plt.subplots(
+                1,
+                3,
+                figsize=(15.6, 4.9),
+                gridspec_kw={"width_ratios": (1.0, 1.25, 0.95)},
+                layout="constrained",
+            )
+            pie_axis.pie(
+                counts,
+                labels=labels,
+                autopct=lambda percent: f"{percent:.0f}%" if percent >= 3.0 else "",
+                startangle=90,
+                counterclock=False,
+                colors=colors,
+                wedgeprops={"linewidth": 1.0, "edgecolor": FIGURE_STYLE.background},
+                textprops={"fontsize": 9.0, "color": FIGURE_STYLE.text_color},
+            )
+            pie_axis.set_title(
+                "CellProfiler module coverage",
+                loc="left",
+                pad=10,
+            )
+            summary_axis.axis("off")
+            summary_table = summary_axis.table(
+                cellText=table_rows,
+                colLabels=("Coverage", "Modules", "Share"),
+                cellLoc="left",
+                colLoc="left",
+                colWidths=(0.56, 0.22, 0.22),
+                loc="center",
+            )
+            summary_table.auto_set_font_size(False)
+            summary_table.set_fontsize(9.0)
+            summary_table.scale(1.0, 1.45)
+            for (row_index, _column_index), cell in summary_table.get_celld().items():
+                cell.set_edgecolor(FIGURE_STYLE.grid_color)
+                if row_index == 0:
+                    cell.set_text_props(weight="bold")
+                    cell.set_facecolor("#f0eee7")
+                if row_index == len(table_rows):
+                    cell.set_text_props(weight="bold")
+            uncovered_axis.axis("off")
+            uncovered_axis.set_title(
+                "Not covered modules",
+                loc="left",
+                pad=10,
+                fontsize=10,
+            )
+            uncovered_table = uncovered_axis.table(
+                cellText=uncovered_rows,
+                colLabels=("Module",),
+                cellLoc="left",
+                colLoc="left",
+                colWidths=(1.0,),
+                loc="center",
+            )
+            uncovered_table.auto_set_font_size(False)
+            uncovered_table.set_fontsize(8.5)
+            uncovered_table.scale(1.0, 1.25)
+            for (row_index, _column_index), cell in uncovered_table.get_celld().items():
+                cell.set_edgecolor(FIGURE_STYLE.grid_color)
+                if row_index == 0:
+                    cell.set_text_props(weight="bold")
+                    cell.set_facecolor("#f0eee7")
+            for output_format in self.output_formats:
+                output_path = (
+                    self.output_dir
+                    / f"06_module_coverage_by_abstraction.{output_format}"
+                )
+                fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
+                outputs.append(output_path)
+            plt.close(fig)
+        return tuple(outputs)
 
     def generate_wells_per_core_figures(
         self,
