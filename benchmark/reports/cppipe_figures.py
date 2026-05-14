@@ -334,7 +334,7 @@ class LinearAxisBreakPolicy:
                 continue
             if upper_bottom * self.upper_window_bottom <= present[index - 1] * self.lower_padding:
                 continue
-            candidates.append((upper_bottom / lower_reference, index))
+            candidates.append((upper_bottom / present[index - 1], index))
         if candidates:
             return max(candidates)[1]
         return None
@@ -483,6 +483,25 @@ def generate_cppipe_benchmark_figures(
             summary_sources=summary_sources,
             pipeline_names=pipeline_names,
             output_dir=output_dir,
+            output_formats=output_formats,
+        )
+    )
+    outputs.extend(
+        generate_speedup_distribution_artifacts(
+            tuple(
+                SpeedupDistributionSeries.from_points(
+                    _speedup_point_series(
+                        table,
+                        source=source,
+                        pipeline_names=pipeline_names,
+                    )
+                )
+                for source, table in zip(summary_sources, source_tables, strict=True)
+            ),
+            output_dir=output_dir,
+            filename_prefix="cppipe_speedup",
+            title="Speedup cumulative distribution",
+            xlabel="Execution speedup versus native CellProfiler (x)",
             output_formats=output_formats,
         )
     )
@@ -901,30 +920,68 @@ def _plot_grouped_metric_broken(
     metric: FigureMetricSpec,
     broken_range: tuple[float, float, float],
 ) -> tuple[Path, ...]:
+    del broken_range
     panels = PIPELINE_LABEL_LAYOUT.panels(request.pipeline_names, request.wrap_after)
+    row_index = {(row.pipeline_name, row.method): row for row in request.rows}
+    panel_breaks = tuple(
+        LINEAR_AXIS_BREAK_POLICY.range_for(
+            tuple(
+                value
+                for pipeline_name in panel
+                for method in request.methods
+                if (
+                    value := METRIC_PROJECTION.value(
+                        row_index.get((pipeline_name, method)),
+                        metric,
+                    )
+                )
+                is not None
+            )
+        )
+        for panel in panels
+    )
+    panel_axis_counts = tuple(2 if panel_break is not None else 1 for panel_break in panel_breaks)
+    height_ratios = tuple(
+        ratio
+        for panel_break in panel_breaks
+        for ratio in ((1.0, 3.2) if panel_break is not None else (3.2,))
+    )
     fig_width = max(
         8.0,
         max(len(panel) for panel in panels) * request.group_width_inches,
     )
     with FIGURE_STYLE.context():
         fig, axes = plt.subplots(
-            len(panels) * 2,
+            sum(panel_axis_counts),
             1,
-            figsize=(fig_width, 5.7 * len(panels)),
-            gridspec_kw={"height_ratios": tuple((1.0, 3.2) * len(panels))},
+            figsize=(
+                fig_width,
+                sum(5.7 if panel_break is not None else 4.8 for panel_break in panel_breaks)
+                + 1.5,
+            ),
+            gridspec_kw={"height_ratios": height_ratios},
             sharex=False,
             layout="constrained",
         )
-        all_axes = tuple(axes.flat)
+        all_axes = (axes,) if sum(panel_axis_counts) == 1 else tuple(axes.flat)
         width = _bar_width(len(request.methods))
         offsets = _bar_offsets(len(request.methods), width)
-        row_index = {(row.pipeline_name, row.method): row for row in request.rows}
 
+        axis_offset = 0
         for panel_index, panel_names in enumerate(panels):
-            top_axis = all_axes[panel_index * 2]
-            bottom_axis = all_axes[panel_index * 2 + 1]
+            panel_break = panel_breaks[panel_index]
+            if panel_break is None:
+                panel_axes = (all_axes[axis_offset],)
+                axis_offset += 1
+                label_axis = panel_axes[0]
+            else:
+                top_axis = all_axes[axis_offset]
+                bottom_axis = all_axes[axis_offset + 1]
+                axis_offset += 2
+                panel_axes = (top_axis, bottom_axis)
+                label_axis = bottom_axis
             x_positions = tuple(range(len(panel_names)))
-            for axis in (top_axis, bottom_axis):
+            for axis in panel_axes:
                 for method_index, method in enumerate(request.methods):
                     values = [
                         METRIC_PROJECTION.plot_value(
@@ -941,32 +998,41 @@ def _plot_grouped_metric_broken(
                         width=width,
                         label=(
                             method
-                            if panel_index == 0 and axis is top_axis
+                            if panel_index == 0 and axis is panel_axes[0]
                             else None
                         ),
                         color=FIGURE_STYLE.color_for_method(method_index),
                         edgecolor=FIGURE_STYLE.background,
                         linewidth=0.55,
                     )
-                _draw_reference_lines(axis, metric=metric, log_y=False)
-                FIGURE_STYLE.decorate_axis(axis, metric=metric, panel_index=panel_index)
+                if panel_break is None or axis is panel_axes[-1]:
+                    _draw_reference_lines(axis, metric=metric, log_y=False)
+                FIGURE_STYLE.decorate_axis(
+                    axis,
+                    metric=metric,
+                    panel_index=panel_index if axis is panel_axes[0] else -1,
+                )
                 axis.set_ylabel(metric.ylabel)
                 axis.set_xticks(list(x_positions))
                 axis.margins(x=0.01)
 
-            top_axis.set_ylim(broken_range[1], broken_range[2])
-            bottom_axis.set_ylim(
-                metric.minimum_ylim if metric.minimum_ylim is not None else 0.0,
-                broken_range[0],
-            )
-            top_axis.set_xticklabels(())
-            bottom_axis.set_xticklabels(
+            if panel_break is not None:
+                top_axis, bottom_axis = panel_axes
+                top_axis.set_ylim(panel_break[1], panel_break[2])
+                bottom_axis.set_ylim(
+                    metric.minimum_ylim if metric.minimum_ylim is not None else 0.0,
+                    panel_break[0],
+                )
+                top_axis.set_xticklabels(())
+                LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
+            elif metric.minimum_ylim is not None:
+                label_axis.set_ylim(bottom=metric.minimum_ylim)
+            label_axis.set_xticklabels(
                 [PIPELINE_LABEL_LAYOUT.split_label(name) for name in panel_names],
                 rotation=42,
                 ha="right",
                 fontsize=PIPELINE_LABEL_FONT_SIZE,
             )
-            LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
 
         all_axes[0].legend(
             frameon=False,
@@ -1200,6 +1266,287 @@ class SpeedupPointSeries:
     ci95: float
 
 
+@dataclass(frozen=True)
+class SpeedupDistributionSeries:
+    """One labeled speedup distribution for report tables and CDF plots."""
+
+    label: str
+    values: tuple[float, ...]
+
+    @classmethod
+    def from_points(cls, series: SpeedupPointSeries) -> "SpeedupDistributionSeries":
+        """Build a distribution series from per-pipeline speedup points."""
+        return cls(series.label, tuple(point.speedup for point in series.points))
+
+
+@dataclass(frozen=True)
+class SpeedupSummaryStatistics:
+    """Summary statistics for one speedup distribution."""
+
+    label: str
+    sample_count: int
+    minimum: float
+    maximum: float
+    median: float
+    mean: float
+    standard_deviation: float
+
+    @classmethod
+    def from_series(
+        cls,
+        series: SpeedupDistributionSeries,
+    ) -> "SpeedupSummaryStatistics | None":
+        """Calculate min/max/median/mean statistics for one distribution."""
+        values = tuple(
+            value for value in series.values if math.isfinite(value) and value > 0.0
+        )
+        if not values:
+            return None
+        return cls(
+            label=series.label,
+            sample_count=len(values),
+            minimum=min(values),
+            maximum=max(values),
+            median=statistics.median(values),
+            mean=sum(values) / len(values),
+            standard_deviation=statistics.stdev(values) if len(values) > 1 else 0.0,
+        )
+
+
+@dataclass(frozen=True)
+class SpeedupDistributionReport:
+    """Owns speedup summary tables and cumulative distribution figures."""
+
+    series: tuple[SpeedupDistributionSeries, ...]
+    output_dir: Path
+    filename_prefix: str
+    title: str
+    xlabel: str
+    output_formats: tuple[str, ...] = DEFAULT_FORMATS
+
+    def outputs(self) -> tuple[Path, ...]:
+        """Write all speedup distribution report artifacts."""
+        if not self.series:
+            return ()
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        summary_csv = self.output_dir / f"{self.filename_prefix}_summary_statistics.csv"
+        summary_markdown = (
+            self.output_dir / f"{self.filename_prefix}_summary_statistics.md"
+        )
+        cdf_csv = self.output_dir / f"{self.filename_prefix}_cumulative_distribution.csv"
+        self.write_summary_statistics(summary_csv)
+        self.write_summary_markdown(summary_markdown)
+        self.write_cdf_csv(cdf_csv)
+        outputs: list[Path] = [summary_csv, summary_markdown, cdf_csv]
+        outputs.extend(self.plot_cdf(log_x=False))
+        outputs.extend(self.plot_cdf(log_x=True))
+        return tuple(outputs)
+
+    def write_summary_statistics(self, path: Path) -> None:
+        """Write machine-readable speedup summary statistics."""
+        fieldnames = (
+            "label",
+            "sample_count",
+            "min_speedup",
+            "max_speedup",
+            "median_speedup",
+            "mean_speedup",
+            "standard_deviation",
+        )
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in self.summary_statistics:
+                writer.writerow(
+                    {
+                        "label": row.label,
+                        "sample_count": row.sample_count,
+                        "min_speedup": row.minimum,
+                        "max_speedup": row.maximum,
+                        "median_speedup": row.median,
+                        "mean_speedup": row.mean,
+                        "standard_deviation": row.standard_deviation,
+                    }
+                )
+
+    def write_summary_markdown(self, path: Path) -> None:
+        """Write human-readable speedup summary statistics."""
+        lines = [
+            "| Series | n | Min speedup | Median speedup | Mean speedup | Max speedup | SD |",
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+        ]
+        lines.extend(
+            "| "
+            f"{row.label} | {row.sample_count} | {row.minimum:.3f} | "
+            f"{row.median:.3f} | {row.mean:.3f} | {row.maximum:.3f} | "
+            f"{row.standard_deviation:.3f} |"
+            for row in self.summary_statistics
+        )
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def write_cdf_csv(self, path: Path) -> None:
+        """Write empirical percent-at-or-above-threshold speedup data."""
+        fieldnames = (
+            "label",
+            "speedup_threshold",
+            "percent_at_or_above",
+            "count_at_or_above",
+            "sample_count",
+        )
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for item in self.series:
+                sample_count = len(item.values)
+                for threshold in self.thresholds(item.values):
+                    count = sum(1 for value in item.values if value >= threshold)
+                    writer.writerow(
+                        {
+                            "label": item.label,
+                            "speedup_threshold": threshold,
+                            "percent_at_or_above": 100.0 * count / sample_count,
+                            "count_at_or_above": count,
+                            "sample_count": sample_count,
+                        }
+                    )
+
+    def plot_cdf(self, *, log_x: bool) -> tuple[Path, ...]:
+        """Plot empirical percent-at-or-above-threshold speedup curves."""
+        with FIGURE_STYLE.context():
+            fig, axis = plt.subplots(
+                1,
+                1,
+                figsize=(7.4, 4.4),
+                layout="constrained",
+            )
+            for index, item in enumerate(self.series):
+                thresholds = self.thresholds(item.values)
+                y_values = tuple(
+                    100.0
+                    * sum(1 for value in item.values if value >= threshold)
+                    / len(item.values)
+                    for threshold in thresholds
+                )
+                axis.step(
+                    thresholds,
+                    y_values,
+                    where="post",
+                    linewidth=2.0,
+                    color=FIGURE_STYLE.color_for_method(index + 1),
+                    label=item.label,
+                )
+            axis.axvline(
+                SPEEDUP_TARGET,
+                color=FIGURE_STYLE.target_color,
+                linewidth=1.15,
+                linestyle="--",
+                alpha=0.86,
+            )
+            axis.annotate(
+                "4x target",
+                xy=(SPEEDUP_TARGET, 99.0),
+                xycoords=("data", "data"),
+                xytext=(3, -2),
+                textcoords="offset points",
+                ha="left",
+                va="top",
+                fontsize=7.8,
+                color=FIGURE_STYLE.target_color,
+            )
+            if log_x:
+                axis.set_xscale("log")
+                axis.xaxis.set_major_formatter(FuncFormatter(_plain_log_tick_label))
+                axis.xaxis.set_minor_formatter(NullFormatter())
+            axis.set_ylim(0.0, 102.0)
+            axis.set_xlabel(self.xlabel)
+            axis.set_ylabel("Datasets at or above threshold (%)")
+            axis.set_title(
+                f"{self.title} (log scale)" if log_x else self.title,
+                loc="left",
+                pad=10,
+            )
+            axis.grid(
+                axis="both",
+                color=FIGURE_STYLE.grid_color,
+                linewidth=0.8,
+                alpha=0.8,
+            )
+            axis.set_axisbelow(True)
+            axis.spines["top"].set_visible(False)
+            axis.spines["right"].set_visible(False)
+            axis.spines["left"].set_color(FIGURE_STYLE.spine_color)
+            axis.spines["bottom"].set_color(FIGURE_STYLE.spine_color)
+            axis.legend(frameon=False, loc="upper right")
+            outputs: list[Path] = []
+            suffix = (
+                "_cumulative_distribution_log"
+                if log_x
+                else "_cumulative_distribution"
+            )
+            for output_format in self.output_formats:
+                output_path = self.output_dir / f"{self.filename_prefix}{suffix}.{output_format}"
+                FIGURE_STYLE.save(fig, output_path)
+                outputs.append(output_path)
+            plt.close(fig)
+            return tuple(outputs)
+
+    @property
+    def summary_statistics(self) -> tuple[SpeedupSummaryStatistics, ...]:
+        """Return summary rows for every distribution series."""
+        return tuple(
+            stats
+            for item in self.series
+            if (stats := SpeedupSummaryStatistics.from_series(item)) is not None
+        )
+
+    @staticmethod
+    def thresholds(values: Sequence[float]) -> tuple[float, ...]:
+        """Return empirical speedup thresholds for CDF/survival reporting."""
+        if not values:
+            return ()
+        return tuple(
+            sorted(
+                {
+                    min(values),
+                    max(values),
+                    1.0,
+                    SPEEDUP_TARGET,
+                    *values,
+                }
+            )
+        )
+
+
+def generate_speedup_distribution_artifacts(
+    series: Sequence[SpeedupDistributionSeries],
+    *,
+    output_dir: Path,
+    filename_prefix: str,
+    title: str,
+    xlabel: str,
+    output_formats: Sequence[str] = DEFAULT_FORMATS,
+) -> tuple[Path, ...]:
+    """Generate speedup summary tables and cumulative distribution figures."""
+    clean_series = tuple(
+        SpeedupDistributionSeries(
+            item.label,
+            tuple(value for value in item.values if math.isfinite(value) and value > 0.0),
+        )
+        for item in series
+    )
+    clean_series = tuple(item for item in clean_series if item.values)
+    if not clean_series:
+        return ()
+    return SpeedupDistributionReport(
+        series=clean_series,
+        output_dir=output_dir,
+        filename_prefix=filename_prefix,
+        title=title,
+        xlabel=xlabel,
+        output_formats=tuple(output_formats),
+    ).outputs()
+
+
 def _speedup_point_series(
     table: SummaryTable,
     *,
@@ -1361,6 +1708,9 @@ def _write_benchmark_figure_index(path: Path, outputs: Sequence[Path]) -> None:
         "- `cppipe_raw_seconds_log.*`: runtime on a log scale for mixed short and long pipelines.",
         "- `cppipe_speedup.*`: execution speedup versus native CellProfiler with the 4x target line.",
         "- `cppipe_speedup_log.*`: speedup on a log scale for wide dynamic range.",
+        "- `cppipe_speedup_summary_statistics.*`: min, max, median, and mean speedup tables.",
+        "- `cppipe_speedup_cumulative_distribution.*`: percent of datasets at or above each speedup threshold.",
+        "- `cppipe_speedup_cumulative_distribution_log.*`: cumulative speedup distribution with a log x-axis.",
         "- `cppipe_average_speedup_points.*`: aggregate speedup mean with per-dataset points and a 95% confidence interval.",
         "- `cppipe_average_speedup_points.csv`: per-dataset speedups and aggregate statistics used by the point/error chart.",
         "- `cppipe_peak_memory*`: peak RSS figures when memory metrics are present.",

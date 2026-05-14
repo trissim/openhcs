@@ -38,6 +38,10 @@ from openhcs.core.runtime_stores import (
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
+from openhcs.core.source_matching import (
+    source_component_metadata_values,
+    source_metadata_values_equal,
+)
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     SourceBindingOrigin,
@@ -210,6 +214,7 @@ class VirtualWorkspaceSourceProjection:
 
     source_paths_by_virtual_path: Mapping[str, str]
     source_metadata_by_path: Mapping[str, Mapping[str, str]]
+    workspace_root: str | None = None
 
     def source_path_for(
         self,
@@ -243,16 +248,51 @@ class VirtualWorkspaceSourceProjection:
         )
         return self.source_metadata_by_path.get(source_path)
 
-    def pipeline_start_files(self) -> tuple[str, ...]:
-        """Return loadable virtual source paths that preserve per-file metadata."""
-        absolute_virtual_paths = tuple(
+    def pipeline_start_files(self, *, axis_id: str | None = None) -> tuple[str, ...]:
+        """Return loadable virtual source paths for one runtime source universe."""
+        relative_virtual_paths = tuple(
             virtual_path
             for virtual_path in self.source_paths_by_virtual_path
-            if Path(virtual_path).is_absolute()
+            if not Path(virtual_path).is_absolute()
         )
-        if absolute_virtual_paths:
-            return tuple(dict.fromkeys(absolute_virtual_paths))
-        return tuple(dict.fromkeys(self.source_paths_by_virtual_path))
+        if not relative_virtual_paths:
+            relative_virtual_paths = tuple(self.source_paths_by_virtual_path)
+
+        selected = tuple(
+            virtual_path
+            for virtual_path in relative_virtual_paths
+            if self._path_belongs_to_axis(virtual_path, axis_id)
+        )
+        return tuple(
+            dict.fromkeys(
+                self._loadable_virtual_path(virtual_path)
+                for virtual_path in selected
+            )
+        )
+
+    def _path_belongs_to_axis(
+        self,
+        virtual_path: str,
+        axis_id: str | None,
+    ) -> bool:
+        if axis_id is None:
+            return True
+        metadata = self.source_metadata_by_path.get(virtual_path)
+        if metadata is None:
+            return True
+        from openhcs.constants import MULTIPROCESSING_AXIS
+
+        values = source_component_metadata_values(metadata, MULTIPROCESSING_AXIS)
+        if not values:
+            return True
+        return any(source_metadata_values_equal(value, axis_id) for value in values)
+
+    def _loadable_virtual_path(self, virtual_path: str) -> str:
+        if Path(virtual_path).is_absolute():
+            return virtual_path
+        if self.workspace_root is not None:
+            return str(Path(self.workspace_root) / virtual_path)
+        return virtual_path
 
 
 @dataclass(slots=True)
@@ -999,7 +1039,7 @@ class PatternGroupRuntime:
             and source_projection is not None
         ):
             return (
-                source_projection.pipeline_start_files(),
+                source_projection.pipeline_start_files(axis_id=self.plan.axis_id),
                 Backend.VIRTUAL_WORKSPACE.value,
             )
 
@@ -1114,7 +1154,9 @@ class PatternGroupRuntime:
                     }
                 )
                 virtual_path = str(virtual_relative)
+                full_virtual_path = str(Path(self.context.plate_path) / virtual_path)
                 source_metadata_by_path[virtual_path] = normalized_metadata
+                source_metadata_by_path[full_virtual_path] = normalized_metadata
                 real_relative = workspace_mapping.get(virtual_path)
                 if real_relative is not None:
                     real_path = str(Path(self.context.plate_path) / real_relative)
@@ -1139,6 +1181,7 @@ class PatternGroupRuntime:
         projection = VirtualWorkspaceSourceProjection(
             source_paths_by_virtual_path=MappingProxyType(workspace_source_paths),
             source_metadata_by_path=MappingProxyType(source_metadata_by_path),
+            workspace_root=plate_path,
         )
         cache.virtual_workspace_projections[plate_path] = projection
         return projection

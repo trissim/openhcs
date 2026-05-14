@@ -6,9 +6,13 @@ from pathlib import Path
 from benchmark.reports.cppipe_figures import LINEAR_AXIS_BREAK_POLICY
 from benchmark.well_throughput_scaling import (
     NativeCellProfilerExecutionBaseline,
+    PresentationAxisBand,
+    PresentationAxisBandPolicy,
     WellThroughputBenchmarkPlan,
     WellThroughputMode,
     WellThroughputObservationKey,
+    WellThroughputPresentationReport,
+    WellThroughputPresentationSources,
     WellThroughputResult,
     WellThroughputPreset,
     WellThroughputStatus,
@@ -492,20 +496,6 @@ def test_generate_well_throughput_figures_writes_linear_log_and_points(
     csv_path = tmp_path / "well_throughput.csv"
     rows = (
         WellThroughputResult(
-            case_name="CaseA",
-            mode_name="1w_1t",
-            worker_count=1,
-            well_count=1,
-            compile_seconds=0.1,
-            prepare_seconds=0.0,
-            execute_seconds=1.0,
-            total_seconds=1.1,
-            wells_per_second=1.0,
-            successful_wells=1,
-            projected_execution_speedup=4.0,
-            peak_memory_mb=512.0,
-        ),
-        WellThroughputResult(
             case_name="CaseB",
             mode_name="16w_4c",
             worker_count=4,
@@ -519,6 +509,20 @@ def test_generate_well_throughput_figures_writes_linear_log_and_points(
             projected_execution_speedup=500.0,
             peak_memory_mb=4096.0,
         ),
+        WellThroughputResult(
+            case_name="CaseA",
+            mode_name="1w_1t",
+            worker_count=1,
+            well_count=1,
+            compile_seconds=0.1,
+            prepare_seconds=0.0,
+            execute_seconds=1.0,
+            total_seconds=1.1,
+            wells_per_second=1.0,
+            successful_wells=1,
+            projected_execution_speedup=4.0,
+            peak_memory_mb=512.0,
+        ),
     )
     write_well_throughput_csv(csv_path, rows)
 
@@ -531,6 +535,11 @@ def test_generate_well_throughput_figures_writes_linear_log_and_points(
     assert {output.name for output in outputs} == {
         "well_throughput_speedup.png",
         "well_throughput_speedup_log.png",
+        "well_throughput_speedup_summary_statistics.csv",
+        "well_throughput_speedup_summary_statistics.md",
+        "well_throughput_speedup_cumulative_distribution.csv",
+        "well_throughput_speedup_cumulative_distribution.png",
+        "well_throughput_speedup_cumulative_distribution_log.png",
         "well_throughput_average_speedup_points.csv",
         "well_throughput_average_speedup_points.png",
         "well_throughput_average_speedup_points_log.png",
@@ -538,7 +547,194 @@ def test_generate_well_throughput_figures_writes_linear_log_and_points(
         "well_throughput_peak_memory_log.png",
     }
     assert all(output.exists() for output in outputs)
+    summary_rows = tuple(
+        csv.DictReader(
+            (tmp_path / "figures" / "well_throughput_speedup_summary_statistics.csv")
+            .open(encoding="utf-8", newline="")
+        )
+    )
+    assert tuple(row["label"] for row in summary_rows) == ("1w_1t", "16w_4c")
 
 
 def test_linear_axis_break_policy_handles_single_extreme_outlier() -> None:
     assert LINEAR_AXIS_BREAK_POLICY.range_for((4.0, 500.0)) is not None
+
+
+def test_linear_axis_break_policy_prefers_earliest_dominant_outlier_cluster() -> None:
+    low_cluster = (
+        5.5,
+        6.2,
+        8.7,
+        11.5,
+        16.9,
+        22.5,
+        36.3,
+        70.2,
+        96.4,
+        109.4,
+    )
+    high_cluster = (725.0, 1477.0, 2044.0, 2277.0)
+
+    low_top, high_bottom, _high_top = LINEAR_AXIS_BREAK_POLICY.range_for(
+        (*low_cluster, *high_cluster)
+    )
+
+    assert low_top < 130.0
+    assert 130.0 < high_bottom < 200.0
+
+
+def test_presentation_axis_band_policy_keeps_normal_mid_and_outlier_bars_readable() -> None:
+    bands = PresentationAxisBandPolicy().bands_for(
+        (
+            5.5,
+            6.2,
+            8.7,
+            11.5,
+            16.9,
+            22.5,
+            36.3,
+            70.2,
+            96.4,
+            109.4,
+            725.0,
+            1477.0,
+            2044.0,
+            2277.0,
+        )
+    )
+
+    assert len(bands) == 3
+    assert bands[0].contains(36.3)
+    assert not bands[0].contains(70.2)
+    assert bands[1].contains(70.2)
+    assert bands[1].contains(109.4)
+    assert not bands[1].contains(725.0)
+    assert bands[2].contains(725.0)
+    assert bands[2].contains(2277.0)
+
+
+def test_presentation_axis_band_rejects_invalid_range() -> None:
+    try:
+        PresentationAxisBand(10.0, 10.0)
+    except ValueError as exc:
+        assert "upper bound" in str(exc)
+    else:
+        raise AssertionError("Expected invalid presentation axis band to fail.")
+
+
+def test_well_throughput_presentation_report_uses_existing_figure_pack(
+    tmp_path: Path,
+) -> None:
+    summary_csv = tmp_path / "summary.csv"
+    with summary_csv.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=(
+                "case_name",
+                "assay_category",
+                "module_category",
+                "median_speedup",
+                "min_parity_accuracy",
+            ),
+        )
+        writer.writeheader()
+        writer.writerow(
+            {
+                "case_name": "CaseA",
+                "assay_category": "A",
+                "module_category": "M",
+                "median_speedup": "5.0",
+                "min_parity_accuracy": "1.0",
+            }
+        )
+        writer.writerow(
+            {
+                "case_name": "CaseB",
+                "assay_category": "A",
+                "module_category": "M",
+                "median_speedup": "8.0",
+                "min_parity_accuracy": "1.0",
+            }
+        )
+
+    def result(
+        case_name: str,
+        mode_name: str,
+        wells: int,
+        workers: int,
+        speedup: float,
+    ) -> WellThroughputResult:
+        return WellThroughputResult(
+            case_name=case_name,
+            mode_name=mode_name,
+            worker_count=workers,
+            well_count=wells,
+            compile_seconds=0.1,
+            prepare_seconds=0.0,
+            execute_seconds=1.0,
+            total_seconds=1.1,
+            wells_per_second=float(wells),
+            successful_wells=wells,
+            projected_execution_speedup=speedup,
+            peak_memory_mb=512.0 * workers,
+        )
+
+    core_csv = tmp_path / "core.csv"
+    core_rows = []
+    for case_index, case_name in enumerate(("CaseA", "CaseB"), start=1):
+        core_rows.extend(
+            (
+                result(case_name, "1w_1t", 1, 1, 4.0 + case_index),
+                result(case_name, "8w_2c", 8, 2, 8.0 + case_index),
+                result(case_name, "12w_3c", 12, 3, 12.0 + case_index),
+                result(case_name, "16w_4c", 16, 4, 16.0 + case_index),
+            )
+        )
+    write_well_throughput_csv(core_csv, tuple(core_rows))
+
+    wells_per_core_csv = tmp_path / "wells_per_core.csv"
+    wpc_rows = []
+    for case_index, case_name in enumerate(("CaseA", "CaseB"), start=1):
+        for workers in (2, 3, 4):
+            for wells_per_core in (2, 3):
+                wells = workers * wells_per_core
+                wpc_rows.append(
+                    result(
+                        case_name,
+                        f"{wells}w_{workers}c",
+                        wells,
+                        workers,
+                        float(wells + case_index),
+                    )
+                )
+    write_well_throughput_csv(wells_per_core_csv, tuple(wpc_rows))
+
+    outputs = WellThroughputPresentationReport(
+        sources=WellThroughputPresentationSources(
+            single_process_summary_csv=summary_csv,
+            core_scaling_csv=core_csv,
+            wells_per_core_csv=wells_per_core_csv,
+        ),
+        output_dir=tmp_path / "figures",
+        output_formats=("png",),
+    ).generate()
+
+    output_names = {path.name for path in outputs}
+    assert "01_parity_by_pipeline.png" in output_names
+    assert "02_core_scaling_by_pipeline_plus_average_speedup.png" in output_names
+    assert "02_core_scaling_by_pipeline_plus_average_speedup_log.png" in output_names
+    assert "03_core_scaling_average_with_pipeline_points_speedup.png" in output_names
+    assert "04_core_scaling_by_pipeline_plus_average_ram.png" in output_names
+    assert "05_speedup_summary_by_core_and_wells_per_core.png" in output_names
+    assert "05_speedup_summary_by_core_and_wells_per_core_log.png" in output_names
+    assert all(path.exists() for path in outputs)
+
+    summary_rows = tuple(
+        csv.DictReader(
+            (tmp_path / "figures" / "05_speedup_by_core_and_wells_per_core_summary.csv")
+            .open(encoding="utf-8", newline="")
+        )
+    )
+    assert len(summary_rows) == 9
+    assert summary_rows[0]["worker_count"] == "2"
+    assert summary_rows[0]["wells_per_core"] == "2"

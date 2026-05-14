@@ -46,6 +46,7 @@ from openhcs.core.source_matching import (
     source_metadata_component,
     source_metadata_values_equal,
     source_metadata_value,
+    with_source_component_metadata,
 )
 from openhcs.microscopes.openhcs import FIELDS, OpenHCSMetadata
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
@@ -1134,10 +1135,11 @@ def expand_source_schema_workspace_wells(
                 used_paths=used_expanded_paths,
             )
             _add_mapping(expanded_mapping, expanded_path, str(real_path))
-            expanded_source_metadata[expanded_path] = {
-                **path_source_metadata,
-                AllComponents.WELL.value: well_id,
-            }
+            expanded_source_metadata[expanded_path] = with_source_component_metadata(
+                path_source_metadata,
+                AllComponents.WELL,
+                well_id,
+            )
 
     main_metadata[FIELDS.IMAGE_FILES] = list(expanded_mapping)
     main_metadata[FIELDS.WORKSPACE_MAPPING] = expanded_mapping

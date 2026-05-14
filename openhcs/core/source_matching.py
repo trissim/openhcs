@@ -520,6 +520,28 @@ def source_component_metadata_values(
     return tuple(dict.fromkeys(values))
 
 
+def with_source_component_metadata(
+    metadata: Mapping[str, Any],
+    component: AllComponents,
+    value: Any,
+) -> dict[str, Any]:
+    """Return metadata with one canonical component value.
+
+    Source schemas can carry CellProfiler spellings such as ``Well`` and OpenHCS
+    spellings such as ``well`` at the same time. Component updates must replace
+    every semantic spelling so later normalized lookups cannot observe both the
+    old and new component values.
+    """
+    return {
+        **{
+            key: field_value
+            for key, field_value in metadata.items()
+            if source_metadata_component(str(key)) is not component
+        },
+        component.value: str(value),
+    }
+
+
 def source_metadata_values_equal(left: str, right: str) -> bool:
     """Compare metadata selector values with source-schema numeric normalization."""
 

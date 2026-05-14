@@ -317,6 +317,50 @@ class PlotBenchmarkCommand(BenchmarkCliCommand):
         return 0
 
 
+class PlotWellThroughputPresentationCommand(BenchmarkCliCommand):
+    """Plot the official30 parity/core/wells-per-core presentation pack."""
+
+    command_name = "plot-well-throughput-presentation"
+    help_text = "Plot the reusable well-throughput presentation figure pack."
+    sort_order = 35
+
+    def configure(self, subparsers: argparse._SubParsersAction) -> None:
+        parser = self._parser(subparsers)
+        parser.add_argument("--single-process-summary-csv", type=Path, required=True)
+        parser.add_argument("--core-scaling-csv", type=Path, required=True)
+        parser.add_argument("--wells-per-core-csv", type=Path, required=True)
+        parser.add_argument(
+            "--additional-wells-per-core-csv",
+            type=Path,
+            action="append",
+            default=[],
+        )
+        parser.add_argument("--output-dir", type=Path, required=True)
+
+    def run(self, args: argparse.Namespace) -> int:
+        configure_headless_cpu_benchmark_runtime(args.log_level)
+        from benchmark.well_throughput_scaling import (
+            WellThroughputPresentationReport,
+            WellThroughputPresentationSources,
+        )
+
+        report = WellThroughputPresentationReport(
+            sources=WellThroughputPresentationSources(
+                single_process_summary_csv=args.single_process_summary_csv,
+                core_scaling_csv=args.core_scaling_csv,
+                wells_per_core_csv=args.wells_per_core_csv,
+                additional_wells_per_core_csvs=tuple(
+                    args.additional_wells_per_core_csv
+                ),
+            ),
+            output_dir=args.output_dir,
+        )
+        outputs = report.generate()
+        print(f"figures={args.output_dir}")
+        print(f"outputs={len(outputs)}")
+        return 0
+
+
 def _official_cellprofiler3_cppipe_path(
     central_cppipe_path: Path,
     dataset_wrapper_path: Path,

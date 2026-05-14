@@ -13,6 +13,7 @@ from openhcs.core.source_matching import (
     source_filters_match,
     source_metadata_component,
     source_metadata_values_equal,
+    with_source_component_metadata,
 )
 
 
@@ -90,6 +91,26 @@ def test_source_component_metadata_values_include_native_and_alias_fields():
         "1",
         "00",
     )
+
+
+def test_with_source_component_metadata_replaces_alias_fields():
+    metadata = {
+        "Well": "A01",
+        "Metadata_Well": "A01",
+        "ChannelNumber": "1",
+    }
+
+    updated = with_source_component_metadata(
+        metadata,
+        AllComponents.WELL,
+        "W001",
+    )
+
+    assert updated == {
+        "ChannelNumber": "1",
+        "well": "W001",
+    }
+    assert source_component_metadata_values(updated, AllComponents.WELL) == ("W001",)
 
 
 def test_source_metadata_values_equal_normalizes_numeric_padding():

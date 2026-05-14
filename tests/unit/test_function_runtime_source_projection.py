@@ -21,9 +21,12 @@ def test_virtual_workspace_pipeline_start_files_preserve_virtual_identity(tmp_pa
             virtual_a.name: {"well": "W001"},
             virtual_b.name: {"well": "W002"},
         },
+        workspace_root=str(plate_path),
     )
 
     assert projection.pipeline_start_files() == (str(virtual_a), str(virtual_b))
+    assert projection.pipeline_start_files(axis_id="W001") == (str(virtual_a),)
+    assert projection.pipeline_start_files(axis_id="W002") == (str(virtual_b),)
     assert projection.source_metadata_for(
         virtual_path=virtual_a.name,
         full_virtual_path=str(virtual_a),

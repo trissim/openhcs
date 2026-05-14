@@ -123,6 +123,33 @@ DEFAULT_WELL_THROUGHPUT_PRESETS: tuple[WellThroughputPreset, ...] = (
 
 
 @dataclass(frozen=True, slots=True)
+class WellThroughputModeOrder:
+    """Publication order for named well-throughput modes."""
+
+    names: tuple[str, ...]
+
+    @classmethod
+    def from_presets(
+        cls,
+        presets: Sequence[WellThroughputPreset],
+    ) -> "WellThroughputModeOrder":
+        """Build the display order from named throughput presets."""
+        return cls(tuple(preset.value for preset in presets))
+
+    def order(self, mode_names: Iterable[str]) -> tuple[str, ...]:
+        """Return known modes in preset order and custom modes after them."""
+        unique_names = tuple(dict.fromkeys(mode_names))
+        known = tuple(name for name in self.names if name in unique_names)
+        custom = tuple(name for name in unique_names if name not in self.names)
+        return (*known, *custom)
+
+
+WELL_THROUGHPUT_MODE_ORDER = WellThroughputModeOrder.from_presets(
+    DEFAULT_WELL_THROUGHPUT_PRESETS
+)
+
+
+@dataclass(frozen=True, slots=True)
 class WellThroughputBenchmarkPlan:
     """Authoritative set of native OpenHCS throughput modes to run."""
 
@@ -190,6 +217,1092 @@ class WellThroughputBenchmarkPlan:
         raise ValueError(
             "Specify presets, both well_counts and worker_counts, or a manifest "
             "with well_throughput_modes."
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WellThroughputPresentationSources:
+    """CSV inputs for the publication-oriented throughput figure pack."""
+
+    single_process_summary_csv: Path
+    core_scaling_csv: Path
+    wells_per_core_csv: Path
+    additional_wells_per_core_csvs: tuple[Path, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class WellThroughputPresentationMode:
+    """One mode shown in the presentation throughput figures."""
+
+    source_mode_name: str
+    label: str
+    worker_count: int
+    wells_per_core: int
+
+
+@dataclass(frozen=True, slots=True)
+class PresentationAxisBand:
+    """One visible y-axis interval in a broken presentation axis."""
+
+    lower: float
+    upper: float
+
+    def __post_init__(self) -> None:
+        if self.lower < 0.0:
+            raise ValueError("Presentation axis bands cannot start below zero.")
+        if self.upper <= self.lower:
+            raise ValueError("Presentation axis band upper bound must exceed lower bound.")
+
+    def contains(self, value: float) -> bool:
+        """Return whether the band displays the given y-value."""
+        return self.lower <= value <= self.upper
+
+    def as_ylim(self) -> tuple[float, float]:
+        """Return the matplotlib y-limit tuple for this band."""
+        return (self.lower, self.upper)
+
+
+@dataclass(frozen=True, slots=True)
+class PresentationAxisBandPolicy:
+    """Resolve readable y-axis bands for outlier-heavy presentation figures."""
+
+    max_bands: int = 3
+    minimum_absolute_gap: float = 10.0
+    minimum_gap_ratio: float = 1.75
+    lower_padding: float = 0.92
+    upper_padding: float = 1.16
+
+    def bands_for(self, values: Sequence[float | None]) -> tuple[PresentationAxisBand, ...]:
+        """Return low-to-high display bands for finite positive values."""
+        present = tuple(
+            sorted(
+                value
+                for value in values
+                if value is not None and math.isfinite(value) and value > 0.0
+            )
+        )
+        if not present:
+            return (PresentationAxisBand(0.0, 1.0),)
+
+        split_indices = self.split_indices_for(present)
+        if not split_indices:
+            return (PresentationAxisBand(0.0, present[-1] * self.upper_padding),)
+
+        bands: list[PresentationAxisBand] = []
+        start = 0
+        for split_index in (*split_indices, len(present)):
+            segment = present[start:split_index]
+            if segment:
+                lower = 0.0 if not bands else segment[0] * self.lower_padding
+                upper = segment[-1] * self.upper_padding
+                bands.append(PresentationAxisBand(lower, upper))
+            start = split_index
+        return tuple(bands)
+
+    def split_indices_for(self, present: Sequence[float]) -> tuple[int, ...]:
+        """Return inter-cluster split points ordered from low to high."""
+        candidates = tuple(
+            index
+            for index in range(1, len(present))
+            if present[index] - present[index - 1] >= self.minimum_absolute_gap
+            and present[index] / present[index - 1] >= self.minimum_gap_ratio
+        )
+        return candidates[: max(self.max_bands - 1, 0)]
+
+
+@dataclass(frozen=True, slots=True)
+class WellThroughputPresentationReport:
+    """Reusable report generator for the lab-meeting throughput figure pack."""
+
+    sources: WellThroughputPresentationSources
+    output_dir: Path
+    output_formats: tuple[str, ...] = ("png", "svg")
+
+    core_scaling_modes: tuple[WellThroughputPresentationMode, ...] = (
+        WellThroughputPresentationMode("1w_1t", "1 core", 1, 1),
+        WellThroughputPresentationMode("8w_2c", "2 cores", 2, 4),
+        WellThroughputPresentationMode("12w_3c", "3 cores", 3, 4),
+        WellThroughputPresentationMode("16w_4c", "4 cores", 4, 4),
+    )
+    wells_per_core_counts: tuple[int, ...] = (2, 3, 4)
+    multicore_worker_counts: tuple[int, ...] = (2, 3, 4)
+    speedup_axis_band_policy: PresentationAxisBandPolicy = PresentationAxisBandPolicy()
+
+    def generate(self) -> tuple[Path, ...]:
+        """Generate the complete presentation figure/table pack."""
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        outputs: list[Path] = []
+        summary_rows = self.single_process_summary_rows()
+        core_rows = self.core_scaling_rows()
+        wells_per_core_rows = self.wells_per_core_rows()
+
+        outputs.extend(self.write_source_index())
+        outputs.extend(self.generate_parity_figures(summary_rows))
+        outputs.extend(self.generate_core_scaling_figures(core_rows, summary_rows))
+        outputs.extend(self.generate_wells_per_core_figures(core_rows, wells_per_core_rows))
+        return tuple(outputs)
+
+    def single_process_summary_rows(self) -> tuple[Mapping[str, str], ...]:
+        """Return single-process summary rows in CSV order."""
+        return self.read_dict_rows(self.sources.single_process_summary_csv)
+
+    def core_scaling_rows(self) -> tuple[WellThroughputResult, ...]:
+        """Return successful rows for the fixed core-scaling comparison."""
+        mode_names = {mode.source_mode_name for mode in self.core_scaling_modes}
+        return tuple(
+            row
+            for row in read_well_throughput_csv(self.sources.core_scaling_csv)
+            if row.is_successful() and row.mode_name in mode_names
+        )
+
+    def wells_per_core_rows(self) -> tuple[WellThroughputResult, ...]:
+        """Return successful rows for the variable wells/core sweep."""
+        paths = (self.sources.wells_per_core_csv, *self.sources.additional_wells_per_core_csvs)
+        return tuple(
+            row
+            for path in paths
+            for row in read_well_throughput_csv(path)
+            if row.is_successful()
+        )
+
+    def write_source_index(self) -> tuple[Path, ...]:
+        """Write a compact manifest for the generated figure pack."""
+        path = self.output_dir / "presentation_figure_index.md"
+        path.write_text(
+            "\n".join(
+                (
+                    "# Official30 Presentation Figure Pack",
+                    "",
+                    "Source data:",
+                    f"- Parity/single-process: `{self.sources.single_process_summary_csv}`",
+                    f"- 1/2/3/4 core comparison: `{self.sources.core_scaling_csv}`",
+                    f"- Variable wells/core comparison: `{self.sources.wells_per_core_csv}`",
+                    *(
+                        f"- Additional wells/core comparison: `{path}`"
+                        for path in self.sources.additional_wells_per_core_csvs
+                    ),
+                    "",
+                    "Figure groups:",
+                    "- `01_parity_by_pipeline.*`",
+                    "- `02_core_scaling_by_pipeline_plus_average_speedup.*`",
+                    "- `03_core_scaling_average_with_pipeline_points_speedup.*`",
+                    "- `04_core_scaling_by_pipeline_plus_average_ram.*` for per-pipeline RAM.",
+                    "- `04_core_scaling_average_with_pipeline_points_ram.*` for aggregate RAM.",
+                    "- `05_speedup_summary_by_core_and_wells_per_core.*`",
+                    "",
+                    "Interpretation notes:",
+                    "- The `1 core` point is same-process, single-well execution latency.",
+                    "- The `2/3/4 cores` points are native OpenHCS multiprocessing throughput runs over replicated wells.",
+                    "- Very small pipelines can look non-monotonic in `02_core_scaling_by_pipeline_plus_average_speedup.*` because fixed fork/work-queue/file overhead is not amortized at low well counts.",
+                    "- Use `05_speedup_summary_by_core_and_wells_per_core.*` to assess throughput scaling as queue depth increases.",
+                    "",
+                )
+            ),
+            encoding="utf-8",
+        )
+        return (path,)
+
+    def generate_parity_figures(
+        self,
+        summary_rows: Sequence[Mapping[str, str]],
+    ) -> tuple[Path, ...]:
+        """Generate benchmark-style parity figures from summary.csv."""
+        from benchmark.reports.cppipe_figures import (
+            ACCURACY_FRACTION_FIELD,
+            BenchmarkMetricRow,
+            FigureMetricSpec,
+            generate_grouped_benchmark_metric_figures,
+        )
+
+        rows = tuple(
+            BenchmarkMetricRow(
+                pipeline_name=row[CASE_NAME_FIELD],
+                method="OpenHCS",
+                assay_category=row.get("assay_category", ""),
+                module_category=row.get("module_category", ""),
+                accuracy_fraction=_optional_float(row.get("min_parity_accuracy")),
+                raw_seconds=None,
+                speedup=None,
+                peak_memory_mb=None,
+            )
+            for row in summary_rows
+        )
+        csv_path = self.output_dir / "01_parity_by_pipeline.csv"
+        self.write_metric_rows(csv_path, rows)
+        return (
+            csv_path,
+            *generate_grouped_benchmark_metric_figures(
+                rows,
+                metrics=(
+                    FigureMetricSpec(
+                        ACCURACY_FRACTION_FIELD,
+                        "01_parity_by_pipeline",
+                        "Parity accuracy by pipeline",
+                        "Parity accuracy (%)",
+                        percentage=True,
+                        baseline_line=100.0,
+                        minimum_ylim=0.0,
+                    ),
+                ),
+                methods=("OpenHCS",),
+                pipeline_names=tuple(row[CASE_NAME_FIELD] for row in summary_rows),
+                output_dir=self.output_dir,
+                output_formats=self.output_formats,
+            ),
+        )
+
+    def generate_core_scaling_figures(
+        self,
+        core_rows: Sequence[WellThroughputResult],
+        summary_rows: Sequence[Mapping[str, str]],
+    ) -> tuple[Path, ...]:
+        """Generate fixed 1/2/3/4-core throughput and RAM figures."""
+        outputs: list[Path] = []
+        metric_rows = self.core_scaling_metric_rows(core_rows, summary_rows)
+        average_rows = self.core_scaling_average_rows(metric_rows)
+        all_rows = (*metric_rows, *average_rows)
+        outputs.append(
+            self.write_metric_rows(
+                self.output_dir / "02_core_scaling_by_pipeline_plus_average_long.csv",
+                all_rows,
+            )
+        )
+
+        from benchmark.reports.cppipe_figures import (
+            BenchmarkMetricRow,
+            FigureMetricSpec,
+            SPEEDUP_TARGET,
+            generate_grouped_benchmark_metric_figures,
+        )
+
+        methods = tuple(mode.label for mode in self.core_scaling_modes)
+        pipeline_names = tuple(row[CASE_NAME_FIELD] for row in summary_rows) + (
+            "Average",
+        )
+        outputs.extend(
+            self.generate_core_scaling_pipeline_speedup_figures(
+                all_rows,
+                methods=methods,
+                pipeline_names=pipeline_names,
+            )
+        )
+        outputs.extend(
+            self.generate_average_point_figures(
+                tuple(
+                    BenchmarkMetricRow(
+                        pipeline_name=row.pipeline_name,
+                        method=row.method,
+                        assay_category=row.assay_category,
+                        module_category=row.module_category,
+                        accuracy_fraction=row.accuracy_fraction,
+                        raw_seconds=row.raw_seconds,
+                        speedup=row.speedup,
+                        peak_memory_mb=row.peak_memory_mb,
+                    )
+                    for row in metric_rows
+                ),
+                filename_stem="03_core_scaling_average_with_pipeline_points_speedup",
+                title="Average execution speedup by core count",
+                ylabel="Execution speedup vs CellProfiler (x)",
+                value_key="speedup",
+                target_line=SPEEDUP_TARGET,
+                log_variant=True,
+            )
+        )
+        outputs.extend(
+            generate_grouped_benchmark_metric_figures(
+                all_rows,
+                metrics=(
+                    FigureMetricSpec(
+                        "peak_memory_mb",
+                        "04_core_scaling_by_pipeline_plus_average_ram",
+                        "RAM usage by pipeline and core count",
+                        "Peak process-tree RSS (MB)",
+                        minimum_ylim=0.0,
+                        log_variant=True,
+                    ),
+                ),
+                methods=methods,
+                pipeline_names=pipeline_names,
+                output_dir=self.output_dir,
+                output_formats=self.output_formats,
+            )
+        )
+        outputs.extend(
+            self.generate_average_point_figures(
+                metric_rows,
+                filename_stem="04_core_scaling_average_with_pipeline_points_ram",
+                title="Average RAM usage by core count",
+                ylabel="Peak process-tree RSS (MB)",
+                value_key="peak_memory_mb",
+                log_variant=False,
+            )
+        )
+        return tuple(outputs)
+
+    def generate_core_scaling_pipeline_speedup_figures(
+        self,
+        rows: Sequence["BenchmarkMetricRow"],
+        *,
+        methods: Sequence[str],
+        pipeline_names: Sequence[str],
+    ) -> tuple[Path, ...]:
+        """Generate the per-pipeline core scaling figure with multi-band breaks."""
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import FuncFormatter
+        from matplotlib.ticker import LogLocator
+        from matplotlib.ticker import NullFormatter
+        from matplotlib.ticker import NullLocator
+
+        from benchmark.reports.cppipe_figures import FIGURE_STYLE
+        from benchmark.reports.cppipe_figures import FIGURE_DPI
+        from benchmark.reports.cppipe_figures import DEFAULT_WRAP_AFTER
+        from benchmark.reports.cppipe_figures import PIPELINE_LABEL_FONT_SIZE
+        from benchmark.reports.cppipe_figures import PIPELINE_LABEL_LAYOUT
+        from benchmark.reports.cppipe_figures import SPEEDUP_TARGET
+
+        row_index = {(row.pipeline_name, row.method): row for row in rows}
+        panels = PIPELINE_LABEL_LAYOUT.panels(pipeline_names, DEFAULT_WRAP_AFTER)
+        width = min(0.18, 0.82 / max(len(methods), 1))
+        offsets = _bar_offsets(len(methods), width)
+        outputs: list[Path] = []
+
+        panel_bands = tuple(
+            self.speedup_axis_band_policy.bands_for(
+                tuple(
+                    row.speedup
+                    for pipeline_name in panel
+                    for method in methods
+                    if (row := row_index.get((pipeline_name, method))) is not None
+                    and row.speedup is not None
+                )
+            )
+            for panel in panels
+        )
+        with FIGURE_STYLE.context():
+            axis_row_specs: list[tuple[int | None, int | None, float]] = []
+            for panel_index, bands in enumerate(panel_bands):
+                for band_index, ratio in enumerate(
+                    (1.0,) * (len(bands) - 1) + (3.0,)
+                ):
+                    axis_row_specs.append((panel_index, band_index, ratio))
+                if panel_index < len(panel_bands) - 1:
+                    axis_row_specs.append((None, None, 0.35))
+
+            fig = plt.figure(
+                figsize=(
+                    max(8.0, max(len(panel) for panel in panels) * 0.98),
+                    7.4 * len(panels),
+                ),
+                layout="constrained",
+            )
+            grid = fig.add_gridspec(
+                len(axis_row_specs),
+                1,
+                height_ratios=[row_spec[2] for row_spec in axis_row_specs],
+            )
+            axes_by_panel: list[list[Any]] = [[] for _panel in panels]
+            for row_index_, (panel_index, _band_index, _ratio) in enumerate(axis_row_specs):
+                axis = fig.add_subplot(grid[row_index_, 0])
+                if panel_index is None:
+                    axis.set_axis_off()
+                    continue
+                axes_by_panel[panel_index].append(axis)
+
+            for panel_index, (panel, bands) in enumerate(zip(panels, panel_bands, strict=True)):
+                panel_axes = tuple(axes_by_panel[panel_index])
+                x_positions = tuple(range(len(panel)))
+                visible_bands = tuple(reversed(bands))
+                for band_index, (axis, band) in enumerate(zip(panel_axes, visible_bands, strict=True)):
+                    for method_index, method in enumerate(methods):
+                        values = tuple(
+                            (
+                                row.speedup
+                                if (row := row_index.get((pipeline_name, method))) is not None
+                                else None
+                            )
+                            for pipeline_name in panel
+                        )
+                        axis.bar(
+                            [x + offsets[method_index] for x in x_positions],
+                            [value if value is not None else float("nan") for value in values],
+                            width=width,
+                            label=method if panel_index == 0 and band_index == 0 else None,
+                            color=FIGURE_STYLE.color_for_method(method_index),
+                            edgecolor=FIGURE_STYLE.background,
+                            linewidth=0.55,
+                        )
+                    axis.set_ylim(*band.as_ylim())
+                    if band.contains(SPEEDUP_TARGET):
+                        axis.axhline(
+                            SPEEDUP_TARGET,
+                            color=FIGURE_STYLE.target_color,
+                            linewidth=1.15,
+                            linestyle="--",
+                            alpha=0.86,
+                        )
+                        axis.text(
+                            len(panel) - 0.15,
+                            SPEEDUP_TARGET * 1.05,
+                            "4x target",
+                            color=FIGURE_STYLE.target_color,
+                            ha="right",
+                            va="bottom",
+                            fontsize=8,
+                        )
+                    axis.grid(
+                        axis="y",
+                        color=FIGURE_STYLE.grid_color,
+                        linewidth=0.8,
+                        alpha=0.8,
+                    )
+                    axis.set_axisbelow(True)
+                    axis.spines["top"].set_visible(False)
+                    axis.spines["right"].set_visible(False)
+                    axis.spines["left"].set_color(FIGURE_STYLE.spine_color)
+                    axis.spines["bottom"].set_color(FIGURE_STYLE.spine_color)
+                    axis.set_xticks(list(x_positions))
+                    if band_index < len(visible_bands) - 1:
+                        axis.set_xticklabels(())
+                    else:
+                        axis.set_xticklabels(
+                            [PIPELINE_LABEL_LAYOUT.split_label(name) for name in panel],
+                            rotation=42,
+                            ha="right",
+                            fontsize=PIPELINE_LABEL_FONT_SIZE,
+                        )
+                    if band_index > 0:
+                        self.mark_axis_break(panel_axes[band_index - 1], axis)
+                    if panel_index == 0 and band_index == 0:
+                        axis.set_title(
+                            "Execution speedup by pipeline and core count",
+                            loc="left",
+                            pad=10,
+                        )
+            axes_by_panel[0][0].legend(
+                frameon=False,
+                ncol=min(len(methods), 5),
+                loc="upper left",
+            )
+            fig.supylabel("Execution speedup vs CellProfiler (x)")
+            for output_format in self.output_formats:
+                output_path = (
+                    self.output_dir
+                    / f"02_core_scaling_by_pipeline_plus_average_speedup.{output_format}"
+                )
+                fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
+                outputs.append(output_path)
+            plt.close(fig)
+
+        with FIGURE_STYLE.context():
+            fig, axes_ = plt.subplots(
+                len(panels),
+                1,
+                figsize=(max(8.0, max(len(panel) for panel in panels) * 0.98), 7.2),
+                layout="constrained",
+            )
+            axes = (axes_,) if len(panels) == 1 else tuple(axes_)
+            for panel_index, (axis, panel) in enumerate(zip(axes, panels, strict=True)):
+                x_positions = tuple(range(len(panel)))
+                for method_index, method in enumerate(methods):
+                    values = tuple(
+                        (
+                            row.speedup
+                            if (row := row_index.get((pipeline_name, method))) is not None
+                            else None
+                        )
+                        for pipeline_name in panel
+                    )
+                    axis.bar(
+                        [x + offsets[method_index] for x in x_positions],
+                        [value if value is not None else float("nan") for value in values],
+                        width=width,
+                        label=method if panel_index == 0 else None,
+                        color=FIGURE_STYLE.color_for_method(method_index),
+                        edgecolor=FIGURE_STYLE.background,
+                        linewidth=0.55,
+                    )
+                axis.set_yscale("log")
+                axis.yaxis.set_major_locator(LogLocator(base=10.0, numticks=6))
+                axis.yaxis.set_minor_locator(NullLocator())
+                axis.yaxis.set_major_formatter(FuncFormatter(_plain_numeric_tick_label))
+                axis.yaxis.set_minor_formatter(NullFormatter())
+                axis.axhline(
+                    SPEEDUP_TARGET,
+                    color=FIGURE_STYLE.target_color,
+                    linewidth=1.15,
+                    linestyle="--",
+                    alpha=0.86,
+                )
+                axis.grid(axis="y", color=FIGURE_STYLE.grid_color, linewidth=0.8, alpha=0.8)
+                axis.set_axisbelow(True)
+                axis.spines["top"].set_visible(False)
+                axis.spines["right"].set_visible(False)
+                axis.set_ylabel("Execution speedup vs CellProfiler (x)")
+                axis.set_xticks(list(x_positions))
+                axis.set_xticklabels(
+                    [PIPELINE_LABEL_LAYOUT.split_label(name) for name in panel],
+                    rotation=42,
+                    ha="right",
+                    fontsize=PIPELINE_LABEL_FONT_SIZE,
+                )
+                if panel_index == 0:
+                    axis.set_title(
+                        "Execution speedup by pipeline and core count (log)",
+                        loc="left",
+                        pad=10,
+                    )
+            axes[0].legend(frameon=False, ncol=min(len(methods), 5), loc="upper left")
+            for output_format in self.output_formats:
+                output_path = (
+                    self.output_dir
+                    / f"02_core_scaling_by_pipeline_plus_average_speedup_log.{output_format}"
+                )
+                fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
+                outputs.append(output_path)
+            plt.close(fig)
+        return tuple(outputs)
+
+    @staticmethod
+    def mark_axis_break(upper_axis, lower_axis) -> None:
+        """Draw diagonal cut marks between adjacent y-axis bands."""
+        marker_size = 0.008
+        upper_axis.plot(
+            (-marker_size, +marker_size),
+            (-marker_size, +marker_size),
+            transform=upper_axis.transAxes,
+            color="black",
+            clip_on=False,
+            linewidth=1.0,
+        )
+        upper_axis.plot(
+            (1 - marker_size, 1 + marker_size),
+            (-marker_size, +marker_size),
+            transform=upper_axis.transAxes,
+            color="black",
+            clip_on=False,
+            linewidth=1.0,
+        )
+        lower_axis.plot(
+            (-marker_size, +marker_size),
+            (1 - marker_size, 1 + marker_size),
+            transform=lower_axis.transAxes,
+            color="black",
+            clip_on=False,
+            linewidth=1.0,
+        )
+        lower_axis.plot(
+            (1 - marker_size, 1 + marker_size),
+            (1 - marker_size, 1 + marker_size),
+            transform=lower_axis.transAxes,
+            color="black",
+            clip_on=False,
+            linewidth=1.0,
+        )
+
+    def generate_wells_per_core_figures(
+        self,
+        core_rows: Sequence[WellThroughputResult],
+        wells_per_core_rows: Sequence[WellThroughputResult],
+    ) -> tuple[Path, ...]:
+        """Generate summary figures for 2/3/4 cores x 2/3/4 wells/core."""
+        summary_rows = self.wells_per_core_summary_rows(
+            core_rows=core_rows,
+            wells_per_core_rows=wells_per_core_rows,
+        )
+        outputs: list[Path] = []
+        outputs.append(
+            self.write_wells_per_core_summary_csv(
+                self.output_dir / "05_speedup_by_core_and_wells_per_core_summary.csv",
+                summary_rows,
+            )
+        )
+        outputs.append(
+            self.write_wells_per_core_summary_markdown(
+                self.output_dir / "05_speedup_by_core_and_wells_per_core_summary.md",
+                summary_rows,
+            )
+        )
+
+        outputs.extend(self.generate_wells_per_core_summary_figure(summary_rows))
+        return tuple(outputs)
+
+    def generate_wells_per_core_summary_figure(
+        self,
+        summary_rows: Sequence["WellsPerCoreSummaryRow"],
+    ) -> tuple[Path, ...]:
+        """Plot mean bars with median/min overlays in one wells/core summary."""
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import FuncFormatter
+        from matplotlib.ticker import LogLocator
+        from matplotlib.ticker import NullFormatter
+        from matplotlib.ticker import NullLocator
+
+        from benchmark.reports.cppipe_figures import FIGURE_DPI
+        from benchmark.reports.cppipe_figures import FIGURE_STYLE
+        from benchmark.reports.cppipe_figures import SPEEDUP_TARGET
+
+        row_index = {
+            (row.worker_count, row.wells_per_core): row for row in summary_rows
+        }
+        ordered_keys = tuple(
+            (worker_count, wells_per_core)
+            for worker_count in self.multicore_worker_counts
+            for wells_per_core in sorted(
+                {
+                    row.wells_per_core
+                    for row in summary_rows
+                    if row.worker_count == worker_count
+                }
+            )
+        )
+        outputs: list[Path] = []
+        for log_y in (False, True):
+            with FIGURE_STYLE.context():
+                fig, axis = plt.subplots(
+                    1,
+                    1,
+                    figsize=(12.0, 5.8),
+                    layout="constrained",
+                )
+                x_positions = tuple(range(len(ordered_keys)))
+                mean_values = tuple(
+                    row_index[key].mean if key in row_index else float("nan")
+                    for key in ordered_keys
+                )
+                median_values = tuple(
+                    row_index[key].median if key in row_index else float("nan")
+                    for key in ordered_keys
+                )
+                min_values = tuple(
+                    row_index[key].min if key in row_index else float("nan")
+                    for key in ordered_keys
+                )
+                bar_colors = tuple(
+                    FIGURE_STYLE.color_for_method(
+                        self.multicore_worker_counts.index(worker_count)
+                    )
+                    for worker_count, _wells_per_core in ordered_keys
+                )
+                axis.bar(
+                    x_positions,
+                    mean_values,
+                    width=0.72,
+                    label="Mean",
+                    color=bar_colors,
+                    edgecolor=FIGURE_STYLE.background,
+                    linewidth=0.55,
+                    alpha=0.82,
+                )
+                axis.scatter(
+                    x_positions,
+                    median_values,
+                    label="Median",
+                    marker="D",
+                    s=58,
+                    color=FIGURE_STYLE.text_color,
+                    zorder=4,
+                )
+                axis.scatter(
+                    x_positions,
+                    min_values,
+                    label="Minimum",
+                    marker="v",
+                    s=72,
+                    color=FIGURE_STYLE.target_color,
+                    edgecolor=FIGURE_STYLE.background,
+                    linewidth=0.7,
+                    zorder=5,
+                )
+                axis.axhline(
+                    SPEEDUP_TARGET,
+                    color=FIGURE_STYLE.target_color,
+                    linewidth=1.15,
+                    linestyle="--",
+                    alpha=0.86,
+                )
+                if log_y:
+                    axis.set_yscale("log")
+                    axis.yaxis.set_major_locator(LogLocator(base=10.0, numticks=6))
+                    axis.yaxis.set_minor_locator(NullLocator())
+                    axis.yaxis.set_major_formatter(
+                        FuncFormatter(_plain_numeric_tick_label)
+                    )
+                    axis.yaxis.set_minor_formatter(NullFormatter())
+                else:
+                    axis.set_ylim(bottom=0.0)
+                axis.set_xticks(list(x_positions))
+                axis.set_xticklabels(
+                    [
+                        f"{worker_count}c\n{wells_per_core} wells/core"
+                        for worker_count, wells_per_core in ordered_keys
+                    ],
+                    rotation=35,
+                    ha="right",
+                    fontsize=9,
+                )
+                axis.set_ylabel("Speedup vs CellProfiler (x)", fontsize=10)
+                axis.grid(
+                    axis="y",
+                    color=FIGURE_STYLE.grid_color,
+                    linewidth=0.8,
+                    alpha=0.8,
+                )
+                axis.set_axisbelow(True)
+                axis.spines["top"].set_visible(False)
+                axis.spines["right"].set_visible(False)
+                axis.legend(frameon=False, ncol=4, loc="upper left", fontsize=9)
+                title_suffix = " (log)" if log_y else ""
+                fig.suptitle(
+                    f"Multicore speedup summary by wells/core{title_suffix}",
+                    x=0.01,
+                    ha="left",
+                    fontsize=13,
+                    fontweight="bold",
+                )
+                stem = "05_speedup_summary_by_core_and_wells_per_core"
+                if log_y:
+                    stem = f"{stem}_log"
+                for output_format in self.output_formats:
+                    output_path = self.output_dir / f"{stem}.{output_format}"
+                    fig.savefig(output_path, dpi=FIGURE_DPI, bbox_inches="tight")
+                    outputs.append(output_path)
+                plt.close(fig)
+        return tuple(outputs)
+
+    def core_scaling_metric_rows(
+        self,
+        core_rows: Sequence[WellThroughputResult],
+        summary_rows: Sequence[Mapping[str, str]],
+    ) -> tuple["BenchmarkMetricRow", ...]:
+        """Project fixed core-scaling observations into benchmark metric rows."""
+        from benchmark.reports.cppipe_figures import BenchmarkMetricRow
+
+        row_index = {(row.case_name, row.mode_name): row for row in core_rows}
+        rows: list[BenchmarkMetricRow] = []
+        for summary_row in summary_rows:
+            case_name = summary_row[CASE_NAME_FIELD]
+            for mode in self.core_scaling_modes:
+                row = row_index.get((case_name, mode.source_mode_name))
+                if row is None:
+                    continue
+                rows.append(
+                    BenchmarkMetricRow(
+                        pipeline_name=case_name,
+                        method=mode.label,
+                        assay_category=summary_row.get("assay_category", ""),
+                        module_category=summary_row.get("module_category", ""),
+                        accuracy_fraction=None,
+                        raw_seconds=row.execute_seconds,
+                        speedup=row.projected_execution_speedup,
+                        peak_memory_mb=row.peak_memory_mb,
+                    )
+                )
+        return tuple(rows)
+
+    def core_scaling_average_rows(
+        self,
+        rows: Sequence["BenchmarkMetricRow"],
+    ) -> tuple["BenchmarkMetricRow", ...]:
+        """Aggregate one Average row per fixed core-scaling mode."""
+        from benchmark.reports.cppipe_figures import BenchmarkMetricRow
+
+        average_rows: list[BenchmarkMetricRow] = []
+        for mode in self.core_scaling_modes:
+            mode_rows = tuple(row for row in rows if row.method == mode.label)
+            average_rows.append(
+                BenchmarkMetricRow(
+                    pipeline_name="Average",
+                    method=mode.label,
+                    assay_category="",
+                    module_category="",
+                    accuracy_fraction=None,
+                    raw_seconds=_mean_present(row.raw_seconds for row in mode_rows),
+                    speedup=_mean_present(row.speedup for row in mode_rows),
+                    peak_memory_mb=_mean_present(row.peak_memory_mb for row in mode_rows),
+                )
+            )
+        return tuple(average_rows)
+
+    def generate_average_point_figures(
+        self,
+        rows: Sequence["BenchmarkMetricRow"],
+        *,
+        filename_stem: str,
+        title: str,
+        ylabel: str,
+        value_key: str,
+        target_line: float | None = None,
+        log_variant: bool,
+    ) -> tuple[Path, ...]:
+        """Plot mean bars with all per-pipeline points for each method."""
+        import matplotlib.pyplot as plt
+        from matplotlib.ticker import FuncFormatter
+        from matplotlib.ticker import LogLocator
+        from matplotlib.ticker import NullFormatter
+        from matplotlib.ticker import NullLocator
+
+        from benchmark.reports.cppipe_figures import FIGURE_STYLE
+        from benchmark.reports.cppipe_figures import LINEAR_AXIS_BREAK_POLICY
+
+        methods = tuple(mode.label for mode in self.core_scaling_modes)
+        method_values = tuple(
+            (
+                method,
+                tuple(
+                    float(value)
+                    for row in rows
+                    if row.method == method
+                    and (value := getattr(row, value_key)) is not None
+                ),
+            )
+            for method in methods
+        )
+        values = tuple(value for _method, method_values_ in method_values for value in method_values_)
+        if not values:
+            return ()
+        outputs: list[Path] = []
+        for log_y in (False, True) if log_variant else (False,):
+            broken_range = (
+                LINEAR_AXIS_BREAK_POLICY.range_for(values)
+                if not log_y
+                else None
+            )
+            with FIGURE_STYLE.context():
+                if broken_range is None:
+                    fig, axis = plt.subplots(
+                        1,
+                        1,
+                        figsize=(max(5.6, 1.45 * len(method_values) + 3.2), 4.6),
+                        layout="constrained",
+                    )
+                    axes = (axis,)
+                else:
+                    fig, axes_ = plt.subplots(
+                        2,
+                        1,
+                        figsize=(max(5.6, 1.45 * len(method_values) + 3.2), 5.6),
+                        gridspec_kw={"height_ratios": (1.0, 3.2)},
+                        sharex=True,
+                        layout="constrained",
+                    )
+                    top_axis, bottom_axis = tuple(axes_)
+                    top_axis.set_ylim(broken_range[1], broken_range[2])
+                    bottom_axis.set_ylim(0.0, broken_range[0])
+                    LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
+                    axes = (top_axis, bottom_axis)
+                x_positions = tuple(range(len(method_values)))
+                for method_index, (_method, values_) in enumerate(method_values):
+                    if not values_:
+                        continue
+                    mean = sum(values_) / len(values_)
+                    color = FIGURE_STYLE.color_for_method(method_index + 1)
+                    point_x = tuple(
+                        method_index + _deterministic_jitter(index, len(values_))
+                        for index in range(len(values_))
+                    )
+                    for axis in axes:
+                        axis.bar(
+                            [method_index],
+                            [mean],
+                            width=0.62,
+                            color=color,
+                            alpha=0.72,
+                            edgecolor=FIGURE_STYLE.background,
+                            linewidth=0.55,
+                        )
+                        axis.scatter(
+                            point_x,
+                            values_,
+                            s=28,
+                            color=FIGURE_STYLE.text_color,
+                            alpha=0.58,
+                            zorder=3,
+                        )
+                        axis.hlines(
+                            statistics.median(values_),
+                            method_index - 0.31,
+                            method_index + 0.31,
+                            color=FIGURE_STYLE.text_color,
+                            linewidth=1.35,
+                            zorder=4,
+                            label=(
+                                "Median"
+                                if method_index == 0 and axis is axes[0]
+                                else None
+                            ),
+                        )
+                        if target_line is not None:
+                            axis.axhline(
+                                target_line,
+                                color=FIGURE_STYLE.target_color,
+                                linewidth=1.15,
+                                linestyle="--",
+                                alpha=0.86,
+                            )
+                        axis.grid(
+                            axis="y",
+                            color=FIGURE_STYLE.grid_color,
+                            linewidth=0.8,
+                            alpha=0.8,
+                        )
+                        axis.set_axisbelow(True)
+                        axis.spines["top"].set_visible(False)
+                        axis.spines["right"].set_visible(False)
+                        axis.spines["left"].set_color(FIGURE_STYLE.spine_color)
+                        axis.spines["bottom"].set_color(FIGURE_STYLE.spine_color)
+                label_axis = axes[-1]
+                label_axis.set_xticks(list(x_positions))
+                label_axis.set_xticklabels([method for method, _values in method_values])
+                label_axis.set_ylabel(ylabel)
+                axes[0].set_title(title + (" (log)" if log_y else ""), loc="left", pad=10)
+                axes[0].legend(frameon=False, loc="upper left")
+                if log_y:
+                    for axis in axes:
+                        axis.set_yscale("log")
+                        axis.yaxis.set_major_locator(LogLocator(base=10.0, numticks=6))
+                        axis.yaxis.set_minor_locator(NullLocator())
+                        axis.yaxis.set_major_formatter(
+                            FuncFormatter(_plain_numeric_tick_label)
+                        )
+                        axis.yaxis.set_minor_formatter(NullFormatter())
+                suffix = "_log" if log_y else ""
+                for output_format in self.output_formats:
+                    output_path = self.output_dir / f"{filename_stem}{suffix}.{output_format}"
+                    FIGURE_STYLE.save(fig, output_path)
+                    outputs.append(output_path)
+                plt.close(fig)
+        return tuple(outputs)
+
+    def wells_per_core_summary_rows(
+        self,
+        *,
+        core_rows: Sequence[WellThroughputResult],
+        wells_per_core_rows: Sequence[WellThroughputResult],
+    ) -> tuple["WellsPerCoreSummaryRow", ...]:
+        """Summarize multicore modes across all available wells/core counts."""
+        rows_by_key: dict[tuple[int, int], list[float]] = {}
+        seen_observations: set[tuple[str, str]] = set()
+        for row in (*wells_per_core_rows, *core_rows):
+            if row.worker_count not in self.multicore_worker_counts:
+                continue
+            if row.well_count % row.worker_count != 0:
+                continue
+            observation_key = (row.case_name, row.mode_name)
+            if observation_key in seen_observations:
+                continue
+            seen_observations.add(observation_key)
+            wells_per_core = row.well_count // row.worker_count
+            if row.projected_execution_speedup is not None:
+                rows_by_key.setdefault((row.worker_count, wells_per_core), []).append(
+                    float(row.projected_execution_speedup)
+                )
+        return tuple(
+            WellsPerCoreSummaryRow.from_values(
+                worker_count=worker_count,
+                wells_per_core=wells_per_core,
+                values=tuple(rows_by_key[(worker_count, wells_per_core)]),
+            )
+            for worker_count, wells_per_core in sorted(rows_by_key)
+        )
+
+    @staticmethod
+    def read_dict_rows(path: Path) -> tuple[Mapping[str, str], ...]:
+        """Read a CSV file as immutable mapping rows."""
+        with Path(path).open("r", encoding="utf-8", newline="") as handle:
+            return tuple(csv.DictReader(handle))
+
+    @staticmethod
+    def write_metric_rows(path: Path, rows: Sequence["BenchmarkMetricRow"]) -> Path:
+        """Write benchmark metric rows used by generated figures."""
+        fieldnames = (
+            "pipeline_name",
+            "method",
+            "assay_category",
+            "module_category",
+            "accuracy_fraction",
+            "raw_seconds",
+            "speedup",
+            "peak_memory_mb",
+        )
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow({field: getattr(row, field) for field in fieldnames})
+        return path
+
+    @staticmethod
+    def write_wells_per_core_summary_csv(
+        path: Path,
+        rows: Sequence["WellsPerCoreSummaryRow"],
+    ) -> Path:
+        """Write 2/3/4 cores x 2/3/4 wells/core summary statistics."""
+        fieldnames = tuple(asdict(rows[0])) if rows else ()
+        with path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=fieldnames)
+            writer.writeheader()
+            for row in rows:
+                writer.writerow(asdict(row))
+        return path
+
+    @staticmethod
+    def write_wells_per_core_summary_markdown(
+        path: Path,
+        rows: Sequence["WellsPerCoreSummaryRow"],
+    ) -> Path:
+        """Write a Markdown table for wells/core summary statistics."""
+        lines = [
+            "| cores | wells/core | n | minimum x | median x | mean x | max x |",
+            "|---:|---:|---:|---:|---:|---:|---:|",
+        ]
+        lines.extend(
+            (
+                f"| {row.worker_count} | {row.wells_per_core} | {row.n} | "
+                f"{row.min:.2f} | {row.median:.2f} | {row.mean:.2f} | "
+                f"{row.max:.2f} |"
+            )
+            for row in rows
+        )
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return path
+
+
+@dataclass(frozen=True, slots=True)
+class WellsPerCoreSummaryRow:
+    """Speedup summary statistics for one core count and wells/core setting."""
+
+    worker_count: int
+    wells_per_core: int
+    n: int
+    min: float
+    median: float
+    mean: float
+    max: float
+
+    @classmethod
+    def from_values(
+        cls,
+        *,
+        worker_count: int,
+        wells_per_core: int,
+        values: Sequence[float],
+    ) -> "WellsPerCoreSummaryRow":
+        """Build summary statistics from finite speedup values."""
+        finite_values = tuple(value for value in values if math.isfinite(value))
+        if not finite_values:
+            raise ValueError(
+                f"No speedup values for {worker_count} cores and "
+                f"{wells_per_core} wells/core."
+            )
+        return cls(
+            worker_count=int(worker_count),
+            wells_per_core=int(wells_per_core),
+            n=len(finite_values),
+            min=min(finite_values),
+            median=statistics.median(finite_values),
+            mean=statistics.mean(finite_values),
+            max=max(finite_values),
         )
 
 
@@ -775,7 +1888,7 @@ def generate_well_throughput_figures(
 
     output_dir.mkdir(parents=True, exist_ok=True)
     case_names = tuple(dict.fromkeys(row.case_name for row in rows))
-    mode_names = tuple(dict.fromkeys(row.mode_name for row in rows))
+    mode_names = WELL_THROUGHPUT_MODE_ORDER.order(row.mode_name for row in rows)
     row_index = {(row.case_name, row.mode_name): row for row in rows}
     outputs: list[Path] = []
 
@@ -919,6 +2032,30 @@ def generate_well_throughput_figures(
     average_csv = output_dir / "well_throughput_average_speedup_points.csv"
     _write_well_throughput_average_speedup_csv(average_csv, rows, mode_names)
     outputs.append(average_csv)
+    from benchmark.reports.cppipe_figures import SpeedupDistributionSeries
+    from benchmark.reports.cppipe_figures import generate_speedup_distribution_artifacts
+
+    outputs.extend(
+        generate_speedup_distribution_artifacts(
+            tuple(
+                SpeedupDistributionSeries(
+                    mode_name,
+                    tuple(
+                        float(row.projected_execution_speedup)
+                        for row in rows
+                        if row.mode_name == mode_name
+                        and row.projected_execution_speedup is not None
+                    ),
+                )
+                for mode_name in mode_names
+            ),
+            output_dir=output_dir,
+            filename_prefix="well_throughput_speedup",
+            title="Well-throughput speedup cumulative distribution",
+            xlabel="Projected speedup versus CP (x)",
+            output_formats=output_formats,
+        )
+    )
     outputs.extend(
         _plot_well_throughput_average_speedup_points(
             rows,
@@ -973,6 +2110,13 @@ def _optional_float(value: str | None) -> float | None:
     if value in (None, ""):
         return None
     return float(value)
+
+
+def _mean_present(values: Iterable[float | None]) -> float | None:
+    present = tuple(value for value in values if value is not None)
+    if not present:
+        return None
+    return sum(present) / len(present)
 
 
 def _plain_numeric_tick_label(value: float, position: int) -> str:

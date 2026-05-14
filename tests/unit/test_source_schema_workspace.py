@@ -246,6 +246,48 @@ def test_expand_source_schema_workspace_wells_preserves_original_well_dimension(
     }
 
 
+def test_expand_source_schema_workspace_wells_replaces_source_well_metadata(
+    tmp_path: Path,
+) -> None:
+    metadata_path = tmp_path / "openhcs_metadata.json"
+    metadata_path.write_text(
+        json.dumps(
+            {
+                "subdirectories": {
+                    ".": {
+                        "workspace_mapping": {
+                            "source_s001_w1_z001_t001.tif": "Sequence1/image.tif",
+                        },
+                        "source_metadata": {
+                            "source_s001_w1_z001_t001.tif": {
+                                "Well": "A01",
+                                "Metadata_Well": "A01",
+                                "ChannelNumber": "1",
+                            },
+                        },
+                    }
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    expand_source_schema_workspace_wells(metadata_path, ("W001", "W002"))
+
+    metadata = json.loads(metadata_path.read_text())
+    source_metadata = metadata["subdirectories"]["."]["source_metadata"]
+    assert source_metadata == {
+        "W001_s001_w1_z001_t001.tif": {
+            "ChannelNumber": "1",
+            "well": "W001",
+        },
+        "W002_s001_w1_z001_t001.tif": {
+            "ChannelNumber": "1",
+            "well": "W002",
+        },
+    }
+
+
 def test_materialize_source_schema_workspace_projects_cellprofiler_sources(
     tmp_path: Path,
 ) -> None:
