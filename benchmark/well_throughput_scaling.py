@@ -520,6 +520,7 @@ class WellThroughputPresentationReport:
                         "Peak process-tree RSS (MB)",
                         minimum_ylim=0.0,
                         log_variant=True,
+                        use_axis_break=False,
                     ),
                 ),
                 methods=methods,
@@ -1061,12 +1062,13 @@ class WellThroughputPresentationReport:
         values = tuple(value for _method, method_values_ in method_values for value in method_values_)
         if not values:
             return ()
+        value_suffix = " MB" if value_key == "peak_memory_mb" else "x"
         outputs: list[Path] = []
         for log_y in (False, True) if log_variant else (False,):
             broken_range = (
-                LINEAR_AXIS_BREAK_POLICY.range_for(values)
-                if not log_y
-                else None
+                None
+                if log_y or value_key == "peak_memory_mb"
+                else LINEAR_AXIS_BREAK_POLICY.range_for(values)
             )
             with FIGURE_STYLE.context():
                 if broken_range is None:
@@ -1092,6 +1094,15 @@ class WellThroughputPresentationReport:
                     LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
                     axes = (top_axis, bottom_axis)
                 x_positions = tuple(range(len(method_values)))
+                if log_y:
+                    for axis in axes:
+                        axis.set_yscale("log")
+                        axis.yaxis.set_major_locator(LogLocator(base=10.0, numticks=6))
+                        axis.yaxis.set_minor_locator(NullLocator())
+                        axis.yaxis.set_major_formatter(
+                            FuncFormatter(_plain_numeric_tick_label)
+                        )
+                        axis.yaxis.set_minor_formatter(NullFormatter())
                 if target_line is not None:
                     for axis in axes:
                         axis.axhline(
@@ -1167,6 +1178,96 @@ class WellThroughputPresentationReport:
                         zorder=6,
                     )
 
+                def adjusted_label_values(
+                    axis,
+                    stats: Sequence[tuple[str, float, str]],
+                    *,
+                    min_gap_points: float = 11.0,
+                    edge_padding_points: float = 5.0,
+                ) -> tuple[tuple[str, float, str], ...]:
+                    """Return stat label y-values adjusted to avoid text collisions."""
+                    if not stats:
+                        return ()
+                    renderer = fig.canvas.get_renderer()
+                    points_to_pixels = renderer.points_to_pixels
+                    min_gap_pixels = points_to_pixels(min_gap_points)
+                    edge_padding_pixels = points_to_pixels(edge_padding_points)
+                    axis_min = axis.bbox.y0 + edge_padding_pixels
+                    axis_max = axis.bbox.y1 - edge_padding_pixels
+
+                    positioned = sorted(
+                        (
+                            (
+                                label,
+                                value,
+                                weight,
+                                axis.transData.transform((0.0, value))[1],
+                            )
+                            for label, value, weight in stats
+                        ),
+                        key=lambda item: item[3],
+                    )
+                    adjusted_pixels: list[float] = []
+                    for _label, _value, _weight, original_pixels in positioned:
+                        adjusted_pixels.append(
+                            max(
+                                original_pixels,
+                                adjusted_pixels[-1] + min_gap_pixels
+                                if adjusted_pixels
+                                else axis_min,
+                            )
+                        )
+                    if adjusted_pixels[-1] > axis_max:
+                        adjusted_pixels[-1] = axis_max
+                    for index in range(len(adjusted_pixels) - 2, -1, -1):
+                        adjusted_pixels[index] = min(
+                            adjusted_pixels[index],
+                            adjusted_pixels[index + 1] - min_gap_pixels,
+                        )
+                    for index in range(1, len(adjusted_pixels)):
+                        adjusted_pixels[index] = max(
+                            adjusted_pixels[index],
+                            adjusted_pixels[index - 1] + min_gap_pixels,
+                        )
+
+                    return tuple(
+                        (
+                            label,
+                            axis.transData.inverted().transform((0.0, adjusted_pixels[index]))[1],
+                            weight,
+                        )
+                        for index, (label, _value, weight, _pixels) in enumerate(positioned)
+                    )
+
+                def annotate_stat_labels(
+                    *,
+                    method_index: int,
+                    color: str,
+                    stats: Sequence[tuple[str, float, str]],
+                ) -> None:
+                    label_x = method_index - 0.30
+                    for axis in axes:
+                        visible_stats = tuple(
+                            (label, value, weight)
+                            for label, value, weight in stats
+                            if axis.get_ylim()[0] <= value <= axis.get_ylim()[1]
+                        )
+                        for label, label_value, weight in adjusted_label_values(
+                            axis, visible_stats
+                        ):
+                            annotate_value(
+                                x=label_x,
+                                value=label_value,
+                                text=label,
+                                x_offset=-3.0,
+                                y_offset=0.0,
+                                ha="right",
+                                va="center",
+                                color=color,
+                                weight=weight,
+                            )
+
+                stat_label_groups: list[tuple[int, str, tuple[tuple[str, float, str], ...]]] = []
                 for method_index, (_method, values_) in enumerate(method_values):
                     if not values_:
                         continue
@@ -1174,8 +1275,19 @@ class WellThroughputPresentationReport:
                     median = statistics.median(values_)
                     minimum = min(values_)
                     maximum = max(values_)
-                    label_x = method_index - 0.30
                     color = FIGURE_STYLE.color_for_method(method_index + 1)
+                    stat_label_groups.append(
+                        (
+                            method_index,
+                            color,
+                            (
+                                (f"min {minimum:.1f}{value_suffix}", minimum, "normal"),
+                                (f"med {median:.1f}{value_suffix}", median, "normal"),
+                                (f"mean {mean:.1f}{value_suffix}", mean, "bold"),
+                                (f"max {maximum:.1f}{value_suffix}", maximum, "normal"),
+                            ),
+                        )
+                    )
                     point_x = tuple(
                         method_index + _deterministic_jitter(index, len(values_))
                         for index in range(len(values_))
@@ -1222,47 +1334,6 @@ class WellThroughputPresentationReport:
                         axis.spines["right"].set_visible(False)
                         axis.spines["left"].set_color(FIGURE_STYLE.spine_color)
                         axis.spines["bottom"].set_color(FIGURE_STYLE.spine_color)
-                    annotate_value(
-                        x=label_x,
-                        value=mean,
-                        text=f"mean {mean:.1f}x",
-                        x_offset=-3.0,
-                        y_offset=3.0,
-                        ha="right",
-                        va="bottom",
-                        color=color,
-                        weight="bold",
-                    )
-                    annotate_value(
-                        x=label_x,
-                        value=median,
-                        text=f"med {median:.1f}x",
-                        x_offset=-3.0,
-                        y_offset=9.0,
-                        ha="right",
-                        va="bottom",
-                        color=color,
-                    )
-                    annotate_value(
-                        x=label_x,
-                        value=minimum,
-                        text=f"min {minimum:.1f}x",
-                        x_offset=-3.0,
-                        y_offset=2.0,
-                        ha="right",
-                        va="bottom",
-                        color=color,
-                    )
-                    annotate_value(
-                        x=label_x,
-                        value=maximum,
-                        text=f"max {maximum:.1f}x",
-                        x_offset=-3.0,
-                        y_offset=-3.0,
-                        ha="right",
-                        va="top",
-                        color=color,
-                    )
                 label_axis = axes[-1]
                 for axis in axes:
                     axis.set_xlim(-0.80, len(method_values) - 0.48)
@@ -1271,15 +1342,13 @@ class WellThroughputPresentationReport:
                 label_axis.set_ylabel(ylabel)
                 axes[0].set_title(title + (" (log)" if log_y else ""), loc="left", pad=10)
                 axes[0].legend(frameon=False, loc="upper left")
-                if log_y:
-                    for axis in axes:
-                        axis.set_yscale("log")
-                        axis.yaxis.set_major_locator(LogLocator(base=10.0, numticks=6))
-                        axis.yaxis.set_minor_locator(NullLocator())
-                        axis.yaxis.set_major_formatter(
-                            FuncFormatter(_plain_numeric_tick_label)
-                        )
-                        axis.yaxis.set_minor_formatter(NullFormatter())
+                fig.canvas.draw()
+                for method_index, color, stats in stat_label_groups:
+                    annotate_stat_labels(
+                        method_index=method_index,
+                        color=color,
+                        stats=stats,
+                    )
                 suffix = "_log" if log_y else ""
                 for output_format in self.output_formats:
                     output_path = self.output_dir / f"{filename_stem}{suffix}.{output_format}"
@@ -2519,7 +2588,6 @@ def _plot_well_throughput_ram(
     from matplotlib.ticker import NullLocator
 
     from benchmark.reports.cppipe_figures import FIGURE_STYLE
-    from benchmark.reports.cppipe_figures import LINEAR_AXIS_BREAK_POLICY
 
     row_index = {(row.case_name, row.mode_name): row for row in rows}
 
@@ -2533,37 +2601,15 @@ def _plot_well_throughput_ram(
             for case_name in case_names
         )
 
-    ram_values = tuple(
-        value
-        for mode_name in mode_names
-        for value in values_for_mode(mode_name)
-        if value is not None
-    )
-    broken_range = LINEAR_AXIS_BREAK_POLICY.range_for(ram_values)
     outputs: list[Path] = []
     with FIGURE_STYLE.context():
-        if broken_range is None:
-            fig, axis = plt.subplots(
-                1,
-                1,
-                figsize=(max(8.0, len(case_names) * 0.62), 4.8),
-                layout="constrained",
-            )
-            plot_axes = (axis,)
-        else:
-            fig, axes = plt.subplots(
-                2,
-                1,
-                figsize=(max(8.0, len(case_names) * 0.62), 5.8),
-                gridspec_kw={"height_ratios": (1.0, 3.2)},
-                sharex=True,
-                layout="constrained",
-            )
-            top_axis, bottom_axis = tuple(axes)
-            top_axis.set_ylim(broken_range[1], broken_range[2])
-            bottom_axis.set_ylim(0.0, broken_range[0])
-            LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
-            plot_axes = (top_axis, bottom_axis)
+        fig, axis = plt.subplots(
+            1,
+            1,
+            figsize=(max(8.0, len(case_names) * 0.62), 4.8),
+            layout="constrained",
+        )
+        plot_axes = (axis,)
 
         width = min(0.18, 0.82 / max(len(mode_names), 1))
         offsets = _bar_offsets(len(mode_names), width)

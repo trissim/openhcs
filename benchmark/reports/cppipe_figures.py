@@ -97,6 +97,7 @@ class FigureMetricSpec:
     target_line: float | None = None
     minimum_ylim: float | None = None
     log_variant: bool = False
+    use_axis_break: bool = True
 
 
 @dataclass(frozen=True)
@@ -805,6 +806,7 @@ def _category_metrics(category_key: str) -> tuple[FigureMetricSpec, ...]:
             target_line=metric.target_line,
             minimum_ylim=metric.minimum_ylim,
             log_variant=metric.log_variant,
+            use_axis_break=metric.use_axis_break,
         )
         for metric in FIGURE_METRICS
     )
@@ -822,7 +824,7 @@ def _plot_grouped_metric(
 ) -> tuple[Path, ...]:
     broken_range = (
         LINEAR_AXIS_BREAK_POLICY.range_for(_grouped_metric_values(request, metric))
-        if not log_y and not metric.percentage
+        if metric.use_axis_break and not log_y and not metric.percentage
         else None
     )
     if broken_range is not None:
