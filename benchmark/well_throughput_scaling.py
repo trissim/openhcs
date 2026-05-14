@@ -1111,14 +1111,15 @@ class WellThroughputPresentationReport:
                     )
                     target_axis.annotate(
                         f"{target_line:g}x",
-                        xy=(0.012, target_line),
+                        xy=(-0.012, target_line),
                         xycoords=("axes fraction", "data"),
-                        xytext=(2, 3),
+                        xytext=(-2, 3),
                         textcoords="offset points",
-                        ha="left",
+                        ha="right",
                         va="bottom",
                         fontsize=7.8,
                         color=FIGURE_STYLE.target_color,
+                        annotation_clip=False,
                     )
 
                 def visible_axis_for(value: float):
@@ -1173,10 +1174,7 @@ class WellThroughputPresentationReport:
                     median = statistics.median(values_)
                     minimum = min(values_)
                     maximum = max(values_)
-                    label_side = -1.0 if method_index >= len(method_values) - 2 else 1.0
-                    label_x = method_index + (0.34 * label_side)
-                    label_ha = "right" if label_side < 0.0 else "left"
-                    label_x_offset = 3.0 * label_side
+                    label_x = method_index - 0.36
                     color = FIGURE_STYLE.color_for_method(method_index + 1)
                     point_x = tuple(
                         method_index + _deterministic_jitter(index, len(values_))
@@ -1228,9 +1226,9 @@ class WellThroughputPresentationReport:
                         x=label_x,
                         value=mean,
                         text=f"mean {mean:.1f}x",
-                        x_offset=label_x_offset,
+                        x_offset=-3.0,
                         y_offset=3.0,
-                        ha=label_ha,
+                        ha="right",
                         va="bottom",
                         color=color,
                         weight="bold",
@@ -1239,32 +1237,32 @@ class WellThroughputPresentationReport:
                         x=label_x,
                         value=median,
                         text=f"med {median:.1f}x",
-                        x_offset=label_x_offset,
+                        x_offset=-3.0,
                         y_offset=9.0,
-                        ha=label_ha,
+                        ha="right",
                         va="bottom",
                     )
                     annotate_value(
                         x=label_x,
                         value=minimum,
                         text=f"min {minimum:.1f}x",
-                        x_offset=label_x_offset,
+                        x_offset=-3.0,
                         y_offset=2.0,
-                        ha=label_ha,
+                        ha="right",
                         va="bottom",
                     )
                     annotate_value(
                         x=label_x,
                         value=maximum,
                         text=f"max {maximum:.1f}x",
-                        x_offset=label_x_offset,
+                        x_offset=-3.0,
                         y_offset=-3.0,
-                        ha=label_ha,
+                        ha="right",
                         va="top",
                     )
                 label_axis = axes[-1]
                 for axis in axes:
-                    axis.set_xlim(-0.52, len(method_values) - 0.48)
+                    axis.set_xlim(-1.08, len(method_values) - 0.48)
                 label_axis.set_xticks(list(x_positions))
                 label_axis.set_xticklabels([method for method, _values in method_values])
                 label_axis.set_ylabel(ylabel)
