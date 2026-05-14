@@ -1092,10 +1092,91 @@ class WellThroughputPresentationReport:
                     LINEAR_AXIS_BREAK_POLICY.mark(top_axis, bottom_axis)
                     axes = (top_axis, bottom_axis)
                 x_positions = tuple(range(len(method_values)))
+                if target_line is not None:
+                    for axis in axes:
+                        axis.axhline(
+                            target_line,
+                            color=FIGURE_STYLE.target_color,
+                            linewidth=1.15,
+                            linestyle="--",
+                            alpha=0.86,
+                        )
+                    target_axis = next(
+                        (
+                            axis
+                            for axis in axes
+                            if axis.get_ylim()[0] <= target_line <= axis.get_ylim()[1]
+                        ),
+                        axes[-1],
+                    )
+                    target_axis.annotate(
+                        f"{target_line:g}x",
+                        xy=(0.012, target_line),
+                        xycoords=("axes fraction", "data"),
+                        xytext=(2, 3),
+                        textcoords="offset points",
+                        ha="left",
+                        va="bottom",
+                        fontsize=7.8,
+                        color=FIGURE_STYLE.target_color,
+                    )
+
+                def visible_axis_for(value: float):
+                    return next(
+                        (
+                            axis
+                            for axis in axes
+                            if axis.get_ylim()[0] <= value <= axis.get_ylim()[1]
+                        ),
+                        None,
+                    )
+
+                def annotate_value(
+                    *,
+                    x: float,
+                    value: float,
+                    text: str,
+                    x_offset: float = 4.0,
+                    y_offset: float = 0.0,
+                    ha: str = "left",
+                    va: str = "center",
+                    color: str | None = None,
+                    weight: str = "normal",
+                ) -> None:
+                    axis = visible_axis_for(value)
+                    if axis is None:
+                        return
+                    axis.annotate(
+                        text,
+                        xy=(x, value),
+                        xytext=(x_offset, y_offset),
+                        textcoords="offset points",
+                        ha=ha,
+                        va=va,
+                        fontsize=6.2,
+                        color=color or FIGURE_STYLE.text_color,
+                        fontweight=weight,
+                        bbox={
+                            "boxstyle": "round,pad=0.08",
+                            "facecolor": FIGURE_STYLE.background,
+                            "edgecolor": "none",
+                            "alpha": 0.72,
+                        },
+                        clip_on=True,
+                        zorder=6,
+                    )
+
                 for method_index, (_method, values_) in enumerate(method_values):
                     if not values_:
                         continue
                     mean = sum(values_) / len(values_)
+                    median = statistics.median(values_)
+                    minimum = min(values_)
+                    maximum = max(values_)
+                    label_side = -1.0 if method_index >= len(method_values) - 2 else 1.0
+                    label_x = method_index + (0.34 * label_side)
+                    label_ha = "right" if label_side < 0.0 else "left"
+                    label_x_offset = 3.0 * label_side
                     color = FIGURE_STYLE.color_for_method(method_index + 1)
                     point_x = tuple(
                         method_index + _deterministic_jitter(index, len(values_))
@@ -1120,7 +1201,7 @@ class WellThroughputPresentationReport:
                             zorder=3,
                         )
                         axis.hlines(
-                            statistics.median(values_),
+                            median,
                             method_index - 0.31,
                             method_index + 0.31,
                             color=FIGURE_STYLE.text_color,
@@ -1132,14 +1213,6 @@ class WellThroughputPresentationReport:
                                 else None
                             ),
                         )
-                        if target_line is not None:
-                            axis.axhline(
-                                target_line,
-                                color=FIGURE_STYLE.target_color,
-                                linewidth=1.15,
-                                linestyle="--",
-                                alpha=0.86,
-                            )
                         axis.grid(
                             axis="y",
                             color=FIGURE_STYLE.grid_color,
@@ -1151,7 +1224,47 @@ class WellThroughputPresentationReport:
                         axis.spines["right"].set_visible(False)
                         axis.spines["left"].set_color(FIGURE_STYLE.spine_color)
                         axis.spines["bottom"].set_color(FIGURE_STYLE.spine_color)
+                    annotate_value(
+                        x=label_x,
+                        value=mean,
+                        text=f"mean {mean:.1f}x",
+                        x_offset=label_x_offset,
+                        y_offset=3.0,
+                        ha=label_ha,
+                        va="bottom",
+                        color=color,
+                        weight="bold",
+                    )
+                    annotate_value(
+                        x=label_x,
+                        value=median,
+                        text=f"med {median:.1f}x",
+                        x_offset=label_x_offset,
+                        y_offset=9.0,
+                        ha=label_ha,
+                        va="bottom",
+                    )
+                    annotate_value(
+                        x=label_x,
+                        value=minimum,
+                        text=f"min {minimum:.1f}x",
+                        x_offset=label_x_offset,
+                        y_offset=2.0,
+                        ha=label_ha,
+                        va="bottom",
+                    )
+                    annotate_value(
+                        x=label_x,
+                        value=maximum,
+                        text=f"max {maximum:.1f}x",
+                        x_offset=label_x_offset,
+                        y_offset=-3.0,
+                        ha=label_ha,
+                        va="top",
+                    )
                 label_axis = axes[-1]
+                for axis in axes:
+                    axis.set_xlim(-0.52, len(method_values) - 0.48)
                 label_axis.set_xticks(list(x_positions))
                 label_axis.set_xticklabels([method for method, _values in method_values])
                 label_axis.set_ylabel(ylabel)
