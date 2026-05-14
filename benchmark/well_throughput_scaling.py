@@ -1174,7 +1174,7 @@ class WellThroughputPresentationReport:
                     median = statistics.median(values_)
                     minimum = min(values_)
                     maximum = max(values_)
-                    label_x = method_index - 0.36
+                    label_x = method_index - 0.30
                     color = FIGURE_STYLE.color_for_method(method_index + 1)
                     point_x = tuple(
                         method_index + _deterministic_jitter(index, len(values_))
@@ -1241,6 +1241,7 @@ class WellThroughputPresentationReport:
                         y_offset=9.0,
                         ha="right",
                         va="bottom",
+                        color=color,
                     )
                     annotate_value(
                         x=label_x,
@@ -1250,6 +1251,7 @@ class WellThroughputPresentationReport:
                         y_offset=2.0,
                         ha="right",
                         va="bottom",
+                        color=color,
                     )
                     annotate_value(
                         x=label_x,
@@ -1259,10 +1261,11 @@ class WellThroughputPresentationReport:
                         y_offset=-3.0,
                         ha="right",
                         va="top",
+                        color=color,
                     )
                 label_axis = axes[-1]
                 for axis in axes:
-                    axis.set_xlim(-1.08, len(method_values) - 0.48)
+                    axis.set_xlim(-0.80, len(method_values) - 0.48)
                 label_axis.set_xticks(list(x_positions))
                 label_axis.set_xticklabels([method for method, _values in method_values])
                 label_axis.set_ylabel(ylabel)
