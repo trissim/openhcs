@@ -114,7 +114,7 @@ class ProgressWorkflowService:
         finally:
             self.mark_dirty()
 
-    def mark_dirty(self) -> None:
+    def mark_dirty(self, *_listener_event: object) -> None:
         self._progress_dirty = True
         if self._on_dirty is not None:
             self._on_dirty()

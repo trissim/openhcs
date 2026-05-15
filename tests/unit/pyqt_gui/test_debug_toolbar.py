@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 
 from metaclass_registry import AutoRegisterMeta
 from PyQt6.QtWidgets import QApplication
@@ -26,7 +27,11 @@ from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
     DebugSnapshotAvailableNotification,
 )
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
-from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
+from openhcs.pyqt_gui.widgets.pipeline_editor import (
+    PipelineEditorWidget,
+    StepPreviewConfigDetailFormatter,
+    StepPreviewConfigField,
+)
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
 
@@ -393,6 +398,16 @@ def test_pipeline_editor_routes_step_debug_command_to_bounded_run() -> None:
 
 def test_pipeline_editor_has_route_for_every_debug_command() -> None:
     assert set(PipelineEditorWidget.DEBUG_COMMAND_ROUTES) == set(DebugCommandType)
+
+
+def test_step_preview_config_detail_uses_nominal_formatter_family() -> None:
+    formatter = StepPreviewConfigDetailFormatter.for_config_field(
+        StepPreviewConfigField.NAPARI_STREAMING
+    )
+
+    assert formatter.format_detail(SimpleNamespace(port=5941)) == (
+        "• Napari Streaming: Port 5941"
+    )
 
 
 def test_pipeline_editor_dispatches_pause_step_indices(monkeypatch) -> None:

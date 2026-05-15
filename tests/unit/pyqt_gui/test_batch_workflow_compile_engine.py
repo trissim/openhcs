@@ -208,6 +208,21 @@ def _progress_service(
     return service, debug_notifications
 
 
+def test_mark_dirty_accepts_progress_tracker_listener_event() -> None:
+    host = BatchWorkflowHostHarness()
+    client_service = SimpleNamespace(zmq_client=None)
+    dirty = {"count": 0}
+    service, _debug_notifications = _progress_service(
+        host=host,
+        client_service=client_service,
+        on_dirty=lambda: dirty.__setitem__("count", dirty["count"] + 1),
+    )
+
+    service.mark_dirty("exec-1", object())
+
+    assert dirty["count"] == 1
+
+
 def test_on_progress_notifies_debug_snapshot_listeners() -> None:
     host = BatchWorkflowHostHarness()
     client_service = SimpleNamespace(zmq_client=None)

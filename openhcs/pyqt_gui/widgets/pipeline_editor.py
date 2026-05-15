@@ -9,10 +9,14 @@ import logging
 import inspect
 import copy
 import asyncio
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
+from enum import Enum
 from types import MappingProxyType
-from typing import List, Dict, Optional, Callable, Tuple, Any, Iterable, Set
+from typing import List, Dict, Optional, Callable, Tuple, Any, Iterable, Set, ClassVar
 from pathlib import Path
+
+from metaclass_registry import AutoRegisterMeta
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -58,6 +62,7 @@ from pyqt_reactive.widgets.shared.list_item_delegate import (
 from pyqt_reactive.widgets.editors.simple_code_editor import SimpleCodeEditorService
 from openhcs.config_framework.lazy_factory import PREVIEW_LABEL_REGISTRY
 from openhcs.core.config import ProcessingConfig
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 import openhcs.serialization.pycodify_formatters  # noqa: F401
 from pycodify import Assignment, generate_python_source
 from openhcs.utils.pipeline_migration import (
@@ -115,6 +120,79 @@ class FunctionPatternInvocationBadge:
         prefix = "▶ " if self.is_current_cursor else ""
         suffix = " *" if self.is_dirty_replay_start else ""
         return f"{prefix}{self.group_key}[{self.position}] {self.function_name}{suffix}"
+
+
+class StepPreviewConfigField(str, Enum):
+    """Closed family of FunctionStep config fields with preview-specific labels."""
+
+    STEP_MATERIALIZATION = "step_materialization_config"
+    NAPARI_STREAMING = "napari_streaming_config"
+    FIJI_STREAMING = "fiji_streaming_config"
+    STEP_WELL_FILTER = "step_well_filter_config"
+
+    @classmethod
+    def from_field_name(cls, field_name: str) -> "StepPreviewConfigField | None":
+        for config_field in cls:
+            if config_field.value == field_name:
+                return config_field
+        return None
+
+
+class StepPreviewConfigDetailFormatter(
+    EnumKeyedStrategyMixin[StepPreviewConfigField],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal formatter family for previewable FunctionStep config fields."""
+
+    __registry_key__ = "config_field_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "config_field"
+    __enum_label_attr__ = "config_field_label"
+
+    config_field: ClassVar[StepPreviewConfigField | None] = None
+    config_field_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_config_field(
+        cls,
+        config_field: StepPreviewConfigField,
+    ) -> "StepPreviewConfigDetailFormatter":
+        return cls.for_enum_member(config_field)
+
+    @abstractmethod
+    def format_detail(self, config: object) -> str:
+        """Return the human-readable preview line for one config value."""
+
+
+class MaterializationConfigDetailFormatter(StepPreviewConfigDetailFormatter):
+    config_field = StepPreviewConfigField.STEP_MATERIALIZATION
+
+    def format_detail(self, config: object) -> str:
+        return "• Materialization Config: Enabled"
+
+
+class NapariStreamingConfigDetailFormatter(StepPreviewConfigDetailFormatter):
+    config_field = StepPreviewConfigField.NAPARI_STREAMING
+
+    def format_detail(self, config: object) -> str:
+        port = getattr(config, "port", "default")
+        return f"• Napari Streaming: Port {port}"
+
+
+class FijiStreamingConfigDetailFormatter(StepPreviewConfigDetailFormatter):
+    config_field = StepPreviewConfigField.FIJI_STREAMING
+
+    def format_detail(self, config: object) -> str:
+        return "• Fiji Streaming: Enabled"
+
+
+class WellFilterConfigDetailFormatter(StepPreviewConfigDetailFormatter):
+    config_field = StepPreviewConfigField.STEP_WELL_FILTER
+
+    def format_detail(self, config: object) -> str:
+        well_filter = getattr(config, "well_filter", "default")
+        return f"• Well Filter: {well_filter}"
 
 
 def dispatch_pipeline_debug_run_command(editor: "PipelineEditorWidget") -> None:
@@ -895,23 +973,6 @@ class PipelineEditorWidget(AbstractManagerWidget):
         # Additional configurations with details - generic introspection-based approach
         config_details = []
 
-        # Helper to format config details based on type
-        def format_config_detail(config_attr: str, config) -> str:
-            """Format config detail string based on config type."""
-            if config_attr == "step_materialization_config":
-                return "• Materialization Config: Enabled"
-            elif config_attr == "napari_streaming_config":
-                port = getattr(config, "port", "default")
-                return f"• Napari Streaming: Port {port}"
-            elif config_attr == "fiji_streaming_config":
-                return "• Fiji Streaming: Enabled"
-            elif config_attr == "step_well_filter_config":
-                well_filter = getattr(config, "well_filter", "default")
-                return f"• Well Filter: {well_filter}"
-            else:
-                # Generic fallback for unknown config types
-                return f"• {config_attr.replace('_', ' ').title()}: Enabled"
-
         # Use registry to discover preview configs - iterate step's fields
         if is_dataclass(step):
             for f in fields(step):
@@ -931,7 +992,16 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 }:
                     if not config.enabled:
                         continue
-                config_details.append(format_config_detail(f.name, config))
+                config_field = StepPreviewConfigField.from_field_name(f.name)
+                if config_field is None:
+                    config_details.append(
+                        f"• {f.name.replace('_', ' ').title()}: Enabled"
+                    )
+                    continue
+                formatter = StepPreviewConfigDetailFormatter.for_config_field(
+                    config_field
+                )
+                config_details.append(formatter.format_detail(config))
 
         if config_details:
             tooltip_lines.append("")  # Empty line separator
