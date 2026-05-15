@@ -96,8 +96,8 @@ class ProgressWorkflowService:
         self._runtime_projection = build_execution_runtime_projection_from_registry(
             self._host._progress_tracker
         )
-        self._host.set_runtime_progress_projection(self._runtime_projection)
-        self._host.set_execution_server_info(self.server_info_snapshot())
+        self._host.runtime_progress_projection = self._runtime_projection
+        self._host.execution_server_info = self.server_info_snapshot()
         self._emit_execution_server_status()
         self._host.update_item_list()
 

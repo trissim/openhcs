@@ -19,8 +19,7 @@ def reset_progress_views_for_new_batch(
     for execution_id in execution_ids:
         host._progress_tracker.clear_execution(execution_id)
 
-    host.set_runtime_progress_projection(runtime_projection)
-    host.set_execution_server_info(None)
+    host.runtime_progress_projection = runtime_projection
+    host.execution_server_info = None
     host.update_item_list()
     return runtime_projection
-

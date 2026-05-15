@@ -204,8 +204,8 @@ class PlateManagerWidget(AbstractManagerWidget):
         self.plate_progress: Dict[str, Dict] = {}  # Deprecated, kept for compatibility
         self.plate_init_pending = set()
         self.plate_compile_pending = set()
-        self._runtime_progress_projection = ExecutionRuntimeProjection()
-        self._execution_server_info: ExecutionServerInfo | None = None
+        self.runtime_progress_projection = ExecutionRuntimeProjection()
+        self.execution_server_info: ExecutionServerInfo | None = None
         self._plate_status_presenter = PlateStatusPresenter()
 
         # Unified batch workflow service
@@ -309,14 +309,6 @@ class PlateManagerWidget(AbstractManagerWidget):
     # ExecutionHost interface
     def emit_status(self, msg: str) -> None:
         self.status_message.emit(msg)
-
-    def set_runtime_progress_projection(
-        self, projection: ExecutionRuntimeProjection
-    ) -> None:
-        self._runtime_progress_projection = projection
-
-    def set_execution_server_info(self, info: ExecutionServerInfo | None) -> None:
-        self._execution_server_info = info
 
     def emit_error(self, msg: str) -> None:
         self.execution_error.emit(msg)
@@ -437,7 +429,7 @@ class PlateManagerWidget(AbstractManagerWidget):
         orchestrator = ObjectStateRegistry.get_object(plate_path)
         terminal_status = self.execution_runtime.terminal_status(plate_key)
         execution_id = self.plate_execution_ids.get(plate_key)
-        runtime_projection = self._runtime_progress_projection.get_plate(
+        runtime_projection = self.runtime_progress_projection.get_plate(
             plate_id=plate_key,
             execution_id=execution_id,
         )
@@ -465,7 +457,7 @@ class PlateManagerWidget(AbstractManagerWidget):
 
     def _queued_execution_position_for_plate(self, plate_id: str) -> Optional[int]:
         """Return queue position from latest execution server snapshot for this plate."""
-        server_info = self._execution_server_info
+        server_info = self.execution_server_info
         if server_info is None:
             return None
 
@@ -1152,7 +1144,7 @@ class PlateManagerWidget(AbstractManagerWidget):
         if not self.execution_runtime.all_batch_terminal():
             return
 
-        server_info = self._execution_server_info
+        server_info = self.execution_server_info
         if server_info is not None and (
             server_info.running_execution_entries
             or server_info.queued_execution_entries
@@ -1244,7 +1236,7 @@ class PlateManagerWidget(AbstractManagerWidget):
             logger.info("🛑 Stop button pressed - changing to Force Kill")
             self.execution_state = ManagerExecutionState.FORCE_KILL_READY
             # Clear stale server info so state can properly reset when plates are terminal
-            self.set_execution_server_info(None)
+            self.execution_server_info = None
             self.update_button_states()
             QApplication.processEvents()
         else:
@@ -1252,7 +1244,7 @@ class PlateManagerWidget(AbstractManagerWidget):
             # cancellation propagates from background threads.
             self.execution_state = ManagerExecutionState.STOPPING
             # Clear stale server info so state can properly reset when plates are terminal
-            self.set_execution_server_info(None)
+            self.execution_server_info = None
             self.update_button_states()
 
         self._batch_workflow_service.stop_execution(force=is_force_kill)
