@@ -17,7 +17,7 @@ import logging
 import sys
 from pathlib import Path
 
-from .runtime_pipeline import generate_pipeline_from_cppipe
+from .runtime_pipeline import CPPipePipelineGenerationRequest
 
 logging.basicConfig(
     level=logging.INFO,
@@ -55,7 +55,9 @@ def main():
 
     logger.info(f"Converting: {args.cppipe_file}")
 
-    conversion = generate_pipeline_from_cppipe(args.cppipe_file)
+    conversion = CPPipePipelineGenerationRequest(
+        cppipe_path=args.cppipe_file,
+    ).generate()
     logger.info(f"Parsed {len(conversion.modules)} modules")
 
     for m in conversion.modules:

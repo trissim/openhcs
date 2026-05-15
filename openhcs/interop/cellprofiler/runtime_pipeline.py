@@ -4,15 +4,24 @@ from __future__ import annotations
 
 from abc import ABC
 from collections.abc import Sequence
-from dataclasses import dataclass
+from contextlib import nullcontext
+from dataclasses import dataclass, replace
 from pathlib import Path
+import time
 from types import ModuleType
 from typing import Any
 
-from openhcs.constants import Backend
+from openhcs.constants import Backend, MULTIPROCESSING_AXIS
+from openhcs.config_framework.global_config import get_current_global_config
+from openhcs.config_framework.lazy_factory import ensure_global_config_context
+from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline import Pipeline
+from openhcs.core.progress import set_progress_queue
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.vfs_protocol import FileManagerLike
+from openhcs.core.worker_start_policy import WorkerStartDecision
+from openhcs.core.worker_start_policy import WorkerStartExecutionFacts
+from openhcs.core.worker_start_policy import resolve_worker_start_context
 from openhcs.interop.cellprofiler.import_records import (
     CellProfilerModuleReference,
     CellProfilerPipelineImportResult,
@@ -31,12 +40,9 @@ from openhcs.interop.cellprofiler.module_roles import (
 )
 from openhcs.interop.cellprofiler.parser import CPPipeParser, ModuleBlock
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
-    generated_pipeline_module_name,
-    load_generated_pipeline_module,
-    load_generated_pipeline_module_from_source,
-    materialize_generated_pipeline_import_module,
-    pipeline_from_generated_module,
-    register_generated_pipeline_functions,
+    GeneratedPipelineFunctionRegistration,
+    GeneratedPipelineModuleIdentity,
+    GeneratedPipelineRuntimeModule,
 )
 
 from openhcs.interop.cellprofiler.pipeline_generator import (
@@ -141,6 +147,116 @@ class DirectPipelineExecution:
     execution_results: dict[str, Any]
 
 
+@dataclass
+class DirectExecutionProgressBridge:
+    """Progress queue lifecycle tied to the resolved worker-start context."""
+
+    decision: WorkerStartDecision
+    queue: Any
+
+    def close(self) -> None:
+        self.queue.close()
+
+
+class DirectExecutionProgressSink:
+    """Progress event sink used when direct execution does not observe events."""
+
+    def put(self, _item: Any) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+    def join_thread(self) -> None:
+        pass
+
+
+def execute_pipeline_direct(
+    orchestrator: Any,
+    pipeline: Pipeline,
+    *,
+    well_filter: Sequence[str] | None = None,
+    phase_timing: Any | None = None,
+    compile_phase: Any | None = None,
+    execute_phase: Any | None = None,
+) -> DirectPipelineExecution:
+    """Compile and execute a pipeline through the direct orchestrator path."""
+    wells = list(well_filter or orchestrator.get_component_keys(MULTIPROCESSING_AXIS))
+    if not wells:
+        raise RuntimeError("No wells found for pipeline execution.")
+
+    global_config = get_current_global_config(GlobalPipelineConfig)
+    if global_config is None:
+        global_config = orchestrator.get_effective_config()
+    worker_start_decision = resolve_worker_start_context(
+        global_config,
+        server_mode=False,
+        gpu_enabled=False,
+    )
+    progress_bridge = DirectExecutionProgressBridge(
+        decision=worker_start_decision,
+        queue=DirectExecutionProgressSink(),
+    )
+
+    try:
+        set_progress_queue(progress_bridge.queue)
+        with _optional_phase(phase_timing, compile_phase):
+            compilation_result = orchestrator.compile_pipelines(
+                pipeline_definition=pipeline.steps,
+                well_filter=wells,
+            )
+        execution_bundle = compilation_result["execution_bundle"]
+        compiled_contexts = execution_bundle.runtime_contexts
+        execution_facts = WorkerStartExecutionFacts.from_compiled_contexts(
+            compiled_contexts
+        )
+        execution_decision = resolve_worker_start_context(
+            global_config,
+            server_mode=False,
+            gpu_enabled=execution_facts.gpu_enabled,
+        )
+        if execution_decision.resolved is not progress_bridge.decision.resolved:
+            global_config = replace(
+                global_config,
+                multiprocessing_start_method=execution_decision.resolved,
+            )
+            ensure_global_config_context(GlobalPipelineConfig, global_config)
+            set_progress_queue(None)
+            progress_bridge.close()
+            progress_bridge = DirectExecutionProgressBridge(
+                decision=execution_decision,
+                queue=DirectExecutionProgressSink(),
+            )
+            set_progress_queue(progress_bridge.queue)
+        progress_context = {
+            "execution_id": f"direct::{int(time.time() * 1_000_000)}",
+            "plate_id": str(orchestrator.plate_path),
+            "axis_id": "",
+        }
+        with _optional_phase(phase_timing, execute_phase):
+            execution_results = orchestrator.execute_compiled_plate(
+                pipeline_definition=pipeline.steps,
+                compiled_contexts=compiled_contexts,
+                execution_bundle=execution_bundle,
+                progress_queue=progress_bridge.queue,
+                progress_context=progress_context,
+            )
+        return DirectPipelineExecution(
+            compiled_contexts=compiled_contexts,
+            execution_results=execution_results,
+        )
+    finally:
+        set_progress_queue(None)
+        progress_bridge.close()
+
+
+def _optional_phase(phase_timing: Any | None, phase: Any | None) -> Any:
+    """Return a timing context only when both timing object and phase are present."""
+    if phase_timing is None or phase is None:
+        return nullcontext()
+    return phase_timing.phase(phase)
+
+
 @dataclass(frozen=True, slots=True)
 class CPPipePipelineGenerationRequest:
     """Nominal request for parsing and generating one CellProfiler pipeline."""
@@ -232,30 +348,33 @@ class CPPipePipelinePreparationRequest:
             backend=self.generated_pipeline_backend,
         )
 
-        module_name = generated_pipeline_module_name(
+        module_name = GeneratedPipelineModuleIdentity(
             self.output_path,
             converted.generated_pipeline.code,
-        )
+        ).module_name
         artifact_contracts_by_module_num = (
             converted.generated_pipeline.runtime_module_contracts_by_module_num
         )
-        module = load_generated_pipeline_module_from_source(
-            converted.generated_pipeline.code,
-            module_name=module_name,
+        runtime_module = GeneratedPipelineRuntimeModule(
+            GeneratedPipelineModuleIdentity(
+                module_path=self.output_path,
+                code=converted.generated_pipeline.code,
+                explicit_module_name=module_name,
+            )
+        )
+        module = runtime_module.load_from_source(
             filename=str(self.output_path),
             artifact_contracts=artifact_contracts_by_module_num,
         )
-        materialize_generated_pipeline_import_module(
-            converted.generated_pipeline.code,
-            module_name=module_name,
+        runtime_module.materialize_import_module(
             output_dir=self.output_path.parent,
             artifact_contracts=artifact_contracts_by_module_num,
         )
-        pipeline = pipeline_from_generated_module(
+        pipeline = runtime_module.pipeline_from_module(
             module,
             pipeline_name=converted.generated_pipeline.name,
         )
-        registered_functions = register_generated_pipeline_functions(module)
+        registered_functions = GeneratedPipelineFunctionRegistration(module).register()
         return PreparedGeneratedPipeline(
             cppipe_path=converted.cppipe_path,
             module_name=module_name,
@@ -336,32 +455,6 @@ def partition_cppipe_modules(
         infrastructure_modules=infrastructure_modules,
         disabled_modules=disabled_modules,
     )
-
-
-def generate_pipeline_from_cppipe(
-    cppipe_path: Path,
-    *,
-    parser: CPPipeParser | None = None,
-    generator: PipelineGenerator | None = None,
-    infrastructure_module_names: frozenset[str] = INFRASTRUCTURE_MODULE_NAMES,
-    prune_dead_unmaterialized_artifact_steps: bool = False,
-    materialize_skipped_save_images: bool = True,
-    filemanager: FileManagerLike | None = None,
-    cppipe_backend: Backend = Backend.DISK,
-) -> GeneratedCPPipePipeline:
-    """Parse and convert a .cppipe file into generated OpenHCS pipeline code."""
-    return CPPipePipelineGenerationRequest(
-        cppipe_path=cppipe_path,
-        parser=parser,
-        generator=generator,
-        infrastructure_module_names=infrastructure_module_names,
-        prune_dead_unmaterialized_artifact_steps=(
-            prune_dead_unmaterialized_artifact_steps
-        ),
-        materialize_skipped_save_images=materialize_skipped_save_images,
-        filemanager=filemanager,
-        cppipe_backend=cppipe_backend,
-    ).generate()
 
 
 def prepare_generated_pipeline(
