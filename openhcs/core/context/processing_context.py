@@ -8,6 +8,7 @@ from typing import Any, Dict, Optional
 
 from openhcs.core.config import GlobalPipelineConfig, VFSConfig, PathPlanningConfig
 from openhcs.core.compiled_step_plan import CompiledStepPlan
+from openhcs.core.debug import DebugSnapshotFileManagerContext, NO_OP_DEBUG_EVENT_SINK
 from openhcs.core.runtime_stores import RuntimeValueStore
 
 
@@ -71,6 +72,7 @@ class ProcessingContext:
         self.plate_id = None  # Set by worker before execution (same as plate_path)
         self.worker_slot = None  # Logical worker slot for deterministic ownership
         self.owned_wells = None  # Full well set owned by this worker slot
+        self.debug_event_sink = NO_OP_DEBUG_EVENT_SINK
 
         # Pipeline-wide sequential processing fields
         self.pipeline_sequential_mode = False
@@ -139,8 +141,6 @@ class ProcessingContext:
             True if the context is frozen, False otherwise.
         """
         return self._is_frozen
-
-
 
     # update_from_step_result method is removed as per plan.
 
@@ -331,3 +331,6 @@ class ProcessingContext:
         # This ensures the worker uses its own memory backend instance
         # Use __dict__ directly to bypass frozen check
         self.__dict__['filemanager'] = FileManager(global_storage_registry)
+
+
+DebugSnapshotFileManagerContext.register(ProcessingContext)

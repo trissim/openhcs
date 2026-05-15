@@ -23,13 +23,20 @@ from openhcs.interop.cellprofiler.runtime.invocation import (
     illumination_scope_uses_all_images,
 )
 from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerModuleContractBinding,
+    CellProfilerModuleContractRegistry,
     CellProfilerModuleExecutor,
+    CellProfilerRuntimeStepBinding,
+    cellprofiler_module_callable,
     cellprofiler_runtime_adapter_factory,
 )
 
 __all__ = (
     "CELLPROFILER_GRID_CYCLE_SCOPE_KWARG",
+    "CellProfilerModuleContractBinding",
+    "CellProfilerModuleContractRegistry",
     "CellProfilerModuleExecutor",
+    "CellProfilerRuntimeStepBinding",
     "CellProfilerRelationshipPayload",
     "CellProfilerRuntimeAdapter",
     "CellProfilerGridCycleScope",
@@ -41,6 +48,7 @@ __all__ = (
     "CellProfilerMeasurementImageDomain",
     "CellProfilerResolvedInputRequest",
     "CellProfilerSliceAlignedValues",
+    "cellprofiler_module_callable",
     "cellprofiler_runtime_adapter_factory",
     "coerce_cellprofiler_grid_cycle_scope",
     "illumination_scope_uses_all_images",

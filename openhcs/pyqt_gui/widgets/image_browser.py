@@ -1174,9 +1174,10 @@ class ImageBrowserWidget(QWidget):
                 self._status_update_signal.emit(f"Error: {e}")
 
                 from PyQt6.QtCore import QTimer
+                from openhcs.ui.shared.streaming_service import StreamingService
 
                 # Route to appropriate error dialog on UI thread
-                if viewer_type == "napari":
+                if StreamingService.is_napari_viewer_type(viewer_type):
                     QTimer.singleShot(0, lambda: self._show_streaming_error(str(e)))
                 else:
                     QTimer.singleShot(
@@ -1434,18 +1435,27 @@ class ImageBrowserWidget(QWidget):
     def _stream_images_to_viewer(self, filenames: list, viewer_type: str):
         """Load and stream images to specified viewer type."""
         viewer, plate_path, read_backend, config = self._prepare_streaming(viewer_type)
+        from openhcs.ui.shared.streaming_service import (
+            ImageStreamingRequest,
+            StreamingService,
+            ViewerStreamingContext,
+        )
 
         self._streaming_service.stream_images_async(
-            viewer=viewer,
-            filenames=filenames,
-            plate_path=plate_path,
-            read_backend=read_backend,
-            config=config,
-            viewer_type=viewer_type,
-            status_callback=self._status_update_signal.emit,
-            error_callback=lambda e: self._show_streaming_error(e)
-            if viewer_type == "napari"
-            else self._show_fiji_streaming_error(e),
+            ImageStreamingRequest(
+                context=ViewerStreamingContext(
+                    viewer=viewer,
+                    plate_path=plate_path,
+                    config=config,
+                    viewer_type=viewer_type,
+                    status_callback=self._status_update_signal.emit,
+                    error_callback=lambda e: self._show_streaming_error(e)
+                    if StreamingService.is_napari_viewer_type(viewer_type)
+                    else self._show_fiji_streaming_error(e),
+                ),
+                filenames=tuple(filenames),
+                read_backend=read_backend,
+            )
         )
         logger.info(f"Streaming {len(filenames)} images to {viewer_type}...")
 
@@ -1468,17 +1478,26 @@ class ImageBrowserWidget(QWidget):
     ):
         """Stream ROI files to specified viewer type."""
         viewer, _, _, config = self._prepare_streaming(viewer_type)
+        from openhcs.ui.shared.streaming_service import (
+            RoiStreamingRequest,
+            StreamingService,
+            ViewerStreamingContext,
+        )
 
         self._streaming_service.stream_rois_async(
-            viewer=viewer,
-            roi_filenames=roi_filenames,
-            plate_path=plate_path,
-            config=config,
-            viewer_type=viewer_type,
-            status_callback=self._status_update_signal.emit,
-            error_callback=lambda e: self._show_streaming_error(e)
-            if viewer_type == "napari"
-            else self._show_fiji_streaming_error(e),
+            RoiStreamingRequest(
+                context=ViewerStreamingContext(
+                    viewer=viewer,
+                    plate_path=plate_path,
+                    config=config,
+                    viewer_type=viewer_type,
+                    status_callback=self._status_update_signal.emit,
+                    error_callback=lambda e: self._show_streaming_error(e)
+                    if StreamingService.is_napari_viewer_type(viewer_type)
+                    else self._show_fiji_streaming_error(e),
+                ),
+                roi_filenames=tuple(roi_filenames),
+            )
         )
         logger.info(f"Streaming {len(roi_filenames)} ROI files to {viewer_type}...")
 

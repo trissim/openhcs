@@ -10,7 +10,7 @@ import concurrent.futures
 import contextlib
 import gc
 import multiprocessing
-from dataclasses import fields
+from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Union, Set
 
@@ -48,6 +48,11 @@ from openhcs.core.progress import (
     ProgressPhase,
     ProgressStatus,
     create_event,
+)
+from openhcs.core.debug import (
+    DebugExecutionPolicy,
+    DebugSinkInstallRequest,
+    NoOpDebugExecutionPolicy,
 )
 from openhcs.core.runtime_stores import require_runtime_value_store
 from polystore.filemanager import FileManager
@@ -122,35 +127,50 @@ class ForkInheritedWorkerExecutionState:
         ]
 
 
+@dataclass(frozen=True, slots=True)
+class WorkerLaneExecutionContext:
+    """Shared execution identity for one deterministic worker lane."""
+
+    visualizer: Optional["NapariVisualizerType"]
+    execution_id: str
+    plate_id: str
+    worker_slot: str
+    owned_wells: tuple[str, ...]
+    debug_execution_policy: DebugExecutionPolicy
+
+    def install_debug_sink(self, processing_context: object) -> None:
+        self.debug_execution_policy.install_context_sink(
+            DebugSinkInstallRequest(
+                context=processing_context,
+                execution_id=self.execution_id,
+                plate_id=self.plate_id,
+                worker_slot=self.worker_slot,
+                owned_wells=self.owned_wells,
+            )
+        )
+
+
 def _execute_fork_inherited_worker_lane_process(
     result_connection: Any,
     lane_axis_context_keys: List[tuple[str, List[str]]],
-    visualizer: Optional["NapariVisualizerType"],
-    execution_id: str,
-    plate_id: str,
-    worker_slot: str,
-    owned_wells: List[str],
+    lane_context: WorkerLaneExecutionContext,
     runtime_observation_mode: RuntimeObservationMode,
 ) -> None:
     """Process entrypoint for fork-inherited worker lane execution."""
     profiling_policy = CProfileWorkerProfilingPolicy.from_environment()
     try:
         with profiling_policy.profile(
-            execution_id=execution_id,
-            plate_id=plate_id,
-            worker_slot=worker_slot,
-            owned_wells=owned_wells,
+            execution_id=lane_context.execution_id,
+            plate_id=lane_context.plate_id,
+            worker_slot=lane_context.worker_slot,
+            owned_wells=list(lane_context.owned_wells),
         ):
             result_connection.send(
                 (
                     "result",
                     _execute_fork_inherited_worker_lane_static(
                         lane_axis_context_keys,
-                        visualizer,
-                        execution_id,
-                        plate_id,
-                        worker_slot,
-                        owned_wells,
+                        lane_context,
                         runtime_observation_mode,
                     ),
                 )
@@ -177,6 +197,7 @@ class ForkInheritedWorkerLaneRunner:
         plate_id: str,
         worker_assignments: Dict[str, List[str]],
         runtime_observation_mode: RuntimeObservationMode,
+        debug_execution_policy: DebugExecutionPolicy,
     ) -> Dict[str, ExecutionResult]:
         processes: list[tuple[str, List[str], Any, Any]] = []
         execution_results: Dict[str, ExecutionResult] = {}
@@ -185,6 +206,14 @@ class ForkInheritedWorkerLaneRunner:
             if not lane_contexts:
                 continue
             owned_wells = list(worker_assignments[worker_slot])
+            worker_lane_context = WorkerLaneExecutionContext(
+                visualizer=None,
+                execution_id=execution_id,
+                plate_id=plate_id,
+                worker_slot=worker_slot,
+                owned_wells=tuple(owned_wells),
+                debug_execution_policy=debug_execution_policy,
+            )
             result_reader, result_writer = self._multiprocessing_context.Pipe(
                 duplex=False
             )
@@ -193,11 +222,7 @@ class ForkInheritedWorkerLaneRunner:
                 args=(
                     result_writer,
                     lane_contexts,
-                    None,
-                    execution_id,
-                    plate_id,
-                    worker_slot,
-                    owned_wells,
+                    worker_lane_context,
                     runtime_observation_mode,
                 ),
             )
@@ -354,11 +379,7 @@ def _create_merged_config(
 def _execute_axis_with_sequential_combinations(
     pipeline_definition: List[AbstractStep],
     axis_contexts: List[tuple],  # List of (context_key, frozen_context) tuples
-    visualizer: Optional["NapariVisualizerType"],
-    execution_id: str,
-    plate_id: str,
-    worker_slot: str,
-    owned_wells: List[str],
+    lane_context: WorkerLaneExecutionContext,
     runtime_observation_mode: RuntimeObservationMode,
 ) -> ExecutionResult:
     """
@@ -389,8 +410,8 @@ def _execute_axis_with_sequential_combinations(
     total_steps = len(pipeline_definition)
 
     emit(
-        execution_id=execution_id,
-        plate_id=plate_id,
+        execution_id=lane_context.execution_id,
+        plate_id=lane_context.plate_id,
         axis_id=axis_id,
         step_name="pipeline",
         phase=ProgressPhase.AXIS_STARTED,
@@ -398,8 +419,8 @@ def _execute_axis_with_sequential_combinations(
         completed=0,
         total=total_steps,
         percent=0.0,
-        worker_slot=worker_slot,
-        owned_wells=owned_wells,
+        worker_slot=lane_context.worker_slot,
+        owned_wells=list(lane_context.owned_wells),
     )
 
     runtime_observations: list[RuntimeContextObservation] = []
@@ -408,11 +429,7 @@ def _execute_axis_with_sequential_combinations(
         result = _execute_single_axis_static(
             pipeline_definition,
             frozen_context,
-            visualizer,
-            execution_id,
-            plate_id,
-            worker_slot,
-            owned_wells,
+            lane_context,
         )
         if runtime_observation_mode.collects_records:
             runtime_store = require_runtime_value_store(
@@ -448,8 +465,8 @@ def _execute_axis_with_sequential_combinations(
                 f"🔄 WORKER: Combination {context_key} failed for axis {axis_id}"
             )
             emit(
-                execution_id=execution_id,
-                plate_id=plate_id,
+                execution_id=lane_context.execution_id,
+                plate_id=lane_context.plate_id,
                 axis_id=axis_id,
                 step_name="pipeline",
                 phase=ProgressPhase.AXIS_ERROR,
@@ -458,8 +475,8 @@ def _execute_axis_with_sequential_combinations(
                 total=total_steps,
                 percent=0.0,
                 message=result.error_message,
-                worker_slot=worker_slot,
-                owned_wells=owned_wells,
+                worker_slot=lane_context.worker_slot,
+                owned_wells=list(lane_context.owned_wells),
             )
             return ExecutionResult.error(
                 axis_id=axis_id,
@@ -468,8 +485,8 @@ def _execute_axis_with_sequential_combinations(
             )
 
     emit(
-        execution_id=execution_id,
-        plate_id=plate_id,
+        execution_id=lane_context.execution_id,
+        plate_id=lane_context.plate_id,
         axis_id=axis_id,
         step_name="pipeline",
         phase=ProgressPhase.AXIS_COMPLETED,
@@ -477,8 +494,8 @@ def _execute_axis_with_sequential_combinations(
         completed=total_steps,
         total=total_steps,
         percent=100.0,
-        worker_slot=worker_slot,
-        owned_wells=owned_wells,
+        worker_slot=lane_context.worker_slot,
+        owned_wells=list(lane_context.owned_wells),
     )
     return ExecutionResult.success(
         axis_id=axis_id,
@@ -491,11 +508,7 @@ def _execute_axis_with_sequential_combinations(
 def _execute_single_axis_static(
     pipeline_definition: List[AbstractStep],
     frozen_context: "ProcessingContext",
-    visualizer: Optional["NapariVisualizerType"],
-    execution_id: str,
-    plate_id: str,
-    worker_slot: str,
-    owned_wells: List[str],
+    lane_context: WorkerLaneExecutionContext,
 ) -> ExecutionResult:
     """
     Static version of _execute_single_axis for multiprocessing compatibility.
@@ -529,18 +542,44 @@ def _execute_single_axis_static(
 
     # Set execution tracking fields on context (these are allowed even when frozen)
     # These fields are set at execution time, not compilation time
-    object.__setattr__(frozen_context, "execution_id", execution_id)
-    object.__setattr__(frozen_context, "plate_id", plate_id)
-    object.__setattr__(frozen_context, "worker_slot", worker_slot)
-    object.__setattr__(frozen_context, "owned_wells", owned_wells)
+    object.__setattr__(frozen_context, "execution_id", lane_context.execution_id)
+    object.__setattr__(frozen_context, "plate_id", lane_context.plate_id)
+    object.__setattr__(frozen_context, "worker_slot", lane_context.worker_slot)
+    object.__setattr__(frozen_context, "owned_wells", list(lane_context.owned_wells))
+    lane_context.install_debug_sink(frozen_context)
 
     # Execute each step in the pipeline
     for step_index, step in enumerate(pipeline_definition):
-        step_name = frozen_context.step_plans[step_index].step_name
+        step_plan = frozen_context.step_plans[step_index]
+        step_name = step_plan.step_name
+        if not lane_context.debug_execution_policy.should_execute_step(step_index):
+            if lane_context.debug_execution_policy.should_reuse_step_outputs(step_index):
+                lane_context.debug_execution_policy.prepare_reused_step_outputs(
+                    step_index=step_index,
+                    step_name=step_name,
+                    step_scope_id=step_plan.step_scope_id,
+                    context=frozen_context,
+                    artifact_outputs=step_plan.artifact_outputs,
+                )
+                emit(
+                    execution_id=lane_context.execution_id,
+                    plate_id=lane_context.plate_id,
+                    axis_id=axis_id,
+                    step_name=step_name,
+                    phase=ProgressPhase.STEP_COMPLETED,
+                    status=ProgressStatus.SUCCESS,
+                    completed=step_index + 1,
+                    total=total_steps,
+                    percent=((step_index + 1) / total_steps) * 100.0,
+                    worker_slot=lane_context.worker_slot,
+                    owned_wells=list(lane_context.owned_wells),
+                    message="Reused warm debug artifacts",
+                )
+            continue
 
         emit(
-            execution_id=execution_id,
-            plate_id=plate_id,
+            execution_id=lane_context.execution_id,
+            plate_id=lane_context.plate_id,
             axis_id=axis_id,
             step_name=step_name,
             phase=ProgressPhase.STEP_STARTED,
@@ -548,16 +587,16 @@ def _execute_single_axis_static(
             completed=step_index,
             total=total_steps,
             percent=(step_index / total_steps) * 100.0,
-            worker_slot=worker_slot,
-            owned_wells=owned_wells,
+            worker_slot=lane_context.worker_slot,
+            owned_wells=list(lane_context.owned_wells),
         )
 
         # Call process method on step instance
         step.process(frozen_context, step_index)
 
         emit(
-            execution_id=execution_id,
-            plate_id=plate_id,
+            execution_id=lane_context.execution_id,
+            plate_id=lane_context.plate_id,
             axis_id=axis_id,
             step_name=step_name,
             phase=ProgressPhase.STEP_COMPLETED,
@@ -565,12 +604,17 @@ def _execute_single_axis_static(
             completed=step_index + 1,
             total=total_steps,
             percent=((step_index + 1) / total_steps) * 100.0,
-            worker_slot=worker_slot,
-            owned_wells=owned_wells,
+            worker_slot=lane_context.worker_slot,
+            owned_wells=list(lane_context.owned_wells),
         )
+        if lane_context.debug_execution_policy.step_stop_strategy().should_stop_after_step(
+            step_index=step_index,
+            step_name=step_name,
+        ):
+            break
 
         # Handle visualization if requested
-        if visualizer:
+        if lane_context.visualizer:
             step_plan = frozen_context.step_plans[step_index]
             if step_plan.visualize:
                 output_dir = step_plan.output_dir
@@ -579,7 +623,7 @@ def _execute_single_axis_static(
                     logger.debug(
                         f"Visualizing output for step {step_index} from path {output_dir} (backend: {write_backend}) for axis {axis_id}"
                     )
-                    visualizer.visualize_path(
+                    lane_context.visualizer.visualize_path(
                         step_id=f"step_{step_index}",
                         path=str(output_dir),
                         backend=write_backend,
@@ -596,12 +640,8 @@ def _execute_single_axis_static(
 def _execute_worker_lane_static(
     pipeline_definition: List[AbstractStep],
     lane_axis_contexts: List[tuple[str, List[tuple]]],
-    visualizer: Optional["NapariVisualizerType"],
-    execution_id: str,
-    plate_id: str,
-    worker_slot: str,
-    owned_wells: List[str],
-    runtime_observation_mode: RuntimeObservationMode = RuntimeObservationMode.MERGE_INTO_PARENT,
+    lane_context: WorkerLaneExecutionContext,
+    runtime_observation_mode: RuntimeObservationMode,
 ) -> Dict[str, ExecutionResult]:
     """Execute a deterministic worker lane: wells sequentially within one slot."""
     lane_results: Dict[str, ExecutionResult] = {}
@@ -609,11 +649,7 @@ def _execute_worker_lane_static(
         lane_results[axis_id] = _execute_axis_with_sequential_combinations(
             pipeline_definition=pipeline_definition,
             axis_contexts=axis_contexts,
-            visualizer=visualizer,
-            execution_id=execution_id,
-            plate_id=plate_id,
-            worker_slot=worker_slot,
-            owned_wells=owned_wells,
+            lane_context=lane_context,
             runtime_observation_mode=runtime_observation_mode,
         )
     return lane_results
@@ -621,11 +657,7 @@ def _execute_worker_lane_static(
 
 def _execute_fork_inherited_worker_lane_static(
     lane_axis_context_keys: List[tuple[str, List[str]]],
-    visualizer: Optional["NapariVisualizerType"],
-    execution_id: str,
-    plate_id: str,
-    worker_slot: str,
-    owned_wells: List[str],
+    lane_context: WorkerLaneExecutionContext,
     runtime_observation_mode: RuntimeObservationMode,
 ) -> Dict[str, ExecutionResult]:
     """Execute a worker lane using fork-inherited compiled contexts."""
@@ -635,11 +667,7 @@ def _execute_fork_inherited_worker_lane_static(
         lane_axis_contexts=ForkInheritedWorkerExecutionState.resolve_lane_contexts(
             lane_axis_context_keys
         ),
-        visualizer=visualizer,
-        execution_id=execution_id,
-        plate_id=plate_id,
-        worker_slot=worker_slot,
-        owned_wells=owned_wells,
+        lane_context=lane_context,
         runtime_observation_mode=runtime_observation_mode,
     )
 
@@ -1265,6 +1293,7 @@ class PipelineOrchestrator:
         worker_assignments: Optional[Dict[str, List[str]]] = None,
         execution_bundle: Optional[CompiledExecutionBundle] = None,
         runtime_observation_mode: RuntimeObservationMode = RuntimeObservationMode.MERGE_INTO_PARENT,
+        debug_execution_policy: DebugExecutionPolicy = NoOpDebugExecutionPolicy(),
     ) -> Dict[str, Dict[str, Any]]:
         """
         Execute-all phase: Runs the stateless pipeline against compiled contexts.
@@ -1595,6 +1624,7 @@ class PipelineOrchestrator:
                                 plate_id=plate_id,
                                 worker_assignments=worker_assignments,
                                 runtime_observation_mode=runtime_observation_mode,
+                                debug_execution_policy=debug_execution_policy,
                             )
                         )
                     else:
@@ -1602,17 +1632,21 @@ class PipelineOrchestrator:
                             if not lane_contexts:
                                 continue
                             owned_wells = list(worker_assignments[worker_slot])
+                            worker_lane_context = WorkerLaneExecutionContext(
+                                visualizer=None,
+                                execution_id=execution_id,
+                                plate_id=plate_id,
+                                worker_slot=worker_slot,
+                                owned_wells=tuple(owned_wells),
+                                debug_execution_policy=debug_execution_policy,
+                            )
 
                             try:
                                 future = executor.submit(
                                     _execute_worker_lane_static,
                                     pipeline_definition,
                                     lane_contexts,
-                                    None,  # visualizer
-                                    execution_id,
-                                    plate_id,
-                                    worker_slot,
-                                    owned_wells,
+                                    worker_lane_context,
                                     runtime_observation_mode,
                                 )
                                 future_to_worker_slot[future] = (worker_slot, owned_wells)

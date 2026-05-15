@@ -11,7 +11,9 @@ from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     MaterializedOutputPlan,
 )
+from openhcs.core.invocation_artifacts import InvocationArtifactDeclarations
 from openhcs.core.pipeline.path_planner import PathPlanner
+from openhcs.core.source_bindings import EMPTY_SOURCE_BINDINGS
 from openhcs.core.step_dependencies import StepInputDependencyKind
 
 
@@ -97,6 +99,57 @@ def test_artifact_output_plans_preserve_declared_kind():
 
     assert outputs["nuclei"].kind is ArtifactKind.OBJECT_LABELS
     assert planner.declared["nuclei"].kind is ArtifactKind.OBJECT_LABELS
+
+
+def test_planner_uses_invocation_aware_artifact_declaration_provider():
+    def identify(image, artifact_name: str):
+        return image
+
+    def declarations_for_invocation(invocation, step_context):
+        assert step_context.step_name == "identify_cells"
+        artifact_name = dict(invocation.kwargs)["artifact_name"]
+        return InvocationArtifactDeclarations(
+            outputs=(
+                (
+                    artifact_name,
+                    ArtifactSpec(artifact_name, ArtifactKind.OBJECT_LABELS),
+                ),
+            ),
+        )
+
+    planner = _artifact_planner_stub()
+    planner.declaration_provider = declarations_for_invocation
+    snapshot = SimpleNamespace(
+        is_function_step=True,
+        func=(identify, {"artifact_name": "cells"}),
+        injectable_values={},
+        group_by=GroupBy.NONE,
+        variable_components=(VariableComponents.SITE,),
+        name="identify_cells",
+        index=2,
+        source_bindings=EMPTY_SOURCE_BINDINGS,
+        processing_config=None,
+    )
+
+    declarations, _execution_groups, func_pattern = planner._prepare_step_declarations(
+        snapshot,
+    )
+    compiled = planner._build_step_compiled_function_pattern(
+        snapshot,
+        True,
+        func_pattern,
+        {},
+        {
+            "cells": ArtifactOutputPlan(
+                name="cells",
+                path="/memory/cells.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+            )
+        },
+    )
+
+    assert list(declarations.outputs) == ["cells"]
+    assert compiled.groups[0].invocations[0].artifact_output_keys == ("cells",)
 
 
 def test_execution_groups_use_normalized_group_by_for_variable_conflicts():

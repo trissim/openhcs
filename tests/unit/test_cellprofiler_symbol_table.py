@@ -848,23 +848,33 @@ def test_pipeline_generator_emits_compiled_artifact_contracts():
     )
 
     assert len(generated.artifact_contracts) == 2
-    assert "CELLPROFILER_MODULE_CONTRACTS" in generated.code
+    assert len(generated.runtime_module_contracts) == 2
+    assert "CELLPROFILER_MODULE_CONTRACTS" not in generated.code
     assert "benchmark.cellprofiler_library" not in generated.code
     assert "benchmark.cellprofiler_compat" not in generated.code
     assert "from openhcs.interop.cellprofiler.runtime import" in generated.code
-    assert "ModuleArtifactContract(" in generated.code
+    assert "require_cellprofiler_function" not in generated.code
+    assert "attach_callable_contract_metadata" not in generated.code
+    assert "CellProfilerAbsorbedFunctionBinding" not in generated.code
+    assert "CellProfilerModuleRuntimeBinding" not in generated.code
+    assert "CellProfilerModuleContractBinding" not in generated.code
+    assert "ModuleArtifactContract(" not in generated.code
     assert "source_bindings=StepSourceBindingsConfig(" in generated.code
-    assert "runtime_artifact_inputs=(ArtifactSpec('Nuclei'" in generated.code
-    assert "identify_primary_objects_1 = require_cellprofiler_function" in generated.code
-    assert "identify_secondary_objects_2 = require_cellprofiler_function" in generated.code
-    assert "CellProfilerModuleExecutor" in generated.code
-    assert "cellprofiler_runtime_adapter_factory" in generated.code
-    assert "@artifact_outputs(*CELLPROFILER_MODULE_CONTRACTS[1]" in generated.code
-    assert "@artifact_inputs(*CELLPROFILER_MODULE_CONTRACTS[2]" in generated.code
-    assert "@runtime_adapter(\"cellprofiler_runtime\"" in generated.code
-    assert "identify_primary_objects_1_runtime.input_memory_type" in generated.code
-    assert "func=identify_primary_objects_1_runtime" in generated.code
-    assert "func=identify_secondary_objects_2_runtime" in generated.code
+    assert generated.runtime_module_contracts_by_module_num[
+        2
+    ].runtime_artifact_inputs[0].name == "Nuclei"
+    assert "identify_primary_objects," in generated.code
+    assert "identify_secondary_objects," in generated.code
+    assert "cellprofiler_module_callable" not in generated.code
+    assert "CellProfilerModuleExecutor" not in generated.code
+    assert "cellprofiler_runtime_adapter_factory" not in generated.code
+    assert "@module_artifact_contract" not in generated.code
+    assert "@artifact_outputs(*CELLPROFILER_MODULE_CONTRACTS" not in generated.code
+    assert "@artifact_inputs(*CELLPROFILER_MODULE_CONTRACTS" not in generated.code
+    assert "@runtime_adapter(\"cellprofiler_runtime\"" not in generated.code
+    assert "identify_primary_objects_1_runtime.input_memory_type" not in generated.code
+    assert "func=identify_primary_objects_1_runtime" not in generated.code
+    assert "func=identify_secondary_objects_2_runtime" not in generated.code
 
 
 def test_pipeline_generator_resolves_object_measurement_function_variants():
@@ -909,18 +919,9 @@ def test_pipeline_generator_resolves_object_measurement_function_variants():
         modules=modules,
     )
 
-    assert (
-        'measure_texture_objects_2 = require_cellprofiler_function("MeasureTexture", '
-        'function_name="measure_texture_objects")'
-    ) in generated.code
-    assert (
-        'measure_colocalization_objects_3 = require_cellprofiler_function('
-        '"MeasureColocalization", function_name="measure_colocalization_objects")'
-    ) in generated.code
-    assert (
-        'measure_granularity_objects_4 = require_cellprofiler_function('
-        '"MeasureGranularity", function_name="measure_granularity_objects")'
-    ) in generated.code
+    assert "measure_texture_objects," in generated.code
+    assert "measure_colocalization_objects," in generated.code
+    assert "measure_granularity_objects," in generated.code
 
 
 def test_pipeline_generator_canonicalizes_legacy_measure_correlation_module():
@@ -957,11 +958,10 @@ def test_pipeline_generator_canonicalizes_legacy_measure_correlation_module():
         "OrigGreen",
         "Nuclei",
     ]
-    assert (
-        'measure_colocalization_objects_2 = require_cellprofiler_function('
-        '"MeasureCorrelation", function_name="measure_colocalization_objects")'
-    ) in generated.code
-    assert "module_name='MeasureColocalization'" in generated.code
+    assert "measure_colocalization_objects," in generated.code
+    assert generated.runtime_module_contracts_by_module_num[
+        2
+    ].module_name == "MeasureColocalization"
 
 
 def test_measure_image_area_occupied_alias_compiles_binary_contract():
@@ -998,11 +998,7 @@ def test_measure_image_area_occupied_alias_compiles_binary_contract():
         "Foreground",
         "MeasureImageAreaOccupied_1_measurements",
     ]
-    assert (
-        'measure_image_area_occupied_1 = require_cellprofiler_function('
-        '"MeasureImageAreaOccupied", '
-        'function_name="measure_image_area_occupied")'
-    ) in generated.code
+    assert "measure_image_area_occupied," in generated.code
 
 
 def test_measure_image_area_occupied_resolves_object_variant():
@@ -1041,11 +1037,7 @@ def test_measure_image_area_occupied_resolves_object_variant():
         "OccupiedNuclei",
         "MeasureImageAreaOccupied_2_measurements",
     ]
-    assert (
-        'measure_image_area_occupied_2 = require_cellprofiler_function('
-        '"MeasureImageAreaOccupied", '
-        'function_name="measure_image_area_occupied")'
-    ) in generated.code
+    assert "measure_image_area_occupied," in generated.code
 
 
 def test_measure_image_area_occupied_compiles_mixed_rows():
@@ -1120,10 +1112,7 @@ def test_align_compiles_two_image_contract():
         "AlignedImage2",
         "Align_1_measurements",
     ]
-    assert (
-        'align_1 = require_cellprofiler_function("Align", function_name="align")'
-        in generated.code
-    )
+    assert "align," in generated.code
     assert "'crop_mode': 'Keep size'" in generated.code
 
 
@@ -1152,7 +1141,10 @@ def test_crop_contract_marks_mask_sidecar_with_typed_role():
 
     assert crop_mask_spec.name == "CropBlue__crop_mask"
     assert crop_mask_spec.sidecar_role is ArtifactSidecarRole.CROP_MASK
-    assert "ArtifactSidecarRole.CROP_MASK" in generated.code
+    assert "ArtifactSidecarRole.CROP_MASK" not in generated.code
+    assert generated.runtime_module_contracts_by_module_num[
+        1
+    ].outputs[1].sidecar_role is ArtifactSidecarRole.CROP_MASK
 
 
 def test_align_compiles_additional_similar_image_contract():
@@ -1286,10 +1278,7 @@ def test_pipeline_generator_uses_image_variant_without_object_measurement_inputs
     contract = generated.artifact_contracts[0]
 
     assert [spec.name for spec in contract.inputs] == ["OrigBlue", "OrigGreen"]
-    assert (
-        'measure_colocalization_1 = require_cellprofiler_function('
-        '"MeasureColocalization", function_name="measure_colocalization")'
-    ) in generated.code
+    assert "measure_colocalization," in generated.code
 
 
 def test_pipeline_generator_preserves_default_materialization_for_tabular_outputs():
@@ -1312,14 +1301,9 @@ def test_pipeline_generator_preserves_default_materialization_for_tabular_output
         modules=modules,
     )
 
-    assert (
-        "ArtifactSpec('Nuclei', ArtifactKind.OBJECT_LABELS, "
-        "materialization=NO_ARTIFACT_MATERIALIZATION)"
-    ) in generated.code
-    assert (
-        "ArtifactSpec('MeasureImageIntensity_2_measurements', "
-        "ArtifactKind.MEASUREMENTS)"
-    ) in generated.code
+    contracts_by_module = generated.runtime_module_contracts_by_module_num
+    assert contracts_by_module[1].outputs[0].materialization is None
+    assert contracts_by_module[2].outputs[0].materialization is None
 
 
 def test_pipeline_generator_binds_correct_illumination_settings_as_literals():
@@ -1931,10 +1915,7 @@ def test_classifyobjects_alias_compiles_variant_contract_and_settings():
     assert [spec.name for spec in contract.outputs] == [
         "ClassifyObjects_2_measurements"
     ]
-    assert (
-        'classify_objects_single_measurement_2 = require_cellprofiler_function('
-        '"ClassifyObjects", function_name="classify_objects_single_measurement")'
-    ) in generated.code
+    assert "classify_objects_single_measurement," in generated.code
     assert "'measurement_feature': 'Math_Ratio'" in generated.code
     assert "'bin_choice': 'custom'" in generated.code
     assert "'custom_thresholds': '0.25,0.75'" in generated.code
@@ -2057,18 +2038,11 @@ def test_grid_variants_do_not_treat_shape_choices_as_object_symbols():
         "IdentifyObjectsInGrid_3_measurements",
         "GridObjects",
     ]
-    assert (
-        'define_grid_automatic_2 = require_cellprofiler_function('
-        '"DefineGrid", function_name="define_grid_automatic")'
-    ) in generated.code
+    assert "define_grid_automatic," in generated.code
     assert "CellProfilerInvocationOptions(" in generated.code
     assert "grid_cycle_scope=CellProfilerGridCycleScope.EACH_CYCLE" in generated.code
     assert "_cellprofiler_grid_cycle_scope" not in generated.code
-    assert (
-        'identify_objects_in_grid_with_guides_3 = require_cellprofiler_function('
-        '"IdentifyObjectsInGrid", '
-        'function_name="identify_objects_in_grid_with_guides")'
-    ) in generated.code
+    assert "identify_objects_in_grid_with_guides," in generated.code
     assert "Natural Shape and Location" not in [
         spec.name for spec in identify_grid.inputs
     ]

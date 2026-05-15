@@ -18,9 +18,21 @@ from weakref import WeakKeyDictionary
 import numpy as np
 
 from openhcs.constants.constants import Backend
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, StepResult
+from openhcs.core.artifacts import (
+    ArtifactInputPlan,
+    ArtifactOutputPlan,
+    StepResult,
+)
 from openhcs.core.callable_contract import prepare_processing_callable
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.debug import (
+    DebugCursor,
+    DebugEvent,
+    DebugEventType,
+    DebugArtifactRefProjection,
+    DebugInvocationParameter,
+    debug_event_sink_from_context,
+)
 from openhcs.core.function_patterns import (
     CompiledFunctionGroup,
     CompiledFunctionInvocation,
@@ -131,6 +143,54 @@ def _log_runtime_profile(label: str, seconds: float, **fields: Any) -> None:
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeProfileRecorder:
+    """Function-scoped runtime profile field authority."""
+
+    function_name: str
+
+    def record_elapsed(
+        self,
+        label: str,
+        *,
+        started_at: float,
+        **fields: Any,
+    ) -> None:
+        _log_runtime_profile(
+            label,
+            time.perf_counter() - started_at,
+            function=self.function_name,
+            **fields,
+        )
+
+    def record_artifact_elapsed(
+        self,
+        label: str,
+        *,
+        started_at: float,
+        artifact_name: str,
+        artifact_kind: str,
+    ) -> None:
+        self.record_elapsed(
+            label,
+            started_at=started_at,
+            artifact=artifact_name,
+            kind=artifact_kind,
+        )
+
+    def record_adapter_elapsed(
+        self,
+        *,
+        started_at: float,
+        adapter_name: str,
+    ) -> None:
+        self.record_elapsed(
+            "runtime_adapter_factory",
+            started_at=started_at,
+            adapter=adapter_name,
+        )
+
+
 def _callable_parameter_names(func: Callable) -> frozenset[str]:
     """Return cached callable parameter names for runtime adapter injection."""
     names = _CALLABLE_PARAMETER_NAMES.get(func)
@@ -216,6 +276,32 @@ class VirtualWorkspaceSourceProjection:
     source_metadata_by_path: Mapping[str, Mapping[str, str]]
     workspace_root: str | None = None
 
+    def virtual_path_candidates(
+        self,
+        *,
+        virtual_path: str,
+        full_virtual_path: str,
+    ) -> tuple[str, str]:
+        """Return virtual path lookup keys in most-specific order."""
+        return (str(virtual_path), str(full_virtual_path))
+
+    def first_virtual_path_value(
+        self,
+        mapping: Mapping[str, Any],
+        *,
+        virtual_path: str,
+        full_virtual_path: str,
+    ) -> Any | None:
+        """Return the first mapped value for a virtual/full path pair."""
+        for key in self.virtual_path_candidates(
+            virtual_path=virtual_path,
+            full_virtual_path=full_virtual_path,
+        ):
+            value = mapping.get(key)
+            if value is not None:
+                return value
+        return None
+
     def source_path_for(
         self,
         *,
@@ -224,11 +310,12 @@ class VirtualWorkspaceSourceProjection:
         fallback_path: str,
     ) -> str:
         """Return the physical source path represented by a virtual workspace path."""
-        for key in (virtual_path, full_virtual_path):
-            source_path = self.source_paths_by_virtual_path.get(str(key))
-            if source_path is not None:
-                return source_path
-        return fallback_path
+        source_path = self.first_virtual_path_value(
+            self.source_paths_by_virtual_path,
+            virtual_path=virtual_path,
+            full_virtual_path=full_virtual_path,
+        )
+        return fallback_path if source_path is None else str(source_path)
 
     def source_metadata_for(
         self,
@@ -237,10 +324,13 @@ class VirtualWorkspaceSourceProjection:
         full_virtual_path: str,
     ) -> Mapping[str, str] | None:
         """Return source metadata represented by a virtual workspace path."""
-        for key in (virtual_path, full_virtual_path):
-            metadata = self.source_metadata_by_path.get(str(key))
-            if metadata is not None:
-                return metadata
+        metadata = self.first_virtual_path_value(
+            self.source_metadata_by_path,
+            virtual_path=virtual_path,
+            full_virtual_path=full_virtual_path,
+        )
+        if metadata is not None:
+            return metadata
         source_path = self.source_path_for(
             virtual_path=virtual_path,
             full_virtual_path=full_virtual_path,
@@ -316,16 +406,6 @@ _SOURCE_BINDING_EXECUTION_CACHES: WeakKeyDictionary[
 ] = WeakKeyDictionary()
 
 
-def _source_binding_execution_cache(
-    context: ProcessingContext,
-) -> SourceBindingExecutionCache:
-    cache = _SOURCE_BINDING_EXECUTION_CACHES.get(context)
-    if cache is None:
-        cache = SourceBindingExecutionCache.empty()
-        _SOURCE_BINDING_EXECUTION_CACHES[context] = cache
-    return cache
-
-
 def _save_artifact_value(
     context: ProcessingContext,
     output_plan: ArtifactOutputPlan,
@@ -361,7 +441,7 @@ def _save_artifact_value(
 
 
 def _require_axis_id(context: ProcessingContext) -> str:
-    axis_id = getattr(context, "axis_id", None)
+    axis_id = context.axis_id
     if not axis_id:
         raise RuntimeError(
             f"{PROCESSING_CONTEXT_OWNER_NAME}.axis_id is required for artifact values."
@@ -479,16 +559,18 @@ def prepare_compiled_function_group(group: CompiledFunctionGroup) -> None:
         FunctionInvocationCallableResolver.prepare(invocation)
 
 
-def prepare_compiled_context_callables(compiled_contexts: Mapping[str, Any]) -> None:
+def prepare_compiled_context_callables(
+    compiled_contexts: Mapping[str, ProcessingContext],
+) -> None:
     """Prepare every compiled callable visible in a set of execution contexts."""
     prepared_group_keys: set[tuple[str, int, str]] = set()
     prepared_invocation_count = 0
     for context_key, context in compiled_contexts.items():
-        step_plans = getattr(context, "step_plans", None)
+        step_plans = context.step_plans
         if not step_plans:
             continue
         for step_plan in step_plans.values():
-            compiled_pattern = getattr(step_plan, "compiled_function_pattern", None)
+            compiled_pattern = step_plan.compiled_function_pattern
             if compiled_pattern is None:
                 continue
             for group in compiled_pattern.groups:
@@ -512,6 +594,8 @@ def prepare_compiled_context_callables(compiled_contexts: Mapping[str, Any]) -> 
 def _execute_function_core(request: FunctionExecutionRequest) -> Any:
     """Execute one callable and route declared artifact I/O."""
     func_callable = request.func_callable
+    function_name = func_callable.__name__
+    profile = RuntimeProfileRecorder(function_name=function_name)
     context = request.context
     artifact_outputs = request.artifact_outputs
     final_kwargs = dict(request.base_kwargs)
@@ -541,12 +625,11 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                     exc_info=True,
                 )
                 raise
-            _log_runtime_profile(
+            profile.record_artifact_elapsed(
                 "artifact_input_load",
-                time.perf_counter() - load_started_at,
-                function=func_callable.__name__,
-                artifact=arg_name,
-                kind=input_plan.kind.value,
+                started_at=load_started_at,
+                artifact_name=arg_name,
+                artifact_kind=input_plan.kind.value,
             )
 
     parameter_names = _callable_parameter_names(func_callable)
@@ -577,20 +660,17 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                 plane_projection=request.plane_projection,
             )
         )
-        _log_runtime_profile(
-            "runtime_adapter_factory",
-            time.perf_counter() - adapter_started_at,
-            function=func_callable.__name__,
-            adapter=adapter_parameter,
+        profile.record_adapter_elapsed(
+            started_at=adapter_started_at,
+            adapter_name=adapter_parameter,
         )
 
     logger.info(f"Executing function: {func_callable.__name__}")
     call_started_at = time.perf_counter()
     raw_function_output = func_callable(request.main_data_arg, **final_kwargs)
-    _log_runtime_profile(
+    profile.record_elapsed(
         "function_call",
-        time.perf_counter() - call_started_at,
-        function=func_callable.__name__,
+        started_at=call_started_at,
     )
 
     if isinstance(raw_function_output, StepResult):
@@ -610,12 +690,11 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                     output_plan,
                     raw_function_output.artifacts[output_key],
                 )
-                _log_runtime_profile(
+                profile.record_artifact_elapsed(
                     "artifact_output_save",
-                    time.perf_counter() - save_started_at,
-                    function=func_callable.__name__,
-                    artifact=output_key,
-                    kind=output_plan.kind.value,
+                    started_at=save_started_at,
+                    artifact_name=output_key,
+                    artifact_kind=output_plan.kind.value,
                 )
     elif isinstance(raw_function_output, tuple):
         main_output_data = raw_function_output[0]
@@ -633,12 +712,11 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                         output_plan,
                         returned_artifact_values_tuple[i],
                     )
-                    _log_runtime_profile(
+                    profile.record_artifact_elapsed(
                         "artifact_output_save",
-                        time.perf_counter() - save_started_at,
-                        function=func_callable.__name__,
-                        artifact=output_key,
-                        kind=output_plan.kind.value,
+                        started_at=save_started_at,
+                        artifact_name=output_key,
+                        artifact_kind=output_plan.kind.value,
                     )
                 else:
                     logger.error(
@@ -653,20 +731,43 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
     return main_output_data
 
 
-def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
+def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
     """Execute compiled invocations over one image stack."""
     plan = request.execution_plan
     current_stack = request.initial_data_stack
     current_memory_type = plan.input_memory_type
+    debug_sink = debug_event_sink_from_context(request.context)
 
     for invocation in request.invocations:
         actual_callable = _resolve_invocation_callable(invocation)
+        callable_name = invocation.key.function_name
+        debug_cursor = DebugCursor.from_invocation(
+            step_index=plan.step_index,
+            step_scope_id=plan.step_scope_id,
+            invocation=invocation,
+            pattern_group_identity=str(request.runtime_plane_index),
+        )
+        if debug_sink.should_skip_invocation(debug_cursor):
+            continue
         invocation_input_type = invocation.input_memory_type
         invocation_output_type = invocation.output_memory_type
         if invocation_input_type is None or invocation_output_type is None:
             raise ValueError(
                 f"Compiled invocation {invocation.key} is missing memory types."
             )
+        invocation_artifact_inputs = invocation.select_inputs(request.artifact_inputs)
+        invocation_artifact_outputs = invocation.select_outputs(request.artifact_outputs)
+        invocation_parameters = DebugInvocationParameter.from_kwargs(
+            invocation.kwargs_dict
+        )
+        input_debug_refs = DebugArtifactRefProjection.from_artifact_plans(
+            artifact_plans=invocation_artifact_inputs,
+            cursor=debug_cursor,
+        )
+        output_debug_refs = DebugArtifactRefProjection.from_artifact_plans(
+            artifact_plans=invocation_artifact_outputs,
+            cursor=debug_cursor,
+        )
 
         current_stack = _convert_main_flow_memory(
             current_stack,
@@ -676,38 +777,84 @@ def _execute_chain_core(request: FunctionChainExecutionRequest) -> Any:
         )
 
         invocation_started_at = time.perf_counter()
-        current_stack = _execute_function_core(
-            FunctionExecutionRequest(
-                func_callable=actual_callable,
-                main_data_arg=current_stack,
-                base_kwargs=invocation.kwargs_dict,
-                context=request.context,
-                artifact_inputs=invocation.select_inputs(request.artifact_inputs),
-                artifact_outputs=invocation.select_outputs(request.artifact_outputs),
-                runtime_adapter=invocation.contract.runtime_adapter,
-                invocation_options=invocation.invocation_options,
-                source_binding_plan=plan.source_binding_plan,
-                source_binding_context=request.source_binding_context,
-                group_key=invocation.key.group_key,
-                plane_projection=RuntimePlaneProjection.for_group_key(
-                    invocation.key.group_key,
-                    plane_index=(
-                        request.runtime_plane_index
-                        if invocation.key.group_key is not None
-                        else None
-                    ),
-                ),
+        debug_sink.record(
+            DebugEvent(
+                event_type=DebugEventType.BEFORE_INVOCATION,
+                cursor=debug_cursor,
+                step_name=plan.step_name,
+                callable_name=callable_name,
+                axis_id=plan.axis_id,
+                input_artifact_refs=input_debug_refs.refs,
+                measurement_refs=input_debug_refs.measurement_refs,
+                relationship_refs=input_debug_refs.relationship_refs,
+                invocation_parameters=invocation_parameters,
             )
         )
+        try:
+            current_stack = _execute_function_core(
+                FunctionExecutionRequest(
+                    func_callable=actual_callable,
+                    main_data_arg=current_stack,
+                    base_kwargs=invocation.kwargs_dict,
+                    context=request.context,
+                    artifact_inputs=invocation_artifact_inputs,
+                    artifact_outputs=invocation_artifact_outputs,
+                    runtime_adapter=invocation.contract.runtime_adapter,
+                    invocation_options=invocation.invocation_options,
+                    source_binding_plan=plan.source_binding_plan,
+                    source_binding_context=request.source_binding_context,
+                    group_key=invocation.key.group_key,
+                    plane_projection=RuntimePlaneProjection.for_group_key(
+                        invocation.key.group_key,
+                        plane_index=(
+                            request.runtime_plane_index
+                            if invocation.key.group_key is not None
+                            else None
+                        ),
+                    ),
+                )
+            )
+        except Exception as exc:
+            debug_sink.record(
+                DebugEvent.for_exception(
+                    cursor=debug_cursor,
+                    step_name=plan.step_name,
+                    callable_name=callable_name,
+                    axis_id=plan.axis_id,
+                    exception=exc,
+                    input_artifact_refs=input_debug_refs.refs,
+                    output_artifact_refs=output_debug_refs.refs,
+                    measurement_refs=output_debug_refs.measurement_refs,
+                    relationship_refs=output_debug_refs.relationship_refs,
+                    invocation_parameters=invocation_parameters,
+                )
+            )
+            raise
+        invocation_seconds = time.perf_counter() - invocation_started_at
+        after_event = DebugEvent(
+            event_type=DebugEventType.AFTER_INVOCATION,
+            cursor=debug_cursor,
+            step_name=plan.step_name,
+            callable_name=callable_name,
+            axis_id=plan.axis_id,
+            timing_seconds=invocation_seconds,
+            input_artifact_refs=input_debug_refs.refs,
+            output_artifact_refs=output_debug_refs.refs,
+            measurement_refs=output_debug_refs.measurement_refs,
+            relationship_refs=output_debug_refs.relationship_refs,
+            invocation_parameters=invocation_parameters,
+        )
+        debug_sink.record(after_event)
         _log_runtime_profile(
             "invocation_total",
-            time.perf_counter() - invocation_started_at,
-            function=getattr(actual_callable, "__name__", invocation.key.function_name),
+            invocation_seconds,
+            function=callable_name,
             group=invocation.key.group_key,
             position=invocation.key.position,
         )
-
         current_memory_type = invocation_output_type
+        if debug_sink.should_stop_after_invocation(after_event):
+            break
 
     return current_stack
 
@@ -816,6 +963,14 @@ class PatternGroupRuntime:
     @property
     def plan(self) -> FunctionStepExecutionPlan:
         return self.request.execution_plan
+
+    def source_binding_execution_cache(self) -> SourceBindingExecutionCache:
+        """Return the per-context source-binding execution cache."""
+        cache = _SOURCE_BINDING_EXECUTION_CACHES.get(self.context)
+        if cache is None:
+            cache = SourceBindingExecutionCache.empty()
+            _SOURCE_BINDING_EXECUTION_CACHES[self.context] = cache
+        return cache
 
     def run(self) -> None:
         start_time = time.time()
@@ -1117,7 +1272,7 @@ class PatternGroupRuntime:
     ) -> VirtualWorkspaceSourceProjection:
         """Return cached source-schema projection for this plate metadata."""
         plate_path = str(Path(self.context.plate_path))
-        cache = _source_binding_execution_cache(self.context)
+        cache = self.source_binding_execution_cache()
         projection = cache.virtual_workspace_projections.get(plate_path)
         if projection is not None:
             return projection
@@ -1194,51 +1349,6 @@ class PatternGroupRuntime:
             metadata_handler = OpenHCSMetadataHandler(self.context.filemanager)
         return metadata_handler._load_metadata_dict(self.context.plate_path)
 
-    def _virtual_workspace_real_source_files(
-        self,
-        step_input_source_paths: Mapping[str, str],
-    ) -> tuple[str, ...]:
-        from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
-
-        workspace_source_files = tuple(dict.fromkeys(step_input_source_paths.values()))
-        if not workspace_source_files:
-            raise RuntimeError(
-                "virtual_workspace pipeline-start source resolution requires "
-                "workspace_mapping entries in OpenHCS metadata."
-            )
-        source_files = dict.fromkeys(
-            (
-                *workspace_source_files,
-                *self._physical_plate_source_files(
-                    excluded_names=(OpenHCSMetadataHandler.METADATA_FILENAME,)
-                ),
-            )
-        )
-        return tuple(source_files)
-
-    def _physical_plate_source_files(
-        self,
-        *,
-        excluded_names: tuple[str, ...] = (),
-    ) -> tuple[str, ...]:
-        plate_path = str(Path(self.context.plate_path))
-        cache_key = (plate_path, tuple(sorted(str(name) for name in excluded_names)))
-        cache = _source_binding_execution_cache(self.context)
-        cached_files = cache.physical_source_files.get(cache_key)
-        if cached_files is not None:
-            return cached_files
-        source_files = tuple(
-            str(path)
-            for path in self.context.filemanager.list_files(
-                str(self.context.plate_path),
-                Backend.DISK.value,
-                recursive=True,
-            )
-            if Path(path).name not in excluded_names
-        )
-        cache.physical_source_files[cache_key] = source_files
-        return source_files
-
     def _component_artifact_plans(self) -> ComponentArtifactPlans:
         request = self.request
         component_key = (
@@ -1270,7 +1380,7 @@ class PatternGroupRuntime:
                 f"Compiled function group {request.compiled_group.group_key} has no invocations."
             )
 
-        return _execute_chain_core(
+        return execute_function_chain(
             FunctionChainExecutionRequest(
                 initial_data_stack=loaded.main_data_stack,
                 invocations=request.compiled_group.invocations,

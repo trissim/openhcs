@@ -13,10 +13,16 @@ from dataclasses import dataclass
 from functools import lru_cache
 from threading import Lock
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
-from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan, ArtifactSpec
+from openhcs.core.artifact_key_selection import ArtifactPlanKeySelector
+from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.module_artifact_contract import (
+    ModuleArtifactContract,
+    module_artifact_contract_from_namespace,
+)
 from openhcs.core.runtime_adapters import (
     RuntimeAdapterSpec,
     runtime_adapter_spec_from_callable,
@@ -45,7 +51,7 @@ class CompilerPreparedAutoRegisterFamily(ABC):
 
 
 @dataclass(frozen=True, slots=True)
-class CallableContract:
+class CallableContract(ArtifactPlanKeySelector):
     """Compiler-visible contract declared by one processing callable."""
 
     func: Any
@@ -58,6 +64,7 @@ class CallableContract:
     runtime_adapter: RuntimeAdapterSpec | None = None
     processing_contract: Any | None = None
     declared_processing_contract: str | None = None
+    module_artifact_contract: ModuleArtifactContract | None = None
     raw_processing_function: Any | None = None
     runtime_image_execution_mode: ImagePayloadExecutionMode | None = None
     runtime_batch_executors: Mapping[Any, Any] | None = None
@@ -90,6 +97,7 @@ class CallableContract:
                 self.runtime_adapter,
                 self.processing_contract,
                 self.declared_processing_contract,
+                self.module_artifact_contract,
                 self.raw_processing_function,
                 self.runtime_image_execution_mode,
                 (
@@ -137,6 +145,10 @@ class CallableContract:
                 function_name,
                 DECLARED_PROCESSING_CONTRACT_ATTR,
             ),
+            module_artifact_contract=module_artifact_contract_from_namespace(
+                namespace,
+                owner_name=function_name,
+            ),
             raw_processing_function=raw_processing_function,
             runtime_image_execution_mode=_optional_execution_mode(
                 namespace,
@@ -149,13 +161,21 @@ class CallableContract:
             ).executors(),
         )
 
+    artifact_input_names: ClassVar[AliasProperty[tuple[str, ...]]] = (
+        AliasProperty("input_names")
+    )
+
     @property
-    def artifact_input_names(self) -> tuple[str, ...]:
+    def input_names(self) -> tuple[str, ...]:
         """Declared artifact input names in declaration order."""
         return tuple(name for name, _ in self.artifact_inputs)
 
+    artifact_output_names: ClassVar[AliasProperty[tuple[str, ...]]] = (
+        AliasProperty("output_names")
+    )
+
     @property
-    def artifact_output_names(self) -> tuple[str, ...]:
+    def output_names(self) -> tuple[str, ...]:
         """Declared artifact output names in declaration order."""
         return tuple(name for name, _ in self.artifact_outputs)
 
@@ -177,23 +197,6 @@ class CallableContract:
         if self.runtime_batch_executors is None:
             return None
         return self.runtime_batch_executors.get(domain)
-
-    def select_input_plan_keys(
-        self,
-        input_plans: Mapping[str, ArtifactInputPlan],
-    ) -> tuple[str, ...]:
-        """Select compiled artifact inputs consumed by this callable."""
-        declared = set(self.artifact_input_names)
-        return tuple(key for key in input_plans if key in declared)
-
-    def select_output_plan_keys(
-        self,
-        output_plans: Mapping[str, ArtifactOutputPlan],
-    ) -> tuple[str, ...]:
-        """Select compiled artifact outputs produced by this callable."""
-        declared = set(self.artifact_output_names)
-        return tuple(key for key in output_plans if key in declared)
-
 
 def _callable_namespace(func: Any) -> CallableNamespace:
     """Return user-declared callable metadata."""

@@ -77,6 +77,12 @@ from openhcs.core.progress import registry
 from openhcs.core.progress.projection import (
     ExecutionRuntimeProjection,
 )
+from openhcs.core.debug import (
+    DebugArtifactRef,
+    DebugCommandType,
+    DebugReplayMode,
+    DebugSession,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +153,7 @@ class PlateManagerWidget(AbstractManagerWidget):
     progress_started = pyqtSignal(int)
     progress_updated = pyqtSignal(int)
     progress_finished = pyqtSignal()
+    debug_snapshot_available = pyqtSignal(object)
     compilation_error = pyqtSignal(str, str)
     initialization_error = pyqtSignal(str, str)
     execution_error = pyqtSignal(str)
@@ -185,6 +192,7 @@ class PlateManagerWidget(AbstractManagerWidget):
             None  # Track current execution ID for cancellation
         )
         self.execution_state = ManagerExecutionState.IDLE
+        self._active_debug_sessions: Dict[str, DebugSession] = {}
 
         # Track per-plate execution state
         self.plate_execution_ids: Dict[str, str] = {}  # plate_path -> execution_id
@@ -204,6 +212,9 @@ class PlateManagerWidget(AbstractManagerWidget):
         self._zmq_client_service = ZMQClientService(port=7777)
         self._batch_workflow_service = BatchWorkflowService(
             self, client_service=self._zmq_client_service
+        )
+        self._batch_workflow_service.add_debug_snapshot_listener(
+            self.debug_snapshot_available.emit
         )
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
@@ -691,12 +702,7 @@ class PlateManagerWidget(AbstractManagerWidget):
                 logger.warning(f"Orchestrator not found for {plate_path}, creating now")
                 orchestrator = self._create_orchestrator_for_plate(plate_path)
 
-            # Skip if already initialized
-            if orchestrator.state in [
-                OrchestratorState.READY,
-                OrchestratorState.COMPILED,
-                OrchestratorState.COMPLETED,
-            ]:
+            if orchestrator.state.skips_initialization:
                 logger.info(
                     f"Orchestrator already initialized for {plate_path}, skipping"
                 )
@@ -959,6 +965,76 @@ class PlateManagerWidget(AbstractManagerWidget):
 
         await self._batch_workflow_service.run_plates(ready_items)
 
+    async def action_run_debug_plate(
+        self,
+        plate_path: str | None = None,
+        *,
+        command_type: DebugCommandType = DebugCommandType.RUN,
+        snapshot_store_backend: str | None = None,
+        selected_source_group: str | None = None,
+        pause_step_indices: tuple[int, ...] = (),
+        start_step_index: int = 0,
+        start_after_invocation_key: str | None = None,
+    ) -> None:
+        """Run one selected plate through the bounded debug execution path."""
+
+        target_plate_path = plate_path
+        if target_plate_path is None:
+            selected_items = self.get_selected_items()
+            if not selected_items:
+                self.execution_error.emit("No plate selected to debug.")
+                return
+            target_plate_path = str(selected_items[0]["path"])
+
+        session = self._active_debug_sessions.get(target_plate_path)
+        if session is not None:
+            await self._batch_workflow_service.send_debug_worker_command(
+                debug_session_id=session.debug_session_id,
+                command_type=command_type,
+            )
+            if command_type is DebugCommandType.STOP:
+                self._active_debug_sessions.pop(target_plate_path, None)
+            return
+
+        session = DebugSession.create(plate_id=target_plate_path)
+        self._active_debug_sessions[target_plate_path] = session
+        plate_root = Path(target_plate_path)
+        snapshot_root = (
+            plate_root if plate_root.is_dir() else plate_root.parent
+        ) / ".openhcs_debug"
+        await self._batch_workflow_service.run_debug_plate(
+            plate_path=target_plate_path,
+            debug_session_id=session.debug_session_id,
+            snapshot_store_ref=str(snapshot_root),
+            snapshot_store_backend=snapshot_store_backend,
+            command_type=command_type,
+            selected_source_group=selected_source_group,
+            pause_step_indices=pause_step_indices,
+            start_step_index=start_step_index,
+            start_after_invocation_key=start_after_invocation_key,
+            replay_mode=DebugReplayMode.PERSISTENT_PAUSED_WORKER,
+        )
+
+    async def action_export_debug_artifact(
+        self,
+        *,
+        debug_session_id: str,
+        artifact_ref: DebugArtifactRef,
+        export_root: str,
+        snapshot_store_ref: str | None = None,
+        snapshot_store_backend: str | None = None,
+    ) -> str:
+        """Export one debug artifact through the shared workflow service."""
+
+        response = await self._batch_workflow_service.export_debug_artifact(
+            debug_session_id=debug_session_id,
+            artifact_ref=artifact_ref,
+            export_root=export_root,
+            snapshot_store_ref=snapshot_store_ref,
+            snapshot_store_backend=snapshot_store_backend,
+        )
+        return response.exported_ref
+
     def _maybe_auto_add_output_plate_orchestrator(
         self, source_plate_path: str, result: dict
     ) -> None:
@@ -1056,6 +1132,7 @@ class PlateManagerWidget(AbstractManagerWidget):
             self.orchestrator_state_changed.emit(plate_path, new_state.value)
 
         self.clear_plate_execution_tracking(plate_path, clear_terminal=False)
+        self._active_debug_sessions.pop(plate_path, None)
         self._maybe_reset_execution_state_after_stop()
         self.refresh_execution_ui()
 
@@ -1660,7 +1737,12 @@ class PlateManagerWidget(AbstractManagerWidget):
         Args:
             pipeline_editor: Pipeline editor widget instance
         """
+        if self.pipeline_editor is not None:
+            self.debug_snapshot_available.disconnect(
+                self.pipeline_editor.show_debug_snapshot
+            )
         self.pipeline_editor = pipeline_editor
+        self.debug_snapshot_available.connect(pipeline_editor.show_debug_snapshot)
         logger.debug("Pipeline editor reference set in plate manager")
 
     # _find_main_window() moved to AbstractManagerWidget

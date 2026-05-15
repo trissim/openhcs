@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 import importlib
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 from functools import lru_cache, wraps
 from typing import Any
 
@@ -31,6 +32,38 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 
 
 CELLPROFILER_MODULE_ATTR = "__openhcs_cellprofiler_module__"
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerFunctionRuntimeMetadata:
+    """Runtime identity attached to an absorbed CellProfiler backend callable."""
+
+    module_name: str
+    function_name: str
+    declared_processing_contract: str | None
+
+
+def cellprofiler_function_runtime_metadata(
+    func: Callable[..., Any],
+) -> CellProfilerFunctionRuntimeMetadata | None:
+    """Return CellProfiler runtime identity for an absorbed backend callable."""
+    if not callable(func):
+        raise TypeError(
+            "cellprofiler_function_runtime_metadata requires a callable, "
+            f"got {type(func).__name__}."
+        )
+    module_name = getattr(func, CELLPROFILER_MODULE_ATTR, None)
+    if module_name is None:
+        return None
+    return CellProfilerFunctionRuntimeMetadata(
+        module_name=str(module_name),
+        function_name=func.__name__,
+        declared_processing_contract=getattr(
+            func,
+            DECLARED_PROCESSING_CONTRACT_ATTR,
+            None,
+        ),
+    )
 
 
 class _LazyCellProfilerFunctionMapping(Mapping[str, Any]):

@@ -28,6 +28,7 @@ from PyQt6.QtGui import QFont, QShowEvent
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.constants.constants import GroupBy
 from openhcs.core.config import PipelineConfig
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.config_framework import is_global_config_instance
 from openhcs.config_framework.context_manager import config_context
 from openhcs.config_framework.global_config import get_current_global_config
@@ -75,6 +76,10 @@ class DualEditorWindow(BaseFormDialog):
         gui_config=None,
         parent=None,
         step_index: Optional[int] = None,
+        source_schema: PipelineImageSchema | None = None,
+        function_invocation_badge_provider: Optional[
+            Callable[[str, int, Callable], Optional[str]]
+        ] = None,
     ):
         """
         Initialize the dual editor window.
@@ -93,6 +98,7 @@ class DualEditorWindow(BaseFormDialog):
 
         # Store step_index for border pattern (used by ScopedBorderMixin._init_scope_border)
         self._step_index = step_index
+        self._function_invocation_badge_provider = function_invocation_badge_provider
 
         # Make window non-modal (like plate manager and pipeline editor)
         self.setModal(False)
@@ -101,6 +107,7 @@ class DualEditorWindow(BaseFormDialog):
         self.color_scheme = color_scheme or ColorScheme()
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.gui_config = gui_config
+        self.source_schema = source_schema
 
         # Business logic state (extracted from Textual version)
         self.is_new = is_new
@@ -599,6 +606,8 @@ class DualEditorWindow(BaseFormDialog):
                     scope_accent_color=self._scope_accent_color,
                     render_header=False,  # Don't render header - buttons will be managed externally
                     button_style="compact",  # Borderless compact style to match function editor
+                    source_schema=self.source_schema,
+                    source_root=self.orchestrator.input_dir,
                 )
 
         # NOTE: parameter_changed connection is now handled automatically by BaseManagedWindow._connect_change_detection()
@@ -649,6 +658,7 @@ class DualEditorWindow(BaseFormDialog):
             render_header=False,
             button_style="compact",  # Borderless compact style for tab row
             scope_index=self._step_index,  # Align scope styling with pipeline order
+            invocation_badge_provider=self._function_invocation_badge_provider,
         )
 
         # Store main window reference for orchestrator access (find it through parent chain)

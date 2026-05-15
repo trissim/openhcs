@@ -5,10 +5,13 @@ from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Iterator, Mapping, Optional
 
 from openhcs.core.artifacts import ArtifactSpec
+from openhcs.core.function_patterns import DEFAULT_GROUP_KEY
 from openhcs.core.function_patterns import FunctionInvocationKey
-from openhcs.core.function_patterns import (
-    DEFAULT_GROUP_KEY,
-    iter_enabled_function_invocations,
+from openhcs.core.function_patterns import normalize_function_pattern
+from openhcs.core.invocation_artifacts import (
+    ArtifactDeclarationStepContext,
+    InvocationArtifactDeclarationProviderLike,
+    callable_contract_artifact_declarations,
 )
 
 
@@ -115,7 +118,7 @@ class ArtifactGraph:
 
 def normalize_pattern(pattern: Any) -> Iterator[tuple[Callable, str, int]]:
     """Extract enabled functions from any pattern with runtime invocation positions."""
-    for invocation in iter_enabled_function_invocations(pattern):
+    for invocation in normalize_function_pattern(pattern).iter_items():
         yield (
             invocation.func,
             invocation.key.group_key,
@@ -123,7 +126,15 @@ def normalize_pattern(pattern: Any) -> Iterator[tuple[Callable, str, int]]:
         )
 
 
-def extract_artifact_declarations(pattern: Any) -> ArtifactGraph:
+def extract_artifact_declarations(
+    pattern: Any,
+    declaration_provider: InvocationArtifactDeclarationProviderLike = (
+        callable_contract_artifact_declarations
+    ),
+    step_context: ArtifactDeclarationStepContext = (
+        ArtifactDeclarationStepContext.empty()
+    ),
+) -> ArtifactGraph:
     """Extract artifact metadata and per-group ownership from a function pattern."""
     producer_specs: OrderedDict[str, ArtifactSpec] = OrderedDict()
     producer_groups: defaultdict[str, list[Optional[str]]] = defaultdict(list)
@@ -131,12 +142,12 @@ def extract_artifact_declarations(pattern: Any) -> ArtifactGraph:
     consumer_specs: OrderedDict[str, ArtifactSpec] = OrderedDict()
     consumer_invocations: defaultdict[str, list[FunctionInvocationKey]] = defaultdict(list)
 
-    for invocation in iter_enabled_function_invocations(pattern):
-        contract = invocation.contract
+    for invocation in normalize_function_pattern(pattern).iter_items():
+        declarations = declaration_provider(invocation, step_context)
         group_key = invocation.key.group_key
         normalized_key = None if group_key == DEFAULT_GROUP_KEY else group_key
 
-        for name, spec in contract.artifact_outputs:
+        for name, spec in declarations.outputs:
             producer_specs[name] = _merge_artifact_spec(
                 existing=producer_specs.get(name),
                 incoming=spec,
@@ -145,7 +156,7 @@ def extract_artifact_declarations(pattern: Any) -> ArtifactGraph:
             producer_groups[name].append(normalized_key)
             producer_invocations[name].append(invocation.key)
 
-        for name, spec in contract.artifact_inputs:
+        for name, spec in declarations.inputs:
             consumer_specs[name] = _merge_artifact_spec(
                 existing=consumer_specs.get(name),
                 incoming=spec,

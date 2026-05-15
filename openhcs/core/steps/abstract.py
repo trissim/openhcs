@@ -100,6 +100,7 @@ class AbstractStep(abc.ABC):
         name: str = None,
         description: str = None,
         enabled: bool = True,
+        debug_pause: bool = False,
         dtype_config: 'LazyDtypeConfig' = LazyDtypeConfig(),
         processing_config: 'LazyProcessingConfig' = LazyProcessingConfig(),
         step_well_filter_config: 'LazyStepWellFilterConfig' = LazyStepWellFilterConfig(),
@@ -119,6 +120,9 @@ class AbstractStep(abc.ABC):
             description: Optional description of what this step does.
             enabled: Whether this step is enabled. Disabled steps are filtered out
                     during pipeline compilation. Defaults to True.
+            debug_pause: Whether bounded debug "run to pause" should stop after
+                    this step. This is definition-time debug metadata and does
+                    not affect normal execution.
             dtype_config: LazyDtypeConfig for dtype conversion behavior in memory type decorators.
             processing_config: LazyProcessingConfig for variable_components, group_by, input_source, and sequential processing.
             step_well_filter_config: LazyStepWellFilterConfig for well filtering.
@@ -134,6 +138,7 @@ class AbstractStep(abc.ABC):
         self.name = name or self.__class__.__name__
         self.description = description
         self.enabled = enabled
+        self.debug_pause = debug_pause
         self.dtype_config = dtype_config
         self.processing_config = processing_config
         self.step_well_filter_config = step_well_filter_config

@@ -7,6 +7,7 @@ import time
 import threading
 import hashlib
 import json
+from pathlib import Path
 from typing import Any
 
 from zmqruntime.execution import ExecutionServer
@@ -75,6 +76,110 @@ class ZMQExecutionServer(ExecutionServer):
         self._worker_assignments_by_execution: dict[str, dict[str, list[str]]] = {}
         self._compiled_artifacts: dict[str, dict[str, Any]] = {}
         self._compiled_artifact_ttl_seconds: float = 30.0 * 60.0
+
+    def handle_control_message(self, message):
+        from openhcs.core.debug import DebugControlMessageType
+
+        if message.get(MessageFields.TYPE) == DebugControlMessageType.READ_SNAPSHOT.value:
+            return self._handle_debug_snapshot_read(message)
+        if message.get(MessageFields.TYPE) == DebugControlMessageType.WORKER_COMMAND.value:
+            return self._handle_debug_worker_command(message)
+        if message.get(MessageFields.TYPE) == DebugControlMessageType.EXPORT_ARTIFACT.value:
+            return self._handle_debug_artifact_export(message)
+        return super().handle_control_message(message)
+
+    def _debug_snapshot_store_for_request(self, request):
+        from openhcs.core.debug import (
+            FileManagerDebugSnapshotStore,
+            LocalDebugSnapshotStore,
+        )
+
+        if request.snapshot_store_backend is None:
+            return LocalDebugSnapshotStore(
+                root_path=request.snapshot_store_ref,
+                debug_session_id=request.debug_session_id,
+            )
+
+        from polystore.base import ensure_storage_registry, storage_registry
+        from polystore.filemanager import FileManager
+
+        ensure_storage_registry()
+        return FileManagerDebugSnapshotStore(
+            filemanager=FileManager(storage_registry),
+            backend=request.snapshot_store_backend,
+            root_path=request.snapshot_store_ref,
+            debug_session_id=request.debug_session_id,
+        )
+
+    def _handle_debug_snapshot_read(self, message):
+        from openhcs.core.debug import (
+            DebugSnapshotReadControlPayload,
+            DebugSnapshotReadResponse,
+        )
+
+        try:
+            request = DebugSnapshotReadControlPayload.from_dict(message).to_request()
+            snapshot = self._debug_snapshot_store_for_request(request).read_snapshot(
+                request.snapshot_id
+            )
+            return DebugSnapshotReadResponse(snapshot=snapshot).to_control_response()
+        except Exception as error:
+            return {
+                MessageFields.STATUS: ResponseType.ERROR.value,
+                MessageFields.ERROR: str(error),
+            }
+
+    def _handle_debug_worker_command(self, message):
+        from openhcs.core.debug import (
+            DebugPausedWorkerRegistry,
+            DebugWorkerCommandControlPayload,
+            DebugWorkerCommandResponse,
+        )
+
+        try:
+            request = DebugWorkerCommandControlPayload.from_dict(message).to_request()
+            status = DebugPausedWorkerRegistry.controller_for(
+                request.debug_session_id
+            ).apply_command(request.command_type)
+            return DebugWorkerCommandResponse(status=status).to_control_response()
+        except Exception as error:
+            return {
+                MessageFields.STATUS: ResponseType.ERROR.value,
+                MessageFields.ERROR: str(error),
+            }
+
+    def _handle_debug_artifact_export(self, message):
+        from openhcs.core.debug import (
+            DebugArtifactExportControlPayload,
+            DebugArtifactExportPlan,
+            DebugArtifactExportResponse,
+        )
+
+        try:
+            request = DebugArtifactExportControlPayload.from_dict(message).to_request()
+            exported_path = DebugArtifactExportPlan(
+                artifact_ref=request.artifact_ref,
+                export_root=Path(request.export_root),
+                filemanager=self._debug_artifact_filemanager(request),
+            ).export()
+            return DebugArtifactExportResponse(
+                exported_ref=str(exported_path)
+            ).to_control_response()
+        except Exception as error:
+            return {
+                MessageFields.STATUS: ResponseType.ERROR.value,
+                MessageFields.ERROR: str(error),
+            }
+
+    @staticmethod
+    def _debug_artifact_filemanager(request):
+        if request.artifact_ref.storage_backend is None:
+            return None
+        from polystore.base import ensure_storage_registry, storage_registry
+        from polystore.filemanager import FileManager
+
+        ensure_storage_registry()
+        return FileManager(storage_registry)
 
     @staticmethod
     def _extract_compiled_axis_ids(compiled_contexts: dict[str, Any]) -> list[str]:
@@ -176,6 +281,28 @@ class ZMQExecutionServer(ExecutionServer):
         }
         canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+    @classmethod
+    def _build_debug_replay_signature(
+        cls,
+        *,
+        plate_id: str,
+        pipeline_code: str,
+        config_params: dict | None,
+        config_code: str | None,
+        pipeline_config_code: str | None,
+    ) -> str:
+        from openhcs.core.debug import DebugExecutionConfig
+
+        return cls._build_request_signature(
+            plate_id=plate_id,
+            pipeline_code=pipeline_code,
+            config_params=DebugExecutionConfig.compatibility_config_params(
+                config_params
+            ),
+            config_code=config_code,
+            pipeline_config_code=pipeline_config_code,
+        )
 
     def _cleanup_compiled_artifacts(self) -> None:
         now = time.time()
@@ -418,6 +545,13 @@ class ZMQExecutionServer(ExecutionServer):
             config_code=config_code,
             pipeline_config_code=pipeline_config_code,
         )
+        debug_replay_signature = self._build_debug_replay_signature(
+            plate_id=plate_id,
+            pipeline_code=pipeline_code,
+            config_params=config_params,
+            config_code=config_code,
+            pipeline_config_code=pipeline_config_code,
+        )
         pipeline_sha = hashlib.sha256(pipeline_code.encode("utf-8")).hexdigest()[:12]
 
         namespace = {}
@@ -472,6 +606,7 @@ class ZMQExecutionServer(ExecutionServer):
                 compile_only=compile_only,
                 compile_artifact_id=compile_artifact_id,
                 request_signature=request_signature,
+                debug_replay_signature=debug_replay_signature,
             )
         except Exception as e:
             if compile_only:
@@ -518,6 +653,7 @@ class ZMQExecutionServer(ExecutionServer):
         compile_only: bool = False,
         compile_artifact_id: str | None = None,
         request_signature: str | None = None,
+        debug_replay_signature: str | None = None,
     ):
         from dataclasses import replace
         from pathlib import Path
@@ -527,6 +663,12 @@ class ZMQExecutionServer(ExecutionServer):
         from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
         from openhcs.core.worker_start_policy import WorkerStartExecutionFacts
         from openhcs.core.worker_start_policy import resolve_worker_start_context
+        from openhcs.core.debug import (
+            DebugExecutionPolicy,
+            DebugPausedWorkerRegistry,
+            DebugReplayMode,
+            ProgressDebugExecutionPolicy,
+        )
         from openhcs.constants import (
             AllComponents,
             VariableComponents,
@@ -550,6 +692,19 @@ class ZMQExecutionServer(ExecutionServer):
             raise TypeError(
                 f"Expected GlobalPipelineConfig, got {type(global_config).__name__}"
             )
+
+        debug_execution_policy = DebugExecutionPolicy.from_config_params(config_params)
+        debug_execution_config = (
+            debug_execution_policy.config
+            if isinstance(debug_execution_policy, ProgressDebugExecutionPolicy)
+            else None
+        )
+        if (
+            debug_execution_config is not None
+            and debug_execution_config.replay_mode
+            is DebugReplayMode.PERSISTENT_PAUSED_WORKER
+        ):
+            global_config = replace(global_config, use_threading=True, num_workers=1)
 
         setup_global_gpu_registry(global_config=global_config)
         ensure_global_config_context(GlobalPipelineConfig, global_config)
@@ -628,7 +783,12 @@ class ZMQExecutionServer(ExecutionServer):
             if config_params and config_params.get("well_filter"):
                 wells = list(config_params["well_filter"])
             else:
-                wells = orchestrator.get_component_keys(MULTIPROCESSING_AXIS)
+                available_axis_ids = tuple(
+                    orchestrator.get_component_keys(MULTIPROCESSING_AXIS)
+                )
+                wells = debug_execution_policy.axis_filter_for_available(
+                    available_axis_ids
+                )
 
             # Initialize compiled_pipeline_definition - will be set by either artifact reuse or fresh compilation
             compiled_pipeline_definition = None
@@ -653,23 +813,39 @@ class ZMQExecutionServer(ExecutionServer):
 
             if compile_artifact_id is not None:
                 self._cleanup_compiled_artifacts()
-                artifact = self._compiled_artifacts.pop(compile_artifact_id, None)
+                retain_compile_artifact = (
+                    debug_execution_config is not None
+                    and debug_execution_config.replay_mode.retains_compile_artifact
+                )
+                artifact = self._compiled_artifacts.get(compile_artifact_id)
+                if artifact is not None and not retain_compile_artifact:
+                    artifact = self._compiled_artifacts.pop(compile_artifact_id)
                 if artifact is None:
                     raise ValueError(
                         f"Missing compile artifact '{compile_artifact_id}'. "
                         "Re-run compilation before execution."
                     )
-                if request_signature is None:
+                signature_key = (
+                    "debug_replay_signature"
+                    if retain_compile_artifact
+                    else "request_signature"
+                )
+                expected_signature = (
+                    debug_replay_signature
+                    if retain_compile_artifact
+                    else request_signature
+                )
+                if expected_signature is None:
                     raise ValueError(
                         "Missing request signature for artifact validation"
                     )
-                if artifact["request_signature"] != request_signature:
+                if artifact[signature_key] != expected_signature:
                     logger.error(
                         "[%s] Compile artifact signature mismatch: artifact_id=%s artifact_sig=%s request_sig=%s",
                         execution_id,
                         compile_artifact_id,
-                        str(artifact["request_signature"])[:12],
-                        request_signature[:12],
+                        str(artifact[signature_key])[:12],
+                        expected_signature[:12],
                     )
                     raise ValueError(
                         f"Compile artifact '{compile_artifact_id}' does not match execution request"
@@ -714,7 +890,7 @@ class ZMQExecutionServer(ExecutionServer):
                     execution_id,
                     compile_artifact_id,
                     plate_id,
-                    request_signature[:12] if request_signature else "missing",
+                    expected_signature[:12],
                 )
 
                 output_plate_root = artifact.get("output_plate_root")
@@ -851,13 +1027,14 @@ class ZMQExecutionServer(ExecutionServer):
                 raise RuntimeError("Execution cancelled by user")
 
             if compile_only:
-                if request_signature is None:
+                if request_signature is None or debug_replay_signature is None:
                     raise ValueError(
                         "Missing request signature for compile artifact storage"
                     )
                 self._compiled_artifacts[execution_id] = {
                     "created_at": time.time(),
                     "request_signature": request_signature,
+                    "debug_replay_signature": debug_replay_signature,
                     MessageFields.PLATE_ID: str(plate_id),
                     "execution_bundle": execution_bundle,
                     "compiled_pipeline_definition": compiled_pipeline_definition,  # Store the stripped pipeline_definition
@@ -958,12 +1135,21 @@ class ZMQExecutionServer(ExecutionServer):
                 progress_queue=worker_progress_queue,
                 progress_context=progress_context,
                 worker_assignments=worker_assignments,
+                debug_execution_policy=debug_execution_policy,
             )
         finally:
             if worker_progress_queue is not None:
                 worker_progress_queue.put(None)
             if progress_forwarder is not None:
                 progress_forwarder.join()
+            if (
+                debug_execution_config is not None
+                and debug_execution_config.replay_mode
+                is DebugReplayMode.PERSISTENT_PAUSED_WORKER
+            ):
+                DebugPausedWorkerRegistry.remove(
+                    debug_execution_config.debug_session_id
+                )
             self._worker_assignments_by_execution.pop(execution_id, None)
 
     def _kill_worker_processes(self) -> int:

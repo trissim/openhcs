@@ -236,15 +236,20 @@ class CPPipePipelinePreparationRequest:
             self.output_path,
             converted.generated_pipeline.code,
         )
+        artifact_contracts_by_module_num = (
+            converted.generated_pipeline.runtime_module_contracts_by_module_num
+        )
         module = load_generated_pipeline_module_from_source(
             converted.generated_pipeline.code,
             module_name=module_name,
             filename=str(self.output_path),
+            artifact_contracts=artifact_contracts_by_module_num,
         )
         materialize_generated_pipeline_import_module(
             converted.generated_pipeline.code,
             module_name=module_name,
             output_dir=self.output_path.parent,
+            artifact_contracts=artifact_contracts_by_module_num,
         )
         pipeline = pipeline_from_generated_module(
             module,

@@ -20,6 +20,11 @@ from openhcs.core.function_patterns import (
     inject_kwargs_into_pattern,
     strip_disabled_functions,
 )
+from openhcs.core.invocation_artifacts import (
+    ArtifactDeclarationStepContext,
+    InvocationArtifactDeclarationProviderLike,
+    callable_contract_artifact_declarations,
+)
 from openhcs.core.compiled_step_plan import (
     CompiledStepPlan,
     InputConversionPlan,
@@ -65,6 +70,9 @@ class PathPlanner:
         pipeline_config,
         orchestrator=None,
         step_snapshots: tuple[StepSnapshot, ...] = (),
+        declaration_provider: InvocationArtifactDeclarationProviderLike = (
+            callable_contract_artifact_declarations
+        ),
     ):
         self.ctx = context
         # CRITICAL: pipeline_config is now the merged config (GlobalPipelineConfig) from context.global_config
@@ -75,6 +83,7 @@ class PathPlanner:
         self.declared = {}  # Tracks artifact outputs
         self.orchestrator = orchestrator
         self.step_snapshots = tuple(step_snapshots)
+        self.declaration_provider = declaration_provider
         self.snapshots_by_index = {
             snapshot.index: snapshot for snapshot in self.step_snapshots
         }
@@ -215,8 +224,6 @@ class PathPlanner:
             self.ctx.output_plate_root = self.build_output_plate_root(self.plate_path, self.cfg, is_per_step_materialization=False)
             self.ctx.sub_dir = self.cfg.sub_dir
 
-
-
         return self.plans
 
     def _prime_future_artifact_inputs(self) -> None:
@@ -234,7 +241,11 @@ class PathPlanner:
                     if snapshot.func
                     else []
                 )
-                declarations = extract_artifact_declarations(pattern)
+                declarations = extract_artifact_declarations(
+                    pattern,
+                    declaration_provider=self.declaration_provider,
+                    step_context=self._artifact_declaration_context(snapshot),
+                )
                 step_inputs = set(declarations.inputs.keys())
             else:
                 step_inputs = set()
@@ -252,7 +263,11 @@ class PathPlanner:
         func_pattern = self._inject_injectable_params(snapshot.func, snapshot)
         func_pattern = strip_disabled_functions(func_pattern)
 
-        declarations = extract_artifact_declarations(func_pattern if func_pattern else [])
+        declarations = extract_artifact_declarations(
+            func_pattern if func_pattern else [],
+            declaration_provider=self.declaration_provider,
+            step_context=self._artifact_declaration_context(snapshot),
+        )
         execution_groups = self._get_execution_groups(snapshot)
         declarations = self._namespace_grouped_outputs_for_runtime_consumers(
             snapshot,
@@ -325,8 +340,9 @@ class PathPlanner:
             ),
         )
 
-    @staticmethod
     def _build_step_compiled_function_pattern(
+        self,
+        snapshot: StepSnapshot,
         is_function_step: bool,
         func_pattern: Any,
         artifact_inputs: Mapping[str, ArtifactInputPlan],
@@ -340,6 +356,20 @@ class PathPlanner:
             func_pattern,
             artifact_inputs,
             artifact_outputs,
+            declaration_provider=self.declaration_provider,
+            step_context=self._artifact_declaration_context(snapshot),
+        )
+
+    @staticmethod
+    def _artifact_declaration_context(
+        snapshot: StepSnapshot,
+    ) -> ArtifactDeclarationStepContext:
+        """Return compile-time context for invocation artifact providers."""
+        return ArtifactDeclarationStepContext(
+            step_name=snapshot.name,
+            step_index=snapshot.index,
+            source_bindings=snapshot.source_bindings,
+            processing_config=snapshot.processing_config,
         )
 
     @staticmethod
@@ -507,6 +537,7 @@ class PathPlanner:
             output_dir,
             artifact_maps,
             self._build_step_compiled_function_pattern(
+                snapshot,
                 snapshot.is_function_step,
                 func_pattern,
                 artifact_maps.inputs,
@@ -938,12 +969,17 @@ class PipelinePathPlanner:
     """Public API matching original interface."""
 
     @staticmethod
-    def prepare_pipeline_paths(context: ProcessingContext,
-                              pipeline_definition: List[AbstractStep],
-                              pipeline_config,
-                              orchestrator=None,
-                              step_state_map=None,
-                              step_snapshots: tuple[StepSnapshot, ...] | None = None) -> Dict:
+    def prepare_pipeline_paths(
+        context: ProcessingContext,
+        pipeline_definition: List[AbstractStep],
+        pipeline_config,
+        orchestrator=None,
+        step_state_map=None,
+        step_snapshots: tuple[StepSnapshot, ...] | None = None,
+        declaration_provider: InvocationArtifactDeclarationProviderLike = (
+            callable_contract_artifact_declarations
+        ),
+    ) -> Dict:
         """
         Prepare pipeline paths.
 
@@ -955,6 +991,7 @@ class PipelinePathPlanner:
             orchestrator: Optional orchestrator for component key resolution
             step_state_map: Optional dict mapping step_index to ObjectState for building snapshots
             step_snapshots: Optional prebuilt ObjectState-resolved step snapshots
+            declaration_provider: Invocation-aware artifact declaration provider
         """
         if step_snapshots is None:
             if step_state_map is None:
@@ -971,6 +1008,7 @@ class PipelinePathPlanner:
             pipeline_config,
             orchestrator=orchestrator,
             step_snapshots=step_snapshots,
+            declaration_provider=declaration_provider,
         ).plan(pipeline_definition)
 
     @staticmethod

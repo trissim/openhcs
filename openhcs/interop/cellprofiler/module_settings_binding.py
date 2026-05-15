@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, final
+from typing import Any, ClassVar, TypeVar, final
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -30,6 +30,8 @@ from openhcs.interop.cellprofiler.area_occupied_settings import (
 from openhcs.interop.cellprofiler.calculate_math_settings import (
     calculate_math_bound_kwargs,
 )
+
+RequiredAttrT = TypeVar("RequiredAttrT")
 from openhcs.interop.cellprofiler.classify_objects_settings import (
     classify_objects_bound_kwargs,
 )
@@ -3101,7 +3103,7 @@ def _typed_setting_value(
     return binder.parse_value(key, value)
 
 
-def _required_class_attr[T](value: T | None, name: str) -> T:
+def _required_class_attr(value: RequiredAttrT | None, name: str) -> RequiredAttrT:
     if value is None:
         raise TypeError(f"Measurement settings strategy must define {name}.")
     return value

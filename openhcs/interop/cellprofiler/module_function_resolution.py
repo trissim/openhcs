@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import ClassVar, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -34,6 +34,8 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_values,
     split_symbol_names,
 )
+
+RequiredAttrT = TypeVar("RequiredAttrT")
 from openhcs.processing.backends.cellprofiler.library import canonical_module_name
 
 
@@ -300,7 +302,7 @@ def _scope_setting_value(
         return default
 
 
-def _required_class_attr[T](value: T | None, name: str) -> T:
+def _required_class_attr(value: RequiredAttrT | None, name: str) -> RequiredAttrT:
     if value is None:
         raise TypeError(f"Measurement resolution strategy must define {name}.")
     return value

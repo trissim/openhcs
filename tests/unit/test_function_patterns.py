@@ -18,6 +18,11 @@ from openhcs.core.function_patterns import (
     normalize_function_pattern,
     strip_disabled_functions,
 )
+from openhcs.core.invocation_artifacts import InvocationArtifactDeclarations
+from openhcs.core.module_artifact_contract import (
+    ModuleArtifactContract,
+    module_artifact_contract,
+)
 from openhcs.core.pipeline.function_contracts import (
     artifact_inputs,
     artifact_outputs,
@@ -126,6 +131,41 @@ def test_artifact_graph_tracks_kind_groups_and_invocation_ownership():
     )
 
 
+def test_artifact_graph_accepts_invocation_aware_declaration_provider():
+    def configurable(image, output_name="objects"):
+        return image
+
+    def declarations_for(invocation, step_context):
+        del step_context
+        return InvocationArtifactDeclarations(
+            outputs=(
+                (
+                    invocation.kwargs_dict["output_name"],
+                    ArtifactSpec(
+                        invocation.kwargs_dict["output_name"],
+                        ArtifactKind.OBJECT_LABELS,
+                    ),
+                ),
+            ),
+        )
+
+    graph = extract_artifact_declarations(
+        [
+            (configurable, {"output_name": "nuclei"}),
+            (configurable, {"output_name": "cells"}),
+        ],
+        declaration_provider=declarations_for,
+    )
+
+    assert tuple(graph.outputs) == ("nuclei", "cells")
+    assert graph.producers[0].invocation_keys == (
+        FunctionInvocationKey("configurable", "default", 0),
+    )
+    assert graph.producers[1].invocation_keys == (
+        FunctionInvocationKey("configurable", "default", 1),
+    )
+
+
 def test_artifact_graph_rejects_conflicting_producer_kinds():
     @artifact_outputs(ArtifactSpec("objects", ArtifactKind.OBJECT_LABELS))
     def identify(image):
@@ -225,6 +265,77 @@ def test_compile_function_pattern_builds_invocation_source_of_truth():
     assert group.invocations[0].artifact_input_keys == ("positions",)
     assert group.invocations[0].artifact_output_keys == ("positions",)
     assert group.invocations[1].artifact_output_keys == ("measurements",)
+
+
+def test_compile_function_pattern_uses_invocation_aware_declarations():
+    def configurable(image, output_name="objects"):
+        return image
+
+    def declarations_for(invocation, step_context):
+        del step_context
+        output_name = invocation.kwargs_dict["output_name"]
+        return InvocationArtifactDeclarations(
+            outputs=((output_name, ArtifactSpec(output_name)),)
+        )
+
+    compiled = compile_function_pattern(
+        [
+            (configurable, {"output_name": "nuclei"}),
+            (configurable, {"output_name": "cells"}),
+        ],
+        {},
+        {
+            "nuclei": ArtifactOutputPlan("nuclei", "/tmp/nuclei.pkl"),
+            "cells": ArtifactOutputPlan("cells", "/tmp/cells.pkl"),
+        },
+        declaration_provider=declarations_for,
+    )
+
+    assert [invocation.artifact_output_keys for invocation in compiled.default_group.invocations] == [
+        ("nuclei",),
+        ("cells",),
+    ]
+
+
+def test_module_artifact_contract_drives_default_artifact_declarations():
+    contract = ModuleArtifactContract(
+        module_name="IdentifyPrimaryObjects",
+        runtime_artifact_inputs=(
+            ArtifactSpec("DNA", ArtifactKind.IMAGE),
+        ),
+        outputs=(
+            ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
+        ),
+    )
+
+    @module_artifact_contract(contract)
+    def identify_primary_objects(image):
+        return image
+
+    graph = extract_artifact_declarations(identify_primary_objects)
+    compiled = compile_function_pattern(
+        identify_primary_objects,
+        {
+            "DNA": ArtifactInputPlan(
+                name="DNA",
+                path="/memory/DNA.pkl",
+                kind=ArtifactKind.IMAGE,
+            ),
+        },
+        {
+            "Nuclei": ArtifactOutputPlan(
+                name="Nuclei",
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+            ),
+        },
+    )
+
+    invocation = compiled.groups[0].invocations[0]
+    assert list(graph.inputs) == ["DNA"]
+    assert list(graph.outputs) == ["Nuclei"]
+    assert invocation.artifact_input_keys == ("DNA",)
+    assert invocation.artifact_output_keys == ("Nuclei",)
 
 
 def test_compile_function_pattern_preserves_typed_invocation_options():

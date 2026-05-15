@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Iterator
 
@@ -39,14 +39,14 @@ class RuntimeMeasurementLookupDialect:
     """Dialect used to resolve external measurement names to runtime fields."""
 
     category_prefixes: tuple[tuple[str, ...], ...] = ()
-    feature_part_aliases: Mapping[tuple[str, ...], tuple[str, ...]] = (
-        _EMPTY_FEATURE_ALIASES
+    feature_part_aliases: Mapping[tuple[str, ...], tuple[str, ...]] = field(
+        default_factory=lambda: _EMPTY_FEATURE_ALIASES
     )
     source_qualified_feature_families: tuple[tuple[str, ...], ...] = (
         _EMPTY_FEATURE_FAMILIES
     )
-    object_domain_policy: RuntimeMeasurementObjectDomainPolicy = (
-        RuntimeMeasurementObjectDomainPolicy()
+    object_domain_policy: RuntimeMeasurementObjectDomainPolicy = field(
+        default_factory=RuntimeMeasurementObjectDomainPolicy
     )
 
     def __post_init__(self) -> None:

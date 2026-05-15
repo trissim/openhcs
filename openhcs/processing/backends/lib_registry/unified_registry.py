@@ -273,6 +273,16 @@ class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMe
 
     @classmethod
     def slice(cls, value: Any, memory_type: str) -> tuple[Any, ...]:
+        return cls.strategy_for_value(value).slice_value(value, memory_type)
+
+    @classmethod
+    def is_single_plane(cls, value: Any) -> bool:
+        """Return whether a PURE_2D input is already one 2D invocation."""
+        return cls.strategy_for_value(value).is_single_plane_value(value)
+
+    @classmethod
+    def strategy_for_value(cls, value: Any) -> "Pure2DInputSlicer":
+        """Select the nearest registered slicer for a PURE_2D input value."""
         candidates: list[Pure2DInputSlicer] = []
         for strategy in cls.registered_strategies():
             if not isinstance(strategy, Pure2DInputSlicer):
@@ -288,7 +298,7 @@ class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMe
             candidates,
             key=lambda candidate: candidate.type_distance(value),
         )
-        return slicer.slice_value(value, memory_type)
+        return slicer
 
     def supports(self, value: Any) -> bool:
         accepted_types = self.accepted_value_types()
@@ -308,13 +318,22 @@ class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMe
     def slice_value(self, value: Any, memory_type: str) -> tuple[Any, ...]:
         """Return nominal per-slice values for one PURE_2D input."""
 
+    @abstractmethod
+    def is_single_plane_value(self, value: Any) -> bool:
+        """Return whether this value should bypass slice/restack execution."""
+
 
 class RegisteredImageLayoutPure2DInputSlicer(Pure2DInputSlicer):
     """Slice plain arrays through the registered OpenHCS image-stack layouts."""
 
     value_type = np.ndarray
 
+    def is_single_plane_value(self, value: np.ndarray) -> bool:
+        return value.ndim == 2
+
     def slice_value(self, value: np.ndarray, memory_type: str) -> tuple[Any, ...]:
+        if self.is_single_plane_value(value):
+            return (value,)
         return tuple(
             ImageStackLayout.for_stack(value).unstack(
                 array=value,
@@ -329,8 +348,13 @@ class ImagePayloadPure2DInputSlicer(Pure2DInputSlicer):
 
     value_type = None
 
+    def is_single_plane_value(self, value: Any) -> bool:
+        return image_payload_data(value).ndim == 2
+
     def slice_value(self, value: Any, memory_type: str) -> tuple[Any, ...]:
         data = image_payload_data(value)
+        if self.is_single_plane_value(value):
+            return (value,)
         slices = ImageStackLayout.for_stack(data).unstack(
             array=data,
             memory_type=memory_type,
@@ -1175,6 +1199,8 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Execute 2D→2D function with unstack/restack wrapper."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
+        if Pure2DInputSlicer.is_single_plane(image):
+            return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
         slices = Pure2DInputSlicer.slice(image, memory_type)
         slice_results = [
             Pure2DSliceIndexProjector.project(

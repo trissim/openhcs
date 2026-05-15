@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from types import MappingProxyType
 from typing import Annotated, ClassVar, get_args, get_origin, get_type_hints
@@ -324,13 +324,13 @@ class RuntimeMeasurementDialect:
     """Policy-provided measurement-name dialect for semantic comparisons."""
 
     category_prefixes: tuple[tuple[str, ...], ...] = ()
-    feature_part_aliases: Mapping[tuple[str, ...], tuple[str, ...]] = (
-        _EMPTY_FEATURE_ALIASES
+    feature_part_aliases: Mapping[tuple[str, ...], tuple[str, ...]] = field(
+        default_factory=lambda: _EMPTY_FEATURE_ALIASES
     )
     source_feature_prefixes: tuple[tuple[str, ...], ...] = ()
     calculated_feature_prefixes: tuple[tuple[str, ...], ...] = ()
-    directional_pair_feature_aliases: Mapping[str, tuple[str, int]] = (
-        _EMPTY_PAIR_FEATURE_ALIASES
+    directional_pair_feature_aliases: Mapping[str, tuple[str, int]] = field(
+        default_factory=lambda: _EMPTY_PAIR_FEATURE_ALIASES
     )
     scale_qualified_feature_prefixes: tuple[tuple[str, ...], ...] = ()
     threshold_qualifier_tokens: frozenset[str] = frozenset()
@@ -343,13 +343,13 @@ class RuntimeMeasurementDialect:
         RuntimeMeasurementRowQualifierSequence,
         ...
     ] = _DEFAULT_MEASUREMENT_ROW_QUALIFIER_SEQUENCES
-    numbered_feature_prefix_aliases: Mapping[str, tuple[str, ...]] = (
-        _EMPTY_NUMBERED_FEATURE_PREFIX_ALIASES
+    numbered_feature_prefix_aliases: Mapping[str, tuple[str, ...]] = field(
+        default_factory=lambda: _EMPTY_NUMBERED_FEATURE_PREFIX_ALIASES
     )
     source_name_encoding_by_scope: Mapping[
         MeasurementScope,
         RuntimeMeasurementSourceNameEncoding,
-    ] = MappingProxyType({})
+    ] = field(default_factory=lambda: MappingProxyType({}))
     row_identity_contract: RuntimeMeasurementRowIdentityContract = (
         DEFAULT_RUNTIME_MEASUREMENT_ROW_IDENTITY_CONTRACT
     )

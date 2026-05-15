@@ -214,11 +214,12 @@ except:
 
         # Get user's shell (same logic as TerminalWindow)
         user_shell = self._get_user_shell()
+        escaped_command = command.replace('"', '\\"')
 
         # Create script that sources user configs and runs command
         script_content = f'''#!/bin/bash
 # Run in login shell to load user environment
-exec {user_shell} -l -c "{command.replace('"', '\\"')}"
+exec {user_shell} -l -c "{escaped_command}"
 '''
 
         # Write to temporary file

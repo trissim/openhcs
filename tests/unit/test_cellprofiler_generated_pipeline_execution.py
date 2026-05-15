@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -5,7 +6,15 @@ import imageio.v3 as imageio
 import numpy as np
 import tifffile
 
-from openhcs.interop.cellprofiler.runtime import cellprofiler_runtime_adapter_factory
+from openhcs.interop.cellprofiler.runtime import (
+    CellProfilerModuleContractRegistry,
+    cellprofiler_runtime_adapter_factory,
+)
+from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    bind_generated_pipeline_runtime,
+    GeneratedPipelineContractSidecar,
+    materialize_generated_pipeline_import_module,
+)
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.pipeline_generator import GeneratedPipeline, PipelineGenerator
 from openhcs.constants import Backend
@@ -155,11 +164,17 @@ def _generated_pipeline(
 
 
 def _pipeline_namespace(generated: GeneratedPipeline) -> dict:
-    namespace: dict = {}
+    namespace: dict = {"__name__": "test_generated_cellprofiler_pipeline"}
+    runtime_contracts = generated.runtime_module_contracts_by_module_num
+    CellProfilerModuleContractRegistry.register(
+        namespace["__name__"],
+        runtime_contracts,
+    )
     exec(
         compile(generated.code, "<generated-cellprofiler-pipeline>", "exec"),
         namespace,
     )
+    bind_generated_pipeline_runtime(SimpleNamespace(**namespace), runtime_contracts)
     return namespace
 
 
@@ -183,6 +198,41 @@ def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
     assert not output_path.exists()
 
 
+def test_materialized_generated_pipeline_contract_sidecar_is_versioned_json(
+    tmp_path: Path,
+) -> None:
+    generated = _generated_pipeline(_image_artifact_pipeline_modules())
+    module_name = "test_generated_contract_sidecar"
+
+    import_module_path = materialize_generated_pipeline_import_module(
+        generated.code,
+        module_name=module_name,
+        output_dir=tmp_path,
+        artifact_contracts=generated.runtime_module_contracts_by_module_num,
+    )
+
+    sidecar_path = tmp_path / f"{module_name}.cellprofiler_contracts.json"
+    assert sidecar_path.exists()
+    assert not (tmp_path / f"{module_name}.cellprofiler_contracts.pkl").exists()
+
+    payload = json.loads(sidecar_path.read_text(encoding="utf-8"))
+    assert payload["schema"] == "openhcs.cellprofiler.generated_contracts"
+    assert payload["version"] == 1
+    assert [contract["module_num"] for contract in payload["contracts"]] == [
+        1,
+        2,
+        3,
+        4,
+    ]
+
+    restored = GeneratedPipelineContractSidecar.read(sidecar_path)
+    assert restored[3].module_name == "Opening"
+    assert restored[3].outputs[0].name == OPENED_NUCLEI_IMAGE
+    assert "GeneratedPipelineContractSidecar" in import_module_path.read_text(
+        encoding="utf-8"
+    )
+
+
 def _synthetic_nuclei_image() -> np.ndarray:
     image = np.zeros((64, 64), dtype=np.float32)
     image[18:28, 18:28] = 0.95
@@ -191,21 +241,17 @@ def _synthetic_nuclei_image() -> np.ndarray:
 
 
 def test_generator_uses_absorbed_function_contract_for_unknown_registry_contract():
-    generator = PipelineGenerator()
-
-    assert (
-        generator._processing_contract_expression("Opening", "opening")
-        == f"ProcessingContract.{ProcessingContract.PURE_2D.name}"
-    )
-
-
-def test_generator_scopes_artifact_managed_wrappers_to_pattern_group():
     generated = _generated_pipeline(_image_artifact_pipeline_modules())
 
-    assert (
-        "opening_3_runtime.__processing_contract__ = ProcessingContract.FLEXIBLE"
-        in generated.code
-    )
+    assert "from openhcs.processing.backends.cellprofiler import (" in generated.code
+    assert "opening," in generated.code
+
+
+def test_generator_scopes_artifact_managed_callables_to_pattern_group():
+    generated = _generated_pipeline(_image_artifact_pipeline_modules())
+
+    assert "CellProfilerModuleRuntimeBinding" not in generated.code
+    assert "func=(opening," in generated.code
 
 
 def test_generator_scopes_runtime_artifact_only_step_once_per_axis():
@@ -251,9 +297,8 @@ def test_generator_binds_canonical_morphology_alias_structuring_element():
         ]
     )
 
-    assert 'erode_image_3 = require_cellprofiler_function("Erosion", function_name="erode_image")' in (
-        generated.code
-    )
+    assert "erode_image," in generated.code
+    assert "CellProfilerModuleRuntimeBinding" not in generated.code
     assert "'structuring_element': 'disk'" in generated.code
     assert "'size': 5" in generated.code
 
@@ -765,16 +810,12 @@ def test_generator_keeps_unmaterialized_image_artifacts_required_by_saveimages()
     assert 'name="ConvertObjectsToImage"' in generated.code
     assert 'name="Opening"' in generated.code
     assert 'name="OverlayOutlines"' in generated.code
-    assert (
-        f"ArtifactSpec({OVERLAY_IMAGE!r}, ArtifactKind.IMAGE, "
-        "materialization=tiff_stack(normalize_uint8=True))"
-        in generated.code
-    )
-    assert (
-        f"ArtifactSpec({OVERLAY_IMAGE!r}, ArtifactKind.IMAGE, "
-        "materialization=NO_ARTIFACT_MATERIALIZATION)"
-        not in generated.code
-    )
+    overlay_contract = generated.runtime_module_contracts_by_module_num[4]
+    assert overlay_contract.outputs[0].name == OVERLAY_IMAGE
+    assert overlay_contract.outputs[0].materialization is not None
+    assert "ArtifactSpec(" not in generated.code
+    assert "tiff_stack(" not in generated.code
+    assert "NO_ARTIFACT_MATERIALIZATION" not in generated.code
     assert [contract.module_name for contract in generated.artifact_contracts] == [
         IDENTIFY_PRIMARY_OBJECTS,
         CONVERT_OBJECTS_TO_IMAGE,

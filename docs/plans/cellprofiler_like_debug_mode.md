@@ -199,7 +199,9 @@ The debug store should support:
 
 Do not force every intermediate output to become a normal pipeline materialized output. Debug materialization is different: it is ephemeral, selective, and viewer-oriented.
 
-Implementation gap to close: the GUI process must have a proven read path for snapshot metadata and preview payloads. Local filesystem-backed debug storage is enough for the first slice. Remote debugging requires either a shared VFS URI resolver or explicit ZMQ snapshot-read RPCs.
+Status: the first storage and transport slice is implemented. `DebugSnapshotStore` is the nominal store family, with `LocalDebugSnapshotStore` for local filesystem metadata and `FileManagerDebugSnapshotStore` for VFS/FileManager-backed metadata. `ProcessingContext` explicitly registers as the debug snapshot FileManager context, so worker policies can choose the shared store without structural probing.
+
+Snapshot readback now has two concrete paths. Local and shared-namespace callers can read through the store abstraction directly. Remote GUI/server callers can use the ZMQ control-channel `DebugSnapshotReadRequest`/`DebugSnapshotReadResponse` path, which asks the execution server to read the snapshot from the declared local or FileManager-backed store and return metadata to the GUI. Preview payload materialization remains artifact/viewer work, not a progress-event concern.
 
 Recommended shape:
 
@@ -262,7 +264,7 @@ Add a “Debug/Test Mode” toggle.
 When enabled:
 
 - Show a cursor marker beside the next invocation/step.
-- Show pause markers beside steps and, later, individual function-pattern invocations.
+- Show pause markers beside steps; individual function-pattern invocation markers are a presentation extension over the implemented invocation cursor.
 - Disable full production run controls that conflict with the active debug session.
 - Add controls: `Step`, `Run`, `Run to Next Pause`, `Restart`, `Choose Well/Image Set`, `Random Image Set`.
 
@@ -270,7 +272,7 @@ The controls should live in the existing pipeline editor/plate workflow area, no
 
 - A compact debug toolbar at the top or bottom of `PipelineEditorWidget`.
 - Per-step pause/cursor affordances in the existing step list.
-- Optional expansion later for per-function-invocation pause markers inside the function pattern editor.
+- Optional expansion for per-function-invocation pause markers inside the function pattern editor.
 
 The pipeline editor already persists steps through `ObjectState` and stable step scope IDs. Debug state should key against those step scope IDs so editing, undo/redo, and selection remain coherent.
 
@@ -337,7 +339,7 @@ Use a separate debug snapshot store/query path for payloads:
 - GUI receives the event through the existing ZMQ progress client.
 - GUI requests/loads the snapshot from the debug store when the inspector needs to render it.
 
-The first implementation can use a local filesystem/VFS-backed debug store under the output/debug namespace. A later implementation can expose explicit ZMQ debug RPCs if remote GUI/debugging requires it.
+The first implementation uses a local filesystem/VFS-backed debug store under the output/debug namespace and exposes an explicit ZMQ snapshot-read RPC for remote GUI/debugging reads. Large payloads still stay behind artifact refs and viewer/materialization paths.
 
 ## Worker Control Model
 
@@ -373,11 +375,11 @@ The execution server should remain the broker. The GUI should not connect direct
 
 1. Add no-op debug event sink support to `ProcessingContext`.
 
-This should be inert in normal runs.
+Implemented. `openhcs.core.debug` now defines `DebugSession`, invocation-aware `DebugCursor`, `DebugSnapshot`, `DebugArtifactRef`, `DebugEvent`, and debug sinks. `ProcessingContext` owns a default `NO_OP_DEBUG_EVENT_SINK`, so normal execution remains inert unless a caller installs a real sink before context freeze.
 
 2. Emit events in `FunctionStepExecutor` and `PatternGroupRuntime`.
 
-Start with step and pattern-group boundaries. Then add per-invocation events inside the compiled function chain.
+Started at the real semantic boundary: compiled function invocation execution inside `openhcs.core.steps.function_runtime.execute_function_chain`. The runtime now emits `BEFORE_INVOCATION`, `AFTER_INVOCATION`, and `EXCEPTION` events with cursor identity, callable name, axis, and timing/traceback data. Step and pattern-group progress events can layer on top, but invocation events are the key boundary for CellProfiler-like module stepping.
 
 3. Record debug snapshots.
 
@@ -389,34 +391,69 @@ The first implementation can capture:
 - Timing.
 - Exceptions.
 
+Implemented. `DebugSnapshotStore` is now the store abstraction for snapshot metadata. `LocalDebugSnapshotStore` writes/reads JSON snapshot metadata under a per-session directory and maintains a manifest of snapshot IDs. `FileManagerDebugSnapshotStore` provides the same contract through an OpenHCS `FileManagerLike` backend. `LocalSnapshotProgressDebugEventSink` now accepts any `DebugSnapshotStore`, so worker debug events can write metadata snapshots through the local or FileManager-backed path before emitting progress with the resulting `snapshot_id`. This is intentionally metadata/ref-only; large arrays and tables should remain artifact refs or preview refs.
+
 4. Add artifact preview extraction.
 
 Build small preview records for images/labels/tables. Avoid full-array retention by default.
 
+Implemented for metadata refs. Runtime debug events now project invocation-selected artifact plans into cursor-aware `DebugArtifactRef` values through `DebugArtifactRefProjection`. Snapshots therefore carry input refs, output refs, measurement refs, and relationship refs without loading or retaining artifact payload arrays. Rich thumbnail/table preview materialization remains viewer/export work layered on top of those refs.
+
 5. Add PyQt debug session controls.
 
-Start with step-level debug mode, then refine to invocation-level stepping.
+Start with invocation-level runtime events and present them through step-level GUI controls where that is clearer.
+
+Started the inspector/control side. `DebugInspectorWindow` renders the renderer-independent debug view model and defaults to the CellProfiler debug-view registry. `DebugToolbarWidget` is now mounted in `PipelineEditorWidget` and emits typed `DebugCommand` values from the core debug model. The buttons are intentionally command-surface only for now; execution dispatch still goes through the bounded ZMQ debug request path.
+
+Command transport has its first bounded execution slice: `DebugExecutionConfig` is carried through normal ZMQ execute params, and `submit_debug_pipeline(...)` installs a progress-backed debug sink in worker contexts. This intentionally reuses normal execution and progress transport rather than adding a CellProfiler-only runner.
+
+The worker sink install path is now a nominal request boundary. `DebugSinkInstallRequest` owns the worker context, execution id, plate id, worker slot, and owned-well provenance needed by `DebugExecutionPolicy.install_context_sink(...)`, so no-op and progress policies consume one coherent request instead of parallel semantic parameters.
+
+The first GUI bridge is now wired for bounded debug run submission. `PlateManagerWidget.action_run_debug_plate(...)` creates a `DebugSession`, selects a local `.openhcs_debug` snapshot store beside the plate, and delegates to `BatchWorkflowService.run_debug_plate(...)`. `PipelineEditorWidget` routes toolbar `Step`, `Run`, `Run to Pause`, `Restart`, `Choose Source Group`, and `Random Source Group` through that same plate-manager boundary with a typed `DebugCommandType` carried in `DebugExecutionConfig`; `Stop` uses the existing stop/force-kill path. Cursor-limited replay semantics can now be added inside the bounded execution policy without changing GUI or ZMQ request shape.
+
+Snapshot readback now has a local, store-generic, and server-mediated GUI path. `DebugInspectorWindow.load_snapshot(...)` reads metadata from `LocalDebugSnapshotStore`, while `load_snapshot_from_store(...)` accepts any `DebugSnapshotStore`, including FileManager/VFS-backed stores supplied by a host that owns the same namespace. For remote GUI/server separation, `ZMQExecutionClient.get_debug_snapshot(...)` sends `DebugSnapshotReadRequest` over the control channel and receives a typed `DebugSnapshotReadResponse`. `BatchWorkflowService` attaches that snapshot to `DebugSnapshotAvailableNotification` when available, so `PipelineEditorWidget.show_debug_snapshot(...)` does not have to reconstruct server-local storage paths.
+
+Selected snapshot artifacts now have typed viewer/export handoffs. The inspector builds an artifact action section from output, preview, and input artifact refs, discovers napari/Fiji targets from the existing streaming registry, and emits `DebugArtifactOpenRequest` values for viewers plus `DebugArtifactMaterializeRequest` values for host-side export/materialization. `PipelineEditorWidget` connects those inspector signals when the reusable inspector is created; export requests ask for a destination directory and route through `PlateManagerWidget.action_export_debug_artifact(...)` to the existing ZMQ debug artifact export control path. Viewer open requests are now a host-level typed seam; deeper viewer-specific streaming behavior can be added without changing the inspector model.
+
+GUI progress handling now has a typed snapshot-availability seam. `BatchWorkflowService` still registers every debug `ProgressEvent` in the shared progress tracker, but it also parses `DebugProgressContext` and emits `DebugSnapshotAvailableNotification` to listeners when a snapshot ID is present. This keeps snapshot subscription out of raw ZMQ dictionaries and gives the inspector/controller a nominal event to consume.
+
+The inspector loop is now wired through the normal widgets. `PlateManagerWidget` exposes `debug_snapshot_available` as a Qt signal, and `PipelineEditorWidget.show_debug_snapshot(...)` consumes that nominal notification, uses the attached server-read snapshot when present, otherwise falls back to store loading, and reuses a single `DebugInspectorWindow`. Bounded `STEP` and `RUN_TO_PAUSE` now have worker-policy semantics: `DebugStepStopStrategy` is the registered command strategy family, `StepDebugStepStopStrategy` stops after the configured start step, and `RunToPauseDebugStepStopStrategy` stops at step indices marked with `FunctionStep.debug_pause`.
+
+Bounded `STEP` also works inside native OpenHCS function patterns, not only one-function imported CellProfiler steps. `DebugInvocationExecutionStrategy` is the registered command strategy family for invocation execution. For `DebugCommandType.STEP`, `StepDebugInvocationExecutionStrategy` skips invocations until the optional `start_after_invocation_key`, executes one compiled invocation, emits its `AFTER_INVOCATION` event/snapshot, then stops the chain. `PipelineEditorWidget` threads the current cursor's invocation key through `DebugExecutionConfig.start_after_invocation_key`, so repeated `Step` commands advance through functions inside the same `FunctionStep`.
+
+Debug axis selection is now owned by `DebugExecutionPolicy`, not by GUI-side filtering. Bounded debug executions compile and run one axis by default, or the explicit `selected_source_group` when provided. The same `DebugPlateRunRequest` config is submitted for compile-before-run and execution, so compile artifact signatures match and debug mode does not accidentally compile every well before executing a one-axis command.
+
+The remaining gap is richer preview payload rendering and GUI ergonomics. Cursor-bounded short executions are implemented: `DebugExecutionConfig.start_step_index` and `start_after_invocation_key` let restart/step commands resume at the correct step/invocation boundary without requiring GUI-side filtering or a CellProfiler-only runner. Warm replay now validates skipped upstream artifact outputs before claiming reuse, can hydrate local or FileManager/VFS-backed outputs from prior snapshot artifact refs by logical artifact identity, verifies producer/settings identity, records content digests in snapshot refs when payloads are readable, rejects stale payloads when content changes, and fails loudly when required warm outputs are missing.
+
+During verification, a registry-state leak surfaced after `.cppipe` corpus imports initialized the global OpenHCS function registry: direct calls to registry-wrapped `PURE_2D` CellProfiler functions were forced through stack slicing. The fix is at the contract seam, not the module test: `Pure2DInputSlicer` now recognizes already-2D arrays and image payloads, and `LibraryRegistryBase._execute_pure_2d(...)` bypasses slice/restack for single-plane inputs. This keeps direct backend calls and pipeline stack execution consistent.
 
 6. Add CellProfiler debug view registry.
 
 Implement default views first, then add high-value CP renderers for segmentation, measurement, correction, alignment, and relationships.
 
+Implemented for the generic view substrate and CellProfiler renderer families. `openhcs.core.debug_views` now owns the renderer-independent `DebugViewModel`/section/table row types. `DebugViewTable.from_artifact_refs(...)` is the shared artifact-ref table projection, and `DebugViewTable.from_invocation_parameters(...)` renders JSON-safe invocation kwargs captured in snapshots. `openhcs.interop.cellprofiler.debug_views` defines only the registered `CellProfilerDebugView` family and declarative `CellProfilerDebugSectionSpec` section tables. The default renderer exposes source paths, invocation parameters, input refs, output refs, preview refs, measurements, relationships, timing, and errors from generic snapshots. CellProfiler category renderers now include artifact-overview tables for image/object/display/export families so thumbnail/table-heavy modules get useful summaries without module-specific runtime code. Renderers consume generic `DebugSnapshot` only; they do not execute CellProfiler code or parse `.cppipe` files.
+
+The debug model now also has nominal class-family witnesses for the common runtime boundary and control-request families. `DebugBoundaryState` is an `AutoRegisterMeta` root for `DebugEvent` and `DebugSnapshot`, and `DebugSessionRequest` is an `AutoRegisterMeta` root for snapshot read, artifact export, worker command, and progress-event request records. This makes the debug model family membership explicit instead of relying on implicit dataclass inheritance.
+
 7. Add rerun/invalidation.
 
 When a setting changes, mark snapshots downstream of the edited step/invocation dirty. Allow rerun from the dirty cursor.
+
+Implemented for bounded replay. `DebugSession` now owns immutable cursor updates and `dirty_from_cursor` invalidation through `with_cursor(...)` and `mark_dirty_from_cursor()`. The pipeline editor keeps the current debug session state after loading a debug snapshot and marks it dirty when the pipeline changes, so stale downstream snapshots are explicitly identified instead of silently reused. `Restart` uses the dirty cursor's step index as `DebugExecutionConfig.start_step_index`, and `Step` uses the current cursor plus `start_after_invocation_key` to advance through function-pattern invocations. Reusing prior artifact materialization is now explicit: warm replay validates expected upstream outputs and may hydrate local files or FileManager/VFS payloads from prior snapshots with matching artifact identity before skipping a step.
 
 ## Minimal First Slice
 
 The smallest useful version:
 
 - Run one selected well/image set.
-- Step by `FunctionStep`.
-- Record before/after artifact refs.
+- Step by compiled invocation inside a `FunctionStep`.
+- Record before/after invocation events and exceptions.
+- Record artifact refs in a debug snapshot store.
 - Show outputs in a debug inspector.
 - Stream selected image/label outputs to napari.
 - Preserve normal pipeline execution semantics.
 
-The second slice should step by function invocation inside a `FunctionStep`, because that is the real OpenHCS semantic boundary.
+The implementation started directly at invocation-level events because that is the real OpenHCS semantic boundary. Step-level controls can still present a coarser UI by grouping invocation cursors under a step.
 
 ## Risks
 
@@ -428,9 +465,9 @@ The second slice should step by function invocation inside a `FunctionStep`, bec
 ## Acceptance Criteria
 
 - Normal runs have no behavior change when debug mode is disabled.
-- A user can choose a well/image set and step through a pipeline.
+- A user can choose a well/image set and step through a pipeline at compiled-invocation granularity, including multiple functions inside one `FunctionStep`.
 - The UI shows which step/invocation will run next.
 - Intermediate images, labels, measurements, and relationships can be inspected.
 - CellProfiler modules get familiar output displays for common module families.
-- Editing a step marks downstream debug snapshots dirty and reruns from the edited point.
+- Editing a step marks downstream debug snapshots dirty and reruns from the edited step boundary; artifact-reuse warm replay validates/hydrates local and FileManager/VFS upstream outputs before skipping reused steps.
 - The system works for native OpenHCS functions, not only CellProfiler modules.

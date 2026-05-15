@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import ClassVar, Mapping
 
@@ -387,9 +387,11 @@ class PipelineImageSchema:
     image_plane_sources: tuple[ImagePlaneSource, ...] = ()
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
     imported_metadata_tables: tuple[ImportedMetadataTable, ...] = ()
-    assignments_by_alias: Mapping[str, ImageAssignment] = MappingProxyType({})
-    source_artifacts_by_alias: Mapping[str, SourceArtifactAssignment] = (
-        MappingProxyType({})
+    assignments_by_alias: Mapping[str, ImageAssignment] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    source_artifacts_by_alias: Mapping[str, SourceArtifactAssignment] = field(
+        default_factory=lambda: MappingProxyType({})
     )
     match_plan: SourceBindingMatchPlan | None = None
     grouping: GroupingPlan | None = None

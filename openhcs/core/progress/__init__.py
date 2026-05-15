@@ -154,6 +154,17 @@ def emit(**kwargs) -> None:
     _progress_queue.put(event.to_dict())
 
 
+def emit_event(event: ProgressEvent) -> None:
+    """Emit an already-constructed progress event through the configured queue."""
+
+    if _progress_queue is None:
+        raise ProgressError(
+            "emit_event() requires explicit progress queue configuration via "
+            "set_progress_queue(queue). No fallback path is allowed."
+        )
+    _progress_queue.put(event.to_dict())
+
+
 def get_registry():
     """Get process-local progress registry.
 
@@ -172,5 +183,6 @@ __all__ = [
     "__version__",
     # Convenience
     "emit",
+    "emit_event",
     "get_registry",
 ]

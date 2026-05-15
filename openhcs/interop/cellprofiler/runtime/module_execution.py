@@ -16,7 +16,7 @@ from pathlib import Path
 import re
 import time
 from types import MappingProxyType
-from typing import Any, ClassVar, get_args, get_origin, get_type_hints
+from typing import Any, ClassVar, TypeVar, get_args, get_origin, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
@@ -36,6 +36,9 @@ from openhcs.core.aligned_image_payload import (
 from openhcs.core.artifacts import ArtifactKind, ArtifactSpec, ArtifactSpecCollection
 from openhcs.core.callable_contract import (
     CallableContract,
+    PROCESSING_CONTRACT_ATTR,
+    attach_callable_contract_metadata,
+    prepare_processing_callable,
 )
 from openhcs.core.config import DtypeConfig
 from openhcs.core.memory import (
@@ -58,7 +61,10 @@ from openhcs.core.measurement_image_alignment import (
     MeasurementImageLabelAlignmentRequest,
     MeasurementImageLabelAlignmentStrategy,
 )
-from openhcs.core.module_artifact_contract import ModuleArtifactContract
+from openhcs.core.module_artifact_contract import (
+    ModuleArtifactContract,
+    module_artifact_contract,
+)
 from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.pipeline.function_contracts import (
@@ -68,7 +74,7 @@ from openhcs.core.pipeline.function_contracts import (
     RuntimePure2DSliceBatchRequest,
     object_label_measurement_execution_from_callable,
 )
-from openhcs.core.runtime_adapters import RuntimeAdapterRequest
+from openhcs.core.runtime_adapters import RuntimeAdapterRequest, runtime_adapter
 from openhcs.core.runtime_slice_alignment import (
     RuntimeSliceAlignedValues,
     RuntimeSliceAlignedValueSet,
@@ -241,6 +247,8 @@ _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 _CELLPROFILER_IMAGE_OVERRIDE_KWARG = "_cellprofiler_image_override"
 _CELLPROFILER_EXECUTION_MODE_OVERRIDE_KWARG = "_cellprofiler_execution_mode_override"
 logger = logging.getLogger(__name__)
+
+RequiredAttrT = TypeVar("RequiredAttrT")
 _PROCESSING_CONTRACT_CACHE: dict[Callable[..., Any], ProcessingContract] = {}
 _CELLPROFILER_RUNTIME_CALLABLE_POLICY = RuntimeCallablePolicy(
     callable_view=RuntimeCallableView.RAW,
@@ -462,6 +470,188 @@ def cellprofiler_runtime_adapter_factory(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerModuleContractBinding:
+    """Generated-module reference to a product-owned CellProfiler artifact contract."""
+
+    generated_module_name: str
+    module_num: int
+
+    def __post_init__(self) -> None:
+        if not self.generated_module_name:
+            raise ValueError(
+                "CellProfilerModuleContractBinding.generated_module_name cannot "
+                "be empty."
+            )
+        if self.module_num < 1:
+            raise ValueError(
+                "CellProfilerModuleContractBinding.module_num must be one-based."
+            )
+
+    def resolve(self) -> ModuleArtifactContract:
+        """Resolve this binding through the product-owned generated-module registry."""
+        return CellProfilerModuleContractRegistry.contract_for(self)
+
+
+class CellProfilerModuleContractRegistry:
+    """Process-local contract registry for generated CellProfiler modules."""
+
+    _contracts_by_generated_module: dict[str, dict[int, ModuleArtifactContract]] = {}
+
+    @classmethod
+    def register(
+        cls,
+        generated_module_name: str,
+        contracts_by_module_num: Mapping[int, ModuleArtifactContract],
+    ) -> None:
+        """Register contracts compiled from a `.cppipe` for one generated module."""
+        if not generated_module_name:
+            raise ValueError("generated_module_name cannot be empty.")
+        normalized: dict[int, ModuleArtifactContract] = {}
+        for module_num, contract in contracts_by_module_num.items():
+            if not isinstance(module_num, int) or module_num < 1:
+                raise TypeError(
+                    "CellProfiler module contract registry keys must be one-based "
+                    f"ints, got {module_num!r}."
+                )
+            if not isinstance(contract, ModuleArtifactContract):
+                raise TypeError(
+                    "CellProfiler module contract registry values must be "
+                    f"ModuleArtifactContract, got {type(contract).__name__}."
+                )
+            normalized[module_num] = contract
+        cls._contracts_by_generated_module[generated_module_name] = normalized
+
+    @classmethod
+    @classmethod
+    def contract_for(
+        cls,
+        binding: CellProfilerModuleContractBinding,
+    ) -> ModuleArtifactContract:
+        """Resolve a generated-module binding into a typed artifact contract."""
+        try:
+            contracts = cls._contracts_by_generated_module[
+                binding.generated_module_name
+            ]
+        except KeyError as exc:
+            raise KeyError(
+                "No CellProfiler module contracts registered for generated module "
+                f"{binding.generated_module_name!r}."
+            ) from exc
+        try:
+            return contracts[binding.module_num]
+        except KeyError as exc:
+            raise KeyError(
+                "No CellProfiler module contract registered for module "
+                f"{binding.module_num} in generated module "
+                f"{binding.generated_module_name!r}."
+            ) from exc
+
+
+CellProfilerModuleContractLike = (
+    ModuleArtifactContract | CellProfilerModuleContractBinding
+)
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerRuntimeStepBinding:
+    """Runtime wrapper binding for an already-declared generated FunctionStep."""
+
+    raw_callable: Callable[..., Any]
+    generated_module_name: str
+    module_num: int
+    declared_processing_contract: str | None
+    runtime_name: str
+
+    def load(self) -> Callable[..., Any]:
+        """Return the artifact-managed runtime callable for a generated step."""
+        return cellprofiler_module_callable(
+            self.raw_callable,
+            CellProfilerModuleContractBinding(
+                generated_module_name=self.generated_module_name,
+                module_num=self.module_num,
+            ),
+            declared_processing_contract=self.declared_processing_contract,
+            processing_contract=ProcessingContract.FLEXIBLE,
+            name=self.runtime_name,
+        )
+
+
+def cellprofiler_module_callable(
+    raw_func: Callable[..., Any],
+    contract: CellProfilerModuleContractLike,
+    *,
+    declared_processing_contract: str | None = None,
+    processing_contract: Any | None = None,
+    name: str | None = None,
+) -> Callable[..., Any]:
+    """Build the product-owned runtime callable for one CellProfiler module."""
+    if not callable(raw_func):
+        raise TypeError(
+            "cellprofiler_module_callable raw_func must be callable, "
+            f"got {type(raw_func).__name__}."
+        )
+    if isinstance(contract, CellProfilerModuleContractBinding):
+        contract = contract.resolve()
+    if not isinstance(contract, ModuleArtifactContract):
+        raise TypeError(
+            "cellprofiler_module_callable contract must be ModuleArtifactContract "
+            "or CellProfilerModuleContractBinding, "
+            f"got {type(contract).__name__}."
+        )
+
+    executor = CellProfilerModuleExecutor(contract)
+    raw_contract = CallableContract.from_callable(raw_func)
+
+    @module_artifact_contract(contract)
+    @runtime_adapter(
+        "cellprofiler_runtime",
+        cellprofiler_runtime_adapter_factory,
+        manages_artifact_inputs=True,
+    )
+    def runtime_callable(
+        image: Any,
+        *,
+        cellprofiler_runtime: CellProfilerRuntimeAdapter,
+        runtime_invocation_options: Any | None = None,
+        enabled: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        if not enabled:
+            return image
+        kwargs.pop("slice_by_slice", None)
+        return executor.run(
+            raw_func,
+            image,
+            cellprofiler_runtime=cellprofiler_runtime,
+            invocation_options=runtime_invocation_options,
+            **kwargs,
+        )
+
+    def prepare_runtime_callable() -> None:
+        prepare_processing_callable(raw_func)
+        executor.prepare(raw_func)
+
+    if name:
+        runtime_callable.__name__ = name
+        runtime_callable.__qualname__ = name
+    if raw_contract.input_memory_type is not None:
+        runtime_callable.input_memory_type = raw_contract.input_memory_type
+    if raw_contract.output_memory_type is not None:
+        runtime_callable.output_memory_type = raw_contract.output_memory_type
+    if processing_contract is not None:
+        setattr(runtime_callable, PROCESSING_CONTRACT_ATTR, processing_contract)
+
+    attach_callable_contract_metadata(
+        runtime_callable,
+        declared_processing_contract=declared_processing_contract,
+        raw_processing_function=raw_func,
+        prepare=prepare_runtime_callable,
+        runtime_image_execution_mode=raw_contract.runtime_image_execution_mode,
+    )
+    return runtime_callable
+
+
 @lru_cache(maxsize=None)
 def _declared_input_specs_for_contract(
     contract: ModuleArtifactContract,
@@ -478,6 +668,16 @@ class CellProfilerModuleExecutor:
     """Execute one generated CellProfiler module against a typed runtime adapter."""
 
     contract: ModuleArtifactContract
+    object_input_specs = AliasProperty[tuple[ArtifactSpec, ...]]("_object_inputs")
+    external_source_image_names = AliasProperty[tuple[str, ...]](
+        "_external_source_image_names_cache"
+    )
+    external_source_object_names = AliasProperty[tuple[str, ...]](
+        "_external_source_object_names_cache"
+    )
+    runtime_image_names = AliasProperty[tuple[str, ...]]("_runtime_image_names_cache")
+    declared_input_specs = AliasProperty[tuple[ArtifactSpec, ...]]("_declared_inputs")
+
     _canonical_module_name: str = field(init=False, repr=False, compare=False)
     _declared_inputs: tuple[ArtifactSpec, ...] = field(
         init=False,
@@ -2041,32 +2241,6 @@ class CellProfilerModuleExecutor:
         return _single_source_name(
             tuple(source_name for source_name in source_names if source_name)
         )
-
-    @property
-    def object_input_specs(self) -> tuple[ArtifactSpec, ...]:
-        """Return declared object-label inputs for this module contract."""
-        return self._object_inputs
-
-    @property
-    def external_source_image_names(self) -> tuple[str, ...]:
-        """Return source-bound image aliases not provided by runtime storage."""
-        return self._external_source_image_names_cache
-
-    @property
-    def external_source_object_names(self) -> tuple[str, ...]:
-        """Return source-bound object aliases not provided by runtime storage."""
-        return self._external_source_object_names_cache
-
-    @property
-    def runtime_image_names(self) -> tuple[str, ...]:
-        """Return runtime image artifact names available from the adapter."""
-        return self._runtime_image_names_cache
-
-    @property
-    def declared_input_specs(self) -> tuple[ArtifactSpec, ...]:
-        """Return declared module inputs plus runtime-only input contracts."""
-        return self._declared_inputs
-
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerMainFlowReplacementRequest:
@@ -9686,7 +9860,7 @@ def _row_source_names_required(
     return len(unique_names) > 1
 
 
-def _required_class_attr[T](value: T | None, name: str) -> T:
+def _required_class_attr(value: RequiredAttrT | None, name: str) -> RequiredAttrT:
     if value is None:
         raise TypeError(f"CellProfiler policy must define {name}.")
     return value

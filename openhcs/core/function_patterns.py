@@ -11,6 +11,11 @@ from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.callable_contract import CallableContract
+from openhcs.core.invocation_artifacts import (
+    ArtifactDeclarationStepContext,
+    InvocationArtifactDeclarationProviderLike,
+    callable_contract_artifact_declarations,
+)
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.formats.func_arg_prep import get_core_callable
 
@@ -261,6 +266,12 @@ def compile_function_pattern(
     pattern: Any,
     input_plans: Mapping[str, ArtifactInputPlan],
     output_plans: Mapping[str, ArtifactOutputPlan],
+    declaration_provider: InvocationArtifactDeclarationProviderLike = (
+        callable_contract_artifact_declarations
+    ),
+    step_context: ArtifactDeclarationStepContext = (
+        ArtifactDeclarationStepContext.empty()
+    ),
 ) -> CompiledFunctionPattern:
     """Compile raw FunctionStep.func syntax into the runtime source of truth."""
     normalized = normalize_function_pattern(pattern)
@@ -270,6 +281,8 @@ def compile_function_pattern(
                 normalized_group=group,
                 input_plans=input_plans,
                 output_plans=output_plans,
+                declaration_provider=declaration_provider,
+                step_context=step_context,
             )
             for group in normalized.groups
         ),
@@ -415,12 +428,16 @@ def _compile_function_group(
     normalized_group: NormalizedFunctionGroup,
     input_plans: Mapping[str, ArtifactInputPlan],
     output_plans: Mapping[str, ArtifactOutputPlan],
+    declaration_provider: InvocationArtifactDeclarationProviderLike,
+    step_context: ArtifactDeclarationStepContext,
 ) -> CompiledFunctionGroup:
     invocations = tuple(
         _compile_invocation(
             item=item,
             input_plans=input_plans,
             output_plans=output_plans,
+            declaration_provider=declaration_provider,
+            step_context=step_context,
         )
         for item in normalized_group.items
     )
@@ -434,14 +451,17 @@ def _compile_invocation(
     item: NormalizedFunctionItem,
     input_plans: Mapping[str, ArtifactInputPlan],
     output_plans: Mapping[str, ArtifactOutputPlan],
+    declaration_provider: InvocationArtifactDeclarationProviderLike,
+    step_context: ArtifactDeclarationStepContext,
 ) -> CompiledFunctionInvocation:
+    declarations = declaration_provider(item, step_context)
     return CompiledFunctionInvocation(
         key=item.key,
         contract=item.contract,
         kwargs=item.kwargs,
         invocation_options=item.invocation_options,
-        artifact_input_keys=item.contract.select_input_plan_keys(input_plans),
-        artifact_output_keys=item.contract.select_output_plan_keys(output_plans),
+        artifact_input_keys=declarations.select_input_plan_keys(input_plans),
+        artifact_output_keys=declarations.select_output_plan_keys(output_plans),
     )
 
 

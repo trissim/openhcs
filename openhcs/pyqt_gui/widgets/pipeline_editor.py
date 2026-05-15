@@ -8,7 +8,9 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 import logging
 import inspect
 import copy
-from dataclasses import fields, is_dataclass
+import asyncio
+from dataclasses import dataclass, fields, is_dataclass
+from types import MappingProxyType
 from typing import List, Dict, Optional, Callable, Tuple, Any, Iterable, Set
 from pathlib import Path
 
@@ -20,6 +22,7 @@ from PyQt6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QLabel,
+    QFileDialog,
     QSplitter,
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
@@ -29,6 +32,7 @@ from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants import Backend
 from openhcs.constants.constants import OrchestratorState
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.pipeline import Pipeline
 from openhcs.interop.cellprofiler import (
@@ -61,6 +65,21 @@ from openhcs.utils.pipeline_migration import (
     load_pipeline_with_migration,
 )
 from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
+from openhcs.pyqt_gui.windows.debug_inspector_window import (
+    DebugArtifactMaterializeRequest,
+    DebugArtifactOpenRequest,
+    DebugInspectorWindow,
+)
+from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
+from openhcs.core.debug import (
+    DebugCommandType,
+    DebugSession,
+    FileManagerDebugSnapshotStore,
+)
+from openhcs.core.function_patterns import normalize_function_pattern
+from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
+    DebugSnapshotAvailableNotification,
+)
 
 # Import ABC base class (Phase 4 migration)
 from pyqt_reactive.widgets.shared.abstract_manager_widget import (
@@ -71,6 +90,69 @@ from pyqt_reactive.widgets.shared.abstract_manager_widget import (
 from openhcs.utils.performance_monitor import timer
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineDebugCommandRoute:
+    """Nominal route for one pipeline-editor debug command."""
+
+    command_type: DebugCommandType
+    dispatch: Callable[["PipelineEditorWidget"], None]
+
+
+@dataclass(frozen=True, slots=True)
+class FunctionPatternInvocationBadge:
+    """GUI badge for one invocation in a FunctionStep function pattern."""
+
+    group_key: str
+    position: int
+    function_name: str
+    is_current_cursor: bool = False
+    is_dirty_replay_start: bool = False
+
+    @property
+    def text(self) -> str:
+        prefix = "▶ " if self.is_current_cursor else ""
+        suffix = " *" if self.is_dirty_replay_start else ""
+        return f"{prefix}{self.group_key}[{self.position}] {self.function_name}{suffix}"
+
+
+def dispatch_pipeline_debug_run_command(editor: "PipelineEditorWidget") -> None:
+    editor._dispatch_debug_run_command(DebugCommandType.RUN)
+
+
+def dispatch_pipeline_debug_toggle_command(editor: "PipelineEditorWidget") -> None:
+    editor.status_message.emit(
+        "Debug toolbar active. Use Step, Run, Pause, Restart, Choose, Random, or Stop."
+    )
+
+
+def dispatch_pipeline_debug_step_command(editor: "PipelineEditorWidget") -> None:
+    editor._dispatch_debug_run_command(DebugCommandType.STEP)
+
+
+def dispatch_pipeline_debug_run_to_pause_command(editor: "PipelineEditorWidget") -> None:
+    editor._dispatch_debug_run_command(DebugCommandType.RUN_TO_PAUSE)
+
+
+def dispatch_pipeline_debug_restart_command(editor: "PipelineEditorWidget") -> None:
+    editor._dispatch_debug_run_command(DebugCommandType.RESTART)
+
+
+def dispatch_pipeline_debug_choose_source_group_command(
+    editor: "PipelineEditorWidget",
+) -> None:
+    editor._dispatch_debug_run_command(DebugCommandType.CHOOSE_SOURCE_GROUP)
+
+
+def dispatch_pipeline_debug_random_source_group_command(
+    editor: "PipelineEditorWidget",
+) -> None:
+    editor._dispatch_debug_run_command(DebugCommandType.RANDOM_SOURCE_GROUP)
+
+
+def dispatch_pipeline_debug_stop_command(editor: "PipelineEditorWidget") -> None:
+    editor._dispatch_debug_stop_command()
 
 
 class PipelineEditorWidget(AbstractManagerWidget):
@@ -115,6 +197,45 @@ class PipelineEditorWidget(AbstractManagerWidget):
         "scope_item_type": ListItemType.STEP,
         "scope_id_builder": lambda item, idx, w: w._build_step_scope_id(item),
     }
+    DEBUG_COMMAND_ROUTES = MappingProxyType(
+        {
+            route.command_type: route
+            for route in (
+                PipelineDebugCommandRoute(
+                    DebugCommandType.TOGGLE,
+                    dispatch_pipeline_debug_toggle_command,
+                ),
+                PipelineDebugCommandRoute(
+                    DebugCommandType.STEP,
+                    dispatch_pipeline_debug_step_command,
+                ),
+                PipelineDebugCommandRoute(
+                    DebugCommandType.RUN,
+                    dispatch_pipeline_debug_run_command,
+                ),
+                PipelineDebugCommandRoute(
+                    DebugCommandType.RUN_TO_PAUSE,
+                    dispatch_pipeline_debug_run_to_pause_command,
+                ),
+                PipelineDebugCommandRoute(
+                    DebugCommandType.RESTART,
+                    dispatch_pipeline_debug_restart_command,
+                ),
+                PipelineDebugCommandRoute(
+                    DebugCommandType.CHOOSE_SOURCE_GROUP,
+                    dispatch_pipeline_debug_choose_source_group_command,
+                ),
+                PipelineDebugCommandRoute(
+                    DebugCommandType.RANDOM_SOURCE_GROUP,
+                    dispatch_pipeline_debug_random_source_group_command,
+                ),
+                PipelineDebugCommandRoute(
+                    DebugCommandType.STOP,
+                    dispatch_pipeline_debug_stop_command,
+                ),
+            )
+        }
+    )
 
     # Declarative list item format (replaces imperative format_item_for_display logic)
     # Config indicators (NAP, FIJI, MAT) are auto-discovered via always_viewable_fields
@@ -145,6 +266,9 @@ class PipelineEditorWidget(AbstractManagerWidget):
             func: The func value to format
             state: Optional ObjectState to get group_by for dict key metadata lookup
         """
+        badges = self.function_pattern_invocation_badges(func)
+        if badges:
+            return "func=" + " | ".join(badge.text for badge in badges)
         if isinstance(func, tuple) and len(func) >= 1:
             # (func, kwargs) pattern - extract function name
             func_name = self._get_func_name(func)
@@ -181,6 +305,69 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 entries.append(f"{display_name}: {func_name}")
             return f"func={{{', '.join(entries)}}}"
         return None
+
+    def function_pattern_invocation_badges(
+        self,
+        func,
+    ) -> tuple[FunctionPatternInvocationBadge, ...]:
+        """Build cursor-aware badges for each invocation in a function pattern."""
+
+        if not func:
+            return ()
+        normalized = normalize_function_pattern(func)
+        cursor = (
+            None
+            if self.debug_session_state is None
+            else self.debug_session_state.cursor
+        )
+        dirty_cursor = (
+            None
+            if self.debug_session_state is None
+            else self.debug_session_state.dirty_from_cursor
+        )
+        return tuple(
+            FunctionPatternInvocationBadge(
+                group_key=item.key.group_key,
+                position=item.key.position,
+                function_name=item.key.function_name,
+                is_current_cursor=(
+                    cursor.matches_invocation_key_parts(
+                        group_key=item.key.group_key,
+                        position=item.key.position,
+                        function_name=item.key.function_name,
+                    )
+                    if cursor is not None
+                    else False
+                ),
+                is_dirty_replay_start=(
+                    dirty_cursor.matches_invocation_key_parts(
+                        group_key=item.key.group_key,
+                        position=item.key.position,
+                        function_name=item.key.function_name,
+                    )
+                    if dirty_cursor is not None
+                    else False
+                ),
+            )
+            for item in normalized.iter_items()
+        )
+
+    def _function_invocation_badge_provider(
+        self,
+        step: FunctionStep,
+    ) -> Callable[[str, int, Callable], str | None]:
+        """Create an editor-local provider for per-invocation debug badges."""
+
+        badges = {
+            (badge.group_key, badge.position, badge.function_name): badge
+            for badge in self.function_pattern_invocation_badges(step.func)
+        }
+
+        def badge_text(group_key: str, position: int, func: Callable) -> str | None:
+            badge = badges.get((group_key, position, self._get_func_name(func)))
+            return None if badge is None else badge.text
+
+        return badge_text
 
     def _get_func_name(self, func_entry) -> str:
         """Extract function name from various func entry formats."""
@@ -239,6 +426,10 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         # Clipboard for copy-paste operations (in-memory only)
         self._clipboard_steps: List[FunctionStep] = []
+        self.debug_toolbar: DebugToolbarWidget | None = None
+        self.cellprofiler_import_result = None
+        self.debug_inspector_window: DebugInspectorWindow | None = None
+        self.debug_session_state: DebugSession | None = None
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
         # Also auto-processes PREVIEW_FIELD_CONFIGS declaratively
@@ -254,6 +445,28 @@ class PipelineEditorWidget(AbstractManagerWidget):
     # UI infrastructure provided by AbstractManagerWidget base class
     # Step-specific customizations via hooks below
 
+    def setup_ui(self):
+        """Create pipeline editor UI with a debug/test-mode toolbar."""
+
+        header = self._create_header()
+        self.debug_toolbar = DebugToolbarWidget(self)
+        self.item_list = self._create_list_widget()
+        button_panel = self._create_button_panel()
+
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(2, 2, 2, 2)
+        main_layout.setSpacing(2)
+        main_layout.addWidget(header)
+        main_layout.addWidget(self.debug_toolbar)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.item_list)
+        splitter.addWidget(button_panel)
+        splitter.setSizes([1000, 1])
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 0)
+        main_layout.addWidget(splitter)
+
     def setup_connections(self):
         """Setup signal/slot connections (base class + step-specific)."""
         # Call base class connection setup (handles item list selection, double-click, reordering, status)
@@ -268,6 +481,184 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         QShortcut(QKeySequence("Ctrl+C"), self, self._action_copy_steps)
         QShortcut(QKeySequence("Ctrl+V"), self, self._action_paste_steps)
+        if self.debug_toolbar is not None:
+            self.debug_toolbar.command_requested.connect(self._handle_debug_command)
+
+    def _handle_debug_command(self, command):
+        """Handle debug toolbar commands through the typed debug command surface."""
+
+        route = self.DEBUG_COMMAND_ROUTES.get(command.command_type)
+        if route is None:
+            raise RuntimeError(
+                f"Unhandled debug command route: {command.command_type.value}"
+            )
+        route.dispatch(self)
+
+    def _dispatch_debug_run_command(
+        self,
+        command_type: DebugCommandType = DebugCommandType.RUN,
+    ) -> None:
+        """Submit a bounded debug run through the owning plate manager."""
+
+        if not self.current_plate:
+            self.status_message.emit("Select a plate before running debug mode.")
+            return
+        if self.plate_manager is None:
+            self.status_message.emit("Debug run requires a connected Plate Manager.")
+            return
+        command_label = command_type.value.replace("_", " ")
+        self.status_message.emit(
+            f"Submitting debug {command_label} for {self.current_plate}"
+        )
+        asyncio.create_task(
+            self.plate_manager.action_run_debug_plate(
+                self.current_plate,
+                command_type=command_type,
+                pause_step_indices=self._debug_pause_step_indices(),
+                start_step_index=self._debug_start_step_index(command_type),
+                start_after_invocation_key=self._debug_start_after_invocation_key(
+                    command_type
+                ),
+            )
+        )
+
+    def _debug_pause_step_indices(self) -> tuple[int, ...]:
+        """Return step indices carrying definition-time debug pause markers."""
+
+        return tuple(
+            index
+            for index, step in enumerate(self.pipeline_steps)
+            if getattr(step, "debug_pause", False)
+        )
+
+    def _debug_start_step_index(self, command_type: DebugCommandType) -> int:
+        """Return the replay start step for dirty debug restart commands."""
+
+        if (
+            command_type is DebugCommandType.RESTART
+            and self.debug_session_state is not None
+            and self.debug_session_state.dirty_from_cursor is not None
+        ):
+            return self.debug_session_state.dirty_from_cursor.step_index
+        if (
+            command_type is DebugCommandType.STEP
+            and self.debug_session_state is not None
+            and self.debug_session_state.cursor is not None
+        ):
+            return self.debug_session_state.cursor.step_index
+        return 0
+
+    def _debug_start_after_invocation_key(
+        self,
+        command_type: DebugCommandType,
+    ) -> str | None:
+        """Return the invocation cursor that a STEP command should advance past."""
+
+        if (
+            command_type is DebugCommandType.STEP
+            and self.debug_session_state is not None
+            and self.debug_session_state.cursor is not None
+        ):
+            return self.debug_session_state.cursor.invocation_key
+        return None
+
+    def _dispatch_debug_stop_command(self) -> None:
+        """Stop the active bounded debug run through the owning plate manager."""
+
+        if self.plate_manager is None:
+            self.status_message.emit("Debug stop requires a connected Plate Manager.")
+            return
+        self.plate_manager.action_stop_execution()
+        self.status_message.emit("Requested debug execution stop.")
+
+    def show_debug_snapshot(
+        self,
+        notification: DebugSnapshotAvailableNotification,
+    ) -> None:
+        """Load the latest debug snapshot into the reusable inspector window."""
+
+        debug_context = notification.debug_context
+        snapshot_store_ref = debug_context.snapshot_store_ref
+        snapshot_store_backend = debug_context.snapshot_store_backend
+        snapshot_id = debug_context.snapshot_id
+        if snapshot_store_ref is None or snapshot_id is None:
+            self.status_message.emit("Debug snapshot event did not include a snapshot store.")
+            return
+
+        if self.debug_inspector_window is None:
+            self.debug_inspector_window = DebugInspectorWindow(self)
+            self.debug_inspector_window.artifact_export_requested.connect(
+                self._handle_debug_artifact_export_request
+            )
+            self.debug_inspector_window.artifact_open_requested.connect(
+                self._handle_debug_artifact_open_request
+            )
+        self.debug_session_state = DebugSession(
+            debug_session_id=debug_context.debug_session_id,
+            plate_id=notification.progress_event.plate_id,
+            axis_id=notification.progress_event.axis_id,
+            snapshot_store_ref=snapshot_store_ref,
+            snapshot_store_backend=snapshot_store_backend,
+        ).with_cursor(debug_context.cursor)
+        if notification.snapshot is not None:
+            self.debug_inspector_window.set_snapshot(notification.snapshot)
+        elif snapshot_store_backend is None:
+            self.debug_inspector_window.load_snapshot(
+                root_path=snapshot_store_ref,
+                debug_session_id=debug_context.debug_session_id,
+                snapshot_id=snapshot_id,
+            )
+        else:
+            self.debug_inspector_window.load_snapshot_from_store(
+                store=FileManagerDebugSnapshotStore(
+                    filemanager=self.service_adapter.get_file_manager(),
+                    backend=snapshot_store_backend,
+                    root_path=snapshot_store_ref,
+                    debug_session_id=debug_context.debug_session_id,
+                ),
+                snapshot_id=snapshot_id,
+            )
+        self.debug_inspector_window.show()
+        self.debug_inspector_window.raise_()
+        self.status_message.emit(
+            f"Loaded debug snapshot {snapshot_id} for {notification.progress_event.step_name}"
+        )
+
+    def _handle_debug_artifact_open_request(
+        self,
+        request: DebugArtifactOpenRequest,
+    ) -> None:
+        """Route a debug artifact viewer request to the host export/viewer UX."""
+
+        self.status_message.emit(
+            "Debug artifact viewer request queued for "
+            f"{request.viewer_type}: {request.artifact_ref.name}"
+        )
+
+    def _handle_debug_artifact_export_request(
+        self,
+        request: DebugArtifactMaterializeRequest,
+    ) -> None:
+        """Ask the user for an export directory and submit server-side export."""
+
+        if self.plate_manager is None or self.debug_session_state is None:
+            self.status_message.emit("Debug artifact export requires an active debug session.")
+            return
+        export_root = QFileDialog.getExistingDirectory(
+            self,
+            "Export Debug Artifact",
+            str(Path.home()),
+        )
+        if not export_root:
+            return
+        task = self.plate_manager.action_export_debug_artifact(
+            debug_session_id=self.debug_session_state.debug_session_id,
+            artifact_ref=request.artifact_ref,
+            export_root=export_root,
+            snapshot_store_ref=self.debug_session_state.snapshot_store_ref,
+            snapshot_store_backend=self.debug_session_state.snapshot_store_backend,
+        )
+        asyncio.create_task(task)
 
     # ========== Pipeline ObjectState Management ==========
 
@@ -436,6 +827,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
             Tuple of (StyledText with segments, step_name)
         """
         step_name: str = getattr(step, "name", "Unknown Step") or "Unknown Step"
+        if getattr(step, "debug_pause", False):
+            step_name = f"Pause | {step_name}"
 
         # Use declarative format from LIST_ITEM_FORMAT
         styled = self._build_item_display_from_format(
@@ -612,6 +1005,10 @@ class PipelineEditorWidget(AbstractManagerWidget):
             orchestrator=orchestrator,
             gui_config=self.gui_config,
             parent=self,
+            source_schema=self._current_source_schema(),
+            function_invocation_badge_provider=(
+                self._function_invocation_badge_provider(new_step)
+            ),
         )
         # Set original step for change detection
         editor.set_original_step_for_change_detection()
@@ -1123,6 +1520,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self.buttons["code_pipeline"].setEnabled(
             has_plate and is_initialized
         )  # Same as add button - orchestrator init is sufficient
+        if self.debug_toolbar is not None:
+            self.debug_toolbar.set_controls_enabled(has_plate and is_initialized)
 
     # Event handlers (update_status, on_selection_changed, on_item_double_clicked, on_steps_reordered)
     # DELETED - provided by AbstractManagerWidget base class
@@ -1140,6 +1539,12 @@ class PipelineEditorWidget(AbstractManagerWidget):
         # Save pipeline to current plate if one is selected
         if self.current_plate:
             self.save_pipeline_for_plate(self.current_plate, steps)
+        if self.debug_session_state is not None:
+            self.debug_session_state = self.debug_session_state.mark_dirty_from_cursor()
+            if self.debug_session_state.dirty_from_cursor is not None:
+                self.status_message.emit(
+                    "Debug snapshots downstream of the current cursor are dirty."
+                )
 
         logger.debug(f"Pipeline changed: {len(steps)} steps")
 
@@ -1157,14 +1562,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             if orchestrator is None:
                 return False
 
-            # Check if orchestrator is in an initialized state (mirrors Textual TUI logic)
-            is_initialized = orchestrator.state in [
-                OrchestratorState.READY,
-                OrchestratorState.COMPILED,
-                OrchestratorState.COMPLETED,
-                OrchestratorState.COMPILE_FAILED,
-                OrchestratorState.EXEC_FAILED,
-            ]
+            is_initialized = orchestrator.state.has_completed_initialization
             logger.debug(
                 f"PipelineEditor: Plate {self.current_plate} orchestrator state: {orchestrator.state}, initialized: {is_initialized}"
             )
@@ -1184,14 +1582,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         if orchestrator is None:
             return False
 
-        # Check if orchestrator is in an initialized state (mirrors Textual TUI logic)
-        return orchestrator.state in [
-            OrchestratorState.READY,
-            OrchestratorState.COMPILED,
-            OrchestratorState.COMPLETED,
-            OrchestratorState.COMPILE_FAILED,
-            OrchestratorState.EXEC_FAILED,
-        ]
+        return orchestrator.state.has_completed_initialization
 
     def _get_current_orchestrator(self) -> Optional[PipelineOrchestrator]:
         """Get the orchestrator for the currently selected plate."""
@@ -1200,6 +1591,13 @@ class PipelineEditorWidget(AbstractManagerWidget):
         from objectstate import ObjectStateRegistry
 
         return ObjectStateRegistry.get_object(self.current_plate)
+
+    def _current_source_schema(self) -> PipelineImageSchema | None:
+        """Return the imported pipeline image schema available to step editors."""
+
+        if self.cellprofiler_import_result is None:
+            return None
+        return self.cellprofiler_import_result.source_schema
 
     # _find_main_window() moved to AbstractManagerWidget
 
@@ -1211,14 +1609,6 @@ class PipelineEditorWidget(AbstractManagerWidget):
             new_config: New global configuration
         """
         self.global_config = new_config
-
-        # CRITICAL FIX: Refresh all placeholders when global config changes
-        # This ensures pipeline config editor shows updated inherited values
-        if hasattr(self, "form_manager") and self.form_manager:
-            self.form_manager.refresh_placeholder_text()
-            logger.info(
-                "Refreshed pipeline config placeholders after global config change"
-            )
 
     # ========== Abstract Hook Implementations (AbstractManagerWidget ABC) ==========
 
@@ -1293,6 +1683,10 @@ class PipelineEditorWidget(AbstractManagerWidget):
             gui_config=self.gui_config,
             parent=self,
             step_index=step_index,  # Pass actual position for border pattern
+            source_schema=self._current_source_schema(),
+            function_invocation_badge_provider=(
+                self._function_invocation_badge_provider(step_to_edit)
+            ),
         )
         # Set original step for change detection
         editor.set_original_step_for_change_detection()

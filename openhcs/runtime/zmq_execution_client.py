@@ -123,6 +123,58 @@ class ZMQExecutionClient(ExecutionClient):
         }
         return self.submit_execution(task)
 
+    def submit_debug_pipeline(
+        self,
+        plate_id,
+        pipeline_steps,
+        global_config,
+        *,
+        debug_session_id: str,
+        snapshot_store_ref: str | None = None,
+        snapshot_store_backend: str | None = None,
+        command_type=None,
+        selected_source_group: str | None = None,
+        pause_step_indices=(),
+        start_step_index: int = 0,
+        start_after_invocation_key: str | None = None,
+        replay_mode=None,
+        pipeline_config=None,
+        config_params=None,
+        compile_artifact_id=None,
+    ):
+        from openhcs.core.debug import DebugCommandType, DebugExecutionConfig, DebugReplayMode
+
+        merged_config_params = dict(config_params or {})
+        merged_config_params.update(
+            DebugExecutionConfig(
+                debug_session_id=debug_session_id,
+                snapshot_store_ref=snapshot_store_ref,
+                snapshot_store_backend=snapshot_store_backend,
+                command_type=(
+                    DebugCommandType.RUN
+                    if command_type is None
+                    else DebugCommandType(command_type)
+                ),
+                selected_source_group=selected_source_group,
+                pause_step_indices=tuple(pause_step_indices),
+                start_step_index=start_step_index,
+                start_after_invocation_key=start_after_invocation_key,
+                replay_mode=(
+                    DebugReplayMode.WARM_ARTIFACT
+                    if replay_mode is None
+                    else DebugReplayMode(replay_mode)
+                ),
+            ).to_config_params()
+        )
+        return self.submit_pipeline(
+            plate_id=plate_id,
+            pipeline_steps=pipeline_steps,
+            global_config=global_config,
+            pipeline_config=pipeline_config,
+            config_params=merged_config_params,
+            compile_artifact_id=compile_artifact_id,
+        )
+
     def submit_compile(
         self,
         plate_id,
@@ -159,6 +211,86 @@ class ZMQExecutionClient(ExecutionClient):
 
     def get_status(self, execution_id=None):
         return self.poll_status(execution_id)
+
+    def get_debug_snapshot(
+        self,
+        *,
+        debug_session_id: str,
+        snapshot_id: str,
+        snapshot_store_ref: str,
+        snapshot_store_backend: str | None = None,
+    ):
+        from openhcs.core.debug import (
+            DebugSnapshotReadControlPayload,
+            DebugSnapshotReadRequest,
+            DebugSnapshotReadResponse,
+        )
+
+        if not self._connected and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        request = DebugSnapshotReadRequest(
+            debug_session_id=debug_session_id,
+            snapshot_id=snapshot_id,
+            snapshot_store_ref=snapshot_store_ref,
+            snapshot_store_backend=snapshot_store_backend,
+        )
+        response = self._send_control_request(
+            DebugSnapshotReadControlPayload.from_request(request).to_dict()
+        )
+        return DebugSnapshotReadResponse.from_control_response(response).snapshot
+
+    def send_debug_worker_command(
+        self,
+        *,
+        debug_session_id: str,
+        command_type,
+    ):
+        from openhcs.core.debug import (
+            DebugCommandType,
+            DebugWorkerCommandControlPayload,
+            DebugWorkerCommandRequest,
+            DebugWorkerCommandResponse,
+        )
+
+        if not self._connected and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        request = DebugWorkerCommandRequest(
+            debug_session_id=debug_session_id,
+            command_type=DebugCommandType(command_type),
+        )
+        response = self._send_control_request(
+            DebugWorkerCommandControlPayload.from_request(request).to_dict()
+        )
+        return DebugWorkerCommandResponse.from_control_response(response)
+
+    def export_debug_artifact(
+        self,
+        *,
+        debug_session_id: str,
+        artifact_ref,
+        export_root: str,
+        snapshot_store_ref: str | None = None,
+        snapshot_store_backend: str | None = None,
+    ):
+        from openhcs.core.debug import (
+            DebugArtifactExportControlPayload,
+            DebugArtifactExportRequest,
+            DebugArtifactExportResponse,
+        )
+
+        if not self._connected and not self.connect():
+            raise RuntimeError("Failed to connect to execution server")
+        request = DebugArtifactExportRequest(
+            debug_session_id=debug_session_id,
+            artifact_ref=artifact_ref,
+            export_root=export_root,
+            snapshot_store_ref=snapshot_store_ref,
+            snapshot_store_backend=snapshot_store_backend,
+        )
+        response = self._send_control_request(
+            DebugArtifactExportControlPayload.from_request(request).to_dict()
+        )
+        return DebugArtifactExportResponse.from_control_response(response)
 
     def _spawn_server_process(self):
         import os

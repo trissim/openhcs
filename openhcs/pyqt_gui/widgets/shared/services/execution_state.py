@@ -10,16 +10,28 @@ from openhcs.core.orchestrator.orchestrator import OrchestratorState
 
 
 class ManagerExecutionState(str, Enum):
-    IDLE = "idle"
-    RUNNING = "running"
-    STOPPING = "stopping"
-    FORCE_KILL_READY = "force_kill_ready"
+    IDLE = ("idle", True)
+    RUNNING = ("running", False)
+    STOPPING = ("stopping", True)
+    FORCE_KILL_READY = ("force_kill_ready", True)
+
+    def __new__(cls, value: str, suppresses_stop_failure: bool):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.suppresses_stop_failure = suppresses_stop_failure
+        return obj
 
 
 class TerminalExecutionStatus(str, Enum):
-    COMPLETE = "complete"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    COMPLETE = ("complete", False)
+    FAILED = ("failed", True)
+    CANCELLED = ("cancelled", True)
+
+    def __new__(cls, value: str, counts_as_failed: bool):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj.counts_as_failed = counts_as_failed
+        return obj
 
 
 @dataclass(frozen=True)
@@ -86,12 +98,7 @@ class ExecutionBatchRuntime:
         completed = sum(
             1 for status in statuses if status == TerminalExecutionStatus.COMPLETE
         )
-        failed = sum(
-            1
-            for status in statuses
-            if status
-            in (TerminalExecutionStatus.FAILED, TerminalExecutionStatus.CANCELLED)
-        )
+        failed = sum(1 for status in statuses if status.counts_as_failed)
         return completed, failed
 
     def cancellable_plates(self) -> tuple[str, ...]:

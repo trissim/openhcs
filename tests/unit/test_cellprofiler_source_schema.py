@@ -746,7 +746,7 @@ def test_symbol_table_and_codegen_use_compiled_setup_schema():
     assert "group_by=GroupBy.SITE" in generated.code
 
 
-def test_codegen_upgrades_pure_2d_runtime_wrapper_when_step_input_binding_selects_stack():
+def test_codegen_upgrades_pure_2d_runtime_callable_when_step_input_binding_selects_stack():
     setup_modules = [
         _module_with_records(
             1,
@@ -796,10 +796,8 @@ def test_codegen_upgrades_pure_2d_runtime_wrapper_when_step_input_binding_select
         skipped_modules=setup_modules,
     )
 
-    assert (
-        "gray_to_color_3_runtime.__processing_contract__ = "
-        "ProcessingContract.FLEXIBLE"
-    ) in generated.code
+    assert "gray_to_color," in generated.code
+    assert "CellProfilerModuleRuntimeBinding" not in generated.code
 
 
 def test_codegen_uses_pipeline_start_for_load_images_filter_bindings():
@@ -1019,7 +1017,7 @@ def test_generated_pipeline_exposes_pipeline_level_source_schema():
     )
 
 
-def test_generated_runtime_wrappers_with_non_image_artifacts_are_flexible():
+def test_generated_runtime_callables_with_non_image_artifacts_are_flexible():
     generated = PipelineGenerator().generate_from_registry(
         pipeline_name="cp_runtime_artifact_only",
         source_cppipe=Path("source.cppipe"),
@@ -1053,10 +1051,8 @@ def test_generated_runtime_wrappers_with_non_image_artifacts_are_flexible():
         ],
     )
 
-    assert (
-        "identify_tertiary_objects_3_runtime.__processing_contract__ = "
-        "ProcessingContract.FLEXIBLE"
-    ) in generated.code
+    assert "identify_tertiary_objects," in generated.code
+    assert "CellProfilerModuleRuntimeBinding" not in generated.code
     assert "name=\"IdentifyTertiaryObjects\"," in generated.code
     assert "variable_components=[VariableComponents.CHANNEL]," in generated.code
     assert "group_by=GroupBy.SITE," in generated.code

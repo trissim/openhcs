@@ -28,7 +28,10 @@ from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.introspection import SignatureAnalyzer
 from openhcs.core.config import PipelineConfig
+from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.path_cache import PathCacheKey
+from openhcs.core.source_bindings_view import SourceInventory
+from openhcs.pyqt_gui.widgets.source_bindings_editor import SourceBindingsEditorWidget
 from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
 from pyqt_reactive.widgets.shared.config_hierarchy_tree import ConfigHierarchyTreeHelper
 from pyqt_reactive.core.collapsible_splitter_helper import CollapsibleSplitterHelper
@@ -81,6 +84,8 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         scope_accent_color=None,
         render_header: bool = True,
         button_style: Optional[str] = None,
+        source_schema: PipelineImageSchema | None = None,
+        source_root: str | Path | None = None,
     ):
         super().__init__(parent)
 
@@ -100,6 +105,8 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         )
         self.scope_id = scope_id  # Store scope_id for cross-window update scoping
         self.step_index = step_index  # Step position index for tree registry
+        self.source_schema = source_schema
+        self.source_root = source_root
 
         self.header_label: Optional[QLabel] = None
 
@@ -134,6 +141,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         parameters = {}
         parameter_types = {}
         param_defaults = {}
+        self._step_level_configs = {}
 
         for name, info in param_info.items():
             # All AbstractStep parameters are relevant for editing
@@ -149,8 +157,6 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
                 # The UI will handle lazy resolution and show appropriate placeholders
                 param_defaults[name] = None
                 # Mark this as a step-level config for special handling
-                if getattr(self, "_step_level_configs", None) is None:
-                    self._step_level_configs = {}
                 self._step_level_configs[name] = True
             else:
                 param_defaults[name] = info.default_value
@@ -209,6 +215,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         self.content_splitter = None
 
         self.setup_ui()
+        self.apply_source_bindings_preview_context()
         self.setup_connections()
 
         # Ensure placeholders pick up live context (e.g., PipelineConfig edits) after registration.
@@ -227,6 +234,21 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         )
 
         apply_scope_color_scheme_to_widget_tree(self.form_manager, scheme)
+
+    def apply_source_bindings_preview_context(self) -> None:
+        """Pass imported pipeline source-schema context to source-binding editors."""
+
+        if self.source_schema is None:
+            return
+        for widget in self.findChildren(SourceBindingsEditorWidget):
+            widget.set_preview_context(
+                schema=self.source_schema,
+                inventory=SourceInventory.from_schema_context(
+                    self.source_schema,
+                    bindings=widget.get_value(),
+                    source_root=self.source_root,
+                ),
+            )
 
     def _is_optional_lazy_dataclass_in_pipeline(self, param_type, param_name):
         """
@@ -319,7 +341,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
 
     def _create_configuration_tree(self) -> Optional[QTreeWidget]:
         """Create and populate the configuration hierarchy tree."""
-        if not getattr(self, "_tree_dataclass_params", None):
+        if not self._tree_dataclass_params:
             return None
 
         # Pass form_manager as flash_manager - tree reads from SAME _flash_colors dict as groupboxes

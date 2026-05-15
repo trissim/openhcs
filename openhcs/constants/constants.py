@@ -362,23 +362,32 @@ def __getattr__(name):
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
 
 
-
-
-
-#Documentation URL
+# Documentation URL
 DOCUMENTATION_URL = "https://openhcs.readthedocs.io/en/latest/"
 
 
 class OrchestratorState(Enum):
     """Simple orchestrator state tracking - no complex state machine."""
-    CREATED = "created"         # Object exists, not initialized
-    READY = "ready"             # Initialized, ready for compilation
-    COMPILED = "compiled"       # Compilation complete, ready for execution
-    EXECUTING = "executing"     # Execution in progress
-    COMPLETED = "completed"     # Execution completed successfully
-    INIT_FAILED = "init_failed"       # Initialization failed
-    COMPILE_FAILED = "compile_failed" # Compilation failed (implies initialized)
-    EXEC_FAILED = "exec_failed"       # Execution failed (implies compiled)
+    CREATED = ("created", False, False)  # Object exists, not initialized
+    READY = ("ready", True, True)  # Initialized, ready for compilation
+    COMPILED = ("compiled", True, True)  # Compilation complete
+    EXECUTING = ("executing", True, False)  # Execution in progress
+    COMPLETED = ("completed", True, True)  # Execution completed successfully
+    INIT_FAILED = ("init_failed", False, False)  # Initialization failed
+    COMPILE_FAILED = ("compile_failed", True, False)  # Compilation failed
+    EXEC_FAILED = ("exec_failed", True, False)  # Execution failed
+
+    def __new__(
+        cls,
+        value: str,
+        has_completed_initialization: bool,
+        skips_initialization: bool,
+    ):
+        obj = object.__new__(cls)
+        obj._value_ = value
+        obj.has_completed_initialization = has_completed_initialization
+        obj.skips_initialization = skips_initialization
+        return obj
 
 # I/O-related constants
 DEFAULT_IMAGE_EXTENSION = ".tif"
@@ -416,9 +425,6 @@ def get_multiprocessing_axis():
     return config.multiprocessing_axis
 
 DEFAULT_MICROSCOPE: Microscope = Microscope.AUTO
-
-
-
 
 
 # Backend-related constants

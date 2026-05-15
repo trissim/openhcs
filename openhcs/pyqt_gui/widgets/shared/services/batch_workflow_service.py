@@ -14,6 +14,16 @@ from PyQt6.QtWidgets import QApplication
 
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 from openhcs.core.progress import ProgressEvent
+from openhcs.core.debug import (
+    DebugArtifactRef,
+    DebugArtifactExportResponse,
+    DebugCommandType,
+    DebugExecutionConfig,
+    DebugPausedWorkerStatus,
+    DebugProgressContext,
+    DebugReplayMode,
+    DebugSnapshot,
+)
 from openhcs.core.progress.projection import (
     ExecutionRuntimeProjection,
     build_execution_runtime_projection_from_registry,
@@ -57,13 +67,112 @@ T = TypeVar("T")
 
 
 @dataclass(frozen=True)
-class CompileJob:
-    """Single compile unit for a plate."""
+class PlatePipelineRequest:
+    """Shared plate/pipeline/config identity for compile and run requests."""
 
     plate_path: str
-    plate_name: str
     definition_pipeline: List
     pipeline_config: Any
+
+
+@dataclass(frozen=True)
+class CompileJob(PlatePipelineRequest):
+    """Single compile unit for a plate."""
+
+    plate_name: str
+    config_params: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class CompileRequestResult:
+    """Accepted compile submission returned by the execution server."""
+
+    execution_id: str
+    response: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class RunSpec(PlatePipelineRequest):
+    """Execution request assembled from one plate and its resolved config."""
+
+    global_config: Any
+
+
+@dataclass(frozen=True)
+class DebugPlateRunRequest:
+    """Debug execution identity threaded through compile and run submission."""
+
+    debug_session_id: str
+    snapshot_store_ref: str
+    snapshot_store_backend: str | None
+    command_type: DebugCommandType
+    selected_source_group: str | None
+    pause_step_indices: tuple[int, ...]
+    start_step_index: int = 0
+    start_after_invocation_key: str | None = None
+    replay_mode: DebugReplayMode = DebugReplayMode.WARM_ARTIFACT
+
+    @property
+    def execution_config(self) -> DebugExecutionConfig:
+        return DebugExecutionConfig(
+            debug_session_id=self.debug_session_id,
+            snapshot_store_ref=self.snapshot_store_ref,
+            snapshot_store_backend=self.snapshot_store_backend,
+            command_type=self.command_type,
+            selected_source_group=self.selected_source_group,
+            pause_step_indices=self.pause_step_indices,
+            start_step_index=self.start_step_index,
+            start_after_invocation_key=self.start_after_invocation_key,
+            replay_mode=self.replay_mode,
+        )
+
+    @property
+    def config_params(self) -> dict[str, Any]:
+        return self.execution_config.to_config_params()
+
+    @property
+    def compile_config_params(self) -> dict[str, Any]:
+        return self.execution_config.compile_cache_config_params()
+
+
+@dataclass(frozen=True)
+class DebugCompileArtifactCacheKey:
+    """Stable identity for reusable debug compile artifacts."""
+
+    plate_path: str
+    pipeline_fingerprint: str
+    selected_source_group: str | None
+    replay_mode: DebugReplayMode
+
+
+CompileJobCallback = Callable[[CompileJob, int, int], None] | None
+CompileJobStatusCallback = Callable[[CompileJob, str, int, int], None] | None
+CompileJobErrorCallback = Callable[[CompileJob, Exception, int, int], None] | None
+
+
+@dataclass(frozen=True)
+class ZMQClientConnectionSpec:
+    """Connection request for execution-server progress clients."""
+
+    progress_callback: Callable[[ProgressEvent], None]
+    persistent: bool = True
+    timeout: int = 15
+
+    async def connect(self, client_service: ZMQClientService):
+        return await client_service.connect(
+            progress_callback=self.progress_callback,
+            persistent=self.persistent,
+            timeout=self.timeout,
+        )
+
+
+@dataclass(frozen=True)
+class DebugSnapshotAvailableNotification:
+    """GUI-side notification that one debug snapshot can be read."""
+
+    progress_event: ProgressEvent
+    debug_context: DebugProgressContext
+    snapshot: DebugSnapshot | None = None
 
 
 class BatchWorkflowService:
@@ -106,7 +215,11 @@ class BatchWorkflowService:
             )
         )
         self._compile_batch_engine = BatchSubmitWaitEngine[CompileJob]()
+        self._debug_compile_artifacts: dict[DebugCompileArtifactCacheKey, str] = {}
         self._execution_status_poller = ExecutionStatusPoller()
+        self._debug_snapshot_listeners: list[
+            Callable[[DebugSnapshotAvailableNotification], None]
+        ] = []
         self._server_kill_service = ServerKillService()
         self._server_status_presenter = ExecutionServerStatusPresenter()
         self._registry_listener = self._on_registry_event
@@ -143,11 +256,7 @@ class BatchWorkflowService:
         loop = asyncio.get_event_loop()
 
         try:
-            zmq_client = await self.client_service.connect(
-                progress_callback=self._on_progress,
-                persistent=True,
-                timeout=15,
-            )
+            zmq_client = await self._connect_progress_client()
             plate_paths = [str(item["path"]) for item in selected_items]
             for plate_path in plate_paths:
                 self.host.clear_plate_execution_tracking(plate_path)
@@ -233,6 +342,26 @@ class BatchWorkflowService:
         )
         self.host.update_button_states()
 
+    def add_debug_snapshot_listener(
+        self,
+        listener: Callable[[DebugSnapshotAvailableNotification], None],
+    ) -> None:
+        """Subscribe to debug snapshot availability announced through progress."""
+
+        self._debug_snapshot_listeners.append(listener)
+
+    def remove_debug_snapshot_listener(
+        self,
+        listener: Callable[[DebugSnapshotAvailableNotification], None],
+    ) -> bool:
+        """Remove one debug snapshot listener if it is registered."""
+
+        try:
+            self._debug_snapshot_listeners.remove(listener)
+        except ValueError:
+            return False
+        return True
+
     async def run_plates(self, ready_items: List[Dict]) -> None:
         """Run selected plates using compile-all then execute-all workflow."""
         self._flush_pending_ui_edits()
@@ -244,9 +373,7 @@ class BatchWorkflowService:
             self._reset_progress_for_new_batch()
             self.host.emit_clear_logs()
 
-            await self.client_service.connect(
-                progress_callback=self._on_progress, persistent=True, timeout=15
-            )
+            await self._connect_progress_client()
 
             self.host.plate_execution_ids.clear()
             self.host.execution_runtime.begin_batch(plate_paths)
@@ -280,10 +407,9 @@ class BatchWorkflowService:
                 f"Compilation complete. Submitting {len(run_specs)} plate(s) for execution..."
             )
             for run_spec in run_specs:
-                plate_path = run_spec["plate_path"]
                 await self._submit_plate(
                     run_spec=run_spec,
-                    compile_artifact_id=compile_artifacts[plate_path],
+                    compile_artifact_id=compile_artifacts[run_spec.plate_path],
                     loop=loop,
                 )
         except Exception as error:
@@ -291,16 +417,171 @@ class BatchWorkflowService:
             self.host.emit_error(f"Failed to execute: {error}")
             await self._handle_execution_failure(loop)
 
+    async def run_debug_plate(
+        self,
+        *,
+        plate_path: str,
+        debug_session_id: str,
+        snapshot_store_ref: str,
+        command_type,
+        snapshot_store_backend: str | None = None,
+        selected_source_group: str | None = None,
+        pause_step_indices: tuple[int, ...] = (),
+        start_step_index: int = 0,
+        start_after_invocation_key: str | None = None,
+        replay_mode: DebugReplayMode = DebugReplayMode.WARM_ARTIFACT,
+    ) -> None:
+        """Compile one plate and submit a bounded debug execution."""
+
+        self._flush_pending_ui_edits()
+        loop = asyncio.get_event_loop()
+        try:
+            await self._connect_progress_client()
+            self._reset_progress_for_new_batch()
+            self.host.execution_runtime.begin_batch([plate_path])
+            self.host.execution_state = ManagerExecutionState.RUNNING
+            self.host.emit_status(f"Compiling debug run for {plate_path}...")
+            self.host.update_button_states()
+            self.host.update_item_list()
+
+            debug_request = DebugPlateRunRequest(
+                debug_session_id=debug_session_id,
+                snapshot_store_ref=snapshot_store_ref,
+                snapshot_store_backend=snapshot_store_backend,
+                command_type=DebugCommandType(command_type),
+                selected_source_group=selected_source_group,
+                pause_step_indices=tuple(pause_step_indices),
+                start_step_index=start_step_index,
+                start_after_invocation_key=start_after_invocation_key,
+                replay_mode=replay_mode,
+            )
+            run_spec = self._build_run_spec(plate_path)
+            compile_artifact_id = await self._debug_compile_artifact_id(
+                run_spec=run_spec,
+                debug_request=debug_request,
+                loop=loop,
+            )
+            self.host.emit_status(f"Submitting debug run for {plate_path}...")
+            await self._submit_debug_plate(
+                run_spec=run_spec,
+                compile_artifact_id=compile_artifact_id,
+                debug_request=debug_request,
+                loop=loop,
+            )
+        except Exception as error:
+            logger.error("Failed to execute debug run via ZMQ: %s", error, exc_info=True)
+            self.host.emit_error(f"Failed to execute debug run: {error}")
+            await self._handle_execution_failure(loop)
+
+    async def send_debug_worker_command(
+        self,
+        *,
+        debug_session_id: str,
+        command_type: DebugCommandType,
+    ) -> DebugPausedWorkerStatus:
+        """Send a control command to an already-running persistent debug worker."""
+
+        loop = asyncio.get_event_loop()
+        await self._connect_progress_client()
+
+        def send_command() -> DebugPausedWorkerStatus:
+            if self.client_service.zmq_client is None:
+                raise RuntimeError("ZMQ client is not connected")
+            return self.client_service.zmq_client.send_debug_worker_command(
+                debug_session_id=debug_session_id,
+                command_type=command_type,
+            ).status
+
+        status = await self._run_blocking(loop, send_command)
+        self.host.emit_status(
+            f"Debug worker {status.state.value} for session {debug_session_id[:8]}"
+        )
+        return status
+
+    async def export_debug_artifact(
+        self,
+        *,
+        debug_session_id: str,
+        artifact_ref: DebugArtifactRef,
+        export_root: str,
+        snapshot_store_ref: str | None = None,
+        snapshot_store_backend: str | None = None,
+    ) -> DebugArtifactExportResponse:
+        """Materialize one debug artifact through the execution server namespace."""
+
+        loop = asyncio.get_event_loop()
+        await self._connect_progress_client()
+
+        def export_artifact() -> DebugArtifactExportResponse:
+            if self.client_service.zmq_client is None:
+                raise RuntimeError("ZMQ client is not connected")
+            return self.client_service.zmq_client.export_debug_artifact(
+                debug_session_id=debug_session_id,
+                artifact_ref=artifact_ref,
+                export_root=export_root,
+                snapshot_store_ref=snapshot_store_ref,
+                snapshot_store_backend=snapshot_store_backend,
+            )
+
+        response = await self._run_blocking(loop, export_artifact)
+        self.host.emit_status(f"Exported debug artifact to {response.exported_ref}")
+        return response
+
+    async def _debug_compile_artifact_id(
+        self,
+        *,
+        run_spec: RunSpec,
+        debug_request: DebugPlateRunRequest,
+        loop,
+    ) -> str:
+        cache_key = DebugCompileArtifactCacheKey(
+            plate_path=run_spec.plate_path,
+            pipeline_fingerprint=self._pipeline_fingerprint(
+                run_spec.definition_pipeline
+            ),
+            selected_source_group=debug_request.selected_source_group,
+            replay_mode=debug_request.replay_mode,
+        )
+        if debug_request.replay_mode.retains_compile_artifact:
+            cached_artifact_id = self._debug_compile_artifacts.get(cache_key)
+            if cached_artifact_id is not None:
+                logger.info(
+                    "Reusing debug compile artifact: plate=%s artifact_id=%s",
+                    run_spec.plate_path,
+                    cached_artifact_id,
+                )
+                return cached_artifact_id
+
+        compile_artifacts = await self._compile_plates_before_execution(
+            run_specs=[run_spec],
+            loop=loop,
+            config_params_by_plate={
+                run_spec.plate_path: debug_request.compile_config_params
+            },
+        )
+        compile_artifact_id = compile_artifacts[run_spec.plate_path]
+        if debug_request.replay_mode.retains_compile_artifact:
+            self._debug_compile_artifacts[cache_key] = compile_artifact_id
+        return compile_artifact_id
+
     async def _compile_plates_before_execution(
-        self, run_specs: List[Dict[str, Any]], loop
+        self,
+        run_specs: List[RunSpec],
+        loop,
+        config_params_by_plate: dict[str, dict[str, Any]] | None = None,
     ) -> Dict[str, str]:
         """Compile all selected plates before submitting execution jobs."""
         if self.client_service.zmq_client is None:
             raise RuntimeError("ZMQ client is not connected")
 
         zmq_client = self.client_service.zmq_client
+        compile_config_params = config_params_by_plate or {}
         compile_jobs = [
-            self._build_compile_job_from_run_spec(run_spec) for run_spec in run_specs
+            self._build_compile_job_from_run_spec(
+                run_spec,
+                config_params=compile_config_params.get(run_spec.plate_path),
+            )
+            for run_spec in run_specs
         ]
         waiting_announced = False
 
@@ -342,6 +623,13 @@ class BatchWorkflowService:
         )
         return compile_artifacts
 
+    async def _connect_progress_client(self):
+        """Connect the shared ZMQ client with the standard progress callback."""
+
+        return await ZMQClientConnectionSpec(
+            progress_callback=self._on_progress,
+        ).connect(self.client_service)
+
     def _build_compile_job_from_plate_data(
         self, plate_data: Dict[str, Any]
     ) -> CompileJob:
@@ -371,9 +659,13 @@ class BatchWorkflowService:
         )
 
     @staticmethod
-    def _build_compile_job_from_run_spec(run_spec: Dict[str, Any]) -> CompileJob:
-        plate_path = str(run_spec["plate_path"])
-        definition_pipeline = run_spec["definition_pipeline"]
+    def _build_compile_job_from_run_spec(
+        run_spec: RunSpec,
+        *,
+        config_params: dict[str, Any] | None = None,
+    ) -> CompileJob:
+        plate_path = run_spec.plate_path
+        definition_pipeline = run_spec.definition_pipeline
         logger.info(
             "Compile-before-run snapshot: plate=%s steps=%d fingerprint=%s step_names=%s",
             plate_path,
@@ -385,7 +677,8 @@ class BatchWorkflowService:
             plate_path=plate_path,
             plate_name=plate_path,
             definition_pipeline=definition_pipeline,
-            pipeline_config=run_spec["pipeline_config"],
+            pipeline_config=run_spec.pipeline_config,
+            config_params=config_params,
         )
 
     def _make_compile_policy(
@@ -395,12 +688,11 @@ class BatchWorkflowService:
         loop,
         fail_fast_submit: bool,
         fail_fast_wait: bool,
-        on_submit_error: Callable[[CompileJob, Exception, int, int], None]
-        | None = None,
-        on_wait_start: Callable[[CompileJob, int, int], None] | None = None,
-        on_wait_success: Callable[[CompileJob, str, int, int], None] | None = None,
-        on_wait_error: Callable[[CompileJob, Exception, int, int], None] | None = None,
-        on_wait_finally: Callable[[CompileJob, int, int], None] | None = None,
+        on_submit_error: CompileJobErrorCallback = None,
+        on_wait_start: CompileJobCallback = None,
+        on_wait_success: CompileJobStatusCallback = None,
+        on_wait_error: CompileJobErrorCallback = None,
+        on_wait_finally: CompileJobCallback = None,
     ) -> CallbackBatchSubmitWaitPolicy[CompileJob]:
         return CallbackBatchSubmitWaitPolicy(
             submit_fn=lambda job: self._submit_compile_job(
@@ -431,8 +723,9 @@ class BatchWorkflowService:
             plate_path=job.plate_path,
             definition_pipeline=job.definition_pipeline,
             pipeline_config=job.pipeline_config,
+            config_params=job.config_params,
         )
-        return response["execution_id"]
+        return response.execution_id
 
     async def _wait_compile_job(
         self, *, submission_id: str, job: CompileJob, zmq_client, loop
@@ -465,7 +758,8 @@ class BatchWorkflowService:
         plate_path: str,
         definition_pipeline: List,
         pipeline_config,
-    ) -> Dict[str, Any]:
+        config_params: dict[str, Any] | None = None,
+    ) -> CompileRequestResult:
         def _submit_compile() -> Dict[str, Any]:
             logger.info(
                 "Submit compile: plate=%s steps=%d fingerprint=%s",
@@ -478,6 +772,7 @@ class BatchWorkflowService:
                 pipeline_steps=definition_pipeline,
                 global_config=self.host.global_config,
                 pipeline_config=pipeline_config,
+                config_params=config_params,
             )
 
         response = await self._run_blocking(loop, _submit_compile)
@@ -491,7 +786,10 @@ class BatchWorkflowService:
             raise RuntimeError(
                 f"Compile submission missing execution_id for {plate_path}"
             )
-        return {"execution_id": execution_id, "response": response}
+        return CompileRequestResult(
+            execution_id=str(execution_id),
+            response=response,
+        )
 
     async def _wait_for_compile_completion(
         self,
@@ -511,7 +809,7 @@ class BatchWorkflowService:
                 f"{wait_result.get('message', 'Unknown error')}"
             )
 
-    def _build_run_spec(self, plate_path: str) -> Dict[str, Any]:
+    def _build_run_spec(self, plate_path: str) -> RunSpec:
         plate_path = str(plate_path)
         definition_pipeline = self.host.get_pipeline_definition(plate_path)
         if not definition_pipeline:
@@ -522,20 +820,20 @@ class BatchWorkflowService:
             definition_pipeline = []
         self._validate_pipeline_steps(definition_pipeline)
         pipeline_config = resolve_pipeline_config_for_plate(self.host, plate_path)
-        return {
-            "plate_path": plate_path,
-            "definition_pipeline": definition_pipeline,
-            "global_config": self.host.global_config,
-            "pipeline_config": pipeline_config,
-        }
+        return RunSpec(
+            plate_path=plate_path,
+            definition_pipeline=definition_pipeline,
+            global_config=self.host.global_config,
+            pipeline_config=pipeline_config,
+        )
 
     async def _submit_plate(
-        self, run_spec: Dict[str, Any], compile_artifact_id: str, loop
+        self, run_spec: RunSpec, compile_artifact_id: str, loop
     ) -> None:
         if self.client_service.zmq_client is None:
             raise RuntimeError("ZMQ client is not connected")
-        plate_path = run_spec["plate_path"]
-        definition_pipeline = run_spec["definition_pipeline"]
+        plate_path = run_spec.plate_path
+        definition_pipeline = run_spec.definition_pipeline
         logger.info("Executing plate: %s", plate_path)
         logger.info(
             "Submit run: plate=%s artifact_id=%s steps=%d fingerprint=%s",
@@ -549,8 +847,8 @@ class BatchWorkflowService:
             return self.client_service.zmq_client.submit_pipeline(
                 plate_id=plate_path,
                 pipeline_steps=definition_pipeline,
-                global_config=run_spec["global_config"],
-                pipeline_config=run_spec["pipeline_config"],
+                global_config=run_spec.global_config,
+                pipeline_config=run_spec.pipeline_config,
                 compile_artifact_id=compile_artifact_id,
             )
 
@@ -582,6 +880,65 @@ class BatchWorkflowService:
             self.host.emit_orchestrator_state(
                 plate_path, OrchestratorState.EXEC_FAILED.value
             )
+
+    async def _submit_debug_plate(
+        self,
+        *,
+        run_spec: RunSpec,
+        compile_artifact_id: str,
+        debug_request: DebugPlateRunRequest,
+        loop,
+    ) -> None:
+        if self.client_service.zmq_client is None:
+            raise RuntimeError("ZMQ client is not connected")
+        plate_path = run_spec.plate_path
+        definition_pipeline = run_spec.definition_pipeline
+        logger.info(
+            "Submit debug run: plate=%s artifact_id=%s steps=%d fingerprint=%s",
+            plate_path,
+            compile_artifact_id,
+            len(definition_pipeline),
+            self._pipeline_fingerprint(definition_pipeline),
+        )
+
+        def submit_debug() -> Dict[str, Any]:
+            return self.client_service.zmq_client.submit_debug_pipeline(
+                plate_id=plate_path,
+                pipeline_steps=definition_pipeline,
+                global_config=run_spec.global_config,
+                pipeline_config=run_spec.pipeline_config,
+                compile_artifact_id=compile_artifact_id,
+                debug_session_id=debug_request.debug_session_id,
+                snapshot_store_ref=debug_request.snapshot_store_ref,
+                snapshot_store_backend=debug_request.snapshot_store_backend,
+                command_type=debug_request.command_type,
+                selected_source_group=debug_request.selected_source_group,
+                pause_step_indices=debug_request.pause_step_indices,
+                start_step_index=debug_request.start_step_index,
+                start_after_invocation_key=debug_request.start_after_invocation_key,
+                replay_mode=debug_request.replay_mode,
+                config_params=debug_request.config_params,
+            )
+
+        response = await self._run_blocking(loop, submit_debug)
+        execution_id = response.get("execution_id")
+        if execution_id:
+            self.host.plate_execution_ids[plate_path] = execution_id
+            self.host.current_execution_id = execution_id
+
+        if response.get("status") == "accepted":
+            self.host.emit_status(f"Submitted debug run for {plate_path}")
+            if execution_id:
+                self._start_completion_poller(execution_id, plate_path)
+            return
+
+        error_msg = response.get("message", "Unknown error")
+        logger.error("Debug run %s submission failed: %s", plate_path, error_msg)
+        self.host.emit_error(f"Debug submission failed for {plate_path}: {error_msg}")
+        self.host.execution_runtime.mark_terminal(
+            plate_path,
+            TerminalExecutionStatus.FAILED,
+        )
 
     async def _handle_execution_failure(self, loop) -> None:
         from objectstate import ObjectStateRegistry
@@ -742,20 +1099,8 @@ class BatchWorkflowService:
         execution_payload: Dict[str, Any],
     ) -> Dict[str, Any]:
         status = parse_terminal_status(terminal_status)
-        match status:
-            case TerminalExecutionStatus.COMPLETE:
-                return BatchWorkflowService._build_complete_terminal_result(
-                    execution_id, execution_payload
-                )
-            case TerminalExecutionStatus.FAILED:
-                return BatchWorkflowService._build_failed_terminal_result(
-                    execution_id, execution_payload
-                )
-            case TerminalExecutionStatus.CANCELLED:
-                return BatchWorkflowService._build_cancelled_terminal_result(
-                    execution_id, execution_payload
-                )
-        raise ValueError(f"Unsupported terminal status '{status}'")
+        builder = TERMINAL_RESULT_BUILDERS[status]
+        return builder(execution_id, execution_payload)
 
     @staticmethod
     def _build_complete_terminal_result(
@@ -816,10 +1161,49 @@ class BatchWorkflowService:
         try:
             event = ProgressEvent.from_dict(message)
             self.host._progress_tracker.register_event(event.execution_id, event)
+            self._notify_debug_snapshot_available(event)
         except Exception as error:
             logger.warning("Failed to parse/register progress event: %s", error)
         finally:
             self._mark_progress_dirty()
+
+    def _notify_debug_snapshot_available(self, event: ProgressEvent) -> None:
+        if not event.context:
+            return
+        try:
+            debug_context = DebugProgressContext.from_progress_context(event.context)
+        except (KeyError, TypeError, ValueError):
+            return
+        if debug_context.snapshot_id is None:
+            return
+        notification = DebugSnapshotAvailableNotification(
+            progress_event=event,
+            debug_context=debug_context,
+            snapshot=self._read_debug_snapshot_from_server(debug_context),
+        )
+        for listener in tuple(self._debug_snapshot_listeners):
+            listener(notification)
+
+    def _read_debug_snapshot_from_server(
+        self,
+        debug_context: DebugProgressContext,
+    ) -> DebugSnapshot | None:
+        if (
+            debug_context.snapshot_store_ref is None
+            or debug_context.snapshot_id is None
+            or self.client_service.zmq_client is None
+        ):
+            return None
+        try:
+            return self.client_service.zmq_client.get_debug_snapshot(
+                debug_session_id=debug_context.debug_session_id,
+                snapshot_id=debug_context.snapshot_id,
+                snapshot_store_ref=debug_context.snapshot_store_ref,
+                snapshot_store_backend=debug_context.snapshot_store_backend,
+            )
+        except Exception as error:
+            logger.debug("Server debug snapshot readback failed: %s", error)
+            return None
 
     def _on_registry_event(self, _execution_id: str, _event: ProgressEvent) -> None:
         """Mark projection dirty when shared registry changes from any producer."""
@@ -882,11 +1266,7 @@ class BatchWorkflowService:
                     log_error=logger.error,
                 )
                 if not success:
-                    if self.host.execution_state in (
-                        ManagerExecutionState.STOPPING,
-                        ManagerExecutionState.FORCE_KILL_READY,
-                        ManagerExecutionState.IDLE,
-                    ):
+                    if self.host.execution_state.suppresses_stop_failure:
                         logger.info(
                             "Suppressing stale stop failure while stop is already terminalizing: %s",
                             message,
@@ -972,3 +1352,10 @@ class BatchWorkflowService:
         )
         self._server_info_poller.reset()
         self._mark_progress_dirty()
+
+
+TERMINAL_RESULT_BUILDERS = {
+    TerminalExecutionStatus.COMPLETE: BatchWorkflowService._build_complete_terminal_result,
+    TerminalExecutionStatus.FAILED: BatchWorkflowService._build_failed_terminal_result,
+    TerminalExecutionStatus.CANCELLED: BatchWorkflowService._build_cancelled_terminal_result,
+}

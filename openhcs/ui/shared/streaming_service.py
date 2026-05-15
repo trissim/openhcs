@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal
 
@@ -25,6 +26,74 @@ CHUNK_SIZE = 50
 # ViewerType is now the registry key (e.g., 'napari_streaming_config', 'fiji_streaming_config')
 # This provides type safety and consistency throughout the codebase
 ViewerType = str  # Registry key from StreamingConfig.__registry__
+NAPARI_VIEWER_TOKEN = "napari"
+
+
+@dataclass(frozen=True, slots=True)
+class StreamingMetadata:
+    """Nominal metadata record passed to viewer streaming backends."""
+
+    port: int
+    host: str
+    transport_mode: object
+    display_config: object
+    microscope_handler: object
+    plate_path: Path
+    source: str
+
+    @classmethod
+    def from_viewer_context(
+        cls,
+        *,
+        viewer,
+        config,
+        microscope_handler,
+        plate_path: Path,
+        source: str,
+    ) -> "StreamingMetadata":
+        return cls(
+            port=viewer.port,
+            host=config.host,
+            transport_mode=config.transport_mode,
+            display_config=config,
+            microscope_handler=microscope_handler,
+            plate_path=plate_path,
+            source=source,
+        )
+
+    def to_backend_kwargs(self) -> dict[str, object]:
+        """Convert to kwargs at the third-party backend boundary."""
+
+        return asdict(self)
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerStreamingContext:
+    """Shared viewer/request context for asynchronous streaming operations."""
+
+    viewer: object
+    plate_path: Path
+    config: object
+    viewer_type: ViewerType
+    status_callback: Callable[[str], None]
+    error_callback: Callable[[str], None]
+
+
+@dataclass(frozen=True, slots=True)
+class ImageStreamingRequest:
+    """Request to stream image files to one viewer."""
+
+    context: ViewerStreamingContext
+    filenames: tuple[str, ...]
+    read_backend: str
+
+
+@dataclass(frozen=True, slots=True)
+class RoiStreamingRequest:
+    """Request to stream ROI files to one viewer."""
+
+    context: ViewerStreamingContext
+    roi_filenames: tuple[str, ...]
 
 
 class StreamingService:
@@ -45,7 +114,7 @@ class StreamingService:
         self.plate_path = plate_path
 
     @staticmethod
-    def _get_display_name(viewer_type: str) -> str:
+    def display_name_for_viewer_type(viewer_type: str) -> str:
         """Get display name from registry key.
 
         Args:
@@ -57,6 +126,8 @@ class StreamingService:
         # Extract viewer name from registry key (e.g., 'napari_streaming_config' -> 'napari')
         viewer_name = viewer_type.replace('_streaming_config', '')
         return viewer_name.title()
+
+    _get_display_name = display_name_for_viewer_type
 
     @classmethod
     def supported_viewer_types(cls):
@@ -82,9 +153,15 @@ class StreamingService:
 
         return (
             BackendEnum.NAPARI_STREAM
-            if "napari" in viewer_type
+            if self.is_napari_viewer_type(viewer_type)
             else BackendEnum.FIJI_STREAM
         )
+
+    @staticmethod
+    def is_napari_viewer_type(viewer_type: str) -> bool:
+        """Return whether a streaming registry key targets napari."""
+
+        return NAPARI_VIEWER_TOKEN in viewer_type
 
     def _wait_for_viewer_ready(
         self,
@@ -121,50 +198,36 @@ class StreamingService:
                 f"{display_name} viewer on port {viewer.port} is ready"
             )
 
-    def _build_metadata(self, viewer, config, source: str) -> dict:
-        """Build metadata dict for streaming."""
-        return {
-            "port": viewer.port,
-            "host": config.host,
-            "transport_mode": config.transport_mode,
-            "display_config": config,
-            "microscope_handler": self.microscope_handler,
-            "plate_path": self.plate_path,
-            "source": source,
-        }
-
     def stream_images_async(
         self,
-        viewer,
-        filenames: list[str],
-        plate_path: Path,
-        read_backend: str,
-        config,
-        viewer_type: ViewerType,
-        status_callback: Callable[[str], None],
-        error_callback: Callable[[str], None],
+        request: ImageStreamingRequest,
     ) -> None:
         """Load and stream images to viewer in background thread.
 
         Uses chunked streaming to prevent file descriptor exhaustion.
         """
-        backend_enum = self._get_backend_enum(viewer_type)
-        display_name = self._get_display_name(viewer_type)
+        context = request.context
+        backend_enum = self._get_backend_enum(context.viewer_type)
+        display_name = self.display_name_for_viewer_type(context.viewer_type)
 
         def _worker():
             try:
-                self._wait_for_viewer_ready(viewer, viewer_type, len(filenames))
+                self._wait_for_viewer_ready(
+                    context.viewer,
+                    context.viewer_type,
+                    len(request.filenames),
+                )
 
-                total_images = len(filenames)
+                total_images = len(request.filenames)
                 num_chunks = (total_images + CHUNK_SIZE - 1) // CHUNK_SIZE
                 logger.info(f"Streaming {total_images} images in {num_chunks} chunks")
 
                 for chunk_idx in range(num_chunks):
                     start_idx = chunk_idx * CHUNK_SIZE
                     end_idx = min(start_idx + CHUNK_SIZE, total_images)
-                    chunk_filenames = filenames[start_idx:end_idx]
+                    chunk_filenames = request.filenames[start_idx:end_idx]
 
-                    status_callback(
+                    context.status_callback(
                         f"Loading chunk {chunk_idx + 1}/{num_chunks} ({len(chunk_filenames)} images)..."
                     )
 
@@ -172,9 +235,9 @@ class StreamingService:
                     image_data_list = []
                     file_paths = []
                     for filename in chunk_filenames:
-                        image_path = plate_path / filename
+                        image_path = context.plate_path / filename
                         image_data = self.filemanager.load(
-                            str(image_path), read_backend
+                            str(image_path), request.read_backend
                         )
                         image_data_list.append(image_data)
                         file_paths.append(filename)
@@ -188,7 +251,13 @@ class StreamingService:
                         if file_paths
                         else "unknown_source"
                     )
-                    metadata = self._build_metadata(viewer, config, source)
+                    metadata = StreamingMetadata.from_viewer_context(
+                        viewer=context.viewer,
+                        config=context.config,
+                        microscope_handler=self.microscope_handler,
+                        plate_path=context.plate_path,
+                        source=source,
+                    ).to_backend_kwargs()
 
                     self.filemanager.save_batch(
                         image_data_list, file_paths, backend_enum.value, **metadata
@@ -203,47 +272,47 @@ class StreamingService:
                 logger.info(
                     f"Successfully streamed {total_images} images to {display_name}"
                 )
-                status_callback(
+                context.status_callback(
                     f"Streamed {total_images} images to {display_name}"
                 )
 
             except Exception as e:
                 logger.error(f"Failed to stream images to {display_name}: {e}")
-                status_callback(f"Error: {e}")
-                error_callback(str(e))
+                context.status_callback(f"Error: {e}")
+                context.error_callback(str(e))
 
-        spawn_thread_with_context(_worker, name=f"stream_images_{viewer_type}")
-        logger.info(f"Started streaming {len(filenames)} images to {display_name}")
+        spawn_thread_with_context(
+            _worker,
+            name=f"stream_images_{context.viewer_type}",
+        )
+        logger.info(
+            f"Started streaming {len(request.filenames)} images to {display_name}"
+        )
 
     def stream_rois_async(
         self,
-        viewer,
-        roi_filenames: list[str],
-        plate_path: Path,
-        config,
-        viewer_type: ViewerType,
-        status_callback: Callable[[str], None],
-        error_callback: Callable[[str], None],
+        request: RoiStreamingRequest,
     ) -> None:
         """Load and stream ROI files to viewer in background thread."""
-        backend_enum = self._get_backend_enum(viewer_type)
-        display_name = self._get_display_name(viewer_type)
+        context = request.context
+        backend_enum = self._get_backend_enum(context.viewer_type)
+        display_name = self.display_name_for_viewer_type(context.viewer_type)
 
         def _worker():
             try:
                 from polystore.roi import load_rois_from_zip
 
-                total = len(roi_filenames)
+                total = len(request.roi_filenames)
                 if total == 0:
                     return
 
-                status_callback(f"Loading {total} ROI file(s) from disk...")
+                context.status_callback(f"Loading {total} ROI file(s) from disk...")
 
                 data_list: list = []
                 paths: list[str] = []
 
-                for i, filename in enumerate(roi_filenames, 1):
-                    file_path = plate_path / filename
+                for i, filename in enumerate(request.roi_filenames, 1):
+                    file_path = context.plate_path / filename
                     rois = load_rois_from_zip(file_path)
                     if not rois:
                         logger.warning(f"No ROIs found in {file_path.name}")
@@ -253,20 +322,30 @@ class StreamingService:
                     paths.append(filename)
 
                     if i % 5 == 0 or i == total:
-                        status_callback(f"Loading ROIs: {i}/{total} file(s)...")
+                        context.status_callback(f"Loading ROIs: {i}/{total} file(s)...")
 
                 if not data_list:
                     msg = "No ROIs loaded from any selected files."
                     logger.warning(msg)
-                    status_callback(msg)
+                    context.status_callback(msg)
                     return
 
-                self._wait_for_viewer_ready(viewer, viewer_type, len(paths))
+                self._wait_for_viewer_ready(
+                    context.viewer,
+                    context.viewer_type,
+                    len(paths),
+                )
 
                 source = Path(paths[0]).parent.name if paths else "unknown_source"
-                metadata = self._build_metadata(viewer, config, source)
+                metadata = StreamingMetadata.from_viewer_context(
+                    viewer=context.viewer,
+                    config=context.config,
+                    microscope_handler=self.microscope_handler,
+                    plate_path=context.plate_path,
+                    source=source,
+                ).to_backend_kwargs()
 
-                status_callback(
+                context.status_callback(
                     f"Streaming {len(paths)} ROI file(s) to {display_name}..."
                 )
 
@@ -274,13 +353,16 @@ class StreamingService:
                     data_list, paths, backend_enum.value, **metadata
                 )
 
-                msg = f"Streamed {len(paths)} ROI file(s) to {display_name} on port {viewer.port}"
+                msg = (
+                    f"Streamed {len(paths)} ROI file(s) to {display_name} "
+                    f"on port {context.viewer.port}"
+                )
                 logger.info(msg)
-                status_callback(msg)
+                context.status_callback(msg)
 
             except Exception as e:
                 logger.error(f"Failed to stream ROIs to {display_name}: {e}")
-                status_callback(f"Error: {e}")
-                error_callback(str(e))
+                context.status_callback(f"Error: {e}")
+                context.error_callback(str(e))
 
-        spawn_thread_with_context(_worker, name=f"stream_rois_{viewer_type}")
+        spawn_thread_with_context(_worker, name=f"stream_rois_{context.viewer_type}")

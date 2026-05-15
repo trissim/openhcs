@@ -1,10 +1,21 @@
 import asyncio
+from types import SimpleNamespace
 
 import pytest
 
+from openhcs.core.debug import (
+    DebugCommandType,
+    DebugCursor,
+    DebugEvent,
+    DebugEventType,
+    DebugExecutionConfig,
+    DebugProgressEventRequest,
+)
 from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
     BatchWorkflowService,
     CompileJob,
+    DebugSnapshotAvailableNotification,
+    RunSpec,
 )
 from zmqruntime.execution import BatchSubmitWaitEngine
 
@@ -55,6 +66,26 @@ def test_compile_policy_with_engine_collects_artifacts_and_callbacks():
         ("wait", "/tmp/b", "exec-/tmp/b"),
         ("success", "/tmp/b", "exec-/tmp/b"),
     ]
+
+
+def test_build_compile_job_preserves_debug_config_params():
+    debug_config_params = DebugExecutionConfig(
+        debug_session_id="debug-1",
+        command_type=DebugCommandType.STEP,
+    ).to_config_params()
+    run_spec = RunSpec(
+        plate_path="/tmp/plate",
+        definition_pipeline=[],
+        global_config=object(),
+        pipeline_config={"x": 1},
+    )
+
+    job = BatchWorkflowService._build_compile_job_from_run_spec(
+        run_spec=run_spec,
+        config_params=debug_config_params,
+    )
+
+    assert job.config_params == debug_config_params
 
 
 def test_compile_policy_fail_fast_submit_raises():
@@ -130,3 +161,128 @@ def test_compile_policy_non_fail_fast_wait_tracks_error_and_finally():
     assert callbacks["success"] == [("/tmp/a", "exec-/tmp/a")]
     assert callbacks["error"] == [("/tmp/b", "compile failed")]
     assert callbacks["finally"] == ["/tmp/a", "/tmp/b"]
+
+
+class RecordingProgressTracker:
+    def __init__(self) -> None:
+        self.events = []
+
+    def register_event(self, execution_id, event) -> None:
+        self.events.append((execution_id, event))
+
+
+class BatchWorkflowHostHarness:
+    def __init__(self) -> None:
+        self._progress_tracker = RecordingProgressTracker()
+
+
+def test_on_progress_notifies_debug_snapshot_listeners() -> None:
+    service = BatchWorkflowService.__new__(BatchWorkflowService)
+    service.host = BatchWorkflowHostHarness()
+    service.client_service = SimpleNamespace(zmq_client=None)
+    service._debug_snapshot_listeners = []
+    dirty = {"count": 0}
+    notifications: list[DebugSnapshotAvailableNotification] = []
+    service._mark_progress_dirty = lambda: dirty.__setitem__(
+        "count",
+        dirty["count"] + 1,
+    )
+    service.add_debug_snapshot_listener(notifications.append)
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id="step-1",
+        group_key="default",
+        invocation_key="default:0:segment",
+    )
+    event = DebugEvent(
+        event_type=DebugEventType.AFTER_INVOCATION,
+        cursor=cursor,
+        step_name="IdentifyPrimaryObjects",
+        callable_name="IdentifyPrimaryObjects",
+        axis_id="A01",
+    )
+    progress_event = DebugProgressEventRequest(
+        debug_session_id="debug-1",
+        debug_event=event,
+        execution_id="exec-1",
+        plate_id="plate-1",
+        snapshot_id="snapshot-1",
+        snapshot_store_ref="/tmp/debug",
+    ).to_progress_event()
+
+    service._on_progress(progress_event.to_dict())
+
+    assert dirty["count"] == 1
+    assert service.host._progress_tracker.events == [("exec-1", progress_event)]
+    assert len(notifications) == 1
+    assert notifications[0].debug_context.snapshot_id == "snapshot-1"
+    assert notifications[0].debug_context.snapshot_store_ref == "/tmp/debug"
+
+
+def test_on_progress_ignores_debug_events_without_snapshot_id() -> None:
+    service = BatchWorkflowService.__new__(BatchWorkflowService)
+    service.host = BatchWorkflowHostHarness()
+    service.client_service = SimpleNamespace(zmq_client=None)
+    service._debug_snapshot_listeners = []
+    service._mark_progress_dirty = lambda: None
+    notifications: list[DebugSnapshotAvailableNotification] = []
+    service.add_debug_snapshot_listener(notifications.append)
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id="step-1",
+        group_key="default",
+        invocation_key="default:0:segment",
+    )
+    event = DebugEvent(
+        event_type=DebugEventType.BEFORE_INVOCATION,
+        cursor=cursor,
+        step_name="IdentifyPrimaryObjects",
+    )
+    progress_event = DebugProgressEventRequest(
+        debug_session_id="debug-1",
+        debug_event=event,
+        execution_id="exec-1",
+        plate_id="plate-1",
+    ).to_progress_event()
+
+    service._on_progress(progress_event.to_dict())
+
+    assert notifications == []
+
+
+def test_on_progress_attaches_server_read_debug_snapshot() -> None:
+    service = BatchWorkflowService.__new__(BatchWorkflowService)
+    service.host = BatchWorkflowHostHarness()
+    cursor = DebugCursor(
+        step_index=1,
+        step_scope_id="step-1",
+        group_key="default",
+        invocation_key="default:0:segment",
+    )
+    event = DebugEvent(
+        event_type=DebugEventType.AFTER_INVOCATION,
+        cursor=cursor,
+        step_name="IdentifyPrimaryObjects",
+        callable_name="IdentifyPrimaryObjects",
+        axis_id="A01",
+    )
+    snapshot = event.to_snapshot(snapshot_id="snapshot-1")
+    service.client_service = SimpleNamespace(
+        zmq_client=SimpleNamespace(get_debug_snapshot=lambda **_kwargs: snapshot)
+    )
+    service._debug_snapshot_listeners = []
+    service._mark_progress_dirty = lambda: None
+    notifications: list[DebugSnapshotAvailableNotification] = []
+    service.add_debug_snapshot_listener(notifications.append)
+    progress_event = DebugProgressEventRequest(
+        debug_session_id="debug-1",
+        debug_event=event,
+        execution_id="exec-1",
+        plate_id="plate-1",
+        snapshot_id="snapshot-1",
+        snapshot_store_ref="/tmp/debug",
+    ).to_progress_event()
+
+    service._on_progress(progress_event.to_dict())
+
+    assert notifications[0].snapshot == snapshot

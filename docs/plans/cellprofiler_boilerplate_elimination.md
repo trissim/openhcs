@@ -291,6 +291,31 @@ Outputs belong to artifact declaration providers and the artifact graph.
 
 ## Migration Plan
 
+### Progress: 2026-05-14
+
+The first core seam is implemented:
+
+- `InvocationArtifactDeclarations` is now a nominal value object for per-invocation artifact inputs and outputs.
+- `ArtifactDeclarationStepContext` is now a nominal compile-time context for provider-visible step facts: step name, step index, source bindings, processing config, and optional source provenance.
+- `extract_artifact_declarations(...)` accepts an invocation declaration provider and passes normalized invocation items plus `ArtifactDeclarationStepContext` to that provider.
+- `compile_function_pattern(...)` accepts the same provider/context pair and selects `CompiledFunctionInvocation.artifact_input_keys` / `artifact_output_keys` from provider declarations instead of calling the static callable contract selectors directly.
+- The default provider preserves current behavior by projecting from `CallableContract`, so existing OpenHCS and generated CellProfiler pipelines keep working.
+- `PipelinePathPlanner` now carries the same declaration provider into future-input planning, per-step declaration extraction, and compiled function-pattern construction.
+- `PipelinePathPlanner` builds provider contexts from `StepSnapshot`, so provider implementations do not need live step/config probing.
+- `CallableContract` can now carry a typed `ModuleArtifactContract`, and the default declaration provider projects runtime artifact inputs and outputs from that contract when present.
+- Generated CellProfiler runtime callables now attach their `ModuleArtifactContract` through that typed callable metadata path, and generated per-artifact decorators have been removed.
+- The invariant CellProfiler executor/runtime-adapter glue now lives in product runtime code via `cellprofiler_module_callable(...)`; the importer binds that product callable after loading generated direct-function declarations.
+- Absorbed CellProfiler function loading and callable metadata attachment now live in the backend/runtime product layer; generated code no longer imports `require_cellprofiler_function(...)` or calls `attach_callable_contract_metadata(...)` directly.
+- Generated source no longer serializes `CELLPROFILER_MODULE_CONTRACTS` or `ModuleArtifactContract(...)` literals. The importer registers compiled runtime contracts in `CellProfilerModuleContractRegistry`, and product-owned runtime step bindings reference them through `CellProfilerModuleContractBinding`.
+- Materialized generated import modules write/read a product-owned, versioned JSON contract sidecar so registry-backed generated modules remain importable without putting contract literals back into generated source.
+- Generated source no longer calls `cellprofiler_module_callable(...)` directly, imports runtime binding classes, or emits product-owned binding expressions in `FunctionStep.func`.
+- Generated source now declares normal backend callables in `FunctionStep` declarations. Product runtime code applies artifact-aware wrappers after import using `CellProfilerRuntimeStepBinding`, `CellProfilerModuleContractRegistry`, and the generated-module contract sidecar.
+- Generated source no longer emits top-level per-module raw-function or runtime-callable assignments. Callable declarations are direct absorbed backend references, and runtime wrapping is importer-owned.
+- `openhcs.processing.backends.cellprofiler` now owns CellProfiler callable runtime metadata lookup so generated pipeline import logic does not recover module identity through ad hoc attribute probing.
+- Focused tests now prove that the same callable can declare different artifact outputs for different invocation kwargs, and that a typed module artifact contract can drive artifact planning without per-artifact decorators.
+
+The remaining implementation work in this plan is parity hardening and removal of legacy compatibility paths after benchmark stability, not generated boilerplate removal. The generated output target is now represented by direct backend imports plus `FunctionStep` declarations; importer/runtime code owns contracts, wrappers, adapter preparation, registry registration, and materialization sidecar persistence.
+
 1. Add the generic invocation-aware artifact declaration provider abstraction.
 
 The first implementation should preserve old behavior exactly by defaulting to callable metadata. This should be covered by tests on ordinary OpenHCS functions before CellProfiler uses the hook.
