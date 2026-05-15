@@ -870,35 +870,12 @@ class PipelineEditorWidget(AbstractManagerWidget):
         for step in steps:
             scope_id = ScopeTokenService.build_scope_id(plate_path, step)
             step_scope_ids.append(scope_id)
-
-            # Register step with ObjectState if not already registered
-            existing = ObjectStateRegistry.get_by_scope(scope_id)
-            step_state = existing
-            if not step_state:
-                state = ObjectState(
-                    object_instance=step,
-                    scope_id=scope_id,
-                    parent_state=ObjectStateRegistry.get_by_scope(plate_path),
-                )
-                step_state = state
-                to_register.append(step_state)
-
-            # Register function ObjectStates alongside the step
-            func_items = self._normalize_func_items(step.func)
-            for func_obj, kwargs in func_items:
-                func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)
-                if ObjectStateRegistry.get_by_scope(func_scope_id):
-                    continue
-                reserved_param = self._get_reserved_param_name(func_obj)
-                exclude_params = [reserved_param] if reserved_param else None
-                func_state = ObjectState(
-                    object_instance=func_obj,
-                    scope_id=func_scope_id,
-                    parent_state=step_state,
-                    exclude_params=exclude_params,
-                    initial_values=kwargs,
-                )
-                to_register.append(func_state)
+            _step_state, states = self._collect_step_registration_states(
+                step=step,
+                scope_id=scope_id,
+                parent_state=ObjectStateRegistry.get_by_scope(plate_path),
+            )
+            to_register.extend(states)
 
         # Register pipeline + steps + update step_scope_ids
         # NOTE: This is called within an atomic block from the caller (delete/paste/add)
@@ -1525,39 +1502,27 @@ class PipelineEditorWidget(AbstractManagerWidget):
             return param_name
         return None
 
-    def _register_step_state(self, step: FunctionStep) -> None:
-        """Register ObjectState for a step (creates if not exists)."""
-        scope_id = self._build_step_scope_id(step)
+    def _collect_step_registration_states(
+        self,
+        *,
+        step: FunctionStep,
+        scope_id: str,
+        parent_state: ObjectState | None,
+    ) -> tuple[ObjectState, list[ObjectState]]:
+        """Build missing ObjectStates for one step and its function pattern."""
 
-        # Check if already registered
         existing = ObjectStateRegistry.get_by_scope(scope_id)
         step_state = existing
-
-        # Get context (PipelineConfig from orchestrator)
-        orchestrator = self._get_current_orchestrator()
-        context_obj = orchestrator.pipeline_config if orchestrator else None
-
-        parent_state = (
-            ObjectStateRegistry.get_by_scope(str(self.current_plate))
-            if self.current_plate
-            else None
-        )
-
-        # Determine which ObjectStates need registering
         to_register: list[ObjectState] = []
-
         if step_state is None:
             step_state = ObjectState(
                 object_instance=step,
                 scope_id=scope_id,
                 parent_state=parent_state,
-                # func is hidden from ParameterFormManager via _ui_special_fields but included in ObjectState
             )
             to_register.append(step_state)
 
-        # Register function ObjectStates alongside the step (atomic)
-        func_items = self._normalize_func_items(step.func)
-        for func_obj, kwargs in func_items:
+        for func_obj, kwargs in self._normalize_func_items(step.func):
             func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)
             if ObjectStateRegistry.get_by_scope(func_scope_id):
                 continue
@@ -1571,6 +1536,23 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 initial_values=kwargs,
             )
             to_register.append(func_state)
+
+        return step_state, to_register
+
+    def _register_step_state(self, step: FunctionStep) -> None:
+        """Register ObjectState for a step (creates if not exists)."""
+        scope_id = self._build_step_scope_id(step)
+
+        parent_state = (
+            ObjectStateRegistry.get_by_scope(str(self.current_plate))
+            if self.current_plate
+            else None
+        )
+        _step_state, to_register = self._collect_step_registration_states(
+            step=step,
+            scope_id=scope_id,
+            parent_state=parent_state,
+        )
 
         if not to_register:
             return
