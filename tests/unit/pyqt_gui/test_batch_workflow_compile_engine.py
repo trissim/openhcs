@@ -15,6 +15,9 @@ from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
     BatchWorkflowService,
     CompileJob,
     DebugSnapshotAvailableNotification,
+)
+from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
+    PlatePipelineRequestBuilder,
     RunSpec,
 )
 from zmqruntime.execution import BatchSubmitWaitEngine
@@ -80,7 +83,7 @@ def test_build_compile_job_preserves_debug_config_params():
         pipeline_config={"x": 1},
     )
 
-    job = BatchWorkflowService._build_compile_job_from_run_spec(
+    job = PlatePipelineRequestBuilder.compile_job_from_run_spec(
         run_spec=run_spec,
         config_params=debug_config_params,
     )

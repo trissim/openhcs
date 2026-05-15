@@ -22,18 +22,22 @@ Problem:
 
 Target shape:
 
-- `CompileWorkflowService`: compile request construction, compile submission, compile artifact cache.
+- `CompileWorkflowService`: compile submission transport, compile wait behavior, and stable pipeline fingerprints.
+- `PlatePipelineRequestBuilder`: compile/run request construction from host plate state and fail-loud pipeline validation.
 - `ExecutionSubmissionService`: normal run submission and execution-id bookkeeping.
 - `DebugWorkflowService`: debug compile/run, paused-worker commands, artifact export, snapshot listener fanout.
-- `ProgressWorkflowService`: progress registration, snapshot notification parsing, runtime projection invalidation.
+- `DebugProgressNotificationService`: debug snapshot notification parsing and server readback from progress events.
+- `ProgressWorkflowService`: progress registration, runtime projection invalidation, and server status polling.
+- `TerminalExecutionResultBuilder`: host-facing terminal result payload construction.
 - `BatchWorkflowService`: thin public facade that owns sequencing and composes the services.
 
 Migration strategy:
 
-1. Extract pure dataclass request/result records first, without changing behavior.
-2. Move methods by role with tests kept at the facade boundary.
-3. Keep `BatchWorkflowService` public methods stable until GUI callers are migrated.
+1. Extract pure dataclass request/result records first, without changing behavior. Done for compile/run/debug progress/terminal result records.
+2. Move methods by role with tests kept at the facade boundary. In progress: compile transport, plate request building, debug snapshot fanout, and terminal result mapping have moved out of the facade.
+3. Keep `BatchWorkflowService` public methods stable until GUI callers are migrated. Current pass preserves `compile_plates`, `run_plates`, debug run/control/export methods, and debug snapshot listener registration.
 4. Add focused tests for each service before deleting facade internals.
+5. Next extraction should target either normal execution submission or debug compile/run orchestration; do not mix both in one commit.
 
 ## Sequence 2: Normalize Pipeline/Plate GUI Command Families
 

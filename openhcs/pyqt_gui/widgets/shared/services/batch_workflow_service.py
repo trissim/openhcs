@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import threading
 from dataclasses import dataclass
-from typing import Any, Dict, List, Callable, Optional, TypeVar
+from typing import Any, Dict, List, Callable, TypeVar
 
 from PyQt6.QtCore import QEventLoop
 from PyQt6.QtWidgets import QApplication
@@ -20,19 +19,32 @@ from openhcs.core.debug import (
     DebugCommandType,
     DebugExecutionConfig,
     DebugPausedWorkerStatus,
-    DebugProgressContext,
     DebugReplayMode,
-    DebugSnapshot,
 )
 from openhcs.core.progress.projection import (
     ExecutionRuntimeProjection,
     build_execution_runtime_projection_from_registry,
 )
-from openhcs.pyqt_gui.widgets.shared.services.plate_config_resolver import (
-    resolve_pipeline_config_for_plate,
-)
 from openhcs.pyqt_gui.widgets.shared.services.progress_batch_reset import (
     reset_progress_views_for_new_batch,
+)
+from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
+    CompileJob,
+    CompileJobCallback,
+    CompileJobErrorCallback,
+    CompileJobStatusCallback,
+    CompileWorkflowService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
+    DebugProgressNotificationService,
+    DebugSnapshotAvailableNotification,
+)
+from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
+    PlatePipelineRequestBuilder,
+    RunSpec,
+)
+from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
+    TerminalExecutionResultBuilder,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
@@ -64,38 +76,6 @@ from zmqruntime.execution import (
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
-
-
-@dataclass(frozen=True)
-class PlatePipelineRequest:
-    """Shared plate/pipeline/config identity for compile and run requests."""
-
-    plate_path: str
-    definition_pipeline: List
-    pipeline_config: Any
-
-
-@dataclass(frozen=True)
-class CompileJob(PlatePipelineRequest):
-    """Single compile unit for a plate."""
-
-    plate_name: str
-    config_params: dict[str, Any] | None = None
-
-
-@dataclass(frozen=True)
-class CompileRequestResult:
-    """Accepted compile submission returned by the execution server."""
-
-    execution_id: str
-    response: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class RunSpec(PlatePipelineRequest):
-    """Execution request assembled from one plate and its resolved config."""
-
-    global_config: Any
 
 
 @dataclass(frozen=True)
@@ -145,11 +125,6 @@ class DebugCompileArtifactCacheKey:
     replay_mode: DebugReplayMode
 
 
-CompileJobCallback = Callable[[CompileJob, int, int], None] | None
-CompileJobStatusCallback = Callable[[CompileJob, str, int, int], None] | None
-CompileJobErrorCallback = Callable[[CompileJob, Exception, int, int], None] | None
-
-
 @dataclass(frozen=True)
 class ZMQClientConnectionSpec:
     """Connection request for execution-server progress clients."""
@@ -166,17 +141,13 @@ class ZMQClientConnectionSpec:
         )
 
 
-@dataclass(frozen=True)
-class DebugSnapshotAvailableNotification:
-    """GUI-side notification that one debug snapshot can be read."""
-
-    progress_event: ProgressEvent
-    debug_context: DebugProgressContext
-    snapshot: DebugSnapshot | None = None
-
-
 class BatchWorkflowService:
     """Single owner of batch compilation and execution workflow."""
+
+    _compile_workflow: CompileWorkflowService | None = None
+    _debug_progress_notifications: DebugProgressNotificationService | None = None
+    _plate_request_builder: PlatePipelineRequestBuilder | None = None
+    _terminal_result_builder: TerminalExecutionResultBuilder | None = None
 
     def __init__(
         self,
@@ -215,11 +186,15 @@ class BatchWorkflowService:
             )
         )
         self._compile_batch_engine = BatchSubmitWaitEngine[CompileJob]()
+        self._compile_workflow = CompileWorkflowService(
+            global_config_provider=lambda: self.host.global_config,
+            run_blocking=self._run_blocking,
+        )
         self._debug_compile_artifacts: dict[DebugCompileArtifactCacheKey, str] = {}
+        self._plate_request_builder = PlatePipelineRequestBuilder(self.host)
+        self._terminal_result_builder = TerminalExecutionResultBuilder()
         self._execution_status_poller = ExecutionStatusPoller()
-        self._debug_snapshot_listeners: list[
-            Callable[[DebugSnapshotAvailableNotification], None]
-        ] = []
+        self._debug_progress_notifications = DebugProgressNotificationService()
         self._server_kill_service = ServerKillService()
         self._server_status_presenter = ExecutionServerStatusPresenter()
         self._registry_listener = self._on_registry_event
@@ -272,7 +247,9 @@ class BatchWorkflowService:
                 plate_path = str(plate_data["path"])
                 try:
                     compile_jobs.append(
-                        self._build_compile_job_from_plate_data(plate_data)
+                        self._plate_pipeline_request_builder().build_compile_job_from_plate_data(
+                            plate_data
+                        )
                     )
                 except Exception as error:
                     self._handle_compile_failure(plate_data, plate_path, error)
@@ -348,19 +325,7 @@ class BatchWorkflowService:
     ) -> None:
         """Subscribe to debug snapshot availability announced through progress."""
 
-        self._debug_snapshot_listeners.append(listener)
-
-    def remove_debug_snapshot_listener(
-        self,
-        listener: Callable[[DebugSnapshotAvailableNotification], None],
-    ) -> bool:
-        """Remove one debug snapshot listener if it is registered."""
-
-        try:
-            self._debug_snapshot_listeners.remove(listener)
-        except ValueError:
-            return False
-        return True
+        self._debug_progress_notification_service().add_listener(listener)
 
     async def run_plates(self, ready_items: List[Dict]) -> None:
         """Run selected plates using compile-all then execute-all workflow."""
@@ -397,7 +362,10 @@ class BatchWorkflowService:
             self.host.update_button_states()
             self.host.update_item_list()
 
-            run_specs = [self._build_run_spec(plate_path) for plate_path in plate_paths]
+            run_specs = [
+                self._plate_pipeline_request_builder().build_run_spec(plate_path)
+                for plate_path in plate_paths
+            ]
             compile_artifacts = await self._compile_plates_before_execution(
                 run_specs=run_specs,
                 loop=loop,
@@ -455,7 +423,7 @@ class BatchWorkflowService:
                 start_after_invocation_key=start_after_invocation_key,
                 replay_mode=replay_mode,
             )
-            run_spec = self._build_run_spec(plate_path)
+            run_spec = self._plate_pipeline_request_builder().build_run_spec(plate_path)
             compile_artifact_id = await self._debug_compile_artifact_id(
                 run_spec=run_spec,
                 debug_request=debug_request,
@@ -536,7 +504,7 @@ class BatchWorkflowService:
     ) -> str:
         cache_key = DebugCompileArtifactCacheKey(
             plate_path=run_spec.plate_path,
-            pipeline_fingerprint=self._pipeline_fingerprint(
+            pipeline_fingerprint=self._compile_workflow_service().pipeline_fingerprint(
                 run_spec.definition_pipeline
             ),
             selected_source_group=debug_request.selected_source_group,
@@ -577,7 +545,7 @@ class BatchWorkflowService:
         zmq_client = self.client_service.zmq_client
         compile_config_params = config_params_by_plate or {}
         compile_jobs = [
-            self._build_compile_job_from_run_spec(
+            PlatePipelineRequestBuilder.compile_job_from_run_spec(
                 run_spec,
                 config_params=compile_config_params.get(run_spec.plate_path),
             )
@@ -630,57 +598,6 @@ class BatchWorkflowService:
             progress_callback=self._on_progress,
         ).connect(self.client_service)
 
-    def _build_compile_job_from_plate_data(
-        self, plate_data: Dict[str, Any]
-    ) -> CompileJob:
-        plate_path = str(plate_data["path"])
-        definition_pipeline = self.host.get_pipeline_definition(plate_path)
-        if not definition_pipeline:
-            logger.warning(
-                "No pipeline defined for %s, using empty pipeline",
-                plate_data["name"],
-            )
-            definition_pipeline = []
-
-        self._validate_pipeline_steps(definition_pipeline)
-        pipeline_config = resolve_pipeline_config_for_plate(self.host, plate_path)
-        logger.info(
-            "Compile snapshot: plate=%s steps=%d fingerprint=%s step_names=%s",
-            plate_path,
-            len(definition_pipeline),
-            self._pipeline_fingerprint(definition_pipeline),
-            self._pipeline_step_names(definition_pipeline),
-        )
-        return CompileJob(
-            plate_path=plate_path,
-            plate_name=str(plate_data["name"]),
-            definition_pipeline=definition_pipeline,
-            pipeline_config=pipeline_config,
-        )
-
-    @staticmethod
-    def _build_compile_job_from_run_spec(
-        run_spec: RunSpec,
-        *,
-        config_params: dict[str, Any] | None = None,
-    ) -> CompileJob:
-        plate_path = run_spec.plate_path
-        definition_pipeline = run_spec.definition_pipeline
-        logger.info(
-            "Compile-before-run snapshot: plate=%s steps=%d fingerprint=%s step_names=%s",
-            plate_path,
-            len(definition_pipeline),
-            BatchWorkflowService._pipeline_fingerprint(definition_pipeline),
-            BatchWorkflowService._pipeline_step_names(definition_pipeline),
-        )
-        return CompileJob(
-            plate_path=plate_path,
-            plate_name=plate_path,
-            definition_pipeline=definition_pipeline,
-            pipeline_config=run_spec.pipeline_config,
-            config_params=config_params,
-        )
-
     def _make_compile_policy(
         self,
         *,
@@ -717,24 +634,20 @@ class BatchWorkflowService:
         )
 
     async def _submit_compile_job(self, *, job: CompileJob, zmq_client, loop) -> str:
-        response = await self._submit_compile_request(
+        return await self._compile_workflow_service().submit_compile_job(
+            job=job,
             zmq_client=zmq_client,
             loop=loop,
-            plate_path=job.plate_path,
-            definition_pipeline=job.definition_pipeline,
-            pipeline_config=job.pipeline_config,
-            config_params=job.config_params,
         )
-        return response.execution_id
 
     async def _wait_compile_job(
         self, *, submission_id: str, job: CompileJob, zmq_client, loop
     ) -> None:
-        await self._wait_for_compile_completion(
+        await self._compile_workflow_service().wait_compile_job(
+            submission_id=submission_id,
+            job=job,
             zmq_client=zmq_client,
             loop=loop,
-            execution_id=submission_id,
-            plate_path=job.plate_path,
         )
 
     def _mark_execution_compile_failed(self, plate_path: str, error: Exception) -> None:
@@ -750,83 +663,6 @@ class BatchWorkflowService:
         self.host.emit_error(f"Compile failed for {plate_path}: {error}")
         self.host.update_item_list()
 
-    async def _submit_compile_request(
-        self,
-        *,
-        zmq_client,
-        loop,
-        plate_path: str,
-        definition_pipeline: List,
-        pipeline_config,
-        config_params: dict[str, Any] | None = None,
-    ) -> CompileRequestResult:
-        def _submit_compile() -> Dict[str, Any]:
-            logger.info(
-                "Submit compile: plate=%s steps=%d fingerprint=%s",
-                plate_path,
-                len(definition_pipeline),
-                self._pipeline_fingerprint(definition_pipeline),
-            )
-            return zmq_client.submit_compile(
-                plate_id=plate_path,
-                pipeline_steps=definition_pipeline,
-                global_config=self.host.global_config,
-                pipeline_config=pipeline_config,
-                config_params=config_params,
-            )
-
-        response = await self._run_blocking(loop, _submit_compile)
-        if response.get("status") != "accepted":
-            raise RuntimeError(
-                f"Compile submission failed for {plate_path}: "
-                f"{response.get('message', 'Unknown error')}"
-            )
-        execution_id = response.get("execution_id")
-        if not execution_id:
-            raise RuntimeError(
-                f"Compile submission missing execution_id for {plate_path}"
-            )
-        return CompileRequestResult(
-            execution_id=str(execution_id),
-            response=response,
-        )
-
-    async def _wait_for_compile_completion(
-        self,
-        *,
-        zmq_client,
-        loop,
-        execution_id: str,
-        plate_path: str,
-    ) -> None:
-        wait_result = await self._run_blocking(
-            loop,
-            lambda: zmq_client.wait_for_completion(execution_id),
-        )
-        if wait_result.get("status") != "complete":
-            raise RuntimeError(
-                f"Compilation failed for {plate_path}: "
-                f"{wait_result.get('message', 'Unknown error')}"
-            )
-
-    def _build_run_spec(self, plate_path: str) -> RunSpec:
-        plate_path = str(plate_path)
-        definition_pipeline = self.host.get_pipeline_definition(plate_path)
-        if not definition_pipeline:
-            logger.warning(
-                "No pipeline defined for %s, using empty pipeline",
-                plate_path,
-            )
-            definition_pipeline = []
-        self._validate_pipeline_steps(definition_pipeline)
-        pipeline_config = resolve_pipeline_config_for_plate(self.host, plate_path)
-        return RunSpec(
-            plate_path=plate_path,
-            definition_pipeline=definition_pipeline,
-            global_config=self.host.global_config,
-            pipeline_config=pipeline_config,
-        )
-
     async def _submit_plate(
         self, run_spec: RunSpec, compile_artifact_id: str, loop
     ) -> None:
@@ -840,7 +676,7 @@ class BatchWorkflowService:
             plate_path,
             compile_artifact_id,
             len(definition_pipeline),
-            self._pipeline_fingerprint(definition_pipeline),
+            self._compile_workflow_service().pipeline_fingerprint(definition_pipeline),
         )
 
         def _submit() -> Dict[str, Any]:
@@ -898,7 +734,7 @@ class BatchWorkflowService:
             plate_path,
             compile_artifact_id,
             len(definition_pipeline),
-            self._pipeline_fingerprint(definition_pipeline),
+            self._compile_workflow_service().pipeline_fingerprint(definition_pipeline),
         )
 
         def submit_debug() -> Dict[str, Any]:
@@ -971,21 +807,36 @@ class BatchWorkflowService:
     async def _run_blocking(loop, func: Callable[[], T]) -> T:
         return await loop.run_in_executor(None, func)
 
-    @staticmethod
-    def _pipeline_fingerprint(definition_pipeline: List) -> str:
-        import openhcs.serialization.pycodify_formatters  # noqa: F401
-        from pycodify import Assignment, generate_python_source
+    def _compile_workflow_service(self) -> CompileWorkflowService:
+        workflow = self._compile_workflow
+        if workflow is None:
+            workflow = CompileWorkflowService(
+                global_config_provider=lambda: self.host.global_config,
+                run_blocking=self._run_blocking,
+            )
+            self._compile_workflow = workflow
+        return workflow
 
-        pipeline_code = generate_python_source(
-            Assignment("pipeline_steps", definition_pipeline),
-            header="# Edit this pipeline and save to apply changes",
-            clean_mode=True,
-        )
-        return hashlib.sha256(pipeline_code.encode("utf-8")).hexdigest()[:12]
+    def _debug_progress_notification_service(self) -> DebugProgressNotificationService:
+        service = self._debug_progress_notifications
+        if service is None:
+            service = DebugProgressNotificationService()
+            self._debug_progress_notifications = service
+        return service
 
-    @staticmethod
-    def _pipeline_step_names(definition_pipeline: List) -> List[str]:
-        return [str(getattr(step, "name", "<unnamed>")) for step in definition_pipeline]
+    def _plate_pipeline_request_builder(self) -> PlatePipelineRequestBuilder:
+        builder = self._plate_request_builder
+        if builder is None:
+            builder = PlatePipelineRequestBuilder(self.host)
+            self._plate_request_builder = builder
+        return builder
+
+    def _terminal_result_builder_service(self) -> TerminalExecutionResultBuilder:
+        builder = self._terminal_result_builder
+        if builder is None:
+            builder = TerminalExecutionResultBuilder()
+            self._terminal_result_builder = builder
+        return builder
 
     @staticmethod
     def _flush_pending_ui_edits() -> None:
@@ -1028,7 +879,7 @@ class BatchWorkflowService:
             self.host.execution_runtime.mark_terminal(
                 plate_path, parsed_terminal_status
             )
-            result = self._build_terminal_result(
+            result = self._terminal_result_builder_service().build(
                 terminal_status=parsed_terminal_status.value,
                 execution_id=_execution_id,
                 execution_payload=execution_payload,
@@ -1091,58 +942,6 @@ class BatchWorkflowService:
 
         threading.Thread(target=poll_completion, daemon=True).start()
 
-    @staticmethod
-    def _build_terminal_result(
-        *,
-        terminal_status: str,
-        execution_id: str,
-        execution_payload: Dict[str, Any],
-    ) -> Dict[str, Any]:
-        status = parse_terminal_status(terminal_status)
-        builder = TERMINAL_RESULT_BUILDERS[status]
-        return builder(execution_id, execution_payload)
-
-    @staticmethod
-    def _build_complete_terminal_result(
-        execution_id: str, execution_payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        results_summary = execution_payload.get("results_summary", {}) or {}
-        output_plate_root = None
-        auto_add_output_plate = None
-        if isinstance(results_summary, dict):
-            output_plate_root = results_summary.get("output_plate_root")
-            auto_add_output_plate = results_summary.get(
-                "auto_add_output_plate_to_plate_manager"
-            )
-        return {
-            "status": TerminalExecutionStatus.COMPLETE.value,
-            "execution_id": execution_id,
-            "results": results_summary,
-            "output_plate_root": output_plate_root,
-            "auto_add_output_plate_to_plate_manager": auto_add_output_plate,
-        }
-
-    @staticmethod
-    def _build_failed_terminal_result(
-        execution_id: str, execution_payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        return {
-            "status": TerminalExecutionStatus.FAILED.value,
-            "execution_id": execution_id,
-            "message": execution_payload.get("error", "Unknown error"),
-            "traceback": execution_payload.get("traceback", ""),
-        }
-
-    @staticmethod
-    def _build_cancelled_terminal_result(
-        execution_id: str, _execution_payload: Dict[str, Any]
-    ) -> Dict[str, Any]:
-        return {
-            "status": TerminalExecutionStatus.CANCELLED.value,
-            "execution_id": execution_id,
-            "message": "Execution was cancelled",
-        }
-
     def _coalesced_progress_update(self) -> None:
         if self.client_service.zmq_client is not None:
             self._server_info_poller.tick()
@@ -1161,49 +960,14 @@ class BatchWorkflowService:
         try:
             event = ProgressEvent.from_dict(message)
             self.host._progress_tracker.register_event(event.execution_id, event)
-            self._notify_debug_snapshot_available(event)
+            self._debug_progress_notification_service().notify_from_progress_event(
+                event,
+                zmq_client=self.client_service.zmq_client,
+            )
         except Exception as error:
             logger.warning("Failed to parse/register progress event: %s", error)
         finally:
             self._mark_progress_dirty()
-
-    def _notify_debug_snapshot_available(self, event: ProgressEvent) -> None:
-        if not event.context:
-            return
-        try:
-            debug_context = DebugProgressContext.from_progress_context(event.context)
-        except (KeyError, TypeError, ValueError):
-            return
-        if debug_context.snapshot_id is None:
-            return
-        notification = DebugSnapshotAvailableNotification(
-            progress_event=event,
-            debug_context=debug_context,
-            snapshot=self._read_debug_snapshot_from_server(debug_context),
-        )
-        for listener in tuple(self._debug_snapshot_listeners):
-            listener(notification)
-
-    def _read_debug_snapshot_from_server(
-        self,
-        debug_context: DebugProgressContext,
-    ) -> DebugSnapshot | None:
-        if (
-            debug_context.snapshot_store_ref is None
-            or debug_context.snapshot_id is None
-            or self.client_service.zmq_client is None
-        ):
-            return None
-        try:
-            return self.client_service.zmq_client.get_debug_snapshot(
-                debug_session_id=debug_context.debug_session_id,
-                snapshot_id=debug_context.snapshot_id,
-                snapshot_store_ref=debug_context.snapshot_store_ref,
-                snapshot_store_backend=debug_context.snapshot_store_backend,
-            )
-        except Exception as error:
-            logger.debug("Server debug snapshot readback failed: %s", error)
-            return None
 
     def _on_registry_event(self, _execution_id: str, _event: ProgressEvent) -> None:
         """Mark projection dirty when shared registry changes from any producer."""
@@ -1317,14 +1081,6 @@ class BatchWorkflowService:
         self.host.update_item_list()
         self.host.update_button_states()
 
-    def _validate_pipeline_steps(self, pipeline: List) -> None:
-        for step in pipeline:
-            if step.func is None:
-                raise AttributeError(
-                    f"Step '{step.name}' has func=None. "
-                    "This usually means the pipeline was loaded from a compiled state."
-                )
-
     @staticmethod
     def _set_orchestrator_state(plate_path: str, state: OrchestratorState) -> None:
         from objectstate import ObjectStateRegistry
@@ -1352,10 +1108,3 @@ class BatchWorkflowService:
         )
         self._server_info_poller.reset()
         self._mark_progress_dirty()
-
-
-TERMINAL_RESULT_BUILDERS = {
-    TerminalExecutionStatus.COMPLETE: BatchWorkflowService._build_complete_terminal_result,
-    TerminalExecutionStatus.FAILED: BatchWorkflowService._build_failed_terminal_result,
-    TerminalExecutionStatus.CANCELLED: BatchWorkflowService._build_cancelled_terminal_result,
-}
