@@ -90,10 +90,11 @@ Target shape:
 
 Migration strategy:
 
-1. Add a compatibility-path inventory with tests proving which paths are still exercised.
-2. Delete one legacy path at a time after parity benchmarks and generated-pipeline tests pass.
-3. Keep sidecar schema versioning fail-loud.
-4. Re-run official30 parity after each deletion batch.
+1. Add a compatibility-path inventory with tests proving which paths are still exercised. Done for the generated runtime import/registration shell.
+2. Delete one legacy path at a time after parity benchmarks and generated-pipeline tests pass. Done for the trivial `.cppipe` generation facade and generated function-registration facade; benchmark conversion now calls `CPPipePipelineGenerationRequest` directly.
+3. Keep sidecar schema versioning fail-loud. Done, with contract/spec/materialization sidecar codecs split under the versioned sidecar facade.
+4. Re-run official30 parity after each deletion batch. Still required before deleting deeper CP runtime compatibility paths.
+5. Remaining Sequence 3 work is the broad `PipelineGenerator` stage split and any deeper CP runtime compatibility deletion. Do not mix that with path-planner decomposition.
 
 ## Sequence 4: Tighten Artifact/Invocation Planning Boundaries
 
@@ -119,9 +120,11 @@ Target shape:
 
 Migration strategy:
 
-1. Add provider-level tests for native functions, CP module contracts, grouped function patterns, and disabled invocations.
-2. Remove direct callable-contract artifact extraction from path-planner internals.
-3. Keep backwards-compatible decorators as metadata producers, not planner logic.
+1. Add provider-level tests for native functions, CP module contracts, grouped function patterns, and disabled invocations. Existing `tests/unit/test_function_patterns.py` covers these seams and was rerun after each cleanup.
+2. Remove direct callable-contract artifact extraction from path-planner internals. Current path planning consumes `extract_artifact_declarations(...)` through the invocation declaration provider; callable-contract projection remains the default provider.
+3. Keep backwards-compatible decorators as metadata producers, not planner logic. Preserved.
+4. Done in this pass: artifact spec merging moved into `ArtifactSpecAccumulator`, group-key de-duplication moved onto `ArtifactGraph`, compiled invocations now extend normalized invocation items, function-pattern group lookup/kwarg merge are nominalized, and `PathPlanner` construction uses `PathPlanningContext`.
+5. Remaining Sequence 4 work is the broad `PathPlanner` staged subsystem split. The touched artifact/function-pattern/path-planner scan now reports only that broad class decomposition.
 
 ## Sequence 5: Complete Debug UX Integration
 
@@ -167,9 +170,12 @@ Every sequence should preserve:
 The current checkpoint includes:
 
 - Invocation-aware artifact declarations and module artifact contracts.
-- Generated CellProfiler boilerplate elimination through runtime-owned wrappers and sidecars.
+- Generated CellProfiler boilerplate elimination through runtime-owned wrappers and sidecars, with generated import/registration compatibility facades reduced to nominal runtime-module authorities.
+- Product-owned direct generated-pipeline execution, with benchmark timing kept as a thin facade.
+- Artifact planning merge/group-key behavior owned by nominal artifact planning authorities.
 - Source-binding inline editor and preview model.
 - Debug snapshot store, ZMQ read/export controls, paused-worker command path, warm artifact replay validation.
 - Debug/source-binding implementation files cleaned to advisor zero-findings for the targeted scan.
+- Current remaining advisor findings are broad staged-orchestration splits: `PipelineGenerator`, `PathPlanner`, and older large GUI widgets.
 
 Do not start broad GUI class decomposition in the same commit as benchmark/runtime parity changes. Keep each sequence independently revertible.
