@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import threading
 from dataclasses import dataclass
 from typing import Any, Dict, List, Callable, TypeVar
 
@@ -52,13 +51,11 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter 
     ExecutionServerStatusPresenter,
 )
 from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
-    STOP_PENDING_MANAGER_STATES,
     ManagerExecutionState,
     TerminalExecutionStatus,
 )
-from openhcs.pyqt_gui.widgets.shared.server_browser import (
-    ServerKillPlan,
-    ServerKillService,
+from openhcs.pyqt_gui.widgets.shared.services.execution_control_service import (
+    ExecutionControlService,
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
 from pyqt_reactive.services import (
@@ -101,6 +98,7 @@ class BatchWorkflowService:
     _execution_submission: ExecutionSubmissionService | None = None
     _debug_workflow: DebugWorkflowService | None = None
     _progress_workflow: ProgressWorkflowService | None = None
+    _execution_control: ExecutionControlService | None = None
 
     def __init__(
         self,
@@ -127,17 +125,17 @@ class BatchWorkflowService:
         self._plate_request_builder = PlatePipelineRequestBuilder(self.host)
         self._terminal_result_builder = TerminalExecutionResultBuilder()
         self._execution_status_poller = ExecutionStatusPoller()
+        self._execution_control = self._build_execution_control_service()
         self._execution_submission = ExecutionSubmissionService(
             host=self.host,
             client_service=self.client_service,
             run_blocking=self._run_blocking,
             completion_poller=self._execution_status_poller,
             terminal_result_builder=self._terminal_result_builder,
-            on_completion_update=self._check_all_completed,
+            on_completion_update=self._execution_control.check_all_completed,
         )
         self._debug_workflow = self._build_debug_workflow_service()
         self._debug_progress_notifications = DebugProgressNotificationService()
-        self._server_kill_service = ServerKillService()
         self._server_status_presenter = ExecutionServerStatusPresenter()
         self._progress_workflow = self._build_progress_workflow_service()
         self._registry_listener = self._progress_workflow.mark_dirty
@@ -323,7 +321,7 @@ class BatchWorkflowService:
         except Exception as error:
             logger.error("Failed to execute plates via ZMQ: %s", error, exc_info=True)
             self.host.emit_error(f"Failed to execute: {error}")
-            await self._handle_execution_failure(loop)
+            await self._execution_control_service().handle_execution_failure(loop)
 
     async def run_debug_plate(
         self,
@@ -379,7 +377,7 @@ class BatchWorkflowService:
         except Exception as error:
             logger.error("Failed to execute debug run via ZMQ: %s", error, exc_info=True)
             self.host.emit_error(f"Failed to execute debug run: {error}")
-            await self._handle_execution_failure(loop)
+            await self._execution_control_service().handle_execution_failure(loop)
 
     async def send_debug_worker_command(
         self,
@@ -550,33 +548,6 @@ class BatchWorkflowService:
         self.host.emit_error(f"Compile failed for {plate_path}: {error}")
         self.host.update_item_list()
 
-    async def _handle_execution_failure(self, loop) -> None:
-        from objectstate import ObjectStateRegistry
-
-        for plate_path in tuple(self.host.execution_runtime.active_plates):
-            self.host.execution_runtime.mark_terminal(
-                plate_path, TerminalExecutionStatus.FAILED
-            )
-            orchestrator = ObjectStateRegistry.get_object(plate_path)
-            if orchestrator is not None:
-                orchestrator._state = OrchestratorState.EXEC_FAILED
-                self.host.emit_orchestrator_state(
-                    plate_path, OrchestratorState.EXEC_FAILED.value
-                )
-
-        self.host.execution_state = ManagerExecutionState.IDLE
-        await self._disconnect_client(loop)
-        self.host.current_execution_id = None
-        self._refresh_host_execution_ui()
-
-    async def _disconnect_client(self, loop) -> None:
-        if self.client_service.zmq_client is None:
-            return
-        try:
-            await self.client_service.disconnect()
-        except Exception as error:
-            logger.warning("Error disconnecting old client: %s", error)
-
     @staticmethod
     async def _run_blocking(loop, func: Callable[[], T]) -> T:
         return await loop.run_in_executor(None, func)
@@ -621,10 +592,24 @@ class BatchWorkflowService:
                 run_blocking=self._run_blocking,
                 completion_poller=self._execution_status_poller,
                 terminal_result_builder=self._terminal_result_builder_service(),
-                on_completion_update=self._check_all_completed,
+                on_completion_update=self._execution_control_service().check_all_completed,
             )
             self._execution_submission = service
         return service
+
+    def _execution_control_service(self) -> ExecutionControlService:
+        service = self._execution_control
+        if service is None:
+            service = self._build_execution_control_service()
+            self._execution_control = service
+        return service
+
+    def _build_execution_control_service(self) -> ExecutionControlService:
+        return ExecutionControlService(
+            host=self.host,
+            client_service=self.client_service,
+            port=self.port,
+        )
 
     def _debug_workflow_service(self) -> DebugWorkflowService:
         service = self._debug_workflow
@@ -669,89 +654,14 @@ class BatchWorkflowService:
             focus_widget.clearFocus()
         app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents)
 
-    def _check_all_completed(self) -> None:
-        if self.host.execution_state not in (
-            ManagerExecutionState.RUNNING,
-            *STOP_PENDING_MANAGER_STATES,
-        ):
-            return
-        if not self.host.execution_runtime.all_batch_terminal():
-            return
-        completed, failed = self.host.execution_runtime.terminal_counts()
-        self.host.notify_all_plates_completed(completed, failed)
-
     def stop_execution(self, force: bool = False) -> None:
-        port = self.port
-
-        def kill_server() -> None:
-            try:
-                # Force-kill is best-effort: the server may already be gone if a graceful
-                # stop just completed, so treat "not found" style outcomes as success.
-                plan = ServerKillPlan(
-                    graceful=not force,
-                    strict_failures=not force,
-                    emit_signal_on_failure=force,
-                    success_message=f"Stopped execution server on port {port}",
-                )
-                success, message = self._server_kill_service.kill_ports(
-                    ports=[port],
-                    plan=plan,
-                    on_server_killed=lambda _port: self._emit_cancelled_for_all_plates(),
-                    log_info=logger.info,
-                    log_warning=logger.warning,
-                    log_error=logger.error,
-                )
-                if not success:
-                    if self.host.execution_state.suppresses_stop_failure:
-                        logger.info(
-                            "Suppressing stale stop failure while stop is already terminalizing: %s",
-                            message,
-                        )
-                        self._emit_cancelled_for_all_plates()
-                        return
-                    self.host.emit_error(message)
-                    return
-            except Exception as error:
-                logger.error("Error stopping server: %s", error)
-                self.host.emit_error(f"Error stopping execution: {error}")
-
-        threading.Thread(target=kill_server, daemon=True).start()
-
-        if force:
-            # Keep UI responsive on force-kill: mark plates cancelled immediately on the
-            # caller thread while kill work continues in the background.
-            self._emit_cancelled_for_all_plates()
-            self.disconnect_async()
-
-    def _emit_cancelled_for_all_plates(self) -> None:
-        for plate_path in self.host.execution_runtime.cancellable_plates():
-            self.host.emit_execution_complete(
-                {"status": TerminalExecutionStatus.CANCELLED.value}, plate_path
-            )
+        self._execution_control_service().stop_execution(force=force)
 
     def disconnect(self) -> None:
-        if self.client_service.zmq_client is None:
-            return
-        try:
-            self.client_service.disconnect_sync()
-        except Exception as error:
-            logger.warning("Error disconnecting ZMQ client: %s", error)
+        self._execution_control_service().disconnect()
 
     def disconnect_async(self) -> None:
-        """Disconnect client on a background thread to avoid UI stalls."""
-
-        def _disconnect() -> None:
-            self.disconnect()
-
-        threading.Thread(target=_disconnect, daemon=True).start()
-
-    def _refresh_host_execution_ui(self) -> None:
-        refresh_fn = getattr(self.host, "refresh_execution_ui", None)
-        if callable(refresh_fn):
-            refresh_fn()
-            return
-        self.host.update_item_list()
-        self.host.update_button_states()
+        self._execution_control_service().disconnect_async()
 
     @staticmethod
     def _set_orchestrator_state(plate_path: str, state: OrchestratorState) -> None:

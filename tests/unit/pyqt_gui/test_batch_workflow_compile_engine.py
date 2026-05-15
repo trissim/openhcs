@@ -22,6 +22,13 @@ from openhcs.pyqt_gui.widgets.shared.services.debug_progress_service import (
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
 )
+from openhcs.pyqt_gui.widgets.shared.services.execution_control_service import (
+    ExecutionControlService,
+)
+from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
+    ManagerExecutionState,
+    TerminalExecutionStatus,
+)
 from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder import (
     PlatePipelineRequestBuilder,
     RunSpec,
@@ -174,6 +181,106 @@ def test_compile_policy_non_fail_fast_wait_tracks_error_and_finally():
     assert callbacks["success"] == [("/tmp/a", "exec-/tmp/a")]
     assert callbacks["error"] == [("/tmp/b", "compile failed")]
     assert callbacks["finally"] == ["/tmp/a", "/tmp/b"]
+
+
+class ExecutionRuntimeHarness:
+    def __init__(self) -> None:
+        self.active_plates = ["/tmp/a"]
+        self.marked_terminal = []
+        self._cancellable_plates = ["/tmp/a", "/tmp/b"]
+
+    def all_batch_terminal(self) -> bool:
+        return True
+
+    def terminal_counts(self) -> tuple[int, int]:
+        return (2, 1)
+
+    def mark_terminal(self, plate_path: str, status: TerminalExecutionStatus) -> None:
+        self.marked_terminal.append((plate_path, status))
+
+    def cancellable_plates(self) -> list[str]:
+        return list(self._cancellable_plates)
+
+
+class ExecutionControlHostHarness:
+    def __init__(self) -> None:
+        self.execution_state = ManagerExecutionState.RUNNING
+        self.execution_runtime = ExecutionRuntimeHarness()
+        self.completed_notifications = []
+        self.execution_completions = []
+        self.current_execution_id = "exec-1"
+        self.item_updates = 0
+        self.button_updates = 0
+
+    def notify_all_plates_completed(self, completed: int, failed: int) -> None:
+        self.completed_notifications.append((completed, failed))
+
+    def emit_execution_complete(self, result: dict, plate_path: str) -> None:
+        self.execution_completions.append((plate_path, result))
+
+    def update_item_list(self) -> None:
+        self.item_updates += 1
+
+    def update_button_states(self) -> None:
+        self.button_updates += 1
+
+
+class ClientServiceHarness:
+    def __init__(self) -> None:
+        self.zmq_client = object()
+        self.disconnect_sync_calls = 0
+        self.disconnect_calls = 0
+
+    def disconnect_sync(self) -> None:
+        self.disconnect_sync_calls += 1
+        self.zmq_client = None
+
+    async def disconnect(self) -> None:
+        self.disconnect_calls += 1
+        self.zmq_client = None
+
+
+def test_execution_control_notifies_when_batch_terminal() -> None:
+    host = ExecutionControlHostHarness()
+    service = ExecutionControlService(
+        host=host,
+        client_service=ClientServiceHarness(),
+        port=7777,
+    )
+
+    service.check_all_completed()
+
+    assert host.completed_notifications == [(2, 1)]
+
+
+def test_execution_control_emits_cancelled_for_cancellable_plates() -> None:
+    host = ExecutionControlHostHarness()
+    service = ExecutionControlService(
+        host=host,
+        client_service=ClientServiceHarness(),
+        port=7777,
+    )
+
+    service.emit_cancelled_for_all_plates()
+
+    assert host.execution_completions == [
+        ("/tmp/a", {"status": "cancelled"}),
+        ("/tmp/b", {"status": "cancelled"}),
+    ]
+
+
+def test_execution_control_disconnect_uses_client_service() -> None:
+    client_service = ClientServiceHarness()
+    service = ExecutionControlService(
+        host=ExecutionControlHostHarness(),
+        client_service=client_service,
+        port=7777,
+    )
+
+    service.disconnect()
+
+    assert client_service.disconnect_sync_calls == 1
+    assert client_service.zmq_client is None
 
 
 class RecordingProgressTracker:
