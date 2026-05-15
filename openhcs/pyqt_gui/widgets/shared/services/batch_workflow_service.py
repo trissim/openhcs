@@ -46,6 +46,9 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
 from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
     TerminalExecutionResultBuilder,
 )
+from openhcs.pyqt_gui.widgets.shared.services.execution_submission_service import (
+    ExecutionSubmissionService,
+)
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
 )
@@ -53,7 +56,6 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
     STOP_PENDING_MANAGER_STATES,
     ManagerExecutionState,
     TerminalExecutionStatus,
-    parse_terminal_status,
 )
 from openhcs.pyqt_gui.widgets.shared.server_browser import (
     ServerKillPlan,
@@ -71,7 +73,6 @@ from zmqruntime.execution import (
     BatchSubmitWaitEngine,
     CallbackBatchSubmitWaitPolicy,
     ExecutionStatusPoller,
-    CallbackExecutionStatusPollPolicy,
 )
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,7 @@ class BatchWorkflowService:
     _debug_progress_notifications: DebugProgressNotificationService | None = None
     _plate_request_builder: PlatePipelineRequestBuilder | None = None
     _terminal_result_builder: TerminalExecutionResultBuilder | None = None
+    _execution_submission: ExecutionSubmissionService | None = None
 
     def __init__(
         self,
@@ -194,6 +196,14 @@ class BatchWorkflowService:
         self._plate_request_builder = PlatePipelineRequestBuilder(self.host)
         self._terminal_result_builder = TerminalExecutionResultBuilder()
         self._execution_status_poller = ExecutionStatusPoller()
+        self._execution_submission = ExecutionSubmissionService(
+            host=self.host,
+            client_service=self.client_service,
+            run_blocking=self._run_blocking,
+            completion_poller=self._execution_status_poller,
+            terminal_result_builder=self._terminal_result_builder,
+            on_completion_update=self._check_all_completed,
+        )
         self._debug_progress_notifications = DebugProgressNotificationService()
         self._server_kill_service = ServerKillService()
         self._server_status_presenter = ExecutionServerStatusPresenter()
@@ -375,7 +385,7 @@ class BatchWorkflowService:
                 f"Compilation complete. Submitting {len(run_specs)} plate(s) for execution..."
             )
             for run_spec in run_specs:
-                await self._submit_plate(
+                await self._execution_submission_service().submit_plate(
                     run_spec=run_spec,
                     compile_artifact_id=compile_artifacts[run_spec.plate_path],
                     loop=loop,
@@ -663,60 +673,6 @@ class BatchWorkflowService:
         self.host.emit_error(f"Compile failed for {plate_path}: {error}")
         self.host.update_item_list()
 
-    async def _submit_plate(
-        self, run_spec: RunSpec, compile_artifact_id: str, loop
-    ) -> None:
-        if self.client_service.zmq_client is None:
-            raise RuntimeError("ZMQ client is not connected")
-        plate_path = run_spec.plate_path
-        definition_pipeline = run_spec.definition_pipeline
-        logger.info("Executing plate: %s", plate_path)
-        logger.info(
-            "Submit run: plate=%s artifact_id=%s steps=%d fingerprint=%s",
-            plate_path,
-            compile_artifact_id,
-            len(definition_pipeline),
-            self._compile_workflow_service().pipeline_fingerprint(definition_pipeline),
-        )
-
-        def _submit() -> Dict[str, Any]:
-            return self.client_service.zmq_client.submit_pipeline(
-                plate_id=plate_path,
-                pipeline_steps=definition_pipeline,
-                global_config=run_spec.global_config,
-                pipeline_config=run_spec.pipeline_config,
-                compile_artifact_id=compile_artifact_id,
-            )
-
-        response = await self._run_blocking(loop, _submit)
-
-        execution_id = response.get("execution_id")
-        if execution_id:
-            self.host.plate_execution_ids[plate_path] = execution_id
-            self.host.current_execution_id = execution_id
-
-        status = response.get("status")
-        if status == "accepted":
-            self.host.emit_status(f"Submitted {plate_path} (queued on server)")
-            if execution_id:
-                self._start_completion_poller(execution_id, plate_path)
-            return
-
-        error_msg = response.get("message", "Unknown error")
-        logger.error("Plate %s submission failed: %s", plate_path, error_msg)
-        self.host.emit_error(f"Submission failed for {plate_path}: {error_msg}")
-        self.host.execution_runtime.mark_terminal(
-            plate_path, TerminalExecutionStatus.FAILED
-        )
-        from objectstate import ObjectStateRegistry
-
-        orchestrator = ObjectStateRegistry.get_object(plate_path)
-        if orchestrator is not None:
-            orchestrator._state = OrchestratorState.EXEC_FAILED
-            self.host.emit_orchestrator_state(
-                plate_path, OrchestratorState.EXEC_FAILED.value
-            )
-
     async def _submit_debug_plate(
         self,
         *,
@@ -765,7 +721,10 @@ class BatchWorkflowService:
         if response.get("status") == "accepted":
             self.host.emit_status(f"Submitted debug run for {plate_path}")
             if execution_id:
-                self._start_completion_poller(execution_id, plate_path)
+                self._execution_submission_service().start_completion_poller(
+                    str(execution_id),
+                    plate_path,
+                )
             return
 
         error_msg = response.get("message", "Unknown error")
@@ -838,6 +797,20 @@ class BatchWorkflowService:
             self._terminal_result_builder = builder
         return builder
 
+    def _execution_submission_service(self) -> ExecutionSubmissionService:
+        service = self._execution_submission
+        if service is None:
+            service = ExecutionSubmissionService(
+                host=self.host,
+                client_service=self.client_service,
+                run_blocking=self._run_blocking,
+                completion_poller=self._execution_status_poller,
+                terminal_result_builder=self._terminal_result_builder_service(),
+                on_completion_update=self._check_all_completed,
+            )
+            self._execution_submission = service
+        return service
+
     @staticmethod
     def _flush_pending_ui_edits() -> None:
         """Commit pending editor widget state before reading pipeline definitions."""
@@ -848,99 +821,6 @@ class BatchWorkflowService:
         if focus_widget is not None:
             focus_widget.clearFocus()
         app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents)
-
-    def _start_completion_poller(self, execution_id: str, plate_path: str) -> None:
-        class _ClientDisconnected(RuntimeError):
-            pass
-
-        def _poll_status(polled_execution_id: str) -> Dict[str, Any]:
-            if self.client_service.zmq_client is None:
-                raise _ClientDisconnected("ZMQ client disconnected")
-            return self.client_service.zmq_client.get_status(polled_execution_id)
-
-        def _on_running(_execution_id: str, _execution_payload: Dict[str, Any]) -> None:
-            self.host.update_item_list()
-            self.host.emit_status(f"▶️ Running {plate_path}")
-
-        def _on_terminal(
-            _execution_id: str, terminal_status: str, execution_payload: Dict[str, Any]
-        ) -> None:
-            current_execution_id = self.host.plate_execution_ids.get(plate_path)
-            if current_execution_id != _execution_id:
-                logger.info(
-                    "Ignoring stale terminal status for %s: execution_id=%s current=%s",
-                    plate_path,
-                    _execution_id,
-                    current_execution_id,
-                )
-                return
-            parsed_terminal_status = parse_terminal_status(terminal_status)
-
-            self.host.execution_runtime.mark_terminal(
-                plate_path, parsed_terminal_status
-            )
-            result = self._terminal_result_builder_service().build(
-                terminal_status=parsed_terminal_status.value,
-                execution_id=_execution_id,
-                execution_payload=execution_payload,
-            )
-            self.host.notify_plate_completed(
-                plate_path, parsed_terminal_status.value, result
-            )
-            self._check_all_completed()
-
-        def _on_status_error(_execution_id: str, message: str) -> None:
-            current_execution_id = self.host.plate_execution_ids.get(plate_path)
-            if current_execution_id != _execution_id:
-                logger.info(
-                    "Ignoring stale status error for %s: execution_id=%s current=%s",
-                    plate_path,
-                    _execution_id,
-                    current_execution_id,
-                )
-                return
-            self.host.execution_runtime.mark_terminal(
-                plate_path, TerminalExecutionStatus.FAILED
-            )
-            self.host.notify_plate_completed(
-                plate_path,
-                TerminalExecutionStatus.FAILED.value,
-                {
-                    "status": TerminalExecutionStatus.FAILED.value,
-                    "execution_id": _execution_id,
-                    "message": message,
-                },
-            )
-            self._check_all_completed()
-
-        def _on_poll_exception(_execution_id: str, error: Exception) -> bool:
-            if isinstance(error, _ClientDisconnected):
-                return False
-            logger.warning("Error polling status for %s: %s", plate_path, error)
-            return True
-
-        policy = CallbackExecutionStatusPollPolicy(
-            poll_status_fn=_poll_status,
-            poll_interval_seconds_value=0.5,
-            on_running_fn=_on_running,
-            on_terminal_fn=_on_terminal,
-            on_status_error_fn=_on_status_error,
-            on_poll_exception_fn=_on_poll_exception,
-        )
-
-        def poll_completion() -> None:
-            try:
-                self._execution_status_poller.run(execution_id, policy)
-            except Exception as error:
-                logger.error(
-                    "Error in completion poller for %s: %s",
-                    plate_path,
-                    error,
-                    exc_info=True,
-                )
-                self.host.emit_error(f"{plate_path}: {error}")
-
-        threading.Thread(target=poll_completion, daemon=True).start()
 
     def _coalesced_progress_update(self) -> None:
         if self.client_service.zmq_client is not None:
