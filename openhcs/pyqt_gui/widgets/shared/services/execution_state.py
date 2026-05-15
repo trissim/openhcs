@@ -9,29 +9,31 @@ from typing import Iterable
 from openhcs.core.orchestrator.orchestrator import OrchestratorState
 
 
-class ManagerExecutionState(str, Enum):
+class BooleanPolicyStringEnum(str, Enum):
+    """String enum carrying one boolean policy attribute."""
+
+    def __new__(cls, value: str, policy_value: bool):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        setattr(obj, cls.__policy_attribute_name__, policy_value)
+        return obj
+
+
+class ManagerExecutionState(BooleanPolicyStringEnum):
+    __policy_attribute_name__ = "suppresses_stop_failure"
+
     IDLE = ("idle", True)
     RUNNING = ("running", False)
     STOPPING = ("stopping", True)
     FORCE_KILL_READY = ("force_kill_ready", True)
 
-    def __new__(cls, value: str, suppresses_stop_failure: bool):
-        obj = str.__new__(cls, value)
-        obj._value_ = value
-        obj.suppresses_stop_failure = suppresses_stop_failure
-        return obj
 
+class TerminalExecutionStatus(BooleanPolicyStringEnum):
+    __policy_attribute_name__ = "counts_as_failed"
 
-class TerminalExecutionStatus(str, Enum):
     COMPLETE = ("complete", False)
     FAILED = ("failed", True)
     CANCELLED = ("cancelled", True)
-
-    def __new__(cls, value: str, counts_as_failed: bool):
-        obj = str.__new__(cls, value)
-        obj._value_ = value
-        obj.counts_as_failed = counts_as_failed
-        return obj
 
 
 @dataclass(frozen=True)
