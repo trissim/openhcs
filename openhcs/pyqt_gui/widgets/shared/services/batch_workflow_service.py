@@ -20,13 +20,6 @@ from openhcs.core.debug import (
     DebugPausedWorkerStatus,
     DebugReplayMode,
 )
-from openhcs.core.progress.projection import (
-    ExecutionRuntimeProjection,
-    build_execution_runtime_projection_from_registry,
-)
-from openhcs.pyqt_gui.widgets.shared.services.progress_batch_reset import (
-    reset_progress_views_for_new_batch,
-)
 from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
     CompileJob,
     CompileJobCallback,
@@ -52,6 +45,9 @@ from openhcs.pyqt_gui.widgets.shared.services.debug_workflow_service import (
     DebugPlateRunRequest,
     DebugWorkflowService,
 )
+from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
+    ProgressWorkflowService,
+)
 from openhcs.pyqt_gui.widgets.shared.services.execution_server_status_presenter import (
     ExecutionServerStatusPresenter,
 )
@@ -66,10 +62,7 @@ from openhcs.pyqt_gui.widgets.shared.server_browser import (
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
 from pyqt_reactive.services import (
-    CallbackIntervalSnapshotPollerPolicy,
     DefaultServerInfoParser,
-    ExecutionServerInfo,
-    IntervalSnapshotPoller,
     ServerInfoParserABC,
 )
 from zmqruntime.execution import (
@@ -107,6 +100,7 @@ class BatchWorkflowService:
     _terminal_result_builder: TerminalExecutionResultBuilder | None = None
     _execution_submission: ExecutionSubmissionService | None = None
     _debug_workflow: DebugWorkflowService | None = None
+    _progress_workflow: ProgressWorkflowService | None = None
 
     def __init__(
         self,
@@ -124,26 +118,7 @@ class BatchWorkflowService:
             else DefaultServerInfoParser()
         )
 
-        self._progress_dirty = False
-        from PyQt6.QtCore import QTimer
-        from openhcs.pyqt_gui.config import ProgressUIConfig
-
-        self._progress_coalesce_timer = QTimer()
-        self._progress_coalesce_timer.timeout.connect(self._coalesced_progress_update)
-        self._progress_coalesce_timer.start(ProgressUIConfig().update_interval_ms)
-        self._runtime_projection = ExecutionRuntimeProjection()
         self._server_info_parser = server_info_parser_impl
-        self._server_info_poller = IntervalSnapshotPoller[ExecutionServerInfo](
-            CallbackIntervalSnapshotPollerPolicy(
-                fetch_snapshot_fn=self._fetch_server_info_snapshot,
-                clone_snapshot_fn=lambda snapshot: snapshot,
-                poll_interval_seconds_value=1.0,
-                on_snapshot_changed_fn=lambda _snapshot: self._mark_progress_dirty(),
-                on_poll_error_fn=lambda error: logger.debug(
-                    "Server info poll failed: %s", error
-                ),
-            )
-        )
         self._compile_batch_engine = BatchSubmitWaitEngine[CompileJob]()
         self._compile_workflow = CompileWorkflowService(
             global_config_provider=lambda: self.host.global_config,
@@ -164,7 +139,8 @@ class BatchWorkflowService:
         self._debug_progress_notifications = DebugProgressNotificationService()
         self._server_kill_service = ServerKillService()
         self._server_status_presenter = ExecutionServerStatusPresenter()
-        self._registry_listener = self._on_registry_event
+        self._progress_workflow = self._build_progress_workflow_service()
+        self._registry_listener = self._progress_workflow.mark_dirty
         self.host._progress_tracker.add_listener(self._registry_listener)
         self._registry_listener_registered = True
         self._cleaned_up = False
@@ -185,15 +161,12 @@ class BatchWorkflowService:
                 )
             self._registry_listener_registered = False
 
-        if self._progress_coalesce_timer is not None:
-            self._progress_coalesce_timer.stop()
-            self._progress_coalesce_timer.deleteLater()
-            self._progress_coalesce_timer = None
+        self._progress_workflow_service().cleanup()
 
     async def compile_plates(self, selected_items: List[Dict]) -> None:
         """Compile pipelines for selected plates."""
         self._flush_pending_ui_edits()
-        reset_progress_views_for_new_batch(self.host)
+        self._progress_workflow_service().reset_for_new_batch()
         self.host.emit_progress_started(len(selected_items))
         loop = asyncio.get_event_loop()
 
@@ -302,7 +275,7 @@ class BatchWorkflowService:
             plate_paths = [str(item["path"]) for item in ready_items]
             logger.info("Starting ZMQ execution for %d plates", len(plate_paths))
 
-            self._reset_progress_for_new_batch()
+            self._progress_workflow_service().reset_for_new_batch()
             self.host.emit_clear_logs()
 
             await self._connect_progress_client()
@@ -372,7 +345,7 @@ class BatchWorkflowService:
         loop = asyncio.get_event_loop()
         try:
             await self._connect_progress_client()
-            self._reset_progress_for_new_batch()
+            self._progress_workflow_service().reset_for_new_batch()
             self.host.execution_runtime.begin_batch([plate_path])
             self.host.execution_state = ManagerExecutionState.RUNNING
             self.host.emit_status(f"Compiling debug run for {plate_path}...")
@@ -509,7 +482,7 @@ class BatchWorkflowService:
         """Connect the shared ZMQ client with the standard progress callback."""
 
         return await ZMQClientConnectionSpec(
-            progress_callback=self._on_progress,
+            progress_callback=self._progress_workflow_service().on_progress,
         ).connect(self.client_service)
 
     def _make_compile_policy(
@@ -669,6 +642,22 @@ class BatchWorkflowService:
             execution_submission=self._execution_submission_service(),
         )
 
+    def _progress_workflow_service(self) -> ProgressWorkflowService:
+        service = self._progress_workflow
+        if service is None:
+            service = self._build_progress_workflow_service()
+            self._progress_workflow = service
+        return service
+
+    def _build_progress_workflow_service(self) -> ProgressWorkflowService:
+        return ProgressWorkflowService(
+            host=self.host,
+            client_service=self.client_service,
+            server_info_parser=self._server_info_parser,
+            debug_notifications=self._debug_progress_notification_service(),
+            status_presenter=self._server_status_presenter,
+        )
+
     @staticmethod
     def _flush_pending_ui_edits() -> None:
         """Commit pending editor widget state before reading pipeline definitions."""
@@ -679,61 +668,6 @@ class BatchWorkflowService:
         if focus_widget is not None:
             focus_widget.clearFocus()
         app.processEvents(QEventLoop.ProcessEventsFlag.AllEvents)
-
-    def _coalesced_progress_update(self) -> None:
-        if self.client_service.zmq_client is not None:
-            self._server_info_poller.tick()
-        if not self._progress_dirty:
-            return
-        self._progress_dirty = False
-        self._runtime_projection = build_execution_runtime_projection_from_registry(
-            self.host._progress_tracker
-        )
-        self.host.set_runtime_progress_projection(self._runtime_projection)
-        self.host.set_execution_server_info(self._get_server_info_snapshot())
-        self._emit_execution_server_status()
-        self.host.update_item_list()
-
-    def _on_progress(self, message: dict) -> None:
-        try:
-            event = ProgressEvent.from_dict(message)
-            self.host._progress_tracker.register_event(event.execution_id, event)
-            self._debug_progress_notification_service().notify_from_progress_event(
-                event,
-                zmq_client=self.client_service.zmq_client,
-            )
-        except Exception as error:
-            logger.warning("Failed to parse/register progress event: %s", error)
-        finally:
-            self._mark_progress_dirty()
-
-    def _on_registry_event(self, _execution_id: str, _event: ProgressEvent) -> None:
-        """Mark projection dirty when shared registry changes from any producer."""
-        self._mark_progress_dirty()
-
-    def _emit_execution_server_status(self) -> None:
-        status_view = self._server_status_presenter.build_status_text(
-            projection=self._runtime_projection,
-            server_info=self._get_server_info_snapshot(),
-        )
-        self.host.emit_status(status_view.text)
-
-    def _get_server_info_snapshot(self) -> ExecutionServerInfo | None:
-        return self._server_info_poller.get_snapshot_copy()
-
-    def _fetch_server_info_snapshot(self) -> ExecutionServerInfo:
-        if self.client_service.zmq_client is None:
-            raise RuntimeError("ZMQ client is not connected")
-        pong = self.client_service.zmq_client.get_server_info_snapshot()
-        parsed = self._server_info_parser.parse(pong.to_dict())
-        if not isinstance(parsed, ExecutionServerInfo):
-            raise ValueError(
-                f"Expected ExecutionServerInfo, got {type(parsed).__name__}"
-            )
-        return parsed
-
-    def _mark_progress_dirty(self) -> None:
-        self._progress_dirty = True
 
     def _check_all_completed(self) -> None:
         if self.host.execution_state not in (
@@ -838,11 +772,3 @@ class BatchWorkflowService:
         self.host.update_item_list()
         self.host.emit_orchestrator_state(plate_path, "COMPILE_FAILED")
         self.host.emit_compilation_error(plate_data["name"], str(error))
-
-    def _reset_progress_for_new_batch(self) -> None:
-        self._runtime_projection = reset_progress_views_for_new_batch(
-            self.host,
-            projection=ExecutionRuntimeProjection(),
-        )
-        self._server_info_poller.reset()
-        self._mark_progress_dirty()

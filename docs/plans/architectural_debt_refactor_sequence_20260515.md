@@ -27,17 +27,17 @@ Target shape:
 - `ExecutionSubmissionService`: normal run submission, execution-id bookkeeping, and completion polling.
 - `DebugWorkflowService`: debug compile/run, paused-worker commands, artifact export, and warm debug compile artifact reuse.
 - `DebugProgressNotificationService`: debug snapshot notification parsing and server readback from progress events.
-- `ProgressWorkflowService`: progress registration, runtime projection invalidation, and server status polling.
+- `ProgressWorkflowService`: progress registration, runtime projection invalidation, server status polling, and coalesced progress UI updates.
 - `TerminalExecutionResultBuilder`: host-facing terminal result payload construction.
 - `BatchWorkflowService`: thin public facade that owns sequencing and composes the services.
 
 Migration strategy:
 
 1. Extract pure dataclass request/result records first, without changing behavior. Done for compile/run/debug progress/terminal result records.
-2. Move methods by role with tests kept at the facade boundary. In progress: compile transport, plate request building, normal execution submission/completion polling, debug compile/run orchestration, paused-worker commands, artifact export, debug snapshot fanout, and terminal result mapping have moved out of the facade.
+2. Move methods by role with tests kept at the facade boundary. In progress: compile transport, plate request building, normal execution submission/completion polling, debug compile/run orchestration, paused-worker commands, artifact export, progress/server-status polling, debug snapshot fanout, and terminal result mapping have moved out of the facade.
 3. Keep `BatchWorkflowService` public methods stable until GUI callers are migrated. Current pass preserves `compile_plates`, `run_plates`, debug run/control/export methods, and debug snapshot listener registration.
 4. Add focused tests for each service before deleting facade internals.
-5. Next extraction should target progress/server-status polling, then stop/disconnect/failure handling. Keep each extraction independently revertible.
+5. Next extraction should target stop/disconnect/failure handling. Keep each extraction independently revertible.
 
 ## Sequence 2: Normalize Pipeline/Plate GUI Command Families
 
