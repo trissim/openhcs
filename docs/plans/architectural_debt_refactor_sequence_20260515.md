@@ -29,15 +29,16 @@ Target shape:
 - `DebugProgressNotificationService`: debug snapshot notification parsing and server readback from progress events.
 - `ProgressWorkflowService`: progress registration, runtime projection invalidation, server status polling, and coalesced progress UI updates.
 - `TerminalExecutionResultBuilder`: host-facing terminal result payload construction.
+- `ExecutionControlService`: stop/force-kill orchestration, cancellation fanout, disconnect, terminal failure handling, and completion checks.
 - `BatchWorkflowService`: thin public facade that owns sequencing and composes the services.
 
 Migration strategy:
 
 1. Extract pure dataclass request/result records first, without changing behavior. Done for compile/run/debug progress/terminal result records.
-2. Move methods by role with tests kept at the facade boundary. In progress: compile transport, plate request building, normal execution submission/completion polling, debug compile/run orchestration, paused-worker commands, artifact export, progress/server-status polling, debug snapshot fanout, and terminal result mapping have moved out of the facade.
+2. Move methods by role with tests kept at the facade boundary. Done for compile transport, plate request building, normal execution submission/completion polling, debug compile/run orchestration, paused-worker commands, artifact export, progress/server-status polling, debug snapshot fanout, terminal result mapping, and stop/disconnect/failure handling.
 3. Keep `BatchWorkflowService` public methods stable until GUI callers are migrated. Current pass preserves `compile_plates`, `run_plates`, debug run/control/export methods, and debug snapshot listener registration.
 4. Add focused tests for each service before deleting facade internals.
-5. Next extraction should target stop/disconnect/failure handling. Keep each extraction independently revertible.
+5. Remaining Sequence 1 work is optional facade slimming only; the touched service set is currently advisor-clean and independently covered by focused tests plus full `tests/unit`.
 
 ## Sequence 2: Normalize Pipeline/Plate GUI Command Families
 
@@ -53,16 +54,18 @@ The broad advisor scan flags string-key dispatch tables, repeated attribute prob
 Target shape:
 
 - Replace config-attribute string dispatch with a typed config-detail projection table or registered strategy family.
+- Replace widget action dispatch and inherited item hook mappings with nominal declarations plus compatibility projection.
 - Replace structural `hasattr`/`getattr` GUI role probes with explicit host protocols or nominal service interfaces.
 - Delete truly unreferenced private methods after verifying no Qt/framework hook depends on them.
 - Convert one-step setter wrappers into properties or direct state updates.
 
 Migration strategy:
 
-1. Add tests around currently observed GUI behavior before deleting private methods.
-2. Introduce nominal protocols for host/editor services used by tests and workflow services.
-3. Replace string-key dispatch one closed family at a time.
-4. Only then remove dead private methods.
+1. Add tests around currently observed GUI behavior before deleting private methods. Done for action dispatch and workflow/progress seams.
+2. Introduce nominal protocols for host/editor services used by tests and workflow services. Partially done through typed action routes, typed item hooks, direct projection state, and extracted workflow services.
+3. Replace string-key dispatch one closed family at a time. Done for preview config details, widget actions, and widget item hooks.
+4. Only then remove dead private methods. Done for verified dead partial-refresh helpers; remaining private-method advisor entries are inherited `AbstractManagerWidget` template hooks or broad class-decomposition candidates.
+5. Remaining Sequence 2 work is broad GUI class decomposition and structural `hasattr`/`getattr` cleanup. Keep that separate from runtime/planner parity work.
 
 ## Sequence 3: Retire CellProfiler Runtime Compatibility Paths
 
