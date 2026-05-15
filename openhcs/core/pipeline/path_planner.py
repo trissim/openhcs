@@ -59,6 +59,19 @@ class ArtifactPlanMaps:
     outputs_by_group: dict[Optional[str], OrderedDict]
 
 
+@dataclass(frozen=True)
+class PathPlanningContext:
+    """Nominal construction context for one path-planning pass."""
+
+    context: ProcessingContext
+    pipeline_config: Any
+    orchestrator: Any | None = None
+    step_snapshots: tuple[StepSnapshot, ...] = ()
+    declaration_provider: InvocationArtifactDeclarationProviderLike = (
+        callable_contract_artifact_declarations
+    )
+
+
 # ===== PATH PLANNING (NO duplication) =====
 
 class PathPlanner:
@@ -66,24 +79,18 @@ class PathPlanner:
 
     def __init__(
         self,
-        context: ProcessingContext,
-        pipeline_config,
-        orchestrator=None,
-        step_snapshots: tuple[StepSnapshot, ...] = (),
-        declaration_provider: InvocationArtifactDeclarationProviderLike = (
-            callable_contract_artifact_declarations
-        ),
+        planning_context: PathPlanningContext,
     ):
-        self.ctx = context
+        self.ctx = planning_context.context
         # CRITICAL: pipeline_config is now the merged config (GlobalPipelineConfig) from context.global_config
         # This ensures proper inheritance from global config without needing field-specific code
-        self.cfg = pipeline_config.path_planning_config
-        self.vfs = pipeline_config.vfs_config
-        self.plans: dict[int, CompiledStepPlan] = context.step_plans
+        self.cfg = planning_context.pipeline_config.path_planning_config
+        self.vfs = planning_context.pipeline_config.vfs_config
+        self.plans: dict[int, CompiledStepPlan] = self.ctx.step_plans
         self.declared = {}  # Tracks artifact outputs
-        self.orchestrator = orchestrator
-        self.step_snapshots = tuple(step_snapshots)
-        self.declaration_provider = declaration_provider
+        self.orchestrator = planning_context.orchestrator
+        self.step_snapshots = tuple(planning_context.step_snapshots)
+        self.declaration_provider = planning_context.declaration_provider
         self.snapshots_by_index = {
             snapshot.index: snapshot for snapshot in self.step_snapshots
         }
@@ -92,8 +99,8 @@ class PathPlanner:
         ]
 
         # Initial input determination (once)
-        self.initial_input = Path(context.input_dir)
-        self.plate_path = Path(context.plate_path)
+        self.initial_input = Path(self.ctx.input_dir)
+        self.plate_path = Path(self.ctx.plate_path)
 
     @staticmethod
     def _normalize_group_key(key: Optional[Any]) -> Optional[str]:
@@ -1003,13 +1010,14 @@ class PipelinePathPlanner:
                 pipeline_definition,
                 step_state_map,
             )
-        return PathPlanner(
-            context,
-            pipeline_config,
+        planning_context = PathPlanningContext(
+            context=context,
+            pipeline_config=pipeline_config,
             orchestrator=orchestrator,
             step_snapshots=step_snapshots,
             declaration_provider=declaration_provider,
-        ).plan(pipeline_definition)
+        )
+        return PathPlanner(planning_context).plan(pipeline_definition)
 
     @staticmethod
     def _build_axis_filename(axis_id: str, key: str, extension: str = "pkl", step_index: Optional[int] = None) -> str:
