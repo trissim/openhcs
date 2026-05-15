@@ -107,20 +107,11 @@ class NormalizedFunctionPattern:
 
 
 @dataclass(frozen=True, slots=True)
-class CompiledFunctionInvocation:
+class CompiledFunctionInvocation(NormalizedFunctionItem):
     """Executable compiler output for one callable in a function pattern."""
 
-    key: FunctionInvocationKey
-    contract: CallableContract
-    kwargs: tuple[tuple[str, Any], ...] = ()
-    invocation_options: RuntimeInvocationOptions | None = None
     artifact_input_keys: tuple[str, ...] = ()
     artifact_output_keys: tuple[str, ...] = ()
-
-    @property
-    def func(self) -> Any:
-        """Underlying callable or FunctionReference resolved at runtime."""
-        return self.contract.func
 
     @property
     def input_memory_type(self) -> str | None:
@@ -177,10 +168,22 @@ class CompiledFunctionPattern:
 
     @property
     def default_group(self) -> CompiledFunctionGroup:
+        """Return the compiled default group."""
+        return self.require_group(DEFAULT_GROUP_KEY)
+
+    def require_group(self, group_key: str) -> CompiledFunctionGroup:
+        """Return a compiled group or fail loudly when it is absent."""
+        group = self.group_by_key(group_key)
+        if group is None:
+            raise ValueError(f"Compiled function pattern has no {group_key!r} group.")
+        return group
+
+    def group_by_key(self, group_key: str) -> CompiledFunctionGroup | None:
+        """Return a compiled group by normalized group key."""
         for group in self.groups:
-            if group.group_key == DEFAULT_GROUP_KEY:
+            if group.group_key == group_key:
                 return group
-        raise ValueError("Compiled function pattern has no default group.")
+        return None
 
     def iter_invocations(self) -> Iterator[CompiledFunctionInvocation]:
         """Yield all compiled invocations in runtime order."""
@@ -193,10 +196,7 @@ class CompiledFunctionPattern:
             return self.default_group
 
         component_key = str(component_value)
-        for group in self.groups:
-            if group.group_key == component_key:
-                return group
-        return None
+        return self.group_by_key(component_key)
 
     def prepare_grouped_patterns(
         self,
@@ -325,7 +325,7 @@ def inject_kwargs_into_pattern(pattern: Any, kwargs: Mapping[str, Any]) -> Any:
         return pattern
 
     if _is_callable_pattern_item(pattern):
-        return _merge_pattern_item_kwargs(pattern, kwargs)
+        return PatternItemKwargMerge(kwargs).merge(pattern)
 
     if isinstance(pattern, list):
         return [inject_kwargs_into_pattern(item, kwargs) for item in pattern]
@@ -357,7 +357,7 @@ def inject_artifact_input_values(
         }
         if not matched_values:
             return pattern
-        return _merge_pattern_item_kwargs(pattern, matched_values)
+        return PatternItemKwargMerge(matched_values).merge(pattern)
 
     if isinstance(pattern, list):
         return [
@@ -380,16 +380,23 @@ def _is_callable_pattern_item(pattern: Any) -> bool:
     return not isinstance(pattern, (list, dict))
 
 
-def _merge_pattern_item_kwargs(pattern: Any, kwargs: Mapping[str, Any]) -> Any:
-    if isinstance(pattern, tuple) and len(pattern) in {2, 3}:
-        func, existing_kwargs, *invocation_options = pattern
-        if not isinstance(existing_kwargs, Mapping):
-            raise TypeError(
-                f"Function kwargs must be a mapping, got {type(existing_kwargs)}"
-            )
-        return (func, {**kwargs, **existing_kwargs}, *invocation_options)
+@dataclass(frozen=True, slots=True)
+class PatternItemKwargMerge:
+    """Nominal merge authority for function-pattern item kwargs."""
 
-    return (pattern, dict(kwargs))
+    kwargs: Mapping[str, Any]
+
+    def merge(self, pattern: Any) -> Any:
+        """Return a callable pattern item with injected kwargs."""
+        if isinstance(pattern, tuple) and len(pattern) in {2, 3}:
+            func, existing_kwargs, *invocation_options = pattern
+            if not isinstance(existing_kwargs, Mapping):
+                raise TypeError(
+                    f"Function kwargs must be a mapping, got {type(existing_kwargs)}"
+                )
+            return (func, {**self.kwargs, **existing_kwargs}, *invocation_options)
+
+        return (pattern, dict(self.kwargs))
 
 
 def _normalize_function_group(

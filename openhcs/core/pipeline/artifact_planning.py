@@ -105,7 +105,7 @@ class ArtifactGraph:
                 ArtifactProducer(
                     name=producer.name,
                     spec=producer.spec,
-                    groups=_unique_preserving_order(
+                    groups=ArtifactGraph.unique_preserving_order(
                         list(output_groups.get(producer.name, producer.groups))
                     ),
                     invocation_keys=producer.invocation_keys,
@@ -113,6 +113,74 @@ class ArtifactGraph:
                 for producer in self.producers
             ),
             consumers=self.consumers,
+        )
+
+    @staticmethod
+    def unique_preserving_order(
+        values: Iterable[Optional[str]],
+    ) -> tuple[Optional[str], ...]:
+        """Return unique group keys while preserving declaration order."""
+        unique: list[Optional[str]] = []
+        for value in values:
+            if value not in unique:
+                unique.append(value)
+        return tuple(unique)
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactSpecAccumulator:
+    """Ordered artifact-spec merge authority for one producer/consumer role."""
+
+    role: str
+    specs: OrderedDict[str, ArtifactSpec]
+
+    @classmethod
+    def empty(cls, role: str) -> "ArtifactSpecAccumulator":
+        """Create an empty ordered accumulator for an artifact role."""
+        return cls(role=role, specs=OrderedDict())
+
+    def add(self, incoming: ArtifactSpec) -> None:
+        """Merge an incoming spec into this accumulator."""
+        if incoming.name not in self.specs:
+            self.specs[incoming.name] = incoming
+            return
+        self.specs[incoming.name] = self.merge_existing(
+            existing=self.specs[incoming.name],
+            incoming=incoming,
+        )
+
+    def merge_existing(
+        self,
+        *,
+        existing: ArtifactSpec,
+        incoming: ArtifactSpec,
+    ) -> ArtifactSpec:
+        """Merge two declarations for the same artifact name."""
+        if existing.kind != incoming.kind:
+            raise ValueError(
+                f"Conflicting {self.role} artifact kind for '{incoming.name}': "
+                f"{existing.kind.value} vs {incoming.kind.value}."
+            )
+        if (
+            existing.materialization is not None
+            and incoming.materialization is not None
+            and existing.materialization != incoming.materialization
+        ):
+            raise ValueError(
+                f"Conflicting {self.role} artifact materialization for "
+                f"'{incoming.name}'."
+            )
+
+        materialization = (
+            existing.materialization
+            if existing.materialization is not None
+            else incoming.materialization
+        )
+        return ArtifactSpec(
+            name=existing.name,
+            kind=existing.kind,
+            materialization=materialization,
+            required=existing.required or incoming.required,
         )
 
 
@@ -136,10 +204,10 @@ def extract_artifact_declarations(
     ),
 ) -> ArtifactGraph:
     """Extract artifact metadata and per-group ownership from a function pattern."""
-    producer_specs: OrderedDict[str, ArtifactSpec] = OrderedDict()
+    producer_specs = ArtifactSpecAccumulator.empty("producer")
     producer_groups: defaultdict[str, list[Optional[str]]] = defaultdict(list)
     producer_invocations: defaultdict[str, list[FunctionInvocationKey]] = defaultdict(list)
-    consumer_specs: OrderedDict[str, ArtifactSpec] = OrderedDict()
+    consumer_specs = ArtifactSpecAccumulator.empty("consumer")
     consumer_invocations: defaultdict[str, list[FunctionInvocationKey]] = defaultdict(list)
 
     for invocation in normalize_function_pattern(pattern).iter_items():
@@ -148,33 +216,25 @@ def extract_artifact_declarations(
         normalized_key = None if group_key == DEFAULT_GROUP_KEY else group_key
 
         for name, spec in declarations.outputs:
-            producer_specs[name] = _merge_artifact_spec(
-                existing=producer_specs.get(name),
-                incoming=spec,
-                role="producer",
-            )
+            producer_specs.add(spec)
             producer_groups[name].append(normalized_key)
             producer_invocations[name].append(invocation.key)
 
         for name, spec in declarations.inputs:
-            consumer_specs[name] = _merge_artifact_spec(
-                existing=consumer_specs.get(name),
-                incoming=spec,
-                role="consumer",
-            )
+            consumer_specs.add(spec)
             consumer_invocations[name].append(invocation.key)
 
-    _validate_local_consumer_producer_kinds(producer_specs, consumer_specs)
+    _validate_local_consumer_producer_kinds(producer_specs.specs, consumer_specs.specs)
 
     return ArtifactGraph(
         producers=tuple(
             ArtifactProducer(
                 name=name,
                 spec=spec,
-                groups=_unique_preserving_order(producer_groups[name]),
+                groups=ArtifactGraph.unique_preserving_order(producer_groups[name]),
                 invocation_keys=tuple(producer_invocations[name]),
             )
-            for name, spec in producer_specs.items()
+            for name, spec in producer_specs.specs.items()
         ),
         consumers=tuple(
             ArtifactConsumer(
@@ -182,42 +242,8 @@ def extract_artifact_declarations(
                 spec=spec,
                 invocation_keys=tuple(consumer_invocations[name]),
             )
-            for name, spec in consumer_specs.items()
+            for name, spec in consumer_specs.specs.items()
         ),
-    )
-
-
-def _merge_artifact_spec(
-    existing: ArtifactSpec | None,
-    incoming: ArtifactSpec,
-    role: str,
-) -> ArtifactSpec:
-    if existing is None:
-        return incoming
-    if existing.kind != incoming.kind:
-        raise ValueError(
-            f"Conflicting {role} artifact kind for '{incoming.name}': "
-            f"{existing.kind.value} vs {incoming.kind.value}."
-        )
-    if (
-        existing.materialization is not None
-        and incoming.materialization is not None
-        and existing.materialization != incoming.materialization
-    ):
-        raise ValueError(
-            f"Conflicting {role} artifact materialization for '{incoming.name}'."
-        )
-
-    materialization = (
-        existing.materialization
-        if existing.materialization is not None
-        else incoming.materialization
-    )
-    return ArtifactSpec(
-        name=existing.name,
-        kind=existing.kind,
-        materialization=materialization,
-        required=existing.required or incoming.required,
     )
 
 
@@ -234,11 +260,3 @@ def _validate_local_consumer_producer_kinds(
                 f"Artifact '{name}' is produced as {producer_spec.kind.value} "
                 f"but consumed as {consumer_spec.kind.value} in the same FunctionStep."
             )
-
-
-def _unique_preserving_order(values: list[Optional[str]]) -> tuple[Optional[str], ...]:
-    unique: list[Optional[str]] = []
-    for value in values:
-        if value not in unique:
-            unique.append(value)
-    return tuple(unique)
