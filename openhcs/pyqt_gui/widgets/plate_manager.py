@@ -466,19 +466,6 @@ class PlateManagerWidget(AbstractManagerWidget):
         )
         self.update_item_list()
 
-    def _update_single_plate_item(self, plate_path: str):
-        """Update a single plate item's preview text without rebuilding the list."""
-        for i in range(self.item_list.count()):
-            item = self.item_list.item(i)
-            plate_data = item.data(Qt.ItemDataRole.UserRole)
-            if plate_data and plate_data.get("path") == plate_path:
-                display_text = self._format_plate_item_with_preview_text(plate_data)
-                item.setText(display_text)
-                self._set_item_styling_roles(
-                    item, display_text, plate_data
-                )  # ABC helper
-                break
-
     def format_item_for_display(self, item: Dict, live_ctx=None) -> Tuple[str, str]:
         """Format plate item for display with preview (required abstract method)."""
         return (self._format_plate_item_with_preview_text(item), item["path"])

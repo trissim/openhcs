@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import List, Dict, Optional, Callable, Tuple, Any, Iterable, Set, ClassVar
+from typing import List, Dict, Optional, Callable, Tuple, Any, Set, ClassVar
 from pathlib import Path
 
 from metaclass_registry import AutoRegisterMeta
@@ -1580,28 +1580,6 @@ class PipelineEditorWidget(AbstractManagerWidget):
     def _handle_full_preview_refresh(self) -> None:
         """Refresh all step preview labels."""
         self.update_item_list()
-
-    def _refresh_step_items_by_index(
-        self, indices: Iterable[int], live_context_snapshot=None
-    ) -> None:
-        """Refresh specific step items by index. Uses ObjectState for values."""
-        if not indices or not self.current_plate:
-            return
-
-        for step_index in sorted(set(indices)):
-            if step_index < 0 or step_index >= len(self.pipeline_steps):
-                continue
-            item = self.item_list.item(step_index)
-            if item is None:
-                continue
-            step = self.pipeline_steps[step_index]
-            display_text, _ = self.format_item_for_display(step)
-            if item.text() != display_text:
-                item.setText(display_text)
-            item.setData(Qt.ItemDataRole.UserRole, step_index)
-            item.setData(Qt.ItemDataRole.UserRole + 1, not step.enabled)
-            item.setToolTip(self._create_step_tooltip(step))
-            self._set_item_styling_roles(item, display_text, step)  # ABC helper
 
     # ========== UI Helper Methods ==========
 
