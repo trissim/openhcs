@@ -85,6 +85,11 @@ from openhcs.core.function_patterns import normalize_function_pattern
 from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
     DebugSnapshotAvailableNotification,
 )
+from openhcs.pyqt_gui.widgets.shared.services.manager_item_hooks import ManagerItemHooks
+from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
+    WidgetActionRoute,
+    dispatch_widget_action,
+)
 
 # Import ABC base class (Phase 4 migration)
 from pyqt_reactive.widgets.shared.abstract_manager_widget import (
@@ -136,6 +141,16 @@ class StepPreviewConfigField(str, Enum):
             if config_field.value == field_name:
                 return config_field
         return None
+
+
+class PipelineEditorAction(str, Enum):
+    """Closed set of PipelineEditor button actions."""
+
+    ADD_STEP = "add_step"
+    DELETE_STEP = "del_step"
+    EDIT_STEP = "edit_step"
+    AUTO_LOAD_PIPELINE = "auto_load_pipeline"
+    CODE_PIPELINE = "code_pipeline"
 
 
 class StepPreviewConfigDetailFormatter(
@@ -245,36 +260,64 @@ class PipelineEditorWidget(AbstractManagerWidget):
     TITLE = "Pipeline Editor"
     BUTTON_GRID_COLUMNS = 0  # Single row (1 x N grid)
     BUTTON_CONFIGS = [
-        ("Add", "add_step", "Add new pipeline step"),
-        ("Del", "del_step", "Delete selected steps"),
-        ("Edit", "edit_step", "Edit selected step"),
-        ("Auto", "auto_load_pipeline", "Load basic_pipeline.py"),
-        ("Code", "code_pipeline", "Edit pipeline as Python code"),
+        ("Add", PipelineEditorAction.ADD_STEP.value, "Add new pipeline step"),
+        ("Del", PipelineEditorAction.DELETE_STEP.value, "Delete selected steps"),
+        ("Edit", PipelineEditorAction.EDIT_STEP.value, "Edit selected step"),
+        (
+            "Auto",
+            PipelineEditorAction.AUTO_LOAD_PIPELINE.value,
+            "Load basic_pipeline.py",
+        ),
+        (
+            "Code",
+            PipelineEditorAction.CODE_PIPELINE.value,
+            "Edit pipeline as Python code",
+        ),
     ]
-    ACTION_REGISTRY = {
-        "add_step": "action_add",  # Uses action_add() which delegates to action_add_step()
-        "del_step": "action_delete",  # Uses ABC template with _perform_delete() hook
-        "edit_step": "action_edit",  # Uses ABC template with _show_item_editor() hook
-        "auto_load_pipeline": "action_auto_load_pipeline",
-        "code_pipeline": "action_code_pipeline",
-    }
+    ACTION_REGISTRY = {}
+    ACTION_ROUTES = MappingProxyType(
+        {
+            route.action: route
+            for route in (
+                WidgetActionRoute(
+                    PipelineEditorAction.ADD_STEP,
+                    lambda widget: widget.action_add,
+                ),
+                WidgetActionRoute(
+                    PipelineEditorAction.DELETE_STEP,
+                    lambda widget: widget.action_delete,
+                ),
+                WidgetActionRoute(
+                    PipelineEditorAction.EDIT_STEP,
+                    lambda widget: widget.action_edit,
+                ),
+                WidgetActionRoute(
+                    PipelineEditorAction.AUTO_LOAD_PIPELINE,
+                    lambda widget: widget.action_auto_load_pipeline,
+                ),
+                WidgetActionRoute(
+                    PipelineEditorAction.CODE_PIPELINE,
+                    lambda widget: widget.action_code_pipeline,
+                ),
+            )
+        }
+    )
     ITEM_NAME_SINGULAR = "step"
     ITEM_NAME_PLURAL = "steps"
 
-    # Declarative item hooks (replaces 9 trivial method overrides)
-    ITEM_HOOKS = {
-        "id_accessor": ("attr", "name"),  # getattr(item, 'name', '')
-        "backing_attr": "pipeline_steps",  # self.pipeline_steps
-        "selection_attr": "selected_step",  # self.selected_step = ...
-        "selection_signal": "step_selected",  # self.step_selected.emit(...)
-        "selection_emit_id": False,  # emit the full step object
-        "selection_clear_value": None,  # emit None when cleared
-        "items_changed_signal": "pipeline_changed",  # self.pipeline_changed.emit(...)
-        "preserve_selection_pred": lambda self: bool(self.pipeline_steps),
-        "list_item_data": "item",  # store the step object
-        "scope_item_type": ListItemType.STEP,
-        "scope_id_builder": lambda item, idx, w: w._build_step_scope_id(item),
-    }
+    ITEM_HOOKS = ManagerItemHooks(
+        id_accessor=("attr", "name"),
+        backing_attr="pipeline_steps",
+        selection_attr="selected_step",
+        selection_signal="step_selected",
+        selection_emit_id=False,
+        selection_clear_value=None,
+        items_changed_signal="pipeline_changed",
+        preserve_selection_pred=lambda self: bool(self.pipeline_steps),
+        list_item_data="item",
+        scope_item_type=ListItemType.STEP,
+        scope_id_builder=lambda item, idx, widget: widget._build_step_scope_id(item),
+    ).to_legacy_mapping()
     DEBUG_COMMAND_ROUTES = MappingProxyType(
         {
             route.command_type: route
@@ -522,6 +565,16 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
     # UI infrastructure provided by AbstractManagerWidget base class
     # Step-specific customizations via hooks below
+
+    def handle_button_action(self, action: str) -> None:
+        if dispatch_widget_action(
+            widget=self,
+            action_id=action,
+            action_enum=PipelineEditorAction,
+            routes=self.ACTION_ROUTES,
+        ):
+            return
+        logger.warning("Unknown action: %s", action)
 
     def setup_ui(self):
         """Create pipeline editor UI with a debug/test-mode toolbar."""

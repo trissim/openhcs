@@ -10,6 +10,8 @@ import os
 import asyncio
 import traceback
 from dataclasses import fields
+from enum import Enum
+from types import MappingProxyType
 from typing import List, Dict, Optional, Any, Callable, Tuple
 from pathlib import Path
 
@@ -72,6 +74,11 @@ from openhcs.pyqt_gui.widgets.shared.services.execution_state import (
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import (
     ZMQClientService,
 )
+from openhcs.pyqt_gui.widgets.shared.services.manager_item_hooks import ManagerItemHooks
+from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
+    WidgetActionRoute,
+    dispatch_widget_action,
+)
 from pyqt_reactive.widgets.shared.scope_visual_config import ListItemType
 from openhcs.core.progress import registry
 from openhcs.core.progress.projection import (
@@ -91,6 +98,19 @@ logger = logging.getLogger(__name__)
 ROOT_SCOPE_ID = "__plates__"
 
 
+class PlateManagerAction(str, Enum):
+    """Closed set of PlateManager button actions."""
+
+    ADD_PLATE = "add_plate"
+    DELETE_PLATE = "del_plate"
+    EDIT_CONFIG = "edit_config"
+    INIT_PLATE = "init_plate"
+    COMPILE_PLATE = "compile_plate"
+    RUN_PLATE = "run_plate"
+    CODE_PLATE = "code_plate"
+    VIEW_METADATA = "view_metadata"
+
+
 class PlateManagerWidget(AbstractManagerWidget):
     """
     PyQt6 Plate Manager Widget.
@@ -108,40 +128,75 @@ class PlateManagerWidget(AbstractManagerWidget):
     BUTTON_GRID_COLUMNS = 0  # Single row with all buttons
     ENABLE_STATUS_SCROLLING = True  # Marquee animation for long status messages
     BUTTON_CONFIGS = [
-        ("Add", "add_plate", "Add new plate directory"),
-        ("Del", "del_plate", "Delete selected plates"),
-        ("Edit", "edit_config", "Edit plate configuration"),
-        ("Init", "init_plate", "Initialize selected plates"),
-        ("Compile", "compile_plate", "Compile plate pipelines"),
-        ("Run", "run_plate", "Run/Stop plate execution"),
-        ("Code", "code_plate", "Generate Python code"),
-        ("Viewer", "view_metadata", "View plate metadata"),
+        ("Add", PlateManagerAction.ADD_PLATE.value, "Add new plate directory"),
+        ("Del", PlateManagerAction.DELETE_PLATE.value, "Delete selected plates"),
+        ("Edit", PlateManagerAction.EDIT_CONFIG.value, "Edit plate configuration"),
+        ("Init", PlateManagerAction.INIT_PLATE.value, "Initialize selected plates"),
+        ("Compile", PlateManagerAction.COMPILE_PLATE.value, "Compile plate pipelines"),
+        ("Run", PlateManagerAction.RUN_PLATE.value, "Run/Stop plate execution"),
+        ("Code", PlateManagerAction.CODE_PLATE.value, "Generate Python code"),
+        ("Viewer", PlateManagerAction.VIEW_METADATA.value, "View plate metadata"),
     ]
-    ACTION_REGISTRY = {
-        "add_plate": "action_add",
-        "del_plate": "action_delete",
-        "edit_config": "action_edit_config",
-        "init_plate": "action_init_plate",
-        "compile_plate": "action_compile_plate",
-        "code_plate": "action_code_plate",
-        "view_metadata": "action_view_metadata",
-    }
-    DYNAMIC_ACTIONS = {"run_plate": "_resolve_run_action"}
+    ACTION_REGISTRY = {}
+    DYNAMIC_ACTIONS = {}
+    ACTION_ROUTES = MappingProxyType(
+        {
+            route.action: route
+            for route in (
+                WidgetActionRoute(
+                    PlateManagerAction.ADD_PLATE,
+                    lambda widget: widget.action_add,
+                ),
+                WidgetActionRoute(
+                    PlateManagerAction.DELETE_PLATE,
+                    lambda widget: widget.action_delete,
+                ),
+                WidgetActionRoute(
+                    PlateManagerAction.EDIT_CONFIG,
+                    lambda widget: widget.action_edit_config,
+                ),
+                WidgetActionRoute(
+                    PlateManagerAction.INIT_PLATE,
+                    lambda widget: widget.action_init_plate,
+                ),
+                WidgetActionRoute(
+                    PlateManagerAction.COMPILE_PLATE,
+                    lambda widget: widget.action_compile_plate,
+                ),
+                WidgetActionRoute(
+                    PlateManagerAction.RUN_PLATE,
+                    lambda widget: (
+                        widget.action_stop_execution
+                        if widget.is_any_plate_running()
+                        else widget.action_run_plate
+                    ),
+                ),
+                WidgetActionRoute(
+                    PlateManagerAction.CODE_PLATE,
+                    lambda widget: widget.action_code_plate,
+                ),
+                WidgetActionRoute(
+                    PlateManagerAction.VIEW_METADATA,
+                    lambda widget: widget.action_view_metadata,
+                ),
+            )
+        }
+    )
     ITEM_NAME_SINGULAR = "plate"
     ITEM_NAME_PLURAL = "plates"
-    ITEM_HOOKS = {
-        "id_accessor": "path",
-        "backing_attr": "plates",
-        "selection_attr": "selected_plate_path",
-        "selection_signal": "plate_selected",
-        "selection_emit_id": True,
-        "selection_clear_value": "",
-        "items_changed_signal": None,
-        "list_item_data": "item",
-        "preserve_selection_pred": lambda self: bool(self.plates),
-        "scope_item_type": ListItemType.ORCHESTRATOR,
-        "scope_id_attr": "path",
-    }
+    ITEM_HOOKS = ManagerItemHooks(
+        id_accessor="path",
+        backing_attr="plates",
+        selection_attr="selected_plate_path",
+        selection_signal="plate_selected",
+        selection_emit_id=True,
+        selection_clear_value="",
+        items_changed_signal=None,
+        preserve_selection_pred=lambda self: bool(self.plates),
+        list_item_data="item",
+        scope_item_type=ListItemType.ORCHESTRATOR,
+        scope_id_attr="path",
+    ).to_legacy_mapping()
     # Signals
     plate_selected = pyqtSignal(str)
     status_message = pyqtSignal(str)
@@ -233,6 +288,16 @@ class PlateManagerWidget(AbstractManagerWidget):
         )
 
         logger.debug("Plate manager widget initialized")
+
+    def handle_button_action(self, action: str) -> None:
+        if dispatch_widget_action(
+            widget=self,
+            action_id=action,
+            action_enum=PlateManagerAction,
+            routes=self.ACTION_ROUTES,
+        ):
+            return
+        logger.warning("Unknown action: %s", action)
 
     def cleanup(self):
         """Cleanup resources before widget destruction."""
@@ -477,14 +542,6 @@ class PlateManagerWidget(AbstractManagerWidget):
         self.compilation_error.connect(self._handle_compilation_error)
         self.initialization_error.connect(self._handle_initialization_error)
         self.execution_error.connect(self._handle_execution_error)
-
-    def _resolve_run_action(self) -> str:
-        """Resolve run/stop action based on current state."""
-        return (
-            "action_stop_execution"
-            if self.is_any_plate_running()
-            else "action_run_plate"
-        )
 
     def _update_orchestrator_global_config(self, orchestrator, new_global_config):
         """Update orchestrator global config reference and rebuild pipeline config if needed."""
