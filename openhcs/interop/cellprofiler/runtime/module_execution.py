@@ -3309,7 +3309,7 @@ class ObjectInputBindingRequest(RuntimeInputBindingRequestBase):
         )
 
     def require_exact_object_count(self, expected_count: int) -> None:
-        _require_exact_object_count(
+        CellProfilerObjectInputCountAuthority.require_exact(
             self.module_name,
             self.object_inputs,
             expected_count,
@@ -8793,16 +8793,20 @@ def _label_payload_small_removed(payload: Any) -> Any | None:
     return collapse_singleton_object_label_stack(payload.small_removed_labels)
 
 
-def _require_exact_object_count(
-    module_name: str,
-    object_inputs: tuple[ArtifactSpec, ...],
-    expected_count: int,
-) -> None:
-    if len(object_inputs) != expected_count:
-        raise NotImplementedError(
-            f"{module_name} requires {expected_count} object runtime input(s), "
-            f"got {[spec.name for spec in object_inputs]}."
-        )
+class CellProfilerObjectInputCountAuthority:
+    """Validate CellProfiler policies that require a fixed object-input arity."""
+
+    @staticmethod
+    def require_exact(
+        module_name: str,
+        object_inputs: tuple[ArtifactSpec, ...],
+        expected_count: int,
+    ) -> None:
+        if len(object_inputs) != expected_count:
+            raise NotImplementedError(
+                f"{module_name} requires {expected_count} object runtime input(s), "
+                f"got {[spec.name for spec in object_inputs]}."
+            )
 
 
 def _measurement_object_name(
@@ -9741,7 +9745,11 @@ class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
         object_inputs = request.object_inputs
-        _require_exact_object_count(request.module_name, object_inputs, 1)
+        CellProfilerObjectInputCountAuthority.require_exact(
+            request.module_name,
+            object_inputs,
+            1,
+        )
         measurement_inputs = ArtifactSpecCollection(request.runtime_inputs).of_kind(
             ArtifactKind.MEASUREMENTS
         )
@@ -9785,7 +9793,11 @@ class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
         object_inputs = request.object_inputs
-        _require_exact_object_count(request.module_name, object_inputs, 1)
+        CellProfilerObjectInputCountAuthority.require_exact(
+            request.module_name,
+            object_inputs,
+            1,
+        )
         object_spec = object_inputs[0]
         labels = request.labels_for(object_spec)
         feature_name = CellProfilerStringKwargAuthority.required(
@@ -9831,7 +9843,11 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
         request: SpecialInputBindingRequest,
     ) -> dict[str, Any]:
         object_inputs = request.object_inputs
-        _require_exact_object_count(request.module_name, object_inputs, 1)
+        CellProfilerObjectInputCountAuthority.require_exact(
+            request.module_name,
+            object_inputs,
+            1,
+        )
         object_spec = object_inputs[0]
         labels = request.labels_for(object_spec)
         measurement_labels = request.label_payload_for(object_spec)
