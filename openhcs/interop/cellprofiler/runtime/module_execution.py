@@ -8449,6 +8449,32 @@ class CellProfilerRowSequenceAxisProjection:
             row.setdefault(image_number_field, start)
         return projected_rows
 
+    def present_axis_values(self, field_name: str) -> tuple[int, ...]:
+        """Return present integer axis values for one measurement row field."""
+        return tuple(
+            int(row[field_name])
+            for row in self.row_mappings
+            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(
+                row.get(field_name)
+            )
+        )
+
+    def project_axis_values(
+        self,
+        *,
+        source_field_name: str,
+        target_field_name: str,
+        transform: Callable[[int], int],
+    ) -> Sequence[Mapping[str, Any]]:
+        """Return rows with present source-axis values projected into a target."""
+        projected_rows = [dict(row) for row in self.row_mappings]
+        for row in projected_rows:
+            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(
+                row.get(source_field_name)
+            ):
+                row[target_field_name] = transform(int(row[source_field_name]))
+        return projected_rows
+
     def apply(self, start: int) -> Sequence[Any] | None:
         if not self.rows or not self.has_axis:
             return None
@@ -8457,36 +8483,26 @@ class CellProfilerRowSequenceAxisProjection:
         return self.project_image_number(start)
 
     def project_slice_index(self, start: int) -> Sequence[Mapping[str, Any]]:
-        projected_rows = [dict(row) for row in self.row_mappings]
         slice_index_field = MeasurementRowAxisField.SLICE_INDEX.value
         image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
-        for row in projected_rows:
-            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(
-                row.get(slice_index_field)
-            ):
-                row[image_number_field] = int(row[slice_index_field]) + start
-        return projected_rows
+        return self.project_axis_values(
+            source_field_name=slice_index_field,
+            target_field_name=image_number_field,
+            transform=lambda value: value + start,
+        )
 
     def project_image_number(self, start: int) -> Sequence[Mapping[str, Any]] | None:
         image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
-        image_numbers = [
-            int(row[image_number_field])
-            for row in self.row_mappings
-            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(
-                row.get(image_number_field)
-            )
-        ]
+        image_numbers = self.present_axis_values(image_number_field)
         if not image_numbers or min(image_numbers) >= start:
             return None
 
         offset = start - 1
-        projected_rows = [dict(row) for row in self.row_mappings]
-        for row in projected_rows:
-            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(
-                row.get(image_number_field)
-            ):
-                row[image_number_field] = int(row[image_number_field]) + offset
-        return projected_rows
+        return self.project_axis_values(
+            source_field_name=image_number_field,
+            target_field_name=image_number_field,
+            transform=lambda value: value + offset,
+        )
 
 
 @dataclass(frozen=True, slots=True)
