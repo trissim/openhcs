@@ -1212,14 +1212,18 @@ class CellProfilerModuleExecutor:
                         "Columnar measurement ownership annotation must preserve "
                         f"ColumnarRows, got {type(owned_rows).__name__}."
                     )
-                projected_rows, _projected_row_mappings = CellProfilerGlobalImageNumberProjection(
-                    adapter=cellprofiler_runtime,
-                    rows=owned_rows,
-                    source_image_name=source_image_name,
-                    source_image_payload=measurement_image.payload,
-                    object_name=object_spec.name,
-                    need_row_mappings=False,
-                ).apply()
+                projected_rows, _projected_row_mappings = (
+                    CellProfilerMeasurementMaterializer.project_rows(
+                        CellProfilerMeasurementProjectionRequest.for_measurement_image(
+                            adapter=cellprofiler_runtime,
+                            rows=owned_rows,
+                            measurement_image=measurement_image,
+                            source_image_name=source_image_name,
+                            object_name=object_spec.name,
+                            need_row_mappings=False,
+                        )
+                    )
+                )
                 if not isinstance(projected_rows, ColumnarRows):
                     raise TypeError(
                         "Columnar measurement axis projection must preserve "
@@ -1238,14 +1242,18 @@ class CellProfilerModuleExecutor:
             )
             annotated_rows = owned_rows.annotate_rows(measurement_rows)
             if isinstance(annotated_rows, ColumnarRows):
-                projected_rows, _projected_row_mappings = CellProfilerGlobalImageNumberProjection(
-                    adapter=cellprofiler_runtime,
-                    rows=annotated_rows,
-                    source_image_name=source_image_name,
-                    source_image_payload=measurement_image.payload,
-                    object_name=None,
-                    need_row_mappings=False,
-                ).apply()
+                projected_rows, _projected_row_mappings = (
+                    CellProfilerMeasurementMaterializer.project_rows(
+                        CellProfilerMeasurementProjectionRequest.for_measurement_image(
+                            adapter=cellprofiler_runtime,
+                            rows=annotated_rows,
+                            measurement_image=measurement_image,
+                            source_image_name=source_image_name,
+                            object_name=None,
+                            need_row_mappings=False,
+                        )
+                    )
+                )
                 if not isinstance(projected_rows, ColumnarRows):
                     raise TypeError(
                         "Columnar measurement axis projection must preserve "
@@ -1253,14 +1261,18 @@ class CellProfilerModuleExecutor:
                     )
                 columnar_rows.append(projected_rows)
             else:
-                projected_rows, _projected_row_mappings = CellProfilerGlobalImageNumberProjection(
-                    adapter=cellprofiler_runtime,
-                    rows=annotated_rows,
-                    source_image_name=source_image_name,
-                    source_image_payload=measurement_image.payload,
-                    object_name=None,
-                    need_row_mappings=False,
-                ).apply()
+                projected_rows, _projected_row_mappings = (
+                    CellProfilerMeasurementMaterializer.project_rows(
+                        CellProfilerMeasurementProjectionRequest.for_measurement_image(
+                            adapter=cellprofiler_runtime,
+                            rows=annotated_rows,
+                            measurement_image=measurement_image,
+                            source_image_name=source_image_name,
+                            object_name=None,
+                            need_row_mappings=False,
+                        )
+                    )
+                )
                 combined_rows.extend(projected_rows)
             annotate_seconds += time.perf_counter() - annotate_started_at
 
@@ -1530,35 +1542,39 @@ class CellProfilerModuleExecutor:
         record_started_at = time.perf_counter()
         if combined_rows:
             CellProfilerMeasurementMaterializer.record(
-                cellprofiler_runtime,
-                measurement_outputs[0].name,
-                combined_rows,
-                fields=CellProfilerMeasurementFieldSchema.for_record(
-                    measurement_outputs[0], combined_rows, func
-                ),
-                object_name=(
-                    None
-                    if image_measurement_rows or requires_explicit_row_ownership
-                    else object_inputs[0].name if len(object_inputs) == 1 else None
-                ),
-                source_image_name=combined_source_image_name,
+                CellProfilerMeasurementMaterializationRequest(
+                    adapter=cellprofiler_runtime,
+                    name=measurement_outputs[0].name,
+                    rows=combined_rows,
+                    fields=CellProfilerMeasurementFieldSchema.for_record(
+                        measurement_outputs[0], combined_rows, func
+                    ),
+                    object_name=(
+                        None
+                        if image_measurement_rows or requires_explicit_row_ownership
+                        else object_inputs[0].name if len(object_inputs) == 1 else None
+                    ),
+                    source_image_name=combined_source_image_name,
+                )
             )
         if not combined_rows and not columnar_rows:
             CellProfilerMeasurementMaterializer.record(
-                cellprofiler_runtime,
-                measurement_outputs[0].name,
-                (),
-                fields=CellProfilerMeasurementFieldSchema.for_record(
-                    measurement_outputs[0],
-                    (),
-                    func,
-                ),
-                object_name=(
-                    None
-                    if requires_explicit_row_ownership
-                    else object_inputs[0].name if len(object_inputs) == 1 else None
-                ),
-                source_image_name=combined_source_image_name,
+                CellProfilerMeasurementMaterializationRequest(
+                    adapter=cellprofiler_runtime,
+                    name=measurement_outputs[0].name,
+                    rows=(),
+                    fields=CellProfilerMeasurementFieldSchema.for_record(
+                        measurement_outputs[0],
+                        (),
+                        func,
+                    ),
+                    object_name=(
+                        None
+                        if requires_explicit_row_ownership
+                        else object_inputs[0].name if len(object_inputs) == 1 else None
+                    ),
+                    source_image_name=combined_source_image_name,
+                )
             )
         if columnar_rows:
             measurement_rows = (
@@ -1567,20 +1583,22 @@ class CellProfilerModuleExecutor:
                 else ConcatenatedMeasurementColumnarRows(tuple(columnar_rows))
             )
             CellProfilerMeasurementMaterializer.record(
-                cellprofiler_runtime,
-                measurement_outputs[0].name,
-                measurement_rows,
-                fields=CellProfilerMeasurementFieldSchema.for_record(
-                    measurement_outputs[0],
-                    measurement_rows,
-                    func,
-                ),
-                object_name=(
-                    object_inputs[0].name
-                    if len(object_inputs) == 1 and not requires_explicit_row_ownership
-                    else None
-                ),
-                source_image_name=combined_source_image_name,
+                CellProfilerMeasurementMaterializationRequest(
+                    adapter=cellprofiler_runtime,
+                    name=measurement_outputs[0].name,
+                    rows=measurement_rows,
+                    fields=CellProfilerMeasurementFieldSchema.for_record(
+                        measurement_outputs[0],
+                        measurement_rows,
+                        func,
+                    ),
+                    object_name=(
+                        object_inputs[0].name
+                        if len(object_inputs) == 1 and not requires_explicit_row_ownership
+                        else None
+                    ),
+                    source_image_name=combined_source_image_name,
+                )
             )
         _log_module_profile(
             "cp_per_object_record_measurements",
@@ -1750,14 +1768,15 @@ class CellProfilerModuleExecutor:
                 )
             )
             combined_records.append(measurement_record)
-            projected_rows, _projected_row_mappings = CellProfilerGlobalImageNumberProjection(
-                adapter=cellprofiler_runtime,
-                rows=measurement_record.rows,
-                source_image_name=measurement_record.source_image_name,
-                source_image_payload=measurement_record.source_image_payload,
-                object_name=measurement_record.object_name,
-                need_row_mappings=False,
-            ).apply()
+            projected_rows, _projected_row_mappings = (
+                CellProfilerMeasurementMaterializer.project_rows(
+                    CellProfilerMeasurementProjectionRequest.for_measurement_record(
+                        adapter=cellprofiler_runtime,
+                        record=measurement_record,
+                        need_row_mappings=False,
+                    )
+                )
+            )
             combined_rows.extend(
                 MeasurementRowOwnership(
                     source_image_name=measurement_record.source_image_name,
@@ -1784,26 +1803,28 @@ class CellProfilerModuleExecutor:
         )
         record_started_at = time.perf_counter()
         CellProfilerMeasurementMaterializer.record(
-            cellprofiler_runtime,
-            measurement_outputs[0].name,
-            combined_rows,
-            fields=CellProfilerMeasurementFieldSchema.for_record(
-                measurement_outputs[0], combined_rows, func
-            ),
-            object_name=(
-                None if rows_declare_object_name else _MISSING_MEASUREMENT_OBJECT_NAME
-            ),
-            source_image_name=(
-                None
-                if rows_declare_object_name
-                else (
-                    CellProfilerMeasurementRecord.shared_source_image_name(
-                        tuple(combined_records)
+            CellProfilerMeasurementMaterializationRequest(
+                adapter=cellprofiler_runtime,
+                name=measurement_outputs[0].name,
+                rows=combined_rows,
+                fields=CellProfilerMeasurementFieldSchema.for_record(
+                    measurement_outputs[0], combined_rows, func
+                ),
+                object_name=(
+                    None if rows_declare_object_name else _MISSING_MEASUREMENT_OBJECT_NAME
+                ),
+                source_image_name=(
+                    None
+                    if rows_declare_object_name
+                    else (
+                        CellProfilerMeasurementRecord.shared_source_image_name(
+                            tuple(combined_records)
+                        )
+                        or CellProfilerMeasurementImage.shared_source_image_name(
+                            measurement_images
+                        )
                     )
-                    or CellProfilerMeasurementImage.shared_source_image_name(
-                        measurement_images
-                    )
-                )
+                ),
             ),
         )
         _log_module_profile(
@@ -6945,13 +6966,15 @@ class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
         )
         for partition in row_policy.record_partitions(measurement_record):
             CellProfilerMeasurementMaterializer.record(
-                request.adapter,
-                request.spec.name,
-                partition.rows,
-                fields=partition.fields,
-                object_name=partition.object_name,
-                source_image_name=partition.source_image_name,
-                source_image_payload=partition.source_image_payload,
+                CellProfilerMeasurementMaterializationRequest(
+                    adapter=request.adapter,
+                    name=request.spec.name,
+                    rows=partition.rows,
+                    fields=partition.fields,
+                    object_name=partition.object_name,
+                    source_image_name=partition.source_image_name,
+                    source_image_payload=partition.source_image_payload,
+                )
             )
 
 
@@ -8194,46 +8217,117 @@ class RowOrdinalMeasurementObjectRowIdentityProjectionStrategy(
 
 
 _MISSING_MEASUREMENT_OBJECT_NAME = object()
+ProjectedMeasurementRowsResult = tuple[Sequence[Any] | ColumnarRows, ProjectedMeasurementRows]
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerMeasurementProjectionRequest:
+    """Request for projecting measurement rows onto CellProfiler image numbers."""
+
+    adapter: CellProfilerRuntimeAdapter
+    rows: Sequence[Any] | ColumnarRows
+    source_image_name: str | None = None
+    source_image_payload: Any | None = None
+    object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME
+    need_row_mappings: bool = False
+
+    @classmethod
+    def for_measurement_image(
+        cls,
+        *,
+        adapter: CellProfilerRuntimeAdapter,
+        rows: Sequence[Any] | ColumnarRows,
+        measurement_image: "CellProfilerMeasurementImage",
+        source_image_name: str | None,
+        object_name: str | None | object,
+        need_row_mappings: bool = False,
+    ) -> "CellProfilerMeasurementProjectionRequest":
+        return cls(
+            adapter=adapter,
+            rows=rows,
+            source_image_name=source_image_name,
+            source_image_payload=measurement_image.payload,
+            object_name=object_name,
+            need_row_mappings=need_row_mappings,
+        )
+
+    @classmethod
+    def for_measurement_record(
+        cls,
+        *,
+        adapter: CellProfilerRuntimeAdapter,
+        record: "CellProfilerMeasurementRecord",
+        need_row_mappings: bool = False,
+    ) -> "CellProfilerMeasurementProjectionRequest":
+        return cls(
+            adapter=adapter,
+            rows=record.rows,
+            source_image_name=record.source_image_name,
+            source_image_payload=record.source_image_payload,
+            object_name=record.object_name,
+            need_row_mappings=need_row_mappings,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerMeasurementMaterializationRequest:
+    """Request for materializing projected measurement rows into the adapter."""
+
+    adapter: CellProfilerRuntimeAdapter
+    name: str
+    rows: Sequence[Any] | ColumnarRows
+    fields: tuple[FieldSpec, ...] = ()
+    object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME
+    source_image_name: str | None = None
+    source_image_payload: Any | None = None
+
+    @property
+    def projection_request(self) -> CellProfilerMeasurementProjectionRequest:
+        return CellProfilerMeasurementProjectionRequest(
+            adapter=self.adapter,
+            rows=self.rows,
+            source_image_name=self.source_image_name,
+            source_image_payload=self.source_image_payload,
+            object_name=self.object_name,
+            need_row_mappings=bool(self.fields),
+        )
 
 
 class CellProfilerMeasurementMaterializer:
     """Materialize projected CellProfiler measurement rows into the adapter."""
 
     @staticmethod
-    def record(
-        adapter: CellProfilerRuntimeAdapter,
-        name: str,
-        rows: Sequence[Any] | ColumnarRows,
-        *,
-        fields: tuple[FieldSpec, ...] = (),
-        object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME,
-        source_image_name: str | None = None,
-        source_image_payload: Any | None = None,
-    ) -> None:
+    def project_rows(
+        request: CellProfilerMeasurementProjectionRequest,
+    ) -> ProjectedMeasurementRowsResult:
+        return CellProfilerGlobalImageNumberProjection(request).apply()
+
+    @staticmethod
+    def record(request: CellProfilerMeasurementMaterializationRequest) -> None:
         kwargs: dict[str, Any] = {
-            "source_image_name": source_image_name,
+            "source_image_name": request.source_image_name,
         }
-        if object_name is not _MISSING_MEASUREMENT_OBJECT_NAME:
-            kwargs["object_name"] = object_name
+        if request.object_name is not _MISSING_MEASUREMENT_OBJECT_NAME:
+            kwargs["object_name"] = request.object_name
         projection_started_at = time.perf_counter()
         projected_rows: Sequence[Any] | ColumnarRows
         projected_row_mappings: ProjectedMeasurementRows
-        projected_rows, projected_row_mappings = CellProfilerGlobalImageNumberProjection(
-            adapter=adapter,
-            rows=rows,
-            source_image_name=source_image_name,
-            source_image_payload=source_image_payload,
-            object_name=object_name,
-            need_row_mappings=bool(fields),
-        ).apply()
+        projected_rows, projected_row_mappings = (
+            CellProfilerMeasurementMaterializer.project_rows(
+                request.projection_request,
+            )
+        )
         _log_module_profile(
             "record_measurements_project_rows",
             time.perf_counter() - projection_started_at,
             rows=len(projected_rows),
-            fields=bool(fields),
+            fields=bool(request.fields),
         )
         fields_started_at = time.perf_counter()
-        fields = _measurement_fields_covering_mappings(fields, projected_row_mappings)
+        fields = _measurement_fields_covering_mappings(
+            request.fields,
+            projected_row_mappings,
+        )
         fields, projected_rows = CellProfilerMeasurementOutputProjection(
             fields=fields,
             rows=projected_rows,
@@ -8247,8 +8341,8 @@ class CellProfilerMeasurementMaterializer:
         if fields:
             kwargs["fields"] = fields
         add_started_at = time.perf_counter()
-        adapter.add_measurements(
-            name,
+        request.adapter.add_measurements(
+            request.name,
             projected_rows,
             **kwargs,
         )
@@ -8470,40 +8564,60 @@ class CellProfilerRowSequenceAxisProjection:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class CellProfilerGlobalImageNumberProjection:
     """Project local runtime measurement axes into CP global ImageNumber space."""
 
-    adapter: CellProfilerRuntimeAdapter
-    rows: Sequence[Any] | ColumnarRows
-    source_image_name: str | None
-    source_image_payload: Any | None
-    object_name: str | None | object
-    need_row_mappings: bool
+    request: CellProfilerMeasurementProjectionRequest
 
-    def apply(
+    def __init__(
         self,
-    ) -> tuple[Sequence[Any] | ColumnarRows, ProjectedMeasurementRows]:
-        if isinstance(self.rows, ColumnarRows):
+        request: CellProfilerMeasurementProjectionRequest | None = None,
+        *,
+        adapter: CellProfilerRuntimeAdapter | None = None,
+        rows: Sequence[Any] | ColumnarRows | None = None,
+        source_image_name: str | None = None,
+        source_image_payload: Any | None = None,
+        object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME,
+        need_row_mappings: bool = False,
+    ) -> None:
+        if request is None:
+            if adapter is None or rows is None:
+                raise TypeError(
+                    "CellProfilerGlobalImageNumberProjection requires either a "
+                    "projection request or adapter and rows."
+                )
+            request = CellProfilerMeasurementProjectionRequest(
+                adapter=adapter,
+                rows=rows,
+                source_image_name=source_image_name,
+                source_image_payload=source_image_payload,
+                object_name=object_name,
+                need_row_mappings=need_row_mappings,
+            )
+        object.__setattr__(self, "request", request)
+
+    def apply(self) -> ProjectedMeasurementRowsResult:
+        if isinstance(self.request.rows, ColumnarRows):
             return self._columnar_rows()
         return self._row_sequence()
 
     @property
     def start(self) -> int:
-        resolved_source_image_name = self.source_image_name
+        resolved_source_image_name = self.request.source_image_name
         if (
             resolved_source_image_name is None
-            and self.object_name is not _MISSING_MEASUREMENT_OBJECT_NAME
-            and self.object_name is not None
+            and self.request.object_name is not _MISSING_MEASUREMENT_OBJECT_NAME
+            and self.request.object_name is not None
         ):
-            resolved_source_image_name = self.adapter.get_objects(
-                str(self.object_name)
+            resolved_source_image_name = self.request.adapter.get_objects(
+                str(self.request.object_name)
             ).source_image_name
         return CellProfilerImageNumberStart(
-            adapter=self.adapter,
+            adapter=self.request.adapter,
             image_payload=(
-                self.source_image_payload
-                if self.source_image_payload is not None
+                self.request.source_image_payload
+                if self.request.source_image_payload is not None
                 else object()
             ),
             source_image_name=resolved_source_image_name,
@@ -8513,16 +8627,22 @@ class CellProfilerGlobalImageNumberProjection:
         self,
     ) -> tuple[ColumnarRows, ColumnarRows | tuple[Any, ...]]:
         columns = {
-            str(column): columnar_row_values(self.rows, str(column))
-            for column in self.rows.columns
+            str(column): columnar_row_values(self.request.rows, str(column))
+            for column in self.request.rows.columns
         }
         projection = self.columnar_projection(columns)
         if projection is None:
-            return self.rows, self.rows if self.need_row_mappings else ()
+            return (
+                self.request.rows,
+                self.request.rows if self.request.need_row_mappings else (),
+            )
         projected = projection.apply()
         if projected is None:
-            return self.rows, self.rows if self.need_row_mappings else ()
-        return projected, projected if self.need_row_mappings else ()
+            return (
+                self.request.rows,
+                self.request.rows if self.request.need_row_mappings else (),
+            )
+        return projected, projected if self.request.need_row_mappings else ()
 
     def columnar_projection(
         self,
@@ -8549,19 +8669,19 @@ class CellProfilerGlobalImageNumberProjection:
         self,
     ) -> tuple[Sequence[Any], Sequence[Mapping[str, Any]]]:
         projection = CellProfilerRowSequenceAxisProjection.from_rows(
-            self.rows,
-            need_row_mappings=self.need_row_mappings,
+            self.request.rows,
+            need_row_mappings=self.request.need_row_mappings,
         )
         if (
-            self.source_image_payload is not None
-            and self.object_name in (_MISSING_MEASUREMENT_OBJECT_NAME, None)
+            self.request.source_image_payload is not None
+            and self.request.object_name in (_MISSING_MEASUREMENT_OBJECT_NAME, None)
             and projection.has_source_qualified_image_rows
         ):
             projected_rows = projection.project_current_image_number(self.start)
             return projected_rows, projected_rows
         projected_rows = projection.apply(self.start)
         if projected_rows is None:
-            return self.rows, list(projection.row_mappings)
+            return self.request.rows, list(projection.row_mappings)
         return projected_rows, projected_rows
 
 
