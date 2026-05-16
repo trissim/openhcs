@@ -18,6 +18,7 @@ import numpy as np
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
+from openhcs.core.registry_strategies import GeneratedLeafClassSpec
 from openhcs.core.runtime_semantics import MeasurementImageReferenceDomain
 from openhcs.core.runtime_invocation import (
     RuntimeImageExecutionContext,
@@ -243,88 +244,72 @@ class SecondFirstCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
         return source_pair.second_name, source_pair.first_name
 
 
-class CellProfilerCorrelationFeature(FirstSecondCellProfilerSourcePairFeature):
-    """Pearson correlation column emitted in CellProfiler's first-second order."""
-
-    source_field = "correlation"
-    feature_family = "Correlation"
-
-
-class CellProfilerSlopeFeature(FirstSecondCellProfilerSourcePairFeature):
-    """Regression slope from the first source to the second source."""
-
-    source_field = "slope"
-    feature_family = "Slope"
-
-
-class CellProfilerReverseSlopeFeature(SecondFirstCellProfilerSourcePairFeature):
-    """Regression slope from the second source to the first source."""
-
-    source_field = "slope_reverse"
-    feature_family = "Slope"
-
-
-class CellProfilerOverlapFeature(FirstSecondCellProfilerSourcePairFeature):
-    """Overlap coefficient column emitted in CellProfiler's first-second order."""
-
-    source_field = "overlap"
-    feature_family = "Overlap"
-
-
-class CellProfilerK1Feature(FirstSecondCellProfilerSourcePairFeature):
-    """K coefficient for first source against second source."""
-
-    source_field = "k1"
-    feature_family = "K"
-
-
-class CellProfilerK2Feature(SecondFirstCellProfilerSourcePairFeature):
-    """K coefficient for second source against first source."""
-
-    source_field = "k2"
-    feature_family = "K"
-
-
-class CellProfilerMandersM1Feature(FirstSecondCellProfilerSourcePairFeature):
-    """Manders coefficient for first source against second source."""
-
-    source_field = "manders_m1"
-    feature_family = "Manders"
-
-
-class CellProfilerMandersM2Feature(SecondFirstCellProfilerSourcePairFeature):
-    """Manders coefficient for second source against first source."""
-
-    source_field = "manders_m2"
-    feature_family = "Manders"
-
-
-class CellProfilerRWC1Feature(FirstSecondCellProfilerSourcePairFeature):
-    """Rank-weighted colocalization for first source against second source."""
-
-    source_field = "rwc1"
-    feature_family = "RWC"
-
-
-class CellProfilerRWC2Feature(SecondFirstCellProfilerSourcePairFeature):
-    """Rank-weighted colocalization for second source against first source."""
-
-    source_field = "rwc2"
-    feature_family = "RWC"
-
-
-class CellProfilerCostesM1Feature(FirstSecondCellProfilerSourcePairFeature):
-    """Costes thresholded Manders for first source against second source."""
-
-    source_field = "costes_m1"
-    feature_family = "Costes"
-
-
-class CellProfilerCostesM2Feature(SecondFirstCellProfilerSourcePairFeature):
-    """Costes thresholded Manders for second source against first source."""
-
-    source_field = "costes_m2"
-    feature_family = "Costes"
+for _source_pair_feature_spec in (
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerCorrelationFeature",
+        base_type=FirstSecondCellProfilerSourcePairFeature,
+        attributes={
+            "source_field": "correlation",
+            "feature_family": "Correlation",
+        },
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerSlopeFeature",
+        base_type=FirstSecondCellProfilerSourcePairFeature,
+        attributes={"source_field": "slope", "feature_family": "Slope"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerReverseSlopeFeature",
+        base_type=SecondFirstCellProfilerSourcePairFeature,
+        attributes={"source_field": "slope_reverse", "feature_family": "Slope"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerOverlapFeature",
+        base_type=FirstSecondCellProfilerSourcePairFeature,
+        attributes={"source_field": "overlap", "feature_family": "Overlap"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerK1Feature",
+        base_type=FirstSecondCellProfilerSourcePairFeature,
+        attributes={"source_field": "k1", "feature_family": "K"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerK2Feature",
+        base_type=SecondFirstCellProfilerSourcePairFeature,
+        attributes={"source_field": "k2", "feature_family": "K"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerMandersM1Feature",
+        base_type=FirstSecondCellProfilerSourcePairFeature,
+        attributes={"source_field": "manders_m1", "feature_family": "Manders"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerMandersM2Feature",
+        base_type=SecondFirstCellProfilerSourcePairFeature,
+        attributes={"source_field": "manders_m2", "feature_family": "Manders"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerRWC1Feature",
+        base_type=FirstSecondCellProfilerSourcePairFeature,
+        attributes={"source_field": "rwc1", "feature_family": "RWC"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerRWC2Feature",
+        base_type=SecondFirstCellProfilerSourcePairFeature,
+        attributes={"source_field": "rwc2", "feature_family": "RWC"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerCostesM1Feature",
+        base_type=FirstSecondCellProfilerSourcePairFeature,
+        attributes={"source_field": "costes_m1", "feature_family": "Costes"},
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CellProfilerCostesM2Feature",
+        base_type=SecondFirstCellProfilerSourcePairFeature,
+        attributes={"source_field": "costes_m2", "feature_family": "Costes"},
+    ),
+):
+    _source_pair_feature_spec.declare_in(globals())
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
