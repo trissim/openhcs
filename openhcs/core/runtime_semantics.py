@@ -2685,6 +2685,50 @@ class ParentChildRelationshipPayload:
 class ObjectRelationshipPayloadKernel(ABC):
     """Kernel contract used by semantic relationship payload policies."""
 
+    def dominant_parent_ids_by_child(
+        self,
+        parent_array: Any,
+        child_array: Any,
+        context_array: Any,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Return child ids with their dominant parent ids by positive overlap."""
+        children = np.asarray(child_array, dtype=np.int64)
+        parents = np.asarray(parent_array, dtype=np.int64)
+        context = np.asarray(context_array, dtype=np.int64)
+
+        child_ids = np.unique(children[children > 0])
+        if child_ids.size == 0:
+            empty = np.zeros(0, dtype=np.int64)
+            return empty, empty
+
+        max_parent = int(np.max(parents)) if parents.size else 0
+        parent_ids = np.zeros(child_ids.size, dtype=np.int64)
+        valid = (context > 0) & (parents > 0)
+        if not np.any(valid) or max_parent <= 0:
+            return child_ids, parent_ids
+
+        stride = max_parent + 1
+        pair_keys = context[valid] * stride + parents[valid]
+        counts = np.bincount(pair_keys)
+        child_to_index = np.full(int(child_ids[-1]) + 1, -1, dtype=np.int64)
+        child_to_index[child_ids] = np.arange(child_ids.size, dtype=np.int64)
+
+        nonzero_keys = np.flatnonzero(counts)
+        best_counts = np.zeros(child_ids.size, dtype=np.int64)
+        for key in nonzero_keys:
+            child_id = key // stride
+            if child_id >= child_to_index.size:
+                continue
+            output_index = child_to_index[child_id]
+            if output_index < 0:
+                continue
+            count = counts[key]
+            parent_id = key % stride
+            if count > best_counts[output_index]:
+                best_counts[output_index] = count
+                parent_ids[output_index] = parent_id
+        return child_ids, parent_ids
+
     @abstractmethod
     def relate_children_to_parents(
         self,
@@ -2715,7 +2759,7 @@ class DefaultObjectRelationshipPayloadKernel(ObjectRelationshipPayloadKernel):
         child_count: int,
     ) -> np.ndarray:
         del child_count
-        child_ids, parent_ids = _dominant_parent_ids_by_child(
+        child_ids, parent_ids = self.dominant_parent_ids_by_child(
             parent_labels,
             child_labels,
             child_labels,
@@ -4229,7 +4273,7 @@ def object_label_parent_child_payload(
             context_array,
         )
 
-    child_ids_array, parent_ids_array = _dominant_parent_ids_by_child(
+    child_ids_array, parent_ids_array = kernel.dominant_parent_ids_by_child(
         parent_array,
         child_array,
         context_array,
@@ -4329,51 +4373,6 @@ def coerce_enum(enum_type: type[Enum], value: Any, field_name: str) -> Any:
             f"{field_name} must be one of "
             f"{', '.join(member.value for member in enum_type)}; got {value!r}."
         ) from exc
-
-
-def _dominant_parent_ids_by_child(
-    parent_array: Any,
-    child_array: Any,
-    context_array: Any,
-) -> tuple[Any, Any]:
-    import numpy as np
-
-    children = np.asarray(child_array, dtype=np.int64)
-    parents = np.asarray(parent_array, dtype=np.int64)
-    context = np.asarray(context_array, dtype=np.int64)
-
-    child_ids = np.unique(children[children > 0])
-    if child_ids.size == 0:
-        empty = np.zeros(0, dtype=np.int64)
-        return empty, empty
-
-    max_parent = int(np.max(parents)) if parents.size else 0
-    parent_ids = np.zeros(child_ids.size, dtype=np.int64)
-    valid = (context > 0) & (parents > 0)
-    if not np.any(valid) or max_parent <= 0:
-        return child_ids, parent_ids
-
-    stride = max_parent + 1
-    pair_keys = context[valid] * stride + parents[valid]
-    counts = np.bincount(pair_keys)
-    child_to_index = np.full(int(child_ids[-1]) + 1, -1, dtype=np.int64)
-    child_to_index[child_ids] = np.arange(child_ids.size, dtype=np.int64)
-
-    nonzero_keys = np.flatnonzero(counts)
-    best_counts = np.zeros(child_ids.size, dtype=np.int64)
-    for key in nonzero_keys:
-        child_id = key // stride
-        if child_id >= child_to_index.size:
-            continue
-        output_index = child_to_index[child_id]
-        if output_index < 0:
-            continue
-        count = counts[key]
-        parent_id = key % stride
-        if count > best_counts[output_index]:
-            best_counts[output_index] = count
-            parent_ids[output_index] = parent_id
-    return child_ids, parent_ids
 
 
 def _require_name(value: str, field_name: str) -> None:
