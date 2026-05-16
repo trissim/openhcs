@@ -841,10 +841,11 @@ class CellProfilerModuleExecutor:
             data = image_payload_data(value)
         except Exception:
             data = value
+        data_array = data if isinstance(data, np.ndarray) else None
         return {
             f"{prefix}_type": type(data).__name__,
-            f"{prefix}_shape": getattr(data, "shape", None),
-            f"{prefix}_nbytes": getattr(data, "nbytes", None),
+            f"{prefix}_shape": None if data_array is None else data_array.shape,
+            f"{prefix}_nbytes": None if data_array is None else data_array.nbytes,
         }
 
     def prepare(self, func: Callable[..., Any]) -> None:
