@@ -3674,11 +3674,11 @@ class CellProfilerObjectMeasurementVectorBinding:
     )
 
     @classmethod
-    def for_object_input(
+    def for_object(
         cls,
         request: RuntimeInputBindingRequestBase,
         *,
-        object_spec: ArtifactSpec,
+        object_ref: ArtifactSpec | str,
         feature_name: str,
         labels: Any | None = None,
         image_number: int | None = None,
@@ -3686,35 +3686,23 @@ class CellProfilerObjectMeasurementVectorBinding:
             CellProfilerObjectMeasurementVectorSource.RUNTIME_MEASUREMENTS
         ),
     ) -> "CellProfilerObjectMeasurementVectorBinding":
+        object_ref_is_spec = isinstance(object_ref, ArtifactSpec)
+        object_spec = (
+            object_ref
+            if object_ref_is_spec
+            else ArtifactSpecCollection(request.object_inputs).by_name(object_ref)
+        )
+        resolved_image_number = image_number
+        if resolved_image_number is None and object_ref_is_spec:
+            resolved_image_number = request.image_number_for_object(object_spec)
         return cls(
             request=request,
             object_name=object_spec.name,
             feature_name=feature_name,
             object_spec=object_spec,
             labels=labels,
-            image_number=(
-                image_number
-                if image_number is not None
-                else request.image_number_for_object(object_spec)
-            ),
+            image_number=resolved_image_number,
             source=source,
-        )
-
-    @classmethod
-    def for_object_name(
-        cls,
-        request: ObjectInputBindingRequest,
-        *,
-        object_name: str,
-        feature_name: str,
-    ) -> "CellProfilerObjectMeasurementVectorBinding":
-        return cls(
-            request=request,
-            object_name=object_name,
-            feature_name=feature_name,
-            object_spec=ArtifactSpecCollection(request.object_inputs).by_name(
-                object_name
-            ),
         )
 
     @property
@@ -5159,9 +5147,9 @@ class FilterObjectsMeasurementVectorPlan:
     def bind(self, request: ObjectInputBindingRequest) -> Any:
         labels = request.labels_for(self.object_spec)
         return (
-            CellProfilerObjectMeasurementVectorBinding.for_object_input(
+            CellProfilerObjectMeasurementVectorBinding.for_object(
                 request,
-                object_spec=self.object_spec,
+                object_ref=self.object_spec,
                 feature_name=self.feature_name,
                 labels=labels,
             )
@@ -5349,9 +5337,9 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             if object_spec is None:
                 return None
             bindings.append(
-                CellProfilerObjectMeasurementVectorBinding.for_object_input(
+                CellProfilerObjectMeasurementVectorBinding.for_object(
                     request,
-                    object_spec=object_spec,
+                    object_ref=object_spec,
                     feature_name=feature_name,
                 )
             )
@@ -5385,9 +5373,9 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             return self.image_operand_value(request.adapter, feature_name)
 
         return (
-            CellProfilerObjectMeasurementVectorBinding.for_object_name(
+            CellProfilerObjectMeasurementVectorBinding.for_object(
                 request,
-                object_name=object_name,
+                object_ref=object_name,
                 feature_name=feature_name,
             )
             .vector()
@@ -9933,9 +9921,9 @@ class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         return {
             "labels": labels,
             "measurements": (
-                CellProfilerObjectMeasurementVectorBinding.for_object_input(
+                CellProfilerObjectMeasurementVectorBinding.for_object(
                     request,
-                    object_spec=object_spec,
+                    object_ref=object_spec,
                     feature_name=feature_name,
                     labels=labels,
                 )
@@ -9987,9 +9975,9 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
             return {
                 "labels": labels,
                 "measurement_values_by_rule": tuple(
-                    CellProfilerObjectMeasurementVectorBinding.for_object_input(
+                    CellProfilerObjectMeasurementVectorBinding.for_object(
                         request,
-                        object_spec=object_spec,
+                        object_ref=object_spec,
                         feature_name=_classification_rule_measurement_feature(
                             rule,
                             request.module_name,
@@ -10006,9 +9994,9 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
             "labels": labels,
             **{
                 parameter_name: (
-                    CellProfilerObjectMeasurementVectorBinding.for_object_input(
+                    CellProfilerObjectMeasurementVectorBinding.for_object(
                         request,
-                        object_spec=object_spec,
+                        object_ref=object_spec,
                         feature_name=CellProfilerStringKwargAuthority.required(
                             request.kwargs,
                             kwarg_name,
