@@ -1529,7 +1529,7 @@ class CellProfilerModuleExecutor:
 
         record_started_at = time.perf_counter()
         if combined_rows:
-            _record_measurements(
+            CellProfilerMeasurementMaterializer.record(
                 cellprofiler_runtime,
                 measurement_outputs[0].name,
                 combined_rows,
@@ -1544,7 +1544,7 @@ class CellProfilerModuleExecutor:
                 source_image_name=combined_source_image_name,
             )
         if not combined_rows and not columnar_rows:
-            _record_measurements(
+            CellProfilerMeasurementMaterializer.record(
                 cellprofiler_runtime,
                 measurement_outputs[0].name,
                 (),
@@ -1566,7 +1566,7 @@ class CellProfilerModuleExecutor:
                 if len(columnar_rows) == 1
                 else ConcatenatedMeasurementColumnarRows(tuple(columnar_rows))
             )
-            _record_measurements(
+            CellProfilerMeasurementMaterializer.record(
                 cellprofiler_runtime,
                 measurement_outputs[0].name,
                 measurement_rows,
@@ -1783,7 +1783,7 @@ class CellProfilerModuleExecutor:
             CellProfilerMeasurementFieldSchema.rows_declare_object_name(combined_rows)
         )
         record_started_at = time.perf_counter()
-        _record_measurements(
+        CellProfilerMeasurementMaterializer.record(
             cellprofiler_runtime,
             measurement_outputs[0].name,
             combined_rows,
@@ -6932,7 +6932,7 @@ class MeasurementsOutputRecorder(MeasurementDependentOutputRecorder):
             request.executor.module_name
         )
         for partition in row_policy.record_partitions(measurement_record):
-            _record_measurements(
+            CellProfilerMeasurementMaterializer.record(
                 request.adapter,
                 request.spec.name,
                 partition.rows,
@@ -8191,63 +8191,67 @@ class RowOrdinalMeasurementObjectRowIdentityProjectionStrategy(
 _MISSING_MEASUREMENT_OBJECT_NAME = object()
 
 
-def _record_measurements(
-    adapter: CellProfilerRuntimeAdapter,
-    name: str,
-    rows: Sequence[Any] | ColumnarRows,
-    *,
-    fields: tuple[FieldSpec, ...] = (),
-    object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME,
-    source_image_name: str | None = None,
-    source_image_payload: Any | None = None,
-) -> None:
-    kwargs: dict[str, Any] = {
-        "source_image_name": source_image_name,
-    }
-    if object_name is not _MISSING_MEASUREMENT_OBJECT_NAME:
-        kwargs["object_name"] = object_name
-    projection_started_at = time.perf_counter()
-    projected_rows: Sequence[Any] | ColumnarRows
-    projected_row_mappings: ProjectedMeasurementRows
-    projected_rows, projected_row_mappings = CellProfilerGlobalImageNumberProjection(
-        adapter=adapter,
-        rows=rows,
-        source_image_name=source_image_name,
-        source_image_payload=source_image_payload,
-        object_name=object_name,
-        need_row_mappings=bool(fields),
-    ).apply()
-    _log_module_profile(
-        "record_measurements_project_rows",
-        time.perf_counter() - projection_started_at,
-        rows=len(projected_rows),
-        fields=bool(fields),
-    )
-    fields_started_at = time.perf_counter()
-    fields = _measurement_fields_covering_mappings(fields, projected_row_mappings)
-    fields, projected_rows = CellProfilerMeasurementOutputProjection(
-        fields=fields,
-        rows=projected_rows,
-    ).apply()
-    _log_module_profile(
-        "record_measurements_fields",
-        time.perf_counter() - fields_started_at,
-        rows=len(projected_row_mappings),
-        fields=bool(fields),
-    )
-    if fields:
-        kwargs["fields"] = fields
-    add_started_at = time.perf_counter()
-    adapter.add_measurements(
-        name,
-        projected_rows,
-        **kwargs,
-    )
-    _log_module_profile(
-        "record_measurements_add",
-        time.perf_counter() - add_started_at,
-        rows=len(projected_rows),
-    )
+class CellProfilerMeasurementMaterializer:
+    """Materialize projected CellProfiler measurement rows into the adapter."""
+
+    @staticmethod
+    def record(
+        adapter: CellProfilerRuntimeAdapter,
+        name: str,
+        rows: Sequence[Any] | ColumnarRows,
+        *,
+        fields: tuple[FieldSpec, ...] = (),
+        object_name: str | None | object = _MISSING_MEASUREMENT_OBJECT_NAME,
+        source_image_name: str | None = None,
+        source_image_payload: Any | None = None,
+    ) -> None:
+        kwargs: dict[str, Any] = {
+            "source_image_name": source_image_name,
+        }
+        if object_name is not _MISSING_MEASUREMENT_OBJECT_NAME:
+            kwargs["object_name"] = object_name
+        projection_started_at = time.perf_counter()
+        projected_rows: Sequence[Any] | ColumnarRows
+        projected_row_mappings: ProjectedMeasurementRows
+        projected_rows, projected_row_mappings = CellProfilerGlobalImageNumberProjection(
+            adapter=adapter,
+            rows=rows,
+            source_image_name=source_image_name,
+            source_image_payload=source_image_payload,
+            object_name=object_name,
+            need_row_mappings=bool(fields),
+        ).apply()
+        _log_module_profile(
+            "record_measurements_project_rows",
+            time.perf_counter() - projection_started_at,
+            rows=len(projected_rows),
+            fields=bool(fields),
+        )
+        fields_started_at = time.perf_counter()
+        fields = _measurement_fields_covering_mappings(fields, projected_row_mappings)
+        fields, projected_rows = CellProfilerMeasurementOutputProjection(
+            fields=fields,
+            rows=projected_rows,
+        ).apply()
+        _log_module_profile(
+            "record_measurements_fields",
+            time.perf_counter() - fields_started_at,
+            rows=len(projected_row_mappings),
+            fields=bool(fields),
+        )
+        if fields:
+            kwargs["fields"] = fields
+        add_started_at = time.perf_counter()
+        adapter.add_measurements(
+            name,
+            projected_rows,
+            **kwargs,
+        )
+        _log_module_profile(
+            "record_measurements_add",
+            time.perf_counter() - add_started_at,
+            rows=len(projected_rows),
+        )
 
 
 def _measurement_fields_covering_mappings(
