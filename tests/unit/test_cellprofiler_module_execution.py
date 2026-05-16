@@ -62,6 +62,8 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerPure2DOutputAggregator,
     CallableInvocationKwargSpec,
     CellProfilerGlobalImageNumberProjection,
+    CellProfilerMeasurementProjectionSource,
+    CellProfilerMeasurementProjectionRequest,
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_measurement_image,
@@ -217,23 +219,27 @@ def test_source_qualified_image_rows_use_current_image_number_not_slice_index() 
         metadata=ImagePayloadMetadata(source_path="/plate/A01_s007_w1.tif"),
     )
     rows, _mappings = CellProfilerGlobalImageNumberProjection(
-        adapter=adapter,
-        rows=(
-            {
-                "slice_index": 0,
-                "source_image_name": "Objects1",
-                "area_occupied": 10,
-            },
-            {
-                "slice_index": 1,
-                "source_image_name": "Objects2",
-                "area_occupied": 20,
-            },
+        CellProfilerMeasurementProjectionRequest(
+            source=CellProfilerMeasurementProjectionSource(
+                adapter=adapter,
+                source_image_name=None,
+                source_image_payload=source_payload,
+            ),
+            rows=(
+                {
+                    "slice_index": 0,
+                    "source_image_name": "Objects1",
+                    "area_occupied": 10,
+                },
+                {
+                    "slice_index": 1,
+                    "source_image_name": "Objects2",
+                    "area_occupied": 20,
+                },
+            ),
+            object_name=None,
+            need_row_mappings=True,
         ),
-        source_image_name=None,
-        source_image_payload=source_payload,
-        object_name=None,
-        need_row_mappings=True,
     ).apply()
 
     assert [row["image_number"] for row in rows] == [7, 7]
@@ -864,12 +870,14 @@ def test_global_image_number_projection_ignores_missing_axis_values() -> None:
     ]
 
     projected, projected_mappings = CellProfilerGlobalImageNumberProjection(
-        adapter=_FakeCellProfilerRuntime({}),
-        rows=rows,
-        source_image_name=None,
-        object_name=None,
-        source_image_payload=None,
-        need_row_mappings=True,
+        CellProfilerMeasurementProjectionRequest(
+            source=CellProfilerMeasurementProjectionSource(
+                adapter=_FakeCellProfilerRuntime({}),
+            ),
+            rows=rows,
+            object_name=None,
+            need_row_mappings=True,
+        )
     ).apply()
 
     assert projected is projected_mappings
@@ -887,16 +895,18 @@ def test_global_image_number_projection_applies_to_columnar_rows() -> None:
     )
 
     projected, projected_mappings = CellProfilerGlobalImageNumberProjection(
-        adapter=_FakeCellProfilerRuntime(
-            {},
-            image_number_start=23,
-            ordered_pipeline_image_paths=("well-a",),
-        ),
-        rows=rows,
-        source_image_name=None,
-        object_name=None,
-        source_image_payload=None,
-        need_row_mappings=True,
+        CellProfilerMeasurementProjectionRequest(
+            source=CellProfilerMeasurementProjectionSource(
+                adapter=_FakeCellProfilerRuntime(
+                    {},
+                    image_number_start=23,
+                    ordered_pipeline_image_paths=("well-a",),
+                ),
+            ),
+            rows=rows,
+            object_name=None,
+            need_row_mappings=True,
+        )
     ).apply()
 
     assert projected is projected_mappings
@@ -922,19 +932,23 @@ def test_global_image_number_projection_uses_source_payload_for_columnar_rows() 
     )
 
     projected, _projected_mappings = CellProfilerGlobalImageNumberProjection(
-        adapter=_FakeCellProfilerRuntime(
-            {},
-            image_number_start=1,
-            ordered_pipeline_image_paths=(
-                "well-a01-w1.tif",
-                "well-h12-w1.tif",
+        CellProfilerMeasurementProjectionRequest(
+            source=CellProfilerMeasurementProjectionSource(
+                adapter=_FakeCellProfilerRuntime(
+                    {},
+                    image_number_start=1,
+                    ordered_pipeline_image_paths=(
+                        "well-a01-w1.tif",
+                        "well-h12-w1.tif",
+                    ),
+                ),
+                source_image_name="rawGFP",
+                source_image_payload=source_payload,
             ),
-        ),
-        rows=rows,
-        source_image_name="rawGFP",
-        object_name=None,
-        source_image_payload=source_payload,
-        need_row_mappings=True,
+            rows=rows,
+            object_name=None,
+            need_row_mappings=True,
+        )
     ).apply()
 
     assert tuple(
