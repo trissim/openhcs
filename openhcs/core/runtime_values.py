@@ -3564,7 +3564,7 @@ class SpatialGrid(NativeRuntimeValue):
             if data.get("origin") is None
             else coerce_enum(SpatialGridOrigin, data["origin"], "SpatialGrid.origin")
         )
-        ordering = _optional_grid_ordering(data, "ordering")
+        ordering = OptionalMappingField(data, "ordering").grid_ordering()
         topology = SpatialGridTopology.from_mapping(
             data,
             rows=rows,
@@ -3584,9 +3584,9 @@ class SpatialGrid(NativeRuntimeValue):
             y_spacing=y_spacing,
             x_origin=x_origin,
             y_origin=y_origin,
-            slice_index=_optional_int(data, "slice_index", default=0),
-            total_width=_optional_float(data, "total_width"),
-            total_height=_optional_float(data, "total_height"),
+            slice_index=OptionalMappingField(data, "slice_index").int_or(default=0),
+            total_width=OptionalMappingField(data, "total_width").nullable_float(),
+            total_height=OptionalMappingField(data, "total_height").nullable_float(),
             origin=origin,
             ordering=ordering,
             x_locations=topology.x_locations,
@@ -3755,12 +3755,12 @@ class ObjectRelationship(NativeRuntimeValue):
             source_ids=value.data[relationship.source.id_field],
             target_ids=value.data[relationship.target.id_field],
             relationship_type=relationship.relationship_type,
-            slice_indices=_optional_int_tuple(
+            slice_indices=OptionalMappingField(
                 value.data,
                 "slice_indices",
                 aliases=("slice_index",),
-            ),
-            slice_count=_optional_nullable_int(value.data, "slice_count"),
+            ).int_tuple(),
+            slice_count=OptionalMappingField(value.data, "slice_count").nullable_int(),
         )
 
     def __post_init__(self) -> None:
@@ -4189,6 +4189,55 @@ class RequiredMappingField:
         raise KeyError(f"Missing required mapping field {names}.")
 
 
+@dataclass(frozen=True, slots=True)
+class OptionalMappingField:
+    """Optional value lookup and coercion over mapping-backed runtime values."""
+
+    data: Mapping[str, Any]
+    name: str
+    aliases: tuple[str, ...] = ()
+
+    def int_or(self, *, default: int) -> int:
+        if self.name not in self.data:
+            return default
+        return int(self.data[self.name])
+
+    def nullable_int(self) -> int | None:
+        if self.name not in self.data or self.data[self.name] is None:
+            return None
+        return int(self.data[self.name])
+
+    def int_tuple(self) -> tuple[int, ...]:
+        for key in (self.name, *self.aliases):
+            if key not in self.data or self.data[key] is None:
+                continue
+            value = self.data[key]
+            if isinstance(value, Sequence) and not isinstance(
+                value,
+                (str, bytes, bytearray),
+            ):
+                return tuple(int(item) for item in value)
+            raise TypeError(
+                f"Optional integer tuple field '{key}' must be a sequence, "
+                f"got {type(value).__name__}."
+            )
+        return ()
+
+    def nullable_float(self) -> float | None:
+        if self.name not in self.data or self.data[self.name] is None:
+            return None
+        return float(self.data[self.name])
+
+    def grid_ordering(self) -> SpatialGridOrdering:
+        if self.name not in self.data or self.data[self.name] is None:
+            return SpatialGridOrdering.BY_ROWS
+        return coerce_enum(
+            SpatialGridOrdering,
+            self.data[self.name],
+            f"SpatialGrid.{self.name}",
+        )
+
+
 def _required_int(
     data: Mapping[str, Any],
     name: str,
@@ -4205,63 +4254,6 @@ def _required_float(
     aliases: tuple[str, ...] = (),
 ) -> float:
     return float(RequiredMappingField(data, name, aliases).value())
-
-
-def _optional_int(
-    data: Mapping[str, Any],
-    name: str,
-    *,
-    default: int,
-) -> int:
-    if name not in data:
-        return default
-    return int(data[name])
-
-
-def _optional_nullable_int(data: Mapping[str, Any], name: str) -> int | None:
-    if name not in data or data[name] is None:
-        return None
-    return int(data[name])
-
-
-def _optional_int_tuple(
-    data: Mapping[str, Any],
-    name: str,
-    *,
-    aliases: tuple[str, ...] = (),
-) -> tuple[int, ...]:
-    for key in (name, *aliases):
-        if key not in data or data[key] is None:
-            continue
-        value = data[key]
-        if isinstance(value, Sequence) and not isinstance(
-            value,
-            (str, bytes, bytearray),
-        ):
-            return tuple(int(item) for item in value)
-        raise TypeError(
-            f"Optional integer tuple field '{key}' must be a sequence, "
-            f"got {type(value).__name__}."
-        )
-    return ()
-
-
-def _optional_float(
-    data: Mapping[str, Any],
-    name: str,
-) -> float | None:
-    if name not in data or data[name] is None:
-        return None
-    return float(data[name])
-
-
-def _optional_grid_ordering(
-    data: Mapping[str, Any],
-    name: str,
-) -> SpatialGridOrdering:
-    if name not in data or data[name] is None:
-        return SpatialGridOrdering.BY_ROWS
-    return coerce_enum(SpatialGridOrdering, data[name], f"SpatialGrid.{name}")
 
 
 def _require_name(value: str, field_name: str) -> None:
