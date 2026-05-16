@@ -5268,12 +5268,15 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             ("operand1_feature", "operand1_object_name"),
             ("operand2_feature", "operand2_object_name"),
         ):
-            feature_name = _required_string_kwarg(
+            feature_name = CellProfilerStringKwargAuthority.required(
                 request.kwargs,
                 feature_kwarg,
                 "CalculateMath",
             )
-            object_name = _optional_string_kwarg(request.kwargs, object_kwarg)
+            object_name = CellProfilerStringKwargAuthority.optional(
+                request.kwargs,
+                object_kwarg,
+            )
             if (
                 object_name is None
                 or count_feature_object_name(feature_name) is not None
@@ -5300,12 +5303,15 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
         feature_kwarg: str,
         object_kwarg: str,
     ) -> Any:
-        feature_name = _required_string_kwarg(
+        feature_name = CellProfilerStringKwargAuthority.required(
             request.kwargs,
             feature_kwarg,
             "CalculateMath",
         )
-        object_name = _optional_string_kwarg(request.kwargs, object_kwarg)
+        object_name = CellProfilerStringKwargAuthority.optional(
+            request.kwargs,
+            object_kwarg,
+        )
         count_object_name = count_feature_object_name(feature_name)
         if count_object_name is not None:
             return float(
@@ -9782,7 +9788,7 @@ class DisplayDataOnImageSpecialInputPolicy(CellProfilerSpecialInputPolicy):
         _require_exact_object_count(request.module_name, object_inputs, 1)
         object_spec = object_inputs[0]
         labels = request.labels_for(object_spec)
-        feature_name = _required_string_kwarg(
+        feature_name = CellProfilerStringKwargAuthority.required(
             request.kwargs,
             "measurement_feature",
             request.module_name,
@@ -9862,7 +9868,7 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
                     CellProfilerObjectMeasurementVectorBinding.for_object_input(
                         request,
                         object_spec=object_spec,
-                        feature_name=_required_string_kwarg(
+                        feature_name=CellProfilerStringKwargAuthority.required(
                             request.kwargs,
                             kwarg_name,
                             request.module_name,
@@ -9937,28 +9943,34 @@ def _signature_special_image_inputs(
     return image_inputs[-special_image_count:]
 
 
-def _required_string_kwarg(
-    kwargs: Mapping[str, Any],
-    name: str,
-    module_name: str,
-) -> str:
-    value = kwargs.get(name)
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"{module_name} requires non-empty kwarg {name!r}.")
-    return value
+class CellProfilerStringKwargAuthority:
+    """Typed string-kwarg validation shared by CellProfiler binding policies."""
 
+    @staticmethod
+    def required(
+        kwargs: Mapping[str, Any],
+        name: str,
+        module_name: str,
+    ) -> str:
+        value = kwargs.get(name)
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"{module_name} requires non-empty kwarg {name!r}.")
+        return value
 
-def _optional_string_kwarg(
-    kwargs: Mapping[str, Any],
-    name: str,
-) -> str | None:
-    value = kwargs.get(name)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise TypeError(f"Expected string kwarg {name!r}, got {type(value).__name__}.")
-    normalized = value.strip()
-    return normalized or None
+    @staticmethod
+    def optional(
+        kwargs: Mapping[str, Any],
+        name: str,
+    ) -> str | None:
+        value = kwargs.get(name)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError(
+                f"Expected string kwarg {name!r}, got {type(value).__name__}."
+            )
+        normalized = value.strip()
+        return normalized or None
 
 
 def _calculate_math_image_operand_values_by_slice(
