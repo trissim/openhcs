@@ -1878,7 +1878,7 @@ class CellProfilerModuleExecutor:
         return CellProfilerMeasurementImage(
             source_image_name=None,
             source_image_names=(),
-            payload=_object_only_reference_image(current_image),
+            payload=OBJECT_ONLY_REFERENCE_IMAGE.reference_image(current_image),
             reference_domain=reference_domain,
         )
 
@@ -2129,7 +2129,7 @@ class CellProfilerModuleExecutor:
         image_inputs = self.primary_image_inputs(func)
         if not image_inputs:
             payload = (
-                _object_only_reference_image(current_image)
+                OBJECT_ONLY_REFERENCE_IMAGE.reference_image(current_image)
                 if self.object_input_specs or self._spatial_grid_inputs
                 else _cellprofiler_image_payload(current_image)
             )
@@ -8558,30 +8558,6 @@ def _coerce_spatial_grid(
     )
 
 
-def _object_only_reference_image(image: Any) -> Any:
-    """Use one 2D plane to carry object-only CellProfiler modules once.
-
-    Object-only modules consume runtime object artifacts; the image argument is a
-    carrier required by the absorbed function signature, not the semantic domain
-    to iterate over. Running them over every channel slice duplicates object
-    artifacts and corrupts downstream measurement alignment.
-    """
-    image_data = image_payload_data(image)
-    if isinstance(image_data, AlignedImageStack):
-        return _object_only_reference_image(image_data.slices[0])
-    if is_color_image_stack(image_data):
-        return image_data[0, :, :, 0]
-    if is_color_image_slice(image_data):
-        return image_data[:, :, 0]
-    while isinstance(image_data, np.ndarray) and image_data.ndim > 2:
-        if image_data.shape[0] < 1:
-            break
-        image_data = image_data[0]
-        if is_color_image_slice(image_data):
-            return image_data[:, :, 0]
-    return image_data
-
-
 def _measurement_image_for_labels(
     image: Any,
     labels: Any,
@@ -10152,6 +10128,29 @@ class SingletonStackOutputCollapsePolicy:
 
 
 SINGLETON_STACK_OUTPUT_COLLAPSE = SingletonStackOutputCollapsePolicy()
+
+
+class ObjectOnlyReferenceImagePolicy:
+    """Choose the single image plane used to carry object-only CP modules."""
+
+    def reference_image(self, image: Any) -> Any:
+        image_data = image_payload_data(image)
+        if isinstance(image_data, AlignedImageStack):
+            return self.reference_image(image_data.slices[0])
+        if is_color_image_stack(image_data):
+            return image_data[0, :, :, 0]
+        if is_color_image_slice(image_data):
+            return image_data[:, :, 0]
+        while isinstance(image_data, np.ndarray) and image_data.ndim > 2:
+            if image_data.shape[0] < 1:
+                break
+            image_data = image_data[0]
+            if is_color_image_slice(image_data):
+                return image_data[:, :, 0]
+        return image_data
+
+
+OBJECT_ONLY_REFERENCE_IMAGE = ObjectOnlyReferenceImagePolicy()
 
 
 def _openhcs_main_flow_output(

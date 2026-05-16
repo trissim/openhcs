@@ -65,7 +65,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     _measurement_labels,
     _measurement_labels_for_measurement_image,
     measurement_table_rows,
-    _object_only_reference_image,
+    OBJECT_ONLY_REFERENCE_IMAGE,
     _output_values_by_kind,
     _processing_contract_for_callable,
     _unstack_cellprofiler_image_slices,
@@ -3071,7 +3071,7 @@ def test_object_only_reference_image_reduces_color_stacks_to_one_intensity_plane
     color_stack = np.zeros((2, 4, 5, 3), dtype=np.float32)
     color_stack[0, :, :, 1] = 7
 
-    reference = _object_only_reference_image(color_stack)
+    reference = OBJECT_ONLY_REFERENCE_IMAGE.reference_image(color_stack)
 
     assert reference.shape == (4, 5)
     np.testing.assert_array_equal(reference, color_stack[0, :, :, 0])
@@ -4540,7 +4540,7 @@ def test_object_only_reference_image_collapses_payload_stack() -> None:
         metadata=ImagePayloadMetadata(source_dtype="float32"),
     )
 
-    reference = _object_only_reference_image(payload)
+    reference = OBJECT_ONLY_REFERENCE_IMAGE.reference_image(payload)
 
     assert reference.shape == (6, 6)
 
@@ -4559,7 +4559,7 @@ def test_object_only_reference_image_collapses_aligned_stack() -> None:
         )
     )
 
-    reference = _object_only_reference_image(payload)
+    reference = OBJECT_ONLY_REFERENCE_IMAGE.reference_image(payload)
 
     assert reference.shape == (6, 6)
     assert np.all(reference == 0)
@@ -6304,7 +6304,7 @@ def test_image_request_source_name_uses_primary_images_not_object_inputs() -> No
 def test_object_only_reference_image_uses_one_stack_plane() -> None:
     image = np.arange(3 * 4 * 5, dtype=np.uint16).reshape(3, 4, 5)
 
-    reference_image = _object_only_reference_image(image)
+    reference_image = OBJECT_ONLY_REFERENCE_IMAGE.reference_image(image)
 
     assert reference_image.shape == (4, 5)
     np.testing.assert_array_equal(reference_image, image[0])
@@ -6313,7 +6313,7 @@ def test_object_only_reference_image_uses_one_stack_plane() -> None:
 def test_object_only_reference_image_collapses_high_rank_carrier_to_plane() -> None:
     image = np.arange(2 * 3 * 4 * 5, dtype=np.uint16).reshape(2, 3, 4, 5)
 
-    reference_image = _object_only_reference_image(image)
+    reference_image = OBJECT_ONLY_REFERENCE_IMAGE.reference_image(image)
 
     assert reference_image.shape == (4, 5)
     np.testing.assert_array_equal(reference_image, image[0, 0])
