@@ -2270,7 +2270,7 @@ def measurement_table_row_layouts(rows: object) -> frozenset[MeasurementTableRow
         isinstance(row, ObjectMeasurementValueRow) for row in row_sequence
     ):
         return frozenset((MeasurementTableRowLayout.LONG,))
-    return frozenset(_measurement_row_layout(row) for row in row_sequence)
+    return frozenset(MeasurementRowLayoutAuthority(row).layout() for row in row_sequence)
 
 
 def normalize_measurement_table_rows(
@@ -2300,25 +2300,33 @@ def measurement_rows_as_layout(
         projected_row
         for row in row_sequence
         for projected_row in MeasurementRowLayoutProjectionStrategy.for_enum_member(
-            _measurement_row_layout(row)
+            MeasurementRowLayoutAuthority(row).layout()
         ).long_rows(row)
     ]
 
 
-def _measurement_row_layout(row: object) -> MeasurementTableRowLayout:
-    field_names = frozenset(str(field_name) for field_name in measurement_row_mapping(row))
-    has_feature_field = bool(field_names & measurement_row_feature_field_names())
-    has_value_field = bool(field_names & measurement_row_value_field_names())
-    if has_feature_field and not has_value_field:
-        raise ValueError(
-            "Long-form measurement rows must declare both a feature field and a "
-            f"value field, got fields {sorted(field_names)!r}."
+@dataclass(frozen=True, slots=True)
+class MeasurementRowLayoutAuthority:
+    """Classify measurement rows by their declared feature/value fields."""
+
+    row: object
+
+    def layout(self) -> MeasurementTableRowLayout:
+        field_names = frozenset(
+            str(field_name) for field_name in measurement_row_mapping(self.row)
         )
-    return (
-        MeasurementTableRowLayout.LONG
-        if has_feature_field
-        else MeasurementTableRowLayout.WIDE
-    )
+        has_feature_field = bool(field_names & measurement_row_feature_field_names())
+        has_value_field = bool(field_names & measurement_row_value_field_names())
+        if has_feature_field and not has_value_field:
+            raise ValueError(
+                "Long-form measurement rows must declare both a feature field and a "
+                f"value field, got fields {sorted(field_names)!r}."
+            )
+        return (
+            MeasurementTableRowLayout.LONG
+            if has_feature_field
+            else MeasurementTableRowLayout.WIDE
+        )
 
 
 @lru_cache(maxsize=256)
