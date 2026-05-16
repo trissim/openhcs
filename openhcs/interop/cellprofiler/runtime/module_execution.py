@@ -728,6 +728,11 @@ class CellProfilerModuleExecutor:
         repr=False,
         compare=False,
     )
+    _module_output_recorder: "CellProfilerModuleOutputRecorder" = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.contract, ModuleArtifactContract):
@@ -812,6 +817,11 @@ class CellProfilerModuleExecutor:
                     for kind in {spec.kind for spec in ordered_outputs}
                 }
             ),
+        )
+        object.__setattr__(
+            self,
+            "_module_output_recorder",
+            CellProfilerModuleOutputRecorder(self),
         )
 
     @property
@@ -1006,7 +1016,7 @@ class CellProfilerModuleExecutor:
             function=function_name,
         )
         record_started_at = time.perf_counter()
-        self._record_outputs(
+        self._module_output_recorder.record_outputs(
             func,
             cellprofiler_runtime,
             main_output,
@@ -2091,71 +2101,6 @@ class CellProfilerModuleExecutor:
             *special_image_inputs,
         )
 
-    def _record_outputs(
-        self,
-        func: Callable[..., Any],
-        adapter: CellProfilerRuntimeAdapter,
-        main_output: Any,
-        artifact_values: tuple[Any, ...],
-        *,
-        source_image_payload: Any | None = None,
-        source_image_name: str | None,
-    ) -> None:
-        if not self.outputs:
-            return
-
-        function_name = CallableContract.from_callable(func).function_name
-        values_started_at = time.perf_counter()
-        output_values = CellProfilerOutputValueResolution.from_returned_values(
-            self.outputs,
-            declared_specs=self.contract.declared_outputs,
-            main_output=main_output,
-            artifact_values=artifact_values,
-            func=func,
-        )
-        _log_module_profile(
-            "cp_output_values_by_kind",
-            time.perf_counter() - values_started_at,
-            module=self.module_name,
-            function=function_name,
-            outputs=len(self.outputs),
-        )
-        order_started_at = time.perf_counter()
-        ordered_outputs = self._ordered_outputs
-        _log_module_profile(
-            "cp_output_recording_order",
-            time.perf_counter() - order_started_at,
-            module=self.module_name,
-            function=function_name,
-            outputs=len(self.outputs),
-        )
-        for spec in ordered_outputs:
-            record_started_at = time.perf_counter()
-            self._output_recorders[spec.kind].record(
-                CellProfilerOutputRecordRequest(
-                    executor=self,
-                    adapter=adapter,
-                    spec=spec,
-                    value=output_values.recorded_values[spec.name],
-                    output_values=output_values.context_values,
-                    source_image_payload=source_image_payload,
-                    source_image_name=source_image_name,
-                    func=func,
-                )
-            )
-            _log_module_profile(
-                "cp_output_record_one",
-                time.perf_counter() - record_started_at,
-                module=self.module_name,
-                function=function_name,
-                artifact=spec.name,
-                kind=spec.kind.value,
-                **self.profile_payload_fields(
-                    "value",
-                    output_values.recorded_values[spec.name],
-                ),
-            )
-
     def _image_request(
         self,
         func: Callable[..., Any],
@@ -2335,6 +2280,79 @@ class CellProfilerModuleExecutor:
         return _single_source_name(
             tuple(source_name for source_name in source_names if source_name)
         )
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerModuleOutputRecorder:
+    """Resolve and record declared module outputs for a module executor."""
+
+    executor: CellProfilerModuleExecutor
+
+    def record_outputs(
+        self,
+        func: Callable[..., Any],
+        adapter: CellProfilerRuntimeAdapter,
+        main_output: Any,
+        artifact_values: tuple[Any, ...],
+        *,
+        source_image_payload: Any | None = None,
+        source_image_name: str | None,
+    ) -> None:
+        executor = self.executor
+        if not executor.outputs:
+            return
+
+        function_name = CallableContract.from_callable(func).function_name
+        values_started_at = time.perf_counter()
+        output_values = CellProfilerOutputValueResolution.from_returned_values(
+            executor.outputs,
+            declared_specs=executor.contract.declared_outputs,
+            main_output=main_output,
+            artifact_values=artifact_values,
+            func=func,
+        )
+        _log_module_profile(
+            "cp_output_values_by_kind",
+            time.perf_counter() - values_started_at,
+            module=executor.module_name,
+            function=function_name,
+            outputs=len(executor.outputs),
+        )
+        order_started_at = time.perf_counter()
+        ordered_outputs = executor._ordered_outputs
+        _log_module_profile(
+            "cp_output_recording_order",
+            time.perf_counter() - order_started_at,
+            module=executor.module_name,
+            function=function_name,
+            outputs=len(executor.outputs),
+        )
+        for spec in ordered_outputs:
+            record_started_at = time.perf_counter()
+            executor._output_recorders[spec.kind].record(
+                CellProfilerOutputRecordRequest(
+                    executor=executor,
+                    adapter=adapter,
+                    spec=spec,
+                    value=output_values.recorded_values[spec.name],
+                    output_values=output_values.context_values,
+                    source_image_payload=source_image_payload,
+                    source_image_name=source_image_name,
+                    func=func,
+                )
+            )
+            _log_module_profile(
+                "cp_output_record_one",
+                time.perf_counter() - record_started_at,
+                module=executor.module_name,
+                function=function_name,
+                artifact=spec.name,
+                kind=spec.kind.value,
+                **executor.profile_payload_fields(
+                    "value",
+                    output_values.recorded_values[spec.name],
+                ),
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerMainFlowReplacementRequest:

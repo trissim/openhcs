@@ -47,6 +47,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     MeasurementLabelSourceAlignmentStrategy,
     CellProfilerMeasurementImageDomain,
     CellProfilerModuleExecutor,
+    CellProfilerModuleOutputRecorder,
     CellProfilerObjectMeasurementExecutionDomainPolicy,
     CellProfilerObjectMeasurementRowPolicy,
     CompactMeasuredObjectMeasurementRowPolicy,
@@ -2288,7 +2289,7 @@ def test_relationship_recorder_resolves_pruned_child_endpoint_from_artifact_name
     )
     payload = ParentChildRelationshipPayload(parent_ids=(1,), child_ids=(1,))
 
-    executor._record_outputs(
+    CellProfilerModuleOutputRecorder(executor).record_outputs(
         lambda image: image,
         runtime,
         np.zeros((3, 4), dtype=np.float32),
