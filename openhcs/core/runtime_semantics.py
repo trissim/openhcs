@@ -494,6 +494,41 @@ class ObjectLabelDomain:
             raise ValueError(f"ObjectLabelDomain.{field_name} IDs must be positive.")
         return tuple(sorted(dict.fromkeys(normalized)))
 
+    @classmethod
+    def from_metadata(
+        cls,
+        *,
+        declared_object_count: int | None,
+        declared_object_ids: DeclaredObjectIds,
+        declared_object_id_domains: tuple[tuple[int, ...], ...],
+        scope: ObjectLabelDomainScope,
+    ) -> "ObjectLabelDomain":
+        """Return the domain described by an object-label metadata carrier."""
+        return cls(
+            declared_object_count=declared_object_count,
+            declared_object_ids=(
+                tuple(declared_object_ids)
+                if declared_object_ids is not None
+                else ()
+            ),
+            declared_object_id_domains=declared_object_id_domains,
+            scope=scope,
+        )
+
+    @classmethod
+    def plane_domain(
+        cls,
+        *,
+        declared_object_ids: tuple[int, ...] = (),
+        declared_object_id_domains: tuple[tuple[int, ...], ...] = (),
+    ) -> "ObjectLabelDomain":
+        """Return a plane-scoped object-label domain declaration."""
+        return cls(
+            declared_object_ids=declared_object_ids,
+            declared_object_id_domains=declared_object_id_domains,
+            scope=ObjectLabelDomainScope.PLANE,
+        )
+
     def explicit_id_domain(self) -> tuple[int, ...] | None:
         """Return this declaration as IDs, or ``None`` if it is undeclared."""
         if self.declared_object_ids:
@@ -573,9 +608,8 @@ class ObjectLabelDomain:
         if not self.declared_object_id_domains:
             return self
         if len(self.declared_object_id_domains) == 1:
-            return ObjectLabelDomain(
+            return ObjectLabelDomain.plane_domain(
                 declared_object_ids=self.declared_object_id_domains[0],
-                scope=ObjectLabelDomainScope.PLANE,
             )
         if len(self.declared_object_id_domains) % normalized_count == 0:
             domains_per_slice = len(self.declared_object_id_domains) // normalized_count
@@ -597,13 +631,12 @@ class ObjectLabelDomain:
         """Return the object-label domain carried by selected plane indexes."""
         normalized_indices = tuple(int(index) for index in plane_indices)
         if not normalized_indices:
-            return ObjectLabelDomain(scope=ObjectLabelDomainScope.PLANE)
+            return ObjectLabelDomain.plane_domain()
         if not self.declared_object_id_domains:
             return self
         if len(self.declared_object_id_domains) == 1:
-            return ObjectLabelDomain(
+            return ObjectLabelDomain.plane_domain(
                 declared_object_ids=self.declared_object_id_domains[0],
-                scope=ObjectLabelDomainScope.PLANE,
             )
         if any(
             index < 0 or index >= len(self.declared_object_id_domains)
@@ -618,13 +651,11 @@ class ObjectLabelDomain:
             self.declared_object_id_domains[index] for index in normalized_indices
         )
         if len(domains) == 1:
-            return ObjectLabelDomain(
+            return ObjectLabelDomain.plane_domain(
                 declared_object_ids=domains[0],
-                scope=ObjectLabelDomainScope.PLANE,
             )
-        return ObjectLabelDomain(
+        return ObjectLabelDomain.plane_domain(
             declared_object_id_domains=domains,
-            scope=ObjectLabelDomainScope.PLANE,
         )
 
 

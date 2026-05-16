@@ -984,8 +984,25 @@ class ImageMaskDomain:
         return frozenset(valid)
 
 
+class ObjectLabelDomainMetadataFields(ObjectLabelDomainMetadata):
+    """Object-label domain metadata carried as normalized runtime-value fields."""
+
+    declared_object_count: int | None
+    declared_object_ids: tuple[int, ...]
+    declared_object_id_domains: tuple[tuple[int, ...], ...]
+    domain_scope: ObjectLabelDomainScope
+
+    def object_label_domain(self) -> ObjectLabelDomain:
+        return ObjectLabelDomain.from_metadata(
+            declared_object_count=self.declared_object_count,
+            declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
+            scope=self.domain_scope,
+        )
+
+
 @dataclass(frozen=True, slots=True)
-class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
+class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadataFields):
     """Dense object labels plus optional semantic label variants."""
 
     labels: Any
@@ -1062,14 +1079,6 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
 
     def array_payload_data(self) -> Any:
         return self.labels
-
-    def object_label_domain(self) -> ObjectLabelDomain:
-        return ObjectLabelDomain(
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            scope=self.domain_scope,
-        )
 
     def __getitem__(self, key: Any) -> Any:
         return self.labels[key]
@@ -1640,7 +1649,7 @@ class NamedImage(SourceImageRuntimeValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
+class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadataFields):
     """Native OpenHCS object-label value."""
 
     labels: Any
@@ -1848,14 +1857,6 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadata):
             label_variants=label_variants,
             object_name=self.name,
             source_image_name=self.source_image_name,
-        )
-
-    def object_label_domain(self) -> ObjectLabelDomain:
-        return ObjectLabelDomain(
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            scope=self.domain_scope,
         )
 
     @property
