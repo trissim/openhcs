@@ -1945,16 +1945,6 @@ class CellProfilerModuleExecutor:
             reference_domain=reference_domain,
         )
 
-    def _object_labels(
-        self,
-        spec: ArtifactSpec,
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: Any,
-    ) -> Any:
-        return _label_payload_final(
-            self._object_label_payload(spec, adapter, current_image)
-        )
-
     def _object_label_payload(
         self,
         spec: ArtifactSpec,
