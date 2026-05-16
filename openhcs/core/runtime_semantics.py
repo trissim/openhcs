@@ -243,10 +243,7 @@ class ObjectLabelRepresentation(str, Enum):
 
     DENSE_LABELS = ("dense_labels", ArtifactPayloadShape.ARRAY)
     SPARSE_IJV = ("sparse_ijv", ArtifactPayloadShape.TABLE)
-
-    @property
-    def payload_shape(self) -> ArtifactPayloadShape:
-        return self._payload_shape
+    payload_shape = AliasProperty[ArtifactPayloadShape]("_payload_shape")
 
 
 class ObjectLabelVariant(str, Enum):
@@ -1093,16 +1090,8 @@ class SpatialGridOrigin(str, Enum):
     BOTTOM_LEFT = ("bottom_left", True, False)
     TOP_RIGHT = ("top_right", False, True)
     BOTTOM_RIGHT = ("bottom_right", True, True)
-
-    @property
-    def reverses_rows(self) -> bool:
-        """Return whether this origin numbers from the bottom edge."""
-        return self._reverses_rows
-
-    @property
-    def reverses_columns(self) -> bool:
-        """Return whether this origin numbers from the right edge."""
-        return self._reverses_columns
+    reverses_rows = AliasProperty[bool]("_reverses_rows")
+    reverses_columns = AliasProperty[bool]("_reverses_columns")
 
 
 class MeasurementScope(str, Enum):
@@ -1125,15 +1114,8 @@ class MeasurementScope(str, Enum):
     OBJECT = ("object", True, True)
     RELATIONSHIP = ("relationship", True)
     EXPERIMENT = ("experiment", False)
-
-    @property
-    def requires_subject_name(self) -> bool:
-        return self._requires_subject_name
-
-    @property
-    def projects_runtime_slices(self) -> bool:
-        """Return whether measurement rows at this scope can declare runtime slices."""
-        return self._projects_runtime_slices
+    requires_subject_name = AliasProperty[bool]("_requires_subject_name")
+    projects_runtime_slices = AliasProperty[bool]("_projects_runtime_slices")
 
 
 class PairMeasurementFeature(str, Enum):
