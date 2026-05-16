@@ -1024,7 +1024,7 @@ class ObjectLabelDomainMetadataFields(ObjectLabelDomainMetadata):
     domain_scope: ObjectLabelDomainScope
 
     def object_label_domain(self) -> ObjectLabelDomain:
-        return ObjectLabelDomain.from_metadata(
+        return ObjectLabelDomain.declared(
             declared_object_count=self.declared_object_count,
             declared_object_ids=self.declared_object_ids,
             declared_object_id_domains=self.declared_object_id_domains,
