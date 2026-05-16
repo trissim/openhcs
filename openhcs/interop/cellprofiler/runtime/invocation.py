@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from functools import lru_cache
 from dataclasses import dataclass
 from enum import Enum
 from collections.abc import Mapping
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -171,6 +172,31 @@ class CellProfilerSourcePairFeature(ABC, metaclass=AutoRegisterMeta):
             feature.source_field_name: feature.runtime_feature_name(source_pair)
             for feature in cls.all()
         }
+
+    @classmethod
+    def project_row_for_pair(
+        cls,
+        row_mapping: Mapping[str, Any],
+        source_pair: CellProfilerSourceImagePair,
+        *,
+        retain_field: Callable[[str], bool],
+    ) -> dict[str, Any]:
+        """Return one row with source-pair fields projected to runtime names."""
+        source_field_names = cls.source_field_names()
+        if not (source_field_names & row_mapping.keys()):
+            return dict(row_mapping)
+        projected = {
+            field_name: value
+            for field_name, value in row_mapping.items()
+            if retain_field(field_name)
+        }
+        for source_field_name, runtime_feature_name in (
+            cls.runtime_feature_names_for_pair(source_pair).items()
+        ):
+            if source_field_name not in row_mapping:
+                continue
+            projected[runtime_feature_name] = row_mapping[source_field_name]
+        return projected
 
     @property
     def source_field_name(self) -> str:

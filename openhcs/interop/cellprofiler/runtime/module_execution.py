@@ -4728,33 +4728,7 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
     ) -> list[Any]:
         if invocation.source_pair is None:
             return list(rows)
-        source_pair_fields = CellProfilerSourcePairFeature.source_field_names()
-        runtime_feature_names = (
-            CellProfilerSourcePairFeature.runtime_feature_names_for_pair(
-                invocation.source_pair
-            )
-        )
-        identity_fields = type(self).identity_fields
-        projected_rows: list[Any] = []
-        for row in rows:
-            row_mapping = measurement_row_mapping(row)
-            if not (source_pair_fields & row_mapping.keys()):
-                projected_rows.append(dict(row_mapping))
-                continue
-            projected: dict[str, Any] = {
-                field_name: value
-                for field_name, value in row_mapping.items()
-                if field_name in identity_fields
-            }
-            for (
-                source_field_name,
-                runtime_feature_name,
-            ) in runtime_feature_names.items():
-                if source_field_name not in row_mapping:
-                    continue
-                projected[runtime_feature_name] = row_mapping[source_field_name]
-            projected_rows.append(projected)
-        return projected_rows
+        return [self.project_row(row, invocation.source_pair) for row in rows]
 
     def project_row(
         self,
@@ -4763,26 +4737,12 @@ class MeasureColocalizationObjectMeasurementRowPolicy(
     ) -> dict[str, Any]:
         """Return one row with CellProfiler source-pair feature names."""
         row_mapping = measurement_row_mapping(row)
-        has_pair_features = bool(
-            CellProfilerSourcePairFeature.source_field_names() & row_mapping.keys()
+        identity_fields = type(self).identity_fields
+        return CellProfilerSourcePairFeature.project_row_for_pair(
+            row_mapping,
+            source_pair,
+            retain_field=identity_fields.__contains__,
         )
-        if not has_pair_features:
-            return dict(row_mapping)
-        projected: dict[str, Any] = {
-            field_name: value
-            for field_name, value in row_mapping.items()
-            if field_name in type(self).identity_fields
-        }
-        for (
-            source_field_name,
-            runtime_feature_name,
-        ) in CellProfilerSourcePairFeature.runtime_feature_names_for_pair(
-            source_pair
-        ).items():
-            if source_field_name not in row_mapping:
-                continue
-            projected[runtime_feature_name] = row_mapping[source_field_name]
-        return projected
 
     def table_source_image_name(
         self,
@@ -6468,26 +6428,12 @@ class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
         source_pair: CellProfilerSourceImagePair,
     ) -> dict[str, Any]:
         row_mapping = measurement_row_mapping(row)
-        if not (
-            CellProfilerSourcePairFeature.source_field_names() & row_mapping.keys()
-        ):
-            return dict(row_mapping)
-
-        projected: dict[str, Any] = {}
-        for field_name, value in row_mapping.items():
-            if field_name not in CellProfilerSourcePairFeature.source_field_names():
-                projected[field_name] = value
-
-        for (
-            source_field_name,
-            runtime_feature_name,
-        ) in CellProfilerSourcePairFeature.runtime_feature_names_for_pair(
-            source_pair
-        ).items():
-            if source_field_name not in row_mapping:
-                continue
-            projected[runtime_feature_name] = row_mapping[source_field_name]
-        return projected
+        source_pair_fields = CellProfilerSourcePairFeature.source_field_names()
+        return CellProfilerSourcePairFeature.project_row_for_pair(
+            row_mapping,
+            source_pair,
+            retain_field=lambda field_name: field_name not in source_pair_fields,
+        )
 
 
 CellProfilerModulePolicyLeafSpec(
