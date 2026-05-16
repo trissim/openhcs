@@ -3920,6 +3920,71 @@ class MissingObjectMeasurementValuePolicy(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class MissingObjectMeasurementValueRequest:
+    """Inputs needed to materialize one missing object-measurement cell."""
+
+    object_id: int
+    label_payload: Any
+    field_name: str
+    positive_label_extent: int | None = None
+
+
+class MissingObjectMeasurementValueStrategy(
+    EnumKeyedStrategyMixin[MissingObjectMeasurementValuePolicy],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered materialization policy for missing object-measurement values."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "value_policy"
+    value_policy: ClassVar[MissingObjectMeasurementValuePolicy]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def missing_value(self, request: MissingObjectMeasurementValueRequest) -> float:
+        """Return the materialized value for one missing measurement cell."""
+
+
+class NanMissingObjectMeasurementValueStrategy(MissingObjectMeasurementValueStrategy):
+    """Materialize every missing object-measurement value as NaN."""
+
+    value_policy = MissingObjectMeasurementValuePolicy.NAN
+
+    def missing_value(self, request: MissingObjectMeasurementValueRequest) -> float:
+        del request
+        return np.nan
+
+
+class ZeroWithinPositiveExtentMissingObjectMeasurementValueStrategy(
+    MissingObjectMeasurementValueStrategy
+):
+    """Use zero for rows inside the positive label extent and NaN beyond it."""
+
+    value_policy = MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT
+
+    def missing_value(self, request: MissingObjectMeasurementValueRequest) -> float:
+        extent = (
+            self.positive_label_extent(request.label_payload)
+            if request.positive_label_extent is None
+            else request.positive_label_extent
+        )
+        return 0.0 if request.object_id <= extent else np.nan
+
+    @staticmethod
+    def positive_label_extent(label_payload: Any) -> int:
+        """Return the largest positive label ID present in a label payload."""
+        labels = np.asarray(_label_payload_final(label_payload))
+        if labels.size == 0:
+            return 0
+        positive_labels = labels[labels > 0]
+        if positive_labels.size == 0:
+            return 0
+        return int(np.max(positive_labels))
+
+
+@dataclass(frozen=True, slots=True)
 class ObjectMeasurementInvocation:
     """One semantic object-measurement function invocation."""
 
@@ -4387,17 +4452,16 @@ class CellProfilerObjectMeasurementRowPolicy(
         positive_label_extent: int | None = None,
     ) -> float:
         """Return the value to use for a missing object measurement field."""
-        policy = MissingObjectMeasurementValuePolicy(type(self).missing_value_policy)
-        if policy is MissingObjectMeasurementValuePolicy.NAN:
-            return np.nan
-        if policy is MissingObjectMeasurementValuePolicy.ZERO_WITHIN_POSITIVE_EXTENT:
-            extent = (
-                _positive_object_label_extent(label_payload)
-                if positive_label_extent is None
-                else positive_label_extent
+        value_policy = MissingObjectMeasurementValuePolicy(type(self).missing_value_policy)
+        strategy = MissingObjectMeasurementValueStrategy.for_enum_member(value_policy)
+        return strategy.missing_value(
+            MissingObjectMeasurementValueRequest(
+                object_id=object_id,
+                label_payload=label_payload,
+                field_name=field_name,
+                positive_label_extent=positive_label_extent,
             )
-            return 0.0 if object_id <= extent else np.nan
-        raise ValueError(f"Unsupported missing measurement value policy: {policy}.")
+        )
 
 
 class DefaultObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
@@ -7861,13 +7925,10 @@ class ObjectMeasurementRowCompletionSchema:
 
     @staticmethod
     def positive_object_label_extent(label_payload: Any) -> int:
-        labels = np.asarray(_label_payload_final(label_payload))
-        if labels.size == 0:
-            return 0
-        positive_labels = labels[labels > 0]
-        if positive_labels.size == 0:
-            return 0
-        return int(np.max(positive_labels))
+        return (
+            ZeroWithinPositiveExtentMissingObjectMeasurementValueStrategy
+            .positive_label_extent(label_payload)
+        )
 
     def missing_row(
         self,
