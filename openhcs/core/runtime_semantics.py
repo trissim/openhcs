@@ -16,6 +16,7 @@ import numpy as np
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
+    GeneratedLeafClassSpec,
     MostDerivedContextStrategyMixin,
     NominalTypeKeyedStrategyMixin,
 )
@@ -1257,34 +1258,36 @@ class AxisBackedObjectLocationCoordinateProjectionStrategy(
         )
 
 
-class CenterXObjectLocationCoordinateProjectionStrategy(
-    AxisBackedObjectLocationCoordinateProjectionStrategy
+for _coordinate_projection_spec in (
+    GeneratedLeafClassSpec(
+        class_name="CenterXObjectLocationCoordinateProjectionStrategy",
+        base_type=AxisBackedObjectLocationCoordinateProjectionStrategy,
+        attributes={
+            "coordinate_feature": ObjectCoreMeasurementFeature.CENTER_X,
+            "required_ndim": 1,
+            "axis_offset": -1,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CenterYObjectLocationCoordinateProjectionStrategy",
+        base_type=AxisBackedObjectLocationCoordinateProjectionStrategy,
+        attributes={
+            "coordinate_feature": ObjectCoreMeasurementFeature.CENTER_Y,
+            "required_ndim": 2,
+            "axis_offset": -2,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        class_name="CenterZObjectLocationCoordinateProjectionStrategy",
+        base_type=AxisBackedObjectLocationCoordinateProjectionStrategy,
+        attributes={
+            "coordinate_feature": ObjectCoreMeasurementFeature.CENTER_Z,
+            "required_ndim": 3,
+            "axis_offset": -3,
+        },
+    ),
 ):
-    """X is the final dense-array axis."""
-
-    coordinate_feature = ObjectCoreMeasurementFeature.CENTER_X
-    required_ndim = 1
-    axis_offset = -1
-
-
-class CenterYObjectLocationCoordinateProjectionStrategy(
-    AxisBackedObjectLocationCoordinateProjectionStrategy
-):
-    """Y is the penultimate dense-array axis, or zero for present 1D labels."""
-
-    coordinate_feature = ObjectCoreMeasurementFeature.CENTER_Y
-    required_ndim = 2
-    axis_offset = -2
-
-
-class CenterZObjectLocationCoordinateProjectionStrategy(
-    AxisBackedObjectLocationCoordinateProjectionStrategy
-):
-    """Z is the third-from-final dense-array axis, or zero for present 2D labels."""
-
-    coordinate_feature = ObjectCoreMeasurementFeature.CENTER_Z
-    required_ndim = 3
-    axis_offset = -3
+    _coordinate_projection_spec.declare_in(globals())
 
 
 def object_location_coordinate_arrays(
