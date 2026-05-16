@@ -5235,10 +5235,10 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
                 "calculate_math_bind_total",
                 time.perf_counter() - started_at,
             )
-            return {
-                "operand1_value": vectors[0].calculate_math_operand_value,
-                "operand2_value": vectors[1].calculate_math_operand_value,
-            }
+            return CalculateMathOperandValues(
+                operand1=vectors[0].calculate_math_operand_value,
+                operand2=vectors[1].calculate_math_operand_value,
+            ).as_kwargs()
 
         operand1_started_at = time.perf_counter()
         operand1_value = self.operand_value(
@@ -5266,10 +5266,10 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             "calculate_math_bind_total",
             time.perf_counter() - started_at,
         )
-        return {
-            "operand1_value": operand1_value,
-            "operand2_value": operand2_value,
-        }
+        return CalculateMathOperandValues(
+            operand1=operand1_value,
+            operand2=operand2_value,
+        ).as_kwargs()
 
     def object_operand_bindings(
         self,
@@ -5383,6 +5383,20 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
             )
             return scalar_value
         return CellProfilerMeasurementVector(slice_values).slice_aligned_value
+
+
+@dataclass(frozen=True, slots=True)
+class CalculateMathOperandValues:
+    """Resolved CalculateMath operand values before kwarg serialization."""
+
+    operand1: Any
+    operand2: Any
+
+    def as_kwargs(self) -> dict[str, Any]:
+        return {
+            "operand1_value": self.operand1,
+            "operand2_value": self.operand2,
+        }
 
 
 class CellProfilerPerObjectMeasurementPolicy:
