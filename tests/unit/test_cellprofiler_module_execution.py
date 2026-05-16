@@ -64,7 +64,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_measurement_image,
-    _measurement_table_rows,
+    measurement_table_rows,
     _object_only_reference_image,
     _output_values_by_kind,
     _processing_contract_for_callable,
@@ -418,7 +418,7 @@ class _FakeCellProfilerRuntime:
         rows: object,
         **kwargs: object,
     ) -> None:
-        self.measurements.append((name, _measurement_table_rows(rows), kwargs))
+        self.measurements.append((name, measurement_table_rows(rows), kwargs))
 
     def add_objects(
         self,
@@ -6322,7 +6322,7 @@ def test_object_only_reference_image_collapses_high_rank_carrier_to_plane() -> N
 def test_measurement_table_rows_wrap_scalar_measurement() -> None:
     row = {"mean_intensity": 1.5}
 
-    measurement_rows = _measurement_table_rows(row)
+    measurement_rows = measurement_table_rows(row)
 
     assert measurement_rows == [row]
 

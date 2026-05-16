@@ -6319,7 +6319,7 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
         rows = [
-            *_measurement_table_rows(request.value),
+            *measurement_table_rows(request.value),
             *RelationshipMeasurementRows.for_request(request).rows(),
         ]
         rows_declare_object_name = (
@@ -6356,7 +6356,7 @@ class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        source_rows = _measurement_table_rows(request.value)
+        source_rows = measurement_table_rows(request.value)
         owns_source_qualified_features = self.rows_have_source_pair_features(
             source_rows
         )
@@ -6442,7 +6442,7 @@ class ObjectTopologyMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilde
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        rows = _measurement_table_rows(request.value)
+        rows = measurement_table_rows(request.value)
         return CellProfilerMeasurementRecord(
             rows=rows,
             object_name=_measurement_object_name(
@@ -6462,7 +6462,7 @@ class ProducedImageMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        rows = _measurement_table_rows(request.value)
+        rows = measurement_table_rows(request.value)
         source_image = self._primary_image_measurement_source(request)
         return CellProfilerMeasurementRecord(
             rows=rows,
@@ -6565,7 +6565,7 @@ class RelateObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
         table_started_at = time.perf_counter()
-        table_rows = _measurement_table_rows(request.value)
+        table_rows = measurement_table_rows(request.value)
         _log_module_profile(
             "relate_measurement_table_rows",
             time.perf_counter() - table_started_at,
@@ -6655,7 +6655,7 @@ class CalculateMathMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder
         self,
         request: CellProfilerOutputRecordRequest,
     ) -> CellProfilerMeasurementRecord:
-        rows = _measurement_table_rows(request.value)
+        rows = measurement_table_rows(request.value)
         return CellProfilerMeasurementRecord(
             rows=rows,
             object_name=_measurement_object_name(
@@ -6699,7 +6699,7 @@ class IdentifyObjectsInGridMeasurementRecordBuilder(
     ) -> CellProfilerMeasurementRecord:
         object_name = request.single_output_object_name()
         rows = [
-            *_measurement_table_rows(request.value),
+            *measurement_table_rows(request.value),
             *ObjectLocationMeasurementRows(
                 request.output_values[object_name],
                 object_name=object_name,
@@ -6762,7 +6762,7 @@ class TrackObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder)
             request.executor.module_name
         )
         rows = row_policy.annotate_record_rows(
-            _measurement_table_rows(request.value),
+            measurement_table_rows(request.value),
             object_name=_measurement_object_name(
                 request.executor.declared_input_specs
             ),
@@ -7144,7 +7144,7 @@ class CellProfilerResultMeasurementRows(CellProfilerMeasurementRows):
     results: Any
 
     def source_rows(self) -> list[Any]:
-        return _measurement_table_rows(self.results)
+        return measurement_table_rows(self.results)
 
     @staticmethod
     def row_value(
@@ -7616,10 +7616,10 @@ def _measurement_rows_from_output(
     if not artifact_values:
         return []
     rows = artifact_values[0]
-    return _measurement_table_rows(rows)
+    return measurement_table_rows(rows)
 
 
-def _measurement_table_rows(rows: Any) -> Sequence[Any] | ColumnarRows:
+def measurement_table_rows(rows: Any) -> Sequence[Any] | ColumnarRows:
     if isinstance(rows, ColumnarRows):
         return rows
     if isinstance(rows, RuntimeSliceAlignedValues) and all(
