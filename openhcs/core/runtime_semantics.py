@@ -10,6 +10,7 @@ from functools import lru_cache
 from typing import Any, ClassVar, cast
 
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
@@ -206,6 +207,8 @@ class DenseArraySourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
 
     value: Any
     source_domain: SourceSpatialDomain = SourceSpatialDomain()
+    array = AliasProperty[Any]("value")
+    domain = AliasProperty[SourceSpatialDomain]("source_domain")
 
     @classmethod
     def for_value(
@@ -215,16 +218,6 @@ class DenseArraySourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
         source_shape_override_yx: tuple[int, int] | None = None,
     ) -> "DenseArraySourceSpatialDomainAdapter | None":
         return None
-
-    @property
-    def array(self) -> Any:
-        return self.value
-
-    @property
-    def domain(self) -> SourceSpatialDomain:
-        return self.source_domain
-
-
 
 @dataclass(frozen=True, slots=True)
 class FieldSpec:

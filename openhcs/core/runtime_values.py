@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Any, ClassVar, Self, TypeVar
 
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 
 from openhcs.constants.constants import Backend
@@ -3473,6 +3474,8 @@ class SpatialGrid(NativeRuntimeValue):
     y_locations: tuple[float, ...] | None = None
     spot_table: tuple[tuple[int, ...], ...] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
+    x_location_of_lowest_x_spot = AliasProperty[float]("x_origin")
+    y_location_of_lowest_y_spot = AliasProperty[float]("y_origin")
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -3622,14 +3625,6 @@ class SpatialGrid(NativeRuntimeValue):
             spot_table=self.spot_table,
             source_spatial_shape_yx=self.source_spatial_shape_yx,
         )
-
-    @property
-    def x_location_of_lowest_x_spot(self) -> float:
-        return self.x_origin
-
-    @property
-    def y_location_of_lowest_y_spot(self) -> float:
-        return self.y_origin
 
     def as_mapping(self) -> dict[str, Any]:
         """Return a JSON/metadata-compatible grid payload."""
