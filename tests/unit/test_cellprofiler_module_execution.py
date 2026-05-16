@@ -65,6 +65,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerGlobalImageNumberProjection,
     CellProfilerMeasurementProjectionSource,
     CellProfilerMeasurementProjectionRequest,
+    CellProfilerMeasurementImageResolver,
     _measurement_image_for_labels,
     _measurement_labels,
     _measurement_labels_for_measurement_image,
@@ -6248,7 +6249,7 @@ def test_object_label_payload_preserves_source_metadata_for_measurements() -> No
         )
     )
 
-    payload = executor._object_label_payload(
+    payload = CellProfilerMeasurementImageResolver(executor).object_label_payload(
         ArtifactSpec("Nuclei", ArtifactKind.OBJECT_LABELS),
         runtime,
         image,

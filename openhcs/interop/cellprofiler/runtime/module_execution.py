@@ -733,6 +733,11 @@ class CellProfilerModuleExecutor:
         repr=False,
         compare=False,
     )
+    _measurement_image_resolver: "CellProfilerMeasurementImageResolver" = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.contract, ModuleArtifactContract):
@@ -822,6 +827,11 @@ class CellProfilerModuleExecutor:
             self,
             "_module_output_recorder",
             CellProfilerModuleOutputRecorder(self),
+        )
+        object.__setattr__(
+            self,
+            "_measurement_image_resolver",
+            CellProfilerMeasurementImageResolver(self),
         )
 
     @property
@@ -1124,7 +1134,7 @@ class CellProfilerModuleExecutor:
         )
         combined_rows: list[Any] = []
         measurement_images_started_at = time.perf_counter()
-        measurement_images = self._measurement_image_inputs(
+        measurement_images = self._measurement_image_resolver.measurement_image_inputs(
             func,
             cellprofiler_runtime,
             current_image,
@@ -1292,7 +1302,7 @@ class CellProfilerModuleExecutor:
             nonlocal label_payload_seconds, label_align_seconds
 
             label_payload_started_at = time.perf_counter()
-            raw_label_payload = self._object_label_payload(
+            raw_label_payload = self._measurement_image_resolver.object_label_payload(
                 object_spec,
                 cellprofiler_runtime,
                 input_image,
@@ -1703,10 +1713,12 @@ class CellProfilerModuleExecutor:
         )
         combined_rows: list[Any] = []
         measurement_images_started_at = time.perf_counter()
-        measurement_images = self._independent_measurement_image_inputs(
-            func,
-            cellprofiler_runtime,
-            current_image,
+        measurement_images = (
+            self._measurement_image_resolver.independent_measurement_image_inputs(
+                func,
+                cellprofiler_runtime,
+                current_image,
+            )
         )
         _log_module_profile(
             "cp_per_image_measurement_images",
@@ -1851,108 +1863,6 @@ class CellProfilerModuleExecutor:
         )
         return input_image
 
-    def _measurement_image_inputs(
-        self,
-        func: Callable[..., Any],
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: Any,
-        image_request: "CellProfilerImageRequest",
-    ) -> tuple["CellProfilerMeasurementImage", ...]:
-        image_inputs = self.primary_image_inputs(func)
-        if not image_inputs:
-            return (
-                self._measurement_carrier_image(
-                    adapter,
-                    current_image,
-                    reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
-                ),
-            )
-
-        if not CellProfilerPerObjectMeasurementPolicy.measures_images_independently(
-            self.module_name
-        ):
-            return (self._composed_measurement_image(image_request, image_inputs),)
-
-        return self._resolved_measurement_images(
-            image_inputs,
-            adapter,
-            current_image,
-            reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
-        )
-
-    def _independent_measurement_image_inputs(
-        self,
-        func: Callable[..., Any],
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: Any,
-    ) -> tuple["CellProfilerMeasurementImage", ...]:
-        image_inputs = self.primary_image_inputs(func)
-        if not image_inputs:
-            return (
-                self._measurement_carrier_image(
-                    adapter,
-                    current_image,
-                    reference_domain=CellProfilerMeasurementImageDomain.SOURCE_IMAGE,
-                ),
-            )
-
-        return self._resolved_measurement_images(
-            image_inputs,
-            adapter,
-            current_image,
-        )
-
-    def _measurement_carrier_image(
-        self,
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: Any,
-        *,
-        reference_domain: "CellProfilerMeasurementImageDomain",
-    ) -> "CellProfilerMeasurementImage":
-        return CellProfilerMeasurementImage(
-            source_image_name=None,
-            source_image_names=(),
-            payload=OBJECT_ONLY_REFERENCE_IMAGE.reference_image(current_image),
-            reference_domain=reference_domain,
-        )
-
-    def _composed_measurement_image(
-        self,
-        image_request: "CellProfilerImageRequest",
-        image_inputs: tuple[ArtifactSpec, ...],
-    ) -> "CellProfilerMeasurementImage":
-        return CellProfilerMeasurementImage(
-            source_image_name=_measurement_source_name_for_specs(image_inputs),
-            source_image_names=tuple(spec.name for spec in image_inputs),
-            payload=image_request.payload,
-            align_to_labels=False,
-            execution_mode=image_request.execution_mode,
-        )
-
-    def _resolved_measurement_images(
-        self,
-        image_inputs: tuple[ArtifactSpec, ...],
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: Any,
-        *,
-        reference_domain: "CellProfilerMeasurementImageDomain | None" = None,
-    ) -> tuple["CellProfilerMeasurementImage", ...]:
-        if reference_domain is None:
-            reference_domain = CellProfilerMeasurementImageDomain.SOURCE_IMAGE
-        runtime_image_names = self._runtime_image_name_set
-        resolved_images: list[CellProfilerMeasurementImage] = []
-        for spec in image_inputs:
-            resolved_images.append(
-                self._resolved_measurement_image(
-                    spec,
-                    adapter,
-                    current_image,
-                    runtime_image_names,
-                    reference_domain=reference_domain,
-                )
-            )
-        return tuple(resolved_images)
-
     def pop_measurement_target_scope(
         self,
         kwargs: dict[str, Any],
@@ -1964,45 +1874,6 @@ class CellProfilerModuleExecutor:
             kwargs.pop(CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG, None),
             default=default,
         )
-
-    def _resolved_measurement_image(
-        self,
-        spec: ArtifactSpec,
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: Any,
-        runtime_image_names: frozenset[str],
-        *,
-        reference_domain: "CellProfilerMeasurementImageDomain",
-    ) -> "CellProfilerMeasurementImage":
-        if spec.name in runtime_image_names:
-            runtime_image = adapter.get_image(spec.name)
-            return CellProfilerMeasurementImage(
-                source_image_name=spec.name,
-                source_image_names=(spec.name,),
-                payload=_cellprofiler_image_payload(runtime_image.data),
-                reference_domain=reference_domain,
-            )
-        return CellProfilerMeasurementImage(
-            source_image_name=spec.name,
-            source_image_names=(spec.name,),
-            payload=_cellprofiler_image_payload(
-                adapter.resolve_source_image(spec.name, current_image)
-            ),
-            reference_domain=reference_domain,
-        )
-
-    def _object_label_payload(
-        self,
-        spec: ArtifactSpec,
-        adapter: CellProfilerRuntimeAdapter,
-        current_image: Any,
-    ) -> Any:
-        if spec.name in self.external_source_object_names:
-            return adapter.resolve_source_objects(
-                spec.name,
-                current_image,
-            )
-        return adapter.get_objects(spec.name, current_image=current_image)
 
     def _runtime_input_kwargs(
         self,
@@ -2280,6 +2151,152 @@ class CellProfilerModuleExecutor:
         return _single_source_name(
             tuple(source_name for source_name in source_names if source_name)
         )
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerMeasurementImageResolver:
+    """Resolve CellProfiler measurement images and object-label payloads."""
+
+    executor: CellProfilerModuleExecutor
+
+    def measurement_image_inputs(
+        self,
+        func: Callable[..., Any],
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: Any,
+        image_request: "CellProfilerImageRequest",
+    ) -> tuple["CellProfilerMeasurementImage", ...]:
+        executor = self.executor
+        image_inputs = executor.primary_image_inputs(func)
+        if not image_inputs:
+            return (
+                self.measurement_carrier_image(
+                    current_image,
+                    reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+                ),
+            )
+
+        if not CellProfilerPerObjectMeasurementPolicy.measures_images_independently(
+            executor.module_name
+        ):
+            return (self.composed_measurement_image(image_request, image_inputs),)
+
+        return self.resolved_measurement_images(
+            image_inputs,
+            adapter,
+            current_image,
+            reference_domain=CellProfilerMeasurementImageDomain.OBJECT_LABELS,
+        )
+
+    def independent_measurement_image_inputs(
+        self,
+        func: Callable[..., Any],
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: Any,
+    ) -> tuple["CellProfilerMeasurementImage", ...]:
+        image_inputs = self.executor.primary_image_inputs(func)
+        if not image_inputs:
+            return (
+                self.measurement_carrier_image(
+                    current_image,
+                    reference_domain=CellProfilerMeasurementImageDomain.SOURCE_IMAGE,
+                ),
+            )
+
+        return self.resolved_measurement_images(
+            image_inputs,
+            adapter,
+            current_image,
+        )
+
+    def measurement_carrier_image(
+        self,
+        current_image: Any,
+        *,
+        reference_domain: "CellProfilerMeasurementImageDomain",
+    ) -> "CellProfilerMeasurementImage":
+        return CellProfilerMeasurementImage(
+            source_image_name=None,
+            source_image_names=(),
+            payload=OBJECT_ONLY_REFERENCE_IMAGE.reference_image(current_image),
+            reference_domain=reference_domain,
+        )
+
+    def composed_measurement_image(
+        self,
+        image_request: "CellProfilerImageRequest",
+        image_inputs: tuple[ArtifactSpec, ...],
+    ) -> "CellProfilerMeasurementImage":
+        return CellProfilerMeasurementImage(
+            source_image_name=_measurement_source_name_for_specs(image_inputs),
+            source_image_names=tuple(spec.name for spec in image_inputs),
+            payload=image_request.payload,
+            align_to_labels=False,
+            execution_mode=image_request.execution_mode,
+        )
+
+    def resolved_measurement_images(
+        self,
+        image_inputs: tuple[ArtifactSpec, ...],
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: Any,
+        *,
+        reference_domain: "CellProfilerMeasurementImageDomain | None" = None,
+    ) -> tuple["CellProfilerMeasurementImage", ...]:
+        if reference_domain is None:
+            reference_domain = CellProfilerMeasurementImageDomain.SOURCE_IMAGE
+        runtime_image_names = self.executor._runtime_image_name_set
+        resolved_images: list[CellProfilerMeasurementImage] = []
+        for spec in image_inputs:
+            resolved_images.append(
+                self.resolved_measurement_image(
+                    spec,
+                    adapter,
+                    current_image,
+                    runtime_image_names,
+                    reference_domain=reference_domain,
+                )
+            )
+        return tuple(resolved_images)
+
+    def resolved_measurement_image(
+        self,
+        spec: ArtifactSpec,
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: Any,
+        runtime_image_names: frozenset[str],
+        *,
+        reference_domain: "CellProfilerMeasurementImageDomain",
+    ) -> "CellProfilerMeasurementImage":
+        if spec.name in runtime_image_names:
+            runtime_image = adapter.get_image(spec.name)
+            return CellProfilerMeasurementImage(
+                source_image_name=spec.name,
+                source_image_names=(spec.name,),
+                payload=_cellprofiler_image_payload(runtime_image.data),
+                reference_domain=reference_domain,
+            )
+        return CellProfilerMeasurementImage(
+            source_image_name=spec.name,
+            source_image_names=(spec.name,),
+            payload=_cellprofiler_image_payload(
+                adapter.resolve_source_image(spec.name, current_image)
+            ),
+            reference_domain=reference_domain,
+        )
+
+    def object_label_payload(
+        self,
+        spec: ArtifactSpec,
+        adapter: CellProfilerRuntimeAdapter,
+        current_image: Any,
+    ) -> Any:
+        if spec.name in self.executor.external_source_object_names:
+            return adapter.resolve_source_objects(
+                spec.name,
+                current_image,
+            )
+        return adapter.get_objects(spec.name, current_image=current_image)
+
 
 @dataclass(frozen=True, slots=True)
 class CellProfilerModuleOutputRecorder:
