@@ -1083,19 +1083,7 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
             variant,
             "ObjectLabelPayload.variant",
         )
-        if normalized is ObjectLabelVariant.UNEDITED:
-            return (
-                self.unedited_labels
-                if self.unedited_labels is not None
-                else self.labels
-            )
-        if normalized is ObjectLabelVariant.SMALL_REMOVED:
-            return (
-                self.small_removed_labels
-                if self.small_removed_labels is not None
-                else self.labels
-            )
-        return self.labels
+        return ObjectLabelVariantDataStrategy.for_enum_member(normalized).labels(self)
 
     @property
     def variants(self) -> tuple[ObjectLabelVariant, ...]:
@@ -1129,6 +1117,69 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadata):
 
     def with_data(self, data: Any) -> "ObjectLabelPayload":
         return self.with_labels(data)
+
+
+class ObjectLabelVariantDataStrategy(
+    EnumKeyedStrategyMixin[ObjectLabelVariant],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered semantics for object-label variant payload selection."""
+
+    __registry_key__ = "strategy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "variant"
+    variant: ClassVar[ObjectLabelVariant]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def labels(self, payload: ObjectLabelPayload) -> Any:
+        """Return labels for this variant from one payload."""
+
+    @abstractmethod
+    def present(self, payloads: Sequence[ObjectLabelPayload]) -> bool:
+        """Return whether this variant has material data across payloads."""
+
+
+class FinalObjectLabelVariantDataStrategy(ObjectLabelVariantDataStrategy):
+    """Final labels are always present."""
+
+    variant = ObjectLabelVariant.FINAL
+
+    def labels(self, payload: ObjectLabelPayload) -> Any:
+        return payload.labels
+
+    def present(self, payloads: Sequence[ObjectLabelPayload]) -> bool:
+        del payloads
+        return True
+
+
+class UneditedObjectLabelVariantDataStrategy(ObjectLabelVariantDataStrategy):
+    """Unedited labels fall back to final labels when absent."""
+
+    variant = ObjectLabelVariant.UNEDITED
+
+    def labels(self, payload: ObjectLabelPayload) -> Any:
+        return payload.unedited_labels if payload.unedited_labels is not None else payload.labels
+
+    def present(self, payloads: Sequence[ObjectLabelPayload]) -> bool:
+        return any(payload.unedited_labels is not None for payload in payloads)
+
+
+class SmallRemovedObjectLabelVariantDataStrategy(ObjectLabelVariantDataStrategy):
+    """Small-removed labels fall back to final labels when absent."""
+
+    variant = ObjectLabelVariant.SMALL_REMOVED
+
+    def labels(self, payload: ObjectLabelPayload) -> Any:
+        return (
+            payload.small_removed_labels
+            if payload.small_removed_labels is not None
+            else payload.labels
+        )
+
+    def present(self, payloads: Sequence[ObjectLabelPayload]) -> bool:
+        return any(payload.small_removed_labels is not None for payload in payloads)
 
 
 class ColumnarRows(ABC):
@@ -2393,11 +2444,9 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
         )
 
     def has_variant(self, variant: ObjectLabelVariant) -> bool:
-        if variant is ObjectLabelVariant.UNEDITED:
-            return any(value.unedited_labels is not None for value in self.values)
-        if variant is ObjectLabelVariant.SMALL_REMOVED:
-            return any(value.small_removed_labels is not None for value in self.values)
-        return True
+        return ObjectLabelVariantDataStrategy.for_enum_member(variant).present(
+            self.values
+        )
 
     def aggregate_variant(self, variant: ObjectLabelVariant) -> Any:
         return stack_runtime_object_label_slices(
