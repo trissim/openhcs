@@ -2422,7 +2422,7 @@ def object_shape_measurement_field_names(
         if calculate_advanced:
             fields.extend(_indexed_object_shape_fields(_OBJECT_SHAPE_ADVANCED_2D_SPECS))
         if calculate_zernikes:
-            fields.extend(_zernike_feature_names(max_order=9))
+            fields.extend(zernike_shape_feature_names(max_order=9))
     else:
         fields.extend(feature.value for feature in _OBJECT_SHAPE_STANDARD_3D_FIELDS)
         if calculate_advanced:
@@ -2538,10 +2538,6 @@ def _indexed_object_shape_fields(
             for column in columns
         )
     return tuple(fields)
-
-
-def _zernike_feature_names(*, max_order: int) -> tuple[str, ...]:
-    return zernike_shape_feature_names(max_order=max_order)
 
 
 @dataclass(frozen=True, slots=True)
