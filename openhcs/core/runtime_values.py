@@ -1016,6 +1016,30 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadataFields):
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
 
+    @classmethod
+    def from_domain_metadata(
+        cls,
+        metadata: Any,
+        *,
+        labels: object,
+        unedited_labels: object | None = None,
+        small_removed_labels: object | None = None,
+        plane_axis: RuntimePlaneAxis | None = None,
+    ) -> "ObjectLabelPayload":
+        """Build a payload preserving object-label domain metadata from a carrier."""
+        return cls(
+            labels=labels,
+            unedited_labels=unedited_labels,
+            small_removed_labels=small_removed_labels,
+            declared_object_count=metadata.declared_object_count,
+            declared_object_ids=metadata.declared_object_ids,
+            declared_object_id_domains=metadata.declared_object_id_domains,
+            domain_scope=metadata.domain_scope,
+            plane_axis=metadata.plane_axis if plane_axis is None else plane_axis,
+            spatial_origin_yx=metadata.spatial_origin_yx,
+            source_spatial_shape_yx=metadata.source_spatial_shape_yx,
+        )
+
     def __post_init__(self) -> None:
         if self.declared_object_count is not None:
             count = int(self.declared_object_count)
@@ -1111,17 +1135,11 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadataFields):
         small_removed_labels: object | None = None,
     ) -> "ObjectLabelPayload":
         """Return this payload's domain metadata with replacement labels."""
-        return ObjectLabelPayload(
+        return ObjectLabelPayload.from_domain_metadata(
+            self,
             labels=labels,
             unedited_labels=unedited_labels,
             small_removed_labels=small_removed_labels,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
-            plane_axis=self.plane_axis,
-            spatial_origin_yx=self.spatial_origin_yx,
-            source_spatial_shape_yx=self.source_spatial_shape_yx,
         )
 
     def with_data(self, data: Any) -> "ObjectLabelPayload":
@@ -1830,17 +1848,11 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadataFields):
             or self.spatial_origin_yx is not None
             or self.source_spatial_shape_yx is not None
         ):
-            return ObjectLabelPayload(
+            return ObjectLabelPayload.from_domain_metadata(
+                self,
                 labels=self.labels,
                 unedited_labels=self.unedited_labels,
                 small_removed_labels=self.small_removed_labels,
-                declared_object_count=self.declared_object_count,
-                declared_object_ids=self.declared_object_ids,
-                declared_object_id_domains=self.declared_object_id_domains,
-                domain_scope=self.domain_scope,
-                plane_axis=self.plane_axis,
-                spatial_origin_yx=self.spatial_origin_yx,
-                source_spatial_shape_yx=self.source_spatial_shape_yx,
             )
         return self.labels
 
@@ -2491,15 +2503,9 @@ class ObjectLabelPayloadPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
         value: ObjectLabelPayload,
         variant: ObjectLabelVariant,
     ) -> ObjectLabelPayload:
-        return ObjectLabelPayload(
+        return ObjectLabelPayload.from_domain_metadata(
+            value,
             labels=value.labels_for_variant(variant),
-            declared_object_count=value.declared_object_count,
-            declared_object_ids=value.declared_object_ids,
-            declared_object_id_domains=value.declared_object_id_domains,
-            domain_scope=value.domain_scope,
-            plane_axis=value.plane_axis,
-            spatial_origin_yx=value.spatial_origin_yx,
-            source_spatial_shape_yx=value.source_spatial_shape_yx,
         )
 
     def output_value(
@@ -2509,17 +2515,12 @@ class ObjectLabelPayloadPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
         unedited_labels: Any | None,
         small_removed_labels: Any | None,
     ) -> ObjectLabelPayload:
-        return ObjectLabelPayload(
+        return ObjectLabelPayload.from_domain_metadata(
+            self,
             labels=labels,
             unedited_labels=unedited_labels,
             small_removed_labels=small_removed_labels,
-            declared_object_count=self.declared_object_count,
-            declared_object_ids=self.declared_object_ids,
-            declared_object_id_domains=self.declared_object_id_domains,
-            domain_scope=self.domain_scope,
             plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
-            spatial_origin_yx=self.spatial_origin_yx,
-            source_spatial_shape_yx=self.source_spatial_shape_yx,
         )
 
 
