@@ -7084,13 +7084,6 @@ class CellProfilerCallableOutputSpecs:
             for output_spec in raw_outputs
         )
 
-    @classmethod
-    def callable_returned_output_specs(
-        cls,
-        func: Callable[..., Any] | None,
-    ) -> tuple[ArtifactSpec, ...]:
-        return cls(func).artifact_specs()
-
     @staticmethod
     def callable_special_outputs(func: Callable[..., Any]) -> tuple[object, ...]:
         contract = CallableContract.from_callable(func)
@@ -10092,9 +10085,7 @@ class CellProfilerPerImageMeasurementPolicy:
             return False
         if any(
             spec.kind is not ArtifactKind.MEASUREMENTS
-            for spec in CellProfilerCallableOutputSpecs.callable_returned_output_specs(
-                request.func
-            )
+            for spec in CellProfilerCallableOutputSpecs(request.func).artifact_specs()
         ):
             return False
         measurement_outputs = ArtifactSpecCollection(request.outputs).of_kind(
