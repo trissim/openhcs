@@ -2103,6 +2103,10 @@ class DebugEventSink(metaclass=AutoRegisterMeta):
     def record(self, event: DebugEvent) -> None:
         """Record one debug event."""
 
+    def captures_invocation_events(self) -> bool:
+        """Return whether invocation debug events need to be constructed."""
+        return True
+
     def should_skip_invocation(self, cursor: DebugCursor) -> bool:
         del cursor
         return False
@@ -2116,6 +2120,9 @@ class NoOpDebugEventSink(DebugEventSink):
     """Default sink used by production execution."""
 
     sink_kind = "noop"
+
+    def captures_invocation_events(self) -> bool:
+        return False
 
     def record(self, event: DebugEvent) -> None:
         del event

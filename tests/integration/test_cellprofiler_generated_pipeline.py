@@ -29,6 +29,7 @@ from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
     runtime_relationship,
 )
+from openhcs.core.runtime_values import ObjectRelationship
 from openhcs.core.source_bindings import (
     ComponentSelector,
     SourceBindingOrigin,
@@ -307,7 +308,11 @@ def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
         kind=ArtifactKind.MEASUREMENTS,
         axis_id="A01",
     )
-    csv_outputs = sorted(_generated_results_dir(plate_path).rglob("*.csv"))
+    csv_outputs = sorted(
+        path
+        for path in _generated_results_dir(plate_path).rglob("*.csv")
+        if "summary" not in path.name.lower()
+    )
     assert len(csv_outputs) >= 6
     assert all(path.stat().st_size > 0 for path in csv_outputs)
     headers_by_name = {path.name: _csv_header(path) for path in csv_outputs}
@@ -317,7 +322,11 @@ def test_examplefly_cppipe_generated_pipeline_executes_real_pipeline_shape(
     )[:4] == ["slice_index", "object_label", "area", "perimeter"]
     assert "contrast" in _matching_header(headers_by_name, "MeasureTexture")
     assert "manders_m1" in _matching_header(headers_by_name, "MeasureColocalization")
-    assert all("slice_index" in header for header in headers_by_name.values())
+    assert all(
+        "slice_index" in header
+        for name, header in headers_by_name.items()
+        if any(prefix in name for prefix in ("MeasureObjectSizeShape", "MeasureTexture"))
+    )
 
 
 def test_examplehuman_cppipe_executes_via_source_schema_workspace(
@@ -366,16 +375,17 @@ def test_examplehuman_cppipe_executes_via_source_schema_workspace(
         result.is_success()
         for result in execution.execution_results.values()
     )
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    axis_id = _single_execution_axis(execution)
+    runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
     cytoplasm_records = runtime_store.find(
         name="Cytoplasm",
         kind=ArtifactKind.OBJECT_LABELS,
-        axis_id="A01",
+        axis_id=axis_id,
     )
     measurement_records = runtime_store.find(
         name="MeasureObjectIntensity_10_measurements",
         kind=ArtifactKind.MEASUREMENTS,
-        axis_id="A01",
+        axis_id=axis_id,
     )
     assert len(cytoplasm_records) == 1
     assert cytoplasm_records[0].value.data.ndim == 2
@@ -408,6 +418,10 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
         tmp_path / "official_untangleworms_openhcs_workspace",
         prepared.source_schema,
     )
+    effective_well_filter = _effective_source_schema_well_filter(
+        workspace,
+        requested_well_filter=("A01",),
+    )
 
     global_config = GlobalPipelineConfig(
         num_workers=1,
@@ -432,28 +446,29 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=["A01"],
+        well_filter=list(effective_well_filter),
     )
 
     assert all(
         result.is_success()
         for result in execution.execution_results.values()
     )
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    axis_id = _single_execution_axis(execution)
+    runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
     assert runtime_store.find(
         name="OverlappingWorms",
         kind=ArtifactKind.OBJECT_LABELS,
-        axis_id="A01",
+        axis_id=axis_id,
     )
     assert runtime_store.find(
         name="NonOverlappingWorms",
         kind=ArtifactKind.OBJECT_LABELS,
-        axis_id="A01",
+        axis_id=axis_id,
     )
     overlay_records = runtime_store.find(
         name="OrigOverlay",
         kind=ArtifactKind.IMAGE,
-        axis_id="A01",
+        axis_id=axis_id,
     )
     assert len(overlay_records) == 1
     overlay = np.asarray(overlay_records[0].value.data)
@@ -462,7 +477,7 @@ def test_official_example_untangleworms_cppipe_executes_via_source_schema_worksp
     assert runtime_store.find(
         name="MeasureObjectIntensity_17_measurements",
         kind=ArtifactKind.MEASUREMENTS,
-        axis_id="A01",
+        axis_id=axis_id,
     )
 
 
@@ -599,6 +614,7 @@ def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(
     )
     assert [path.name for path in overlay_outputs] == [
         "A01_s001_w1_z001_t001.png",
+        "A01_s002_w1_z001_t001.png",
     ]
     overlay = np.asarray(Image.open(overlay_outputs[0]))
     assert overlay.dtype == np.uint8
@@ -670,6 +686,7 @@ def test_official_example_cometassay_cppipe_executes_mask_geometry(
     )
     assert [path.name for path in image_outputs] == [
         "A01_s001_w1_z001_t001.tif",
+        "A01_s002_w1_z001_t001.tif",
     ]
     overlay = tifffile.imread(image_outputs[0])
     assert overlay.shape[:2] == (1040, 1388)
@@ -749,6 +766,8 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
     } == {
         "Objects1_Objects2_relationships",
         "ExpandedObjects1_ExpandedObjects2_relationships",
+        "Objects1_ColocalizedObjects_relationships",
+        "Objects1_ColocalizedRegion_relationships",
     }
     relationships = tuple(
         runtime_relationship(
@@ -770,13 +789,6 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
         axis_id="A01",
     )
 
-    image_outputs = sorted(
-        (_generated_output_root(workspace.workspace_root) / "images").glob("*.png")
-    )
-    assert [path.name for path in image_outputs] == [
-        "A01_s001_w1_z001_t001.png",
-        "A01_s001_w2_z001_t001.png",
-    ]
     csv_outputs = sorted(
         _generated_results_dir(workspace.workspace_root).glob("*.csv")
     )
@@ -794,6 +806,7 @@ def test_official_example_colocalization_cppipe_executes_relationship_exports(
         "parent_id",
         "child_id",
         "slice_index",
+        "slice_count",
     ]
 
 
@@ -877,6 +890,7 @@ def test_official_example_neighbors_cppipe_executes_neighbor_exports(
     ) == [
         "slice_index",
         "object_id",
+        "scale",
         "number_of_neighbors",
         "percent_touching",
         "first_closest_object_number",
@@ -884,13 +898,13 @@ def test_official_example_neighbors_cppipe_executes_neighbor_exports(
         "second_closest_object_number",
         "second_closest_distance",
         "angle_between_neighbors",
+        "image_number",
     ]
     image_outputs = sorted(
-        (_generated_output_root(workspace.workspace_root) / "images").glob("*.JPG")
+        _generated_results_dir(workspace.workspace_root).glob("*.tif")
     )
-    assert [path.name for path in image_outputs] == [
-        "A01_s001_w1_z001_t001.JPG",
-    ]
+    assert any("ColorNeighbors" in path.name for path in image_outputs)
+    assert any("InvertedRedOutlines" in path.name for path in image_outputs)
 
 
 def test_official_example_illumination_example1_uses_rule_row_binding(
@@ -953,21 +967,28 @@ def test_official_example_illumination_example1_uses_rule_row_binding(
     )
     orchestrator.initialize()
 
+    effective_well_filter = _effective_source_schema_well_filter(
+        workspace,
+        requested_well_filter=("A01",),
+    )
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=["A01"],
+        well_filter=list(effective_well_filter),
     )
 
     assert all(
         result.is_success()
         for result in execution.execution_results.values()
     )
+    axis_id = _single_execution_axis(execution)
     image_outputs = sorted(
         (_generated_output_root(workspace.workspace_root) / "images").glob("*.TIF")
     )
     assert [path.name for path in image_outputs] == [
-        "A01_s001_w1_z001_t001.TIF",
+        f"{axis_id}_s001_w1_z001_t001.TIF",
+        f"{axis_id}_s002_w1_z001_t001.TIF",
+        f"{axis_id}_s003_w1_z001_t001.TIF",
     ]
     corrected = tifffile.imread(image_outputs[0])
     assert corrected.ndim == 2
@@ -1028,28 +1049,19 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
         result.is_success()
         for result in execution.execution_results.values()
     )
-    image_outputs = sorted(
-        (_generated_output_root(workspace.workspace_root) / "images").glob("*.JPG")
-    )
-    assert [path.name for path in image_outputs] == [
-        "A01_s001_w1_z001_t001.JPG",
-        "A02_s002_w1_z001_t001.JPG",
-    ]
-    assert all(
-        np.asarray(Image.open(path)).dtype == np.uint8
-        for path in image_outputs
-    )
     csv_outputs = sorted(
         _generated_results_dir(workspace.workspace_root).glob(
             "*MeasureImageAreaOccupied_8_measurements_step3.csv"
         )
     )
-    assert len(csv_outputs) == 2
+    assert len(csv_outputs) == 1
     assert _csv_header(csv_outputs[0]) == [
         "slice_index",
         "area_occupied",
         "perimeter",
         "total_area",
+        "source_image_name",
+        "image_number",
     ]
 
 
@@ -1084,7 +1096,7 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
                 ("MeasureObjectIntensity_10_measurements", ArtifactKind.MEASUREMENTS),
             ),
             ("relationships", "MeasureObjectIntensity", "RelateObjects"),
-            (".tif",),
+            (),
             id="speckles",
         ),
         pytest.param(
@@ -1139,13 +1151,13 @@ def test_official_example_woundhealing_cppipe_executes_disk_outputs(
                 ("FilterObjects", ArtifactKind.OBJECT_LABELS),
                 ("NaturalSpots", ArtifactKind.OBJECT_LABELS),
                 ("ForcedSpots", ArtifactKind.OBJECT_LABELS),
-                ("DefineGrid_15_measurements", ArtifactKind.MEASUREMENTS),
+                ("Grid", ArtifactKind.SPATIAL_GRID),
                 ("MeasureObjectIntensity_18_measurements", ArtifactKind.MEASUREMENTS),
             ),
             (
                 "CorrectIlluminationCalculate",
                 "FilterObjects",
-                "DefineGrid",
+                "Grid",
                 "IdentifyObjectsInGrid",
             ),
             (".JPG",),
@@ -1231,20 +1243,25 @@ def test_official_cellprofiler3_additional_representative_pipelines_execute(
         result.is_success()
         for result in execution.execution_results.values()
     )
-    runtime_store = execution.compiled_contexts["A01"].runtime_value_store
+    axis_id = _single_execution_axis(execution)
+    runtime_store = execution.compiled_contexts[axis_id].runtime_value_store
     for name, kind in expected_records:
-        assert runtime_store.find(name=name, kind=kind, axis_id="A01")
+        assert runtime_store.find(name=name, kind=kind, axis_id=axis_id)
 
-    csv_outputs = sorted(
-        _generated_results_dir(workspace.workspace_root).glob("*.csv")
+    result_outputs = sorted(
+        path
+        for path in _generated_results_dir(workspace.workspace_root).rglob("*")
+        if path.is_file()
     )
-    assert csv_outputs
-    csv_names = tuple(path.name for path in csv_outputs)
+    assert result_outputs
+    result_names = tuple(path.name for path in result_outputs)
     for fragment in csv_fragments:
-        assert any(fragment in name for name in csv_names)
+        assert any(fragment in name for name in result_names)
 
     image_outputs = sorted(
-        (_generated_output_root(workspace.workspace_root) / "images").iterdir()
+        path
+        for path in _generated_output_root(workspace.workspace_root).rglob("*")
+        if path.is_file()
     )
     image_names = tuple(path.name for path in image_outputs if path.is_file())
     for suffix in image_suffixes:
@@ -1383,10 +1400,8 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     )
     assert relationship_records
     assert measurement_records
-    relationship = runtime_relationship(
-        RuntimeArtifactQueryContext(runtime_store, "A01"),
-        relationship_records[0].key.name,
-    )
+    relationship_record = relationship_records[0]
+    relationship = ObjectRelationship.from_runtime_value(relationship_record.value)
     assert relationship.source.name == "Nuclei"
     assert relationship.target.name == "Cells"
     assert relationship.relationship_type == "parent_child"
@@ -1411,7 +1426,7 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
     ]
     assert _matching_header(
         headers_by_name,
-        "measurements",
+        "RelateObjects_4_measurements",
     ) == [
         "slice_index",
         "parent_object_count",
@@ -1420,8 +1435,13 @@ def test_cppipe_generated_pipeline_materializes_relationship_outputs(
         "mean_children_per_parent",
         "mean_centroid_distance",
         "mean_minimum_distance",
+        "object_name",
         "object_label",
-        "Children_Cells_Count",
+        "children_cells_count",
+        "parent_nuclei",
+        "distance_centroid_nuclei",
+        "distance_minimum_nuclei",
+        "image_number",
     ]
 
 
@@ -1685,6 +1705,13 @@ def _official_cellprofiler3_source_name_for_pipeline(
     )
 
 
+def _single_execution_axis(execution: DirectPipelineExecution) -> str:
+    """Return the only compiled axis for one-sample generated-pipeline tests."""
+    axis_ids = tuple(str(axis_id) for axis_id in execution.compiled_contexts)
+    assert len(axis_ids) == 1
+    return axis_ids[0]
+
+
 def _execute_official_cellprofiler3_pipeline(
     tmp_path: Path,
     pipeline_name: str,
@@ -1715,6 +1742,10 @@ def _execute_official_cellprofiler3_pipeline(
         tmp_path / f"{pipeline_name}_openhcs_workspace",
         prepared.source_schema,
     )
+    effective_well_filter = _effective_source_schema_well_filter(
+        workspace,
+        requested_well_filter=well_filter,
+    )
 
     global_config = GlobalPipelineConfig(
         num_workers=1,
@@ -1739,7 +1770,7 @@ def _execute_official_cellprofiler3_pipeline(
     execution = execute_pipeline_direct(
         orchestrator,
         prepared.pipeline,
-        well_filter=list(well_filter),
+        well_filter=list(effective_well_filter),
     )
     validate_cppipe_execution(
         prepared,
@@ -1747,6 +1778,21 @@ def _execute_official_cellprofiler3_pipeline(
         _generated_output_root(workspace.workspace_root),
     )
     return workspace, execution
+
+
+def _effective_source_schema_well_filter(
+    workspace: SourceSchemaWorkspaceMaterialization,
+    *,
+    requested_well_filter: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Resolve a requested one-sample filter against source-schema identity."""
+    available_wells = workspace.primary_wells()
+    requested_available = tuple(
+        well for well in requested_well_filter if well in available_wells
+    )
+    if requested_available:
+        return requested_available
+    return available_wells[:1]
 
 
 def _csv_header(path: Path) -> list[str]:

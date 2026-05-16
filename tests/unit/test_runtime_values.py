@@ -117,6 +117,40 @@ def test_object_label_dense_data_uses_nominal_payload_registry() -> None:
     assert object_label_dense_array(payload, dtype=np.int32).dtype == np.int32
 
 
+def test_sparse_ijv_object_label_dense_data_uses_source_shape() -> None:
+    sparse_rows = SparseIJVLabelRows(
+        np.array([[0, 1, 2], [2, 3, 4]], dtype=np.int32)
+    )
+    label_set = ObjectLabelSet(
+        name="Cells",
+        labels=sparse_rows,
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+        source_spatial_shape_yx=(5, 6),
+    )
+
+    dense = object_label_dense_array(label_set, dtype=np.int32)
+
+    assert dense.shape == (5, 6)
+    assert dense[0, 1] == 2
+    assert dense[2, 3] == 4
+
+
+def test_sparse_ijv_object_label_dense_data_preserves_runtime_slices() -> None:
+    sparse_rows = SparseIJVLabelRows(
+        np.array([[0, 1, 2, 3], [2, 3, 4, 5]], dtype=np.int32)
+    )
+    payload = ObjectLabelPayload(
+        labels=sparse_rows,
+        source_spatial_shape_yx=(6, 7),
+    )
+
+    dense = object_label_dense_array(payload, dtype=np.int32)
+
+    assert dense.shape == (3, 6, 7)
+    assert dense[0, 1, 2] == 3
+    assert dense[2, 3, 4] == 5
+
+
 def test_object_label_domain_preservation_uses_nominal_metadata_contract() -> None:
     labels = np.array([[0, 1], [2, 0]], dtype=np.int16)
     source = NominalObjectLabelDomainCarrier(
@@ -385,6 +419,24 @@ def test_object_label_set_replacement_preserves_sparse_ijv_representation() -> N
 
     assert rebuilt.representation is ObjectLabelRepresentation.SPARSE_IJV
     assert rebuilt.labels is replacement_rows
+
+
+def test_sparse_ijv_object_label_replacement_converts_dense_labels() -> None:
+    source = ObjectLabelSet(
+        name="OverlappingWorms",
+        labels=SparseIJVLabelRows(np.array([[0, 0, 1]], dtype=np.int32)),
+        representation=ObjectLabelRepresentation.SPARSE_IJV,
+    )
+    dense_replacement = np.array([[0, 2], [3, 0]], dtype=np.int32)
+
+    rebuilt = object_label_set_with_replacement_labels(source, dense_replacement)
+
+    assert rebuilt.representation is ObjectLabelRepresentation.SPARSE_IJV
+    assert isinstance(rebuilt.labels, SparseIJVLabelRows)
+    np.testing.assert_array_equal(
+        rebuilt.labels.as_array(),
+        np.array([[0, 1, 2], [1, 0, 3]], dtype=np.int32),
+    )
 
 
 def test_object_label_payload_with_measurement_labels_preserves_domain_and_variants() -> None:

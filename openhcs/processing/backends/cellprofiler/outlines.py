@@ -297,7 +297,9 @@ def overlay_outlines(
     del dtype_config
     context = OverlayOutlineExecutionContext(
         rows=_runtime_rows(outline_source_kinds, outline_colors),
-        object_labels=tuple(object_labels),
+        object_labels=tuple(
+            object_label_dense_array(labels) for labels in object_labels
+        ),
         blank_image=blank_image,
         display_mode=coerce_cellprofiler_enum(OutlineDisplayMode, display_mode),
         line_mode=coerce_cellprofiler_enum(LineMode, line_mode),

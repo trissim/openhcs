@@ -94,6 +94,10 @@ class RuntimeArrayPayload(ABC):
     def compare_array_payload(self, other: Any, ufunc: Any) -> Any:
         return ufunc(np.asarray(self), runtime_array_operand(other))
 
+    def max(self, *args: Any, **kwargs: Any) -> Any:
+        """Return the maximum of the array payload for ndarray-like callers."""
+        return np.asarray(self).max(*args, **kwargs)
+
     def __lt__(self, other: Any) -> Any:
         return self.compare_array_payload(other, np.less)
 
@@ -1196,6 +1200,22 @@ class SparseIJVLabelRows(ColumnarRows):
         )
 
     @classmethod
+    def from_dense_stack(cls, labels: Any) -> "SparseIJVLabelRows":
+        """Build sparse rows from a 2-D label image or runtime-slice stack."""
+        import numpy as _np
+
+        label_array = _np.asarray(labels)
+        if label_array.ndim == 2:
+            return cls.from_dense_labels(label_array)
+        if label_array.ndim != 3:
+            raise ValueError(
+                "SparseIJVLabelRows.from_dense_stack requires a 2-D label image "
+                "or a 3-D runtime-slice label stack."
+            )
+        slices = tuple(cls.from_dense_labels(slice_labels) for slice_labels in label_array)
+        return cls.from_slices(slices)
+
+    @classmethod
     def from_slices(cls, values: Sequence["SparseIJVLabelRows"]) -> "SparseIJVLabelRows":
         import numpy as _np
 
@@ -1241,6 +1261,56 @@ class SparseIJVLabelRows(ColumnarRows):
         array = self.as_array()
         rows = array[array[:, self.slice_column] == int(slice_index)]
         return type(self)(rows[:, (self.y_column, self.x_column, self.label_column)])
+
+    def to_dense(
+        self,
+        *,
+        source_spatial_shape_yx: tuple[int, int] | None = None,
+        dtype: object | None = None,
+    ) -> np.ndarray:
+        """Materialize sparse IJV rows as dense 2-D or slice-stacked labels."""
+        array = self.as_array()
+        if dtype is None:
+            dtype = array.dtype if array.size else np.int32
+        height, width = self._dense_spatial_shape(source_spatial_shape_yx)
+        if not self.has_slice_index:
+            dense = np.zeros((height, width), dtype=dtype)
+            if array.size:
+                dense[
+                    array[:, self.y_column].astype(np.intp, copy=False),
+                    array[:, self.x_column].astype(np.intp, copy=False),
+                ] = array[:, self.label_column].astype(dtype, copy=False)
+            return dense
+        slice_count = self.label_data_runtime_slice_count()
+        dense = np.zeros((slice_count, height, width), dtype=dtype)
+        if array.size:
+            dense[
+                array[:, self.slice_column].astype(np.intp, copy=False),
+                array[:, self.y_column].astype(np.intp, copy=False),
+                array[:, self.x_column].astype(np.intp, copy=False),
+            ] = array[:, self.label_column].astype(dtype, copy=False)
+        return dense
+
+    def label_data_runtime_slice_count(self) -> int:
+        """Return the encoded runtime-slice count, including empty stacks."""
+        if not self.has_slice_index:
+            return 1
+        slice_indices = self.slice_indices()
+        return max(slice_indices) + 1 if slice_indices else 0
+
+    def _dense_spatial_shape(
+        self,
+        source_spatial_shape_yx: tuple[int, int] | None,
+    ) -> tuple[int, int]:
+        if source_spatial_shape_yx is not None:
+            return _spatial_shape_pair(source_spatial_shape_yx, "source_spatial_shape_yx")
+        array = self.as_array()
+        if not array.size:
+            return (0, 0)
+        return (
+            int(np.max(array[:, self.y_column])) + 1,
+            int(np.max(array[:, self.x_column])) + 1,
+        )
 
     def as_array(self) -> Any:
         _ensure_runtime_payload_integrations_registered()
@@ -1839,6 +1909,10 @@ class ObjectLabelPayloadDenseDataStrategy(ObjectLabelDenseDataStrategy):
                 "ObjectLabelPayloadDenseDataStrategy requires ObjectLabelPayload, "
                 f"got {type(payload).__name__}."
             )
+        if isinstance(payload.labels, SparseIJVLabelRows):
+            return payload.labels.to_dense(
+                source_spatial_shape_yx=payload.source_spatial_shape_yx,
+            )
         return payload.labels
 
 
@@ -1852,6 +1926,10 @@ class ObjectLabelSetDenseDataStrategy(ObjectLabelDenseDataStrategy):
             raise TypeError(
                 "ObjectLabelSetDenseDataStrategy requires ObjectLabelSet, "
                 f"got {type(payload).__name__}."
+            )
+        if isinstance(payload.labels, SparseIJVLabelRows):
+            return payload.labels.to_dense(
+                source_spatial_shape_yx=payload.source_spatial_shape_yx,
             )
         return payload.labels
 
@@ -2047,8 +2125,7 @@ class SparseIJVLabelRowsRuntimeSliceStackContract(
             )
         if not labels.has_slice_index:
             return None
-        slice_indices = labels.slice_indices()
-        return max(slice_indices) + 1 if slice_indices else 0
+        return labels.label_data_runtime_slice_count()
 
 
 class DenseArrayLabelRuntimeSliceStackContract(
@@ -2712,7 +2789,21 @@ class SparseIJVObjectLabelSetReplacementStrategy(ObjectLabelSetReplacementStrate
     representation = ObjectLabelRepresentation.SPARSE_IJV
 
     def replacement_labels(self, labels: object) -> object:
-        return ObjectLabelDenseDataStrategy.for_payload(labels).data(labels)
+        if isinstance(labels, SparseIJVLabelRows):
+            return labels
+        if isinstance(labels, ObjectLabelSet):
+            if labels.representation is not ObjectLabelRepresentation.SPARSE_IJV:
+                return SparseIJVLabelRows.from_dense_stack(
+                    ObjectLabelDenseDataStrategy.for_payload(labels).data(labels)
+                )
+            return labels.labels
+        if isinstance(labels, ObjectLabelPayload):
+            if isinstance(labels.labels, SparseIJVLabelRows):
+                return labels.labels
+            return SparseIJVLabelRows.from_dense_stack(
+                ObjectLabelDenseDataStrategy.for_payload(labels).data(labels)
+            )
+        return SparseIJVLabelRows.from_dense_stack(labels)
 
 
 def object_label_set_with_replacement_labels(

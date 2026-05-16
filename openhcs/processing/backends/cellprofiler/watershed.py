@@ -645,13 +645,18 @@ class CellProfiler4MarkerInitialWatershedStrategy(CellProfiler4InitialWatershedS
                 "semantics."
             )
 
+        import skimage.segmentation
+
         image_array = np.asarray(image)
-        mask_array = np.asarray(mask, dtype=bool) if mask is not None else image_array != 0
-        y_data = cellprofiler_legacy_watershed(
-            image=image,
-            markers=object_label_dense_array(markers, dtype=np.int32),
+        markers_array = np.asarray(markers)
+        mask_array = None if mask is None else np.asarray(mask, dtype=bool)
+        y_data = skimage.segmentation.watershed(
+            image=image_array,
+            markers=markers_array,
             mask=mask_array,
             connectivity=parameters.connectivity,
+            compactness=parameters.compactness,
+            watershed_line=parameters.watershed_line,
         )
         return y_data, image
 

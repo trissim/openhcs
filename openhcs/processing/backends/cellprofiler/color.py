@@ -259,7 +259,7 @@ class GrayToColorSchemeRunner(ABC, metaclass=AutoRegisterMeta):
         height: int,
         width: int,
     ) -> np.ndarray:
-        if channel_index < 0:
+        if channel_index < 0 or channel_index >= image.shape[0]:
             return np.zeros((height, width), dtype=np.float64)
         return image[channel_index].astype(np.float64)
 

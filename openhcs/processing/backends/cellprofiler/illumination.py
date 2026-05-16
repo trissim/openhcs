@@ -1487,6 +1487,18 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NATIVE
     is_default_backend = True
 
+    def prepare_backend(self) -> None:
+        """Compile exact compact-domain rank-median kernels during preparation."""
+        code_image = np.arange(16, dtype=np.uint8).reshape((4, 4))
+        footprint = np.ones((3, 3), dtype=np.bool_)
+        row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+        _rank_median_small_codes_2d_sliding_histogram_numba(
+            code_image,
+            row_offsets_y,
+            row_radii_x,
+            int(code_image.size),
+        )
+
     def smooth_background_plane(
         self,
         pixel_data: np.ndarray,
@@ -1546,6 +1558,15 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
             np.uint8 if values.size <= np.iinfo(np.uint8).max + 1 else np.uint16
         )
         code_image = inverse.reshape(effective_scaled.shape).astype(code_dtype)
+        if code_dtype == np.uint8:
+            row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+            result_codes = _rank_median_small_codes_2d_sliding_histogram_numba(
+                np.ascontiguousarray(code_image),
+                row_offsets_y,
+                row_radii_x,
+                int(values.size),
+            )
+            return values[result_codes].astype(np.float32) / 65535.0
         result_codes = skimage.filters.median(
             code_image,
             footprint,
@@ -2334,6 +2355,65 @@ def _rank_median_codes_2d_sliding_histogram_numba(
             else:
                 output[y, x] = _fenwick_select_code(tree, count // 2)
     return output
+
+
+@njit(cache=True)
+def _rank_median_small_codes_2d_sliding_histogram_numba(
+    code_image: np.ndarray,
+    row_offsets_y: np.ndarray,
+    row_radii_x: np.ndarray,
+    value_count: int,
+) -> np.ndarray:
+    height, width = code_image.shape
+    output = np.empty((height, width), dtype=np.int32)
+    for y in range(height):
+        histogram = np.zeros(value_count, dtype=np.int32)
+        count = 0
+
+        for row_index in range(row_offsets_y.shape[0]):
+            yy = y + row_offsets_y[row_index]
+            if yy < 0 or yy >= height:
+                continue
+            radius_x = row_radii_x[row_index]
+            right = radius_x
+            if right >= width:
+                right = width - 1
+            for xx in range(0, right + 1):
+                histogram[int(code_image[yy, xx])] += 1
+                count += 1
+
+        output[y, 0] = _rank_median_select_small_code(histogram, count)
+
+        for x in range(1, width):
+            for row_index in range(row_offsets_y.shape[0]):
+                yy = y + row_offsets_y[row_index]
+                if yy < 0 or yy >= height:
+                    continue
+                radius_x = row_radii_x[row_index]
+
+                remove_x = x - 1 - radius_x
+                if remove_x >= 0 and remove_x < width:
+                    histogram[int(code_image[yy, remove_x])] -= 1
+                    count -= 1
+
+                add_x = x + radius_x
+                if add_x >= 0 and add_x < width:
+                    histogram[int(code_image[yy, add_x])] += 1
+                    count += 1
+
+            output[y, x] = _rank_median_select_small_code(histogram, count)
+    return output
+
+
+@njit(cache=True)
+def _rank_median_select_small_code(histogram: np.ndarray, count: int) -> int:
+    target = count // 2 + 1
+    cumulative = 0
+    for code in range(histogram.shape[0]):
+        cumulative += histogram[code]
+        if cumulative >= target:
+            return code
+    return max(0, histogram.shape[0] - 1)
 
 
 @njit(cache=True)

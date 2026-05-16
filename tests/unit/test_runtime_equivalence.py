@@ -1751,7 +1751,7 @@ def test_cellprofiler_policy_tolerates_image_texture_numeric_drift() -> None:
     assert cellprofiler_report.is_equivalent
 
 
-def test_cellprofiler_image_texture_tolerance_does_not_apply_to_objects() -> None:
+def test_cellprofiler_object_texture_tolerance_requires_stable_object_count() -> None:
     feature = RuntimeMeasurementFeatureKey(
         subject=RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, "comet"),
         feature_name="sum_variance_corr_gray_10_01_256",
@@ -1766,7 +1766,12 @@ def test_cellprofiler_image_texture_tolerance_does_not_apply_to_objects() -> Non
     candidate = RuntimeMeasurementSnapshot(
         {
             feature: Counter(
-                {RuntimeCellSignature(RuntimeCellValueKind.NUMBER, "831.6043097244797"): 1}
+                {
+                    RuntimeCellSignature(
+                        RuntimeCellValueKind.NUMBER,
+                        "831.6043097244797",
+                    ): 2,
+                }
             )
         }
     )

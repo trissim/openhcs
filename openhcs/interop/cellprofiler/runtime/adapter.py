@@ -1150,7 +1150,86 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 normalized = str(value)
                 if normalized in group_keys:
                     return normalized
+        current_step_group = self.runtime_input_group_key_from_current_sources(
+            group_keys
+        )
+        if current_step_group is not None:
+            return current_step_group
         return selected
+
+    def runtime_input_group_key_from_current_sources(
+        self,
+        group_keys: set[str],
+    ) -> str | None:
+        """Infer the active input group from this invocation's source files."""
+        current_files = self.source_binding_context.current_step_input_files
+        if not current_files:
+            return None
+        candidates = self.source_candidates(current_files)
+        universe_files = (
+            self.source_binding_context.pipeline_input_files
+            or self.source_binding_context.step_input_files
+            or current_files
+        )
+        universe_candidates = self.source_candidates(universe_files)
+        field_values = self.current_source_group_field_values(
+            candidates,
+            universe_candidates,
+            group_keys,
+        )
+        matched_groups = tuple(
+            value
+            for values in field_values.values()
+            if len(values) == 1
+            for value in values
+        )
+        logger.debug(
+            "Resolved current source group candidates from fields %s for groups %s",
+            field_values,
+            sorted(group_keys),
+        )
+        if len(matched_groups) == 1:
+            return matched_groups[0]
+        return None
+
+    @staticmethod
+    def current_source_group_field_values(
+        candidates: tuple["ParsedSourceCandidate", ...],
+        universe_candidates: tuple["ParsedSourceCandidate", ...],
+        group_keys: set[str],
+    ) -> Mapping[str, frozenset[str]]:
+        """Return candidate metadata fields whose values can select input groups."""
+        return MappingProxyType(
+            {
+                field_name: frozenset(values)
+                for field_name in tuple(
+                    dict.fromkeys(
+                        field_name
+                        for candidate in candidates
+                        for field_name in candidate.metadata
+                    )
+                )
+                for values in (
+                    tuple(
+                        str(candidate.metadata[field_name])
+                        for candidate in candidates
+                        if field_name in candidate.metadata
+                        and str(candidate.metadata[field_name]) in group_keys
+                    ),
+                )
+                if (
+                    values
+                    and len(values) == len(candidates)
+                    and group_keys.issubset(
+                        {
+                            str(candidate.metadata[field_name])
+                            for candidate in universe_candidates
+                            if field_name in candidate.metadata
+                        }
+                    )
+                )
+            }
+        )
 
     def current_image_matches_source_candidate(
         self,
@@ -2562,11 +2641,14 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
                 "provided to the runtime adapter."
             )
         parsed_candidates = request.adapter.source_candidates(step_input_files)
+        current_candidates = request.adapter.source_candidates(
+            request.adapter.source_binding_context.current_step_input_files
+        )
         match_started_at = time.perf_counter()
         matched = _match_candidates(
             candidates=parsed_candidates,
             binding=request.binding,
-            inherit_components={},
+            inherit_components=_inherited_scope_components(current_candidates),
         )
         _log_adapter_profile(
             "source_candidates_match",
@@ -2604,7 +2686,7 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
                 "provided to the runtime adapter."
             )
         step_input_candidates = request.adapter.source_candidates(
-            request.adapter.source_binding_context.step_input_files
+            request.adapter.source_binding_context.current_step_input_files
         )
         inherit_components = _pipeline_start_inherited_components(
             request.adapter.source_binding_plan,
@@ -3435,12 +3517,16 @@ def _match_candidates(
         selector.component.value: selector.value
         for selector in binding.selector.components
     }
+    explicit_metadata_fields = {
+        selector.field for selector in binding.selector.metadata
+    }
     effective_components = (
         {
             **{
                 name: value
                 for name, value in inherit_components.items()
                 if name not in component_selectors
+                and name not in explicit_metadata_fields
             },
             **component_selectors,
         }
@@ -3560,24 +3646,56 @@ def _select_step_input_stack(
     request: SourceBindingResolutionRequest,
     selected_paths: tuple[str, ...],
 ) -> Any:
-    step_input_files = request.adapter.source_binding_context.step_input_files
-    indexed_paths = {path: index for index, path in enumerate(step_input_files)}
+    context = request.adapter.source_binding_context
+    current_step_input_files = context.current_step_input_files
+    indexed_paths = {
+        path: index for index, path in enumerate(current_step_input_files)
+    }
     selected_indexes = tuple(
         indexed_paths[path]
-        for path in step_input_files
+        for path in current_step_input_files
         if path in selected_paths
     )
     current_image = request.current_image
+    if len(selected_indexes) != len(selected_paths):
+        return _load_step_input_stack(
+            request=request,
+            selected_paths=selected_paths,
+        )
     if not selected_indexes:
         raise RuntimeError(
             f"CellProfiler source alias '{request.alias}' selected no step-input "
             "stack indexes after filename matching."
         )
-    if len(step_input_files) == 1:
+    if len(current_step_input_files) == 1:
         return _natural_step_input_payload(current_image)
     slices = _unstack_payload(current_image)
     selected_slices = [slices[index] for index in selected_indexes]
     return _restack_like_payload(selected_slices, current_image)
+
+
+def _load_step_input_stack(
+    *,
+    request: SourceBindingResolutionRequest,
+    selected_paths: tuple[str, ...],
+) -> Any:
+    context = request.adapter.source_binding_context
+    if context.step_input_dir is None or context.step_input_backend is None:
+        raise RuntimeError(
+            "Step-input selector resolution needs step_input_dir and "
+            "step_input_backend when selected files are outside the current stack."
+        )
+    full_paths = tuple(str(Path(context.step_input_dir) / path) for path in selected_paths)
+    processing_context = _require_processing_context(request.adapter)
+    loaded = processing_context.filemanager.load_batch(
+        list(full_paths),
+        context.step_input_backend,
+    )
+    if not loaded:
+        raise RuntimeError(
+            f"Step-input source resolution loaded no payloads from {list(full_paths)}."
+        )
+    return _restack_like_payload(list(loaded), request.current_image)
 
 
 def _natural_step_input_payload(current_image: Any) -> Any:

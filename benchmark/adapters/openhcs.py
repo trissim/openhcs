@@ -544,6 +544,7 @@ class OpenHCSAdapter(ToolAdapter):
                         not request.compare_image_outputs
                     ),
                     materialize_skipped_save_images=request.compare_image_outputs,
+                    materialize_terminal_images=request.compare_image_outputs,
                 )
         except ValueError as exc:
             raise ToolExecutionError(

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -18,6 +19,7 @@ from openhcs.core.aligned_image_payload import (
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_artifact_queries import (
     columnar_row_values,
+    measurement_row_mapping,
     measurement_table_for_slice,
     measurement_values_for_label_slices,
 )
@@ -37,6 +39,8 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerFunctionContractExecutor,
     CellProfilerInvocationExecutionModePolicy,
     CellProfilerMeasurementFieldSchema,
+    CellProfilerMeasurementOutputProjection,
+    CellProfilerProjectedMeasurementRow,
     CellProfilerMeasurementRecordBuilder,
     ClassifyObjectsMeasurementFeatureTemplate,
     CombineObjectsInputPolicy,
@@ -188,6 +192,53 @@ class _SyntheticObjectMeasurement:
     value: float
 
 
+def test_projected_measurement_rows_support_mapping_and_attribute_access() -> None:
+    fields, rows = CellProfilerMeasurementOutputProjection(
+        fields=(FieldSpec("AreaShape_Area"),),
+        rows=({"AreaShape_Area": 7.0, "ObjectName": "Worms"},),
+    ).apply()
+
+    (row,) = rows
+
+    assert isinstance(row, CellProfilerProjectedMeasurementRow)
+    assert tuple(field.name for field in fields) == ("area_shape_area",)
+    assert row["area_shape_area"] == 7.0
+    assert row.area_shape_area == 7.0
+    assert row.get("object_name") == "Worms"
+
+
+def test_source_qualified_image_rows_use_current_image_number_not_slice_index() -> None:
+    adapter = SimpleNamespace(
+        cellprofiler_axis_image_number_start=lambda: 7,
+        cellprofiler_image_number_for_source_paths=lambda _paths: None,
+    )
+    source_payload = image_payload_with_context(
+        np.zeros((2, 2), dtype=np.float32),
+        metadata=ImagePayloadMetadata(source_path="/plate/A01_s007_w1.tif"),
+    )
+    rows, _mappings = CellProfilerGlobalImageNumberProjection(
+        adapter=adapter,
+        rows=(
+            {
+                "slice_index": 0,
+                "source_image_name": "Objects1",
+                "area_occupied": 10,
+            },
+            {
+                "slice_index": 1,
+                "source_image_name": "Objects2",
+                "area_occupied": 20,
+            },
+        ),
+        source_image_name=None,
+        source_image_payload=source_payload,
+        object_name=None,
+        need_row_mappings=True,
+    ).apply()
+
+    assert [row["image_number"] for row in rows] == [7, 7]
+
+
 @dataclass(frozen=True, slots=True)
 class _SyntheticAxisObjectMeasurement:
     image_number: int
@@ -229,6 +280,26 @@ def complete_object_measurement_rows(
             else DefaultObjectMeasurementRowPolicy()
         )
     return row_policy.complete_rows(rows, label_payload=label_payload, func=func)
+
+
+def _recorded_measurements_for_assertion(measurements):
+    normalized = []
+    for name, rows, kwargs in measurements:
+        comparable_kwargs = dict(kwargs)
+        if "fields" in comparable_kwargs:
+            field_names = tuple(
+                field.name for field in comparable_kwargs["fields"]
+            )
+            if field_names and "slice_index" not in field_names:
+                field_names = ("slice_index", *field_names)
+            comparable_kwargs["fields"] = field_names
+        normalized_rows = []
+        for row in rows:
+            normalized_row = dict(row)
+            normalized_row.setdefault("slice_index", 0)
+            normalized_rows.append(normalized_row)
+        normalized.append((name, normalized_rows, comparable_kwargs))
+    return normalized
 
 
 class _FakeCellProfilerRuntime:
@@ -309,6 +380,20 @@ class _FakeCellProfilerRuntime:
 
     def measurement_tables_for_object(self, name: str) -> tuple[object, ...]:
         return self.runtime_measurement_tables.get(name, ())
+
+    def measurement_tables_for_object_feature(
+        self,
+        object_name: str,
+        feature_name: str,
+        *,
+        match_group: bool = True,
+    ) -> tuple[MeasurementTable, ...]:
+        del match_group
+        return tuple(
+            table
+            for table in self.runtime_measurement_tables.get(object_name, ())
+            if any(feature_name in measurement_row_mapping(row) for row in table.rows)
+        )
 
     def measurement_values_for_label_slices(
         self,
@@ -1003,6 +1088,28 @@ def test_complete_object_measurement_rows_supports_compact_row_identity() -> Non
     assert np.isnan(rows[4]["Area"])
 
 
+def test_measure_texture_compact_rows_preserve_declared_padding_domain() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.zeros((4, 4), dtype=np.int32),
+        declared_object_count=5,
+    )
+    row_policy = CellProfilerObjectMeasurementRowPolicy.for_module("MeasureTexture")
+
+    rows = row_policy.complete_rows(
+        [
+            {"object_label": 10, "angular_second_moment": 0.1},
+            {"object_label": 30, "angular_second_moment": 0.3},
+            {"object_label": 50, "angular_second_moment": 0.5},
+        ],
+        label_payload=payload,
+        func=_synthetic_object_measurement_function,
+    )
+
+    assert [row["object_label"] for row in rows] == [1, 2, 3, 4, 5]
+    assert [row["angular_second_moment"] for row in rows[:3]] == [0.1, 0.3, 0.5]
+    assert all(np.isnan(row["angular_second_moment"]) for row in rows[3:])
+
+
 def test_measure_object_size_shape_compact_rows_preserve_emitted_padding() -> None:
     payload = ObjectLabelPayload(
         labels=np.zeros((4, 4), dtype=np.int32),
@@ -1158,6 +1265,61 @@ def test_per_object_measurement_reuses_2d_labels_for_each_image_stack_slice() ->
         (1, 1, 20.0),
         (1, 2, 21.0),
     }
+
+
+def test_per_object_measurement_records_declared_empty_measurement_table() -> None:
+    def measure(image: np.ndarray, *, labels: np.ndarray):
+        return image, []
+
+    measure.__processing_contract__ = ProcessingContract.PURE_2D
+    measure.__special_outputs__ = (
+        (
+            "ObjectSizeShape",
+            csv_materializer(fields=("object_label", "area")),
+        ),
+    )
+    image = np.ones((3, 3), dtype=np.float32)
+    runtime = _FakeCellProfilerRuntime(
+        {"Intensity": _FakeRuntimeImage(image)},
+        {
+            "Objects": ObjectLabelSet(
+                name="Objects",
+                labels=np.zeros(image.shape, dtype=np.int32),
+            )
+        },
+    )
+    executor = CellProfilerModuleExecutor(
+        ModuleArtifactContract(
+            module_name="MeasureObjectSizeShape",
+            inputs=(
+                ArtifactSpec("Intensity", ArtifactKind.IMAGE),
+                ArtifactSpec("Objects", ArtifactKind.OBJECT_LABELS),
+            ),
+            runtime_artifact_inputs=(
+                ArtifactSpec("Intensity", ArtifactKind.IMAGE),
+                ArtifactSpec("Objects", ArtifactKind.OBJECT_LABELS),
+            ),
+            outputs=(
+                ArtifactSpec(
+                    "ObjectSizeShape",
+                    ArtifactKind.MEASUREMENTS,
+                ),
+            ),
+        )
+    )
+
+    result = executor.run(measure, image, cellprofiler_runtime=runtime)
+
+    assert result is image
+    assert len(runtime.measurements) == 1
+    name, rows, kwargs = runtime.measurements[0]
+    assert name == "ObjectSizeShape"
+    assert rows == []
+    assert kwargs["object_name"] == "Objects"
+    assert tuple(field.name for field in kwargs["fields"]) == (
+        "object_label",
+        "area",
+    )
 
 
 def test_measurement_record_fields_prefers_artifact_materialization_schema() -> None:
@@ -2491,6 +2653,56 @@ def test_runtime_slice_count_allows_grouped_object_label_planes() -> None:
     assert RuntimeSliceProjection.slice_count_from_values((parent, child)) == 2
 
 
+def test_runtime_slice_count_treats_sequence_kwargs_as_operands() -> None:
+    first = ObjectLabelPayload(
+        labels=np.zeros((2, 4, 5), dtype=np.int32),
+        declared_object_id_domains=((1,), (2,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+    second = ObjectLabelPayload(
+        labels=np.zeros((2, 4, 5), dtype=np.int32),
+        declared_object_id_domains=((3,), (4,)),
+        domain_scope=ObjectLabelDomainScope.PLANE,
+    )
+
+    assert RuntimeSliceProjection.slice_count_from_values(((first, second),)) == 4
+    assert (
+        RuntimeSliceProjection.slice_count_from_kwargs(
+            {"object_labels": (first, second)},
+            sequence_kwargs=frozenset({"object_labels"}),
+        )
+        == 2
+    )
+
+
+def test_runtime_slice_projection_offsets_repeated_scalar_measurement_tables() -> None:
+    first = MeasurementTable(
+        name="MeasureObjectIntensity_7_measurements",
+        rows=[{"slice_index": 0, "object_label": 1, "std_intensity": 0.1}],
+        object_name="Tile_of_grid",
+        object_id_field="object_label",
+        source_image_name="DF_image",
+    )
+    second = MeasurementTable(
+        name="MeasureObjectIntensity_7_measurements",
+        rows=[{"slice_index": 0, "object_label": 1, "std_intensity": 0.2}],
+        object_name="Tile_of_grid",
+        object_id_field="object_label",
+        source_image_name="DF_image",
+    )
+
+    tables = (first, second)
+
+    assert RuntimeSliceProjection.slice_count_from_values((tables,)) == 2
+    sliced = RuntimeSliceProjection.kwargs_for_slice(
+        {"measurement_tables": tables},
+        slice_index=1,
+        slice_count=2,
+    )["measurement_tables"]
+    assert tuple(len(table.rows) for table in sliced) == (0, 1)
+    assert list(sliced[1].rows)[0]["std_intensity"] == 0.2
+
+
 def test_identify_tertiary_batch_aligns_cropped_primary_labels_to_secondary_domain():
     from openhcs.core.runtime_batch_contracts import RuntimePure2DSliceBatchRequest
 
@@ -3135,22 +3347,19 @@ def test_module_executor_runs_image_measurements_per_declared_image() -> None:
 
     assert result is fallback
     assert calls == [1.0, 2.0]
-    assert runtime.measurements == [
+    assert _recorded_measurements_for_assertion(runtime.measurements) == [
         (
             "ImageQuality",
-                [
-                    {"mean": 1.0, "source_image_name": "OrigBlue"},
-                    {"mean": 2.0, "source_image_name": "OrigGreen"},
-                ],
-                {
-                    "source_image_name": None,
-                    "fields": (
-                        FieldSpec("mean"),
-                        FieldSpec("source_image_name"),
-                    ),
-                },
-            )
-        ]
+            [
+                {"mean": 1.0, "source_image_name": "OrigBlue", "slice_index": 0},
+                {"mean": 2.0, "source_image_name": "OrigGreen", "slice_index": 0},
+            ],
+            {
+                "source_image_name": None,
+                "fields": ("slice_index", "mean", "source_image_name"),
+            },
+        )
+    ]
 
 
 def test_module_executor_runs_object_distribution_measurements_per_declared_image() -> None:
@@ -3207,7 +3416,7 @@ def test_module_executor_runs_object_distribution_measurements_per_declared_imag
     assert [call[0] for call in calls] == [1.0, 2.0]
     for _image_value, bound_labels in calls:
         np.testing.assert_array_equal(bound_labels, labels)
-    assert runtime.measurements == [
+    assert _recorded_measurements_for_assertion(runtime.measurements) == [
         (
             "MID",
             [
@@ -3216,26 +3425,29 @@ def test_module_executor_runs_object_distribution_measurements_per_declared_imag
                     "mean": 1.0,
                     "object_name": "Cells",
                     "source_image_name": "OrigBlue",
+                    "slice_index": 0,
                 },
                 {
                     "object_label": 1,
                     "mean": 2.0,
                     "object_name": "Cells",
                     "source_image_name": "OrigGreen",
+                    "slice_index": 0,
                 },
             ],
-                {
-                    "object_name": "Cells",
-                    "source_image_name": None,
-                    "fields": (
-                        FieldSpec("object_label"),
-                        FieldSpec("mean"),
-                        FieldSpec("object_name"),
-                        FieldSpec("source_image_name"),
-                    ),
-                },
-            )
-        ]
+            {
+                "object_name": "Cells",
+                "source_image_name": None,
+                "fields": (
+                    "slice_index",
+                    "object_label",
+                    "mean",
+                    "object_name",
+                    "source_image_name",
+                ),
+            },
+        )
+    ]
 
 
 def test_module_executor_preserves_composed_image_measurements() -> None:
@@ -3277,17 +3489,17 @@ def test_module_executor_preserves_composed_image_measurements() -> None:
 
     assert result is fallback
     assert calls == [(2, 4, 5)]
-    assert runtime.measurements == [
-            (
-                "Colocalization",
-                [{"delta": 2.0}],
-                {
-                    "object_name": None,
-                    "source_image_name": "OrigBlue__OrigGreen",
-                    "fields": (FieldSpec("delta"),),
-                },
-            )
-        ]
+    assert _recorded_measurements_for_assertion(runtime.measurements) == [
+        (
+            "Colocalization",
+            [{"delta": 2.0, "slice_index": 0}],
+            {
+                "object_name": None,
+                "source_image_name": "OrigBlue__OrigGreen",
+                "fields": ("slice_index", "delta"),
+            },
+        )
+    ]
 
 
 def test_colocalization_object_row_policy_projects_source_pair_features() -> None:
@@ -3904,17 +4116,17 @@ def test_module_executor_records_multiple_declared_object_outputs() -> None:
     )
 
     assert result is fallback
-    assert runtime.measurements == [
+    assert _recorded_measurements_for_assertion(runtime.measurements) == [
         (
             "UntangleWorms_3_measurements",
-            [{"worm_count": 1.0}],
-                {
-                    "object_name": None,
-                    "source_image_name": "WormBinary",
-                    "fields": (FieldSpec("worm_count"),),
-                },
-            )
-        ]
+            [{"worm_count": 1.0, "slice_index": 0}],
+            {
+                "object_name": None,
+                "source_image_name": "WormBinary",
+                "fields": ("slice_index", "worm_count"),
+            },
+        )
+    ]
     assert [name for name, _labels, _kwargs in runtime.objects] == [
         "OverlappingWorms",
         "NonOverlappingWorms",
@@ -3960,7 +4172,7 @@ def test_default_measurement_builder_preserves_row_declared_object_scope() -> No
         cellprofiler_runtime=runtime,
     )
 
-    assert runtime.measurements == [
+    assert _recorded_measurements_for_assertion(runtime.measurements) == [
         (
             "UntangleWorms_3_measurements",
             [
@@ -3968,19 +4180,21 @@ def test_default_measurement_builder_preserves_row_declared_object_scope() -> No
                     "object_name": "Worms",
                     "object_number": 1,
                     "worm_length": 10.0,
+                    "slice_index": 0,
                 }
             ],
-                {
-                    "object_name": None,
-                    "source_image_name": None,
-                    "fields": (
-                        FieldSpec("object_name"),
-                        FieldSpec("object_number"),
-                        FieldSpec("worm_length"),
-                    ),
-                },
-            )
-        ]
+            {
+                "object_name": None,
+                "source_image_name": None,
+                "fields": (
+                    "slice_index",
+                    "object_name",
+                    "object_number",
+                    "worm_length",
+                ),
+            },
+        )
+    ]
 
 
 def test_module_executor_routes_spatial_grid_artifacts() -> None:
@@ -5124,7 +5338,7 @@ def test_identify_objects_in_grid_fill_boundaries_match_floor_bins() -> None:
     np.testing.assert_array_equal(labels, expected)
 
 
-def test_identify_objects_in_grid_natural_shape_clips_guides_to_grid_cell() -> None:
+def test_identify_objects_in_grid_natural_shape_preserves_guide_shape() -> None:
     image = np.zeros((5, 10), dtype=np.float32)
     guide_labels = np.zeros((5, 10), dtype=np.int32)
     guide_labels[2, 1:6] = 1
@@ -5148,7 +5362,7 @@ def test_identify_objects_in_grid_natural_shape_clips_guides_to_grid_cell() -> N
     )
 
     labels = np.asarray(payload.labels)
-    np.testing.assert_array_equal(labels[2, 1:6], np.asarray([1, 1, 1, 1, 0]))
+    np.testing.assert_array_equal(labels[2, 1:6], np.asarray([1, 1, 1, 1, 1]))
     assert labels[2, 7] == 0
     assert labels[0, 0] == 0
 
@@ -5210,7 +5424,7 @@ def test_identify_objects_in_grid_natural_shape_uses_filtered_guides() -> None:
     )
     assert not np.any(labels)
 
-    filtered_guides[2, 1:4] = 7
+    filtered_guides[2, 1:4] = 1
     labels = NaturalGridShapeStrategy().labels(
         GridShapeRequest(
             grid=grid,

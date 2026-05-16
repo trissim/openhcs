@@ -267,6 +267,7 @@ class CPPipePipelineGenerationRequest:
     infrastructure_module_names: frozenset[str] = INFRASTRUCTURE_MODULE_NAMES
     prune_dead_unmaterialized_artifact_steps: bool = False
     materialize_skipped_save_images: bool = True
+    materialize_terminal_images: bool = True
     filemanager: FileManagerLike | None = None
     cppipe_backend: Backend = Backend.DISK
 
@@ -318,6 +319,7 @@ class CPPipePipelineGenerationRequest:
                 self.prune_dead_unmaterialized_artifact_steps
             ),
             materialize_skipped_save_images=self.materialize_skipped_save_images,
+            materialize_terminal_images=self.materialize_terminal_images,
         )
         return GeneratedCPPipePipeline(
             cppipe_path=self.cppipe_path,
@@ -466,6 +468,7 @@ def prepare_generated_pipeline(
     infrastructure_module_names: frozenset[str] = INFRASTRUCTURE_MODULE_NAMES,
     prune_dead_unmaterialized_artifact_steps: bool = False,
     materialize_skipped_save_images: bool = True,
+    materialize_terminal_images: bool = True,
     filemanager: FileManagerLike | None = None,
     cppipe_backend: Backend = Backend.DISK,
     generated_pipeline_backend: Backend = Backend.DISK,
@@ -481,6 +484,7 @@ def prepare_generated_pipeline(
                 prune_dead_unmaterialized_artifact_steps
             ),
             materialize_skipped_save_images=materialize_skipped_save_images,
+            materialize_terminal_images=materialize_terminal_images,
             filemanager=filemanager,
             cppipe_backend=cppipe_backend,
         ),

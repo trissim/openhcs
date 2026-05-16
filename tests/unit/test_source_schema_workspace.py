@@ -36,27 +36,28 @@ from openhcs.core.source_bindings import (
     SourceFilterMatchType,
     SourceFilterSubject,
     SourceSelector,
+    StepSourceBindingsConfig,
 )
 from openhcs.core.source_schema_workspace import (
     ImageSetRecord,
     SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR,
     SourceSchemaImageSetSelection,
-    expand_source_schema_workspace_wells,
-    materialize_source_schema_workspace,
+    expand_source_schema_workspace_wells as expand_A01_schema_workspace_wells,
+    materialize_source_schema_workspace as materialize_A01_schema_workspace,
 )
 from openhcs.core.steps.function_execution import SourceBoundAnchorPatternPolicy
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
 
-def test_source_schema_filename_parser_handles_artifact_suffixes() -> None:
+def test_A01_schema_filename_parser_handles_artifact_suffixes() -> None:
     parser = SourceSchemaFilenameParser()
 
     parsed = parser.parse_filename(
-        "source_s001_w1_z001_t001_CorrectIlluminationCalculate_7_measurements_step2.csv"
+        "A01_s001_w1_z001_t001_CorrectIlluminationCalculate_7_measurements_step2.csv"
     )
 
     assert parsed == {
-        "well": "source",
+        "well": "A01",
         "site": 1,
         "channel": 1,
         "z_index": 1,
@@ -65,11 +66,18 @@ def test_source_schema_filename_parser_handles_artifact_suffixes() -> None:
     }
 
 
-def test_source_bound_anchor_filter_uses_declared_source_selectors() -> None:
+def test_source_binding_plan_views_are_registered_nominal_family() -> None:
+    assert set(CompiledSourceBindingPlan.registered_plan_types()) == {
+        StepSourceBindingsConfig,
+        CompiledSourceBindingPlan,
+    }
+
+
+def test_source_bound_anchor_filter_uses_declared_A01_selectors() -> None:
     patterns = [
-        "source_s001_w1_z001_t001.png",
-        "source_s001_w1_z001_t001.tiff",
-        "source_s002_w1_z001_t001.png",
+        "A01_s001_w1_z001_t001.png",
+        "A01_s001_w1_z001_t001.tiff",
+        "A01_s002_w1_z001_t001.png",
     ]
     binding = NamedSourceBinding(
         alias="phase",
@@ -97,17 +105,17 @@ def test_source_bound_anchor_filter_uses_declared_source_selectors() -> None:
         parser=SourceSchemaFilenameParser(),
     )
 
-    assert filtered == ["source_s001_w1_z001_t001.png"]
+    assert filtered == ["A01_s001_w1_z001_t001.png"]
 
 
 def test_order_matched_source_bound_anchor_filter_uses_one_anchor_per_image_set() -> None:
     patterns = [
-        "source_s001_w1_z001_t001.tif",
-        "source_s001_w2_z001_t001.tif",
-        "source_s001_w3_z001_t001.tif",
-        "source_s002_w1_z001_t001.tif",
-        "source_s002_w2_z001_t001.tif",
-        "source_s002_w3_z001_t001.tif",
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w2_z001_t001.tif",
+        "A01_s001_w3_z001_t001.tif",
+        "A01_s002_w1_z001_t001.tif",
+        "A01_s002_w2_z001_t001.tif",
+        "A01_s002_w3_z001_t001.tif",
     ]
     bindings = (
         NamedSourceBinding(
@@ -144,8 +152,8 @@ def test_order_matched_source_bound_anchor_filter_uses_one_anchor_per_image_set(
     )
 
     assert filtered == [
-        "source_s001_w1_z001_t001.tif",
-        "source_s002_w1_z001_t001.tif",
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s002_w1_z001_t001.tif",
     ]
 
 
@@ -173,13 +181,58 @@ def test_order_matched_source_bound_anchor_filter_rejects_incomplete_image_sets(
 
     with pytest.raises(ValueError, match="incomplete image set"):
         SourceBoundAnchorPatternPolicy.for_plan(plan).select(
-            ["source_s001_w1_z001_t001.tif"],
+            ["A01_s001_w1_z001_t001.tif"],
             bindings=plan.bindings_for_group(None),
             parser=SourceSchemaFilenameParser(),
         )
 
 
-def test_expand_source_schema_workspace_wells_preserves_disambiguating_suffixes(
+def test_order_matched_source_artifact_bindings_do_not_add_execution_anchors() -> None:
+    bindings = (
+        NamedSourceBinding(
+            alias="A",
+            artifact_kind=ArtifactKind.OBJECT_LABELS,
+            selector=SourceSelector(
+                filters=(
+                    SourceFilterClause(
+                        SourceFilterSubject.FILE,
+                        SourceFilterMatchType.CONTAINS,
+                        "A",
+                    ),
+                ),
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        ),
+        NamedSourceBinding(
+            alias="B",
+            artifact_kind=ArtifactKind.OBJECT_LABELS,
+            selector=SourceSelector(
+                filters=(
+                    SourceFilterClause(
+                        SourceFilterSubject.FILE,
+                        SourceFilterMatchType.CONTAINS,
+                        "B",
+                    ),
+                ),
+            ),
+            origin=SourceBindingOrigin.PIPELINE_START,
+        ),
+    )
+    plan = CompiledSourceBindingPlan(
+        bindings_by_group={None: bindings},
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+
+    filtered = SourceBoundAnchorPatternPolicy.for_plan(plan).select(
+        ["A01_s001_w1_z001_t001_A.png"],
+        bindings=plan.bindings_for_group(None),
+        parser=SourceSchemaFilenameParser(),
+    )
+
+    assert filtered == ["A01_s001_w1_z001_t001_A.png"]
+
+
+def test_expand_A01_schema_workspace_wells_preserves_disambiguating_suffixes(
     tmp_path: Path,
 ) -> None:
     metadata_path = tmp_path / "openhcs_metadata.json"
@@ -189,12 +242,12 @@ def test_expand_source_schema_workspace_wells_preserves_disambiguating_suffixes(
                 "subdirectories": {
                     ".": {
                         "workspace_mapping": {
-                            "source_s001_w1_z001_t001.tif": "Sequence1/image.tif",
-                            "source_s001_w1_z001_t001_002.tif": "Sequence2/image.tif",
+                            "A01_s001_w1_z001_t001.tif": "Sequence1/image.tif",
+                            "A01_s001_w1_z001_t001_002.tif": "Sequence2/image.tif",
                         },
                         "source_metadata": {
-                            "source_s001_w1_z001_t001.tif": {"sequence": "1"},
-                            "source_s001_w1_z001_t001_002.tif": {"sequence": "2"},
+                            "A01_s001_w1_z001_t001.tif": {"sequence": "1"},
+                            "A01_s001_w1_z001_t001_002.tif": {"sequence": "2"},
                         },
                     }
                 }
@@ -203,7 +256,7 @@ def test_expand_source_schema_workspace_wells_preserves_disambiguating_suffixes(
         encoding="utf-8",
     )
 
-    expand_source_schema_workspace_wells(metadata_path, ("W001", "W002"))
+    expand_A01_schema_workspace_wells(metadata_path, ("W001", "W002"))
 
     metadata = json.loads(metadata_path.read_text())
     mapping = metadata["subdirectories"]["."]["workspace_mapping"]
@@ -215,7 +268,7 @@ def test_expand_source_schema_workspace_wells_preserves_disambiguating_suffixes(
     }
 
 
-def test_expand_source_schema_workspace_wells_preserves_original_well_dimension(
+def test_expand_A01_schema_workspace_wells_preserves_original_well_dimension(
     tmp_path: Path,
 ) -> None:
     metadata_path = tmp_path / "openhcs_metadata.json"
@@ -236,7 +289,7 @@ def test_expand_source_schema_workspace_wells_preserves_original_well_dimension(
         encoding="utf-8",
     )
 
-    expand_source_schema_workspace_wells(metadata_path, ("W001",))
+    expand_A01_schema_workspace_wells(metadata_path, ("W001",))
 
     metadata = json.loads(metadata_path.read_text())
     mapping = metadata["subdirectories"]["."]["workspace_mapping"]
@@ -246,7 +299,7 @@ def test_expand_source_schema_workspace_wells_preserves_original_well_dimension(
     }
 
 
-def test_expand_source_schema_workspace_wells_replaces_source_well_metadata(
+def test_expand_A01_schema_workspace_wells_replaces_source_well_metadata(
     tmp_path: Path,
 ) -> None:
     metadata_path = tmp_path / "openhcs_metadata.json"
@@ -256,10 +309,10 @@ def test_expand_source_schema_workspace_wells_replaces_source_well_metadata(
                 "subdirectories": {
                     ".": {
                         "workspace_mapping": {
-                            "source_s001_w1_z001_t001.tif": "Sequence1/image.tif",
+                            "A01_s001_w1_z001_t001.tif": "Sequence1/image.tif",
                         },
                         "source_metadata": {
-                            "source_s001_w1_z001_t001.tif": {
+                            "A01_s001_w1_z001_t001.tif": {
                                 "Well": "A01",
                                 "Metadata_Well": "A01",
                                 "ChannelNumber": "1",
@@ -272,7 +325,7 @@ def test_expand_source_schema_workspace_wells_replaces_source_well_metadata(
         encoding="utf-8",
     )
 
-    expand_source_schema_workspace_wells(metadata_path, ("W001", "W002"))
+    expand_A01_schema_workspace_wells(metadata_path, ("W001", "W002"))
 
     metadata = json.loads(metadata_path.read_text())
     source_metadata = metadata["subdirectories"]["."]["source_metadata"]
@@ -288,7 +341,7 @@ def test_expand_source_schema_workspace_wells_replaces_source_well_metadata(
     }
 
 
-def test_materialize_source_schema_workspace_projects_cellprofiler_sources(
+def test_materialize_A01_schema_workspace_projects_cellprofiler_sources(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "cellprofiler_source"
@@ -298,10 +351,10 @@ def test_materialize_source_schema_workspace_projects_cellprofiler_sources(
     (source_root / "Channel2ILLUM.mat").write_bytes(b"mat payload")
     workspace_root = tmp_path / "openhcs_workspace"
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         workspace_root,
-        _example_sbs_source_schema(),
+        _example_sbs_A01_schema(),
     )
 
     metadata = json.loads(result.metadata_path.read_text())
@@ -334,7 +387,7 @@ def test_materialize_source_schema_workspace_projects_cellprofiler_sources(
     }
 
 
-def test_materialize_source_schema_workspace_selects_sample_before_projection(
+def test_materialize_A01_schema_workspace_selects_sample_before_projection(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "cellprofiler_source"
@@ -344,10 +397,10 @@ def test_materialize_source_schema_workspace_selects_sample_before_projection(
     _write_image(source_root / "Channel1-01-B-01.tif", value=3)
     _write_image(source_root / "Channel2-01-B-01.tif", value=4)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "openhcs_workspace",
-        _example_sbs_source_schema(),
+        _example_sbs_A01_schema(),
         image_set_selection=SourceSchemaImageSetSelection(well_filter=("B01",)),
     )
 
@@ -362,7 +415,7 @@ def test_materialize_source_schema_workspace_selects_sample_before_projection(
     assert set(result.primary_mappings) == set(primary["workspace_mapping"])
 
 
-def test_source_schema_image_set_selection_keeps_all_sites_for_selected_sample() -> None:
+def test_A01_schema_image_set_selection_keeps_all_sites_for_selected_sample() -> None:
     schema = PipelineImageSchema()
     image_sets = (
         ImageSetRecord(0, {}, {"ImageNumber": "1"}),
@@ -378,7 +431,7 @@ def test_source_schema_image_set_selection_keeps_all_sites_for_selected_sample()
     assert selected == image_sets
 
 
-def test_materialize_source_schema_workspace_derives_well_match_field(
+def test_materialize_A01_schema_workspace_derives_well_match_field(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "cellprofiler_vitra_source"
@@ -387,10 +440,10 @@ def test_materialize_source_schema_workspace_derives_well_match_field(
     _write_image(source_root / "Channel 2-01-A-01-00.tif", value=2)
     workspace_root = tmp_path / "openhcs_workspace"
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         workspace_root,
-        _well_row_column_match_source_schema(),
+        _well_row_column_match_A01_schema(),
     )
 
     metadata = json.loads(result.metadata_path.read_text())
@@ -403,7 +456,7 @@ def test_materialize_source_schema_workspace_derives_well_match_field(
     assert primary["wells"] == {"A01": None}
 
 
-def test_materialize_source_schema_workspace_applies_images_rule(
+def test_materialize_A01_schema_workspace_applies_images_rule(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -413,10 +466,10 @@ def test_materialize_source_schema_workspace_applies_images_rule(
     _write_image(source_root / "Channel1-B01.tif", value=3)
     _write_image(source_root / "Channel2-B01.tif", value=4)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
-        _filtered_source_schema(),
+        _filtered_A01_schema(),
     )
 
     metadata = json.loads(result.metadata_path.read_text())
@@ -429,7 +482,7 @@ def test_materialize_source_schema_workspace_applies_images_rule(
     assert primary["wells"] == {"A01": None}
 
 
-def test_materialize_source_schema_workspace_uses_single_default_well_for_ordered_sets(
+def test_materialize_A01_schema_workspace_uses_single_default_well_for_ordered_sets(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -437,7 +490,7 @@ def test_materialize_source_schema_workspace_uses_single_default_well_for_ordere
     _write_image(source_root / "field-001.tif", value=1)
     _write_image(source_root / "field-002.tif", value=2)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -465,10 +518,10 @@ def test_materialize_source_schema_workspace_uses_single_default_well_for_ordere
     primary = metadata["subdirectories"]["."]
 
     assert set(primary["workspace_mapping"]) == {
-        "source_s001_w1_z001_t001.tif",
-        "source_s002_w1_z001_t001.tif",
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s002_w1_z001_t001.tif",
     }
-    assert primary["wells"] == {"source": None}
+    assert primary["wells"] == {"A01": None}
     assert primary["sites"] == {"1": None, "2": None}
     for path in primary["workspace_mapping"]:
         assert (
@@ -477,7 +530,7 @@ def test_materialize_source_schema_workspace_uses_single_default_well_for_ordere
         )
 
 
-def test_materialize_source_schema_workspace_uses_complete_ordered_image_sets(
+def test_materialize_A01_schema_workspace_uses_complete_ordered_image_sets(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -486,7 +539,7 @@ def test_materialize_source_schema_workspace_uses_complete_ordered_image_sets(
     _write_image(source_root / "field-002.png", value=2)
     _write_image(source_root / "shared-probabilities.tiff", value=3)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -528,15 +581,15 @@ def test_materialize_source_schema_workspace_uses_complete_ordered_image_sets(
     mapping = metadata["subdirectories"]["."]["workspace_mapping"]
 
     assert set(mapping) == {
-        "source_s001_w1_z001_t001.png",
-        "source_s001_w2_z001_t001.tiff",
+        "A01_s001_w1_z001_t001.png",
+        "A01_s001_w2_z001_t001.tiff",
     }
-    assert mapping["source_s001_w2_z001_t001.tiff"].endswith(
+    assert mapping["A01_s001_w2_z001_t001.tiff"].endswith(
         "source/shared-probabilities.tiff"
     )
 
 
-def test_materialize_source_schema_workspace_projects_ordered_channel_site_sets(
+def test_materialize_A01_schema_workspace_projects_ordered_channel_site_sets(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "imaging_flow_source"
@@ -545,7 +598,7 @@ def test_materialize_source_schema_workspace_projects_ordered_channel_site_sets(
         _write_image(source_root / f"{channel}_1.tif", value=1)
         _write_image(source_root / f"{channel}_2.tif", value=2)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -600,18 +653,18 @@ def test_materialize_source_schema_workspace_projects_ordered_channel_site_sets(
     primary = json.loads(result.metadata_path.read_text())["subdirectories"]["."]
 
     assert set(primary["workspace_mapping"]) == {
-        "source_s001_w1_z001_t001.tif",
-        "source_s001_w2_z001_t001.tif",
-        "source_s001_w3_z001_t001.tif",
-        "source_s002_w1_z001_t001.tif",
-        "source_s002_w2_z001_t001.tif",
-        "source_s002_w3_z001_t001.tif",
+        "A01_s001_w1_z001_t001.tif",
+        "A01_s001_w2_z001_t001.tif",
+        "A01_s001_w3_z001_t001.tif",
+        "A01_s002_w1_z001_t001.tif",
+        "A01_s002_w2_z001_t001.tif",
+        "A01_s002_w3_z001_t001.tif",
     }
-    assert primary["wells"] == {"source": None}
+    assert primary["wells"] == {"A01": None}
     assert primary["sites"] == {"1": None, "2": None}
 
 
-def test_materialize_source_schema_workspace_disambiguates_duplicate_site_metadata(
+def test_materialize_A01_schema_workspace_disambiguates_duplicate_site_metadata(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -619,7 +672,7 @@ def test_materialize_source_schema_workspace_disambiguates_duplicate_site_metada
     _write_image(source_root / "Plate_A01_s1_w1_GUID1.tif", value=1)
     _write_image(source_root / "Plate_A01_s1_w1_GUID2.tif", value=2)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -651,14 +704,14 @@ def test_materialize_source_schema_workspace_disambiguates_duplicate_site_metada
     assert primary["source_metadata"]["A01_s002_w1_z001_t001.tif"]["Site"] == "1"
 
 
-def test_materialize_source_schema_workspace_matches_numeric_component_values(
+def test_materialize_A01_schema_workspace_matches_numeric_component_values(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
     source_root.mkdir()
     _write_image(source_root / "Sample_ch00.tif", value=1)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -685,19 +738,19 @@ def test_materialize_source_schema_workspace_matches_numeric_component_values(
     metadata = json.loads(result.metadata_path.read_text())
     primary = metadata["subdirectories"]["."]
 
-    assert primary["workspace_mapping"]["source_s001_w1_z001_t001.tif"].endswith(
+    assert primary["workspace_mapping"]["A01_s001_w1_z001_t001.tif"].endswith(
         "source/Sample_ch00.tif"
     )
 
 
-def test_materialize_source_schema_workspace_keeps_default_input_folder_files(
+def test_materialize_A01_schema_workspace_keeps_default_input_folder_files(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
     source_root.mkdir()
     _write_image(source_root / "Sample_D.TIF", value=1)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -732,10 +785,10 @@ def test_materialize_source_schema_workspace_keeps_default_input_folder_files(
 
     metadata = json.loads(result.metadata_path.read_text())
     primary = metadata["subdirectories"]["."]
-    assert set(primary["workspace_mapping"]) == {"source_s001_w1_z001_t001.TIF"}
+    assert set(primary["workspace_mapping"]) == {"A01_s001_w1_z001_t001.TIF"}
 
 
-def test_materialize_source_schema_workspace_uses_filemanager_for_vfs_operations(
+def test_materialize_A01_schema_workspace_uses_filemanager_for_vfs_operations(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -770,7 +823,7 @@ def test_materialize_source_schema_workspace_uses_filemanager_for_vfs_operations
             Path(output_path).write_text(json.dumps(data), encoding="utf-8")
 
     filemanager = RecordingFileManager()
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         workspace_root,
         PipelineImageSchema(
@@ -800,14 +853,14 @@ def test_materialize_source_schema_workspace_uses_filemanager_for_vfs_operations
     assert isinstance(filemanager.saved_payloads[0], dict)
 
 
-def test_materialize_source_schema_workspace_applies_source_filters_relative_to_root(
+def test_materialize_A01_schema_workspace_applies_source_filters_relative_to_root(
     tmp_path: Path,
 ) -> None:
     hidden_parent = tmp_path / ".cache" / "dataset"
     hidden_parent.mkdir(parents=True)
     _write_image(hidden_parent / "Sample_ch00.tif", value=1)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         hidden_parent,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -847,12 +900,12 @@ def test_materialize_source_schema_workspace_applies_source_filters_relative_to_
     metadata = json.loads(result.metadata_path.read_text())
     primary = metadata["subdirectories"]["."]
 
-    assert primary["workspace_mapping"]["source_s001_w1_z001_t001.tif"].endswith(
+    assert primary["workspace_mapping"]["A01_s001_w1_z001_t001.tif"].endswith(
         ".cache/dataset/Sample_ch00.tif"
     )
 
 
-def test_materialize_source_schema_workspace_includes_embedded_image_planes(
+def test_materialize_A01_schema_workspace_includes_embedded_image_planes(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -864,7 +917,7 @@ def test_materialize_source_schema_workspace_includes_embedded_image_planes(
     _write_image(external_root / "url_D.TIF", value=3)
     _write_image(external_root / "url_F.TIF", value=4)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -910,18 +963,18 @@ def test_materialize_source_schema_workspace_includes_embedded_image_planes(
     primary = metadata["subdirectories"]["."]
 
     assert set(primary["workspace_mapping"]) == {
-        "source_s001_w1_z001_t001.TIF",
-        "source_s001_w2_z001_t001.TIF",
-        "source_s002_w1_z001_t001.TIF",
-        "source_s002_w2_z001_t001.TIF",
+        "A01_s001_w1_z001_t001.TIF",
+        "A01_s001_w2_z001_t001.TIF",
+        "A01_s002_w1_z001_t001.TIF",
+        "A01_s002_w2_z001_t001.TIF",
     }
     assert primary["sites"] == {"1": None, "2": None}
-    assert primary["workspace_mapping"]["source_s002_w1_z001_t001.TIF"].endswith(
+    assert primary["workspace_mapping"]["A01_s002_w1_z001_t001.TIF"].endswith(
         "external/url_D.TIF"
     )
 
 
-def test_materialize_source_schema_workspace_resolves_embedded_urls_to_local_sources(
+def test_materialize_A01_schema_workspace_resolves_embedded_urls_to_local_sources(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -929,7 +982,7 @@ def test_materialize_source_schema_workspace_resolves_embedded_urls_to_local_sou
     _write_image(source_root / "url_D.TIF", value=1)
     _write_image(source_root / "url_F.TIF", value=2)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -975,15 +1028,15 @@ def test_materialize_source_schema_workspace_resolves_embedded_urls_to_local_sou
     primary = metadata["subdirectories"]["."]
 
     assert set(primary["workspace_mapping"]) == {
-        "source_s001_w1_z001_t001.TIF",
-        "source_s001_w2_z001_t001.TIF",
+        "A01_s001_w1_z001_t001.TIF",
+        "A01_s001_w2_z001_t001.TIF",
     }
-    assert primary["workspace_mapping"]["source_s001_w1_z001_t001.TIF"].endswith(
+    assert primary["workspace_mapping"]["A01_s001_w1_z001_t001.TIF"].endswith(
         "source/url_D.TIF"
     )
 
 
-def test_materialize_source_schema_workspace_projects_groups_to_well_axis(
+def test_materialize_A01_schema_workspace_projects_groups_to_well_axis(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -994,10 +1047,10 @@ def test_materialize_source_schema_workspace_projects_groups_to_well_axis(
     _write_image(source_root / "Sequence2" / "Embryo_GFP_0000.tif", value=3)
     _write_image(source_root / "Sequence2" / "Embryo_GFP_0001.tif", value=4)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
-        _grouped_order_source_schema(),
+        _grouped_order_A01_schema(),
     )
 
     metadata = json.loads(result.metadata_path.read_text())
@@ -1021,7 +1074,7 @@ def test_materialize_source_schema_workspace_projects_groups_to_well_axis(
     )
 
 
-def test_materialize_source_schema_workspace_recovers_plate_well_tokens_without_metadata_rules(
+def test_materialize_A01_schema_workspace_recovers_plate_well_tokens_without_metadata_rules(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -1031,7 +1084,7 @@ def test_materialize_source_schema_workspace_recovers_plate_well_tokens_without_
     _write_image(source_root / "AS_09047_050428030001_O02f00d2.TIF", value=3)
     _write_image(source_root / "AS_09047_050428030001_O02f01d2.TIF", value=4)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -1068,7 +1121,7 @@ def test_materialize_source_schema_workspace_recovers_plate_well_tokens_without_
     }
 
 
-def test_materialize_source_schema_workspace_joins_imported_metadata(
+def test_materialize_A01_schema_workspace_joins_imported_metadata(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -1080,10 +1133,10 @@ def test_materialize_source_schema_workspace_joins_imported_metadata(
         encoding="utf-8",
     )
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
-        _imported_metadata_source_schema(),
+        _imported_metadata_A01_schema(),
     )
 
     metadata = json.loads(result.metadata_path.read_text())
@@ -1100,7 +1153,7 @@ def test_materialize_source_schema_workspace_joins_imported_metadata(
     assert result.source_metadata["A01_s001_w2_z001_t001.tif"]["Compound"] == "DMSO"
 
 
-def test_materialize_source_schema_workspace_resolves_stale_imported_metadata_location(
+def test_materialize_A01_schema_workspace_resolves_stale_imported_metadata_location(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source" / "images"
@@ -1112,10 +1165,10 @@ def test_materialize_source_schema_workspace_resolves_stale_imported_metadata_lo
         encoding="utf-8",
     )
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
-        _imported_metadata_source_schema_with_location(
+        _imported_metadata_A01_schema_with_location(
             "/old/default/input/folder/metadata.csv"
         ),
     )
@@ -1123,7 +1176,7 @@ def test_materialize_source_schema_workspace_resolves_stale_imported_metadata_lo
     assert result.source_metadata["A01_s001_w1_z001_t001.tif"]["Compound"] == "DMSO"
 
 
-def test_materialize_source_schema_workspace_skips_imported_metadata_partial_join(
+def test_materialize_A01_schema_workspace_skips_imported_metadata_partial_join(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -1135,7 +1188,7 @@ def test_materialize_source_schema_workspace_skips_imported_metadata_partial_joi
         encoding="utf-8",
     )
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -1196,7 +1249,7 @@ def test_materialize_source_schema_workspace_skips_imported_metadata_partial_joi
     assert "Compound" not in metadata
 
 
-def test_materialize_source_schema_workspace_merges_duplicate_imported_metadata_consensus(
+def test_materialize_A01_schema_workspace_merges_duplicate_imported_metadata_consensus(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -1208,10 +1261,10 @@ def test_materialize_source_schema_workspace_merges_duplicate_imported_metadata_
         encoding="utf-8",
     )
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
-        _imported_metadata_source_schema(),
+        _imported_metadata_A01_schema(),
     )
 
     metadata = result.source_metadata["A01_s001_w1_z001_t001.tif"]
@@ -1219,7 +1272,7 @@ def test_materialize_source_schema_workspace_merges_duplicate_imported_metadata_
     assert "Replicate" not in metadata
 
 
-def test_materialize_source_schema_workspace_supports_source_artifact_only_schema(
+def test_materialize_A01_schema_workspace_supports_source_artifact_only_schema(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -1227,7 +1280,7 @@ def test_materialize_source_schema_workspace_supports_source_artifact_only_schem
     _write_image(source_root / "A.png", value=1)
     _write_image(source_root / "B.png", value=2)
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -1270,9 +1323,9 @@ def test_materialize_source_schema_workspace_supports_source_artifact_only_schem
     primary = metadata["subdirectories"]["."]
     auxiliary = metadata["subdirectories"][SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR]
     assert primary["workspace_mapping"] == {
-        "source_s001_w1_z001_t001.png": "../source/A.png"
+        "A01_s001_w1_z001_t001.png": "../source/A.png"
     }
-    assert primary["wells"] == {"source": None}
+    assert primary["wells"] == {"A01": None}
     assert primary["channels"] == {"1": "A"}
     assert set(auxiliary["workspace_mapping"]) == {
         f"{SOURCE_SCHEMA_WORKSPACE_SOURCE_DIR}/A/001_A.png",
@@ -1283,7 +1336,7 @@ def test_materialize_source_schema_workspace_supports_source_artifact_only_schem
     ][SOURCE_IMAGE_TYPE_METADATA_FIELD] == "Objects"
 
 
-def test_materialize_source_schema_workspace_keeps_extracted_metadata_on_import_conflict(
+def test_materialize_A01_schema_workspace_keeps_extracted_metadata_on_import_conflict(
     tmp_path: Path,
 ) -> None:
     source_root = tmp_path / "source"
@@ -1294,7 +1347,7 @@ def test_materialize_source_schema_workspace_keeps_extracted_metadata_on_import_
         encoding="utf-8",
     )
 
-    result = materialize_source_schema_workspace(
+    result = materialize_A01_schema_workspace(
         source_root,
         tmp_path / "workspace",
         PipelineImageSchema(
@@ -1326,7 +1379,7 @@ def test_materialize_source_schema_workspace_keeps_extracted_metadata_on_import_
     assert metadata["Compound"] == "DMSO"
 
 
-def _example_sbs_source_schema() -> PipelineImageSchema:
+def _example_sbs_A01_schema() -> PipelineImageSchema:
     metadata_rule = MetadataExtractionRule(
         source=MetadataSource.FILE_NAME,
         pattern=r".*-(?P<ImageNumber>\d*)-(?P<WellRow>.*)-(?P<WellColumn>\d*)",
@@ -1397,7 +1450,7 @@ def _example_sbs_source_schema() -> PipelineImageSchema:
     )
 
 
-def _filtered_source_schema() -> PipelineImageSchema:
+def _filtered_A01_schema() -> PipelineImageSchema:
     return PipelineImageSchema(
         images_rule=ImagesRule(
             filters=(
@@ -1441,11 +1494,11 @@ def _filtered_source_schema() -> PipelineImageSchema:
     )
 
 
-def _imported_metadata_source_schema() -> PipelineImageSchema:
-    return _imported_metadata_source_schema_with_location("metadata.csv")
+def _imported_metadata_A01_schema() -> PipelineImageSchema:
+    return _imported_metadata_A01_schema_with_location("metadata.csv")
 
 
-def _imported_metadata_source_schema_with_location(
+def _imported_metadata_A01_schema_with_location(
     location: str,
 ) -> PipelineImageSchema:
     return PipelineImageSchema(
@@ -1512,7 +1565,7 @@ def _imported_metadata_source_schema_with_location(
     )
 
 
-def _grouped_order_source_schema() -> PipelineImageSchema:
+def _grouped_order_A01_schema() -> PipelineImageSchema:
     return PipelineImageSchema(
         metadata_rules=(
             MetadataExtractionRule(
@@ -1545,7 +1598,7 @@ def _grouped_order_source_schema() -> PipelineImageSchema:
     )
 
 
-def _well_row_column_match_source_schema() -> PipelineImageSchema:
+def _well_row_column_match_A01_schema() -> PipelineImageSchema:
     metadata_rule = MetadataExtractionRule(
         source=MetadataSource.FILE_NAME,
         pattern=(

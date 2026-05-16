@@ -2050,6 +2050,7 @@ def run_case_well_throughput(
         output_path=generated_module_path,
         prune_dead_unmaterialized_artifact_steps=True,
         materialize_skipped_save_images=False,
+        materialize_terminal_images=False,
     )
     if prepared.source_schema.is_empty:
         raise ValueError(

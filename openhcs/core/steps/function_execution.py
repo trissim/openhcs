@@ -231,12 +231,17 @@ class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
             parser=parser,
         )
         selector_bindings = self._selector_bindings(bindings)
-        if len(selector_bindings) < 2:
+        anchor_bindings = tuple(
+            binding
+            for binding in selector_bindings
+            if binding.participates_in_execution_anchoring
+        )
+        if len(anchor_bindings) < 2:
             return compatible
 
         return self._deduplicate_matched_image_sets(
             compatible,
-            selector_bindings=selector_bindings,
+            selector_bindings=anchor_bindings,
             parser=parser,
         )
 

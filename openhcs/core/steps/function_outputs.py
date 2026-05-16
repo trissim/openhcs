@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import time
 
 from openhcs.constants.constants import Backend
 from openhcs.core.context.processing_context import ProcessingContext
@@ -136,7 +135,6 @@ def _stream_outputs(
             config_instance.backend.value,
             **kwargs,
         )
-        time.sleep(0.1)
 
 
 def _write_openhcs_metadata(

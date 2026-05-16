@@ -467,21 +467,21 @@ class GridDefinition:
         return np.asarray(label_center_grid_ids, dtype=np.int32)
 
     def filtered_guides(self, guide_labels: np.ndarray) -> np.ndarray:
-        """Filter guide labels to object parts accepted by this grid."""
+        """Relabel accepted guide objects by the grid cell containing their center."""
         labels = self.filled_labels()
         return _filter_labels_by_grid_numba(
             np.asarray(guide_labels, dtype=np.int32),
-            np.asarray(labels, dtype=np.int32),
             self.guide_label_center_grid_ids(guide_labels, grid_labels=labels),
         )
 
     def labels_from_filtered_guides(self, filtered_guides: np.ndarray) -> np.ndarray:
-        """Return grid labels masked by accepted guide pixels."""
+        """Return accepted guide shapes already relabeled by center grid cell."""
         labels = self.labels_for_shape(filtered_guides.shape)
-        return _mask_grid_labels_by_filtered_guides_numba(
-            np.asarray(labels, dtype=np.int32),
-            np.asarray(filtered_guides, dtype=np.int32),
+        result = np.zeros_like(labels)
+        result[0 : filtered_guides.shape[0], 0 : filtered_guides.shape[1]] = (
+            filtered_guides
         )
+        return result
 
 
 @dataclass
@@ -1018,30 +1018,18 @@ def _apply_circle_mask_numba(
 @njit(cache=True)
 def _filter_labels_by_grid_numba(
     guide_labels: np.ndarray,
-    grid_labels: np.ndarray,
     label_center_grid_ids: np.ndarray,
 ) -> np.ndarray:
-    filtered = guide_labels.copy()
+    filtered = np.zeros_like(guide_labels)
     guide_height, guide_width = guide_labels.shape
-    grid_height, grid_width = grid_labels.shape
     for row in range(guide_height):
         for col in range(guide_width):
             guide_id = int(guide_labels[row, col])
-            remove = guide_id == 0
-            center_grid_id = 0
-            if (
-                not remove
-                and guide_id >= 0
-                and guide_id < len(label_center_grid_ids)
-            ):
-                center_grid_id = int(label_center_grid_ids[guide_id])
-                remove = center_grid_id == 0
-            if not remove and row < grid_height and col < grid_width:
-                remove = center_grid_id != int(grid_labels[row, col])
-            elif not remove:
-                remove = True
-            if remove:
-                filtered[row, col] = 0
+            if guide_id <= 0 or guide_id >= len(label_center_grid_ids):
+                continue
+            center_grid_id = int(label_center_grid_ids[guide_id])
+            if center_grid_id > 0:
+                filtered[row, col] = center_grid_id
     return filtered
 
 

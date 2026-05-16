@@ -709,11 +709,18 @@ class MeasurementFeatureValueIndex:
     ) -> "MeasurementFeatureValueIndex":
         index = cls.empty()
         for row in rows:
+            row_mapping = measurement_row_mapping(row)
+            if (
+                query.query_object_name is not None
+                and MEASUREMENT_SOURCE_IMAGE_NAME_FIELD in row_mapping
+                and not measurement_row_has_object_identity(row_mapping)
+            ):
+                continue
             value = query.row_value(row)
             if value is None:
                 continue
             object_label = measurement_object_label(
-                measurement_row_mapping(row),
+                row_mapping,
                 object_id_field=object_id_field,
             )
             index.add(object_label, value)

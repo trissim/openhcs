@@ -481,7 +481,10 @@ class GeneratedPipelineRuntimeBindings:
             generated_module_name=self.module.__name__,
             module_num=module_num,
             declared_processing_contract=metadata.declared_processing_contract,
-            runtime_name=f"{metadata.function_name}_{module_num}_runtime",
+            runtime_name=(
+                f"{self.module.__name__}_{metadata.function_name}_"
+                f"{module_num}_runtime"
+            ),
         ).load()
 
 

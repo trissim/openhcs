@@ -8,12 +8,19 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
+
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.components.validation import convert_enum_by_value
 from openhcs.core.runtime_semantics import coerce_enum
+
+
+SourceBindingGroupMap = Mapping[str | None, tuple["NamedSourceBinding", ...]]
+SourceBindingGroupDict = dict[str | None, tuple["NamedSourceBinding", ...]]
+SourceMetadataIdentity = tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
 
 
 class SourceBindingOrigin(Enum):
@@ -346,6 +353,12 @@ class NamedSourceBinding:
             )
         )
 
+    @property
+    def participates_in_execution_anchoring(self) -> bool:
+        """Whether this binding contributes source-file execution anchors."""
+
+        return self.artifact_kind is ArtifactKind.IMAGE
+
 
 @dataclass(frozen=True, slots=True)
 class GroupedSourceBindings:
@@ -374,11 +387,21 @@ class GroupedSourceBindings:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class _SourceBindingPlanBase(ABC):
+class _SourceBindingPlanBase(ABC, metaclass=AutoRegisterMeta):
     """Shared typed source-binding plan fields across editable and compiled views."""
 
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
     metadata_rules: tuple[MetadataExtractionRule, ...] = ()
     match_plan: SourceBindingMatchPlan | None = None
+
+    @classmethod
+    def registered_plan_types(cls) -> tuple[type["_SourceBindingPlanBase"], ...]:
+        """Return registered concrete source-binding plan views."""
+
+        return tuple(cls.__registry__.values())
 
     def _normalize_common_fields(self) -> None:
         object.__setattr__(self, "metadata_rules", tuple(self.metadata_rules))
@@ -416,6 +439,7 @@ class _SourceBindingPlanBase(ABC):
 class StepSourceBindingsConfig(_SourceBindingPlanBase):
     """First-class FunctionStep field for named semantic input bindings."""
 
+    registry_key: ClassVar[str] = "editable"
     groups: tuple[GroupedSourceBindings, ...] = ()
 
     def __post_init__(self) -> None:
@@ -459,12 +483,24 @@ class StepSourceBindingsConfig(_SourceBindingPlanBase):
             for binding in group.bindings
         )
 
+    @property
+    def requires_step_input_selector_resolution(self) -> bool:
+        """Whether any step-input binding needs selector-aware source matching."""
+
+        return any(
+            binding.origin is SourceBindingOrigin.STEP_INPUT
+            and binding.requires_selector_resolution
+            for group in self.groups
+            for binding in group.bindings
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class CompiledSourceBindingPlan(_SourceBindingPlanBase):
     """Immutable compile-time source binding plan for one step."""
 
-    bindings_by_group: Mapping[str | None, tuple[NamedSourceBinding, ...]]
+    registry_key: ClassVar[str] = "compiled"
+    bindings_by_group: SourceBindingGroupMap
 
     @classmethod
     def empty(cls) -> "CompiledSourceBindingPlan":
@@ -490,7 +526,7 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
         )
 
     def __post_init__(self) -> None:
-        normalized: dict[str | None, tuple[NamedSourceBinding, ...]] = {}
+        normalized: SourceBindingGroupDict = {}
         for group_key, bindings in self.bindings_by_group.items():
             normalized_group_key = None if group_key is None else str(group_key)
             normalized_bindings = tuple(bindings)
@@ -518,7 +554,7 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
     ) -> tuple[
         object,
         tuple[
-            dict[str | None, tuple[NamedSourceBinding, ...]],
+            SourceBindingGroupDict,
             tuple[MetadataExtractionRule, ...],
             SourceBindingMatchPlan | None,
         ],
@@ -548,10 +584,21 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
                 return binding
         return None
 
+    @property
+    def requires_step_input_selector_resolution(self) -> bool:
+        """Whether any step-input binding needs selector-aware source matching."""
+
+        return any(
+            binding.origin is SourceBindingOrigin.STEP_INPUT
+            and binding.requires_selector_resolution
+            for bindings in self.bindings_by_group.values()
+            for binding in bindings
+        )
+
     @classmethod
     def _from_pickled_state(
         cls,
-        bindings_by_group: dict[str | None, tuple[NamedSourceBinding, ...]],
+        bindings_by_group: SourceBindingGroupDict,
         metadata_rules: tuple[MetadataExtractionRule, ...],
         match_plan: SourceBindingMatchPlan | None,
     ) -> "CompiledSourceBindingPlan":
@@ -567,7 +614,9 @@ class SourceBindingRuntimeContext:
     """Execution-local file universe for selector-bearing source bindings."""
 
     step_input_files: tuple[str, ...] = ()
+    current_step_input_files: tuple[str, ...] = ()
     step_input_dir: str | None = None
+    step_input_backend: str | None = None
     step_input_source_paths: Mapping[str, str] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -576,9 +625,12 @@ class SourceBindingRuntimeContext:
     )
     pipeline_input_files: tuple[str, ...] = ()
     pipeline_input_backend: str | None = None
-    _source_metadata_identity: tuple[
-        tuple[str, tuple[tuple[str, str], ...]], ...
-    ] | None = field(default=None, init=False, repr=False, compare=False)
+    _source_metadata_identity: SourceMetadataIdentity | None = field(
+        default=None,
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def empty(cls) -> "SourceBindingRuntimeContext":
@@ -586,8 +638,19 @@ class SourceBindingRuntimeContext:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "step_input_files", tuple(self.step_input_files))
+        object.__setattr__(
+            self,
+            "current_step_input_files",
+            tuple(self.current_step_input_files or self.step_input_files),
+        )
         if self.step_input_dir is not None:
             object.__setattr__(self, "step_input_dir", str(self.step_input_dir))
+        if self.step_input_backend is not None:
+            object.__setattr__(
+                self,
+                "step_input_backend",
+                str(self.step_input_backend),
+            )
         step_input_source_paths = self.step_input_source_paths
         if not isinstance(step_input_source_paths, MappingProxyType):
             step_input_source_paths = MappingProxyType(
@@ -621,7 +684,7 @@ class SourceBindingRuntimeContext:
     @property
     def source_metadata_identity(
         self,
-    ) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+    ) -> SourceMetadataIdentity:
         """Stable identity for the complete source-metadata universe."""
 
         cached = self._source_metadata_identity
@@ -636,7 +699,7 @@ class SourceBindingRuntimeContext:
     def metadata_identity_for_paths(
         self,
         paths: tuple[str, ...],
-    ) -> tuple[tuple[str, tuple[tuple[str, str], ...]], ...]:
+    ) -> SourceMetadataIdentity:
         """Return the stable metadata identity for a selected source subset."""
 
         return tuple(
@@ -682,6 +745,8 @@ class SourceBindingRuntimeContext:
         object,
         tuple[
             tuple[str, ...],
+            tuple[str, ...],
+            str | None,
             str | None,
             dict[str, str],
             dict[str, dict[str, str]],
@@ -694,7 +759,9 @@ class SourceBindingRuntimeContext:
             self.__class__,
             (
                 self.step_input_files,
+                self.current_step_input_files,
                 self.step_input_dir,
+                self.step_input_backend,
                 dict(self.step_input_source_paths),
                 {
                     path: dict(metadata)

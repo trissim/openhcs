@@ -271,6 +271,48 @@ class ForkInheritedWorkerLaneRunner:
         return execution_results
 
 
+class InlineWorkerLaneRunner:
+    """Runs a single deterministic worker lane in the orchestrator process."""
+
+    def run(
+        self,
+        pipeline_definition: List[AbstractStep],
+        lane_axis_contexts: Dict[str, List[tuple[str, List[tuple]]]],
+        *,
+        execution_id: str,
+        plate_id: str,
+        worker_assignments: Dict[str, List[str]],
+        runtime_observation_mode: RuntimeObservationMode,
+        debug_execution_policy: DebugExecutionPolicy,
+    ) -> Dict[str, ExecutionResult]:
+        active_lanes = [
+            (worker_slot, lane_contexts)
+            for worker_slot, lane_contexts in lane_axis_contexts.items()
+            if lane_contexts
+        ]
+        if len(active_lanes) != 1:
+            raise RuntimeError(
+                "Inline worker lane execution requires exactly one active lane, "
+                f"got {len(active_lanes)}."
+            )
+
+        worker_slot, lane_contexts = active_lanes[0]
+        worker_lane_context = WorkerLaneExecutionContext(
+            visualizer=None,
+            execution_id=execution_id,
+            plate_id=plate_id,
+            worker_slot=worker_slot,
+            owned_wells=tuple(worker_assignments[worker_slot]),
+            debug_execution_policy=debug_execution_policy,
+        )
+        return _execute_worker_lane_static(
+            pipeline_definition,
+            lane_contexts,
+            worker_lane_context,
+            runtime_observation_mode,
+        )
+
+
 def _merge_nested_dataclass(pipeline_value, global_value):
     """
     Recursively merge nested dataclass configs.
@@ -1470,12 +1512,17 @@ class PipelineOrchestrator:
                 and effective_config.multiprocessing_start_method
                 is MultiprocessingStartMethod.FORK
             )
+            inline_worker_lane_execution = (
+                effective_config.use_threading and actual_max_workers == 1
+            )
             if fork_inherited_execution:
                 ForkInheritedWorkerExecutionState.install(execution_bundle)
 
             # Choose executor type based on effective config for debugging support
             executor_type = (
-                "ThreadPoolExecutor"
+                "InlineWorkerLaneRunner"
+                if inline_worker_lane_execution
+                else "ThreadPoolExecutor"
                 if effective_config.use_threading
                 else "ProcessPoolExecutor"
             )
@@ -1483,7 +1530,9 @@ class PipelineOrchestrator:
             # DEATH DETECTION: Mark executor creation
 
             # Choose appropriate executor class and configure worker logging
-            if effective_config.use_threading:
+            if inline_worker_lane_execution:
+                executor = None
+            elif effective_config.use_threading:
                 executor = concurrent.futures.ThreadPoolExecutor(
                     max_workers=actual_max_workers
                 )
@@ -1627,6 +1676,22 @@ class PipelineOrchestrator:
                                 debug_execution_policy=debug_execution_policy,
                             )
                         )
+                    elif inline_worker_lane_execution:
+                        lane_results = InlineWorkerLaneRunner().run(
+                            pipeline_definition,
+                            lane_axis_contexts,
+                            execution_id=execution_id,
+                            plate_id=plate_id,
+                            worker_assignments=worker_assignments,
+                            runtime_observation_mode=runtime_observation_mode,
+                            debug_execution_policy=debug_execution_policy,
+                        )
+                        execution_results.update(lane_results)
+                        if runtime_observation_mode.collects_records:
+                            for result in lane_results.values():
+                                result.runtime_observation.merge_into(
+                                    compiled_contexts
+                                )
                     else:
                         for worker_slot, lane_contexts in lane_axis_contexts.items():
                             if not lane_contexts:
@@ -1883,7 +1948,6 @@ class PipelineOrchestrator:
                 comp for comp in all_components if comp in str_component_filter
             ]
             if not selected_components:
-                component_name = group_by.value
                 logger.warning(
                     f"No {component_name} values from {all_components} match the filter: {component_filter}"
                 )

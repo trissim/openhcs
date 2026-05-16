@@ -737,18 +737,21 @@ def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
     current_stack = request.initial_data_stack
     current_memory_type = plan.input_memory_type
     debug_sink = debug_event_sink_from_context(request.context)
+    capture_debug_events = debug_sink.captures_invocation_events()
 
     for invocation in request.invocations:
         actual_callable = _resolve_invocation_callable(invocation)
         callable_name = invocation.key.function_name
-        debug_cursor = DebugCursor.from_invocation(
-            step_index=plan.step_index,
-            step_scope_id=plan.step_scope_id,
-            invocation=invocation,
-            pattern_group_identity=str(request.runtime_plane_index),
-        )
-        if debug_sink.should_skip_invocation(debug_cursor):
-            continue
+        debug_cursor = None
+        if capture_debug_events:
+            debug_cursor = DebugCursor.from_invocation(
+                step_index=plan.step_index,
+                step_scope_id=plan.step_scope_id,
+                invocation=invocation,
+                pattern_group_identity=str(request.runtime_plane_index),
+            )
+            if debug_sink.should_skip_invocation(debug_cursor):
+                continue
         invocation_input_type = invocation.input_memory_type
         invocation_output_type = invocation.output_memory_type
         if invocation_input_type is None or invocation_output_type is None:
@@ -757,17 +760,23 @@ def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
             )
         invocation_artifact_inputs = invocation.select_inputs(request.artifact_inputs)
         invocation_artifact_outputs = invocation.select_outputs(request.artifact_outputs)
-        invocation_parameters = DebugInvocationParameter.from_kwargs(
-            invocation.kwargs_dict
-        )
-        input_debug_refs = DebugArtifactRefProjection.from_artifact_plans(
-            artifact_plans=invocation_artifact_inputs,
-            cursor=debug_cursor,
-        )
-        output_debug_refs = DebugArtifactRefProjection.from_artifact_plans(
-            artifact_plans=invocation_artifact_outputs,
-            cursor=debug_cursor,
-        )
+        invocation_parameters = None
+        input_debug_refs = None
+        output_debug_refs = None
+        if capture_debug_events:
+            if debug_cursor is None:
+                raise RuntimeError("Debug cursor missing while debug events are active.")
+            invocation_parameters = DebugInvocationParameter.from_kwargs(
+                invocation.kwargs_dict
+            )
+            input_debug_refs = DebugArtifactRefProjection.from_artifact_plans(
+                artifact_plans=invocation_artifact_inputs,
+                cursor=debug_cursor,
+            )
+            output_debug_refs = DebugArtifactRefProjection.from_artifact_plans(
+                artifact_plans=invocation_artifact_outputs,
+                cursor=debug_cursor,
+            )
 
         current_stack = _convert_main_flow_memory(
             current_stack,
@@ -777,19 +786,22 @@ def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
         )
 
         invocation_started_at = time.perf_counter()
-        debug_sink.record(
-            DebugEvent(
-                event_type=DebugEventType.BEFORE_INVOCATION,
-                cursor=debug_cursor,
-                step_name=plan.step_name,
-                callable_name=callable_name,
-                axis_id=plan.axis_id,
-                input_artifact_refs=input_debug_refs.refs,
-                measurement_refs=input_debug_refs.measurement_refs,
-                relationship_refs=input_debug_refs.relationship_refs,
-                invocation_parameters=invocation_parameters,
+        if capture_debug_events:
+            if debug_cursor is None or input_debug_refs is None:
+                raise RuntimeError("Debug state missing while debug events are active.")
+            debug_sink.record(
+                DebugEvent(
+                    event_type=DebugEventType.BEFORE_INVOCATION,
+                    cursor=debug_cursor,
+                    step_name=plan.step_name,
+                    callable_name=callable_name,
+                    axis_id=plan.axis_id,
+                    input_artifact_refs=input_debug_refs.refs,
+                    measurement_refs=input_debug_refs.measurement_refs,
+                    relationship_refs=input_debug_refs.relationship_refs,
+                    invocation_parameters=invocation_parameters,
+                )
             )
-        )
         try:
             current_stack = _execute_function_core(
                 FunctionExecutionRequest(
@@ -815,36 +827,53 @@ def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
                 )
             )
         except Exception as exc:
-            debug_sink.record(
-                DebugEvent.for_exception(
-                    cursor=debug_cursor,
-                    step_name=plan.step_name,
-                    callable_name=callable_name,
-                    axis_id=plan.axis_id,
-                    exception=exc,
-                    input_artifact_refs=input_debug_refs.refs,
-                    output_artifact_refs=output_debug_refs.refs,
-                    measurement_refs=output_debug_refs.measurement_refs,
-                    relationship_refs=output_debug_refs.relationship_refs,
-                    invocation_parameters=invocation_parameters,
+            if capture_debug_events:
+                if (
+                    debug_cursor is None
+                    or input_debug_refs is None
+                    or output_debug_refs is None
+                ):
+                    raise RuntimeError(
+                        "Debug state missing while debug events are active."
+                    ) from exc
+                debug_sink.record(
+                    DebugEvent.for_exception(
+                        cursor=debug_cursor,
+                        step_name=plan.step_name,
+                        callable_name=callable_name,
+                        axis_id=plan.axis_id,
+                        exception=exc,
+                        input_artifact_refs=input_debug_refs.refs,
+                        output_artifact_refs=output_debug_refs.refs,
+                        measurement_refs=output_debug_refs.measurement_refs,
+                        relationship_refs=output_debug_refs.relationship_refs,
+                        invocation_parameters=invocation_parameters,
+                    )
                 )
-            )
             raise
         invocation_seconds = time.perf_counter() - invocation_started_at
-        after_event = DebugEvent(
-            event_type=DebugEventType.AFTER_INVOCATION,
-            cursor=debug_cursor,
-            step_name=plan.step_name,
-            callable_name=callable_name,
-            axis_id=plan.axis_id,
-            timing_seconds=invocation_seconds,
-            input_artifact_refs=input_debug_refs.refs,
-            output_artifact_refs=output_debug_refs.refs,
-            measurement_refs=output_debug_refs.measurement_refs,
-            relationship_refs=output_debug_refs.relationship_refs,
-            invocation_parameters=invocation_parameters,
-        )
-        debug_sink.record(after_event)
+        after_event = None
+        if capture_debug_events:
+            if (
+                debug_cursor is None
+                or input_debug_refs is None
+                or output_debug_refs is None
+            ):
+                raise RuntimeError("Debug state missing while debug events are active.")
+            after_event = DebugEvent(
+                event_type=DebugEventType.AFTER_INVOCATION,
+                cursor=debug_cursor,
+                step_name=plan.step_name,
+                callable_name=callable_name,
+                axis_id=plan.axis_id,
+                timing_seconds=invocation_seconds,
+                input_artifact_refs=input_debug_refs.refs,
+                output_artifact_refs=output_debug_refs.refs,
+                measurement_refs=output_debug_refs.measurement_refs,
+                relationship_refs=output_debug_refs.relationship_refs,
+                invocation_parameters=invocation_parameters,
+            )
+            debug_sink.record(after_event)
         _log_runtime_profile(
             "invocation_total",
             invocation_seconds,
@@ -853,7 +882,7 @@ def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
             position=invocation.key.position,
         )
         current_memory_type = invocation_output_type
-        if debug_sink.should_stop_after_invocation(after_event):
+        if after_event is not None and debug_sink.should_stop_after_invocation(after_event):
             break
 
     return current_stack
@@ -1168,14 +1197,39 @@ class PatternGroupRuntime:
                 source_projection=source_projection,
             )
         )
+        step_input_files = self._step_input_source_universe(
+            matching_files,
+            source_backend,
+            source_projection=source_projection,
+        )
         return SourceBindingRuntimeContext(
-            step_input_files=tuple(matching_files),
+            step_input_files=step_input_files,
+            current_step_input_files=tuple(matching_files),
             step_input_dir=str(self.plan.input_dir),
+            step_input_backend=self.plan.read_backend,
             step_input_source_paths=step_input_source_paths,
             source_metadata_by_path=source_metadata_by_path,
             pipeline_input_files=pipeline_input_files,
             pipeline_input_backend=pipeline_input_backend,
         )
+
+    def _step_input_source_universe(
+        self,
+        matching_files: list[str],
+        source_backend: str,
+        *,
+        source_projection: VirtualWorkspaceSourceProjection | None,
+    ) -> tuple[str, ...]:
+        """Return the source universe needed for step-input selector bindings."""
+
+        if not self.plan.source_binding_plan.requires_step_input_selector_resolution:
+            return tuple(matching_files)
+        if (
+            source_backend == Backend.VIRTUAL_WORKSPACE.value
+            and source_projection is not None
+        ):
+            return source_projection.pipeline_start_files(axis_id=self.plan.axis_id)
+        return tuple(self.plan.get_paths_for_axis(self.context.input_dir, source_backend))
 
     def _pipeline_start_source_universe(
         self,
@@ -1189,18 +1243,34 @@ class PatternGroupRuntime:
                 source_backend,
             )
 
-        if (
-            source_backend == Backend.VIRTUAL_WORKSPACE.value
-            and source_projection is not None
-        ):
+        if source_projection is not None:
+            disk_files = tuple(
+                str(path)
+                for path in self.context.filemanager.list_files(
+                    str(self.context.input_dir),
+                    Backend.DISK.value,
+                    recursive=True,
+                )
+            )
             return (
-                source_projection.pipeline_start_files(axis_id=self.plan.axis_id),
-                Backend.VIRTUAL_WORKSPACE.value,
+                tuple(
+                    dict.fromkeys(
+                        (
+                            *(
+                                str(path)
+                                for path in source_projection.source_paths_by_virtual_path.values()
+                            ),
+                            *disk_files,
+                        )
+                    )
+                ),
+                Backend.DISK.value,
             )
 
         universe_backend = (
             Backend.DISK.value
-            if source_backend == Backend.VIRTUAL_WORKSPACE.value
+            if source_backend
+            in (Backend.VIRTUAL_WORKSPACE.value, Backend.MEMORY.value)
             else source_backend
         )
         return (

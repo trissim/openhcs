@@ -59,6 +59,21 @@ CELLPROFILER_MEASUREMENT_FEATURE_PART_ALIASES = MappingProxyType(
         },
     }
 )
+CELLPROFILER_HARALICK_TEXTURE_FEATURE_PREFIXES = (
+    "angular_second_moment_",
+    "contrast_",
+    "correlation_",
+    "difference_entropy_",
+    "difference_variance_",
+    "entropy_",
+    "info_meas_1_",
+    "info_meas_2_",
+    "inverse_difference_moment_",
+    "sum_average_",
+    "sum_entropy_",
+    "sum_variance_",
+    "variance_",
+)
 
 
 class CellProfilerMeasurementObjectDomainPolicy(RuntimeMeasurementObjectDomainPolicy):
@@ -183,24 +198,19 @@ CELLPROFILER_FEATURE_NUMERIC_TOLERANCES = (
         numeric_rel_tolerance=1e-5,
     ),
     RuntimeMeasurementFeatureNumericTolerance(
-        feature_name_prefixes=(
-            "angular_second_moment_",
-            "contrast_",
-            "correlation_",
-            "difference_entropy_",
-            "entropy_",
-            "info_meas_1_",
-            "info_meas_2_",
-            "inverse_difference_moment_",
-            "sum_average_",
-            "sum_entropy_",
-            "sum_variance_",
-            "variance_",
-        ),
+        feature_name_prefixes=CELLPROFILER_HARALICK_TEXTURE_FEATURE_PREFIXES,
         subject_scope=MeasurementScope.IMAGE,
         statistic="value",
         numeric_abs_tolerance=1.5e-3,
         numeric_rel_tolerance=1e-3,
+    ),
+    RuntimeMeasurementFeatureNumericTolerance(
+        feature_name_prefixes=CELLPROFILER_HARALICK_TEXTURE_FEATURE_PREFIXES,
+        subject_scope=MeasurementScope.OBJECT,
+        statistic="value",
+        numeric_abs_tolerance=5e-2,
+        numeric_rel_tolerance=2e-2,
+        require_object_count_stability=True,
     ),
     RuntimeMeasurementFeatureNumericTolerance(
         feature_name_prefixes=("final_threshold", "orig_threshold"),

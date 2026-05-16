@@ -196,16 +196,48 @@ class RuntimeSliceProjection:
             name: (
                 tuple(
                     cls.value_for_slice(item, slice_index, slice_count)
-                    for item in value
+                    for item in cls.runtime_slice_normalized_value(value)
                 )
                 if name in sequence_kwargs and isinstance(value, tuple)
-                else cls.value_for_slice(value, slice_index, slice_count)
+                else cls.value_for_slice(
+                    cls.runtime_slice_normalized_value(value),
+                    slice_index,
+                    slice_count,
+                )
             )
             for name, value in kwargs.items()
         }
 
     @classmethod
+    def slice_count_from_kwargs(
+        cls,
+        kwargs: Mapping[str, Any],
+        *,
+        sequence_kwargs: frozenset[str] = frozenset(),
+    ) -> int | None:
+        return cls.slice_count_from_values(
+            item
+            for name, value in kwargs.items()
+            for item in (
+                cls.runtime_slice_normalized_value(value)
+                if name in sequence_kwargs and isinstance(value, tuple)
+                else (cls.runtime_slice_normalized_value(value),)
+            )
+        )
+
+    @classmethod
+    def runtime_slice_normalized_value(cls, value: Any) -> Any:
+        if (
+            isinstance(value, tuple)
+            and value
+            and all(isinstance(item, MeasurementTable) for item in value)
+        ):
+            return cls.measurement_tables_with_repeated_scalar_slice_offsets(value)
+        return value
+
+    @classmethod
     def slice_count_from_values(cls, values: Any) -> int | None:
+        values = tuple(values)
         tensor_slice_counts = {
             stack.shape[0]
             for value in values
@@ -441,7 +473,17 @@ class RuntimeSliceProjection:
         """Return declared measurement-table slice count, treating scalar tables as one slice."""
         if RuntimeSliceProjection.measurement_table_declares_no_slice_index(value):
             return 1
-        return RuntimeSliceProjection.measurement_table_slice_count(value) or 1
+        slice_indices = RuntimeSliceProjection.measurement_table_slice_indices(value)
+        if not slice_indices:
+            return 1
+        expected_indices = set(range(min(slice_indices), max(slice_indices) + 1))
+        if slice_indices != expected_indices:
+            raise ValueError(
+                f"MeasurementTable '{value.name}' has non-contiguous slice_index "
+                f"values {sorted(slice_indices)}; expected "
+                f"{sorted(expected_indices)}."
+            )
+        return len(expected_indices)
 
     @staticmethod
     def measurement_table_declares_no_slice_index(value: MeasurementTable) -> bool:
@@ -453,6 +495,7 @@ class RuntimeSliceProjection:
 
     @staticmethod
     def measurement_table_collection_slice_count(values: Any) -> int | None:
+        values = RuntimeSliceProjection.runtime_slice_normalized_value(tuple(values))
         slice_indices: set[int] = set()
         slice_counts: set[int] = set()
         for value in values:
@@ -565,6 +608,16 @@ class RuntimeSliceProjection:
         aligned = list(tables)
         for indexes in grouped.values():
             if len(indexes) <= 1:
+                continue
+            group_slice_indices = tuple(
+                RuntimeSliceProjection.measurement_table_slice_indices(tables[index])
+                for index in indexes
+            )
+            if (
+                all(len(slice_indices) == 1 for slice_indices in group_slice_indices)
+                and len({next(iter(slice_indices)) for slice_indices in group_slice_indices})
+                == len(indexes)
+            ):
                 continue
             if any(
                 RuntimeSliceProjection.measurement_table_effective_slice_count(

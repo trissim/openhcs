@@ -1205,7 +1205,20 @@ class CellProfilerModuleExecutor:
                         "Columnar measurement ownership annotation must preserve "
                         f"ColumnarRows, got {type(owned_rows).__name__}."
                     )
-                columnar_rows.append(owned_rows)
+                projected_rows, _projected_row_mappings = CellProfilerGlobalImageNumberProjection(
+                    adapter=cellprofiler_runtime,
+                    rows=owned_rows,
+                    source_image_name=source_image_name,
+                    source_image_payload=measurement_image.payload,
+                    object_name=object_spec.name,
+                    need_row_mappings=False,
+                ).apply()
+                if not isinstance(projected_rows, ColumnarRows):
+                    raise TypeError(
+                        "Columnar measurement axis projection must preserve "
+                        f"ColumnarRows, got {type(projected_rows).__name__}."
+                    )
+                columnar_rows.append(projected_rows)
                 annotate_seconds += time.perf_counter() - annotate_started_at
                 return
             owned_rows = MeasurementRowOwnership(
@@ -1218,9 +1231,30 @@ class CellProfilerModuleExecutor:
             )
             annotated_rows = owned_rows.annotate_rows(measurement_rows)
             if isinstance(annotated_rows, ColumnarRows):
-                columnar_rows.append(annotated_rows)
+                projected_rows, _projected_row_mappings = CellProfilerGlobalImageNumberProjection(
+                    adapter=cellprofiler_runtime,
+                    rows=annotated_rows,
+                    source_image_name=source_image_name,
+                    source_image_payload=measurement_image.payload,
+                    object_name=None,
+                    need_row_mappings=False,
+                ).apply()
+                if not isinstance(projected_rows, ColumnarRows):
+                    raise TypeError(
+                        "Columnar measurement axis projection must preserve "
+                        f"ColumnarRows, got {type(projected_rows).__name__}."
+                    )
+                columnar_rows.append(projected_rows)
             else:
-                combined_rows.extend(annotated_rows)
+                projected_rows, _projected_row_mappings = CellProfilerGlobalImageNumberProjection(
+                    adapter=cellprofiler_runtime,
+                    rows=annotated_rows,
+                    source_image_name=source_image_name,
+                    source_image_payload=measurement_image.payload,
+                    object_name=None,
+                    need_row_mappings=False,
+                ).apply()
+                combined_rows.extend(projected_rows)
             annotate_seconds += time.perf_counter() - annotate_started_at
 
         def prepare_measurement_invocation(
@@ -1502,6 +1536,23 @@ class CellProfilerModuleExecutor:
                 ),
                 source_image_name=combined_source_image_name,
             )
+        if not combined_rows and not columnar_rows:
+            _record_measurements(
+                cellprofiler_runtime,
+                measurement_outputs[0].name,
+                (),
+                fields=CellProfilerMeasurementFieldSchema.for_record(
+                    measurement_outputs[0],
+                    (),
+                    func,
+                ),
+                object_name=(
+                    None
+                    if requires_explicit_row_ownership
+                    else object_inputs[0].name if len(object_inputs) == 1 else None
+                ),
+                source_image_name=combined_source_image_name,
+            )
         if columnar_rows:
             measurement_rows = (
                 columnar_rows[0]
@@ -1692,10 +1743,18 @@ class CellProfilerModuleExecutor:
                 )
             )
             combined_records.append(measurement_record)
+            projected_rows, _projected_row_mappings = CellProfilerGlobalImageNumberProjection(
+                adapter=cellprofiler_runtime,
+                rows=measurement_record.rows,
+                source_image_name=measurement_record.source_image_name,
+                source_image_payload=measurement_record.source_image_payload,
+                object_name=measurement_record.object_name,
+                need_row_mappings=False,
+            ).apply()
             combined_rows.extend(
                 MeasurementRowOwnership(
                     source_image_name=measurement_record.source_image_name,
-                ).annotate_rows(measurement_record.rows)
+                ).annotate_rows(projected_rows)
             )
             split_rows_seconds += time.perf_counter() - split_rows_started_at
 
@@ -4402,6 +4461,52 @@ class CompactMeasuredObjectMeasurementRowPolicy(DeclaredObjectMeasurementRowPoli
         }
 
 
+class DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy(
+    CompactMeasuredObjectMeasurementRowPolicy
+):
+    """Compact measured rows, then pad to the declared object-label domain."""
+
+    def required_object_ids_for_axis(
+        self,
+        *,
+        label_payload: Any,
+        projected_rows: Sequence[Any],
+        object_identity: MeasurementObjectRowIdentity,
+        object_id_field: str,
+        axis_fields: Sequence[str],
+        axis_key: tuple[Any, ...],
+    ) -> tuple[int, ...]:
+        return CellProfilerObjectMeasurementRowPolicy.required_object_ids_for_axis(
+            self,
+            label_payload=label_payload,
+            projected_rows=projected_rows,
+            object_identity=object_identity,
+            object_id_field=object_id_field,
+            axis_fields=axis_fields,
+            axis_key=axis_key,
+        )
+
+    def required_object_ids_by_axis(
+        self,
+        *,
+        label_payload: Any,
+        projection: "ObjectMeasurementRowIdentityProjectionResult",
+        object_identity: MeasurementObjectRowIdentity,
+        object_id_field: str,
+        axis_fields: Sequence[str],
+        axis_keys: Sequence[tuple[Any, ...]],
+    ) -> dict[tuple[Any, ...], tuple[int, ...]]:
+        return CellProfilerObjectMeasurementRowPolicy.required_object_ids_by_axis(
+            self,
+            label_payload=label_payload,
+            projection=projection,
+            object_identity=object_identity,
+            object_id_field=object_id_field,
+            axis_fields=axis_fields,
+            axis_keys=axis_keys,
+        )
+
+
 class FeatureAnchoredCompactObjectMeasurementRowPolicy(
     CompactMeasuredObjectMeasurementRowPolicy
 ):
@@ -4453,6 +4558,57 @@ class MeasureObjectIntensityDistributionObjectMeasurementRowPolicy(
         """Intensity-distribution functions emit their full dense row domain."""
         del label_payload, func
         return list(rows)
+
+
+class MeasureGranularityObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
+    """Use emitted object rows directly for dense granularity exports."""
+
+    module_name = _MEASURE_GRANULARITY_MODULE
+
+    def complete_rows(
+        self,
+        rows: Sequence[Any],
+        *,
+        label_payload: Any,
+        func: Callable[..., Any],
+    ) -> list[Any]:
+        """Granularity functions emit one row for every positive label."""
+        del label_payload, func
+        return list(rows)
+
+
+class MeasureTextureObjectMeasurementRowPolicy(
+    DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy
+):
+    """Use direct texture rows when CP already emitted the declared dense domain."""
+
+    module_name = _MEASURE_TEXTURE_MODULE
+
+    def complete_rows(
+        self,
+        rows: Sequence[Any] | ColumnarRows,
+        *,
+        label_payload: Any,
+        func: Callable[..., Any],
+    ) -> Sequence[Any] | ColumnarRows:
+        """Avoid padding work only when emitted rows already match the domain."""
+        if isinstance(rows, ColumnarRows):
+            return rows
+        schema = ObjectMeasurementRowCompletionSchema.from_rows(rows, func)
+        if not schema.axis_fields and rows:
+            required_object_ids = schema.object_ids_for_axis(
+                label_payload=label_payload,
+                object_identity=self.object_identity(),
+                axis_key=(),
+            )
+            emitted_object_ids = tuple(
+                int(measurement_row_mapping(row)[schema.object_id_field])
+                for row in rows
+                if self.row_is_object_scoped(row)
+            )
+            if emitted_object_ids == required_object_ids:
+                return list(rows)
+        return super().complete_rows(rows, label_payload=label_payload, func=func)
 
 
 class CellProfilerMeasurementRowIdentityField(str, Enum):
@@ -4936,6 +5092,45 @@ class FilterObjectsMeasurementVectorPlan:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class FilterObjectsMeasurementTablePlan:
+    """Feature-scoped measurement-table binding for FilterObjects selection."""
+
+    object_spec: ArtifactSpec
+    feature_names: tuple[str, ...]
+
+    @classmethod
+    def from_request(
+        cls,
+        request: ObjectInputBindingRequest,
+        plan: FilterObjectsRuntimeInputPlan,
+    ) -> "FilterObjectsMeasurementTablePlan | None":
+        if not plan.object_specs:
+            return None
+        feature_names = tuple(
+            str(value) for value in request.kwargs.get("measurement_features", ())
+        )
+        if not feature_names:
+            return None
+        return cls(
+            object_spec=plan.object_specs[0],
+            feature_names=feature_names,
+        )
+
+    def bind(self, request: ObjectInputBindingRequest) -> tuple[MeasurementTable, ...]:
+        tables_by_identity: dict[int, MeasurementTable] = {}
+        for feature_name in self.feature_names:
+            for table in request.adapter.measurement_tables_for_object_feature(
+                self.object_spec.name,
+                feature_name,
+                match_group=False,
+            ):
+                tables_by_identity.setdefault(id(table), table)
+        if not tables_by_identity:
+            return request.adapter.measurement_tables_for_object(self.object_spec.name)
+        return tuple(tables_by_identity.values())
+
+
 CellProfilerModulePolicyLeafSpec(
     class_name="MeasureImageAreaOccupiedInputPolicy",
     base_type=ObjectRowsInputPolicy,
@@ -4962,8 +5157,21 @@ class FilterObjectsInputPolicy(ObjectRowsWithMeasurementsInputPolicy):
             request.with_object_inputs(plan.object_specs),
             plan,
         )
+        measurement_table_plan = FilterObjectsMeasurementTablePlan.from_request(
+            request.with_object_inputs(plan.object_specs),
+            plan,
+        )
+        if measurement_table_plan is not None:
+            bound["measurement_tables"] = measurement_table_plan.bind(request)
         if measurement_vector_plan is not None:
             bound["measurement_values"] = measurement_vector_plan.bind(request)
+            if (
+                RuntimeSliceProjection.measurement_table_collection_slice_count(
+                    bound["measurement_tables"]
+                )
+                or 1
+            ) > 1:
+                bound.pop("measurement_values", None)
         if plan.enclosing_spec is not None:
             bound["enclosing_object_labels"] = request.labels_for(plan.enclosing_spec)
         if plan.relationship_spec is not None:
@@ -5591,6 +5799,115 @@ class CellProfilerMeasurementFieldSchema:
 
 
 @dataclass(frozen=True, slots=True)
+class CellProfilerMeasurementOutputProjection:
+    """Project raw CellProfiler feature fields to canonical runtime table names."""
+
+    fields: tuple[FieldSpec, ...]
+    rows: Sequence[Any] | ColumnarRows
+
+    def apply(self) -> tuple[tuple[FieldSpec, ...], Sequence[Any] | ColumnarRows]:
+        fields = self.projected_fields()
+        if isinstance(self.rows, ColumnarRows):
+            return fields, self.project_columnar_rows(self.rows)
+        return fields, self.project_rows(self.rows)
+
+    def projected_fields(self) -> tuple[FieldSpec, ...]:
+        projected: list[FieldSpec] = []
+        seen: set[str] = set()
+        for field in self.fields:
+            self.add_projected_field(
+                projected,
+                seen,
+                FieldSpec(
+                    self.export_field_name(field.name),
+                    dtype=field.dtype,
+                    required=field.required,
+                ),
+            )
+        return tuple(projected)
+
+    @staticmethod
+    def add_projected_field(
+        projected: list[FieldSpec],
+        seen: set[str],
+        field: FieldSpec,
+    ) -> None:
+        if field.name in seen:
+            return
+        seen.add(field.name)
+        projected.append(field)
+
+    @classmethod
+    def project_columnar_rows(cls, rows: ColumnarRows) -> ColumnarRows:
+        columns: dict[str, Sequence[Any]] = {}
+        for name, values in rows.columns.items():
+            columns[cls.export_field_name(name)] = values
+        return CellProfilerProjectedMeasurementColumnarRows(MappingProxyType(columns))
+
+    @classmethod
+    def project_row(cls, row: Any) -> "CellProfilerProjectedMeasurementRow":
+        projected = {
+            cls.export_field_name(name): value
+            for name, value in measurement_row_mapping(row).items()
+        }
+        return CellProfilerProjectedMeasurementRow(MappingProxyType(projected))
+
+    @classmethod
+    def project_rows(
+        cls,
+        rows: Sequence[Any],
+    ) -> tuple["CellProfilerProjectedMeasurementRow", ...]:
+        field_name_cache: dict[tuple[str, ...], tuple[str, ...]] = {}
+        projected_rows: list[CellProfilerProjectedMeasurementRow] = []
+        for row in rows:
+            row_mapping = measurement_row_mapping(row)
+            field_names = tuple(str(name) for name in row_mapping)
+            projected_field_names = field_name_cache.get(field_names)
+            if projected_field_names is None:
+                projected_field_names = tuple(
+                    cls.export_field_name(name) for name in field_names
+                )
+                field_name_cache[field_names] = projected_field_names
+            projected_rows.append(
+                CellProfilerProjectedMeasurementRow(
+                    MappingProxyType(
+                        dict(zip(projected_field_names, row_mapping.values()))
+                    )
+                )
+            )
+        return tuple(projected_rows)
+
+    @staticmethod
+    def export_field_name(name: object) -> str:
+        text = str(name)
+        if text == text.lower():
+            return text
+        return normalize_runtime_identifier(text)
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerProjectedMeasurementRow(Mapping[str, Any]):
+    """Projected measurement row supporting mapping and attribute access."""
+
+    values: Mapping[str, Any]
+
+    def __getitem__(self, key: str) -> Any:
+        return self.values[key]
+
+    def __iter__(self) -> Any:
+        return iter(self.values)
+
+    def __len__(self) -> int:
+        return len(self.values)
+
+    def __getattr__(self, name: str) -> Any:
+        try:
+            return self.values[name]
+        except KeyError as exc:
+            raise AttributeError(name) from exc
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerMeasurementRecord:
     """Rows and semantic owner for one CellProfiler measurement output."""
 
@@ -6009,6 +6326,7 @@ class DefaultMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
             fields=CellProfilerMeasurementFieldSchema.for_record(
                 request.spec, rows, request.func
             ),
+            source_image_payload=request.source_image_payload,
         )
 
 
@@ -6033,6 +6351,7 @@ class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
             fields=CellProfilerMeasurementFieldSchema.for_record(
                 request.spec, rows, request.func
             ),
+            source_image_payload=request.source_image_payload,
             owns_source_qualified_features=owns_source_qualified_features,
         )
 
@@ -6620,7 +6939,10 @@ class RelationshipsOutputRecorder(RelationshipDependentOutputRecorder):
             child_object_name=child_spec.name,
             parent_ids=request.value.parent_ids,
             child_ids=request.value.child_ids,
-            slice_indices=request.value.slice_indices,
+            slice_indices=(
+                request.value.slice_indices
+                or tuple(0 for _child_id in request.value.child_ids)
+            ),
             slice_count=request.value.slice_count,
         )
 
@@ -7873,6 +8195,10 @@ def _record_measurements(
     )
     fields_started_at = time.perf_counter()
     fields = _measurement_fields_covering_mappings(fields, projected_row_mappings)
+    fields, projected_rows = CellProfilerMeasurementOutputProjection(
+        fields=fields,
+        rows=projected_rows,
+    ).apply()
     _log_module_profile(
         "record_measurements_fields",
         time.perf_counter() - fields_started_at,
@@ -8034,6 +8360,21 @@ class CellProfilerRowSequenceAxisProjection:
             for row in self.row_mappings
         )
 
+    @property
+    def has_source_qualified_image_rows(self) -> bool:
+        return any(
+            MEASUREMENT_SOURCE_IMAGE_NAME_FIELD in row
+            and not measurement_row_has_object_identity(row)
+            for row in self.row_mappings
+        )
+
+    def project_current_image_number(self, start: int) -> Sequence[Mapping[str, Any]]:
+        image_number_field = MeasurementRowAxisField.IMAGE_NUMBER.value
+        projected_rows = [dict(row) for row in self.row_mappings]
+        for row in projected_rows:
+            row.setdefault(image_number_field, start)
+        return projected_rows
+
     def apply(self, start: int) -> Sequence[Any] | None:
         if not self.rows or not self.has_axis:
             return None
@@ -8156,6 +8497,13 @@ class CellProfilerGlobalImageNumberProjection:
             self.rows,
             need_row_mappings=self.need_row_mappings,
         )
+        if (
+            self.source_image_payload is not None
+            and self.object_name in (_MISSING_MEASUREMENT_OBJECT_NAME, None)
+            and projection.has_source_qualified_image_rows
+        ):
+            projected_rows = projection.project_current_image_number(self.start)
+            return projected_rows, projected_rows
         projected_rows = projection.apply(self.start)
         if projected_rows is None:
             return self.rows, list(projection.row_mappings)
@@ -10524,7 +10872,10 @@ def _slice_count_from_pure_2d_kwargs(
     if _runtime_profile_enabled():
         _log_pure_2d_slice_count_candidates(kwargs)
 
-    return RuntimeSliceProjection.slice_count_from_values(kwargs.values())
+    return RuntimeSliceProjection.slice_count_from_kwargs(
+        kwargs,
+        sequence_kwargs=_OBJECT_ROW_SEQUENCE_KWARGS,
+    )
 
 
 def _log_pure_2d_slice_count_candidates(kwargs: Mapping[str, Any]) -> None:

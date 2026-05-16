@@ -152,6 +152,7 @@ def _generated_pipeline(
     modules: list[ModuleBlock],
     *,
     prune_dead_unmaterialized_artifact_steps: bool = False,
+    materialize_terminal_images: bool = True,
 ) -> GeneratedPipeline:
     return PipelineGenerator().generate_from_registry(
         pipeline_name="cellprofiler_generated_runtime_smoke",
@@ -160,6 +161,7 @@ def _generated_pipeline(
         prune_dead_unmaterialized_artifact_steps=(
             prune_dead_unmaterialized_artifact_steps
         ),
+        materialize_terminal_images=materialize_terminal_images,
     )
 
 
@@ -176,6 +178,12 @@ def _pipeline_namespace(generated: GeneratedPipeline) -> dict:
     )
     bind_generated_pipeline_runtime(SimpleNamespace(**namespace), runtime_contracts)
     return namespace
+
+
+def test_generated_pipeline_imports_artifact_kind_for_source_binding_literals():
+    generated = _generated_pipeline(_image_artifact_pipeline_modules())
+
+    assert "from openhcs.core.artifacts import ArtifactKind" in generated.code
 
 
 def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
@@ -243,8 +251,11 @@ def _synthetic_nuclei_image() -> np.ndarray:
 def test_generator_uses_absorbed_function_contract_for_unknown_registry_contract():
     generated = _generated_pipeline(_image_artifact_pipeline_modules())
 
-    assert "from openhcs.processing.backends.cellprofiler import (" in generated.code
-    assert "opening," in generated.code
+    assert (
+        "from openhcs.processing.backends.cellprofiler import "
+        "get_cellprofiler_function as _get_cellprofiler_function"
+    ) in generated.code
+    assert "opening = _get_cellprofiler_function('opening')" in generated.code
 
 
 def test_generator_scopes_artifact_managed_callables_to_pattern_group():
@@ -744,11 +755,30 @@ def test_generator_prunes_dead_unmaterialized_image_artifacts_when_requested():
     )
 
     assert 'name="IdentifyPrimaryObjects"' in generated.code
+    assert 'name="ConvertObjectsToImage"' in generated.code
+    assert 'name="Opening"' in generated.code
+    assert 'name="OverlayOutlines"' in generated.code
+    assert [contract.module_name for contract in generated.artifact_contracts] == [
+        IDENTIFY_PRIMARY_OBJECTS,
+        CONVERT_OBJECTS_TO_IMAGE,
+        OPENING,
+        OVERLAY_OUTLINES,
+    ]
+
+
+def test_generator_can_prune_terminal_images_for_value_only_runs():
+    generated = _generated_pipeline(
+        _image_artifact_pipeline_modules(),
+        prune_dead_unmaterialized_artifact_steps=True,
+        materialize_terminal_images=False,
+    )
+
+    assert 'name="IdentifyPrimaryObjects"' in generated.code
     assert 'name="ConvertObjectsToImage"' not in generated.code
     assert 'name="Opening"' not in generated.code
     assert 'name="OverlayOutlines"' not in generated.code
     assert [contract.module_name for contract in generated.artifact_contracts] == [
-        IDENTIFY_PRIMARY_OBJECTS
+        IDENTIFY_PRIMARY_OBJECTS,
     ]
 
 
@@ -770,8 +800,11 @@ def test_generator_prunes_dead_outputs_from_retained_modules():
     (contract,) = generated.artifact_contracts
 
     assert contract.module_name == THRESHOLD
-    assert [output.kind for output in contract.outputs] == [ArtifactKind.MEASUREMENTS]
-    assert "image:UnusedThresholdImage" not in generated.code
+    assert [output.kind for output in contract.outputs] == [
+        ArtifactKind.IMAGE,
+        ArtifactKind.MEASUREMENTS,
+    ]
+    assert "image:UnusedThresholdImage" in generated.code
 
 
 def test_generator_retains_observable_object_label_outputs_when_pruning():
@@ -838,13 +871,14 @@ def test_generator_can_ignore_saveimages_artifacts_for_value_only_runs():
         ],
         prune_dead_unmaterialized_artifact_steps=True,
         materialize_skipped_save_images=False,
+        materialize_terminal_images=False,
     )
 
     assert 'name="ConvertObjectsToImage"' not in generated.code
     assert 'name="Opening"' not in generated.code
     assert 'name="OverlayOutlines"' not in generated.code
     assert [contract.module_name for contract in generated.artifact_contracts] == [
-        IDENTIFY_PRIMARY_OBJECTS
+        IDENTIFY_PRIMARY_OBJECTS,
     ]
 
 

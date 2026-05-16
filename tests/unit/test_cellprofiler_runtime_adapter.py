@@ -97,6 +97,15 @@ MEASURE_OBJECT_NEIGHBORS = "MeasureObjectNeighbors"
 MEASURE_OBJECT_SIZE_SHAPE = "MeasureObjectSizeShape"
 
 
+def _measurement_rows_for_assertion(measurements):
+    rows = []
+    for row in measurements.rows:
+        normalized = dict(row)
+        normalized.setdefault("slice_index", 0)
+        rows.append(normalized)
+    return rows
+
+
 @dataclass(frozen=True, slots=True)
 class SimpleColumnarRows(ColumnarRows):
     data: Mapping[str, tuple[object, ...]]
@@ -454,6 +463,75 @@ def test_cellprofiler_adapter_resolves_current_image_object_input_by_artifact_gr
     objects = consumer.get_objects(NUCLEI, current_image=current_image)
 
     np.testing.assert_array_equal(objects.labels, first_labels)
+
+
+def test_cellprofiler_adapter_resolves_object_input_by_current_source_context():
+    filemanager = FileManagerStub()
+    store = RuntimeValueStore()
+    first_labels = np.full((2, 2), 1, dtype=np.int32)
+    second_labels = np.full((2, 2), 2, dtype=np.int32)
+    group_paths = {
+        "1": "/memory/Nuclei_s1.pkl",
+        "2": "/memory/Nuclei_s2.pkl",
+    }
+    for group_key, labels in (("1", first_labels), ("2", second_labels)):
+        producer = CellProfilerRuntimeAdapter(
+            runtime_value_store=store,
+            axis_id=AXIS_ID,
+            group_key=group_key,
+            artifact_outputs={
+                NUCLEI: ArtifactOutputPlan(
+                    name=NUCLEI,
+                    path=group_paths[group_key],
+                    kind=ArtifactKind.OBJECT_LABELS,
+                    group_keys=(group_key,),
+                    paths_by_group={group_key: group_paths[group_key]},
+                )
+            },
+            filemanager=filemanager,
+        )
+        producer.add_objects(NUCLEI, labels)
+
+    source_binding_context = SourceBindingRuntimeContext(
+        step_input_files=(
+            "/plate/Images/A01_s002_w1_z001_t001.tif",
+            "/plate/Images/A01_s002_w2_z001_t001.tif",
+        ),
+        pipeline_input_files=(
+            "/plate/Images/A01_s001_w1_z001_t001.tif",
+            "/plate/Images/A01_s001_w2_z001_t001.tif",
+            "/plate/Images/A01_s002_w1_z001_t001.tif",
+            "/plate/Images/A01_s002_w2_z001_t001.tif",
+        ),
+        current_step_input_files=(
+            "/plate/Images/A01_s002_w1_z001_t001.tif",
+            "/plate/Images/A01_s002_w2_z001_t001.tif",
+        ),
+    )
+    consumer = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id=AXIS_ID,
+        group_key="default",
+        artifact_inputs={
+            NUCLEI: ArtifactInputPlan(
+                name=NUCLEI,
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+                group_keys=("1", "2"),
+                paths_by_group=group_paths,
+            )
+        },
+        source_binding_context=source_binding_context,
+        processing_context=ContextStub(filemanager),
+        filemanager=filemanager,
+    )
+
+    objects = consumer.get_objects(
+        NUCLEI,
+        current_image=np.zeros((2, 2), dtype=np.float32),
+    )
+
+    np.testing.assert_array_equal(objects.labels, second_labels)
 
 
 def test_cellprofiler_adapter_projects_default_runtime_slice_output_to_group_paths():
@@ -2685,8 +2763,8 @@ def test_cellprofiler_module_executor_reads_objects_for_measurements():
     executor.run(measure, image, cellprofiler_runtime=adapter)
     measurements = adapter.get_measurements(NUCLEI_MEASUREMENTS)
 
-    assert measurements.rows == [
-        {"object_id": 1, "area": 12.0},
+    assert _measurement_rows_for_assertion(measurements) == [
+        {"object_id": 1, "area": 12.0, "slice_index": 0},
     ]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name == DNA_IMAGE
@@ -2730,8 +2808,8 @@ def test_cellprofiler_object_only_measurement_uses_label_domain_reference_image(
     assert measurement_image.dtype == image.dtype
     np.testing.assert_array_equal(measurement_image, np.zeros_like(labels, dtype=image.dtype))
     np.testing.assert_array_equal(measurement_labels, labels)
-    assert measurements.rows == [
-        {"object_id": 1, "area": float(labels.size)},
+    assert _measurement_rows_for_assertion(measurements) == [
+        {"object_id": 1, "area": float(labels.size), "slice_index": 0},
     ]
     assert measurements.object_name == NUCLEI
 
@@ -2776,18 +2854,20 @@ def test_cellprofiler_module_executor_measures_each_declared_image_for_single_ob
 
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [(3.0, 1), (9.0, 1)]
-    assert measurements.rows == [
+    assert _measurement_rows_for_assertion(measurements) == [
         {
             "mean": 3.0,
             "label": 1,
             "object_name": NUCLEI,
             "source_image_name": DNA_IMAGE,
+            "slice_index": 0,
         },
         {
             "mean": 9.0,
             "label": 1,
             "object_name": NUCLEI,
             "source_image_name": "PH3",
+            "slice_index": 0,
         },
     ]
     assert measurements.object_name == NUCLEI
@@ -2834,7 +2914,9 @@ def test_cellprofiler_module_executor_keeps_coupled_measurement_images_composed(
 
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [((2, 4, 5), (4, 5))]
-    assert measurements.rows == [{"object_count": 1}]
+    assert _measurement_rows_for_assertion(measurements) == [
+        {"object_count": 1, "slice_index": 0}
+    ]
     assert measurements.object_name == NUCLEI
     assert measurements.source_image_name == f"{DNA_IMAGE}__PH3"
 
@@ -2872,9 +2954,9 @@ def test_cellprofiler_module_executor_combines_multi_object_measurements():
     executor.run(measure, image, cellprofiler_runtime=adapter)
     measurements = adapter.get_measurements(MEASUREMENTS)
 
-    assert measurements.rows == [
-        {"object": NUCLEI, "object_name": NUCLEI},
-        {"object": CELLS, "object_name": CELLS},
+    assert _measurement_rows_for_assertion(measurements) == [
+        {"object": NUCLEI, "object_name": NUCLEI, "slice_index": 0},
+        {"object": CELLS, "object_name": CELLS, "slice_index": 0},
     ]
     assert measurements.object_name is None
     assert measurements.source_image_name == DNA_IMAGE
@@ -4166,7 +4248,7 @@ def test_cellprofiler_module_executor_preserves_main_stack_for_measurements():
     for measurement_image, measurement_labels in seen_images:
         assert measurement_image.shape == measurement_labels.shape == (4, 5)
     np.testing.assert_array_equal(result, image)
-    assert measurements.rows == [
+    assert _measurement_rows_for_assertion(measurements) == [
         {
             "object_count": 1,
             "slice_index": 0,
@@ -4239,30 +4321,34 @@ def test_cellprofiler_module_executor_measures_each_declared_image_and_object():
 
     np.testing.assert_array_equal(result, np.stack((dna, ph3)))
     assert seen == [(3.0, 1), (3.0, 2), (9.0, 1), (9.0, 2)]
-    assert measurements.rows == [
+    assert _measurement_rows_for_assertion(measurements) == [
         {
             "mean": 3.0,
             "label": 1,
             "object_name": NUCLEI,
             "source_image_name": DNA_IMAGE,
+            "slice_index": 0,
         },
         {
             "mean": 3.0,
             "label": 2,
             "object_name": CELLS,
             "source_image_name": DNA_IMAGE,
+            "slice_index": 0,
         },
         {
             "mean": 9.0,
             "label": 1,
             "object_name": NUCLEI,
             "source_image_name": "PH3",
+            "slice_index": 0,
         },
         {
             "mean": 9.0,
             "label": 2,
             "object_name": CELLS,
             "source_image_name": "PH3",
+            "slice_index": 0,
         },
     ]
     assert measurements.source_image_name is None
@@ -4362,10 +4448,25 @@ def test_cellprofiler_module_executor_records_relationship_and_measurement_outpu
     assert relationship.source_ids == (1, 1)
     assert relationship.target_ids == (1, 2)
     assert measurements.object_name is None
-    assert measurements.rows == [
-        {"mean_children_per_parent": 2.0},
-        {"object_name": CELLS, "object_label": 1, "Children_Nuclei_Count": 2},
-        {"object_name": NUCLEI, "object_label": 1, "Parent_Cells": 1},
-        {"object_name": NUCLEI, "object_label": 2, "Parent_Cells": 1},
+    assert _measurement_rows_for_assertion(measurements) == [
+        {"mean_children_per_parent": 2.0, "slice_index": 0},
+        {
+            "object_name": CELLS,
+            "object_label": 1,
+            "children_nuclei_count": 2,
+            "slice_index": 0,
+        },
+        {
+            "object_name": NUCLEI,
+            "object_label": 1,
+            "parent_cells": 1,
+            "slice_index": 0,
+        },
+        {
+            "object_name": NUCLEI,
+            "object_label": 2,
+            "parent_cells": 1,
+            "slice_index": 0,
+        },
     ]
     assert adapter.measurement_tables_for_object(CELLS) == (measurements,)

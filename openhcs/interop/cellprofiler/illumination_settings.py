@@ -30,6 +30,9 @@ class IlluminationSmoothingMethod(Enum):
     SPLINES = "splines"
 
 
+IlluminationSmoothingMethod.NONE.cellprofiler_literals = ("No smoothing",)
+
+
 class IlluminationFilterSizeMethod(Enum):
     AUTOMATIC = "automatic"
     OBJECT_SIZE = "object_size"

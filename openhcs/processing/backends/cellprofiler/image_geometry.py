@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from dataclasses import dataclass
 from enum import Enum
+import warnings
 from typing import Any
 from typing import Tuple
 
@@ -204,34 +205,58 @@ class ResizeGeometry:
             preserve_range=True,
         ).astype(np.asarray(pixels).dtype, copy=False)
 
-    def resize_mask(self, mask: Any | None) -> np.ndarray | None:
+    def resize_mask(
+        self,
+        mask: Any | None,
+        *,
+        input_shape: tuple[int, ...] | None = None,
+    ) -> np.ndarray | None:
+        """Resize CP image validity masks using the same geometry as pixels."""
         import scipy.ndimage as ndi
 
         if mask is None:
-            return None
-        mask_array = np.asarray(mask, dtype=bool)
+            if input_shape is None:
+                return None
+            mask_array = np.ones(input_shape, dtype=bool)
+        else:
+            mask_array = np.asarray(mask, dtype=bool)
+
+        output_shape = self.output_shape[: mask_array.ndim]
         zoom = tuple(
             output_size / input_size
             for output_size, input_size in zip(
-                self.output_shape,
+                output_shape,
                 mask_array.shape,
                 strict=True,
             )
         )
-        return ndi.zoom(
-            mask_array.astype(np.float32),
-            zoom,
-            order=0,
-            mode="constant",
-            grid_mode=True,
-        ).astype(bool, copy=False)
+        with warnings.catch_warnings():
+            warnings.filterwarnings(
+                "ignore",
+                message=(
+                    "It is recommended to use mode = grid-constant instead "
+                    "of constant when grid_mode is True."
+                ),
+                category=UserWarning,
+            )
+            resized = ndi.zoom(
+                mask_array.astype(np.float32),
+                zoom,
+                order=0,
+                mode="constant",
+                grid_mode=True,
+            )
+        return resized.astype(bool, copy=False)
 
     def resize_payload(self, image: Any) -> Any:
         pixels = image_payload_data(image)
         output_pixels = self.resize_pixels(pixels)
         return image_payload_with_context(
             output_pixels,
-            mask=self.resize_mask(image_payload_mask(image)),
+            mask=self.resize_mask(
+                image_payload_mask(image),
+                input_shape=tuple(np.asarray(pixels).shape),
+            ),
             metadata=image_payload_metadata(image).without_spatial_domain(),
         )
 
@@ -602,6 +627,8 @@ def align_label_plane_to_shape(
 ) -> np.ndarray:
     """Nearest-neighbor align a dense label plane to an XY shape."""
     labels = collapse_singleton_plane_stack(np.asarray(labels))
+    if 0 in labels.shape:
+        return np.zeros(shape, dtype=np.int32)
     if labels.shape == shape:
         return labels.astype(np.int32, copy=False)
     return resize_nearest(labels, shape).astype(np.int32)

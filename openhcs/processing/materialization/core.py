@@ -26,6 +26,7 @@ from openhcs.processing.materialization.options import (
     TextOptions,
     TiffStackOptions,
 )
+from openhcs.core.runtime_values import image_payload_data
 from openhcs.processing.materialization.utils import (
     discover_array_fields,
     expand_array_field,
@@ -55,7 +56,10 @@ def _resolve_source(value: Any, source: Optional[str]) -> Any:
 
 
 def _select_payload(data: Any, options: SourceOptions) -> Any:
-    return _resolve_source(data, options.source)
+    payload = _resolve_source(data, options.source)
+    if isinstance(payload, (list, tuple)):
+        return type(payload)(image_payload_data(item) for item in payload)
+    return image_payload_data(payload)
 
 
 def _is_empty(value: Any) -> bool:

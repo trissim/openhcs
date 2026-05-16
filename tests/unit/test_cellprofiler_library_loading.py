@@ -60,6 +60,9 @@ from openhcs.processing.backends.cellprofiler.colocalization import (
 from benchmark.cellprofiler_library.functions.opening import opening
 from benchmark.cellprofiler_library.functions.overlayobjects import overlay_objects
 from benchmark.cellprofiler_library.functions.overlayoutlines import overlay_outlines
+from openhcs.processing.backends.cellprofiler.image_geometry import (
+    align_label_plane_to_shape,
+)
 from benchmark.cellprofiler_library.functions.relateobjects import (
     DistanceMethod,
     relate_objects,
@@ -258,6 +261,36 @@ def test_resize_volumetric_preserves_resized_image_mask() -> None:
     np.testing.assert_array_equal(resized.mask, mask[:, ::2, ::2])
 
 
+def test_resize_volumetric_projects_default_cellprofiler_validity_mask() -> None:
+    image = np.ones((2, 4, 4), dtype=np.float32)
+
+    raw_resize = resize_volumetric
+    while hasattr(raw_resize, "__wrapped__"):
+        raw_resize = raw_resize.__wrapped__
+
+    downsampled = raw_resize(
+        image,
+        resizing_factor_x=0.5,
+        resizing_factor_y=0.5,
+        resizing_factor_z=1.0,
+    )
+    upsampled = raw_resize(
+        downsampled,
+        resizing_factor_x=2.0,
+        resizing_factor_y=2.0,
+        resizing_factor_z=1.0,
+    )
+
+    assert isinstance(upsampled, MaskedImagePayload)
+    assert upsampled.data.shape == image.shape
+    assert upsampled.mask.shape == image.shape
+    assert not upsampled.mask[:, 0, :].any()
+    assert not upsampled.mask[:, :, 0].any()
+    assert not upsampled.mask[:, -1, :].any()
+    assert not upsampled.mask[:, :, -1].any()
+    assert upsampled.mask[:, 1:-1, 1:-1].all()
+
+
 def test_erode_objects_preserves_leading_axes_for_volume_stacks() -> None:
     from benchmark.cellprofiler_library.functions.erodeobjects import erode_objects
 
@@ -357,6 +390,17 @@ def test_overlay_objects_aligns_labels_to_image_geometry() -> None:
     assert overlay.shape == (8, 10, 3)
     assert overlay.dtype == np.float32
     assert np.any(overlay[2:6, 4:8] > 0.0)
+
+
+def test_empty_label_plane_aligns_to_blank_target_geometry() -> None:
+    aligned = align_label_plane_to_shape(
+        np.zeros((0, 0), dtype=np.int32),
+        (8, 10),
+    )
+
+    assert aligned.shape == (8, 10)
+    assert aligned.dtype == np.int32
+    assert not np.any(aligned)
 
 
 def test_opening_default_backend_matches_skimage_grayscale_opening() -> None:
@@ -1705,7 +1749,7 @@ def test_cellprofiler_legacy_watershed_keeps_descending_pixel_priority():
     np.testing.assert_array_equal(labels, np.array([[1, 1, 2]], dtype=np.int32))
 
 
-def test_cellprofiler4_marker_watershed_uses_legacy_priority_semantics():
+def test_cellprofiler4_marker_watershed_matches_cellprofiler_source_path():
     import inspect
 
     from benchmark.cellprofiler_library.functions.watershed import watershed

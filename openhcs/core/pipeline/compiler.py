@@ -72,7 +72,14 @@ from openhcs.constants.constants import (
     WRITE_BACKEND,
     Backend,
 )
-from openhcs.core.callable_contract import RUNTIME_IMAGE_EXECUTION_MODE_ATTR
+from openhcs.core.callable_contract import (
+    DECLARED_PROCESSING_CONTRACT_ATTR,
+    PROCESSING_CONTRACT_ATTR,
+    PROCESSING_PREPARE_ATTR,
+    RAW_PROCESSING_FUNCTION_ATTR,
+    RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
+)
+from openhcs.core.module_artifact_contract import MODULE_ARTIFACT_CONTRACT_ATTR
 from openhcs.core.autoregister_preparation import AutoRegisterRegistryPreparation
 from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.context.processing_context import ProcessingContext
@@ -165,7 +172,11 @@ _FUNCTION_REFERENCE_PRESERVED_ATTRS = (
     "__artifact_inputs__",
     "__artifact_outputs__",
     "__runtime_adapter__",
-    "__openhcs_prepare__",
+    MODULE_ARTIFACT_CONTRACT_ATTR,
+    PROCESSING_CONTRACT_ATTR,
+    DECLARED_PROCESSING_CONTRACT_ATTR,
+    RAW_PROCESSING_FUNCTION_ATTR,
+    PROCESSING_PREPARE_ATTR,
     RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
     "input_memory_type",
     "output_memory_type",

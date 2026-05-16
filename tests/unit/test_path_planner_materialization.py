@@ -12,7 +12,15 @@ from openhcs.core.compiled_step_plan import (
     MaterializedOutputPlan,
 )
 from openhcs.core.invocation_artifacts import InvocationArtifactDeclarations
-from openhcs.core.pipeline.path_planner import PathPlanner
+from openhcs.core.pipeline.path_planner import (
+    PathPlanner,
+    PathPlannerArtifactStage,
+    PathPlannerExecutionGroups,
+    PathPlannerMaterializationStage,
+    PathPlannerPathAuthority,
+    PathPlannerStepAssemblyStage,
+    PathPlannerValidationStage,
+)
 from openhcs.core.source_bindings import EMPTY_SOURCE_BINDINGS
 from openhcs.core.step_dependencies import StepInputDependencyKind
 
@@ -42,6 +50,12 @@ def _artifact_planner_stub() -> PathPlanner:
         )
     }
     planner.declared = {}
+    planner.execution_groups = PathPlannerExecutionGroups(planner)
+    planner.paths = PathPlannerPathAuthority(planner)
+    planner.artifacts = PathPlannerArtifactStage(planner)
+    planner.materialization = PathPlannerMaterializationStage(planner)
+    planner.validation = PathPlannerValidationStage(planner)
+    planner.steps = PathPlannerStepAssemblyStage(planner)
     return planner
 
 
@@ -70,7 +84,10 @@ def test_materialization_collision_updates_results_dir_and_config():
         materialization_config=PathConfigStub(sub_dir="images"),
     )
 
-    planner._resolve_and_update_paths(
+    planner.paths = PathPlannerPathAuthority(planner)
+    planner.validation = PathPlannerValidationStage(planner)
+
+    planner.validation.resolve_and_update_paths(
         snapshot,
         3,
         Path("/data/plate1_processed/images"),
@@ -90,7 +107,7 @@ def test_materialization_collision_updates_results_dir_and_config():
 def test_artifact_output_plans_preserve_declared_kind():
     planner = _artifact_planner_stub()
 
-    outputs = planner._process_artifact_outputs(
+    outputs = planner.artifacts.process_artifact_outputs(
         {"nuclei": ArtifactSpec("nuclei", ArtifactKind.OBJECT_LABELS)},
         sid=2,
         output_groups={"nuclei": {None}},
@@ -131,10 +148,10 @@ def test_planner_uses_invocation_aware_artifact_declaration_provider():
         processing_config=None,
     )
 
-    declarations, _execution_groups, func_pattern = planner._prepare_step_declarations(
+    declarations, _execution_groups, func_pattern = planner.artifacts.prepare_step_declarations(
         snapshot,
     )
-    compiled = planner._build_step_compiled_function_pattern(
+    compiled = planner.artifacts.build_step_compiled_function_pattern(
         snapshot,
         True,
         func_pattern,
@@ -167,7 +184,7 @@ def test_execution_groups_use_normalized_group_by_for_variable_conflicts():
         name="source_bound_cellprofiler_step",
     )
 
-    assert planner._get_execution_groups(snapshot) == [None]
+    assert planner.execution_groups.get_execution_groups(snapshot) == [None]
 
 
 def test_artifact_input_plan_rejects_producer_consumer_kind_mismatch():
@@ -181,12 +198,40 @@ def test_artifact_input_plan_rejects_producer_consumer_kind_mismatch():
     )
 
     with pytest.raises(ValueError, match="expects measurements"):
-        planner._process_artifact_inputs(
+        planner.artifacts.process_artifact_inputs(
             {"nuclei": ArtifactSpec("nuclei", ArtifactKind.MEASUREMENTS)},
             {},
             sid=2,
             step_name="measure",
         )
+
+
+def test_artifact_input_plan_broadcasts_single_grouped_producer_to_consumer_groups():
+    planner = _artifact_planner_stub()
+    planner.declared["illumination"] = ArtifactOutputPlan(
+        name="illumination",
+        path="/memory/illumination.pkl",
+        kind=ArtifactKind.IMAGE,
+        group_keys=("1",),
+        paths_by_group={"1": "/memory/illumination_channel_1.pkl"},
+        producer_step_index=1,
+        producer_step_name="calculate_illumination",
+    )
+
+    inputs = planner.artifacts.process_artifact_inputs(
+        {"illumination": ArtifactSpec("illumination", ArtifactKind.IMAGE)},
+        {},
+        consumer_groups=["2", "3"],
+        sid=2,
+        step_name="apply_illumination",
+    )
+
+    plan = inputs["illumination"]
+    assert plan.group_keys == ("2", "3")
+    assert plan.paths_by_group == {
+        "2": "/memory/illumination_channel_1.pkl",
+        "3": "/memory/illumination_channel_1.pkl",
+    }
 
 
 def test_main_input_dependency_uses_scope_identity_for_step_output_edges():
@@ -212,8 +257,9 @@ def test_main_input_dependency_uses_scope_identity_for_step_output_edges():
         0: SimpleNamespace(scope_id="plate::functionstep_0"),
         1: SimpleNamespace(scope_id="plate::functionstep_1"),
     }
+    planner.steps = PathPlannerStepAssemblyStage(planner)
 
-    dependency = planner._main_input_dependency(
+    dependency = planner.steps.main_input_dependency(
         SimpleNamespace(input_source=None),
         1,
     )
@@ -222,7 +268,7 @@ def test_main_input_dependency_uses_scope_identity_for_step_output_edges():
     assert dependency.source_step_index == 0
     assert dependency.source_step_scope_id == "plate::functionstep_0"
 
-    input_dir, output_dir = planner._step_io_dirs(dependency, 1)
+    input_dir, output_dir = planner.steps.step_io_dirs(dependency, 1)
     assert input_dir == Path("/data/plate1_processed/images")
     assert output_dir == Path("/data/plate1_processed/images")
 
@@ -242,16 +288,19 @@ def test_main_input_dependency_preserves_pipeline_start_edges():
     planner.snapshots_by_index = {
         1: SimpleNamespace(scope_id="plate::functionstep_1")
     }
-    planner._build_output_path = lambda *_args, **_kwargs: Path(
-        "/data/plate1_processed/images"
+    planner.paths = SimpleNamespace(
+        build_output_path=lambda *_args, **_kwargs: Path(
+            "/data/plate1_processed/images"
+        )
     )
+    planner.steps = PathPlannerStepAssemblyStage(planner)
 
-    dependency = planner._main_input_dependency(
+    dependency = planner.steps.main_input_dependency(
         SimpleNamespace(input_source=InputSource.PIPELINE_START),
         1,
     )
 
     assert dependency.kind is StepInputDependencyKind.PIPELINE_START
-    input_dir, output_dir = planner._step_io_dirs(dependency, 1)
+    input_dir, output_dir = planner.steps.step_io_dirs(dependency, 1)
     assert input_dir == Path("/data/plate1/images")
     assert output_dir == Path("/data/plate1_processed/images")
