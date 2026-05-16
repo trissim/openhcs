@@ -2208,82 +2208,64 @@ class ObjectLabelRuntimeSliceStackContract(
         """Return the runtime-slice count carried by this object-label value."""
 
 
-class ObjectLabelPayloadRuntimeSliceStackContract(ObjectLabelRuntimeSliceStackContract):
+class ObjectLabelContainerRuntimeSliceStackContract(ObjectLabelRuntimeSliceStackContract):
+    """Runtime-slice contract shared by nominal object-label containers."""
+
+    value_type: ClassVar[type[Any] | None] = None
+
+    def typed_value(self, value: object) -> Any:
+        """Return value after validating it belongs to this registered family."""
+        value_type = type(self).value_type
+        if value_type is None:
+            raise TypeError(
+                f"{type(self).__name__} must declare a concrete value_type."
+            )
+        if not isinstance(value, value_type):
+            raise TypeError(
+                f"{type(self).__name__} requires {value_type.__name__}, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+    def value_preserves_runtime_slice_stack(
+        self,
+        value: object,
+        *,
+        slice_count: int,
+    ) -> bool:
+        payload = self.typed_value(value)
+        if payload.domain_scope is not ObjectLabelDomainScope.PLANE:
+            return False
+        return ObjectLabelDataRuntimeSliceStackContract.preserves_runtime_slice_stack(
+            payload.labels,
+            plane_axis=payload.plane_axis,
+            slice_count=slice_count,
+        )
+
+    def value_runtime_slice_count(self, value: object) -> int | None:
+        payload = self.typed_value(value)
+        if payload.domain_scope is not ObjectLabelDomainScope.PLANE:
+            return None
+        return ObjectLabelDataRuntimeSliceStackContract.runtime_slice_count(
+            payload.labels,
+            plane_axis=payload.plane_axis,
+        )
+
+
+class ObjectLabelPayloadRuntimeSliceStackContract(
+    ObjectLabelContainerRuntimeSliceStackContract
+):
     """Runtime-slice contract for dense object-label payloads."""
 
     value_type = ObjectLabelPayload
 
-    def value_preserves_runtime_slice_stack(
-        self,
-        value: object,
-        *,
-        slice_count: int,
-    ) -> bool:
-        if not isinstance(value, ObjectLabelPayload):
-            raise TypeError(
-                "ObjectLabelPayloadRuntimeSliceStackContract requires "
-                f"ObjectLabelPayload, got {type(value).__name__}."
-            )
-        if value.domain_scope is not ObjectLabelDomainScope.PLANE:
-            return False
-        return ObjectLabelDataRuntimeSliceStackContract.preserves_runtime_slice_stack(
-            value.labels,
-            plane_axis=value.plane_axis,
-            slice_count=slice_count,
-        )
-
-    def value_runtime_slice_count(self, value: object) -> int | None:
-        if not isinstance(value, ObjectLabelPayload):
-            raise TypeError(
-                "ObjectLabelPayloadRuntimeSliceStackContract requires "
-                f"ObjectLabelPayload, got {type(value).__name__}."
-            )
-        if value.domain_scope is not ObjectLabelDomainScope.PLANE:
-            return None
-        return ObjectLabelDataRuntimeSliceStackContract.runtime_slice_count(
-            value.labels,
-            plane_axis=value.plane_axis,
-        )
-
 
 class ObjectLabelSetRuntimeSliceStackContract(
-    ObjectLabelPayloadRuntimeSliceStackContract
+    ObjectLabelContainerRuntimeSliceStackContract
 ):
     """Runtime-slice contract for native object-label sets."""
 
     value_type = ObjectLabelSet
-
-    def value_preserves_runtime_slice_stack(
-        self,
-        value: object,
-        *,
-        slice_count: int,
-    ) -> bool:
-        if not isinstance(value, ObjectLabelSet):
-            raise TypeError(
-                "ObjectLabelSetRuntimeSliceStackContract requires ObjectLabelSet, "
-                f"got {type(value).__name__}."
-            )
-        if value.domain_scope is not ObjectLabelDomainScope.PLANE:
-            return False
-        return ObjectLabelDataRuntimeSliceStackContract.preserves_runtime_slice_stack(
-            value.labels,
-            plane_axis=value.plane_axis,
-            slice_count=slice_count,
-        )
-
-    def value_runtime_slice_count(self, value: object) -> int | None:
-        if not isinstance(value, ObjectLabelSet):
-            raise TypeError(
-                "ObjectLabelSetRuntimeSliceStackContract requires ObjectLabelSet, "
-                f"got {type(value).__name__}."
-            )
-        if value.domain_scope is not ObjectLabelDomainScope.PLANE:
-            return None
-        return ObjectLabelDataRuntimeSliceStackContract.runtime_slice_count(
-            value.labels,
-            plane_axis=value.plane_axis,
-        )
 
 
 class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
@@ -3317,13 +3299,14 @@ class MeasurementTable(NativeRuntimeValue):
         return self.rows
 
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
+        subject_resolver = MeasurementTableSubjectResolver(self)
         return RuntimeValueSchema(
             kind=ArtifactKind.MEASUREMENTS,
             fields=self.fields or _infer_fields(payload),
             measurement_subject=self.subject,
-            object_name=_measurement_object_name(self),
-            source_image_name=_measurement_source_image_name(self),
-            object_id_field=_measurement_object_id_field(self),
+            object_name=subject_resolver.object_name,
+            source_image_name=subject_resolver.source_image_name,
+            object_id_field=subject_resolver.object_id_field,
         )
 
 
@@ -3454,9 +3437,9 @@ class SpatialGridTopology:
             table = object_ids.reshape(self.rows, self.columns)
         else:
             table = object_ids.reshape(self.columns, self.rows).T
-        if self.origin in (SpatialGridOrigin.BOTTOM_LEFT, SpatialGridOrigin.BOTTOM_RIGHT):
+        if self.origin.reverses_rows:
             table = table[::-1, :]
-        if self.origin in (SpatialGridOrigin.TOP_RIGHT, SpatialGridOrigin.BOTTOM_RIGHT):
+        if self.origin.reverses_columns:
             table = table[:, ::-1]
         return tuple(tuple(int(value) for value in row) for row in table)
 
@@ -4279,28 +4262,35 @@ def _resolve_measurement_subject(
     return subject
 
 
-def _measurement_object_name(value: MeasurementTable) -> str | None:
-    if value.object_name is not None:
-        return value.object_name
-    if value.subject and value.subject.scope is MeasurementScope.OBJECT:
-        return value.subject.name
-    return None
+@dataclass(frozen=True, slots=True)
+class MeasurementTableSubjectResolver:
+    """Resolve legacy measurement-table fields against the nominal subject."""
 
+    table: MeasurementTable
 
-def _measurement_object_id_field(value: MeasurementTable) -> str | None:
-    if value.object_id_field is not None:
-        return value.object_id_field
-    if value.subject and value.subject.scope is MeasurementScope.OBJECT:
-        return value.subject.id_field
-    return None
+    @property
+    def object_name(self) -> str | None:
+        if self.table.object_name is not None:
+            return self.table.object_name
+        if self.table.subject and self.table.subject.scope is MeasurementScope.OBJECT:
+            return self.table.subject.name
+        return None
 
+    @property
+    def object_id_field(self) -> str | None:
+        if self.table.object_id_field is not None:
+            return self.table.object_id_field
+        if self.table.subject and self.table.subject.scope is MeasurementScope.OBJECT:
+            return self.table.subject.id_field
+        return None
 
-def _measurement_source_image_name(value: MeasurementTable) -> str | None:
-    if value.source_image_name is not None:
-        return value.source_image_name
-    if value.subject and value.subject.scope is MeasurementScope.IMAGE:
-        return value.subject.source_image_name
-    return None
+    @property
+    def source_image_name(self) -> str | None:
+        if self.table.source_image_name is not None:
+            return self.table.source_image_name
+        if self.table.subject and self.table.subject.scope is MeasurementScope.IMAGE:
+            return self.table.subject.source_image_name
+        return None
 
 
 def _infer_fields(rows: Any) -> tuple[FieldSpec, ...]:

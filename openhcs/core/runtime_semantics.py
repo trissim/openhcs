@@ -635,8 +635,27 @@ class ObjectLabelDomain:
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
 class RuntimeObjectMeasurementQuery(ABC):
     """Store-stable identity for object measurement queries."""
+
+    group_key: str | None
+    object_name: str
+    feature_name: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "object_name",
+            self.required_name("object_name", self.object_name),
+        )
+        object.__setattr__(
+            self,
+            "feature_name",
+            self.required_name("feature_name", self.feature_name),
+        )
+        if self.group_key is not None:
+            object.__setattr__(self, "group_key", str(self.group_key))
 
     @staticmethod
     def required_name(field_name: str, value: str) -> str:
@@ -651,21 +670,15 @@ class RuntimeObjectMeasurementQuery(ABC):
 class RuntimeObjectFeatureMeasurementQuery(RuntimeObjectMeasurementQuery):
     """Store-stable identity for object-domain feature vector queries."""
 
-    group_key: str | None
-    object_name: str
-    feature_name: str
     object_domain: tuple[int, ...]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "object_name", self.required_name("object_name", self.object_name))
-        object.__setattr__(self, "feature_name", self.required_name("feature_name", self.feature_name))
+        RuntimeObjectMeasurementQuery.__post_init__(self)
         object.__setattr__(
             self,
             "object_domain",
             ObjectLabelDomain._normalize_ids(tuple(self.object_domain), "object_domain"),
         )
-        if self.group_key is not None:
-            object.__setattr__(self, "group_key", str(self.group_key))
 
 
 @dataclass(frozen=True, slots=True)
@@ -673,23 +686,17 @@ class RuntimeObjectLabelMeasurementQuery(RuntimeObjectMeasurementQuery):
     """Store-stable identity for label-aligned object measurement queries."""
 
     axis_id: str
-    group_key: str | None
-    object_name: str
-    feature_name: str
     label_domain: tuple[int, ...]
     image_number: int | None = None
 
     def __post_init__(self) -> None:
+        RuntimeObjectMeasurementQuery.__post_init__(self)
         object.__setattr__(self, "axis_id", str(self.axis_id))
-        object.__setattr__(self, "object_name", self.required_name("object_name", self.object_name))
-        object.__setattr__(self, "feature_name", self.required_name("feature_name", self.feature_name))
         object.__setattr__(
             self,
             "label_domain",
             ObjectLabelDomain._normalize_ids(tuple(self.label_domain), "label_domain"),
         )
-        if self.group_key is not None:
-            object.__setattr__(self, "group_key", str(self.group_key))
         if self.image_number is not None:
             object.__setattr__(self, "image_number", int(self.image_number))
 
@@ -1079,10 +1086,27 @@ class SpatialGridOrdering(str, Enum):
 class SpatialGridOrigin(str, Enum):
     """Corner used as the numbering origin for a spatial grid."""
 
-    TOP_LEFT = "top_left"
-    BOTTOM_LEFT = "bottom_left"
-    TOP_RIGHT = "top_right"
-    BOTTOM_RIGHT = "bottom_right"
+    def __new__(cls, value: str, reverses_rows: bool, reverses_columns: bool):
+        obj = str.__new__(cls, value)
+        obj._value_ = value
+        obj._reverses_rows = reverses_rows
+        obj._reverses_columns = reverses_columns
+        return obj
+
+    TOP_LEFT = ("top_left", False, False)
+    BOTTOM_LEFT = ("bottom_left", True, False)
+    TOP_RIGHT = ("top_right", False, True)
+    BOTTOM_RIGHT = ("bottom_right", True, True)
+
+    @property
+    def reverses_rows(self) -> bool:
+        """Return whether this origin numbers from the bottom edge."""
+        return self._reverses_rows
+
+    @property
+    def reverses_columns(self) -> bool:
+        """Return whether this origin numbers from the right edge."""
+        return self._reverses_columns
 
 
 class MeasurementScope(str, Enum):
@@ -3380,13 +3404,19 @@ class SourceSpatialDomainProjection:
 
 
 @dataclass(frozen=True, slots=True)
-class DenseObjectLabelPairAlignment:
+class DenseObjectLabelProjectionAlignment:
+    """Shared source-to-native projection metadata for dense label alignment."""
+
+    first_projection: SourceSpatialDomainProjection | None
+    second_projection: SourceSpatialDomainProjection | None
+
+
+@dataclass(frozen=True, slots=True)
+class DenseObjectLabelPairAlignment(DenseObjectLabelProjectionAlignment):
     """Aligned dense label arrays with source-to-native projection metadata."""
 
     first: Any
     second: Any
-    first_projection: SourceSpatialDomainProjection | None = None
-    second_projection: SourceSpatialDomainProjection | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -3485,10 +3515,10 @@ class SourceSpatialAlignmentPair:
             aligned_values = tuple(value.materialize() for value in self.values)
             projections = tuple(value.projection() for value in self.values)
         return DenseObjectLabelPairAlignment(
-            aligned_values[0],
-            aligned_values[1],
-            projections[0],
-            projections[1],
+            first=aligned_values[0],
+            second=aligned_values[1],
+            first_projection=projections[0],
+            second_projection=projections[1],
         )
 
     def shared_source_domain_for_native_pair(self) -> SourceSpatialDomain | None:
@@ -3506,13 +3536,11 @@ class SourceSpatialAlignmentPair:
 
 
 @dataclass(frozen=True, slots=True)
-class DenseObjectLabelStackAlignment:
+class DenseObjectLabelStackAlignment(DenseObjectLabelProjectionAlignment):
     """Aligned dense label stacks with native-domain restoration hooks."""
 
     first_stack: Any
     second_stack: Any
-    first_projection: SourceSpatialDomainProjection | None = None
-    second_projection: SourceSpatialDomainProjection | None = None
 
     def restore_first_stack(self, labels: Any) -> Any:
         if self.first_projection is None:
@@ -3551,16 +3579,19 @@ class DenseObjectLabelPairAligner:
         return alignment.first, alignment.second
 
     def alignment(self) -> DenseObjectLabelPairAlignment:
-        alignment = self._source_domain_alignment()
+        alignment = SourceSpatialAlignmentPair.from_values(
+            self.first_labels,
+            self.second_labels,
+        ).aligned()
         first, second = alignment.first, alignment.second
         first = DenseObjectLabelStack.from_labels(first).collapse_singleton_plane()
         second = DenseObjectLabelStack.from_labels(second).collapse_singleton_plane()
         if first.shape == second.shape:
             return DenseObjectLabelPairAlignment(
-                first,
-                second,
-                alignment.first_projection,
-                alignment.second_projection,
+                first=first,
+                second=second,
+                first_projection=alignment.first_projection,
+                second_projection=alignment.second_projection,
             )
 
         if first.ndim == 3 and second.ndim == 2 and first.shape[1:] == second.shape:
@@ -3573,10 +3604,10 @@ class DenseObjectLabelPairAligner:
                 f"alignment; got {first.shape} and {second.shape}."
             )
         return DenseObjectLabelPairAlignment(
-            first,
-            second,
-            alignment.first_projection,
-            alignment.second_projection,
+            first=first,
+            second=second,
+            first_projection=alignment.first_projection,
+            second_projection=alignment.second_projection,
         )
 
     def aligned_stacks(self, slice_count: int) -> tuple[Any, Any] | None:
@@ -3600,17 +3631,11 @@ class DenseObjectLabelPairAligner:
                 f"alignment; got {first_stack.shape} and {second_stack.shape}."
             )
         return DenseObjectLabelStackAlignment(
-            first_stack,
-            second_stack,
-            alignment.first_projection,
-            alignment.second_projection,
+            first_stack=first_stack,
+            second_stack=second_stack,
+            first_projection=alignment.first_projection,
+            second_projection=alignment.second_projection,
         )
-
-    def _source_domain_alignment(self) -> DenseObjectLabelPairAlignment:
-        return SourceSpatialAlignmentPair.from_values(
-            self.first_labels,
-            self.second_labels,
-        ).aligned()
 
     @staticmethod
     def _stack_view(value: Any, slice_count: int) -> Any | None:

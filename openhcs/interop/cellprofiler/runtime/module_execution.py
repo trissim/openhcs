@@ -4541,40 +4541,36 @@ class MeasureObjectSizeShapeObjectMeasurementRowPolicy(
     )
 
 
+class DenseEmittedObjectMeasurementRowsMixin:
+    """Policy mixin for modules that already emit their complete object row domain."""
+
+    def complete_rows(
+        self,
+        rows: Sequence[Any] | ColumnarRows,
+        *,
+        label_payload: Any,
+        func: Callable[..., Any],
+    ) -> Sequence[Any] | ColumnarRows:
+        del label_payload, func
+        return rows if isinstance(rows, ColumnarRows) else list(rows)
+
+
 class MeasureObjectIntensityDistributionObjectMeasurementRowPolicy(
+    DenseEmittedObjectMeasurementRowsMixin,
     CompactMeasuredObjectMeasurementRowPolicy
 ):
     """Use CP's compact measured-object rows for intensity-distribution exports."""
 
     module_name = _MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE
 
-    def complete_rows(
-        self,
-        rows: Sequence[Any],
-        *,
-        label_payload: Any,
-        func: Callable[..., Any],
-    ) -> list[Any]:
-        """Intensity-distribution functions emit their full dense row domain."""
-        del label_payload, func
-        return list(rows)
 
-
-class MeasureGranularityObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
+class MeasureGranularityObjectMeasurementRowPolicy(
+    DenseEmittedObjectMeasurementRowsMixin,
+    CellProfilerObjectMeasurementRowPolicy,
+):
     """Use emitted object rows directly for dense granularity exports."""
 
     module_name = _MEASURE_GRANULARITY_MODULE
-
-    def complete_rows(
-        self,
-        rows: Sequence[Any],
-        *,
-        label_payload: Any,
-        func: Callable[..., Any],
-    ) -> list[Any]:
-        """Granularity functions emit one row for every positive label."""
-        del label_payload, func
-        return list(rows)
 
 
 class MeasureTextureObjectMeasurementRowPolicy(
