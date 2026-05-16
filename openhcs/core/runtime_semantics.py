@@ -21,6 +21,9 @@ from openhcs.core.registry_strategies import (
 from openhcs.core.process_local_cache import ProcessLocalBoundedCache
 
 
+DeclaredObjectIds = tuple[int, ...] | list[int] | None
+
+
 @dataclass(frozen=True, slots=True)
 class SourceSpatialDomain:
     """Dense XY placement contract for a source-image coordinate domain."""
@@ -513,7 +516,7 @@ class ObjectLabelDomain:
         self,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_ids: DeclaredObjectIds,
         declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> "ObjectLabelDomain":
         """Return this domain with explicit runtime declarations applied."""
@@ -969,7 +972,7 @@ class ObjectLabelPlaneDomainStrategy(
         labels: Any,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_ids: DeclaredObjectIds,
         declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         """Return the object-id domain attached to each dense measurement plane."""
@@ -979,7 +982,7 @@ class ObjectLabelPlaneDomainStrategy(
         labels: Any,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_ids: DeclaredObjectIds,
         declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         """Return object-id domains for identity rows represented by the payload."""
@@ -1001,7 +1004,7 @@ class PayloadObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
         labels: Any,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_ids: DeclaredObjectIds,
         declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         import numpy as np
@@ -1022,7 +1025,7 @@ class PayloadObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
         labels: Any,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_ids: DeclaredObjectIds,
         declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         if declared_object_id_domains:
@@ -1046,7 +1049,7 @@ class PlaneObjectLabelPlaneDomainStrategy(ObjectLabelPlaneDomainStrategy):
         labels: Any,
         *,
         declared_object_count: int | None,
-        declared_object_ids: tuple[int, ...] | list[int] | None,
+        declared_object_ids: DeclaredObjectIds,
         declared_object_id_domains: tuple[tuple[int, ...], ...],
     ) -> tuple[tuple[int, ...], ...]:
         import numpy as np
@@ -3943,7 +3946,7 @@ def dense_object_label_id_domain(
     labels: Any,
     *,
     declared_object_count: int | None = None,
-    declared_object_ids: tuple[int, ...] | list[int] | None = None,
+    declared_object_ids: DeclaredObjectIds = None,
 ) -> tuple[int, ...]:
     """Return the semantic object-id domain represented by dense labels.
 
@@ -4053,7 +4056,7 @@ def dense_object_label_plane_id_domains(
     labels: Any,
     *,
     declared_object_count: int | None = None,
-    declared_object_ids: tuple[int, ...] | list[int] | None = None,
+    declared_object_ids: DeclaredObjectIds = None,
     declared_object_id_domains: tuple[tuple[int, ...], ...] = (),
     domain_scope: ObjectLabelDomainScope | None = None,
 ) -> tuple[tuple[int, ...], ...]:
@@ -4094,7 +4097,7 @@ def dense_object_label_identity_domains(
     labels: Any,
     *,
     declared_object_count: int | None = None,
-    declared_object_ids: tuple[int, ...] | list[int] | None = None,
+    declared_object_ids: DeclaredObjectIds = None,
     declared_object_id_domains: tuple[tuple[int, ...], ...] = (),
     domain_scope: ObjectLabelDomainScope | None = None,
 ) -> tuple[tuple[int, ...], ...]:

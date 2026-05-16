@@ -56,6 +56,8 @@ from openhcs.core.registry_strategies import (
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 
 
+PhysicalBorderEdgesYX = tuple[bool, bool, bool, bool] | None
+
 _TPayload = TypeVar("_TPayload", bound=type[Any])
 _ARRAY_PAYLOAD_PREDICATES: list[Callable[[Any], bool]] = []
 logger = logging.getLogger(__name__)
@@ -141,7 +143,7 @@ class ImagePayloadMetadata:
     channel_unit_interval_intensity_scales: tuple[int | None, ...] = ()
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
-    physical_border_edges_yx: tuple[bool, bool, bool, bool] | None = None
+    physical_border_edges_yx: PhysicalBorderEdgesYX = None
     mask_defines_border: bool | None = None
 
     @classmethod
@@ -300,7 +302,7 @@ class ImagePayloadMetadata:
         input_shape_yx: Sequence[int],
         output_shape_yx: Sequence[int],
         offset_yx: tuple[int, int],
-        physical_border_edges_yx: tuple[bool, bool, bool, bool] | None = None,
+        physical_border_edges_yx: PhysicalBorderEdgesYX = None,
     ) -> "ImagePayloadMetadata":
         """Return metadata for a crop of this image payload."""
         input_shape = _spatial_shape_pair(input_shape_yx, "input_shape_yx")
