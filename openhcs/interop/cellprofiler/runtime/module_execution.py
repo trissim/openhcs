@@ -8794,22 +8794,6 @@ def _require_exact_object_count(
         )
 
 
-def _object_input_labels(
-    spec: ArtifactSpec,
-    adapter: CellProfilerRuntimeAdapter,
-    *,
-    current_image: Any,
-    external_object_names: frozenset[str],
-) -> Any:
-    if spec.name in external_object_names:
-        return _label_payload_final(
-            adapter.resolve_source_objects(spec.name, current_image)
-        )
-    return _label_payload_final(
-        adapter.get_objects(spec.name, current_image=current_image)
-    )
-
-
 def _measurement_object_name(
     inputs: tuple[ArtifactSpec, ...],
 ) -> str | None:

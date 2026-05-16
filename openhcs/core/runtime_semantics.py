@@ -4133,25 +4133,6 @@ def project_dense_object_label_stack(labels: Any) -> Any:
     return DenseObjectLabelStack.from_labels(labels).project_xy_plane_without_relabeling()
 
 
-def _dense_label_array_in_source_domain(labels: Any) -> Any:
-    """Return dense labels placed in their declared source XY domain.
-
-    Object-label payloads can represent a cropped spatial window while retaining
-    source-image coordinates. Relationship semantics operate on parent/child
-    overlap, so cropped labels must be compared in the source coordinate system
-    instead of by array shape alone.
-    """
-    import numpy as np
-
-    adapter = SourceSpatialDomainAdapter.for_value(labels)
-    if adapter is not None:
-        return adapter.materialize()
-    return DenseArraySourceSpatialDomainAdapter(
-        labels,
-        SourceSpatialDomain(value_name="Object-label"),
-    ).materialize()
-
-
 def dense_array_in_source_spatial_domain(
     value: Any,
     *,
@@ -4331,16 +4312,6 @@ def coerce_enum(enum_type: type[Enum], value: Any, field_name: str) -> Any:
             f"{field_name} must be one of "
             f"{', '.join(member.value for member in enum_type)}; got {value!r}."
         ) from exc
-
-
-def _dominant_positive_label(labels: Any) -> int:
-    import numpy as np
-
-    positive_labels = np.asarray(labels)[np.asarray(labels) > 0].astype(np.int64)
-    if positive_labels.size == 0:
-        return 0
-    counts = np.bincount(positive_labels)
-    return int(np.argmax(counts))
 
 
 def _dominant_parent_ids_by_child(
