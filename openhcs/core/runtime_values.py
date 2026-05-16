@@ -411,7 +411,7 @@ class MaskedImagePayload(RuntimeArrayPayload):
                 f"got {type(self.mask).__name__}."
             )
         data_shape = tuple(np.shape(self.data))
-        if mask_shape not in _valid_image_mask_shapes(data_shape):
+        if not ImageMaskDomain(data_shape).accepts(mask_shape):
             raise ValueError(
                 "MaskedImagePayload.mask shape must match the image spatial "
                 f"domain; got mask {mask_shape!r} for image {data_shape!r}."
@@ -506,16 +506,17 @@ def project_image_mask_to_data_domain(mask: Any, data: Any) -> Any | None:
     mask_array = np.asarray(mask, dtype=bool)
     data_shape = tuple(np.asarray(data).shape)
     mask_shape = tuple(mask_array.shape)
-    if mask_shape in _valid_image_mask_shapes(data_shape):
+    mask_domain = ImageMaskDomain(data_shape)
+    if mask_domain.accepts(mask_shape):
         return mask_array
     if (
         mask_array.ndim >= 3
-        and tuple(mask_array.shape[1:]) in _valid_image_mask_shapes(data_shape)
+        and mask_domain.accepts(tuple(mask_array.shape[1:]))
     ):
         return np.all(mask_array, axis=0)
     if (
         mask_array.ndim >= 3
-        and tuple(mask_array.shape[:-1]) in _valid_image_mask_shapes(data_shape)
+        and mask_domain.accepts(tuple(mask_array.shape[:-1]))
     ):
         return np.all(mask_array, axis=-1)
     if (
@@ -948,30 +949,38 @@ def _tuple_value(values: tuple[Any, ...], index: int) -> Any | None:
     return None
 
 
-def _valid_image_mask_shapes(data_shape: tuple[int, ...]) -> frozenset[tuple[int, ...]]:
-    """Return accepted mask domains for common grayscale/color image layouts."""
-    valid: set[tuple[int, ...]] = {data_shape}
-    if len(data_shape) == 2:
-        valid.add(data_shape)
-    if len(data_shape) == 3:
-        if data_shape[-1] in (3, 4):
-            valid.add(data_shape[:2])
-        else:
-            valid.add(data_shape[1:])
-    if len(data_shape) == 4:
-        if data_shape[-1] in (3, 4):
-            valid.add(data_shape[:3])
-            valid.add(data_shape[1:3])
-        else:
-            valid.add(data_shape[1:])
-            valid.add(data_shape[-2:])
-            valid.add((data_shape[0], *data_shape[-2:]))
-    if len(data_shape) == 5:
-        valid.add(data_shape[:4])
-        valid.add(data_shape[1:4])
-        valid.add((data_shape[0], *data_shape[-3:-1]))
-        valid.add(data_shape[-3:-1])
-    return frozenset(valid)
+@dataclass(frozen=True, slots=True)
+class ImageMaskDomain:
+    """Accepted mask shapes for a concrete grayscale/color image data domain."""
+
+    data_shape: tuple[int, ...]
+
+    def accepts(self, mask_shape: tuple[int, ...]) -> bool:
+        return mask_shape in self.valid_shapes()
+
+    def valid_shapes(self) -> frozenset[tuple[int, ...]]:
+        valid: set[tuple[int, ...]] = {self.data_shape}
+        if len(self.data_shape) == 2:
+            valid.add(self.data_shape)
+        if len(self.data_shape) == 3:
+            if self.data_shape[-1] in (3, 4):
+                valid.add(self.data_shape[:2])
+            else:
+                valid.add(self.data_shape[1:])
+        if len(self.data_shape) == 4:
+            if self.data_shape[-1] in (3, 4):
+                valid.add(self.data_shape[:3])
+                valid.add(self.data_shape[1:3])
+            else:
+                valid.add(self.data_shape[1:])
+                valid.add(self.data_shape[-2:])
+                valid.add((self.data_shape[0], *self.data_shape[-2:]))
+        if len(self.data_shape) == 5:
+            valid.add(self.data_shape[:4])
+            valid.add(self.data_shape[1:4])
+            valid.add((self.data_shape[0], *self.data_shape[-3:-1]))
+            valid.add(self.data_shape[-3:-1])
+        return frozenset(valid)
 
 
 @dataclass(frozen=True, slots=True)
