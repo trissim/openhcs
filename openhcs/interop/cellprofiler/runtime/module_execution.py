@@ -5308,7 +5308,12 @@ class CalculateMathInputPolicy(CellProfilerObjectInputPolicy):
         object_name = _optional_string_kwarg(request.kwargs, object_kwarg)
         count_object_name = count_feature_object_name(feature_name)
         if count_object_name is not None:
-            return float(_object_label_count(request.adapter, count_object_name))
+            return float(
+                ObjectLabelCountAuthority.count_from_adapter(
+                    request.adapter,
+                    count_object_name,
+                )
+            )
         if object_name is None:
             return self.image_operand_value(request.adapter, feature_name)
 
@@ -9103,11 +9108,11 @@ class RelationshipMeasurementRows(CellProfilerMeasurementRows):
         slice_index: int | None = None,
     ) -> int:
         if object_name in self.request.output_values:
-            return _object_label_count_from_value(
+            return ObjectLabelCountAuthority.count_from_value(
                 self.request.output_values[object_name],
                 slice_index=slice_index,
             )
-        return _object_label_count(
+        return ObjectLabelCountAuthority.count_from_adapter(
             self.request.adapter,
             object_name,
             slice_index=slice_index,
@@ -9361,68 +9366,77 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         )
 
 
-def _object_label_count(
-    adapter: CellProfilerRuntimeAdapter,
-    object_name: str,
-    *,
-    slice_index: int | None = None,
-) -> int:
-    return _object_label_count_from_value(
-        adapter.get_objects(object_name),
-        slice_index=slice_index,
-    )
+class ObjectLabelCountAuthority:
+    """Authoritative CellProfiler object-count projection for label payloads."""
 
-
-def _object_label_count_from_value(
-    value: Any,
-    *,
-    slice_index: int | None,
-) -> int:
-    if isinstance(value, ObjectLabelPayload | ObjectLabelSet):
-        labels = value.labels
-    else:
-        labels = value
-    label_array = (
-        _sparse_ijv_array(labels)
-        if isinstance(labels, SparseIJVLabelRows)
-        else np.asarray(labels)
-    )
-    if (
-        isinstance(value, ObjectLabelSet)
-        and value.representation is ObjectLabelRepresentation.SPARSE_IJV
-    ):
-        if label_array.size == 0:
-            return 0
-        sparse_rows = (
-            labels
-            if isinstance(labels, SparseIJVLabelRows)
-            else SparseIJVLabelRows(labels)
+    @classmethod
+    def count_from_adapter(
+        cls,
+        adapter: CellProfilerRuntimeAdapter,
+        object_name: str,
+        *,
+        slice_index: int | None = None,
+    ) -> int:
+        return cls.count_from_value(
+            adapter.get_objects(object_name),
+            slice_index=slice_index,
         )
-        if slice_index is not None:
-            sparse_rows = sparse_rows.slice(slice_index)
-            label_array = sparse_rows.as_array()
+
+    @staticmethod
+    def count_from_value(
+        value: Any,
+        *,
+        slice_index: int | None = None,
+    ) -> int:
+        if isinstance(value, ObjectLabelPayload | ObjectLabelSet):
+            labels = value.labels
+        else:
+            labels = value
+        label_array = (
+            _sparse_ijv_array(labels)
+            if isinstance(labels, SparseIJVLabelRows)
+            else np.asarray(labels)
+        )
+        if (
+            isinstance(value, ObjectLabelSet)
+            and value.representation is ObjectLabelRepresentation.SPARSE_IJV
+        ):
             if label_array.size == 0:
                 return 0
-        return int(np.max(label_array[:, sparse_rows.label_column]))
-    if (
-        isinstance(value, ObjectLabelPayload | ObjectLabelSet)
-        and value.declared_object_count is not None
-        and (slice_index is None or label_array.ndim < 3 or label_array.shape[0] == 1)
-    ):
-        return int(value.declared_object_count)
-    if slice_index is not None and label_array.ndim >= 3:
-        if slice_index < label_array.shape[0]:
-            label_array = label_array[slice_index]
-        elif label_array.shape[0] == 1:
-            label_array = label_array[0]
-        else:
-            raise ValueError(
-                "Object label stack does not contain requested slice "
-                f"{slice_index}; shape={label_array.shape!r}."
+            sparse_rows = (
+                labels
+                if isinstance(labels, SparseIJVLabelRows)
+                else SparseIJVLabelRows(labels)
             )
-    if label_array.size == 0:
-        return 0
-    return int(label_array.max())
+            if slice_index is not None:
+                sparse_rows = sparse_rows.slice(slice_index)
+                label_array = sparse_rows.as_array()
+                if label_array.size == 0:
+                    return 0
+            return int(np.max(label_array[:, sparse_rows.label_column]))
+        if (
+            isinstance(value, ObjectLabelPayload | ObjectLabelSet)
+            and value.declared_object_count is not None
+            and (
+                slice_index is None
+                or label_array.ndim < 3
+                or label_array.shape[0] == 1
+            )
+        ):
+            return int(value.declared_object_count)
+        if slice_index is not None and label_array.ndim >= 3:
+            if slice_index < label_array.shape[0]:
+                label_array = label_array[slice_index]
+            elif label_array.shape[0] == 1:
+                label_array = label_array[0]
+            else:
+                raise ValueError(
+                    "Object label stack does not contain requested slice "
+                    f"{slice_index}; shape={label_array.shape!r}."
+                )
+        if label_array.size == 0:
+            return 0
+        return int(label_array.max())
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
