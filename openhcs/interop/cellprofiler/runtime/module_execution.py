@@ -6826,7 +6826,7 @@ class NumpyCellProfilerImageOutputStrategy(CellProfilerImageOutputContextStrateg
             raise TypeError("Numpy image output strategy requires numpy.ndarray.")
         return with_derived_image_payload_data(
             source_image_payload,
-            _collapse_singleton_stack_output(value),
+            SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(value),
         )
 
 
@@ -8618,7 +8618,7 @@ def _measurement_image_for_labels(
 
 def _image_scope_measurement_payload(image: Any) -> Any:
     """Return one image plane for image-scoped measurement functions."""
-    return _collapse_singleton_stack_output(image)
+    return SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(image)
 
 
 def _measurement_labels(labels: Any) -> Any:
@@ -10119,33 +10119,39 @@ def _callable_accepts_composed_image_payload(func: Callable[..., Any]) -> bool:
     )
 
 
-def _collapse_singleton_stack_output(value: Any) -> Any:
-    metadata = image_payload_metadata(value)
-    mask = image_payload_mask(value)
-    if mask is not None or metadata.has_values:
-        data = image_payload_data(value)
-        collapsed_data = _collapse_singleton_stack_output(data)
-        collapsed = collapsed_data is not data
-        return image_payload_with_context(
-            data=collapsed_data,
-            mask=None if mask is None else _collapse_singleton_mask(mask),
-            metadata=metadata.for_channel(0) if collapsed else metadata,
-        )
-    if isinstance(value, np.ndarray) and value.ndim == 3 and value.shape[0] == 1:
-        return value[0]
-    if is_color_image_stack(value) and value.shape[0] == 1:
-        return value[0]
-    if isinstance(value, tuple):
-        return tuple(_collapse_singleton_stack_output(item) for item in value)
-    return value
+class SingletonStackOutputCollapsePolicy:
+    """Collapse single-plane stack outputs while preserving payload context."""
+
+    def collapse(self, value: Any) -> Any:
+        metadata = image_payload_metadata(value)
+        mask = image_payload_mask(value)
+        if mask is not None or metadata.has_values:
+            data = image_payload_data(value)
+            collapsed_data = self.collapse(data)
+            collapsed = collapsed_data is not data
+            return image_payload_with_context(
+                data=collapsed_data,
+                mask=None if mask is None else self.collapse_mask(mask),
+                metadata=metadata.for_channel(0) if collapsed else metadata,
+            )
+        if isinstance(value, np.ndarray) and value.ndim == 3 and value.shape[0] == 1:
+            return value[0]
+        if is_color_image_stack(value) and value.shape[0] == 1:
+            return value[0]
+        if isinstance(value, tuple):
+            return tuple(self.collapse(item) for item in value)
+        return value
+
+    def collapse_mask(self, mask: Any) -> Any:
+        """Collapse a singleton mask stack in the same domain as image data."""
+        if isinstance(mask, np.ndarray) and mask.ndim == 3 and mask.shape[0] == 1:
+            return mask[0]
+        if isinstance(mask, np.ndarray) and mask.ndim == 4 and mask.shape[0] == 1:
+            return mask[0]
+        return mask
 
 
-def _collapse_singleton_mask(mask: Any) -> Any:
-    if isinstance(mask, np.ndarray) and mask.ndim == 3 and mask.shape[0] == 1:
-        return mask[0]
-    if isinstance(mask, np.ndarray) and mask.ndim == 4 and mask.shape[0] == 1:
-        return mask[0]
-    return mask
+SINGLETON_STACK_OUTPUT_COLLAPSE = SingletonStackOutputCollapsePolicy()
 
 
 def _openhcs_main_flow_output(
@@ -10400,7 +10406,7 @@ def _stack_cellprofiler_slice_outputs(
     memory_type: str,
 ) -> Any:
     normalized_outputs = tuple(
-        _collapse_singleton_stack_output(output) for output in slice_outputs
+        SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(output) for output in slice_outputs
     )
     output_masks = tuple(image_payload_mask(output) for output in normalized_outputs)
     output_data = tuple(image_payload_data(output) for output in normalized_outputs)
@@ -10607,7 +10613,7 @@ class CellProfilerFunctionContractExecutor:
             )
         slice_results = tuple(
             Pure2DSliceIndexProjector.project(
-                _collapse_singleton_stack_output(
+                SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(
                     _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
                         func,
                         (slice_payload,),
