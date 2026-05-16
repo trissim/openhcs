@@ -20,7 +20,6 @@ from typing import Any, ClassVar, TypeVar, get_args, get_origin, get_type_hints
 
 from metaclass_registry import AutoRegisterMeta
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
-from nominal_refactor_advisor.record_algebra import product_record
 import numpy as np
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
@@ -6065,13 +6064,11 @@ class ProducedArtifactImageMeasurementSourceBase(CellProfilerImageMeasurementSou
         return self
 
 
-ProducedArtifactImageMeasurementSource = product_record(
-    "ProducedArtifactImageMeasurementSource",
-    "artifact_spec: ArtifactSpec",
-    bases=(ProducedArtifactImageMeasurementSourceBase,),
-    doc="Measurement source owned by a produced image artifact.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class ProducedArtifactImageMeasurementSource(ProducedArtifactImageMeasurementSourceBase):
+    """Measurement source owned by a produced image artifact."""
+
+    artifact_spec: ArtifactSpec
 
 
 class UnqualifiedRuntimeImageMeasurementSource(CellProfilerImageMeasurementSource):
