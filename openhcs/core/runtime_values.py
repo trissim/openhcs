@@ -1900,40 +1900,39 @@ class ObjectLabelDenseDataStrategy(
         """Return the dense label data represented by payload."""
 
 
-class ObjectLabelPayloadDenseDataStrategy(ObjectLabelDenseDataStrategy):
+class ObjectLabelContainerDenseDataStrategy(ObjectLabelDenseDataStrategy):
+    """Dense-label extractor for payloads with label-container semantics."""
+
+    value_type: ClassVar[type[object] | None] = None
+
+    def data(self, payload: object) -> object:
+        value_type = type(self).value_type
+        if value_type is None:
+            raise TypeError(
+                f"{type(self).__name__} must declare a concrete value_type."
+            )
+        if not isinstance(payload, value_type):
+            raise TypeError(
+                f"{type(self).__name__} requires {value_type.__name__}, "
+                f"got {type(payload).__name__}."
+            )
+        if isinstance(payload.labels, SparseIJVLabelRows):
+            return payload.labels.to_dense(
+                source_spatial_shape_yx=payload.source_spatial_shape_yx,
+            )
+        return payload.labels
+
+
+class ObjectLabelPayloadDenseDataStrategy(ObjectLabelContainerDenseDataStrategy):
     """Extract dense labels from serialized object-label payloads."""
 
     value_type = ObjectLabelPayload
 
-    def data(self, payload: object) -> object:
-        if not isinstance(payload, ObjectLabelPayload):
-            raise TypeError(
-                "ObjectLabelPayloadDenseDataStrategy requires ObjectLabelPayload, "
-                f"got {type(payload).__name__}."
-            )
-        if isinstance(payload.labels, SparseIJVLabelRows):
-            return payload.labels.to_dense(
-                source_spatial_shape_yx=payload.source_spatial_shape_yx,
-            )
-        return payload.labels
 
-
-class ObjectLabelSetDenseDataStrategy(ObjectLabelDenseDataStrategy):
+class ObjectLabelSetDenseDataStrategy(ObjectLabelContainerDenseDataStrategy):
     """Extract dense labels from native object-label runtime values."""
 
     value_type = ObjectLabelSet
-
-    def data(self, payload: object) -> object:
-        if not isinstance(payload, ObjectLabelSet):
-            raise TypeError(
-                "ObjectLabelSetDenseDataStrategy requires ObjectLabelSet, "
-                f"got {type(payload).__name__}."
-            )
-        if isinstance(payload.labels, SparseIJVLabelRows):
-            return payload.labels.to_dense(
-                source_spatial_shape_yx=payload.source_spatial_shape_yx,
-            )
-        return payload.labels
 
 
 class RawObjectLabelDenseDataStrategy(ObjectLabelDenseDataStrategy):
