@@ -4128,17 +4128,20 @@ _PAYLOAD_VALIDATORS = _payload_validators(
 )
 
 
-def _required_mapping_value(
-    data: Mapping[str, Any],
-    name: str,
-    *,
-    aliases: tuple[str, ...] = (),
-) -> Any:
-    for key in (name, *aliases):
-        if key in data:
-            return data[key]
-    names = ", ".join(repr(key) for key in (name, *aliases))
-    raise KeyError(f"Missing required mapping field {names}.")
+@dataclass(frozen=True, slots=True)
+class RequiredMappingField:
+    """Resolve a required canonical mapping field with legacy aliases."""
+
+    data: Mapping[str, Any]
+    name: str
+    aliases: tuple[str, ...] = ()
+
+    def value(self) -> Any:
+        for key in (self.name, *self.aliases):
+            if key in self.data:
+                return self.data[key]
+        names = ", ".join(repr(key) for key in (self.name, *self.aliases))
+        raise KeyError(f"Missing required mapping field {names}.")
 
 
 def _required_int(
@@ -4147,7 +4150,7 @@ def _required_int(
     *,
     aliases: tuple[str, ...] = (),
 ) -> int:
-    return int(_required_mapping_value(data, name, aliases=aliases))
+    return int(RequiredMappingField(data, name, aliases).value())
 
 
 def _required_float(
@@ -4156,7 +4159,7 @@ def _required_float(
     *,
     aliases: tuple[str, ...] = (),
 ) -> float:
-    return float(_required_mapping_value(data, name, aliases=aliases))
+    return float(RequiredMappingField(data, name, aliases).value())
 
 
 def _optional_int(
