@@ -3303,7 +3303,7 @@ class MeasurementTable(NativeRuntimeValue):
         subject_resolver = MeasurementTableSubjectResolver(self)
         return RuntimeValueSchema(
             kind=ArtifactKind.MEASUREMENTS,
-            fields=self.fields or _infer_fields(payload),
+            fields=self.fields or RuntimePayloadFieldInference(payload).fields(),
             measurement_subject=self.subject,
             object_name=subject_resolver.object_name,
             source_image_name=subject_resolver.source_image_name,
@@ -3782,7 +3782,7 @@ class ObjectRelationship(NativeRuntimeValue):
     def runtime_schema(self, payload: Any) -> RuntimeValueSchema:
         return RuntimeValueSchema(
             kind=ArtifactKind.RELATIONSHIPS,
-            fields=_infer_fields(payload),
+            fields=RuntimePayloadFieldInference(payload).fields(),
             relationship=self.semantics,
         )
 
@@ -4294,19 +4294,25 @@ class MeasurementTableSubjectResolver:
         return None
 
 
-def _infer_fields(rows: Any) -> tuple[FieldSpec, ...]:
-    _ensure_runtime_payload_integrations_registered()
-    if isinstance(rows, ColumnarRows):
-        return tuple(FieldSpec(str(column)) for column in rows.columns)
-    if isinstance(rows, Mapping):
-        return tuple(FieldSpec(str(column)) for column in rows)
-    if (
-        isinstance(rows, Sequence)
-        and rows
-        and isinstance(rows[0], Mapping)
-    ):
-        return tuple(FieldSpec(str(column)) for column in rows[0])
-    return ()
+@dataclass(frozen=True, slots=True)
+class RuntimePayloadFieldInference:
+    """Infer tabular field declarations from runtime payload row shapes."""
+
+    rows: Any
+
+    def fields(self) -> tuple[FieldSpec, ...]:
+        _ensure_runtime_payload_integrations_registered()
+        if isinstance(self.rows, ColumnarRows):
+            return tuple(FieldSpec(str(column)) for column in self.rows.columns)
+        if isinstance(self.rows, Mapping):
+            return tuple(FieldSpec(str(column)) for column in self.rows)
+        if (
+            isinstance(self.rows, Sequence)
+            and self.rows
+            and isinstance(self.rows[0], Mapping)
+        ):
+            return tuple(FieldSpec(str(column)) for column in self.rows[0])
+        return ()
 
 
 def _ensure_runtime_payload_integrations_registered() -> None:
