@@ -2692,7 +2692,7 @@ class NaturalImageExecutionStrategy(CellProfilerImageExecutionStrategy):
     ) -> Any:
         function_name = CallableContract.from_callable(func).function_name
         contract_started_at = time.perf_counter()
-        contract = _processing_contract_for_callable(func)
+        contract = CellProfilerProcessingContractAuthority.for_callable(func)
         _log_module_profile(
             "cp_natural_processing_contract",
             time.perf_counter() - contract_started_at,
@@ -2702,7 +2702,7 @@ class NaturalImageExecutionStrategy(CellProfilerImageExecutionStrategy):
         execute_started_at = time.perf_counter()
         if (
             contract is ProcessingContract.PURE_2D
-            and _slice_count_from_pure_2d_kwargs(kwargs) is not None
+            and Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs) is not None
         ):
             result = executor._execute_pure_2d(func, image, **kwargs)
         else:
@@ -10718,7 +10718,7 @@ class CellProfilerFunctionContractExecutor:
                 RuntimeSliceProjection.first_axis_slice_count_from_values(
                     kwargs.values()
                 )
-                or _slice_count_from_pure_2d_kwargs(kwargs)
+                or Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs)
             )
             if slice_count is None:
                 return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
@@ -10728,7 +10728,7 @@ class CellProfilerFunctionContractExecutor:
                 )
             slices_2d = tuple(image for _ in range(slice_count))
         elif is_color_image_slice(image_data):
-            slice_count = _slice_count_from_pure_2d_kwargs(kwargs)
+            slice_count = Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs)
             slices_2d = tuple(image for _ in range(slice_count or 1))
         else:
             slices_2d = _unstack_cellprofiler_image_slices(image, memory_type)
@@ -10884,32 +10884,36 @@ def _execute_runtime_batch_invocation(
     )
 
 
-def _processing_contract_for_callable(func: Callable[..., Any]) -> ProcessingContract:
-    cached = _PROCESSING_CONTRACT_CACHE.get(func)
-    if cached is not None:
-        return cached
-    contract = CallableContract.from_callable(func)
-    if isinstance(contract.processing_contract, ProcessingContract):
-        return _cache_processing_contract(func, contract.processing_contract)
-    absorbed_contract = coerce_registered_absorbed_processing_contract(
-        contract.function_name,
-        func,
-    )
-    if absorbed_contract is not None:
-        return _cache_processing_contract(func, absorbed_contract)
-    raise TypeError(
-        f"CellProfiler executable {contract.function_name!r} has no nominal "
-        "__processing_contract__ metadata. Coerce the absorbed catalog contract "
-        "before runtime execution."
-    )
+class CellProfilerProcessingContractAuthority:
+    """Resolve executable processing contracts for CellProfiler runtime calls."""
 
+    @classmethod
+    def for_callable(cls, func: Callable[..., Any]) -> ProcessingContract:
+        cached = _PROCESSING_CONTRACT_CACHE.get(func)
+        if cached is not None:
+            return cached
+        contract = CallableContract.from_callable(func)
+        if isinstance(contract.processing_contract, ProcessingContract):
+            return cls.cache(func, contract.processing_contract)
+        absorbed_contract = coerce_registered_absorbed_processing_contract(
+            contract.function_name,
+            func,
+        )
+        if absorbed_contract is not None:
+            return cls.cache(func, absorbed_contract)
+        raise TypeError(
+            f"CellProfiler executable {contract.function_name!r} has no nominal "
+            "__processing_contract__ metadata. Coerce the absorbed catalog contract "
+            "before runtime execution."
+        )
 
-def _cache_processing_contract(
-    func: Callable[..., Any],
-    contract: ProcessingContract,
-) -> ProcessingContract:
-    _PROCESSING_CONTRACT_CACHE[func] = contract
-    return contract
+    @staticmethod
+    def cache(
+        func: Callable[..., Any],
+        contract: ProcessingContract,
+    ) -> ProcessingContract:
+        _PROCESSING_CONTRACT_CACHE[func] = contract
+        return contract
 
 
 def _slice_pure_2d_kwargs(
@@ -10931,16 +10935,17 @@ def _sparse_ijv_array(value: Any) -> np.ndarray:
     return np.asarray(value.as_array(), dtype=np.int32)
 
 
-def _slice_count_from_pure_2d_kwargs(
-    kwargs: Mapping[str, Any],
-) -> int | None:
-    if _runtime_profile_enabled():
-        _log_pure_2d_slice_count_candidates(kwargs)
+class Pure2DSliceCountPolicy:
+    """Resolve runtime slice counts for PURE_2D CellProfiler execution."""
 
-    return RuntimeSliceProjection.slice_count_from_kwargs(
-        kwargs,
-        sequence_kwargs=_OBJECT_ROW_SEQUENCE_KWARGS,
-    )
+    @staticmethod
+    def slice_count_from_kwargs(kwargs: Mapping[str, Any]) -> int | None:
+        if _runtime_profile_enabled():
+            _log_pure_2d_slice_count_candidates(kwargs)
+        return RuntimeSliceProjection.slice_count_from_kwargs(
+            kwargs,
+            sequence_kwargs=_OBJECT_ROW_SEQUENCE_KWARGS,
+        )
 
 
 def _log_pure_2d_slice_count_candidates(kwargs: Mapping[str, Any]) -> None:
@@ -10984,9 +10989,12 @@ def _should_slice_flexible_object_invocation(
 ) -> bool:
     if not object_inputs:
         return False
-    if _processing_contract_for_callable(func) is not ProcessingContract.FLEXIBLE:
+    if (
+        CellProfilerProcessingContractAuthority.for_callable(func)
+        is not ProcessingContract.FLEXIBLE
+    ):
         return False
-    slice_count = _slice_count_from_pure_2d_kwargs(kwargs)
+    slice_count = Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs)
     return slice_count is not None and slice_count > 1
 
 

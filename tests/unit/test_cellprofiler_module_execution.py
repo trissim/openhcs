@@ -58,6 +58,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerOutputValueResolution,
     CellProfilerOutputRecordRequest,
     CellProfilerOutputRecorder,
+    CellProfilerProcessingContractAuthority,
     CellProfilerPure2DOutputAggregator,
     CallableInvocationKwargSpec,
     CellProfilerGlobalImageNumberProjection,
@@ -67,7 +68,6 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     measurement_table_rows,
     OBJECT_ONLY_REFERENCE_IMAGE,
     _output_values_by_kind,
-    _processing_contract_for_callable,
     _unstack_cellprofiler_image_slices,
 )
 from openhcs.processing.backends.cellprofiler.structuring_elements import StructuringElement
@@ -5637,7 +5637,7 @@ def test_cellprofiler_contract_executor_rejects_uncoerced_unknown_absorbed_contr
     )
 
     with pytest.raises(TypeError, match="no nominal __processing_contract__"):
-        _processing_contract_for_callable(two_dimensional_only)
+        CellProfilerProcessingContractAuthority.for_callable(two_dimensional_only)
 
 
 def test_measurement_image_for_labels_preserves_source_stack_for_2d_labels() -> None:
