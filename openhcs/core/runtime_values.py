@@ -14,6 +14,11 @@ from metaclass_registry import AutoRegisterMeta
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 
+try:
+    from polystore.virtual_workspace import VirtualWorkspaceBackend
+except ImportError:  # pragma: no cover - optional PolyStore backend
+    VirtualWorkspaceBackend = None  # type: ignore[assignment]
+
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import (
     ArtifactKey,
@@ -814,25 +819,51 @@ def resolve_image_payload_source_path(
     filemanager: Any | None = None,
 ) -> Path | None:
     """Resolve a backend-specific image path to a physical file when possible."""
-    if read_backend is not None and filemanager is not None:
-        backend = getattr(filemanager, "registry", {}).get(read_backend)
-        resolver = getattr(backend, "resolve_path", None) or getattr(
+    return ImagePayloadSourcePathResolver(
+        source_path=source_path,
+        read_backend=read_backend,
+        filemanager=filemanager,
+    ).resolve()
+
+
+@dataclass(frozen=True, slots=True)
+class ImagePayloadSourcePathResolver:
+    """Resolve physical image paths from optional backend-specific I/O context."""
+
+    source_path: str
+    read_backend: str | None = None
+    filemanager: Any | None = None
+
+    def resolve(self) -> Path | None:
+        if self.read_backend is not None and self.filemanager is not None:
+            resolved_backend_path = self.resolve_backend_path()
+            if resolved_backend_path is not None:
+                return resolved_backend_path
+        path = Path(self.source_path)
+        return path if path.exists() else None
+
+    def resolve_backend_path(self) -> Path | None:
+        try:
+            registry = self.filemanager.registry
+        except AttributeError:
+            return None
+        if not isinstance(registry, Mapping):
+            return None
+        backend = registry.get(self.read_backend)
+        if VirtualWorkspaceBackend is not None and isinstance(
             backend,
-            "_resolve_path",
-            None,
-        )
-        if callable(resolver):
+            VirtualWorkspaceBackend,
+        ):
             try:
-                return Path(resolver(source_path))
+                return Path(backend._resolve_path(self.source_path))
             except Exception:
                 logger.debug(
                     "Could not resolve image source path %s via backend %s.",
-                    source_path,
-                    read_backend,
+                    self.source_path,
+                    self.read_backend,
                     exc_info=True,
                 )
-    path = Path(source_path)
-    return path if path.exists() else None
+        return None
 
 
 def image_file_source_dtype(path: Path | None) -> Any | None:
