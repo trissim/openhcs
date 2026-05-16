@@ -7805,12 +7805,10 @@ class ObjectMeasurementRowCompletionSchema:
     ) -> tuple[int, ...]:
         axis_payload = self.label_payload_for_axis(label_payload, axis_key=axis_key)
         label_ids = dense_object_label_id_domain(axis_payload)
-        if object_identity is MeasurementObjectRowIdentity.LABEL_ID:
-            return label_ids
-        if object_identity is MeasurementObjectRowIdentity.ROW_ORDINAL:
-            return tuple(range(1, len(label_ids) + 1))
-        raise ValueError(
-            f"Unsupported measurement object row identity: {object_identity}."
+        return (
+            MeasurementObjectRowIdentityProjectionStrategy
+            .for_enum_member(object_identity)
+            .object_ids_for_label_ids(label_ids)
         )
 
     def label_payload_for_axis(
@@ -8052,6 +8050,10 @@ class MeasurementObjectRowIdentityProjectionStrategy(
     ) -> ObjectMeasurementRowIdentityProjectionResult:
         """Return rows with the requested object-row identity."""
 
+    @abstractmethod
+    def object_ids_for_label_ids(self, label_ids: tuple[int, ...]) -> tuple[int, ...]:
+        """Return required exported object IDs for a source label-ID domain."""
+
 
 class LabelIdMeasurementObjectRowIdentityProjectionStrategy(
     MeasurementObjectRowIdentityProjectionStrategy
@@ -8059,6 +8061,9 @@ class LabelIdMeasurementObjectRowIdentityProjectionStrategy(
     """Preserve label IDs as exported object-row identities."""
 
     object_identity = MeasurementObjectRowIdentity.LABEL_ID
+
+    def object_ids_for_label_ids(self, label_ids: tuple[int, ...]) -> tuple[int, ...]:
+        return label_ids
 
     def project_rows(
         self,
@@ -8087,6 +8092,9 @@ class RowOrdinalMeasurementObjectRowIdentityProjectionStrategy(
     """Project measured objects into CP's compact row-ordinal identity."""
 
     object_identity = MeasurementObjectRowIdentity.ROW_ORDINAL
+
+    def object_ids_for_label_ids(self, label_ids: tuple[int, ...]) -> tuple[int, ...]:
+        return tuple(range(1, len(label_ids) + 1))
 
     def project_rows(
         self,
