@@ -249,6 +249,15 @@ _CELLPROFILER_EXECUTION_MODE_OVERRIDE_KWARG = "_cellprofiler_execution_mode_over
 logger = logging.getLogger(__name__)
 
 RequiredAttrT = TypeVar("RequiredAttrT")
+ObjectMeasurementIdsByAxis = dict[tuple[Any, ...], tuple[int, ...]]
+ProjectedMeasurementRows = Sequence[Mapping[str, Any]] | ColumnarRows
+ObjectLocationFeatureValues = tuple[
+    tuple[ObjectLocationMeasurementFeature, float],
+    ...,
+]
+RelationshipMeasurementRow = dict[str, int | str | float]
+RelationshipMeasurementRowList = list[RelationshipMeasurementRow]
+RelationshipDistanceRowTuple = tuple[RelationshipMeasurementRow, ...]
 _PROCESSING_CONTRACT_CACHE: dict[Callable[..., Any], ProcessingContract] = {}
 _CELLPROFILER_RUNTIME_CALLABLE_POLICY = RuntimeCallablePolicy(
     callable_view=RuntimeCallableView.RAW,
@@ -4246,7 +4255,7 @@ class CellProfilerObjectMeasurementRowPolicy(
         object_id_field: str,
         axis_fields: Sequence[str],
         axis_keys: Sequence[tuple[Any, ...]],
-    ) -> dict[tuple[Any, ...], tuple[int, ...]]:
+    ) -> ObjectMeasurementIdsByAxis:
         """Return required object row IDs for every measurement axis."""
         return {
             axis_key: self.required_object_ids_for_axis(
@@ -4444,7 +4453,7 @@ class CompactMeasuredObjectMeasurementRowPolicy(DeclaredObjectMeasurementRowPoli
         object_id_field: str,
         axis_fields: Sequence[str],
         axis_keys: Sequence[tuple[Any, ...]],
-    ) -> dict[tuple[Any, ...], tuple[int, ...]]:
+    ) -> ObjectMeasurementIdsByAxis:
         """Compact CP rows are dense over emitted row ordinals per axis."""
         del label_payload, object_identity, object_id_field, axis_fields
         max_object_id_by_axis = {axis_key: 0 for axis_key in axis_keys}
@@ -4495,7 +4504,7 @@ class DeclaredDomainCompactMeasuredObjectMeasurementRowPolicy(
         object_id_field: str,
         axis_fields: Sequence[str],
         axis_keys: Sequence[tuple[Any, ...]],
-    ) -> dict[tuple[Any, ...], tuple[int, ...]]:
+    ) -> ObjectMeasurementIdsByAxis:
         return CellProfilerObjectMeasurementRowPolicy.required_object_ids_by_axis(
             self,
             label_payload=label_payload,
@@ -7428,7 +7437,7 @@ class ObjectLocationCenterValues:
     def feature_values(
         self,
         object_index: int,
-    ) -> tuple[tuple[ObjectLocationMeasurementFeature, float], ...]:
+    ) -> ObjectLocationFeatureValues:
         return (
             (
                 ObjectLocationMeasurementFeature.CENTER_X,
@@ -7476,7 +7485,7 @@ class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
         *,
         object_label: int,
         slice_index: int,
-        feature_values: tuple[tuple[ObjectLocationMeasurementFeature, float], ...],
+        feature_values: ObjectLocationFeatureValues,
     ) -> tuple[dict[str, Any], ...]:
         return tuple(
             {
@@ -8174,7 +8183,7 @@ def _record_measurements(
         kwargs["object_name"] = object_name
     projection_started_at = time.perf_counter()
     projected_rows: Sequence[Any] | ColumnarRows
-    projected_row_mappings: Sequence[Mapping[str, Any]] | ColumnarRows
+    projected_row_mappings: ProjectedMeasurementRows
     projected_rows, projected_row_mappings = CellProfilerGlobalImageNumberProjection(
         adapter=adapter,
         rows=rows,
@@ -8218,7 +8227,7 @@ def _record_measurements(
 
 def _measurement_fields_covering_mappings(
     fields: tuple[FieldSpec, ...],
-    rows: Sequence[Mapping[str, Any]] | ColumnarRows,
+    rows: ProjectedMeasurementRows,
 ) -> tuple[FieldSpec, ...]:
     """Preserve declared table order while retaining projected semantic fields."""
     if not fields:
@@ -8424,7 +8433,7 @@ class CellProfilerGlobalImageNumberProjection:
 
     def apply(
         self,
-    ) -> tuple[Sequence[Any] | ColumnarRows, Sequence[Mapping[str, Any]] | ColumnarRows]:
+    ) -> tuple[Sequence[Any] | ColumnarRows, ProjectedMeasurementRows]:
         if isinstance(self.rows, ColumnarRows):
             return self._columnar_rows()
         return self._row_sequence()
@@ -9213,8 +9222,8 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
 
     module_name = "RelateObjects"
 
-    def rows(self) -> list[dict[str, int | str | float]]:
-        rows: list[dict[str, int | str | float]] = list(super().rows())
+    def rows(self) -> RelationshipMeasurementRowList:
+        rows: RelationshipMeasurementRowList = list(super().rows())
         endpoint_resolver = RelationshipEndpointResolver(self.request)
         for relationship_spec, payload in self.output_entries():
             parent_spec, child_spec = endpoint_resolver.endpoint_specs(
@@ -9247,12 +9256,12 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         parent_object_name: str,
         child_object_name: str,
         payload: ParentChildRelationshipPayload,
-    ) -> tuple[dict[str, int | str | float], ...]:
+    ) -> RelationshipDistanceRowTuple:
         if not self.distance_measurements_declared():
             return ()
         sliced_pairs = self.payload_pairs_by_slice(payload)
         if sliced_pairs is not None:
-            rows: list[dict[str, int | str | float]] = []
+            rows: RelationshipMeasurementRowList = []
             for slice_index, pairs in sliced_pairs:
                 rows.extend(
                     self.distance_rows_for_pairs(
@@ -9291,7 +9300,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         child_object_name: str,
         pairs: tuple[tuple[int, int], ...],
         slice_index: int | None,
-    ) -> tuple[dict[str, int | str | float], ...]:
+    ) -> RelationshipDistanceRowTuple:
         if not pairs:
             return ()
         parent_labels = self.object_labels(parent_object_name, slice_index=slice_index)
