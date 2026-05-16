@@ -434,19 +434,6 @@ def _log_module_profile(label: str, seconds: float, **fields: Any) -> None:
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
-def _profile_payload_fields(prefix: str, value: Any) -> dict[str, Any]:
-    """Return cheap payload shape/size fields for runtime profiling."""
-    try:
-        data = image_payload_data(value)
-    except Exception:
-        data = value
-    return {
-        f"{prefix}_type": type(data).__name__,
-        f"{prefix}_shape": getattr(data, "shape", None),
-        f"{prefix}_nbytes": getattr(data, "nbytes", None),
-    }
-
-
 def _cellprofiler_image_payload(payload: Any) -> Any:
     """Return payload in CellProfiler's float image intensity domain."""
     return normalize_image_payload_intensity(payload, dtype=np.float32)
@@ -848,6 +835,18 @@ class CellProfilerModuleExecutor:
     def image_outputs(self) -> tuple[ArtifactSpec, ...]:
         return ArtifactSpecCollection(self.outputs).of_kind(ArtifactKind.IMAGE)
 
+    def profile_payload_fields(self, prefix: str, value: Any) -> dict[str, Any]:
+        """Return cheap payload shape/size fields for this module's runtime profile."""
+        try:
+            data = image_payload_data(value)
+        except Exception:
+            data = value
+        return {
+            f"{prefix}_type": type(data).__name__,
+            f"{prefix}_shape": getattr(data, "shape", None),
+            f"{prefix}_nbytes": getattr(data, "nbytes", None),
+        }
+
     def prepare(self, func: Callable[..., Any]) -> None:
         """Resolve nominal policies used by this executor before timed execution."""
         prepare_cellprofiler_runtime_adapter()
@@ -995,8 +994,8 @@ class CellProfilerModuleExecutor:
             time.perf_counter() - execute_started_at,
             module=self.module_name,
             function=function_name,
-            **_profile_payload_fields("input", invocation.image),
-            **_profile_payload_fields("output", raw_output),
+            **self.profile_payload_fields("input", invocation.image),
+            **self.profile_payload_fields("output", raw_output),
         )
         split_started_at = time.perf_counter()
         main_output, artifact_values = _split_cellprofiler_output(raw_output)
@@ -2113,7 +2112,7 @@ class CellProfilerModuleExecutor:
                 function=function_name,
                 artifact=spec.name,
                 kind=spec.kind.value,
-                **_profile_payload_fields(
+                **self.profile_payload_fields(
                     "value",
                     output_values.recorded_values[spec.name],
                 ),
