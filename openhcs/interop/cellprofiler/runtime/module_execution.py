@@ -3964,7 +3964,7 @@ class ZeroWithinPositiveExtentMissingObjectMeasurementValueStrategy(
     @staticmethod
     def positive_label_extent(label_payload: Any) -> int:
         """Return the largest positive label ID present in a label payload."""
-        labels = np.asarray(_label_payload_final(label_payload))
+        labels = np.asarray(LABEL_PAYLOAD_FINAL.value(label_payload))
         if labels.size == 0:
             return 0
         positive_labels = labels[labels > 0]
@@ -4864,10 +4864,10 @@ class MeasureObjectNeighborsInputPolicy(CellProfilerObjectInputPolicy):
         same_objects = measured == neighbor
 
         return {
-            "labels": _label_payload_final(measured_payload),
+            "labels": LABEL_PAYLOAD_FINAL.value(measured_payload),
             "small_removed_labels": _label_payload_small_removed(measured_payload),
             "neighbor_labels": (
-                None if same_objects else _label_payload_final(neighbor_payload)
+                None if same_objects else LABEL_PAYLOAD_FINAL.value(neighbor_payload)
             ),
             "small_removed_neighbor_labels": (
                 None if same_objects else _label_payload_small_removed(neighbor_payload)
@@ -7497,7 +7497,7 @@ class ObjectLocationMeasurementRows(CellProfilerMeasurementRows):
         )
 
     def label_planes(self) -> tuple[np.ndarray, ...]:
-        label_array = np.asarray(_label_payload_final(self.label_payload))
+        label_array = np.asarray(LABEL_PAYLOAD_FINAL.value(self.label_payload))
         if label_array.ndim <= 2:
             return (label_array,)
         return tuple(label_array[index] for index in range(label_array.shape[0]))
@@ -7737,7 +7737,7 @@ class ObjectMeasurementRowIdentityProjectionRequest:
             return ((),)
         if not projection.rows:
             return ()
-        labels = np.asarray(_label_payload_final(label_payload))
+        labels = np.asarray(LABEL_PAYLOAD_FINAL.value(label_payload))
         if labels.ndim < 3 and tuple(self.axis_fields) == ("slice_index",):
             return (projection.row_keys[0][1],)
         return projection.axis_keys
@@ -7825,7 +7825,7 @@ class ObjectMeasurementRowCompletionSchema:
         if slice_axis_position >= len(axis_key):
             return label_payload
         slice_index = int(axis_key[slice_axis_position])
-        labels = np.asarray(_label_payload_final(label_payload))
+        labels = np.asarray(LABEL_PAYLOAD_FINAL.value(label_payload))
         if labels.ndim < 3:
             return label_payload
         if slice_index < 0 or slice_index >= labels.shape[0]:
@@ -8712,7 +8712,7 @@ def _measurement_labels_for_measurement_image(
     adapter: CellProfilerRuntimeAdapter | None = None,
 ) -> Any:
     """Resolve object labels into the semantic source plane for a measurement image."""
-    labels = _label_payload_final(label_payload)
+    labels = LABEL_PAYLOAD_FINAL.value(label_payload)
     if not isinstance(label_payload, ObjectLabelSet):
         return MeasurementLabelSourceAlignmentStrategy.align(
             measurement_image.payload,
@@ -8757,15 +8757,21 @@ def _collapse_repeated_label_stack_for_image(image: Any, labels: Any) -> Any:
     return labels
 
 
-def _label_payload_final(payload: Any) -> Any:
-    """Return the final label plane from a runtime label payload."""
-    if isinstance(payload, ObjectLabelSet):
-        if payload.representation is ObjectLabelRepresentation.SPARSE_IJV:
-            return payload
-        payload = payload.runtime_payload()
-    if isinstance(payload, ObjectLabelPayload):
-        payload = payload.labels
-    return collapse_singleton_object_label_stack(payload)
+class LabelPayloadFinalProjection:
+    """Project runtime object-label payloads to their final label values."""
+
+    def value(self, payload: Any) -> Any:
+        """Return the final label plane from a runtime label payload."""
+        if isinstance(payload, ObjectLabelSet):
+            if payload.representation is ObjectLabelRepresentation.SPARSE_IJV:
+                return payload
+            payload = payload.runtime_payload()
+        if isinstance(payload, ObjectLabelPayload):
+            payload = payload.labels
+        return collapse_singleton_object_label_stack(payload)
+
+
+LABEL_PAYLOAD_FINAL = LabelPayloadFinalProjection()
 
 
 def _label_payload_small_removed(payload: Any) -> Any | None:
@@ -9349,7 +9355,7 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
         value = self.request.output_values.get(object_name)
         if value is None:
             value = self.request.adapter.get_objects(object_name)
-        labels = _label_payload_final(value)
+        labels = LABEL_PAYLOAD_FINAL.value(value)
         return RuntimeSliceProjection.object_label_endpoint(
             labels,
             slice_index=slice_index,
