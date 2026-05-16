@@ -1118,6 +1118,7 @@ class CellProfilerModuleExecutor:
         **kwargs: Any,
     ) -> Any:
         function_name = CallableContract.from_callable(func).function_name
+        profiler = CellProfilerRuntimeProfiler(self.module_name, function_name)
         object_inputs = self.object_input_specs
         measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(
             ArtifactKind.MEASUREMENTS
@@ -1140,11 +1141,9 @@ class CellProfilerModuleExecutor:
             current_image,
             image_request,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_measurement_images",
             time.perf_counter() - measurement_images_started_at,
-            module=self.module_name,
-            function=function_name,
             images=len(measurement_images),
             objects=len(object_inputs),
         )
@@ -1155,11 +1154,9 @@ class CellProfilerModuleExecutor:
             kwargs,
             measurement_target_scope,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_dual_scope_rows",
             time.perf_counter() - dual_scope_started_at,
-            module=self.module_name,
-            function=function_name,
             rows=len(image_measurement_rows),
         )
         combined_rows.extend(image_measurement_rows)
@@ -1515,41 +1512,29 @@ class CellProfilerModuleExecutor:
                     invocation=invocation,
                 )
 
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_label_payload",
             label_payload_seconds,
-            module=self.module_name,
-            function=function_name,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_label_align",
             label_align_seconds,
-            module=self.module_name,
-            function=function_name,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_contract_execute",
             contract_execute_seconds,
-            module=self.module_name,
-            function=function_name,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_split_output",
             split_seconds,
-            module=self.module_name,
-            function=function_name,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_complete_rows",
             complete_rows_seconds,
-            module=self.module_name,
-            function=function_name,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_annotate_rows",
             annotate_seconds,
-            module=self.module_name,
-            function=function_name,
             rows=len(combined_rows),
         )
 
@@ -1619,11 +1604,9 @@ class CellProfilerModuleExecutor:
                     source_image_name=combined_source_image_name,
                 )
             )
-        _log_module_profile(
+        profiler.record(
             "cp_per_object_record_measurements",
             time.perf_counter() - record_started_at,
-            module=self.module_name,
-            function=function_name,
             rows=sum(len(rows) for rows in columnar_rows) + len(combined_rows),
         )
         return input_image
@@ -1634,8 +1617,9 @@ class CellProfilerModuleExecutor:
         measurement_images: tuple["CellProfilerMeasurementImage", ...],
         kwargs: Mapping[str, Any],
         target_scope: CellProfilerMeasurementTargetScope,
-    ) -> list[Any]:
+        ) -> list[Any]:
         function_name = CallableContract.from_callable(object_func).function_name
+        profiler = CellProfilerRuntimeProfiler(self.module_name, function_name)
         if target_scope is not CellProfilerMeasurementTargetScope.BOTH:
             return []
         policy = CellProfilerDualScopeMeasurementPolicy.for_module(self.module_name)
@@ -1673,17 +1657,13 @@ class CellProfilerModuleExecutor:
                 ).annotate_rows(_measurement_rows_from_output(artifact_values))
             )
             split_rows_seconds += time.perf_counter() - split_rows_started_at
-        _log_module_profile(
+        profiler.record(
             "cp_dual_scope_contract_execute",
             contract_execute_seconds,
-            module=self.module_name,
-            function=function_name,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_dual_scope_split_rows",
             split_rows_seconds,
-            module=self.module_name,
-            function=function_name,
             rows=len(rows),
         )
         return rows
@@ -1698,6 +1678,7 @@ class CellProfilerModuleExecutor:
         **kwargs: Any,
     ) -> Any:
         function_name = CallableContract.from_callable(func).function_name
+        profiler = CellProfilerRuntimeProfiler(self.module_name, function_name)
         measurement_outputs = ArtifactSpecCollection(self.outputs).of_kind(
             ArtifactKind.MEASUREMENTS
         )
@@ -1720,11 +1701,9 @@ class CellProfilerModuleExecutor:
                 current_image,
             )
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_image_measurement_images",
             time.perf_counter() - measurement_images_started_at,
-            module=self.module_name,
-            function=function_name,
             images=len(measurement_images),
         )
         kwargs_started_at = time.perf_counter()
@@ -1740,11 +1719,9 @@ class CellProfilerModuleExecutor:
         coerced_kwargs = CallableInvocationKwargSpec.from_callable(
             func
         ).coerce_kwargs(runtime_kwargs)
-        _log_module_profile(
+        profiler.record(
             "cp_per_image_prepare_kwargs",
             time.perf_counter() - kwargs_started_at,
-            module=self.module_name,
-            function=function_name,
         )
         row_source_names_required = _row_source_names_required(measurement_images)
         contract_execute_seconds = 0.0
@@ -1811,17 +1788,13 @@ class CellProfilerModuleExecutor:
             )
             split_rows_seconds += time.perf_counter() - split_rows_started_at
 
-        _log_module_profile(
+        profiler.record(
             "cp_per_image_contract_execute",
             contract_execute_seconds,
-            module=self.module_name,
-            function=function_name,
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_image_split_rows",
             split_rows_seconds,
-            module=self.module_name,
-            function=function_name,
             rows=len(combined_rows),
         )
 
@@ -1854,11 +1827,9 @@ class CellProfilerModuleExecutor:
                 ),
             ),
         )
-        _log_module_profile(
+        profiler.record(
             "cp_per_image_record_measurements",
             time.perf_counter() - record_started_at,
-            module=self.module_name,
-            function=function_name,
             rows=len(combined_rows),
         )
         return input_image
@@ -2296,6 +2267,23 @@ class CellProfilerMeasurementImageResolver:
                 current_image,
             )
         return adapter.get_objects(spec.name, current_image=current_image)
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerRuntimeProfiler:
+    """Module/function-scoped profile event writer."""
+
+    module_name: str
+    function_name: str
+
+    def record(self, event: str, elapsed: float, **fields: Any) -> None:
+        _log_module_profile(
+            event,
+            elapsed,
+            module=self.module_name,
+            function=self.function_name,
+            **fields,
+        )
 
 
 @dataclass(frozen=True, slots=True)
