@@ -1108,7 +1108,7 @@ class CellProfilerModuleExecutor:
                 "measurement output."
             )
 
-        measurement_target_scope = _pop_measurement_target_scope(
+        measurement_target_scope = self.pop_measurement_target_scope(
             kwargs,
             default=CellProfilerMeasurementTargetScope.OBJECT,
         )
@@ -1670,7 +1670,7 @@ class CellProfilerModuleExecutor:
                 "measurement output."
             )
 
-        _pop_measurement_target_scope(
+        self.pop_measurement_target_scope(
             kwargs,
             default=CellProfilerMeasurementTargetScope.IMAGE,
         )
@@ -1916,6 +1916,18 @@ class CellProfilerModuleExecutor:
                 )
             )
         return tuple(resolved_images)
+
+    def pop_measurement_target_scope(
+        self,
+        kwargs: dict[str, Any],
+        *,
+        default: CellProfilerMeasurementTargetScope,
+    ) -> CellProfilerMeasurementTargetScope:
+        """Consume the generated measurement target-scope kwarg for this run."""
+        return coerce_cellprofiler_measurement_target_scope(
+            kwargs.pop(CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG, None),
+            default=default,
+        )
 
     def _resolved_measurement_image(
         self,
@@ -10238,17 +10250,6 @@ def _single_source_name(source_names: tuple[str, ...]) -> str | None:
     if len(unique_names) == 1:
         return unique_names[0]
     return None
-
-
-def _pop_measurement_target_scope(
-    kwargs: dict[str, Any],
-    *,
-    default: CellProfilerMeasurementTargetScope,
-) -> CellProfilerMeasurementTargetScope:
-    return coerce_cellprofiler_measurement_target_scope(
-        kwargs.pop(CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG, None),
-        default=default,
-    )
 
 
 def _measurement_source_name_for_specs(
