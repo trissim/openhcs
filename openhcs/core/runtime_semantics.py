@@ -618,16 +618,13 @@ class ObjectLabelDomain:
     def project_planes(self, plane_indices: Iterable[int]) -> "ObjectLabelDomain":
         """Return the object-label domain carried by selected plane indexes."""
         normalized_indices = tuple(int(index) for index in plane_indices)
-        if not normalized_indices:
-            return ObjectLabelDomain.declared(scope=ObjectLabelDomainScope.PLANE)
         if not self.declared_object_id_domains:
             return self
-        if len(self.declared_object_id_domains) == 1:
-            return ObjectLabelDomain.declared(
-                scope=ObjectLabelDomainScope.PLANE,
-                declared_object_ids=self.declared_object_id_domains[0],
-            )
-        if any(
+        if not normalized_indices:
+            domains: tuple[tuple[int, ...], ...] = ()
+        elif len(self.declared_object_id_domains) == 1:
+            domains = (self.declared_object_id_domains[0],)
+        elif any(
             index < 0 or index >= len(self.declared_object_id_domains)
             for index in normalized_indices
         ):
@@ -636,9 +633,10 @@ class ObjectLabelDomain:
                 f"domain count {len(self.declared_object_id_domains)}: "
                 f"{normalized_indices!r}."
             )
-        domains = tuple(
-            self.declared_object_id_domains[index] for index in normalized_indices
-        )
+        else:
+            domains = tuple(
+                self.declared_object_id_domains[index] for index in normalized_indices
+            )
         if len(domains) == 1:
             return ObjectLabelDomain.declared(
                 scope=ObjectLabelDomainScope.PLANE,
