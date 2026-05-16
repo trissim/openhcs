@@ -78,14 +78,42 @@ class CellProfilerImageRequest(CellProfilerResolvedInputRequest):
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerSourceImagePair:
-    """Ordered pair of source images inside a composed CellProfiler payload."""
+class CellProfilerSourceImageEndpoint:
+    """One source image endpoint inside an ordered CellProfiler source pair."""
 
-    first_index: int
-    second_index: int
+    index: int
+    display_name: str
+
+    name = AliasProperty("display_name")
+
+    def invocation_kwarg(self) -> int:
+        """Return this endpoint's CellProfiler channel index."""
+        return self.index
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerSourceImagePair:
+    """Ordered pair of source-image endpoints inside a composed CP payload."""
+
+    first: CellProfilerSourceImageEndpoint
+    second: CellProfilerSourceImageEndpoint
     runtime_pair: RuntimeMeasurementSourcePair
-    first_display_name: str
-    second_display_name: str
+
+    @classmethod
+    def from_parts(
+        cls,
+        *,
+        first_index: int,
+        second_index: int,
+        first_name: str,
+        second_name: str,
+    ) -> "CellProfilerSourceImagePair":
+        """Build a source pair from endpoint indexes and display names."""
+        return cls(
+            first=CellProfilerSourceImageEndpoint(first_index, first_name),
+            second=CellProfilerSourceImageEndpoint(second_index, second_name),
+            runtime_pair=RuntimeMeasurementSourcePair(first_name, second_name),
+        )
 
     @classmethod
     def from_source_image_name(
@@ -99,23 +127,19 @@ class CellProfilerSourceImagePair:
         if len(source_parts) != 2:
             return None
         first_name, second_name = source_parts
-        return cls(
+        return cls.from_parts(
             first_index=0,
             second_index=1,
-            runtime_pair=RuntimeMeasurementSourcePair(first_name, second_name),
-            first_display_name=first_name,
-            second_display_name=second_name,
+            first_name=first_name,
+            second_name=second_name,
         )
-
-    first_name = AliasProperty("first_display_name")
-    second_name = AliasProperty("second_display_name")
 
     @property
     def source_image_name(self) -> str:
         """Return CellProfiler's table-level source identity for this pair."""
         return RuntimeMeasurementSourcePair.source_pair_name(
-            self.first_display_name,
-            self.second_display_name,
+            self.first.display_name,
+            self.second.display_name,
         )
 
     def invocation_kwargs(
@@ -126,8 +150,8 @@ class CellProfilerSourceImagePair:
     ) -> dict[str, int]:
         """Lower this source-pair invocation to CellProfiler channel kwargs."""
         return {
-            first_channel_kwarg: self.first_index,
-            second_channel_kwarg: self.second_index,
+            first_channel_kwarg: self.first.invocation_kwarg(),
+            second_channel_kwarg: self.second.invocation_kwarg(),
         }
 
 
@@ -229,7 +253,7 @@ class FirstSecondCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
         self,
         source_pair: CellProfilerSourceImagePair,
     ) -> tuple[str, str]:
-        return source_pair.first_name, source_pair.second_name
+        return source_pair.first.name, source_pair.second.name
 
 
 class SecondFirstCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
@@ -241,7 +265,7 @@ class SecondFirstCellProfilerSourcePairFeature(CellProfilerSourcePairFeature):
         self,
         source_pair: CellProfilerSourceImagePair,
     ) -> tuple[str, str]:
-        return source_pair.second_name, source_pair.first_name
+        return source_pair.second.name, source_pair.first.name
 
 
 for _source_pair_feature_spec in (
@@ -367,12 +391,11 @@ class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
     def source_image_pairs(self) -> tuple[CellProfilerSourceImagePair, ...]:
         """Return ordered pairwise source invocations for composed image payloads."""
         return tuple(
-            CellProfilerSourceImagePair(
+            CellProfilerSourceImagePair.from_parts(
                 first_index=first_index,
                 second_index=second_index,
-                runtime_pair=RuntimeMeasurementSourcePair(first_name, second_name),
-                first_display_name=first_name,
-                second_display_name=second_name,
+                first_name=first_name,
+                second_name=second_name,
             )
             for first_index, first_name in enumerate(self.source_image_names)
             for second_index, second_name in enumerate(self.source_image_names)

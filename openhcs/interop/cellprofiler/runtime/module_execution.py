@@ -65,7 +65,6 @@ from openhcs.core.module_artifact_contract import (
     ModuleArtifactContract,
     module_artifact_contract,
 )
-from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 from openhcs.core.pipeline.function_contracts import special_input_names_from_callable
 from openhcs.core.pipeline.function_contracts import (
     ObjectLabelMeasurementExecution,
@@ -6401,12 +6400,11 @@ class SourcePairMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder):
     ) -> CellProfilerSourceImagePair | None:
         if len(request.source_image_names) == 2:
             first_name, second_name = request.source_image_names
-            return CellProfilerSourceImagePair(
+            return CellProfilerSourceImagePair.from_parts(
                 first_index=0,
                 second_index=1,
-                runtime_pair=RuntimeMeasurementSourcePair(first_name, second_name),
-                first_display_name=first_name,
-                second_display_name=second_name,
+                first_name=first_name,
+                second_name=second_name,
             )
         return CellProfilerSourceImagePair.from_source_image_name(
             request.source_image_name

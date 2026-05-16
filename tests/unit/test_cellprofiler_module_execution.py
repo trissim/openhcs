@@ -3514,7 +3514,7 @@ def test_colocalization_object_row_policy_projects_source_pair_features() -> Non
 
     assert [invocation.kwargs["channel_1"] for invocation in invocations] == [0, 0, 1]
     assert [invocation.kwargs["channel_2"] for invocation in invocations] == [1, 2, 2]
-    assert [invocation.source_pair.first_name for invocation in invocations] == [
+    assert [invocation.source_pair.first.name for invocation in invocations] == [
         "DNA",
         "DNA",
         "ER",
