@@ -13,6 +13,7 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
@@ -105,15 +106,8 @@ class CellProfilerSourceImagePair:
             second_display_name=second_name,
         )
 
-    @property
-    def first_name(self) -> str:
-        """Return the first CellProfiler source image display name."""
-        return self.first_display_name
-
-    @property
-    def second_name(self) -> str:
-        """Return the second CellProfiler source image display name."""
-        return self.second_display_name
+    first_name = AliasProperty("first_display_name")
+    second_name = AliasProperty("second_display_name")
 
     @property
     def source_image_name(self) -> str:
