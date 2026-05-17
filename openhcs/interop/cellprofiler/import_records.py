@@ -12,6 +12,24 @@ from openhcs.interop.cellprofiler.module_roles import CellProfilerModuleRole
 
 
 @dataclass(frozen=True, slots=True)
+class TupleMemberTypeValidation:
+    """Validate that all values in a tuple field share one nominal type."""
+
+    owner_name: str
+    field_name: str
+    expected_type: type[object]
+
+    def validate(self, values: tuple[object, ...]) -> None:
+        for value in values:
+            if not isinstance(value, self.expected_type):
+                raise TypeError(
+                    f"{self.owner_name}.{self.field_name} must contain "
+                    f"{self.expected_type.__name__} values, got "
+                    f"{type(value).__name__}."
+                )
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerModuleReference:
     """CellProfiler module identity preserved from the source pipeline."""
 
@@ -41,12 +59,11 @@ class CellProfilerPipelineProvenance:
         object.__setattr__(self, "modules", tuple(self.modules))
         if not self.modules:
             raise ValueError("CellProfilerPipelineProvenance.modules cannot be empty.")
-        for module in self.modules:
-            if not isinstance(module, CellProfilerModuleReference):
-                raise TypeError(
-                    "CellProfilerPipelineProvenance.modules must contain "
-                    f"CellProfilerModuleReference values, got {type(module).__name__}."
-                )
+        TupleMemberTypeValidation(
+            "CellProfilerPipelineProvenance",
+            "modules",
+            CellProfilerModuleReference,
+        ).validate(self.modules)
 
     @property
     def processing_modules(self) -> tuple[CellProfilerModuleReference, ...]:
@@ -112,12 +129,11 @@ class CellProfilerPipelineImportResult:
             "registered_functions",
             tuple(self.registered_functions),
         )
-        for contract in self.artifact_contracts:
-            if not isinstance(contract, ModuleArtifactContract):
-                raise TypeError(
-                    "CellProfilerPipelineImportResult.artifact_contracts must contain "
-                    f"ModuleArtifactContract values, got {type(contract).__name__}."
-                )
+        TupleMemberTypeValidation(
+            "CellProfilerPipelineImportResult",
+            "artifact_contracts",
+            ModuleArtifactContract,
+        ).validate(self.artifact_contracts)
         if not self.generated_source:
             raise ValueError(
                 "CellProfilerPipelineImportResult.generated_source must be "
