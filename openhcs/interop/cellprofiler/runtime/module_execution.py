@@ -1141,12 +1141,16 @@ class CellProfilerModuleExecutor:
             current_image,
             image_request,
         )
-        profiler.record(
-            "cp_per_object_measurement_images",
-            time.perf_counter() - measurement_images_started_at,
-            images=len(measurement_images),
-            objects=len(object_inputs),
-        )
+        profile_events = [
+            CellProfilerRuntimeProfileEvent(
+                "cp_per_object_measurement_images",
+                time.perf_counter() - measurement_images_started_at,
+                (
+                    ("images", len(measurement_images)),
+                    ("objects", len(object_inputs)),
+                ),
+            )
+        ]
         dual_scope_started_at = time.perf_counter()
         image_measurement_rows = self._dual_scope_image_measurement_rows(
             func,
@@ -1154,10 +1158,12 @@ class CellProfilerModuleExecutor:
             kwargs,
             measurement_target_scope,
         )
-        profiler.record(
-            "cp_per_object_dual_scope_rows",
-            time.perf_counter() - dual_scope_started_at,
-            rows=len(image_measurement_rows),
+        profile_events.append(
+            CellProfilerRuntimeProfileEvent(
+                "cp_per_object_dual_scope_rows",
+                time.perf_counter() - dual_scope_started_at,
+                (("rows", len(image_measurement_rows)),),
+            )
         )
         combined_rows.extend(image_measurement_rows)
         row_source_names_required = _row_source_names_required(measurement_images)
@@ -1512,30 +1518,34 @@ class CellProfilerModuleExecutor:
                     invocation=invocation,
                 )
 
-        profiler.record(
-            "cp_per_object_label_payload",
-            label_payload_seconds,
-        )
-        profiler.record(
-            "cp_per_object_label_align",
-            label_align_seconds,
-        )
-        profiler.record(
-            "cp_per_object_contract_execute",
-            contract_execute_seconds,
-        )
-        profiler.record(
-            "cp_per_object_split_output",
-            split_seconds,
-        )
-        profiler.record(
-            "cp_per_object_complete_rows",
-            complete_rows_seconds,
-        )
-        profiler.record(
-            "cp_per_object_annotate_rows",
-            annotate_seconds,
-            rows=len(combined_rows),
+        profile_events.extend(
+            (
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_label_payload",
+                    label_payload_seconds,
+                ),
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_label_align",
+                    label_align_seconds,
+                ),
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_contract_execute",
+                    contract_execute_seconds,
+                ),
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_split_output",
+                    split_seconds,
+                ),
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_complete_rows",
+                    complete_rows_seconds,
+                ),
+                CellProfilerRuntimeProfileEvent(
+                    "cp_per_object_annotate_rows",
+                    annotate_seconds,
+                    (("rows", len(combined_rows)),),
+                ),
+            )
         )
 
         combined_source_image_name = measurement_row_policy.table_source_image_name(
@@ -1604,11 +1614,19 @@ class CellProfilerModuleExecutor:
                     source_image_name=combined_source_image_name,
                 )
             )
-        profiler.record(
-            "cp_per_object_record_measurements",
-            time.perf_counter() - record_started_at,
-            rows=sum(len(rows) for rows in columnar_rows) + len(combined_rows),
+        profile_events.append(
+            CellProfilerRuntimeProfileEvent(
+                "cp_per_object_record_measurements",
+                time.perf_counter() - record_started_at,
+                (
+                    (
+                        "rows",
+                        sum(len(rows) for rows in columnar_rows) + len(combined_rows),
+                    ),
+                ),
+            )
         )
+        profiler.record_events(tuple(profile_events))
         return input_image
 
     def _dual_scope_image_measurement_rows(
@@ -2284,6 +2302,22 @@ class CellProfilerRuntimeProfiler:
             function=self.function_name,
             **fields,
         )
+
+    def record_events(
+        self,
+        events: Sequence["CellProfilerRuntimeProfileEvent"],
+    ) -> None:
+        for event in events:
+            self.record(event.name, event.elapsed, **dict(event.fields))
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerRuntimeProfileEvent:
+    """Deferred profile event with explicit structured fields."""
+
+    name: str
+    elapsed: float
+    fields: tuple[tuple[str, Any], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
