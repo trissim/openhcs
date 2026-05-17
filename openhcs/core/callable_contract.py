@@ -113,21 +113,14 @@ class CallableContract(ArtifactPlanKeySelector):
         """Build a contract from callable attributes once at compiler boundary."""
         namespace = _callable_namespace(func)
         function_name = _callable_name(func)
+        metadata = CallableMetadataReader(namespace, function_name)
         raw_processing_function = namespace.get(RAW_PROCESSING_FUNCTION_ATTR)
         return cls(
             func=func,
             function_name=function_name,
             module_name=_callable_module(func),
-            input_memory_type=_optional_memory_type(
-                namespace,
-                function_name,
-                "input_memory_type",
-            ),
-            output_memory_type=_optional_memory_type(
-                namespace,
-                function_name,
-                "output_memory_type",
-            ),
+            input_memory_type=metadata.optional_string("input_memory_type"),
+            output_memory_type=metadata.optional_string("output_memory_type"),
             artifact_inputs=_artifact_spec_items(
                 namespace,
                 function_name,
@@ -140,9 +133,7 @@ class CallableContract(ArtifactPlanKeySelector):
             ),
             runtime_adapter=runtime_adapter_spec_from_callable(func),
             processing_contract=namespace.get(PROCESSING_CONTRACT_ATTR),
-            declared_processing_contract=_optional_string(
-                namespace,
-                function_name,
+            declared_processing_contract=metadata.optional_string(
                 DECLARED_PROCESSING_CONTRACT_ATTR,
             ),
             module_artifact_contract=module_artifact_contract_from_namespace(
@@ -150,9 +141,7 @@ class CallableContract(ArtifactPlanKeySelector):
                 owner_name=function_name,
             ),
             raw_processing_function=raw_processing_function,
-            runtime_image_execution_mode=_optional_execution_mode(
-                namespace,
-                function_name,
+            runtime_image_execution_mode=metadata.optional_execution_mode(
                 RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
             ),
             runtime_batch_executors=RuntimeBatchCallableFamily(
@@ -454,52 +443,40 @@ def _is_function_reference(func: Any) -> bool:
     return isinstance(func, FunctionReference)
 
 
-def _optional_memory_type(
-    namespace: CallableNamespace,
-    function_name: str,
-    field_name: str,
-) -> str | None:
-    memory_type = namespace.get(field_name)
-    if memory_type is None:
-        return None
-    if not isinstance(memory_type, str):
-        raise TypeError(
-            f"{function_name!r}.{field_name} must be a string, "
-            f"got {type(memory_type).__name__}."
-        )
-    return memory_type
+@dataclass(frozen=True, slots=True)
+class CallableMetadataReader:
+    """Typed reader for user-declared callable metadata."""
 
+    namespace: CallableNamespace
+    function_name: str
 
-def _optional_string(
-    namespace: CallableNamespace,
-    function_name: str,
-    field_name: str,
-) -> str | None:
-    value = namespace.get(field_name)
-    if value is None:
-        return None
-    if not isinstance(value, str):
-        raise TypeError(
-            f"{function_name!r}.{field_name} must be a string, "
-            f"got {type(value).__name__}."
-        )
-    return value
+    def optional_string(self, field_name: str) -> str | None:
+        """Return an optional string metadata field."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be a string, "
+                f"got {type(value).__name__}."
+            )
+        return value
 
-
-def _optional_execution_mode(
-    namespace: CallableNamespace,
-    function_name: str,
-    field_name: str,
-) -> ImagePayloadExecutionMode | None:
-    value = namespace.get(field_name)
-    if value is None:
-        return None
-    if not isinstance(value, ImagePayloadExecutionMode):
-        raise TypeError(
-            f"{function_name!r}.{field_name} must be ImagePayloadExecutionMode, "
-            f"got {type(value).__name__}."
-        )
-    return value
+    def optional_execution_mode(
+        self,
+        field_name: str,
+    ) -> ImagePayloadExecutionMode | None:
+        """Return an optional image execution-mode metadata field."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return None
+        if not isinstance(value, ImagePayloadExecutionMode):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be "
+                "ImagePayloadExecutionMode, "
+                f"got {type(value).__name__}."
+            )
+        return value
 
 
 def _artifact_spec_items(
