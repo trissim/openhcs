@@ -1465,11 +1465,10 @@ class ObjectLabelIdentifierMeasurementCompletion:
             MeasurementScope.OBJECT,
             context.object_name,
         )
-        keys = _required_object_identifier_keys(
-            subject,
+        keys = RequiredRuntimeMeasurementProjection(
             context.required_keys,
             context.policy,
-        )
+        ).object_identifier_keys(subject)
         if not keys:
             return
         if _runtime_object_label_array(context.labels) is None:
@@ -1518,11 +1517,10 @@ class PrimaryRowObjectIdentifierMeasurementCompletion:
         ).object_label_signature
         if object_label is None:
             return
-        for key in _required_object_identifier_keys(
-            subject,
+        for key in RequiredRuntimeMeasurementProjection(
             self.required_keys,
             self.policy,
-        ):
+        ).object_identifier_keys(subject):
             expected_by_key.setdefault(key, Counter())[object_label] += 1
 
 
@@ -3882,12 +3880,13 @@ def _record_static_wide_runtime_measurement_table(
     ):
         return False
 
-    input_keys = _required_measurement_input_keys(
+    required_projection = RequiredRuntimeMeasurementProjection(
         context.required_keys,
         policy,
         known_source_names=context.known_source_names,
     )
-    required_subjects = _required_measurement_subjects(input_keys)
+    input_keys = required_projection.input_keys()
+    required_subjects = required_projection.subjects()
     qualifier_indexes = {
         qualifier: tuple(
             (
@@ -5210,14 +5209,13 @@ class RuntimeMeasurementTableFactRecorder:
         self._aggregate_values_by_feature: _AggregateValuesByFeature = {}
         self._aggregate_input_key_cache: _AggregateMeanKeyCache = {}
         self._explicit_measurement_keys: set[RuntimeMeasurementFeatureKey] = set()
-        self._row_required_keys = _required_measurement_input_keys(
+        required_projection = RequiredRuntimeMeasurementProjection(
             self.context.required_keys,
             self.context.policy,
             known_source_names=self.context.known_source_names,
         )
-        self._row_required_subjects = _required_measurement_subjects(
-            self._row_required_keys
-        )
+        self._row_required_keys = required_projection.input_keys()
+        self._row_required_subjects = required_projection.subjects()
 
     def record(self) -> None:
         table = self.context.table
@@ -5832,58 +5830,6 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
         return None
 
 
-def _required_measurement_input_keys(
-    required_keys: _RuntimeRequiredMeasurementKeys,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    known_source_names: tuple[str, ...] = (),
-) -> _RuntimeRequiredMeasurementKeys:
-    if required_keys is None:
-        return None
-    keys: set[RuntimeMeasurementFeatureKey] = set(required_keys)
-    pair_derivation = RuntimeDirectionalPairMeasurementDerivationContract(
-        policy,
-        known_source_names,
-    )
-    for key in required_keys:
-        if key.statistic == MeasurementStatistic.MEAN.value:
-            keys.add(
-                RuntimeMeasurementFeatureKey(
-                    key.subject,
-                    key.feature_name,
-                    MeasurementStatistic.VALUE.value,
-                    key.source_name,
-                )
-            )
-        keys.update(pair_derivation.required_input_keys(key))
-    return frozenset(keys)
-
-
-def _required_measurement_subjects(
-    required_keys: _RuntimeRequiredMeasurementKeys,
-) -> frozenset[RuntimeMeasurementSubjectKey] | None:
-    if required_keys is None:
-        return None
-    subjects: set[RuntimeMeasurementSubjectKey] = set()
-    for key in required_keys:
-        subjects.add(key.subject)
-        if (
-            key.subject.scope is MeasurementScope.IMAGE
-            and key.subject.name is not None
-        ):
-            source_parts = tuple(
-                part for part in key.subject.name.split("__") if part
-            )
-            if len(source_parts) == 2:
-                subjects.add(
-                    RuntimeMeasurementSubjectKey(
-                        MeasurementScope.IMAGE,
-                        "__".join(reversed(source_parts)),
-                    )
-                )
-    return frozenset(subjects)
-
-
 def _is_metadata_map_row(
     subject: RuntimeMeasurementSubjectKey,
     row: Mapping[str, object],
@@ -6463,6 +6409,107 @@ def _measurement_feature_key_for_field(
 
 
 @dataclass(frozen=True, slots=True)
+class RequiredRuntimeMeasurementProjection:
+    """Project user-required measurement keys into runtime input domains."""
+
+    required_keys: _RuntimeRequiredMeasurementKeys
+    policy: RuntimeEquivalencePolicy
+    known_source_names: tuple[str, ...] = ()
+
+    def input_keys(self) -> _RuntimeRequiredMeasurementKeys:
+        if self.required_keys is None:
+            return None
+        keys: set[RuntimeMeasurementFeatureKey] = set(self.required_keys)
+        pair_derivation = RuntimeDirectionalPairMeasurementDerivationContract(
+            self.policy,
+            self.known_source_names,
+        )
+        for key in self.required_keys:
+            if key.statistic == MeasurementStatistic.MEAN.value:
+                keys.add(
+                    RuntimeMeasurementFeatureKey(
+                        key.subject,
+                        key.feature_name,
+                        MeasurementStatistic.VALUE.value,
+                        key.source_name,
+                    )
+                )
+            keys.update(pair_derivation.required_input_keys(key))
+        return frozenset(keys)
+
+    def subjects(self) -> frozenset[RuntimeMeasurementSubjectKey] | None:
+        input_keys = self.input_keys()
+        if input_keys is None:
+            return None
+        subjects: set[RuntimeMeasurementSubjectKey] = set()
+        for key in input_keys:
+            subjects.add(key.subject)
+            if (
+                key.subject.scope is MeasurementScope.IMAGE
+                and key.subject.name is not None
+            ):
+                source_parts = tuple(
+                    part for part in key.subject.name.split("__") if part
+                )
+                if len(source_parts) == 2:
+                    subjects.add(
+                        RuntimeMeasurementSubjectKey(
+                            MeasurementScope.IMAGE,
+                            "__".join(reversed(source_parts)),
+                        )
+                    )
+        return frozenset(subjects)
+
+    def object_identifier_keys(
+        self,
+        subject: RuntimeMeasurementSubjectKey,
+    ) -> tuple[RuntimeMeasurementFeatureKey, ...]:
+        if self.required_keys is None:
+            return (
+                RuntimeMeasurementFeatureKey(
+                    subject,
+                    ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
+                ),
+            )
+        return tuple(
+            key
+            for key in sorted(self.required_keys, key=lambda item: item.sort_key)
+            if key.subject == subject
+            and object_measurement_feature_has_role(
+                key,
+                ObjectMeasurementFeatureRole.IDENTIFIER,
+                self.policy.measurement_dialect,
+            )
+        )
+
+    def object_location_feature_names(
+        self,
+        subject: RuntimeMeasurementSubjectKey,
+        *,
+        statistic: MeasurementStatistic,
+    ) -> frozenset[str] | None:
+        if self.required_keys is None:
+            return None
+        return frozenset(
+            key.feature_name
+            for key in self.required_keys
+            if key.subject == subject
+            and key.statistic == statistic.value
+            and key.source_name is None
+            and object_measurement_feature_has_role(
+                RuntimeMeasurementFeatureKey(
+                    key.subject,
+                    key.feature_name,
+                    MeasurementStatistic.VALUE.value,
+                    source_name=key.source_name,
+                ),
+                ObjectMeasurementFeatureRole.LOCATION,
+                self.policy.measurement_dialect,
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeAggregateFeatureIdentity:
     """Parsed aggregate measurement feature identity."""
 
@@ -6627,11 +6674,10 @@ class RuntimeObjectLabelMeasurementFactProjector:
             MeasurementScope.OBJECT,
             self.context.object_name,
         )
-        keys = _required_object_identifier_keys(
-            subject,
+        keys = RequiredRuntimeMeasurementProjection(
             self.context.required_keys,
             self.context.policy,
-        )
+        ).object_identifier_keys(subject)
         if not keys:
             return ()
         label_array = _runtime_object_label_array(self.context.labels)
@@ -6703,16 +6749,16 @@ class RuntimeObjectLabelMeasurementFactProjector:
             MeasurementScope.OBJECT,
             self.context.object_name,
         )
-        required_feature_names = _required_object_location_feature_names(
-            subject,
+        required_projection = RequiredRuntimeMeasurementProjection(
             self.context.required_keys,
             self.context.policy,
+        )
+        required_feature_names = required_projection.object_location_feature_names(
+            subject,
             statistic=MeasurementStatistic.VALUE,
         )
-        required_mean_feature_names = _required_object_location_feature_names(
+        required_mean_feature_names = required_projection.object_location_feature_names(
             subject,
-            self.context.required_keys,
-            self.context.policy,
             statistic=MeasurementStatistic.MEAN,
         )
         if subject in self.context.object_location_subjects:
@@ -6774,58 +6820,6 @@ def _runtime_object_label_array(labels: object) -> np.ndarray | None:
     if label_array.ndim == 0:
         return None
     return label_array
-
-
-def _required_object_identifier_keys(
-    subject: RuntimeMeasurementSubjectKey,
-    required_keys: _RuntimeRequiredMeasurementKeys,
-    policy: RuntimeEquivalencePolicy,
-) -> tuple[RuntimeMeasurementFeatureKey, ...]:
-    if required_keys is None:
-        return (
-            RuntimeMeasurementFeatureKey(
-                subject,
-                ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
-            ),
-        )
-    return tuple(
-        key
-        for key in sorted(required_keys, key=lambda item: item.sort_key)
-        if key.subject == subject
-        and object_measurement_feature_has_role(
-            key,
-            ObjectMeasurementFeatureRole.IDENTIFIER,
-            policy.measurement_dialect,
-        )
-    )
-
-
-def _required_object_location_feature_names(
-    subject: RuntimeMeasurementSubjectKey,
-    required_keys: _RuntimeRequiredMeasurementKeys,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    statistic: MeasurementStatistic,
-) -> frozenset[str] | None:
-    if required_keys is None:
-        return None
-    return frozenset(
-        key.feature_name
-        for key in required_keys
-        if key.subject == subject
-        and key.statistic == statistic.value
-        and key.source_name is None
-        and object_measurement_feature_has_role(
-            RuntimeMeasurementFeatureKey(
-                key.subject,
-                key.feature_name,
-                MeasurementStatistic.VALUE.value,
-                source_name=key.source_name,
-            ),
-            ObjectMeasurementFeatureRole.LOCATION,
-            policy.measurement_dialect,
-        )
-    )
 
 
 def _object_location_measurement_facts_for_plane(
@@ -7221,10 +7215,11 @@ def _object_label_measurement_values_for_name(
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
     if subject.name is None:
         return {}
-    required_feature_names = _required_object_location_feature_names(
-        subject,
+    required_feature_names = RequiredRuntimeMeasurementProjection(
         required_keys,
         policy,
+    ).object_location_feature_names(
+        subject,
         statistic=MeasurementStatistic.VALUE,
     )
     if required_feature_names is not None and not required_feature_names:
@@ -7883,11 +7878,11 @@ def _object_measurement_values_by_label(
 ) -> _RuntimeObjectValuesByLabel:
     object_subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
     values_by_feature: _RuntimeObjectValuesByLabel = {}
-    row_required_keys = _required_measurement_input_keys(
+    row_required_keys = RequiredRuntimeMeasurementProjection(
         required_keys,
         policy,
         known_source_names=known_source_names,
-    )
+    ).input_keys()
     schema_cache: _RuntimeMeasurementRowSchemaCache = {}
     key_cache: _RuntimeMeasurementFeatureKeyCache = {}
     long_form_key_cache: _RuntimeMeasurementLongFormKeyCache = {}
