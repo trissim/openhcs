@@ -24,7 +24,10 @@ from openhcs.core.runtime_semantics import (
     MeasurementImageReferenceDomain,
 )
 from openhcs.core.runtime_invocation import (
+    ResolvedRuntimeInputRequest,
+    RuntimeFunctionInvocationRequest,
     RuntimeImageExecutionContext,
+    RuntimeImageRequest,
     RuntimeInvocationOptions,
     RuntimeSliceAlignedValues,
     requested_image_execution_mode,
@@ -55,29 +58,9 @@ class CellProfilerInvocationOptions(RuntimeInvocationOptions):
         )
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerImageExecutionContext(RuntimeImageExecutionContext):
-    """Shared source provenance for CellProfiler image execution records."""
-
-    registry_key: ClassVar[str] = "cellprofiler_image_execution"
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerResolvedInputRequest(CellProfilerImageExecutionContext):
-    """Shared source provenance for resolved CellProfiler invocation inputs."""
-
-    registry_key: ClassVar[str] = "cellprofiler_resolved_input"
-
-    image_count: int
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerImageRequest(CellProfilerResolvedInputRequest):
-    """Resolved image payload and source metadata for one module invocation."""
-
-    registry_key: ClassVar[str] = "cellprofiler_image_request"
-
-    payload: object
+CellProfilerImageExecutionContext = RuntimeImageExecutionContext
+CellProfilerResolvedInputRequest = ResolvedRuntimeInputRequest
+CellProfilerImageRequest = RuntimeImageRequest
 
 
 @dataclass(frozen=True, slots=True)
@@ -339,21 +322,14 @@ for _source_pair_feature_spec in (
     _source_pair_feature_spec.declare_in(globals())
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerInvocationRequest(CellProfilerResolvedInputRequest):
-    """Resolved invocation inputs for one CellProfiler function call."""
-
-    registry_key: ClassVar[str] = "cellprofiler_invocation"
-
-    image: object
-    kwargs: Mapping[str, object]
+CellProfilerInvocationRequest = RuntimeFunctionInvocationRequest
 
 
 CellProfilerMeasurementImageDomain = MeasurementImageReferenceDomain
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
+class CellProfilerMeasurementImage(RuntimeImageExecutionContext):
     """One resolved image payload used by object measurement modules."""
 
     registry_key: ClassVar[str] = "cellprofiler_measurement_image"
