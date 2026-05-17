@@ -12,6 +12,7 @@ from metaclass_registry import AutoRegisterMeta
 
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
+    RepeatedSettingSequence,
     SettingNameFamily,
     block_setting_value,
     normalized_symbol_name,
@@ -171,18 +172,8 @@ class OverlayOutlineRow(OverlayOutlineSymbolPair):
 
 
 @dataclass(frozen=True, slots=True)
-class RepeatedOverlaySetting:
+class RepeatedOverlaySetting(RepeatedSettingSequence):
     """CellProfiler repeated OverlayOutlines setting with last-value fallback."""
-
-    values: tuple[str, ...]
-    default: str = ""
-
-    def at(self, index: int) -> str:
-        if not self.values:
-            return self.default
-        if index < len(self.values):
-            return self.values[index]
-        return self.values[-1]
 
 
 def overlay_outlines_uses_blank_image(module: ModuleBlock) -> bool:

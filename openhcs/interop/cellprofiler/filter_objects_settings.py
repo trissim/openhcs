@@ -16,6 +16,7 @@ from .measurement_lookup import CellProfilerMeasurementFeature
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
     SettingNameFamily,
+    RepeatedSettingSequence,
     block_setting_value,
     normalized_symbol_name,
     optional_setting_value,
@@ -252,18 +253,8 @@ class FilterObjectsOutput:
 
 
 @dataclass(frozen=True, slots=True)
-class RepeatedSettingValues:
+class RepeatedSettingValues(RepeatedSettingSequence):
     """CellProfiler repeated-setting sequence with last-value fallback semantics."""
-
-    values: tuple[str, ...]
-    default: str = ""
-
-    def at(self, index: int) -> str:
-        if not self.values:
-            return self.default
-        if index < len(self.values):
-            return self.values[index]
-        return self.values[-1]
 
 
 @dataclass(frozen=True, slots=True)

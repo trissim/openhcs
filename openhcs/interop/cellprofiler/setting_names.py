@@ -48,6 +48,21 @@ class OptionalSettingSymbol:
         return normalized_symbol_name(setting_value)
 
 
+@dataclass(frozen=True, slots=True)
+class RepeatedSettingSequence:
+    """Repeated CellProfiler setting values with last-value fallback semantics."""
+
+    values: tuple[str, ...]
+    default: str = ""
+
+    def at(self, index: int) -> str:
+        if not self.values:
+            return self.default
+        if index < len(self.values):
+            return self.values[index]
+        return self.values[-1]
+
+
 class CellProfilerSettingLiteralNormalizer:
     """Normalize CellProfiler UI labels and blank-literal sentinels."""
 

@@ -58,6 +58,46 @@ class SaveMetadata:
     max_value: float
 
 
+@dataclass(frozen=True, slots=True)
+class SaveImagesRequest:
+    """Shared SaveImages conversion and metadata context."""
+
+    image: np.ndarray
+    filename_prefix: str
+    file_format: FileFormat
+    bit_depth: BitDepth
+    use_compression: bool
+
+    @property
+    def filename(self) -> str:
+        return f"{self.filename_prefix}.{self.file_format.value}"
+
+    @property
+    def conversion_strategy(self) -> "BitDepthConversionStrategy":
+        return BitDepthConversionStrategy.for_bit_depth(self.bit_depth)
+
+    def converted_image(self) -> np.ndarray:
+        return self.conversion_strategy.convert(self.image)
+
+    def converted_binary_image(self) -> np.ndarray:
+        return self.conversion_strategy.binary_mask(self.converted_image())
+
+    def metadata_for(self, output: np.ndarray) -> SaveMetadata:
+        shape = output.shape
+        return SaveMetadata(
+            slice_index=0,
+            filename=self.filename,
+            bit_depth=self.bit_depth.value,
+            file_format=self.file_format.value,
+            shape_d=shape[0] if output.ndim == 3 else 1,
+            shape_h=shape[-2],
+            shape_w=shape[-1],
+            dtype=str(output.dtype),
+            min_value=float(np.min(output)),
+            max_value=float(np.max(output)),
+        )
+
+
 class BitDepthConversionStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal image conversion policy for one SaveImages bit depth."""
 
@@ -169,26 +209,21 @@ def save_images(
     Returns:
         Tuple of (converted_image, save_metadata)
     """
-    conversion_strategy = BitDepthConversionStrategy.for_bit_depth(bit_depth)
-    output = conversion_strategy.convert(image)
+    request = SaveImagesRequest(
+        image=image,
+        filename_prefix=filename_prefix,
+        file_format=file_format,
+        bit_depth=bit_depth,
+        use_compression=use_compression,
+    )
+    output = request.converted_image()
     
     # Handle mask/cropping types - ensure binary output
     if image_type == ImageType.MASK or image_type == ImageType.CROPPING:
-        output = conversion_strategy.binary_mask(output)
+        output = request.converted_binary_image()
     
     # Generate metadata
-    metadata = SaveMetadata(
-        slice_index=0,
-        filename=f"{filename_prefix}.{file_format.value}",
-        bit_depth=bit_depth.value,
-        file_format=file_format.value,
-        shape_d=1,
-        shape_h=output.shape[0],
-        shape_w=output.shape[1],
-        dtype=str(output.dtype),
-        min_value=float(np.min(output)),
-        max_value=float(np.max(output))
-    )
+    metadata = request.metadata_for(output)
     
     return output, metadata
 
@@ -230,19 +265,15 @@ def save_images_3d(
             f"Use one of: {[f.value for f in volumetric_formats]}"
         )
     
-    output = BitDepthConversionStrategy.for_bit_depth(bit_depth).convert(image)
-    
-    metadata = SaveMetadata(
-        slice_index=0,
-        filename=f"{filename_prefix}.{file_format.value}",
-        bit_depth=bit_depth.value,
-        file_format=file_format.value,
-        shape_d=output.shape[0],
-        shape_h=output.shape[1],
-        shape_w=output.shape[2],
-        dtype=str(output.dtype),
-        min_value=float(np.min(output)),
-        max_value=float(np.max(output))
+    request = SaveImagesRequest(
+        image=image,
+        filename_prefix=filename_prefix,
+        file_format=file_format,
+        bit_depth=bit_depth,
+        use_compression=use_compression,
     )
-    
+    output = request.converted_image()
+
+    metadata = request.metadata_for(output)
+
     return output, metadata
