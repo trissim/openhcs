@@ -297,11 +297,13 @@ class GeneratedEnumClassSpec:
 
     def declare_in(self, namespace: MutableMapping[str, object]) -> type[Enum]:
         """Materialize the generated enum in ``namespace`` and return it."""
-        enum_type = Enum(
-            self.class_name,
-            dict(self.members),
-            type=self.base_type,
-            module=str(namespace.get("__name__", self.base_type.__module__)),
+        enum_meta = type(self.base_type)
+        enum_namespace = enum_meta.__prepare__(self.class_name, (self.base_type,))
+        enum_namespace["__module__"] = str(
+            namespace.get("__name__", self.base_type.__module__)
         )
+        for name, value in self.members.items():
+            enum_namespace[name] = value
+        enum_type = enum_meta(self.class_name, (self.base_type,), enum_namespace)
         namespace[self.class_name] = enum_type
         return enum_type

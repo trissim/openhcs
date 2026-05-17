@@ -7387,12 +7387,18 @@ class FormattingMeasurementFeatureTemplate(str, Enum, metaclass=RegisteredEnumMe
         return self.value.format(**values)
 
 
-class ClassifyObjectsMeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):
-    """CellProfiler ClassifyObjects feature-name templates."""
-
-    OBJECTS_PER_BIN = "Classify_{bin_name}_NumObjectsPerBin"
-    PERCENT_PER_BIN = "Classify_{bin_name}_PctObjectsPerBin"
-    OBJECT_CLASS = "Classify_{bin_name}"
+for _measurement_feature_template_spec in (
+    GeneratedEnumClassSpec(
+        class_name="ClassifyObjectsMeasurementFeatureTemplate",
+        base_type=FormattingMeasurementFeatureTemplate,
+        members={
+            "OBJECTS_PER_BIN": "Classify_{bin_name}_NumObjectsPerBin",
+            "PERCENT_PER_BIN": "Classify_{bin_name}_PctObjectsPerBin",
+            "OBJECT_CLASS": "Classify_{bin_name}",
+        },
+    ),
+):
+    _measurement_feature_template_spec.declare_in(globals())
 
 
 for _measurement_stat_field_spec in (
@@ -7637,13 +7643,19 @@ for _measurement_stat_field_spec in (
     _measurement_stat_field_spec.declare_in(globals())
 
 
-class ThresholdMeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):
-    """CellProfiler image-measurement feature names parameterized by object."""
-
-    FINAL_THRESHOLD = "FinalThreshold_{object_name}"
-    ORIGINAL_THRESHOLD = "OrigThreshold_{object_name}"
-    WEIGHTED_VARIANCE = "WeightedVariance_{object_name}"
-    SUM_OF_ENTROPIES = "SumOfEntropies_{object_name}"
+for _measurement_feature_template_spec in (
+    GeneratedEnumClassSpec(
+        class_name="ThresholdMeasurementFeatureTemplate",
+        base_type=FormattingMeasurementFeatureTemplate,
+        members={
+            "FINAL_THRESHOLD": "FinalThreshold_{object_name}",
+            "ORIGINAL_THRESHOLD": "OrigThreshold_{object_name}",
+            "WEIGHTED_VARIANCE": "WeightedVariance_{object_name}",
+            "SUM_OF_ENTROPIES": "SumOfEntropies_{object_name}",
+        },
+    ),
+):
+    _measurement_feature_template_spec.declare_in(globals())
 
 
 @dataclass(frozen=True, slots=True)
@@ -9156,12 +9168,18 @@ def _measurement_object_name(
     return None
 
 
-class CellProfilerRelationshipMeasurementFeature(FormattingMeasurementFeatureTemplate):
-    """CellProfiler relationship measurement feature-name contract."""
-
-    PARENT = "Parent_{parent_object_name}"
-    DISTANCE_CENTROID = "Distance_Centroid_{parent_object_name}"
-    DISTANCE_MINIMUM = "Distance_Minimum_{parent_object_name}"
+for _measurement_feature_template_spec in (
+    GeneratedEnumClassSpec(
+        class_name="CellProfilerRelationshipMeasurementFeature",
+        base_type=FormattingMeasurementFeatureTemplate,
+        members={
+            "PARENT": "Parent_{parent_object_name}",
+            "DISTANCE_CENTROID": "Distance_Centroid_{parent_object_name}",
+            "DISTANCE_MINIMUM": "Distance_Minimum_{parent_object_name}",
+        },
+    ),
+):
+    _measurement_feature_template_spec.declare_in(globals())
 
 
 # Backwards-compatible alias for existing local callers/tests.
