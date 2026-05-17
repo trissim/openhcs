@@ -80,6 +80,11 @@ class PlateViewerWindow(BaseFormDialog):
             self.color_scheme = ColorScheme()
 
         self.style_gen = StyleSheetGenerator(self.color_scheme)
+        self.image_browser: QWidget | None = None
+        self.image_browser_tab: QWidget | None = None
+        self.metadata_viewer_tab: QWidget | None = None
+        self._metadata_viewer_loaded = False
+        self._metadata_tab_index = -1
 
         plate_name = orchestrator.plate_path.name if orchestrator else "Unknown"
         self.setWindowTitle(f"Plate Viewer - {plate_name}")
@@ -245,9 +250,9 @@ class PlateViewerWindow(BaseFormDialog):
 
     def _on_tab_changed(self, index: int) -> None:
         """Lazy-load metadata viewer when the Metadata tab is opened."""
-        if getattr(self, "_metadata_viewer_loaded", False):
+        if self._metadata_viewer_loaded:
             return
-        if index != getattr(self, "_metadata_tab_index", -1):
+        if index != self._metadata_tab_index:
             return
 
         from PyQt6.QtCore import QSignalBlocker
@@ -280,7 +285,9 @@ class PlateViewerWindow(BaseFormDialog):
             plate_path = self.orchestrator.plate_path
 
             # Check if this is OpenHCS format
-            if hasattr(metadata_handler, "_load_metadata_dict"):
+            from openhcs.microscopes.openhcs import OpenHCSMetadataHandler
+
+            if isinstance(metadata_handler, OpenHCSMetadataHandler):
                 # OpenHCS format
                 from openhcs.microscopes.openhcs import OpenHCSMetadata
 
@@ -384,12 +391,13 @@ class PlateViewerWindow(BaseFormDialog):
 
     def _create_single_metadata_form(self, layout, metadata_instance):
         """Create a single metadata form."""
-        from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
+        from pyqt_reactive.forms import ParameterFormManager
         from openhcs.config_framework.object_state import ObjectState
 
-        image_files = getattr(metadata_instance, "image_files", None)
-        if image_files is not None:
-            layout.addWidget(QLabel(f"Image files: {len(image_files)} (hidden)"))
+        if metadata_instance.image_files is not None:
+            layout.addWidget(
+                QLabel(f"Image files: {len(metadata_instance.image_files)} (hidden)")
+            )
 
         # Create local ObjectState for metadata viewer using plate scope for correct accent color
         state = ObjectState(
@@ -399,49 +407,20 @@ class PlateViewerWindow(BaseFormDialog):
 
         metadata_form = ParameterFormManager(
             state=state,
-            config=FormManagerConfig(
-                parent=None,
-                read_only=True,
-                color_scheme=self.color_scheme,
-                exclude_params=["image_files", "workspace_mapping"],
-            ),
+            config=self._metadata_form_config(),
         )
         layout.addWidget(metadata_form)
 
-    def _create_multi_subdirectory_forms(self, layout, subdirs_instances):
-        """Create forms for multiple subdirectories."""
-        from PyQt6.QtWidgets import QGroupBox
-        from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
-        from openhcs.config_framework.object_state import ObjectState
+    def _metadata_form_config(self):
+        """Return the shared read-only metadata form configuration."""
+        from pyqt_reactive.forms import FormManagerConfig
 
-        for subdir_name, metadata_instance in subdirs_instances.items():
-            group_box = QGroupBox(f"Subdirectory: {subdir_name}")
-            group_layout = QVBoxLayout(group_box)
-
-            image_files = getattr(metadata_instance, "image_files", None)
-            if image_files is not None:
-                group_layout.addWidget(
-                    QLabel(f"Image files: {len(image_files)} (hidden)")
-                )
-
-            # Create local ObjectState for this subdirectory's metadata using plate scope
-            state = ObjectState(
-                object_instance=metadata_instance,
-                scope_id=self._style_scope_id,
-            )
-
-            metadata_form = ParameterFormManager(
-                state=state,
-                config=FormManagerConfig(
-                    parent=None,
-                    read_only=True,
-                    color_scheme=self.color_scheme,
-                    exclude_params=["image_files", "workspace_mapping"],
-                ),
-            )
-            group_layout.addWidget(metadata_form)
-
-            layout.addWidget(group_box)
+        return FormManagerConfig(
+            parent=None,
+            read_only=True,
+            color_scheme=self.color_scheme,
+            exclude_params=["image_files", "workspace_mapping"],
+        )
 
     def _consolidate_results(self):
         """Manually trigger analysis results consolidation."""
@@ -565,5 +544,5 @@ class PlateViewerWindow(BaseFormDialog):
 
     def cleanup(self):
         """Clean up resources."""
-        if hasattr(self, "image_browser"):
+        if self.image_browser is not None:
             self.image_browser.cleanup()
