@@ -8,7 +8,6 @@ Uses hybrid approach: extracted business logic + clean PyQt6 UI.
 import logging
 import inspect
 import copy
-import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
@@ -18,24 +17,13 @@ from pathlib import Path
 
 from metaclass_registry import AutoRegisterMeta
 
-from PyQt6.QtWidgets import (
-    QWidget,
-    QVBoxLayout,
-    QHBoxLayout,
-    QPushButton,
-    QListWidget,
-    QListWidgetItem,
-    QLabel,
-    QFileDialog,
-    QSplitter,
-)
+from PyQt6.QtWidgets import QVBoxLayout, QSplitter
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QColor
 
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants import Backend
 from openhcs.constants.constants import OrchestratorState
-from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.steps.function_step import FunctionStep
@@ -70,25 +58,17 @@ from openhcs.utils.pipeline_migration import (
     load_pipeline_with_migration,
 )
 from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
-from openhcs.pyqt_gui.windows.debug_inspector_window import (
-    DebugArtifactMaterializeRequest,
-    DebugArtifactOpenRequest,
-    DebugInspectorWindow,
-)
 from openhcs.pyqt_gui.widgets.debug_toolbar import DebugToolbarWidget
 from openhcs.core.debug import (
     DebugCommandType,
     DebugSession,
-    FileManagerDebugSnapshotStore,
-)
-from openhcs.core.function_patterns import normalize_function_pattern
-from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
-    DebugSnapshotAvailableNotification,
 )
 from openhcs.pyqt_gui.widgets.shared.services.manager_item_hooks import ManagerItemHooks
 from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
     PipelineEditorCodeWorkflow,
     PipelineEditorDeletionWorkflow,
+    PipelineEditorDebugWorkflow,
+    PipelineEditorFunctionPresentation,
     PipelineEditorListWorkflow,
     PipelineStepSaveWorkflow,
 )
@@ -117,23 +97,6 @@ class PipelineDebugCommandRoute:
 
     command_type: DebugCommandType
     dispatch: Callable[["PipelineEditorWidget"], None]
-
-
-@dataclass(frozen=True, slots=True)
-class FunctionPatternInvocationBadge:
-    """GUI badge for one invocation in a FunctionStep function pattern."""
-
-    group_key: str
-    position: int
-    function_name: str
-    is_current_cursor: bool = False
-    is_dirty_replay_start: bool = False
-
-    @property
-    def text(self) -> str:
-        prefix = "▶ " if self.is_current_cursor else ""
-        suffix = " *" if self.is_dirty_replay_start else ""
-        return f"{prefix}{self.group_key}[{self.position}] {self.function_name}{suffix}"
 
 
 class StepPreviewConfigField(str, Enum):
@@ -218,7 +181,7 @@ class WellFilterConfigDetailFormatter(StepPreviewConfigDetailFormatter):
 
 
 def dispatch_pipeline_debug_run_command(editor: "PipelineEditorWidget") -> None:
-    editor._dispatch_debug_run_command(DebugCommandType.RUN)
+    editor.debug_workflow.run_command(DebugCommandType.RUN)
 
 
 def dispatch_pipeline_debug_toggle_command(editor: "PipelineEditorWidget") -> None:
@@ -228,31 +191,31 @@ def dispatch_pipeline_debug_toggle_command(editor: "PipelineEditorWidget") -> No
 
 
 def dispatch_pipeline_debug_step_command(editor: "PipelineEditorWidget") -> None:
-    editor._dispatch_debug_run_command(DebugCommandType.STEP)
+    editor.debug_workflow.run_command(DebugCommandType.STEP)
 
 
 def dispatch_pipeline_debug_run_to_pause_command(editor: "PipelineEditorWidget") -> None:
-    editor._dispatch_debug_run_command(DebugCommandType.RUN_TO_PAUSE)
+    editor.debug_workflow.run_command(DebugCommandType.RUN_TO_PAUSE)
 
 
 def dispatch_pipeline_debug_restart_command(editor: "PipelineEditorWidget") -> None:
-    editor._dispatch_debug_run_command(DebugCommandType.RESTART)
+    editor.debug_workflow.run_command(DebugCommandType.RESTART)
 
 
 def dispatch_pipeline_debug_choose_source_group_command(
     editor: "PipelineEditorWidget",
 ) -> None:
-    editor._dispatch_debug_run_command(DebugCommandType.CHOOSE_SOURCE_GROUP)
+    editor.debug_workflow.run_command(DebugCommandType.CHOOSE_SOURCE_GROUP)
 
 
 def dispatch_pipeline_debug_random_source_group_command(
     editor: "PipelineEditorWidget",
 ) -> None:
-    editor._dispatch_debug_run_command(DebugCommandType.RANDOM_SOURCE_GROUP)
+    editor.debug_workflow.run_command(DebugCommandType.RANDOM_SOURCE_GROUP)
 
 
 def dispatch_pipeline_debug_stop_command(editor: "PipelineEditorWidget") -> None:
-    editor._dispatch_debug_stop_command()
+    editor.debug_workflow.stop_command()
 
 
 class PipelineEditorWidget(AbstractManagerWidget):
@@ -374,151 +337,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
             "processing_config.group_by",
             "processing_config.input_source",
         ),
-        formatters={
-            "func": "_format_func_preview",  # Method name for complex formatting
-            "processing_config.input_source": "_format_input_source_preview",
-        },
+        formatters={},
     )
-
-    # === Declarative Field Formatters ===
-    def _format_func_preview(self, func, state=None) -> Optional[str]:
-        """Format func field for preview.
-
-        Shows function names for the pattern:
-        - Single callable: func=my_func
-        - Tuple (func, kwargs): func=my_func
-        - List chain: func=[func1, func2, func3]
-        - Dict pattern: func={DAPI: func1, GFP: func2} (uses metadata for key names)
-
-        Args:
-            func: The func value to format
-            state: Optional ObjectState to get group_by for dict key metadata lookup
-        """
-        badges = self.function_pattern_invocation_badges(func)
-        if badges:
-            return "func=" + " | ".join(badge.text for badge in badges)
-        if isinstance(func, tuple) and len(func) >= 1:
-            # (func, kwargs) pattern - extract function name
-            func_name = self._get_func_name(func)
-            return f"func={func_name}"
-        elif isinstance(func, list) and func:
-            # Show actual function names
-            func_names = [self._get_func_name(f) for f in func if f is not None]
-            return f"func=[{', '.join(func_names)}]"
-        elif callable(func):
-            func_name = CallableContract.from_callable(func).function_name
-            return f"func={func_name}"
-        elif isinstance(func, dict):
-            # Use orchestrator's metadata cache for key→name mapping if available
-            orchestrator = self._get_current_orchestrator()
-            metadata_cache = orchestrator.metadata_cache if orchestrator else None
-
-            # Get group_by from ObjectState to determine component type for metadata lookup
-            group_by = None
-            if state:
-                group_by = state.get_resolved_value("processing_config.group_by")
-
-            # Build {display_name: func_name} entries
-            entries = []
-            for key in sorted(func.keys()):
-                # Try to get display name from metadata cache using step's group_by
-                display_name = None
-                if group_by and metadata_cache:
-                    display_name = metadata_cache.get_component_metadata(
-                        group_by, str(key)
-                    )
-                if display_name is None:
-                    display_name = str(key)
-                func_name = self._get_func_name(func[key])
-                entries.append(f"{display_name}: {func_name}")
-            return f"func={{{', '.join(entries)}}}"
-        return None
-
-    def function_pattern_invocation_badges(
-        self,
-        func,
-    ) -> tuple[FunctionPatternInvocationBadge, ...]:
-        """Build cursor-aware badges for each invocation in a function pattern."""
-
-        if not func:
-            return ()
-        normalized = normalize_function_pattern(func)
-        cursor = (
-            None
-            if self.debug_session_state is None
-            else self.debug_session_state.cursor
-        )
-        dirty_cursor = (
-            None
-            if self.debug_session_state is None
-            else self.debug_session_state.dirty_from_cursor
-        )
-        return tuple(
-            FunctionPatternInvocationBadge(
-                group_key=item.key.group_key,
-                position=item.key.position,
-                function_name=item.key.function_name,
-                is_current_cursor=(
-                    cursor.matches_invocation_key_parts(
-                        group_key=item.key.group_key,
-                        position=item.key.position,
-                        function_name=item.key.function_name,
-                    )
-                    if cursor is not None
-                    else False
-                ),
-                is_dirty_replay_start=(
-                    dirty_cursor.matches_invocation_key_parts(
-                        group_key=item.key.group_key,
-                        position=item.key.position,
-                        function_name=item.key.function_name,
-                    )
-                    if dirty_cursor is not None
-                    else False
-                ),
-            )
-            for item in normalized.iter_items()
-        )
-
-    def _function_invocation_badge_provider(
-        self,
-        step: FunctionStep,
-    ) -> Callable[[str, int, Callable], str | None]:
-        """Create an editor-local provider for per-invocation debug badges."""
-
-        badges = {
-            (badge.group_key, badge.position, badge.function_name): badge
-            for badge in self.function_pattern_invocation_badges(step.func)
-        }
-
-        def badge_text(group_key: str, position: int, func: Callable) -> str | None:
-            badge = badges.get((group_key, position, self._get_func_name(func)))
-            return None if badge is None else badge.text
-
-        return badge_text
-
-    def _get_func_name(self, func_entry) -> str:
-        """Extract function name from various func entry formats."""
-        if isinstance(func_entry, tuple) and len(func_entry) >= 1:
-            # (func, kwargs) pattern
-            return CallableContract.from_callable(func_entry[0]).function_name
-        elif isinstance(func_entry, list) and func_entry:
-            # Chain pattern - show first→last
-            first = self._get_func_name(func_entry[0])
-            if len(func_entry) > 1:
-                last = self._get_func_name(func_entry[-1])
-                return f"{first}→{last}"
-            return first
-        elif callable(func_entry):
-            return CallableContract.from_callable(func_entry).function_name
-        return str(func_entry)
-
-    def _format_input_source_preview(self, input_source) -> Optional[str]:
-        """Format input_source field (only show if not default)."""
-        source_name = input_source.name
-        if source_name != "PREVIOUS_STEP":
-            return f"input={source_name}"
-        return None  # Skip default value
 
     # Signals
     pipeline_changed = pyqtSignal(list)  # List[FunctionStep]
@@ -556,7 +376,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self._clipboard_steps: List[FunctionStep] = []
         self.debug_toolbar: DebugToolbarWidget | None = None
         self.cellprofiler_import_result = None
-        self.debug_inspector_window: DebugInspectorWindow | None = None
+        self.debug_inspector_window: Any | None = None
         self.debug_session_state: DebugSession | None = None
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
@@ -564,6 +384,27 @@ class PipelineEditorWidget(AbstractManagerWidget):
         super().__init__(service_adapter, color_scheme, gui_config, parent)
         self.code_execution_workflow = PipelineEditorCodeWorkflow(self)
         self.deletion_workflow = PipelineEditorDeletionWorkflow(self)
+        self.function_presentation = PipelineEditorFunctionPresentation(self)
+        self.debug_workflow = PipelineEditorDebugWorkflow(self)
+        self.LIST_ITEM_FORMAT = ListItemFormat(
+            first_line=self.LIST_ITEM_FORMAT.first_line,
+            preview_line=self.LIST_ITEM_FORMAT.preview_line,
+            detail_line_field=self.LIST_ITEM_FORMAT.detail_line_field,
+            formatters={
+                "func": self.function_presentation.format_func_preview,
+                "processing_config.input_source": (
+                    self.function_presentation.format_input_source_preview
+                ),
+            },
+        )
+        self._handle_debug_command = self.debug_workflow.handle_command
+        self.show_debug_snapshot = self.debug_workflow.show_snapshot
+        self._handle_debug_artifact_export_request = (
+            self.debug_workflow.handle_artifact_export_request
+        )
+        self._handle_debug_artifact_open_request = (
+            self.debug_workflow.handle_artifact_open_request
+        )
 
         # Setup UI (after base and subclass state is ready)
         self.setup_ui()
@@ -623,182 +464,6 @@ class PipelineEditorWidget(AbstractManagerWidget):
         QShortcut(QKeySequence("Ctrl+V"), self, self._action_paste_steps)
         if self.debug_toolbar is not None:
             self.debug_toolbar.command_requested.connect(self._handle_debug_command)
-
-    def _handle_debug_command(self, command):
-        """Handle debug toolbar commands through the typed debug command surface."""
-
-        route = self.DEBUG_COMMAND_ROUTES.get(command.command_type)
-        if route is None:
-            raise RuntimeError(
-                f"Unhandled debug command route: {command.command_type.value}"
-            )
-        route.dispatch(self)
-
-    def _dispatch_debug_run_command(
-        self,
-        command_type: DebugCommandType = DebugCommandType.RUN,
-    ) -> None:
-        """Submit a bounded debug run through the owning plate manager."""
-
-        if not self.current_plate:
-            self.status_message.emit("Select a plate before running debug mode.")
-            return
-        if self.plate_manager is None:
-            self.status_message.emit("Debug run requires a connected Plate Manager.")
-            return
-        command_label = command_type.value.replace("_", " ")
-        self.status_message.emit(
-            f"Submitting debug {command_label} for {self.current_plate}"
-        )
-        asyncio.create_task(
-            self.plate_manager.action_run_debug_plate(
-                self.current_plate,
-                command_type=command_type,
-                pause_step_indices=self._debug_pause_step_indices(),
-                start_step_index=self._debug_start_step_index(command_type),
-                start_after_invocation_key=self._debug_start_after_invocation_key(
-                    command_type
-                ),
-            )
-        )
-
-    def _debug_pause_step_indices(self) -> tuple[int, ...]:
-        """Return step indices carrying definition-time debug pause markers."""
-
-        return tuple(
-            index
-            for index, step in enumerate(self.pipeline_steps)
-            if step.debug_pause
-        )
-
-    def _debug_start_step_index(self, command_type: DebugCommandType) -> int:
-        """Return the replay start step for dirty debug restart commands."""
-
-        if (
-            command_type is DebugCommandType.RESTART
-            and self.debug_session_state is not None
-            and self.debug_session_state.dirty_from_cursor is not None
-        ):
-            return self.debug_session_state.dirty_from_cursor.step_index
-        if (
-            command_type is DebugCommandType.STEP
-            and self.debug_session_state is not None
-            and self.debug_session_state.cursor is not None
-        ):
-            return self.debug_session_state.cursor.step_index
-        return 0
-
-    def _debug_start_after_invocation_key(
-        self,
-        command_type: DebugCommandType,
-    ) -> str | None:
-        """Return the invocation cursor that a STEP command should advance past."""
-
-        if (
-            command_type is DebugCommandType.STEP
-            and self.debug_session_state is not None
-            and self.debug_session_state.cursor is not None
-        ):
-            return self.debug_session_state.cursor.invocation_key
-        return None
-
-    def _dispatch_debug_stop_command(self) -> None:
-        """Stop the active bounded debug run through the owning plate manager."""
-
-        if self.plate_manager is None:
-            self.status_message.emit("Debug stop requires a connected Plate Manager.")
-            return
-        self.plate_manager.action_stop_execution()
-        self.status_message.emit("Requested debug execution stop.")
-
-    def show_debug_snapshot(
-        self,
-        notification: DebugSnapshotAvailableNotification,
-    ) -> None:
-        """Load the latest debug snapshot into the reusable inspector window."""
-
-        debug_context = notification.debug_context
-        snapshot_store_ref = debug_context.snapshot_store_ref
-        snapshot_store_backend = debug_context.snapshot_store_backend
-        snapshot_id = debug_context.snapshot_id
-        if snapshot_store_ref is None or snapshot_id is None:
-            self.status_message.emit("Debug snapshot event did not include a snapshot store.")
-            return
-
-        if self.debug_inspector_window is None:
-            self.debug_inspector_window = DebugInspectorWindow(self)
-            self.debug_inspector_window.artifact_export_requested.connect(
-                self._handle_debug_artifact_export_request
-            )
-            self.debug_inspector_window.artifact_open_requested.connect(
-                self._handle_debug_artifact_open_request
-            )
-        self.debug_session_state = DebugSession(
-            debug_session_id=debug_context.debug_session_id,
-            plate_id=notification.progress_event.plate_id,
-            axis_id=notification.progress_event.axis_id,
-            snapshot_store_ref=snapshot_store_ref,
-            snapshot_store_backend=snapshot_store_backend,
-        ).with_cursor(debug_context.cursor)
-        if notification.snapshot is not None:
-            self.debug_inspector_window.set_snapshot(notification.snapshot)
-        elif snapshot_store_backend is None:
-            self.debug_inspector_window.load_snapshot(
-                root_path=snapshot_store_ref,
-                debug_session_id=debug_context.debug_session_id,
-                snapshot_id=snapshot_id,
-            )
-        else:
-            self.debug_inspector_window.load_snapshot_from_store(
-                store=FileManagerDebugSnapshotStore(
-                    filemanager=self.service_adapter.get_file_manager(),
-                    backend=snapshot_store_backend,
-                    root_path=snapshot_store_ref,
-                    debug_session_id=debug_context.debug_session_id,
-                ),
-                snapshot_id=snapshot_id,
-            )
-        self.debug_inspector_window.show()
-        self.debug_inspector_window.raise_()
-        self.status_message.emit(
-            f"Loaded debug snapshot {snapshot_id} for {notification.progress_event.step_name}"
-        )
-
-    def _handle_debug_artifact_open_request(
-        self,
-        request: DebugArtifactOpenRequest,
-    ) -> None:
-        """Route a debug artifact viewer request to the host export/viewer UX."""
-
-        self.status_message.emit(
-            "Debug artifact viewer request queued for "
-            f"{request.viewer_type}: {request.artifact_ref.name}"
-        )
-
-    def _handle_debug_artifact_export_request(
-        self,
-        request: DebugArtifactMaterializeRequest,
-    ) -> None:
-        """Ask the user for an export directory and submit server-side export."""
-
-        if self.plate_manager is None or self.debug_session_state is None:
-            self.status_message.emit("Debug artifact export requires an active debug session.")
-            return
-        export_root = QFileDialog.getExistingDirectory(
-            self,
-            "Export Debug Artifact",
-            str(Path.home()),
-        )
-        if not export_root:
-            return
-        task = self.plate_manager.action_export_debug_artifact(
-            debug_session_id=self.debug_session_state.debug_session_id,
-            artifact_ref=request.artifact_ref,
-            export_root=export_root,
-            snapshot_store_ref=self.debug_session_state.snapshot_store_ref,
-            snapshot_store_backend=self.debug_session_state.snapshot_store_backend,
-        )
-        asyncio.create_task(task)
 
     # ========== Pipeline ObjectState Management ==========
 
@@ -964,15 +629,17 @@ class PipelineEditorWidget(AbstractManagerWidget):
         if func:
             if isinstance(func, list):
                 if len(func) == 1:
-                    func_name = self._get_func_name(func[0])
+                    func_name = self.function_presentation.func_name(func[0])
                     tooltip_lines.append(f"Function: {func_name}")
                 else:
-                    func_names = [self._get_func_name(f) for f in func[:3]]
+                    func_names = [
+                        self.function_presentation.func_name(f) for f in func[:3]
+                    ]
                     if len(func) > 3:
                         func_names.append(f"... +{len(func) - 3} more")
                     tooltip_lines.append(f"Functions: {', '.join(func_names)}")
             elif callable(func):
-                func_name = self._get_func_name(func)
+                func_name = self.function_presentation.func_name(func)
                 tooltip_lines.append(f"Function: {func_name}")
             elif isinstance(func, dict):
                 tooltip_lines.append(
@@ -1110,7 +777,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             parent=self,
             source_schema=self._current_source_schema(),
             function_invocation_badge_provider=(
-                self._function_invocation_badge_provider(new_step)
+                self.function_presentation.badge_provider(new_step)
             ),
         )
         # Set original step for change detection
@@ -1668,7 +1335,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             step_index=step_index,  # Pass actual position for border pattern
             source_schema=self._current_source_schema(),
             function_invocation_badge_provider=(
-                self._function_invocation_badge_provider(step_to_edit)
+                self.function_presentation.badge_provider(step_to_edit)
             ),
         )
         # Set original step for change detection

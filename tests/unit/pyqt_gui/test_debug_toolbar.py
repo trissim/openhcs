@@ -32,6 +32,10 @@ from openhcs.pyqt_gui.widgets.pipeline_editor import (
     StepPreviewConfigDetailFormatter,
     StepPreviewConfigField,
 )
+from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
+    PipelineEditorDebugWorkflow,
+    PipelineEditorFunctionPresentation,
+)
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
 
@@ -134,30 +138,22 @@ class PipelineEditorHarnessBase(metaclass=AutoRegisterMeta):
     __registry_key__ = "registry_key"
     __skip_if_no_key__ = True
     registry_key = None
+    DEBUG_COMMAND_ROUTES = PipelineEditorWidget.DEBUG_COMMAND_ROUTES
 
     def __init__(self, plate_manager) -> None:
         self.plate_manager = plate_manager
         self.status_message = StatusSignalRecorder()
+        self.debug_workflow = PipelineEditorDebugWorkflow(self)
+        self.function_presentation = PipelineEditorFunctionPresentation(self)
 
 
 class PipelineEditorCommandHarness(PipelineEditorHarnessBase):
     """Minimal object carrying the attributes used by debug command dispatch."""
 
     registry_key = "command"
-    DEBUG_COMMAND_ROUTES = PipelineEditorWidget.DEBUG_COMMAND_ROUTES
-
     def __init__(self, plate_manager: PlateManagerStopRecorder | None) -> None:
         super().__init__(plate_manager)
         self.debug_run_commands: list[DebugCommandType] = []
-
-    def _dispatch_debug_run_command(
-        self,
-        command_type: DebugCommandType = DebugCommandType.RUN,
-    ) -> None:
-        self.debug_run_commands.append(command_type)
-
-    def _dispatch_debug_stop_command(self) -> None:
-        PipelineEditorWidget._dispatch_debug_stop_command(self)
 
 
 class PipelineEditorRunHarness(PipelineEditorHarnessBase):
@@ -173,21 +169,6 @@ class PipelineEditorRunHarness(PipelineEditorHarnessBase):
             FunctionStep(func=lambda image: image, name="first"),
             FunctionStep(func=lambda image: image, name="pause", debug_pause=True),
         ]
-
-    def _debug_pause_step_indices(self) -> tuple[int, ...]:
-        return PipelineEditorWidget._debug_pause_step_indices(self)
-
-    def _debug_start_step_index(self, command_type: DebugCommandType) -> int:
-        return PipelineEditorWidget._debug_start_step_index(self, command_type)
-
-    def _debug_start_after_invocation_key(
-        self,
-        command_type: DebugCommandType,
-    ) -> str | None:
-        return PipelineEditorWidget._debug_start_after_invocation_key(
-            self,
-            command_type,
-        )
 
 
 class PipelineEditorDirtyHarness(PipelineEditorHarnessBase):
@@ -266,15 +247,17 @@ class PipelineEditorSnapshotHarness:
         self.filemanager = FileManagerRecorder()
         self.service_adapter = self
         self.plate_manager = None
+        self.debug_session_state = None
+        self.debug_workflow = PipelineEditorDebugWorkflow(self)
 
     def get_file_manager(self) -> FileManagerRecorder:
         return self.filemanager
 
     def _handle_debug_artifact_export_request(self, request) -> None:
-        PipelineEditorWidget._handle_debug_artifact_export_request(self, request)
+        self.debug_workflow.handle_artifact_export_request(request)
 
     def _handle_debug_artifact_open_request(self, request) -> None:
-        PipelineEditorWidget._handle_debug_artifact_open_request(self, request)
+        self.debug_workflow.handle_artifact_open_request(request)
 
 
 def debug_snapshot_notification(
@@ -318,10 +301,7 @@ def test_pipeline_editor_routes_stop_debug_command_to_plate_manager() -> None:
     plate_manager = PlateManagerStopRecorder()
     harness = PipelineEditorCommandHarness(plate_manager)
 
-    PipelineEditorWidget._handle_debug_command(
-        harness,
-        DebugCommand(DebugCommandType.STOP),
-    )
+    harness.debug_workflow.handle_command(DebugCommand(DebugCommandType.STOP))
 
     assert plate_manager.stop_calls == 1
     assert harness.status_message.messages == ["Requested debug execution stop."]
@@ -384,16 +364,15 @@ def test_plate_manager_reuses_persistent_paused_worker_across_commands(tmp_path)
     assert plate_path not in harness._active_debug_sessions
 
 
-def test_pipeline_editor_routes_step_debug_command_to_bounded_run() -> None:
-    harness = PipelineEditorCommandHarness(PlateManagerStopRecorder())
+def test_pipeline_editor_routes_step_debug_command_to_bounded_run(monkeypatch) -> None:
+    from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
-    PipelineEditorWidget._handle_debug_command(
-        harness,
-        DebugCommand(DebugCommandType.STEP),
-    )
+    monkeypatch.setattr(pipeline_editor_workflows.asyncio, "create_task", lambda task: None)
+    harness = PipelineEditorRunHarness()
 
-    assert harness.debug_run_commands == [DebugCommandType.STEP]
-    assert harness.plate_manager.stop_calls == 0
+    harness.debug_workflow.handle_command(DebugCommand(DebugCommandType.STEP))
+
+    assert harness.plate_manager.run_calls[0][1]["command_type"] is DebugCommandType.STEP
 
 
 def test_pipeline_editor_has_route_for_every_debug_command() -> None:
@@ -419,13 +398,12 @@ def test_pipeline_editor_dispatches_pause_step_indices(monkeypatch) -> None:
 
     import openhcs.pyqt_gui.widgets.pipeline_editor as pipeline_editor_module
 
-    monkeypatch.setattr(pipeline_editor_module.asyncio, "create_task", record_task)
+    from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
+
+    monkeypatch.setattr(pipeline_editor_workflows.asyncio, "create_task", record_task)
     harness = PipelineEditorRunHarness()
 
-    PipelineEditorWidget._dispatch_debug_run_command(
-        harness,
-        DebugCommandType.RUN_TO_PAUSE,
-    )
+    harness.debug_workflow.run_command(DebugCommandType.RUN_TO_PAUSE)
 
     assert created_tasks == [
         (
@@ -456,7 +434,7 @@ def test_pipeline_editor_dispatches_pause_step_indices(monkeypatch) -> None:
 def test_pipeline_editor_derives_pause_step_indices() -> None:
     harness = PipelineEditorRunHarness()
 
-    assert PipelineEditorWidget._debug_pause_step_indices(harness) == (1,)
+    assert harness.debug_workflow.pause_step_indices() == (1,)
 
 
 def test_pipeline_editor_restarts_from_dirty_debug_cursor() -> None:
@@ -465,10 +443,7 @@ def test_pipeline_editor_restarts_from_dirty_debug_cursor() -> None:
     harness.debug_session_state = harness.debug_session_state.mark_dirty_from_cursor()
 
     assert (
-        PipelineEditorWidget._debug_start_step_index(
-            harness,
-            DebugCommandType.RESTART,
-    )
+        harness.debug_workflow.start_step_index(DebugCommandType.RESTART)
     == 1
     )
 
@@ -477,17 +452,11 @@ def test_pipeline_editor_step_advances_from_current_debug_invocation() -> None:
     harness = PipelineEditorDirtyHarness()
 
     assert (
-        PipelineEditorWidget._debug_start_step_index(
-            harness,
-            DebugCommandType.STEP,
-        )
+        harness.debug_workflow.start_step_index(DebugCommandType.STEP)
         == 1
     )
     assert (
-        PipelineEditorWidget._debug_start_after_invocation_key(
-            harness,
-            DebugCommandType.STEP,
-        )
+        harness.debug_workflow.start_after_invocation_key(DebugCommandType.STEP)
         == "default:0:segment"
     )
 
@@ -515,10 +484,7 @@ def test_pipeline_editor_formats_invocation_badges_with_debug_cursor() -> None:
     harness = PipelineEditorDirtyHarness()
     harness.debug_session_state = harness.debug_session_state.mark_dirty_from_cursor()
 
-    badges = PipelineEditorWidget.function_pattern_invocation_badges(
-        harness,
-        [segment, finish],
-    )
+    badges = harness.function_presentation.invocation_badges([segment, finish])
 
     assert tuple(badge.text for badge in badges) == (
         "▶ default[0] segment *",
@@ -529,10 +495,7 @@ def test_pipeline_editor_formats_invocation_badges_with_debug_cursor() -> None:
 def test_pipeline_editor_reports_stop_without_plate_manager() -> None:
     harness = PipelineEditorCommandHarness(None)
 
-    PipelineEditorWidget._handle_debug_command(
-        harness,
-        DebugCommand(DebugCommandType.STOP),
-    )
+    harness.debug_workflow.handle_command(DebugCommand(DebugCommandType.STOP))
 
     assert harness.status_message.messages == [
         "Debug stop requires a connected Plate Manager.",
@@ -540,18 +503,17 @@ def test_pipeline_editor_reports_stop_without_plate_manager() -> None:
 
 
 def test_pipeline_editor_loads_vfs_debug_snapshot_store(monkeypatch) -> None:
-    import openhcs.pyqt_gui.widgets.pipeline_editor as pipeline_editor_module
+    from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
     monkeypatch.setattr(
-        pipeline_editor_module,
+        pipeline_editor_workflows,
         "DebugInspectorWindow",
         DebugInspectorRecorder,
     )
     harness = PipelineEditorSnapshotHarness()
 
-    PipelineEditorWidget.show_debug_snapshot(
-        harness,
-        debug_snapshot_notification(snapshot_store_backend="memory"),
+    harness.debug_workflow.show_snapshot(
+        debug_snapshot_notification(snapshot_store_backend="memory")
     )
 
     inspector = harness.debug_inspector_window
@@ -565,40 +527,39 @@ def test_pipeline_editor_loads_vfs_debug_snapshot_store(monkeypatch) -> None:
 
 
 def test_pipeline_editor_connects_debug_inspector_artifact_actions(monkeypatch) -> None:
-    import openhcs.pyqt_gui.widgets.pipeline_editor as pipeline_editor_module
+    from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
     monkeypatch.setattr(
-        pipeline_editor_module,
+        pipeline_editor_workflows,
         "DebugInspectorWindow",
         DebugInspectorRecorder,
     )
     harness = PipelineEditorSnapshotHarness()
 
-    PipelineEditorWidget.show_debug_snapshot(
-        harness,
-        debug_snapshot_notification(snapshot_store_backend="memory"),
+    harness.debug_workflow.show_snapshot(
+        debug_snapshot_notification(snapshot_store_backend="memory")
     )
 
     inspector = harness.debug_inspector_window
     assert inspector.artifact_export_requested.connected == [
-        harness._handle_debug_artifact_export_request
+        harness.debug_workflow.handle_artifact_export_request
     ]
     assert inspector.artifact_open_requested.connected == [
-        harness._handle_debug_artifact_open_request
+        harness.debug_workflow.handle_artifact_open_request
     ]
 
 
 def test_pipeline_editor_exports_debug_artifact_through_plate_manager(monkeypatch) -> None:
-    import openhcs.pyqt_gui.widgets.pipeline_editor as pipeline_editor_module
+    from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
     created_tasks = []
     monkeypatch.setattr(
-        pipeline_editor_module.QFileDialog,
+        pipeline_editor_workflows.QFileDialog,
         "getExistingDirectory",
         lambda *_args, **_kwargs: "/tmp/debug-export",
     )
     monkeypatch.setattr(
-        pipeline_editor_module.asyncio,
+        pipeline_editor_workflows.asyncio,
         "create_task",
         lambda task: created_tasks.append(task),
     )
@@ -621,9 +582,8 @@ def test_pipeline_editor_exports_debug_artifact_through_plate_manager(monkeypatc
         storage_backend="memory",
     )
 
-    PipelineEditorWidget._handle_debug_artifact_export_request(
-        harness,
-        DebugArtifactMaterializeRequest(artifact_ref=artifact_ref),
+    harness.debug_workflow.handle_artifact_export_request(
+        DebugArtifactMaterializeRequest(artifact_ref=artifact_ref)
     )
 
     assert created_tasks == [
@@ -644,21 +604,21 @@ def test_debug_gui_workflow_runs_commands_inspects_snapshot_and_exports(
     monkeypatch,
     tmp_path,
 ) -> None:
-    import openhcs.pyqt_gui.widgets.pipeline_editor as pipeline_editor_module
+    from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
     monkeypatch.setattr(
-        pipeline_editor_module,
+        pipeline_editor_workflows,
         "DebugInspectorWindow",
         DebugInspectorRecorder,
     )
     monkeypatch.setattr(
-        pipeline_editor_module.QFileDialog,
+        pipeline_editor_workflows.QFileDialog,
         "getExistingDirectory",
         lambda *_args, **_kwargs: str(tmp_path / "export"),
     )
     created_tasks = []
     monkeypatch.setattr(
-        pipeline_editor_module.asyncio,
+        pipeline_editor_workflows.asyncio,
         "create_task",
         lambda task: created_tasks.append(task),
     )
@@ -696,9 +656,8 @@ def test_debug_gui_workflow_runs_commands_inspects_snapshot_and_exports(
         )
     )
 
-    PipelineEditorWidget.show_debug_snapshot(
-        editor,
-        debug_snapshot_notification(snapshot_store_backend="memory"),
+    editor.debug_workflow.show_snapshot(
+        debug_snapshot_notification(snapshot_store_backend="memory")
     )
     artifact_ref = DebugArtifactRef(
         kind=ArtifactKind.MEASUREMENTS,
@@ -707,9 +666,8 @@ def test_debug_gui_workflow_runs_commands_inspects_snapshot_and_exports(
         storage_ref="/debug/measurements.csv",
         storage_backend="memory",
     )
-    PipelineEditorWidget._handle_debug_artifact_export_request(
-        editor,
-        DebugArtifactMaterializeRequest(artifact_ref=artifact_ref),
+    editor.debug_workflow.handle_artifact_export_request(
+        DebugArtifactMaterializeRequest(artifact_ref=artifact_ref)
     )
     asyncio.run(
         PlateManagerWidget.action_run_debug_plate(
