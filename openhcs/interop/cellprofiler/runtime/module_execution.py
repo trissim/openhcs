@@ -3527,6 +3527,39 @@ class RuntimeMeasurementsVectorSourceStrategy(
         return None
 
 
+class CurrentObjectShapeFeatureVectorStatus(Enum):
+    """Resolution status for current-label AreaShape vector derivation."""
+
+    AVAILABLE = "available"
+    UNSUPPORTED_LABEL_DIMENSION = "unsupported_label_dimension"
+    UNKNOWN_SHAPE_FEATURE = "unknown_shape_feature"
+    UNMEASURED_SHAPE_FEATURE = "unmeasured_shape_feature"
+
+
+@dataclass(frozen=True, slots=True)
+class CurrentObjectShapeFeatureVectorResult:
+    """Typed result for deriving an object-measurement vector from live labels."""
+
+    status: CurrentObjectShapeFeatureVectorStatus
+    vector: CellProfilerMeasurementVector | None = None
+
+    @classmethod
+    def available(
+        cls,
+        vector: CellProfilerMeasurementVector,
+    ) -> "CurrentObjectShapeFeatureVectorResult":
+        return cls(CurrentObjectShapeFeatureVectorStatus.AVAILABLE, vector)
+
+    @classmethod
+    def unavailable(
+        cls,
+        status: CurrentObjectShapeFeatureVectorStatus,
+    ) -> "CurrentObjectShapeFeatureVectorResult":
+        if status is CurrentObjectShapeFeatureVectorStatus.AVAILABLE:
+            raise ValueError("Available shape-vector results require a vector.")
+        return cls(status)
+
+
 class CurrentObjectShapeFeatureVectorSourceStrategy(
     CellProfilerObjectMeasurementVectorSourceStrategy
 ):
@@ -3562,7 +3595,7 @@ class CurrentObjectShapeFeatureVectorSourceStrategy(
         )
         if runtime_vector is not None:
             return runtime_vector
-        return self.current_label_shape_vector(binding.feature_name, label_array)
+        return self.current_label_shape_vector(binding.feature_name, label_array).vector
 
     def runtime_current_image_vector(
         self,
@@ -3660,16 +3693,20 @@ class CurrentObjectShapeFeatureVectorSourceStrategy(
         self,
         feature_name: str,
         label_array: np.ndarray,
-    ) -> CellProfilerMeasurementVector | None:
+    ) -> CurrentObjectShapeFeatureVectorResult:
         from openhcs.processing.backends.cellprofiler.shape import (
             measure_object_size_shape_feature_arrays,
         )
 
         if label_array.ndim != 2:
-            return None
+            return CurrentObjectShapeFeatureVectorResult.unavailable(
+                CurrentObjectShapeFeatureVectorStatus.UNSUPPORTED_LABEL_DIMENSION
+            )
         shape_feature = self.shape_feature(feature_name)
         if shape_feature is None:
-            return None
+            return CurrentObjectShapeFeatureVectorResult.unavailable(
+                CurrentObjectShapeFeatureVectorStatus.UNKNOWN_SHAPE_FEATURE
+            )
         feature_arrays, measured_labels = measure_object_size_shape_feature_arrays(
             label_array.astype(np.int32, copy=False),
             calculate_advanced=True,
@@ -3677,18 +3714,22 @@ class CurrentObjectShapeFeatureVectorSourceStrategy(
         )
         values = feature_arrays.get(shape_feature.value)
         if values is None:
-            return None
+            return CurrentObjectShapeFeatureVectorResult.unavailable(
+                CurrentObjectShapeFeatureVectorStatus.UNMEASURED_SHAPE_FEATURE
+            )
         values_by_label = {
             int(label): float(value)
             for label, value in zip(measured_labels, values, strict=True)
         }
         object_ids = dense_object_label_id_domain(label_array)
-        return CellProfilerMeasurementVector(
-            (
-                ObjectLabelMeasurementValues.from_value_mapping(
-                    object_ids,
-                    values_by_label,
-                ).values,
+        return CurrentObjectShapeFeatureVectorResult.available(
+            CellProfilerMeasurementVector(
+                (
+                    ObjectLabelMeasurementValues.from_value_mapping(
+                        object_ids,
+                        values_by_label,
+                    ).values,
+                )
             )
         )
 
