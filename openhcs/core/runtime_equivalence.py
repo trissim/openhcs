@@ -3882,14 +3882,15 @@ def _record_static_wide_runtime_measurement_table(
             aggregate_input_key_cache,
             policy.measurement_dialect,
         )
-        _record_runtime_measurement_facts_for_row(
+        RuntimeRowMeasurementFactRecorder(
             fact_recording_context,
             aggregate_input_context,
+            row_merge_cache=row_merge_cache,
+            policy=policy,
+        ).record(
             derived_row_facts,
             row_mapping=row_mapping,
             axis_key=context.axis_key,
-            row_merge_cache=row_merge_cache,
-            policy=policy,
         )
 
     explicit_measurement_keys = frozenset(table_explicit_measurement_keys)
@@ -4109,52 +4110,116 @@ def _record_row_aggregate_input_value(
     return row_identity
 
 
-def _record_runtime_measurement_facts_for_row(
-    fact_context: _RuntimeMeasurementFactRecordingContext,
-    aggregate_context: _AggregateInputRecordingContext,
-    facts: Iterable[_RuntimeMeasurementFact],
-    *,
-    row_mapping: Mapping[str, object] | None = None,
-    axis_key: object | None = None,
-    row_merge_cache: _RuntimeMeasurementRowMergeCache | None = None,
-    policy: RuntimeEquivalencePolicy = RuntimeEquivalencePolicy(),
-) -> None:
-    row_identity: _RuntimeMeasurementRowIdentityOrMissing = None
-    row_facts = tuple(facts)
-    merged_facts = (
-        row_facts
-        if row_merge_cache is None or row_mapping is None
-        else _merge_runtime_row_measurement_facts(
-            row_merge_cache,
-            fact_context.row_priority_cache,
+@dataclass(frozen=True, slots=True)
+class RuntimeRowMeasurementFactRecorder:
+    """Record one runtime measurement row with merge and aggregate semantics."""
+
+    fact_context: _RuntimeMeasurementFactRecordingContext
+    aggregate_context: _AggregateInputRecordingContext
+    row_merge_cache: _RuntimeMeasurementRowMergeCache | None = None
+    policy: RuntimeEquivalencePolicy = RuntimeEquivalencePolicy()
+
+    def record(
+        self,
+        facts: Iterable[_RuntimeMeasurementFact],
+        *,
+        row_mapping: Mapping[str, object] | None = None,
+        axis_key: object | None = None,
+    ) -> None:
+        row_identity: _RuntimeMeasurementRowIdentityOrMissing = None
+        emitted_row_facts: _RuntimeMeasurementFactList = []
+        for key, value in self.merged_facts(facts, row_mapping, axis_key):
+            self.fact_context.explicit_measurement_keys.add(key)
+            if (
+                self.fact_context.required_keys is None
+                or key in self.fact_context.required_keys
+            ):
+                _runtime_measurement_fact_counter(
+                    self.fact_context.values_by_feature,
+                    key,
+                )[value] += 1
+                emitted_row_facts.append((key, value))
+            row_identity = _record_row_aggregate_input_value(
+                self.aggregate_context,
+                key,
+                value,
+                row_identity=row_identity,
+            )
+        if row_mapping is not None and emitted_row_facts:
+            self.fact_context.object_row_domain.record_row_facts(
+                row_mapping,
+                axis_key,
+                self.policy,
+                emitted_row_facts,
+            )
+
+    def merged_facts(
+        self,
+        facts: Iterable[_RuntimeMeasurementFact],
+        row_mapping: Mapping[str, object] | None,
+        axis_key: object | None,
+    ) -> _RuntimeMeasurementFacts:
+        row_facts = tuple(facts)
+        if self.row_merge_cache is None or row_mapping is None:
+            return row_facts
+        return self._merge_runtime_row_measurement_facts(
             row_mapping,
             axis_key,
             row_facts,
-            policy,
         )
-    )
-    emitted_row_facts: _RuntimeMeasurementFactList = []
-    for key, value in merged_facts:
-        fact_context.explicit_measurement_keys.add(key)
-        if fact_context.required_keys is None or key in fact_context.required_keys:
-            _runtime_measurement_fact_counter(
-                fact_context.values_by_feature,
+
+    def _merge_runtime_row_measurement_facts(
+        self,
+        row_mapping: Mapping[str, object],
+        axis_key: object | None,
+        facts: Iterable[_RuntimeMeasurementFact],
+    ) -> _RuntimeMeasurementFacts:
+        """Defer row-identifiable alias families until all runtime tables are seen."""
+        if self.row_merge_cache is None:
+            return tuple(facts)
+        remaining_facts: _RuntimeMeasurementFactList = []
+        row_merge_contract = RuntimeObjectLocationRowMergeContract(self.policy)
+        for key, value in facts:
+            if not row_merge_contract.owns_key(key):
+                remaining_facts.append((key, value))
+                continue
+            identity = RuntimeObjectMeasurementRowIdentity.from_row_mapping(
+                row_mapping,
+                axis_key,
+                self.policy,
+            )
+            if identity is None:
+                remaining_facts.append((key, value))
+                continue
+            merge_key = (key, identity.row_identity)
+            priority = _runtime_row_measurement_fact_priority(
+                row_mapping,
                 key,
-            )[value] += 1
-            emitted_row_facts.append((key, value))
-        row_identity = _record_row_aggregate_input_value(
-            aggregate_context,
-            key,
-            value,
-            row_identity=row_identity,
-        )
-    if row_mapping is not None and emitted_row_facts:
-        fact_context.object_row_domain.record_row_facts(
-            row_mapping,
-            axis_key,
-            policy,
-            emitted_row_facts,
-        )
+                self.policy,
+                self.fact_context.row_priority_cache,
+            )
+            candidate = (
+                priority,
+                priority,
+                value,
+            )
+            current = self.row_merge_cache.get(merge_key)
+            if current is None or _runtime_row_merge_candidate_preferred(
+                candidate,
+                current,
+            ):
+                self.row_merge_cache[merge_key] = (
+                    candidate[0],
+                    candidate[1] if current is None else min(candidate[1], current[1]),
+                    candidate[2],
+                )
+            elif current is not None:
+                self.row_merge_cache[merge_key] = (
+                    current[0],
+                    min(current[1], priority),
+                    current[2],
+                )
+        return tuple(remaining_facts)
 
 
 def _dedupe_runtime_measurement_table_object_subtable(
@@ -4202,60 +4267,6 @@ def _dedupe_runtime_measurement_table_object_subtable(
         source_image_name=table.source_image_name,
         subject=table.subject,
     )
-
-
-def _merge_runtime_row_measurement_facts(
-    row_merge_cache: _RuntimeMeasurementRowMergeCache,
-    row_priority_cache: _RuntimeMeasurementRowPriorityCache,
-    row_mapping: Mapping[str, object],
-    axis_key: object | None,
-    facts: Iterable[_RuntimeMeasurementFact],
-    policy: RuntimeEquivalencePolicy,
-) -> _RuntimeMeasurementFacts:
-    """Defer row-identifiable alias families until all runtime tables are seen."""
-    remaining_facts: _RuntimeMeasurementFactList = []
-    row_merge_contract = RuntimeObjectLocationRowMergeContract(policy)
-    for key, value in facts:
-        if not row_merge_contract.owns_key(key):
-            remaining_facts.append((key, value))
-            continue
-        identity = RuntimeObjectMeasurementRowIdentity.from_row_mapping(
-            row_mapping,
-            axis_key,
-            policy,
-        )
-        if identity is None:
-            remaining_facts.append((key, value))
-            continue
-        merge_key = (key, identity.row_identity)
-        priority = _runtime_row_measurement_fact_priority(
-            row_mapping,
-            key,
-            policy,
-            row_priority_cache,
-        )
-        candidate = (
-            priority,
-            priority,
-            value,
-        )
-        current = row_merge_cache.get(merge_key)
-        if current is None or _runtime_row_merge_candidate_preferred(
-            candidate,
-            current,
-        ):
-            row_merge_cache[merge_key] = (
-                candidate[0],
-                candidate[1] if current is None else min(candidate[1], current[1]),
-                candidate[2],
-            )
-        elif current is not None:
-            row_merge_cache[merge_key] = (
-                current[0],
-                min(current[1], priority),
-                current[2],
-            )
-    return tuple(remaining_facts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -5173,14 +5184,15 @@ class RuntimeMeasurementTableFactRecorder:
             self._aggregate_input_key_cache,
             self.context.policy.measurement_dialect,
         )
-        _record_runtime_measurement_facts_for_row(
+        RuntimeRowMeasurementFactRecorder(
             fact_context,
             aggregate_input_context,
+            row_merge_cache=self.row_merge_cache,
+            policy=self.context.policy,
+        ).record(
             row_facts,
             row_mapping=row_mapping,
             axis_key=self.context.axis_key,
-            row_merge_cache=self.row_merge_cache,
-            policy=self.context.policy,
         )
 
     def _subject_schema(
