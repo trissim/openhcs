@@ -4276,18 +4276,80 @@ class SourceCandidateMatcher:
     ) -> tuple[ParsedSourceCandidate, ...]:
         if match_plan is None or not step_input_candidates or not target_candidates:
             return target_candidates
-        return SourceBindingMatchPlanResolver.for_method(
-            match_plan.method
-        ).match_candidates(
-            SourceBindingMatchPlanRequest(
-                alias=alias,
-                plan=match_plan,
-                step_input_candidates=step_input_candidates,
-                target_candidates=target_candidates,
-                full_pipeline_candidates=full_pipeline_candidates,
-                source_binding_plan=source_binding_plan,
-                group_key=group_key,
+        request = SourceBindingMatchPlanRequest(
+            alias=alias,
+            plan=match_plan,
+            step_input_candidates=step_input_candidates,
+            target_candidates=target_candidates,
+            full_pipeline_candidates=full_pipeline_candidates,
+            source_binding_plan=source_binding_plan,
+            group_key=group_key,
+        )
+        return cls.match_plan_candidates(request)
+
+    @classmethod
+    def match_plan_candidates(
+        cls,
+        request: SourceBindingMatchPlanRequest,
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        matchers = {
+            SourceBindingMatchMethod.METADATA: cls.match_metadata_image_set_candidates,
+            SourceBindingMatchMethod.ORDER: cls.match_order_image_set_candidates,
+        }
+        return matchers[request.plan.method](request)
+
+    @classmethod
+    def match_metadata_image_set_candidates(
+        cls,
+        request: SourceBindingMatchPlanRequest,
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        constraints: dict[str, str] = {}
+        for dimension in request.plan.dimensions:
+            target_field = dimension.field_for_alias(request.alias)
+            if target_field is None:
+                continue
+            match_value = cls.dimension_match_value(
+                dimension=dimension,
+                request=request,
             )
+            if match_value is None:
+                continue
+            existing = constraints.get(target_field)
+            if existing is not None and existing != match_value:
+                raise RuntimeError(
+                    f"Conflicting image-set match values for alias {request.alias!r} "
+                    f"field {target_field!r}: {existing!r} != {match_value!r}."
+                )
+            constraints[target_field] = match_value
+        metadata_constraints = MappingProxyType(constraints)
+        return tuple(
+            candidate
+            for candidate in request.target_candidates
+            if cls.matches_image_set_metadata(
+                candidate,
+                metadata_constraints,
+            )
+        )
+
+    @classmethod
+    def match_order_image_set_candidates(
+        cls,
+        request: SourceBindingMatchPlanRequest,
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        current_indexes = cls.order_match_indexes(request)
+        if not current_indexes:
+            scoped_candidates = cls.target_candidates_in_current_scope(
+                request.step_input_candidates,
+                request.target_candidates,
+            )
+            return scoped_candidates or request.target_candidates
+        ordered_target_candidates = cls.ordered_source_candidates(
+            request.target_candidates
+        )
+        return tuple(
+            ordered_target_candidates[index]
+            for index in current_indexes
+            if index < len(ordered_target_candidates)
         )
 
     @classmethod
@@ -4681,90 +4743,6 @@ class RestackLikePayloadAuthority:
         )
 
 
-class SourceBindingMatchPlanResolver(ABC, metaclass=AutoRegisterMeta):
-    """Nominal family for restricting target candidates to the current image set."""
-
-    __registry_key__ = "method_key"
-    __skip_if_no_key__ = True
-    method: ClassVar[SourceBindingMatchMethod | None] = None
-    method_key: ClassVar[str | None] = None
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_method(
-        cls,
-        method: SourceBindingMatchMethod,
-    ) -> "SourceBindingMatchPlanResolver":
-        return cls.__registry__[method.value]()
-
-    @abstractmethod
-    def match_candidates(
-        self,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        """Return target candidates belonging to the current image set."""
-
-
-class MetadataSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
-    method = SourceBindingMatchMethod.METADATA
-    method_key = SourceBindingMatchMethod.METADATA.value
-
-    def match_candidates(
-        self,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        constraints: dict[str, str] = {}
-        for dimension in request.plan.dimensions:
-            target_field = dimension.field_for_alias(request.alias)
-            if target_field is None:
-                continue
-            match_value = SourceCandidateMatcher.dimension_match_value(
-                dimension=dimension,
-                request=request,
-            )
-            if match_value is None:
-                continue
-            existing = constraints.get(target_field)
-            if existing is not None and existing != match_value:
-                raise RuntimeError(
-                    f"Conflicting image-set match values for alias {request.alias!r} "
-                    f"field {target_field!r}: {existing!r} != {match_value!r}."
-                )
-            constraints[target_field] = match_value
-        metadata_constraints = MappingProxyType(constraints)
-        return tuple(
-            candidate
-            for candidate in request.target_candidates
-            if SourceCandidateMatcher.matches_image_set_metadata(
-                candidate,
-                metadata_constraints,
-            )
-        )
-
-
-class OrderSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
-    method = SourceBindingMatchMethod.ORDER
-    method_key = SourceBindingMatchMethod.ORDER.value
-
-    def match_candidates(
-        self,
-        request: SourceBindingMatchPlanRequest,
-    ) -> tuple[ParsedSourceCandidate, ...]:
-        current_indexes = SourceCandidateMatcher.order_match_indexes(request)
-        if not current_indexes:
-            scoped_candidates = SourceCandidateMatcher.target_candidates_in_current_scope(
-                request.step_input_candidates,
-                request.target_candidates,
-            )
-            return scoped_candidates or request.target_candidates
-        ordered_target_candidates = SourceCandidateMatcher.ordered_source_candidates(
-            request.target_candidates
-        )
-        return tuple(
-            ordered_target_candidates[index]
-            for index in current_indexes
-            if index < len(ordered_target_candidates)
-        )
 
 
 def _require_processing_context(adapter: CellProfilerRuntimeAdapter) -> Any:
