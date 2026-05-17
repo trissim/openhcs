@@ -929,7 +929,12 @@ class MixedColorImageBundleLayout(ImageBundleLayout):
         )
         if memory_type == MEMORY_TYPE_NUMPY:
             return stacked
-        return _convert_payload(stacked, MEMORY_TYPE_NUMPY, memory_type, gpu_id)
+        return convert_memory(
+            data=stacked,
+            source_type=MEMORY_TYPE_NUMPY,
+            target_type=memory_type,
+            gpu_id=gpu_id,
+        )
 
 
 def compose_aligned_image_payload(
@@ -1183,24 +1188,15 @@ def _as_numpy_slice(slice_data: Any, gpu_id: int) -> np.ndarray:
     source_type = detect_memory_type(slice_data)
     if source_type == MEMORY_TYPE_NUMPY:
         return slice_data
-    return _convert_payload(slice_data, source_type, MEMORY_TYPE_NUMPY, gpu_id)
+    return convert_memory(
+        data=slice_data,
+        source_type=source_type,
+        target_type=MEMORY_TYPE_NUMPY,
+        gpu_id=gpu_id,
+    )
 
 
 def _promote_slice_to_color(slice_data: np.ndarray, channel_count: int) -> np.ndarray:
     if is_color_image_slice(slice_data):
         return slice_data
     return np.repeat(slice_data[:, :, np.newaxis], channel_count, axis=2)
-
-
-def _convert_payload(
-    data: Any,
-    source_type: str,
-    target_type: str,
-    gpu_id: int,
-) -> Any:
-    return convert_memory(
-        data=data,
-        source_type=source_type,
-        target_type=target_type,
-        gpu_id=gpu_id,
-    )
