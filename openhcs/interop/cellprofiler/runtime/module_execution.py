@@ -10833,8 +10833,8 @@ def _with_stacked_output_context(
     stacked_mask = (
         present_masks[0]
         if len(present_masks) == 1
-        else ImageStackLayout.for_slices(present_masks).stack(
-            slices=present_masks,
+        else ImageStackLayout.stack_slices_or_single_stack(
+            present_masks,
             memory_type=memory_type,
             gpu_id=0,
         )

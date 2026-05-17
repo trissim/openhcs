@@ -4657,8 +4657,8 @@ class RestackLikePayloadAuthority:
             return slices[0]
         slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
         memory_type = detect_memory_type(image_payload_data(reference_payload))
-        stacked = ImageStackLayout.for_slices(slice_data).stack(
-            slices=slice_data,
+        stacked = ImageStackLayout.stack_slices_or_single_stack(
+            slice_data,
             memory_type=memory_type,
             gpu_id=0,
         )
@@ -4683,8 +4683,8 @@ class RestackLikePayloadAuthority:
             else np.asarray(mask, dtype=bool)
             for data, mask in zip(slice_data, masks)
         ]
-        return ImageStackLayout.for_slices(resolved_masks).stack(
-            slices=resolved_masks,
+        return ImageStackLayout.stack_slices_or_single_stack(
+            resolved_masks,
             memory_type=memory_type,
             gpu_id=0,
         )
