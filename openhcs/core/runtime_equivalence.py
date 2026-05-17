@@ -2907,11 +2907,10 @@ def _measurement_feature_values_equivalent(
         policy,
     ):
         return True
-    if _threshold_sensitive_pair_values_equivalent(
+    if RuntimeThresholdSensitivePairToleranceContract(policy).values_equivalent(
         feature,
         reference,
         candidate,
-        policy,
     ):
         return True
     if _feature_numeric_tolerance_values_equivalent(
@@ -3073,19 +3072,6 @@ def _threshold_entropy_values_equivalent(
         reference.values_by_feature[feature],
         candidate.values_by_feature[feature],
         entropy_policy,
-    )
-
-
-def _threshold_sensitive_pair_values_equivalent(
-    feature: RuntimeMeasurementFeatureKey,
-    reference: RuntimeMeasurementSnapshot,
-    candidate: RuntimeMeasurementSnapshot,
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    return RuntimeThresholdSensitivePairToleranceContract(policy).values_equivalent(
-        feature,
-        reference,
-        candidate,
     )
 
 
