@@ -17,7 +17,6 @@ from typing import Any, Callable, ClassVar
 from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
-from nominal_refactor_advisor.record_algebra import product_record
 import numpy as np
 
 from openhcs.constants.constants import Backend, FileFormat
@@ -138,20 +137,21 @@ _OBJECT_FEATURE_VALUE_PROCESS_CACHE: WeakKeyDictionary[
 ] = WeakKeyDictionary()
 
 
-ObjectMeasurementTableCacheKey = product_record(
-    "ObjectMeasurementTableCacheKey",
-    "group_key: str | None; match_group: bool; object_name: str",
-    doc="Semantic cache key for object-subject measurement table queries.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementTableCacheKey:
+    """Semantic cache key for object-subject measurement table queries."""
+
+    group_key: str | None
+    match_group: bool
+    object_name: str
 
 
-ObjectMeasurementTableIndexCacheKey = product_record(
-    "ObjectMeasurementTableIndexCacheKey",
-    "group_key: str | None; match_group: bool",
-    doc="Semantic cache key for object-subject measurement table indexes.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class ObjectMeasurementTableIndexCacheKey:
+    """Semantic cache key for object-subject measurement table indexes."""
+
+    group_key: str | None
+    match_group: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -2627,36 +2627,33 @@ class RelationshipRuntimeArtifactCacheInvalidationPolicy(
         return None
 
 
-SourceBindingRequestBase = product_record(
-    "SourceBindingRequestBase",
-    "alias: str; binding: NamedSourceBinding",
-    bases=(ABC,),
-    doc="Shared nominal fields for source-binding request records.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class SourceBindingRequestBase(ABC):
+    """Shared nominal fields for source-binding request records."""
+
+    alias: str
+    binding: NamedSourceBinding
 
 
-SourceBindingResolutionRequest = product_record(
-    "SourceBindingResolutionRequest",
-    "adapter: CellProfilerRuntimeAdapter; current_image: Any",
-    bases=(SourceBindingRequestBase,),
-    doc="Source-binding resolution inputs for one external image alias.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class SourceBindingResolutionRequest(SourceBindingRequestBase):
+    """Source-binding resolution inputs for one external image alias."""
+
+    adapter: CellProfilerRuntimeAdapter
+    current_image: Any
 
 
-SourceBindingMatchPlanRequest = product_record(
-    "SourceBindingMatchPlanRequest",
-    (
-        "alias: str; plan: SourceBindingMatchPlan; "
-        "step_input_candidates: tuple[ParsedSourceCandidate, ...]; "
-        "target_candidates: tuple[ParsedSourceCandidate, ...]; "
-        "full_pipeline_candidates: tuple[ParsedSourceCandidate, ...]; "
-        "source_binding_plan: CompiledSourceBindingPlan; group_key: str | None"
-    ),
-    doc="Typed request for deriving target metadata from an image-set match plan.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class SourceBindingMatchPlanRequest:
+    """Typed request for deriving target metadata from an image-set match plan."""
+
+    alias: str
+    plan: SourceBindingMatchPlan
+    step_input_candidates: tuple["ParsedSourceCandidate", ...]
+    target_candidates: tuple["ParsedSourceCandidate", ...]
+    full_pipeline_candidates: tuple["ParsedSourceCandidate", ...]
+    source_binding_plan: CompiledSourceBindingPlan
+    group_key: str | None
 
 
 class SourceBindingResolver(ABC, metaclass=AutoRegisterMeta):
@@ -2809,12 +2806,13 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
         return payload
 
 
-PipelineStartSourceLoadRequest = product_record(
-    "PipelineStartSourceLoadRequest",
-    "adapter: CellProfilerRuntimeAdapter; selected_paths: tuple[str, ...]; backend: str",
-    doc="Typed request for loading pipeline-start source payloads.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class PipelineStartSourceLoadRequest:
+    """Typed request for loading pipeline-start source payloads."""
+
+    adapter: CellProfilerRuntimeAdapter
+    selected_paths: tuple[str, ...]
+    backend: str
 
 
 class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
@@ -3331,12 +3329,14 @@ def _source_payload_for_declared_image_type(
     )
 
 
-ParsedSourceCandidate = product_record(
-    "ParsedSourceCandidate",
-    "path: str; resolved_path: str; filename: str; metadata: Mapping[str, Any]",
-    doc="One parsed file candidate used for source-binding selector resolution.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class ParsedSourceCandidate:
+    """One parsed file candidate used for source-binding selector resolution."""
+
+    path: str
+    resolved_path: str
+    filename: str
+    metadata: Mapping[str, Any]
 
 
 @dataclass(frozen=True, slots=True)
