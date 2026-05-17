@@ -1631,22 +1631,14 @@ class NativeRuntimeValue(ABC):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SourceImageRuntimeValue(SourceImageContext, NativeRuntimeValue, ABC):
-    """Native value derived from a source image coordinate system."""
-
-    def __post_init__(self) -> None:
-        NativeRuntimeValue.__post_init__(self)
-        self._validate_source_image_context(type(self).__name__)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class NamedImage(SourceImageRuntimeValue):
+class NamedImage(SourceImageContext, NativeRuntimeValue):
     """Native OpenHCS named image value."""
 
     data: Any
 
     def __post_init__(self) -> None:
-        SourceImageRuntimeValue.__post_init__(self)
+        NativeRuntimeValue.__post_init__(self)
+        self._validate_source_image_context(type(self).__name__)
         if not _is_array_like(self.data):
             raise TypeError(
                 f"NamedImage '{self.name}' requires array-like data with "
@@ -1665,7 +1657,11 @@ class NamedImage(SourceImageRuntimeValue):
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadataFields):
+class ObjectLabelSet(
+    SourceImageContext,
+    NativeRuntimeValue,
+    ObjectLabelDomainMetadataFields,
+):
     """Native OpenHCS object-label value."""
 
     labels: Any
@@ -1722,7 +1718,8 @@ class ObjectLabelSet(SourceImageRuntimeValue, ObjectLabelDomainMetadataFields):
         )
 
     def __post_init__(self) -> None:
-        SourceImageRuntimeValue.__post_init__(self)
+        NativeRuntimeValue.__post_init__(self)
+        self._validate_source_image_context(type(self).__name__)
         representation = coerce_enum(
             ObjectLabelRepresentation,
             self.representation,
