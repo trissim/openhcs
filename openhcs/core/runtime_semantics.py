@@ -16,6 +16,7 @@ import numpy as np
 from openhcs.core.artifacts import ArtifactKind, ArtifactPayloadShape
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
+    GeneratedEnumClassSpec,
     GeneratedLeafClassSpec,
     MostDerivedContextStrategyMixin,
     NominalTypeKeyedStrategyMixin,
@@ -1160,16 +1161,28 @@ class MeasurementScope(str, Enum):
     projects_runtime_slices = AliasProperty[bool]("_projects_runtime_slices")
 
 
-class PairMeasurementFeature(str, Enum):
-    """Generic pairwise measurement features with direction semantics."""
+class RuntimeMeasurementFeature(str, Enum):
+    """Base for generated runtime measurement feature enums."""
 
-    CORRELATION = "correlation"
-    REGRESSION_SLOPE = "slope"
-    OVERLAP = "overlap"
-    COSTES_MANDERS = "costes"
-    MANDERS = "manders"
-    RANK_WEIGHTED_COLOCALIZATION = "rwc"
-    OVERLAP_K = "k"
+    feature_name = AliasProperty[str]("value")
+
+
+for _measurement_feature_spec in (
+    GeneratedEnumClassSpec(
+        class_name="PairMeasurementFeature",
+        base_type=RuntimeMeasurementFeature,
+        members={
+            "CORRELATION": "correlation",
+            "REGRESSION_SLOPE": "slope",
+            "OVERLAP": "overlap",
+            "COSTES_MANDERS": "costes",
+            "MANDERS": "manders",
+            "RANK_WEIGHTED_COLOCALIZATION": "rwc",
+            "OVERLAP_K": "k",
+        },
+    ),
+):
+    _measurement_feature_spec.declare_in(globals())
 
 
 class ObjectMeasurementFeatureRole(str, Enum):
@@ -1193,14 +1206,20 @@ class MeasurementStatistic(str, Enum):
     MEAN = "mean"
 
 
-class ObjectCoreMeasurementFeature(str, Enum):
-    """Canonical core object measurement features used by runtime equivalence."""
-
-    OBJECT_COUNT = "object_count"
-    OBJECT_NUMBER = "object_number"
-    CENTER_X = "center_x"
-    CENTER_Y = "center_y"
-    CENTER_Z = "center_z"
+for _measurement_feature_spec in (
+    GeneratedEnumClassSpec(
+        class_name="ObjectCoreMeasurementFeature",
+        base_type=RuntimeMeasurementFeature,
+        members={
+            "OBJECT_COUNT": "object_count",
+            "OBJECT_NUMBER": "object_number",
+            "CENTER_X": "center_x",
+            "CENTER_Y": "center_y",
+            "CENTER_Z": "center_z",
+        },
+    ),
+):
+    _measurement_feature_spec.declare_in(globals())
 
 
 @dataclass(frozen=True, slots=True)
@@ -1333,86 +1352,89 @@ class ObjectLocationMeasurementFeature(str, Enum):
         return ObjectCoreMeasurementFeature[self.name]
 
 
-class ObjectIntensityMeasurementFeature(str, Enum):
-    """Canonical object intensity measurement field names."""
-
-    INTEGRATED_INTENSITY = "IntegratedIntensity"
-    MEAN_INTENSITY = "MeanIntensity"
-    STD_INTENSITY = "StdIntensity"
-    MIN_INTENSITY = "MinIntensity"
-    MAX_INTENSITY = "MaxIntensity"
-    INTEGRATED_INTENSITY_EDGE = "IntegratedIntensityEdge"
-    MEAN_INTENSITY_EDGE = "MeanIntensityEdge"
-    STD_INTENSITY_EDGE = "StdIntensityEdge"
-    MIN_INTENSITY_EDGE = "MinIntensityEdge"
-    MAX_INTENSITY_EDGE = "MaxIntensityEdge"
-    MASS_DISPLACEMENT = "MassDisplacement"
-    LOWER_QUARTILE_INTENSITY = "LowerQuartileIntensity"
-    MEDIAN_INTENSITY = "MedianIntensity"
-    MAD_INTENSITY = "MADIntensity"
-    UPPER_QUARTILE_INTENSITY = "UpperQuartileIntensity"
-    CENTER_MASS_INTENSITY_X = "CenterMassIntensity_X"
-    CENTER_MASS_INTENSITY_Y = "CenterMassIntensity_Y"
-    CENTER_MASS_INTENSITY_Z = "CenterMassIntensity_Z"
-    MAX_INTENSITY_X = "MaxIntensity_X"
-    MAX_INTENSITY_Y = "MaxIntensity_Y"
-    MAX_INTENSITY_Z = "MaxIntensity_Z"
-
-
-class ImageAreaOccupiedMeasurementFeature(str, Enum):
-    """Canonical image area-occupied measurement field names."""
-
-    AREA_OCCUPIED = "AreaOccupied"
-    PERIMETER = "Perimeter"
-    TOTAL_AREA = "TotalArea"
-
-
-class ObjectShapeMeasurementFeature(str, Enum):
-    """Canonical object shape measurement field names.
-
-    The values are the runtime table field names used by object-shape producers.
-    Keeping them in core avoids module-local string schemas and lets dialect
-    layers focus on external naming projection.
-    """
-
-    AREA = "Area"
-    PERIMETER = "Perimeter"
-    VOLUME = "Volume"
-    SURFACE_AREA = "SurfaceArea"
-    ECCENTRICITY = "Eccentricity"
-    SOLIDITY = "Solidity"
-    CONVEX_AREA = "ConvexArea"
-    EXTENT = "Extent"
-    CENTER_X = "Center_X"
-    CENTER_Y = "Center_Y"
-    CENTER_Z = "Center_Z"
-    BOUNDING_BOX_AREA = "BoundingBoxArea"
-    BOUNDING_BOX_VOLUME = "BoundingBoxVolume"
-    BOUNDING_BOX_MINIMUM_X = "BoundingBoxMinimum_X"
-    BOUNDING_BOX_MAXIMUM_X = "BoundingBoxMaximum_X"
-    BOUNDING_BOX_MINIMUM_Y = "BoundingBoxMinimum_Y"
-    BOUNDING_BOX_MAXIMUM_Y = "BoundingBoxMaximum_Y"
-    BOUNDING_BOX_MINIMUM_Z = "BoundingBoxMinimum_Z"
-    BOUNDING_BOX_MAXIMUM_Z = "BoundingBoxMaximum_Z"
-    EULER_NUMBER = "EulerNumber"
-    FORM_FACTOR = "FormFactor"
-    MAJOR_AXIS_LENGTH = "MajorAxisLength"
-    MINOR_AXIS_LENGTH = "MinorAxisLength"
-    ORIENTATION = "Orientation"
-    COMPACTNESS = "Compactness"
-    MAXIMUM_RADIUS = "MaximumRadius"
-    MEDIAN_RADIUS = "MedianRadius"
-    MEAN_RADIUS = "MeanRadius"
-    MIN_FERET_DIAMETER = "MinFeretDiameter"
-    MAX_FERET_DIAMETER = "MaxFeretDiameter"
-    EQUIVALENT_DIAMETER = "EquivalentDiameter"
-    SPATIAL_MOMENT = "SpatialMoment"
-    CENTRAL_MOMENT = "CentralMoment"
-    NORMALIZED_MOMENT = "NormalizedMoment"
-    HU_MOMENT = "HuMoment"
-    INERTIA_TENSOR = "InertiaTensor"
-    INERTIA_TENSOR_EIGENVALUES = "InertiaTensorEigenvalues"
-    ZERNIKE = "Zernike"
+for _measurement_feature_spec in (
+    GeneratedEnumClassSpec(
+        class_name="ObjectIntensityMeasurementFeature",
+        base_type=RuntimeMeasurementFeature,
+        members={
+            "INTEGRATED_INTENSITY": "IntegratedIntensity",
+            "MEAN_INTENSITY": "MeanIntensity",
+            "STD_INTENSITY": "StdIntensity",
+            "MIN_INTENSITY": "MinIntensity",
+            "MAX_INTENSITY": "MaxIntensity",
+            "INTEGRATED_INTENSITY_EDGE": "IntegratedIntensityEdge",
+            "MEAN_INTENSITY_EDGE": "MeanIntensityEdge",
+            "STD_INTENSITY_EDGE": "StdIntensityEdge",
+            "MIN_INTENSITY_EDGE": "MinIntensityEdge",
+            "MAX_INTENSITY_EDGE": "MaxIntensityEdge",
+            "MASS_DISPLACEMENT": "MassDisplacement",
+            "LOWER_QUARTILE_INTENSITY": "LowerQuartileIntensity",
+            "MEDIAN_INTENSITY": "MedianIntensity",
+            "MAD_INTENSITY": "MADIntensity",
+            "UPPER_QUARTILE_INTENSITY": "UpperQuartileIntensity",
+            "CENTER_MASS_INTENSITY_X": "CenterMassIntensity_X",
+            "CENTER_MASS_INTENSITY_Y": "CenterMassIntensity_Y",
+            "CENTER_MASS_INTENSITY_Z": "CenterMassIntensity_Z",
+            "MAX_INTENSITY_X": "MaxIntensity_X",
+            "MAX_INTENSITY_Y": "MaxIntensity_Y",
+            "MAX_INTENSITY_Z": "MaxIntensity_Z",
+        },
+    ),
+    GeneratedEnumClassSpec(
+        class_name="ImageAreaOccupiedMeasurementFeature",
+        base_type=RuntimeMeasurementFeature,
+        members={
+            "AREA_OCCUPIED": "AreaOccupied",
+            "PERIMETER": "Perimeter",
+            "TOTAL_AREA": "TotalArea",
+        },
+    ),
+    GeneratedEnumClassSpec(
+        class_name="ObjectShapeMeasurementFeature",
+        base_type=RuntimeMeasurementFeature,
+        members={
+            "AREA": "Area",
+            "PERIMETER": "Perimeter",
+            "VOLUME": "Volume",
+            "SURFACE_AREA": "SurfaceArea",
+            "ECCENTRICITY": "Eccentricity",
+            "SOLIDITY": "Solidity",
+            "CONVEX_AREA": "ConvexArea",
+            "EXTENT": "Extent",
+            "CENTER_X": "Center_X",
+            "CENTER_Y": "Center_Y",
+            "CENTER_Z": "Center_Z",
+            "BOUNDING_BOX_AREA": "BoundingBoxArea",
+            "BOUNDING_BOX_VOLUME": "BoundingBoxVolume",
+            "BOUNDING_BOX_MINIMUM_X": "BoundingBoxMinimum_X",
+            "BOUNDING_BOX_MAXIMUM_X": "BoundingBoxMaximum_X",
+            "BOUNDING_BOX_MINIMUM_Y": "BoundingBoxMinimum_Y",
+            "BOUNDING_BOX_MAXIMUM_Y": "BoundingBoxMaximum_Y",
+            "BOUNDING_BOX_MINIMUM_Z": "BoundingBoxMinimum_Z",
+            "BOUNDING_BOX_MAXIMUM_Z": "BoundingBoxMaximum_Z",
+            "EULER_NUMBER": "EulerNumber",
+            "FORM_FACTOR": "FormFactor",
+            "MAJOR_AXIS_LENGTH": "MajorAxisLength",
+            "MINOR_AXIS_LENGTH": "MinorAxisLength",
+            "ORIENTATION": "Orientation",
+            "COMPACTNESS": "Compactness",
+            "MAXIMUM_RADIUS": "MaximumRadius",
+            "MEDIAN_RADIUS": "MedianRadius",
+            "MEAN_RADIUS": "MeanRadius",
+            "MIN_FERET_DIAMETER": "MinFeretDiameter",
+            "MAX_FERET_DIAMETER": "MaxFeretDiameter",
+            "EQUIVALENT_DIAMETER": "EquivalentDiameter",
+            "SPATIAL_MOMENT": "SpatialMoment",
+            "CENTRAL_MOMENT": "CentralMoment",
+            "NORMALIZED_MOMENT": "NormalizedMoment",
+            "HU_MOMENT": "HuMoment",
+            "INERTIA_TENSOR": "InertiaTensor",
+            "INERTIA_TENSOR_EIGENVALUES": "InertiaTensorEigenvalues",
+            "ZERNIKE": "Zernike",
+        },
+    ),
+):
+    _measurement_feature_spec.declare_in(globals())
 
 
 class ObjectZernikeDescriptorFeature(str, Enum):
@@ -1423,12 +1445,18 @@ class ObjectZernikeDescriptorFeature(str, Enum):
     INTENSITY_PHASE = "zernike_phase"
 
 
-class ObjectIntensityDistributionMeasurementFeature(str, Enum):
-    """Canonical object intensity-distribution feature families."""
-
-    FRACTION_AT_DISTANCE = "FracAtD"
-    MEAN_FRACTION = "MeanFrac"
-    RADIAL_CV = "RadialCV"
+for _measurement_feature_spec in (
+    GeneratedEnumClassSpec(
+        class_name="ObjectIntensityDistributionMeasurementFeature",
+        base_type=RuntimeMeasurementFeature,
+        members={
+            "FRACTION_AT_DISTANCE": "FracAtD",
+            "MEAN_FRACTION": "MeanFrac",
+            "RADIAL_CV": "RadialCV",
+        },
+    ),
+):
+    _measurement_feature_spec.declare_in(globals())
 
 
 @dataclass(frozen=True, slots=True)

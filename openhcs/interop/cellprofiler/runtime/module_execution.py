@@ -167,6 +167,7 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
+    GeneratedEnumClassSpec,
     GeneratedLeafClassSpec,
     NominalTypeKeyedStrategyMixin,
     RegisteredLeafClassSpec,
@@ -7231,14 +7232,26 @@ class CellProfilerCallableOutputSpecs:
         return ()
 
 
-class ClassifyObjectsMeasurementStatField(str, Enum):
-    """Source fields emitted by absorbed ClassifyObjects functions."""
+class CellProfilerMeasurementStatField(str, Enum):
+    """Base for generated absorbed-result stat-field enums."""
 
-    BIN_COUNTS = "bin_counts"
-    BIN_PERCENTAGES = "bin_percentages"
-    OBJECT_CLASSES = "object_classes"
-    TOTAL_OBJECTS = "total_objects"
-    SLICE_INDEX = MeasurementRowAxisField.SLICE_INDEX.value
+    field_name = AliasProperty[str]("value")
+
+
+for _measurement_stat_field_spec in (
+    GeneratedEnumClassSpec(
+        class_name="ClassifyObjectsMeasurementStatField",
+        base_type=CellProfilerMeasurementStatField,
+        members={
+            "BIN_COUNTS": "bin_counts",
+            "BIN_PERCENTAGES": "bin_percentages",
+            "OBJECT_CLASSES": "object_classes",
+            "TOTAL_OBJECTS": "total_objects",
+            "SLICE_INDEX": MeasurementRowAxisField.SLICE_INDEX.value,
+        },
+    ),
+):
+    _measurement_stat_field_spec.declare_in(globals())
 
 
 class FormattingMeasurementFeatureTemplate(str, Enum, metaclass=RegisteredEnumMeta):
@@ -7258,13 +7271,19 @@ class ClassifyObjectsMeasurementFeatureTemplate(FormattingMeasurementFeatureTemp
     OBJECT_CLASS = "Classify_{bin_name}"
 
 
-class AlignMeasurementStatField(str, Enum):
-    """Source fields emitted by absorbed Align functions."""
-
-    OUTPUT_INDEX = "output_index"
-    SLICE_INDEX = MeasurementRowAxisField.SLICE_INDEX.value
-    X_SHIFT = "x_shift"
-    Y_SHIFT = "y_shift"
+for _measurement_stat_field_spec in (
+    GeneratedEnumClassSpec(
+        class_name="AlignMeasurementStatField",
+        base_type=CellProfilerMeasurementStatField,
+        members={
+            "OUTPUT_INDEX": "output_index",
+            "SLICE_INDEX": MeasurementRowAxisField.SLICE_INDEX.value,
+            "X_SHIFT": "x_shift",
+            "Y_SHIFT": "y_shift",
+        },
+    ),
+):
+    _measurement_stat_field_spec.declare_in(globals())
 
 
 class AlignMeasurementFeature(str, Enum):
@@ -7476,16 +7495,22 @@ class AlignMeasurementRows(CellProfilerResultMeasurementRows):
         return rows
 
 
-class ThresholdMeasurementStatField(str, Enum):
-    """Known source fields for CellProfiler threshold measurement stats."""
-
-    SLICE_INDEX = "slice_index"
-    THRESHOLD_USED = "threshold_used"
-    THRESHOLD_VALUE = "threshold_value"
-    FINAL_THRESHOLD = "final_threshold"
-    ORIGINAL_THRESHOLD = "original_threshold"
-    WEIGHTED_VARIANCE = "weighted_variance"
-    SUM_OF_ENTROPIES = "sum_of_entropies"
+for _measurement_stat_field_spec in (
+    GeneratedEnumClassSpec(
+        class_name="ThresholdMeasurementStatField",
+        base_type=CellProfilerMeasurementStatField,
+        members={
+            "SLICE_INDEX": "slice_index",
+            "THRESHOLD_USED": "threshold_used",
+            "THRESHOLD_VALUE": "threshold_value",
+            "FINAL_THRESHOLD": "final_threshold",
+            "ORIGINAL_THRESHOLD": "original_threshold",
+            "WEIGHTED_VARIANCE": "weighted_variance",
+            "SUM_OF_ENTROPIES": "sum_of_entropies",
+        },
+    ),
+):
+    _measurement_stat_field_spec.declare_in(globals())
 
 
 class ThresholdMeasurementFeatureTemplate(FormattingMeasurementFeatureTemplate):

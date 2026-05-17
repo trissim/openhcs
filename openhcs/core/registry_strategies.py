@@ -285,3 +285,23 @@ class GeneratedLeafClassSpec(RegisteredLeafClassSpec):
     def class_attributes(self) -> Mapping[str, object]:
         """Return the declared class attributes for this generated leaf."""
         return self.attributes
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedEnumClassSpec:
+    """Nominal declaration for generated enum classes."""
+
+    class_name: str
+    base_type: type[Enum]
+    members: Mapping[str, object]
+
+    def declare_in(self, namespace: MutableMapping[str, object]) -> type[Enum]:
+        """Materialize the generated enum in ``namespace`` and return it."""
+        enum_type = Enum(
+            self.class_name,
+            dict(self.members),
+            type=self.base_type,
+            module=str(namespace.get("__name__", self.base_type.__module__)),
+        )
+        namespace[self.class_name] = enum_type
+        return enum_type
