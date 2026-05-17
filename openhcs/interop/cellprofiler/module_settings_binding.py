@@ -370,158 +370,180 @@ class BlankSymbolModuleUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgn
         return not value.strip() or is_blank_symbol_name(value)
 
 
-class MeasureImageIntensityUnmappedSettingIgnore(BlankSymbolModuleUnmappedSettingIgnore):
-    """Empty object-set selector is consumed by symbol-table scope selection."""
+@dataclass(frozen=True, slots=True)
+class ModuleUnmappedSettingIgnoreDeclaration:
+    """Declaration for one typed CellProfiler setting-ignore strategy."""
 
-    module_name = "MeasureImageIntensity"
-    controlling_setting = INPUT_OBJECTS_SETTING
-    ignored_settings = (
-        "Measure the intensity only from areas enclosed by objects?",
-        "calculate_custom_percentiles",
-        "specify_percentiles_to_measure",
-    )
-    inactive_settings = (INPUT_OBJECTS_SETTING,)
+    class_name: str
+    base: type[ModuleUnmappedSettingIgnore]
+    module_name: str
+    ignored_settings: tuple[str | SettingNameFamily, ...] = ()
+    controlling_setting: str | SettingNameFamily | None = None
+    inactive_when_values: tuple[str, ...] = ()
+    inactive_settings: tuple[str | SettingNameFamily, ...] = ()
+    doc: str = ""
 
-
-class MeasureColocalizationUnmappedSettingIgnore(
-    BlankSymbolModuleUnmappedSettingIgnore
-):
-    """Empty object selector is consumed by colocalization scope binding."""
-
-    module_name = "MeasureColocalization"
-    controlling_setting = SettingNameFamily("Select an object to measure")
-    ignored_settings = ("Select objects to measure", "Hidden")
-    inactive_settings = (SettingNameFamily("Select an object to measure"),)
-
-
-class MeasureImageQualityUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgnore):
-    """Image selector is inactive when image quality measures all loaded images."""
-
-    module_name = "MeasureImageQuality"
-    controlling_setting = "Calculate metrics for which images?"
-    inactive_when_values = ("All loaded images",)
-    inactive_settings = ("Select the images to measure",)
+    def materialize(self) -> type[ModuleUnmappedSettingIgnore]:
+        namespace: dict[str, object] = {
+            "__module__": __name__,
+            "__doc__": self.doc,
+            "module_name": self.module_name,
+            "ignored_settings": self.ignored_settings,
+        }
+        if self.controlling_setting is not None:
+            namespace["controlling_setting"] = self.controlling_setting
+        if self.inactive_when_values:
+            namespace["inactive_when_values"] = self.inactive_when_values
+        if self.inactive_settings:
+            namespace["inactive_settings"] = self.inactive_settings
+        return type(self.class_name, (self.base,), namespace)
 
 
-class MaskObjectsUnmappedSettingIgnore(ConditionalModuleUnmappedSettingIgnore):
-    """MaskObjects object/image routing is consumed by the symbol table."""
+MODULE_UNMAPPED_SETTING_IGNORE_DECLARATIONS: tuple[
+    ModuleUnmappedSettingIgnoreDeclaration,
+    ...,
+] = (
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "MeasureImageIntensityUnmappedSettingIgnore",
+        BlankSymbolModuleUnmappedSettingIgnore,
+        "MeasureImageIntensity",
+        (
+            "Measure the intensity only from areas enclosed by objects?",
+            "calculate_custom_percentiles",
+            "specify_percentiles_to_measure",
+        ),
+        controlling_setting=INPUT_OBJECTS_SETTING,
+        inactive_settings=(INPUT_OBJECTS_SETTING,),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "MeasureColocalizationUnmappedSettingIgnore",
+        BlankSymbolModuleUnmappedSettingIgnore,
+        "MeasureColocalization",
+        ("Select objects to measure", "Hidden"),
+        controlling_setting=SettingNameFamily("Select an object to measure"),
+        inactive_settings=(SettingNameFamily("Select an object to measure"),),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "MeasureImageQualityUnmappedSettingIgnore",
+        ConditionalModuleUnmappedSettingIgnore,
+        "MeasureImageQuality",
+        controlling_setting="Calculate metrics for which images?",
+        inactive_when_values=("All loaded images",),
+        inactive_settings=("Select the images to measure",),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "MaskObjectsUnmappedSettingIgnore",
+        ConditionalModuleUnmappedSettingIgnore,
+        "MaskObjects",
+        (
+            "Mask using a region defined by other objects or by binary image",
+            "Select the masking image",
+            "Retain outlines of the resulting objects?",
+        ),
+        controlling_setting="Retain outlines of the resulting objects?",
+        inactive_when_values=("No",),
+        inactive_settings=("Name the outline image",),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "CorrectIlluminationCalculateUnmappedSettingIgnore",
+        ModuleUnmappedSettingIgnore,
+        "CorrectIlluminationCalculate",
+        (
+            "Retain the averaged image?",
+            "Name the averaged image",
+            "Retain the dilated image?",
+            "Name the dilated image",
+        ),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "IdentifyPrimaryObjectsUnmappedSettingIgnore",
+        ModuleUnmappedSettingIgnore,
+        "IdentifyPrimaryObjects",
+        ("Display accepted local maxima?", "Select maxima color"),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "MeasureObjectIntensityUnmappedSettingIgnore",
+        ModuleUnmappedSettingIgnore,
+        "MeasureObjectIntensity",
+        ("Hidden",),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "MeasureGranularityUnmappedSettingIgnore",
+        ModuleUnmappedSettingIgnore,
+        "MeasureGranularity",
+        ("Measure within objects?", "image_count", "object_count"),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "RelateObjectsUnmappedSettingIgnore",
+        ModuleUnmappedSettingIgnore,
+        "RelateObjects",
+        (
+            RELATE_OBJECTS_PARENT_OBJECTS_SETTING,
+            RELATE_OBJECTS_CHILD_OBJECTS_SETTING,
+            RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
+            "Calculate distances to other parents?",
+            "Parent name",
+            RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
+            "Name the output object",
+        ),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "MeasureTextureUnmappedSettingIgnore",
+        ModuleUnmappedSettingIgnore,
+        "MeasureTexture",
+        (
+            "Hidden",
+            "Angles to measure",
+            "Measure Gabor features?",
+            "Number of angles to compute for Gabor",
+        ),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "EnhanceOrSuppressFeaturesUnmappedSettingIgnore",
+        ModuleUnmappedSettingIgnore,
+        "EnhanceOrSuppressFeatures",
+        ("Rescale result image",),
+    ),
+    ModuleUnmappedSettingIgnoreDeclaration(
+        "TrackObjectsUnmappedSettingIgnore",
+        ModuleUnmappedSettingIgnore,
+        "TrackObjects",
+        (
+            "Average cell diameter in pixels",
+            "Cost of cell to empty matching",
+            "Filter objects by lifetime?",
+            "Filter using a maximum lifetime?",
+            "Filter using a minimum lifetime?",
+            "Gap closing cost",
+            "Maximum gap displacement in pixel units",
+            "Maximum lifetime",
+            "Maximum merge score",
+            "Maximum mitosis distance in pixel units",
+            "Maximum split score",
+            "Maximum temporal gap in frames",
+            "Merge alternative cost",
+            "Minimum lifetime",
+            "Mitosis alternative cost",
+            "Number of standard deviations for search radius",
+            "Run the second phase of the LAP algorithm?",
+            "Save color-coded image?",
+            "Search radius limit, in pixel units",
+            "Select display option",
+            "Select object measurement to use for tracking",
+            "Select the movement model",
+            "Split alternative cost",
+            "Use advanced configuration parameters",
+            "Weight of area difference in function matching cost",
+        ),
+    ),
+)
 
-    module_name = "MaskObjects"
-    controlling_setting = "Retain outlines of the resulting objects?"
-    inactive_when_values = ("No",)
-    ignored_settings = (
-        "Mask using a region defined by other objects or by binary image",
-        "Select the masking image",
-        "Retain outlines of the resulting objects?",
-    )
-    inactive_settings = ("Name the outline image",)
-
-
-class CorrectIlluminationCalculateUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """CP UI output toggles ignored when averaged/dilated images are disabled."""
-
-    module_name = "CorrectIlluminationCalculate"
-    ignored_settings = (
-        "Retain the averaged image?",
-        "Name the averaged image",
-        "Retain the dilated image?",
-        "Name the dilated image",
-    )
-
-
-class IdentifyPrimaryObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Display-only maxima visualization settings are not runtime semantics."""
-
-    module_name = "IdentifyPrimaryObjects"
-    ignored_settings = (
-        "Display accepted local maxima?",
-        "Select maxima color",
-    )
-
-
-class MeasureObjectIntensityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Legacy hidden group-count setting is parser metadata, not runtime input."""
-
-    module_name = "MeasureObjectIntensity"
-    ignored_settings = ("Hidden",)
-
-
-class MeasureGranularityUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Granularity object mask routing is consumed by measurement scope binding."""
-
-    module_name = "MeasureGranularity"
-    ignored_settings = (
-        "Measure within objects?",
-        "image_count",
-        "object_count",
-    )
-
-
-class RelateObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Object routing and disabled relationship outputs are contract semantics."""
-
-    module_name = "RelateObjects"
-    ignored_settings = (
-        RELATE_OBJECTS_PARENT_OBJECTS_SETTING,
-        RELATE_OBJECTS_CHILD_OBJECTS_SETTING,
-        RELATE_OBJECTS_PER_PARENT_MEANS_SETTING,
-        "Calculate distances to other parents?",
-        "Parent name",
-        RELATE_OBJECTS_SAVE_CHILDREN_SETTING,
-        "Name the output object",
-    )
-
-
-class MeasureTextureUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Legacy hidden group-count setting is parser metadata, not runtime input."""
-
-    module_name = "MeasureTexture"
-    ignored_settings = (
-        "Hidden",
-        "Angles to measure",
-        "Measure Gabor features?",
-        "Number of angles to compute for Gabor",
-    )
-
-
-class EnhanceOrSuppressFeaturesUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Output display scaling does not affect absorbed numeric feature output."""
-
-    module_name = "EnhanceOrSuppressFeatures"
-    ignored_settings = ("Rescale result image",)
-
-
-class TrackObjectsUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
-    """Unsupported LAP/display knobs are intentionally outside overlap tracking."""
-
-    module_name = "TrackObjects"
-    ignored_settings = (
-        "Average cell diameter in pixels",
-        "Cost of cell to empty matching",
-        "Filter objects by lifetime?",
-        "Filter using a maximum lifetime?",
-        "Filter using a minimum lifetime?",
-        "Gap closing cost",
-        "Maximum gap displacement in pixel units",
-        "Maximum lifetime",
-        "Maximum merge score",
-        "Maximum mitosis distance in pixel units",
-        "Maximum split score",
-        "Maximum temporal gap in frames",
-        "Merge alternative cost",
-        "Minimum lifetime",
-        "Mitosis alternative cost",
-        "Number of standard deviations for search radius",
-        "Run the second phase of the LAP algorithm?",
-        "Save color-coded image?",
-        "Search radius limit, in pixel units",
-        "Select display option",
-        "Select object measurement to use for tracking",
-        "Select the movement model",
-        "Split alternative cost",
-        "Use advanced configuration parameters",
-        "Weight of area difference in function matching cost",
-    )
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in MODULE_UNMAPPED_SETTING_IGNORE_DECLARATIONS
+    }
+)
 
 
 class RepeatedSettingValuePolicy(ABC, metaclass=AutoRegisterMeta):
@@ -2627,34 +2649,65 @@ class CropModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(crop_bound_kwargs(module, binder))
 
 
-class CorrectIlluminationCalculateModuleSettingsBindingStrategy(
-    DeclarativeModuleSettingsBindingStrategy
-):
-    """Bind illumination-function calculation settings without bool/enum loss."""
+@dataclass(frozen=True, slots=True)
+class DeclarativeModuleSettingsBindingStrategyDeclaration:
+    """Declaration for simple settings-binding strategies."""
 
-    module_name = "CorrectIlluminationCalculate"
-    setting_bindings = CORRECT_ILLUMINATION_CALCULATE_SETTINGS
+    class_name: str
+    module_name: str
+    setting_bindings: tuple[SettingToKeywordBinding, ...]
+    base: type[ModuleSettingsBindingStrategy] = DeclarativeModuleSettingsBindingStrategy
+    doc: str = ""
+
+    def materialize(self) -> type[ModuleSettingsBindingStrategy]:
+        return type(
+            self.class_name,
+            (self.base,),
+            {
+                "__module__": __name__,
+                "__doc__": self.doc,
+                "module_name": self.module_name,
+                "setting_bindings": self.setting_bindings,
+            },
+        )
 
 
-class SmoothModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
-    """Bind Smooth's filter and scale settings into absorbed image smoothing."""
+DECLARATIVE_MODULE_SETTINGS_BINDING_DECLARATIONS: tuple[
+    DeclarativeModuleSettingsBindingStrategyDeclaration,
+    ...,
+] = (
+    DeclarativeModuleSettingsBindingStrategyDeclaration(
+        "CorrectIlluminationCalculateModuleSettingsBindingStrategy",
+        "CorrectIlluminationCalculate",
+        CORRECT_ILLUMINATION_CALCULATE_SETTINGS,
+        doc="Bind illumination-function calculation settings without bool/enum loss.",
+    ),
+    DeclarativeModuleSettingsBindingStrategyDeclaration(
+        "SmoothModuleSettingsBindingStrategy",
+        "Smooth",
+        SMOOTH_SETTINGS,
+        doc="Bind Smooth's filter and scale settings into absorbed image smoothing.",
+    ),
+    DeclarativeModuleSettingsBindingStrategyDeclaration(
+        "EnhanceEdgesModuleSettingsBindingStrategy",
+        "EnhanceEdges",
+        ENHANCE_EDGES_SETTINGS,
+        doc="Bind EnhanceEdges method and threshold settings into edge filtering.",
+    ),
+    DeclarativeModuleSettingsBindingStrategyDeclaration(
+        "MaskObjectsModuleSettingsBindingStrategy",
+        "MaskObjects",
+        MASK_OBJECTS_SETTINGS,
+        doc="Bind object-mask policy settings into absorbed MaskObjects kwargs.",
+    ),
+)
 
-    module_name = "Smooth"
-    setting_bindings = SMOOTH_SETTINGS
-
-
-class EnhanceEdgesModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
-    """Bind EnhanceEdges method and threshold settings into edge filtering."""
-
-    module_name = "EnhanceEdges"
-    setting_bindings = ENHANCE_EDGES_SETTINGS
-
-
-class MaskObjectsModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
-    """Bind object-mask policy settings into absorbed MaskObjects kwargs."""
-
-    module_name = "MaskObjects"
-    setting_bindings = MASK_OBJECTS_SETTINGS
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in DECLARATIVE_MODULE_SETTINGS_BINDING_DECLARATIONS
+    }
+)
 
 
 class CorrectIlluminationApplyModuleSettingsBindingStrategy(
@@ -2747,36 +2800,58 @@ class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrat
         return BoundModuleSettings(structuring_element_bound_kwargs(module, binder))
 
 
-class OpeningModuleSettingsBindingStrategy(
-    StructuringElementModuleSettingsBindingStrategy
-):
-    """Bind Opening's CellProfiler structuring-element setting."""
+@dataclass(frozen=True, slots=True)
+class StructuringElementModuleSettingsBindingStrategyDeclaration:
+    """Declaration for simple structuring-element module bindings."""
 
-    module_name = "Opening"
+    class_name: str
+    module_name: str
+    doc: str = ""
 
-
-class ClosingModuleSettingsBindingStrategy(
-    StructuringElementModuleSettingsBindingStrategy
-):
-    """Bind Closing's CellProfiler structuring-element setting."""
-
-    module_name = "Closing"
-
-
-class ErodeImageModuleSettingsBindingStrategy(
-    StructuringElementModuleSettingsBindingStrategy
-):
-    """Bind ErodeImage's CellProfiler structuring-element setting."""
-
-    module_name = "ErodeImage"
+    def materialize(self) -> type[StructuringElementModuleSettingsBindingStrategy]:
+        return type(
+            self.class_name,
+            (StructuringElementModuleSettingsBindingStrategy,),
+            {
+                "__module__": __name__,
+                "__doc__": self.doc,
+                "module_name": self.module_name,
+            },
+        )
 
 
-class DilateImageModuleSettingsBindingStrategy(
-    StructuringElementModuleSettingsBindingStrategy
-):
-    """Bind DilateImage's CellProfiler structuring-element setting."""
+STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_DECLARATIONS: tuple[
+    StructuringElementModuleSettingsBindingStrategyDeclaration,
+    ...,
+] = (
+    StructuringElementModuleSettingsBindingStrategyDeclaration(
+        "OpeningModuleSettingsBindingStrategy",
+        "Opening",
+        "Bind Opening's CellProfiler structuring-element setting.",
+    ),
+    StructuringElementModuleSettingsBindingStrategyDeclaration(
+        "ClosingModuleSettingsBindingStrategy",
+        "Closing",
+        "Bind Closing's CellProfiler structuring-element setting.",
+    ),
+    StructuringElementModuleSettingsBindingStrategyDeclaration(
+        "ErodeImageModuleSettingsBindingStrategy",
+        "ErodeImage",
+        "Bind ErodeImage's CellProfiler structuring-element setting.",
+    ),
+    StructuringElementModuleSettingsBindingStrategyDeclaration(
+        "DilateImageModuleSettingsBindingStrategy",
+        "DilateImage",
+        "Bind DilateImage's CellProfiler structuring-element setting.",
+    ),
+)
 
-    module_name = "DilateImage"
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in STRUCTURING_ELEMENT_MODULE_SETTINGS_BINDING_DECLARATIONS
+    }
+)
 
 
 class ErodeObjectsModuleSettingsBindingStrategy(StructuringElementModuleSettingsBindingStrategy):
