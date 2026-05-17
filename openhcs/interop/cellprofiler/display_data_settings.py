@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from openhcs.core.public_api import declared_public_names
+
 from .parser import ModuleBlock
 from .setting_names import SettingNameFamily, optional_setting_value
 
@@ -32,8 +34,7 @@ def display_data_on_image_bound_kwargs(module: ModuleBlock) -> dict[str, Any]:
     }
 
 
-__all__ = (
-    "DISPLAY_OBJECT_OR_IMAGE_SETTING",
-    "MEASUREMENT_TO_DISPLAY_SETTING",
-    "display_data_on_image_bound_kwargs",
+__all__ = declared_public_names(
+    globals(),
+    constant_prefixes=("DISPLAY_", "MEASUREMENT_"),
 )

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from openhcs.core.public_api import declared_public_names
+
 from .settings_binder import SettingToKeywordBinding
 
 
@@ -29,4 +31,4 @@ ENHANCE_EDGES_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
     SettingToKeywordBinding("Low threshold value", "low_threshold"),
 )
 
-__all__ = ("ENHANCE_EDGES_SETTINGS",)
+__all__ = declared_public_names(globals(), constant_prefixes=("ENHANCE_EDGES_",))

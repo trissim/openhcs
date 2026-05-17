@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from openhcs.core.public_api import declared_public_names
+
 from .setting_names import SettingNameFamily
 
 
@@ -54,23 +56,4 @@ def parse_watershed_border_exclusion(value: str) -> bool:
     )
 
 
-__all__ = (
-    "WATERSHED_BORDER_EXCLUSION_SETTING",
-    "WATERSHED_COMPACTNESS_SETTING",
-    "WATERSHED_CONNECTIVITY_SETTING",
-    "WATERSHED_DECLUMP_METHOD_SETTING",
-    "WATERSHED_DOWNSAMPLE_SETTING",
-    "WATERSHED_FOOTPRINT_SETTING",
-    "WATERSHED_INTENSITY_IMAGE_SETTING",
-    "WATERSHED_LABEL_SEPARATION_SETTING",
-    "WATERSHED_MARKERS_SETTING",
-    "WATERSHED_MASK_SETTING",
-    "WATERSHED_MAX_SEEDS_SETTING",
-    "WATERSHED_METHOD_SETTING",
-    "WATERSHED_MINIMUM_INTERNAL_DISTANCE_SETTING",
-    "WATERSHED_MINIMUM_SEED_DISTANCE_SETTING",
-    "WATERSHED_SMOOTHING_FACTOR_SETTING",
-    "WATERSHED_STRUCTURING_ELEMENT_SETTING",
-    "WATERSHED_USE_ADVANCED_SETTINGS_SETTING",
-    "parse_watershed_border_exclusion",
-)
+__all__ = declared_public_names(globals(), constant_prefixes=("WATERSHED_",))

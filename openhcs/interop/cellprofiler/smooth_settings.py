@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from openhcs.core.public_api import declared_public_names
+
 from .settings_binder import SettingToKeywordBinding
 
 
@@ -22,4 +24,4 @@ SMOOTH_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
     ),
 )
 
-__all__ = ("SMOOTH_SETTINGS",)
+__all__ = declared_public_names(globals(), constant_prefixes=("SMOOTH_",))

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from openhcs.core.public_api import declared_public_names
+
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
     SettingNameFamily,
@@ -180,19 +182,4 @@ def unmix_colors_bound_kwargs(module: ModuleBlock) -> dict[str, object]:
     }
 
 
-__all__ = (
-    "UNMIX_COLORS_BLUE_ABSORBANCE_SETTING",
-    "UNMIX_COLORS_GREEN_ABSORBANCE_SETTING",
-    "UNMIX_COLORS_INPUT_IMAGE_SETTING",
-    "UNMIX_COLORS_OUTPUT_IMAGE_SETTING",
-    "UNMIX_COLORS_RED_ABSORBANCE_SETTING",
-    "UNMIX_COLORS_STAIN_COUNT_SETTING",
-    "UNMIX_COLORS_STAIN_SETTING",
-    "UnmixColorsAbsorbance",
-    "UnmixColorsOutputRow",
-    "UnmixColorsOutputRows",
-    "UnmixColorsSymbolName",
-    "unmix_colors_bound_kwargs",
-    "unmix_colors_input_name",
-    "unmix_colors_output_rows",
-)
+__all__ = declared_public_names(globals(), constant_prefixes=("UNMIX_COLORS_",))

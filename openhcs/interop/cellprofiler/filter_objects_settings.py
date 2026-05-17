@@ -10,6 +10,7 @@ from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.public_api import declared_public_names
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
 from .measurement_lookup import child_count_feature_child_name
 from .parser import ModuleBlock, ModuleSetting
@@ -541,40 +542,4 @@ def filter_objects_child_count_object_names(module: ModuleBlock) -> tuple[str, .
     return tuple(dict.fromkeys(child_names))
 
 
-__all__ = (
-    "FILTER_OBJECTS_ADDITIONAL_INPUT_SETTING",
-    "FILTER_OBJECTS_ADDITIONAL_OUTLINE_SETTING",
-    "FILTER_OBJECTS_ADDITIONAL_OUTPUT_SETTING",
-    "FILTER_OBJECTS_ENCLOSING_OBJECT_SETTING",
-    "FILTER_OBJECTS_INPUT_SETTING",
-    "FILTER_OBJECTS_MAIN_OUTLINE_SETTING",
-    "FILTER_OBJECTS_MAXIMUM_SETTING",
-    "FILTER_OBJECTS_MEASUREMENT_SETTING",
-    "FILTER_OBJECTS_METHOD_SETTING",
-    "FILTER_OBJECTS_MINIMUM_SETTING",
-    "FILTER_OBJECTS_MODE_SETTING",
-    "FILTER_OBJECTS_OUTLINE_IMAGE_SETTING",
-    "FILTER_OBJECTS_OUTPUT_SETTING",
-    "FILTER_OBJECTS_PER_OBJECT_ASSIGNMENT_SETTING",
-    "FILTER_OBJECTS_USE_MAXIMUM_SETTING",
-    "FILTER_OBJECTS_USE_MINIMUM_SETTING",
-    "CellProfilerBooleanLiteral",
-    "FilterObjectsAdditionalObjectRow",
-    "FilterObjectsMainOutlineImageName",
-    "FilterObjectsMappingAdditionalRows",
-    "FilterObjectsMappingMeasurementRules",
-    "FilterObjectsMeasurementRule",
-    "FilterObjectsModeSetting",
-    "FilterObjectsObjectPair",
-    "FilterObjectsOutput",
-    "FilterObjectsOutputRole",
-    "FilterObjectsPlan",
-    "FilterObjectsSymbolRequirement",
-    "OptionalFloatLiteral",
-    "RepeatedSettingValues",
-    "filter_objects_additional_rows",
-    "filter_objects_bound_kwargs",
-    "filter_objects_child_count_object_names",
-    "filter_objects_measurement_rules",
-    "filter_objects_plan",
-)
+__all__ = declared_public_names(globals(), constant_prefixes=("FILTER_OBJECTS_",))

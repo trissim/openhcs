@@ -9,6 +9,7 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.public_api import declared_public_names
 from openhcs.core.runtime_artifact_queries import (
     measurement_scalar_value_for_feature,
     measurement_values_for_feature,
@@ -183,15 +184,11 @@ def child_count_feature_child_name(feature_name: str | None) -> str | None:
     return parsed.object_name
 
 
-__all__ = (
-    "CellProfilerMeasurementFeature",
-    "CellProfilerMeasurementFeatureParser",
-    "CellProfilerMeasurementFeatureKind",
-    "CellProfilerChildCountFeatureParser",
-    "CellProfilerObjectCountFeatureParser",
-    "child_count_feature_child_name",
-    "count_feature_object_name",
+__all__ = declared_public_names(
+    globals(),
+    extra_names=(
     "measurement_scalar_value_for_feature",
     "measurement_values_for_feature",
     "measurement_values_for_label_slices",
+    ),
 )

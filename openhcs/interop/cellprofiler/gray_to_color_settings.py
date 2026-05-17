@@ -9,6 +9,8 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.public_api import declared_public_names
+
 from .parser import ModuleBlock
 from .setting_names import is_blank_symbol_name, normalized_symbol_name
 
@@ -216,27 +218,4 @@ def is_blank_gray_to_color_source(value: str) -> bool:
     return is_blank_symbol_name(value)
 
 
-__all__ = (
-    "GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS",
-    "GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS",
-    "GRAY_TO_COLOR_CURRENT_RESCALE_DEFAULT",
-    "GRAY_TO_COLOR_RESCALE_SETTING",
-    "GRAY_TO_COLOR_REVISION_3_UPGRADED_RESCALE_DEFAULT",
-    "GRAY_TO_COLOR_RGB_IMAGE_SETTINGS",
-    "GRAY_TO_COLOR_RGB_WEIGHT_SETTINGS",
-    "FixedSettingGrayToColorInputNameResolver",
-    "GrayToColorCmykInputNameResolver",
-    "GrayToColorCompositeInputNameResolver",
-    "GrayToColorInputNameResolver",
-    "GrayToColorModuleRevision",
-    "GrayToColorRgbInputNameResolver",
-    "GrayToColorScheme",
-    "GrayToColorStackChannelSetting",
-    "GrayToColorStackInputNameResolver",
-    "RepeatedImageNameGrayToColorInputNameResolver",
-    "coerce_gray_to_color_scheme",
-    "gray_to_color_rescale_default",
-    "gray_to_color_scheme",
-    "gray_to_color_stack_channels",
-    "is_blank_gray_to_color_source",
-)
+__all__ = declared_public_names(globals(), constant_prefixes=("GRAY_TO_COLOR_",))
