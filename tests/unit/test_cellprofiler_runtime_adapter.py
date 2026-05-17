@@ -12,7 +12,7 @@ from openhcs.interop.cellprofiler.runtime import (
     CellProfilerRelationshipPayload,
     CellProfilerRuntimeAdapter,
 )
-from openhcs.interop.cellprofiler.runtime.adapter import _single_spatial_grid
+from openhcs.interop.cellprofiler.runtime.adapter import SpatialGridValueAuthority
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerModuleExecutor,
     ConcatenatedMeasurementColumnarRows,
@@ -908,7 +908,7 @@ def test_cellprofiler_spatial_grid_resolver_broadcasts_identical_scalar_grid():
         )
     )
 
-    resolved = _single_spatial_grid("Grid", (scalar, aligned))
+    resolved = SpatialGridValueAuthority.single_spatial_grid("Grid", (scalar, aligned))
 
     assert isinstance(resolved, RuntimeSliceAlignedValues)
     assert [grid.name for grid in resolved.slices] == ["Grid", "Grid"]

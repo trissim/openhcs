@@ -1061,7 +1061,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         )
         record = records[-1]
         data = (
-            _stack_image_record_payloads(records)
+            RuntimeRecordStackAuthority.stack_image_records(records)
             if len(records) > 1
             else record.value.data
         )
@@ -1088,14 +1088,16 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     ) -> StoredRuntimeValue:
         construct_started_at = time.perf_counter()
         if isinstance(labels, ObjectLabelSet):
-            normalized_labels = _normalize_dense_object_label_payload(labels.labels)
+            normalized_labels = RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
+                labels.labels
+            )
             object_labels = ObjectLabelSet(
                 name=name,
                 labels=normalized_labels,
-                unedited_labels=_normalize_dense_object_label_payload(
+                unedited_labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
                     labels.unedited_labels
                 ),
-                small_removed_labels=_normalize_dense_object_label_payload(
+                small_removed_labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
                     labels.small_removed_labels
                 ),
                 declared_object_count=labels.declared_object_count,
@@ -1109,14 +1111,16 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 representation=labels.representation,
             )
         elif isinstance(labels, ObjectLabelPayload):
-            normalized_labels = _normalize_dense_object_label_payload(labels.labels)
+            normalized_labels = RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
+                labels.labels
+            )
             object_labels = ObjectLabelSet(
                 name=name,
                 labels=normalized_labels,
-                unedited_labels=_normalize_dense_object_label_payload(
+                unedited_labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
                     labels.unedited_labels
                 ),
-                small_removed_labels=_normalize_dense_object_label_payload(
+                small_removed_labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
                     labels.small_removed_labels
                 ),
                 declared_object_count=labels.declared_object_count,
@@ -1136,7 +1140,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             )
             object_labels = ObjectLabelSet(
                 name=name,
-                labels=_normalize_dense_object_label_payload(labels),
+                labels=RuntimeRecordStackAuthority.normalize_dense_object_label_payload(
+                    labels
+                ),
                 spatial_origin_yx=source_domain.spatial_origin_yx,
                 source_spatial_shape_yx=source_domain.source_spatial_shape_yx,
                 source_image_name=source_image_name,
@@ -1180,7 +1186,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             current_image=current_image,
         )
         objects = (
-            _stack_object_label_records(records)
+            RuntimeRecordStackAuthority.stack_object_label_records(records)
             if len(records) > 1
             else ObjectLabelSet.from_runtime_value(records[0].value)
         )
@@ -2182,7 +2188,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 ArtifactKind.SPATIAL_GRID,
                 RuntimeSliceAlignedValues(
                     slices=tuple(
-                        _spatial_grid_native_value(name, value)
+                        SpatialGridValueAuthority.native_value(name, value)
                         for value in grid.slices
                     )
                 ),
@@ -2209,8 +2215,11 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             kind=ArtifactKind.SPATIAL_GRID,
             group_key=group_key,
         )
-        grids = tuple(_spatial_grid_record_value(name, record) for record in records)
-        return _single_spatial_grid(name, grids)
+        grids = tuple(
+            SpatialGridValueAuthority.record_value(name, record)
+            for record in records
+        )
+        return SpatialGridValueAuthority.single_spatial_grid(name, grids)
 
     def _record_native_value(
         self,
@@ -2894,88 +2903,102 @@ def _label_stack_repeats_first_plane(label_array: np.ndarray) -> bool:
     return all(np.array_equal(first_plane, label_array[index]) for index in range(1, label_array.shape[0]))
 
 
-def _stack_image_record_payloads(records: tuple[StoredRuntimeValue, ...]) -> Any:
-    payloads = tuple(record.value.data for record in records)
-    arrays = tuple(_grouped_image_array(image_payload_data(payload)) for payload in payloads)
-    memory_type = detect_memory_type(arrays[0])
-    data = stack_slices(
-        list(arrays),
-        memory_type,
-        0,
-    ) if all(getattr(array, "ndim", None) == 2 for array in arrays) else np.stack(
-        tuple(np.asarray(array) for array in arrays),
-        axis=0,
-    )
-    masks = tuple(image_payload_mask(payload) for payload in payloads)
-    present_masks = tuple(mask for mask in masks if mask is not None)
-    if present_masks and len(present_masks) != len(masks):
-        raise ValueError("Cannot stack mixed masked and unmasked grouped image inputs.")
-    mask = (
-        None
-        if not present_masks
-        else stack_slices(list(present_masks), memory_type, 0)
-        if all(getattr(mask, "ndim", None) == 2 for mask in present_masks)
-        else np.stack(tuple(np.asarray(mask) for mask in present_masks), axis=0)
-    )
-    return image_payload_with_context(
-        data,
-        mask=mask,
-        metadata=compose_image_payload_metadata(payloads),
-    )
+class RuntimeRecordStackAuthority:
+    """Stack grouped runtime image/object-label records with payload semantics."""
 
-
-def _grouped_image_array(array: Any) -> Any:
-    if (
-        getattr(array, "ndim", None) == 3
-        and not is_color_image_slice(array)
-        and getattr(array, "shape", ())[0] == 1
-    ):
-        return array[0]
-    return array
-
-
-def _stack_object_label_records(
-    records: tuple[StoredRuntimeValue, ...],
-) -> ObjectLabelSet:
-    values = tuple(ObjectLabelSet.from_runtime_value(record.value) for record in records)
-    first = values[0]
-    representations = {value.representation for value in values}
-    if len(representations) != 1:
-        raise ValueError("Cannot stack grouped object labels with mixed representations.")
-    return ObjectLabelPure2DSliceAggregator.aggregate(
-        values,
-        detect_memory_type(first.labels),
-    )
-
-
-def _normalize_dense_object_label_payload(labels: Any) -> Any:
-    """Return dense object labels as one array payload, not slice lists."""
-    if labels is None or isinstance(labels, SparseIJVLabelRows):
-        return labels
-    if not _is_sequence_payload(labels):
-        return labels
-    if not labels:
-        return np.asarray(labels, dtype=np.int32)
-    memory_type = detect_memory_type(labels[0])
-    try:
-        return ImageStackLayout.stack_slices_or_single_stack(
-            labels,
-            memory_type=memory_type,
-            gpu_id=0,
+    @classmethod
+    def stack_image_records(cls, records: tuple[StoredRuntimeValue, ...]) -> Any:
+        payloads = tuple(record.value.data for record in records)
+        arrays = tuple(
+            cls.grouped_image_array(image_payload_data(payload))
+            for payload in payloads
         )
-    except ValueError:
-        return _stack_dense_label_sequence(labels, memory_type)
+        memory_type = detect_memory_type(arrays[0])
+        data = (
+            stack_slices(
+                list(arrays),
+                memory_type,
+                0,
+            )
+            if all(getattr(array, "ndim", None) == 2 for array in arrays)
+            else np.stack(
+                tuple(np.asarray(array) for array in arrays),
+                axis=0,
+            )
+        )
+        masks = tuple(image_payload_mask(payload) for payload in payloads)
+        present_masks = tuple(mask for mask in masks if mask is not None)
+        if present_masks and len(present_masks) != len(masks):
+            raise ValueError("Cannot stack mixed masked and unmasked grouped image inputs.")
+        mask = (
+            None
+            if not present_masks
+            else stack_slices(list(present_masks), memory_type, 0)
+            if all(getattr(mask, "ndim", None) == 2 for mask in present_masks)
+            else np.stack(tuple(np.asarray(mask) for mask in present_masks), axis=0)
+        )
+        return image_payload_with_context(
+            data,
+            mask=mask,
+            metadata=compose_image_payload_metadata(payloads),
+        )
 
+    @staticmethod
+    def grouped_image_array(array: Any) -> Any:
+        if (
+            getattr(array, "ndim", None) == 3
+            and not is_color_image_slice(array)
+            and getattr(array, "shape", ())[0] == 1
+        ):
+            return array[0]
+        return array
 
-def _stack_dense_label_sequence(labels: Sequence[Any], memory_type: str) -> Any:
-    """Stack a homogeneous dense-label sequence without image-slice assumptions."""
-    label_list = list(labels)
-    arrays = tuple(np.asarray(label) for label in label_list)
-    shapes = {tuple(array.shape) for array in arrays}
-    if len(shapes) == 1:
-        _raise_if_dense_label_stack_too_large(arrays)
-        return np.stack(arrays, axis=0)
-    return stack_slices(label_list, memory_type, 0)
+    @staticmethod
+    def stack_object_label_records(
+        records: tuple[StoredRuntimeValue, ...],
+    ) -> ObjectLabelSet:
+        values = tuple(
+            ObjectLabelSet.from_runtime_value(record.value)
+            for record in records
+        )
+        first = values[0]
+        representations = {value.representation for value in values}
+        if len(representations) != 1:
+            raise ValueError("Cannot stack grouped object labels with mixed representations.")
+        return ObjectLabelPure2DSliceAggregator.aggregate(
+            values,
+            detect_memory_type(first.labels),
+        )
+
+    @classmethod
+    def normalize_dense_object_label_payload(cls, labels: Any) -> Any:
+        """Return dense object labels as one array payload, not slice lists."""
+        if labels is None or isinstance(labels, SparseIJVLabelRows):
+            return labels
+        if not _is_sequence_payload(labels):
+            return labels
+        if not labels:
+            return np.asarray(labels, dtype=np.int32)
+        memory_type = detect_memory_type(labels[0])
+        try:
+            return ImageStackLayout.stack_slices_or_single_stack(
+                labels,
+                memory_type=memory_type,
+                gpu_id=0,
+            )
+        except ValueError:
+            return cls.stack_dense_label_sequence(labels, memory_type)
+
+    @staticmethod
+    def stack_dense_label_sequence(labels: Sequence[Any], memory_type: str) -> Any:
+        """Stack a homogeneous dense-label sequence without image-slice assumptions."""
+        label_list = list(labels)
+        arrays = tuple(np.asarray(label) for label in label_list)
+        shapes = {tuple(array.shape) for array in arrays}
+        if len(shapes) == 1:
+            _raise_if_dense_label_stack_too_large(arrays)
+            return np.stack(arrays, axis=0)
+        return stack_slices(label_list, memory_type, 0)
 
 
 def _raise_if_dense_label_stack_too_large(arrays: tuple[np.ndarray, ...]) -> None:
@@ -3012,108 +3035,107 @@ def _is_global_grouped_input_request(
     return group_key in (None, "default") and group_key not in paths_by_group
 
 
-def _spatial_grid_payload(name: str, value: Any) -> Mapping[str, Any]:
-    if isinstance(value, SpatialGrid):
-        return value.with_name(name).as_mapping()
-    if isinstance(value, Mapping):
-        return SpatialGrid.from_mapping(name, value).as_mapping()
-    raise TypeError(
-        f"Spatial grid slice '{name}' must be SpatialGrid or mapping-backed, "
-        f"got {type(value).__name__}."
-    )
+class SpatialGridValueAuthority:
+    """Normalize, compare, and collapse grouped spatial-grid runtime values."""
 
+    @classmethod
+    def payload(cls, name: str, value: Any) -> Mapping[str, Any]:
+        return cls.native_value(name, value).as_mapping()
 
-def _spatial_grid_native_value(name: str, value: Any) -> SpatialGrid:
-    if isinstance(value, SpatialGrid):
-        return value.with_name(name)
-    if isinstance(value, Mapping):
-        return SpatialGrid.from_mapping(name, value)
-    raise TypeError(
-        f"Spatial grid slice '{name}' must be SpatialGrid or mapping-backed, "
-        f"got {type(value).__name__}."
-    )
-
-
-def _spatial_grid_record_value(
-    name: str,
-    record: StoredRuntimeValue,
-) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
-    data = record.value.data
-    if isinstance(data, tuple | list) and all(
-        isinstance(value, Mapping) for value in data
-    ):
-        return RuntimeSliceAlignedValues(
-            slices=tuple(
-                SpatialGrid.from_mapping(name, value) for value in data
-            )
+    @staticmethod
+    def native_value(name: str, value: Any) -> SpatialGrid:
+        if isinstance(value, SpatialGrid):
+            return value.with_name(name)
+        if isinstance(value, Mapping):
+            return SpatialGrid.from_mapping(name, value)
+        raise TypeError(
+            f"Spatial grid slice '{name}' must be SpatialGrid or mapping-backed, "
+            f"got {type(value).__name__}."
         )
-    return SpatialGrid.from_runtime_value(record.value)
 
+    @staticmethod
+    def record_value(
+        name: str,
+        record: StoredRuntimeValue,
+    ) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
+        data = record.value.data
+        if isinstance(data, tuple | list) and all(
+            isinstance(value, Mapping) for value in data
+        ):
+            return RuntimeSliceAlignedValues(
+                slices=tuple(
+                    SpatialGrid.from_mapping(name, value) for value in data
+                )
+            )
+        return SpatialGrid.from_runtime_value(record.value)
 
-def _single_spatial_grid(
-    name: str,
-    grids: tuple[SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid], ...],
-) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
-    if not grids:
-        raise RuntimeError(f"Missing spatial grid artifact {name!r}.")
-    if any(isinstance(grid, RuntimeSliceAlignedValues) for grid in grids):
-        return _single_slice_aligned_spatial_grid(name, grids)
-    first = grids[0]
-    first_payload = _spatial_grid_equivalence_payload(first)
-    if all(_spatial_grid_equivalence_payload(grid) == first_payload for grid in grids):
-        return first.with_name(name)
-    raise RuntimeError(
-        f"Spatial grid artifact {name!r} resolved to non-identical grouped grids."
-    )
+    @classmethod
+    def single_spatial_grid(
+        cls,
+        name: str,
+        grids: tuple[SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid], ...],
+    ) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
+        if not grids:
+            raise RuntimeError(f"Missing spatial grid artifact {name!r}.")
+        if any(isinstance(grid, RuntimeSliceAlignedValues) for grid in grids):
+            return cls.single_slice_aligned_spatial_grid(name, grids)
+        first = grids[0]
+        first_payload = cls.equivalence_payload(first)
+        if all(cls.equivalence_payload(grid) == first_payload for grid in grids):
+            return first.with_name(name)
+        raise RuntimeError(
+            f"Spatial grid artifact {name!r} resolved to non-identical grouped grids."
+        )
 
-
-def _single_slice_aligned_spatial_grid(
-    name: str,
-    grids: tuple[SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid], ...],
-) -> RuntimeSliceAlignedValues[SpatialGrid]:
-    slice_count = max(
-        grid.slice_count if isinstance(grid, RuntimeSliceAlignedValues) else 1
-        for grid in grids
-    )
-    aligned_slices: list[SpatialGrid] = []
-    for slice_index in range(slice_count):
-        candidates = tuple(
-            _spatial_grid_for_aligned_slice(grid, slice_index, slice_count)
+    @classmethod
+    def single_slice_aligned_spatial_grid(
+        cls,
+        name: str,
+        grids: tuple[SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid], ...],
+    ) -> RuntimeSliceAlignedValues[SpatialGrid]:
+        slice_count = max(
+            grid.slice_count if isinstance(grid, RuntimeSliceAlignedValues) else 1
             for grid in grids
         )
-        first = candidates[0]
-        first_payload = _spatial_grid_equivalence_payload(first)
-        if not all(
-            _spatial_grid_equivalence_payload(candidate) == first_payload
-            for candidate in candidates
-        ):
-            raise RuntimeError(
-                f"Spatial grid artifact {name!r} resolved to non-identical "
-                "slice-aligned grouped grids."
+        aligned_slices: list[SpatialGrid] = []
+        for slice_index in range(slice_count):
+            candidates = tuple(
+                cls.for_aligned_slice(grid, slice_index, slice_count)
+                for grid in grids
             )
-        aligned_slices.append(first.with_name(name))
-    return RuntimeSliceAlignedValues(slices=tuple(aligned_slices))
+            first = candidates[0]
+            first_payload = cls.equivalence_payload(first)
+            if not all(
+                cls.equivalence_payload(candidate) == first_payload
+                for candidate in candidates
+            ):
+                raise RuntimeError(
+                    f"Spatial grid artifact {name!r} resolved to non-identical "
+                    "slice-aligned grouped grids."
+                )
+            aligned_slices.append(first.with_name(name))
+        return RuntimeSliceAlignedValues(slices=tuple(aligned_slices))
 
+    @staticmethod
+    def for_aligned_slice(
+        grid: SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid],
+        slice_index: int,
+        slice_count: int,
+    ) -> SpatialGrid:
+        if isinstance(grid, RuntimeSliceAlignedValues):
+            if grid.slice_count == slice_count:
+                return grid.value_for_slice(slice_index)
+            if grid.slice_count == 1:
+                return grid.value_for_slice(0)
+            raise RuntimeError(
+                "Spatial grid artifact resolved to incompatible slice-aligned "
+                f"counts {grid.slice_count} and {slice_count}."
+            )
+        return grid
 
-def _spatial_grid_for_aligned_slice(
-    grid: SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid],
-    slice_index: int,
-    slice_count: int,
-) -> SpatialGrid:
-    if isinstance(grid, RuntimeSliceAlignedValues):
-        if grid.slice_count == slice_count:
-            return grid.value_for_slice(slice_index)
-        if grid.slice_count == 1:
-            return grid.value_for_slice(0)
-        raise RuntimeError(
-            "Spatial grid artifact resolved to incompatible slice-aligned "
-            f"counts {grid.slice_count} and {slice_count}."
-        )
-    return grid
-
-
-def _spatial_grid_equivalence_payload(grid: SpatialGrid) -> dict[str, Any]:
-    return {**grid.as_mapping(), "slice_index": 0}
+    @staticmethod
+    def equivalence_payload(grid: SpatialGrid) -> dict[str, Any]:
+        return {**grid.as_mapping(), "slice_index": 0}
 
 
 def _runtime_query_for_input_plan(
