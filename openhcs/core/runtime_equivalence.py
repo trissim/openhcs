@@ -4150,11 +4150,10 @@ class StaticWideRuntimeRowProjector:
         )
         if not derives_directional_pair_facts:
             return facts
-        return _derive_pair_measurement_facts(
-            facts,
+        return RuntimeDirectionalPairMeasurementDerivationContract(
             self.context.policy,
-            known_source_names=self.context.known_source_names,
-        )
+            self.context.known_source_names,
+        ).derive(facts)
 
     def qualifiers(
         self,
@@ -5201,13 +5200,14 @@ class RuntimeTableSnapshotFactExtractor:
                 if index not in padding_indexes
             )
             facts.extend(
-                _derive_pair_measurement_facts(
+                RuntimeDirectionalPairMeasurementDerivationContract(
+                    self.policy,
+                    self.known_source_names,
+                ).derive(
                     RuntimeMeasurementFactProjectionContract.dedupe_observed_alias_records(
                         row_fact_records,
                         self.policy,
-                    ),
-                    self.policy,
-                    known_source_names=self.known_source_names,
+                    )
                 )
             )
         return tuple(facts)
@@ -5637,10 +5637,11 @@ class RuntimeMeasurementRowFactProjector:
         )
         if projection.long_form:
             return row_facts
-        derived_facts = _derive_pair_measurement_facts(
-            RuntimeMeasurementFactProjectionContract.dedupe_alias_facts(row_facts),
+        derived_facts = RuntimeDirectionalPairMeasurementDerivationContract(
             self.context.policy,
-            known_source_names=self.context.known_source_names,
+            self.context.known_source_names,
+        ).derive(
+            RuntimeMeasurementFactProjectionContract.dedupe_alias_facts(row_facts),
         )
         if self.context.required_keys is not None:
             return tuple(
@@ -5672,13 +5673,14 @@ class RuntimeMeasurementRowFactProjector:
         ):
             return row_values_by_key
 
-        derived_facts = _derive_pair_measurement_facts(
+        derived_facts = RuntimeDirectionalPairMeasurementDerivationContract(
+            self.context.policy,
+            self.context.known_source_names,
+        ).derive(
             tuple(
                 (key, _cell_signature(repr(value), self.context.policy))
                 for key, value in row_values_by_key
             ),
-            self.context.policy,
-            known_source_names=self.context.known_source_names,
         )
         if self.context.required_keys is not None:
             derived_facts = tuple(
@@ -6349,19 +6351,6 @@ def _cached_runtime_cell_signature(
         rounded = round(numeric, numeric_decimal_places)
         canonical = repr(0.0 if rounded == 0 else rounded)
     return RuntimeCellSignature(RuntimeCellValueKind.NUMBER, canonical)
-
-
-def _derive_pair_measurement_facts(
-    facts: _RuntimeMeasurementFacts,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    known_source_names: tuple[str, ...],
-) -> _RuntimeMeasurementFacts:
-    """Derive mathematically equivalent facts for directional pair measurements."""
-    return RuntimeDirectionalPairMeasurementDerivationContract(
-        policy,
-        known_source_names,
-    ).derive(facts)
 
 
 def _reverse_regression_slope(
