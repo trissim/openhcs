@@ -238,7 +238,9 @@ from openhcs.interop.cellprofiler.measurement_lookup import (
     count_feature_object_name,
 )
 from openhcs.interop.cellprofiler.runtime.adapter import (
+    CellProfilerImageNumberResolver,
     CellProfilerRuntimeAdapter,
+    SourceBindingPlaneIndexResolver,
     prepare_cellprofiler_runtime_adapter,
 )
 
@@ -3009,8 +3011,12 @@ class CellProfilerImageNumberStart:
         if not source_paths:
             return self.adapter.cellprofiler_axis_image_number_start()
 
-        image_number = self.adapter.cellprofiler_image_number_for_source_paths(
-            source_paths
+        image_number = (
+            CellProfilerImageNumberResolver.for_adapter(
+                self.adapter
+            ).image_number_for_paths(source_paths)
+            if isinstance(self.adapter, CellProfilerRuntimeAdapter)
+            else self.adapter.cellprofiler_image_number_for_source_paths(source_paths)
         )
         if image_number is not None:
             return image_number
@@ -6396,6 +6402,12 @@ class ObjectLabelSourceBindingProjectionRequest:
     def current_source_binding_plane_index(self) -> int | None:
         if self.label_payload.plane_axis is not RuntimePlaneAxis.SOURCE_BINDING:
             return None
+        if self.adapter is None:
+            return None
+        if isinstance(self.adapter, CellProfilerRuntimeAdapter):
+            return SourceBindingPlaneIndexResolver.for_adapter(
+                self.adapter
+            ).plane_index_for_aliases(self.source_aliases)
         return self.current_axis_plane_index(RuntimePlaneAxis.SOURCE_BINDING)
 
     def current_runtime_slice_plane_index(self) -> int | None:

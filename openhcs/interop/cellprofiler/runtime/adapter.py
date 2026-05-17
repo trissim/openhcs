@@ -792,7 +792,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         )
         if not source_paths and metadata.source_path:
             source_paths = (metadata.source_path,)
-        return self.cellprofiler_image_number_for_source_paths(source_paths)
+        return CellProfilerImageNumberResolver.for_adapter(self).image_number_for_paths(
+            source_paths
+        )
 
     def source_image_payload_for_name(
         self,
@@ -864,21 +866,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         source_aliases: tuple[str, ...],
     ) -> int | None:
         """Return the current axis-local source-binding plane index."""
-        indexes = tuple(
-            index
-            for alias in source_aliases
-            for index in (self.source_binding_plane_index(alias),)
-            if index is not None
+        return SourceBindingPlaneIndexResolver.for_adapter(self).plane_index_for_aliases(
+            source_aliases
         )
-        unique_indexes = tuple(dict.fromkeys(indexes))
-        if not unique_indexes:
-            return None
-        if len(unique_indexes) != 1:
-            raise RuntimeError(
-                "Source-binding plane resolution produced conflicting indexes: "
-                f"{unique_indexes!r}."
-            )
-        return unique_indexes[0]
 
     def resolve_source_objects(
         self,
@@ -2922,6 +2912,23 @@ class SourceBindingPlaneIndexResolver:
             .bind(self.single_plane_index)
             .value
         )
+
+    def plane_index_for_aliases(self, aliases: tuple[str, ...]) -> int | None:
+        indexes = tuple(
+            index
+            for alias in aliases
+            for index in (self.plane_index(alias),)
+            if index is not None
+        )
+        unique_indexes = tuple(dict.fromkeys(indexes))
+        if not unique_indexes:
+            return None
+        if len(unique_indexes) != 1:
+            raise RuntimeError(
+                "Source-binding plane resolution produced conflicting indexes: "
+                f"{unique_indexes!r}."
+            )
+        return unique_indexes[0]
 
     def candidate_context(
         self,
