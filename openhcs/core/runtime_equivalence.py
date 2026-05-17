@@ -1404,6 +1404,25 @@ class DeclaredObjectIdentifierPlaneDomainProjectionStrategy(
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeExpectedMeasurementFactCompletion:
+    """Materialize expected facts missing from explicit runtime measurements."""
+
+    expected_by_key: _RuntimeMeasurementFactCounters
+    values_by_feature: _RuntimeMeasurementFactCounterMapping
+
+    def missing_facts(self) -> _RuntimeMeasurementFacts:
+        facts: _RuntimeMeasurementFactList = []
+        for key, expected_counter in self.expected_by_key.items():
+            explicit_counter = self.values_by_feature.get(key, Counter())
+            for signature, expected_count in expected_counter.items():
+                missing_count = expected_count - explicit_counter[signature]
+                if missing_count <= 0:
+                    continue
+                facts.extend((key, signature) for _index in range(missing_count))
+        return tuple(facts)
+
+
+@dataclass(frozen=True, slots=True)
 class ObjectLabelIdentifierMeasurementCompletion:
     """Complete ObjectNumber facts from all nominal object-label domains."""
 
@@ -1421,15 +1440,10 @@ class ObjectLabelIdentifierMeasurementCompletion:
         expected_by_key: _RuntimeMeasurementFactCounters = {}
         for record in records:
             self._add_expected_record_counts(expected_by_key, record)
-        facts: _RuntimeMeasurementFactList = []
-        for key, expected_counter in expected_by_key.items():
-            explicit_counter = self.values_by_feature.get(key, Counter())
-            for signature, expected_count in expected_counter.items():
-                missing_count = expected_count - explicit_counter[signature]
-                if missing_count <= 0:
-                    continue
-                facts.extend((key, signature) for _index in range(missing_count))
-        return tuple(facts)
+        return RuntimeExpectedMeasurementFactCompletion(
+            expected_by_key,
+            self.values_by_feature,
+        ).missing_facts()
 
     def _add_expected_record_counts(
         self,
@@ -1486,16 +1500,10 @@ class PrimaryRowObjectIdentifierMeasurementCompletion:
         expected_by_key: _RuntimeMeasurementFactCounters = {}
         for subject, row_identity in primary_row_identities:
             self.add_expected_row_counts(expected_by_key, subject, row_identity)
-
-        facts: _RuntimeMeasurementFactList = []
-        for key, expected_counter in expected_by_key.items():
-            explicit_counter = self.values_by_feature.get(key, Counter())
-            for signature, expected_count in expected_counter.items():
-                missing_count = expected_count - explicit_counter[signature]
-                if missing_count <= 0:
-                    continue
-                facts.extend((key, signature) for _index in range(missing_count))
-        return tuple(facts)
+        return RuntimeExpectedMeasurementFactCompletion(
+            expected_by_key,
+            self.values_by_feature,
+        ).missing_facts()
 
     def add_expected_row_counts(
         self,
