@@ -9,7 +9,12 @@ from enum import Enum, EnumMeta
 from functools import lru_cache
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import (
+    AutoRegisterMeta,
+    RegistryFamily,
+    RegistryKeyAttribute,
+    extract_key_from_class_name,
+)
 
 
 _EnumT = TypeVar("_EnumT", bound=Enum)
@@ -249,8 +254,11 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
         """Return whether this registered strategy owns ``context``."""
 
 
-class RegisteredLeafClassSpec(ABC):
+class RegisteredLeafClassSpec(ABC, metaclass=AutoRegisterMeta):
     """Nominal declaration for generated AutoRegisterMeta leaf classes."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
+    __key_extractor__ = staticmethod(extract_key_from_class_name)
 
     class_name: str
     base_type: type[object]
