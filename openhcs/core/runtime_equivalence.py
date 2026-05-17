@@ -198,6 +198,10 @@ _RuntimeMeasurementFactCounters = dict[
     RuntimeMeasurementFeatureKey,
     Counter[RuntimeCellSignature],
 ]
+_RuntimeMeasurementFactCounterMapping = Mapping[
+    RuntimeMeasurementFeatureKey,
+    Counter[RuntimeCellSignature],
+]
 _RuntimeMeasurementKeySet = frozenset[RuntimeMeasurementFeatureKey]
 _RuntimeRequiredMeasurementKeys = _RuntimeMeasurementKeySet | None
 _RuntimeObjectValuesByLabel = dict[
@@ -222,6 +226,11 @@ _RuntimeMeasurementRowMergeCache = dict[
     _RuntimeMeasurementRowMergeKey,
     _RuntimeMeasurementRowMergeValue,
 ]
+_ObjectInstanceChildrenByParent = Mapping[
+    ObjectInstanceKey,
+    tuple[ObjectInstanceKey, ...],
+]
+_ObjectInstanceAggregateValues = dict[tuple[ObjectInstanceKey, ...], float]
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementRowPriorityCacheKey:
     """Identity for row-to-feature priority resolution within one equivalence pass."""
@@ -625,6 +634,10 @@ _RuntimeProjectedCell = tuple[
     RuntimeMeasurementFeatureKey,
     _RuntimeRowProjectionValueT,
 ]
+_RuntimeProjectedCells = tuple[
+    _RuntimeProjectedCell[_RuntimeRowProjectionValueT],
+    ...,
+]
 
 
 @dataclass(frozen=True, slots=True)
@@ -705,7 +718,7 @@ class RuntimeRowValueProjection(
         key: RuntimeMeasurementFeatureKey,
         value: object,
         policy: RuntimeEquivalencePolicy,
-    ) -> tuple[_RuntimeProjectedCell[_RuntimeRowProjectionValueT], ...]:
+    ) -> _RuntimeProjectedCells[_RuntimeRowProjectionValueT]:
         """Project one wide-form cell into semantic values."""
 
 
@@ -814,7 +827,7 @@ class RuntimeRowLongFormProjection(
     def project(
         self,
         fact: _RuntimeMeasurementFact,
-    ) -> tuple[_RuntimeProjectedCell[_RuntimeRowProjectionValueT], ...]:
+    ) -> _RuntimeProjectedCells[_RuntimeRowProjectionValueT]:
         """Project one normalized long-form fact into semantic values."""
 
 
@@ -1157,10 +1170,7 @@ class _ObjectLabelMeasurementContext:
     labels: object
     object_name: str | None
     policy: RuntimeEquivalencePolicy
-    values_by_feature: Mapping[
-        RuntimeMeasurementFeatureKey,
-        Counter[RuntimeCellSignature],
-    ]
+    values_by_feature: _RuntimeMeasurementFactCounterMapping
     object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey]
     object_location_subjects: frozenset[RuntimeMeasurementSubjectKey]
     object_count_subjects: frozenset[RuntimeMeasurementSubjectKey]
@@ -1178,10 +1188,7 @@ class _ObjectLabelMeasurementContext:
         cls,
         value: RuntimeValue,
         policy: RuntimeEquivalencePolicy,
-        values_by_feature: Mapping[
-            RuntimeMeasurementFeatureKey,
-            Counter[RuntimeCellSignature],
-        ],
+        values_by_feature: _RuntimeMeasurementFactCounterMapping,
         object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey],
         object_location_subjects: frozenset[RuntimeMeasurementSubjectKey],
         object_count_subjects: frozenset[RuntimeMeasurementSubjectKey],
@@ -1431,10 +1438,7 @@ class ObjectLabelIdentifierMeasurementCompletion:
     """Complete ObjectNumber facts from all nominal object-label domains."""
 
     policy: RuntimeEquivalencePolicy
-    values_by_feature: Mapping[
-        RuntimeMeasurementFeatureKey,
-        Counter[RuntimeCellSignature],
-    ]
+    values_by_feature: _RuntimeMeasurementFactCounterMapping
     object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey]
     object_location_subjects: frozenset[RuntimeMeasurementSubjectKey]
     object_count_subjects: frozenset[RuntimeMeasurementSubjectKey]
@@ -1444,10 +1448,7 @@ class ObjectLabelIdentifierMeasurementCompletion:
         self,
         records: Sequence[Any],
     ) -> _RuntimeMeasurementFacts:
-        expected_by_key: dict[
-            RuntimeMeasurementFeatureKey,
-            Counter[RuntimeCellSignature],
-        ] = {}
+        expected_by_key: _RuntimeMeasurementFactCounters = {}
         for record in records:
             self._add_expected_record_counts(expected_by_key, record)
         facts: _RuntimeMeasurementFactList = []
@@ -1462,10 +1463,7 @@ class ObjectLabelIdentifierMeasurementCompletion:
 
     def _add_expected_record_counts(
         self,
-        expected_by_key: dict[
-            RuntimeMeasurementFeatureKey,
-            Counter[RuntimeCellSignature],
-        ],
+        expected_by_key: _RuntimeMeasurementFactCounters,
         record: Any,
     ) -> None:
         context = _ObjectLabelMeasurementContext.from_runtime_value(
@@ -1507,10 +1505,7 @@ class PrimaryRowObjectIdentifierMeasurementCompletion:
     """Complete ObjectNumber facts from explicit primary object measurement rows."""
 
     policy: RuntimeEquivalencePolicy
-    values_by_feature: Mapping[
-        RuntimeMeasurementFeatureKey,
-        Counter[RuntimeCellSignature],
-    ]
+    values_by_feature: _RuntimeMeasurementFactCounterMapping
     object_identifier_subjects: frozenset[RuntimeMeasurementSubjectKey]
     required_keys: _RuntimeRequiredMeasurementKeys
 
@@ -1518,10 +1513,7 @@ class PrimaryRowObjectIdentifierMeasurementCompletion:
         self,
         primary_row_identities: Iterable[_RuntimeMeasurementPrimaryRowKey],
     ) -> _RuntimeMeasurementFacts:
-        expected_by_key: dict[
-            RuntimeMeasurementFeatureKey,
-            Counter[RuntimeCellSignature],
-        ] = {}
+        expected_by_key: _RuntimeMeasurementFactCounters = {}
         for subject, row_identity in primary_row_identities:
             self.add_expected_row_counts(expected_by_key, subject, row_identity)
 
@@ -1537,10 +1529,7 @@ class PrimaryRowObjectIdentifierMeasurementCompletion:
 
     def add_expected_row_counts(
         self,
-        expected_by_key: dict[
-            RuntimeMeasurementFeatureKey,
-            Counter[RuntimeCellSignature],
-        ],
+        expected_by_key: _RuntimeMeasurementFactCounters,
         subject: RuntimeMeasurementSubjectKey,
         row_identity: _RuntimeMeasurementRowIdentity,
     ) -> None:
@@ -2349,7 +2338,7 @@ class RuntimeMeasurementObservationProjector:
 class RuntimeMeasurementSnapshot:
     """Semantic measurement facts independent of table layout."""
 
-    values_by_feature: Mapping[RuntimeMeasurementFeatureKey, Counter[RuntimeCellSignature]]
+    values_by_feature: _RuntimeMeasurementFactCounterMapping
 
     @classmethod
     def from_output_snapshot(
@@ -4152,10 +4141,7 @@ class StaticWideRuntimeRowProjector:
 
     def facts(self) -> _RuntimeMeasurementFacts:
         row_fact_records: list[_RuntimeRowProjectionRecord[RuntimeCellSignature]] = []
-        padding_group_presence: dict[
-            tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-            bool,
-        ] = {}
+        padding_group_presence: _RuntimeMeasurementPaddingGroupPresence = {}
         row_qualifier_cache: _RuntimeMeasurementIndexedQualifierCache = {}
         derives_directional_pair_facts = False
         for index in self.context.feature_column_indexes:
@@ -4250,7 +4236,7 @@ class StaticWideRuntimeRowProjector:
         field_name: str,
         key: RuntimeMeasurementFeatureKey,
         qualifiers: tuple[str, ...],
-    ) -> tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]]:
+    ) -> _RuntimeMeasurementPaddingGroup:
         if qualifiers:
             return self._padding_group(field_name, key)
         padding_group_cache_key = (field_name, key)
@@ -4289,7 +4275,7 @@ class StaticWideRuntimeRowProjector:
         self,
         field_name: str,
         key: RuntimeMeasurementFeatureKey,
-    ) -> tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]]:
+    ) -> _RuntimeMeasurementPaddingGroup:
         return RuntimeMeasurementFactProjectionContract.padding_group(
             self.context.table_padding_group,
             field_name,
@@ -7184,7 +7170,7 @@ class RuntimeObjectLabelInstanceCatalog:
 class ObjectInstanceKeyPlaneAlignmentContext:
     """Object-instance relationship keys plus measured child value identity."""
 
-    child_ids_by_parent: Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]
+    child_ids_by_parent: _ObjectInstanceChildrenByParent
     values_by_child_id: Mapping[ObjectInstanceKey, float]
 
     @property
@@ -7223,12 +7209,9 @@ class ObjectInstanceKeyPlaneAlignmentStrategy(
     @classmethod
     def align_child_ids_by_parent(
         cls,
-        child_ids_by_parent: Mapping[
-            ObjectInstanceKey,
-            tuple[ObjectInstanceKey, ...],
-        ],
+        child_ids_by_parent: _ObjectInstanceChildrenByParent,
         values_by_child_id: Mapping[ObjectInstanceKey, float],
-    ) -> Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
+    ) -> _ObjectInstanceChildrenByParent:
         """Align relationship child identities to the measured value domain."""
         context = ObjectInstanceKeyPlaneAlignmentContext(
             child_ids_by_parent=child_ids_by_parent,
@@ -7246,7 +7229,7 @@ class ObjectInstanceKeyPlaneAlignmentStrategy(
     def align(
         self,
         context: ObjectInstanceKeyPlaneAlignmentContext,
-    ) -> Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
+    ) -> _ObjectInstanceChildrenByParent:
         """Return relationship child identities projected into value identity."""
 
 
@@ -7267,7 +7250,7 @@ class UnmodifiedObjectInstanceKeyPlaneAlignmentStrategy(
     def align(
         self,
         context: ObjectInstanceKeyPlaneAlignmentContext,
-    ) -> Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
+    ) -> _ObjectInstanceChildrenByParent:
         return context.child_ids_by_parent
 
 
@@ -7290,7 +7273,7 @@ class SingleSliceValueObjectInstanceKeyPlaneAlignmentStrategy(
     def align(
         self,
         context: ObjectInstanceKeyPlaneAlignmentContext,
-    ) -> Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
+    ) -> _ObjectInstanceChildrenByParent:
         slice_index = context.single_value_slice_index
         if slice_index is None:
             raise ValueError("Single-slice alignment requires a value slice index.")
@@ -7323,7 +7306,7 @@ class MultiSliceValueObjectInstanceKeyPlaneAlignmentStrategy(
     def align(
         self,
         context: ObjectInstanceKeyPlaneAlignmentContext,
-    ) -> Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
+    ) -> _ObjectInstanceChildrenByParent:
         value_keys_by_object_id: dict[int, list[ObjectInstanceKey]] = {}
         for value_key in context.values_by_child_id:
             value_keys_by_object_id.setdefault(value_key.object_id, []).append(value_key)
@@ -7356,7 +7339,7 @@ class UnscopedValueObjectInstanceKeyPlaneAlignmentStrategy(
     def align(
         self,
         context: ObjectInstanceKeyPlaneAlignmentContext,
-    ) -> Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]]:
+    ) -> _ObjectInstanceChildrenByParent:
         unscoped_children_by_parent: dict[ObjectInstanceKey, list[ObjectInstanceKey]] = {}
         for parent_id, child_ids in context.child_ids_by_parent.items():
             parent_key = ObjectInstanceKey(parent_id.object_id)
@@ -7994,11 +7977,11 @@ class RelationshipMeasurementSemantics:
 
     def aggregate_values_by_parent(
         self,
-        child_ids_by_parent: Mapping[ObjectInstanceKey, tuple[ObjectInstanceKey, ...]],
+        child_ids_by_parent: _ObjectInstanceChildrenByParent,
         values_by_child_id: Mapping[ObjectInstanceKey, float],
-    ) -> dict[tuple[ObjectInstanceKey, ...], float]:
+    ) -> _ObjectInstanceAggregateValues:
         """Return aggregate target values keyed by each parent child-domain."""
-        means: dict[tuple[ObjectInstanceKey, ...], float] = {}
+        means: _ObjectInstanceAggregateValues = {}
         for child_ids in child_ids_by_parent.values():
             if child_ids in means:
                 continue
