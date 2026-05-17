@@ -102,10 +102,6 @@ class RuntimeArrayPayload(ABC):
     def compare_array_payload(self, other: Any, ufunc: Any) -> Any:
         return ufunc(np.asarray(self), runtime_array_operand(other))
 
-    def max(self, *args: Any, **kwargs: Any) -> Any:
-        """Return the maximum of the array payload for ndarray-like callers."""
-        return np.asarray(self).max(*args, **kwargs)
-
     def __lt__(self, other: Any) -> Any:
         return self.compare_array_payload(other, np.less)
 
