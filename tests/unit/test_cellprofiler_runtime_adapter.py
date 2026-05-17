@@ -9,12 +9,12 @@ from scipy.io import savemat
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 from openhcs.interop.cellprofiler.runtime import (
-    CellProfilerModuleExecutor,
     CellProfilerRelationshipPayload,
     CellProfilerRuntimeAdapter,
 )
 from openhcs.interop.cellprofiler.runtime.adapter import _single_spatial_grid
 from openhcs.interop.cellprofiler.runtime.module_execution import (
+    CellProfilerModuleExecutor,
     ConcatenatedMeasurementColumnarRows,
 )
 from openhcs.interop.cellprofiler.measurement_dialect import (

@@ -115,3 +115,41 @@ Required outputs:
 - Remaining compatibility exports are either current runtime authority or
   explicitly documented migration support.
 
+## Progress: 2026-05-17
+
+Inventory result:
+
+- `CELLPROFILER_MODULE_CONTRACTS`: only present in tests/docs proving generated
+  source does not emit it.
+- `ModuleArtifactContract(...)` literals: current product/runtime tests and
+  sidecar codecs use typed contracts; generated source tests prove literals are
+  absent.
+- `CellProfilerModuleExecutor`: still current product runtime authority in
+  `runtime.module_execution`; unit tests instantiate it directly. It is not
+  generated pipeline boilerplate.
+- `cellprofiler_module_callable`: still current product-owned runtime binding
+  factory used by `CellProfilerRuntimeStepBinding.load`; generated source tests
+  prove generated modules do not call it directly.
+- `attach_callable_contract_metadata`: still current runtime callable metadata
+  implementation detail; generated source tests prove generated modules do not
+  call it.
+
+Deleted compatibility path:
+
+- Removed `CellProfilerModuleExecutor` and `cellprofiler_module_callable` from
+  the broad `openhcs.interop.cellprofiler.runtime` package re-export surface.
+- Updated remaining internal/test compatibility imports to use the concrete
+  `openhcs.interop.cellprofiler.runtime.module_execution` authority.
+
+Verification:
+
+- `tests/unit/test_cellprofiler_symbol_table.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_cellprofiler_runtime_adapter.py tests/unit/test_cellprofiler_module_execution.py`:
+  `389 passed`.
+
+Remaining:
+
+- Do not delete `CellProfilerModuleExecutor` or `cellprofiler_module_callable`
+  without first replacing the product runtime binding authority; they are no
+  longer generated boilerplate.
+- Official30 parity rerun is only needed after behavior-changing CP runtime or
+  planner changes. This slice changed import surface only.
