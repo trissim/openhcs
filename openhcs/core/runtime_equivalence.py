@@ -418,6 +418,12 @@ class RuntimeIndexedRowValues:
         text = str(value).strip()
         return text or None
 
+    def has_text_at_any(self, indexes: tuple[int, ...]) -> bool:
+        for index in indexes:
+            if self.text_at(index) is not None:
+                return True
+        return False
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementRowMapping:
@@ -432,6 +438,49 @@ class RuntimeMeasurementRowMapping:
             if field is not None:
                 return self.row[field]
         return None
+
+    def has_identity_value(self, field_names: frozenset[str]) -> bool:
+        normalized_fields = {_normalize_identifier(field): field for field in self.row}
+        for field_name in field_names:
+            field = normalized_fields.get(field_name)
+            if field is None:
+                continue
+            value = self.row[field]
+            if value is None:
+                continue
+            if str(value).strip():
+                return True
+        return False
+
+    def has_image_identity(self) -> bool:
+        return self.has_identity_value(_IMAGE_IDENTITY_FIELDS)
+
+    def has_object_identity(self) -> bool:
+        return self.has_identity_value(_OBJECT_IDENTITY_FIELDS)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFeatureKeyFactory:
+    """Factory for runtime measurement keys with image-source subject folding."""
+
+    subject: RuntimeMeasurementSubjectKey
+    feature_name: str
+    statistic: str = MeasurementStatistic.VALUE.value
+    source_name: str | None = None
+
+    def key(self) -> RuntimeMeasurementFeatureKey:
+        if self.subject.scope is MeasurementScope.IMAGE and self.source_name is not None:
+            return RuntimeMeasurementFeatureKey(
+                RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, self.source_name),
+                self.feature_name,
+                self.statistic,
+            )
+        return RuntimeMeasurementFeatureKey(
+            self.subject,
+            self.feature_name,
+            self.statistic,
+            self.source_name,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -849,12 +898,12 @@ class RuntimeMeasurementCellValue:
         )
 
     def nested_key(self, name: object) -> RuntimeMeasurementFeatureKey:
-        return _runtime_measurement_feature_key(
+        return RuntimeMeasurementFeatureKeyFactory(
             self.key.subject,
             f"{self.key.feature_name}_{_canonical_measurement_feature_name(str(name), self.policy)}",
             self.key.statistic,
             source_name=self.key.source_name,
-        )
+        ).key()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1703,12 +1752,12 @@ def _aggregate_mean_key(
     )
     mean_key = key_cache.get(cache_key, _CACHE_MISS)
     if mean_key is _CACHE_MISS:
-        mean_key = _runtime_measurement_feature_key(
+        mean_key = RuntimeMeasurementFeatureKeyFactory(
             key.subject,
             key.feature_name,
             MeasurementStatistic.MEAN.value,
             source_name=key.source_name,
-        )
+        ).key()
         if required_keys is not None and mean_key not in required_keys:
             mean_key = None
         elif _is_image_number_reference_feature(key):
@@ -2621,12 +2670,12 @@ class RuntimeMeasurementSnapshot:
                     existing_measurement_keys=explicit_measurement_keys,
                     required_measurement_keys=required_measurement_keys,
                 )
-                relationship_object_number_aggregate_key = _runtime_measurement_feature_key(
+                relationship_object_number_aggregate_key = RuntimeMeasurementFeatureKeyFactory(
                     relationship_measurement.source_subject,
                     relationship_measurement.aggregate_feature_name(
                         ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
                     ),
-                )
+                ).key()
                 if any(
                     key == relationship_object_number_aggregate_key
                     for key, _value in aggregate_facts
@@ -3790,7 +3839,7 @@ def _record_static_wide_measurement_table_snapshot(
     if not is_wide_measurement_table(first_row):
         return False
 
-    first_subject = _measurement_subject_from_export_row(table.path, first_row)
+    first_subject = RuntimeExportRowSubject(table.path, first_row).subject()
     if RuntimeMetadataMapRow(first_subject, first_row).matches():
         return True
 
@@ -3835,7 +3884,12 @@ def _record_static_wide_measurement_table_snapshot(
         )
         return True
     column_subject_contexts = {
-        index: _export_column_subject_context(table, index)
+        index: RuntimeExportColumnSubject(
+            table,
+            first_row,
+            index,
+            first_subject,
+        ).context_pair()
         for index in feature_column_indexes
     }
     padding_groups_by_index = _contextual_measurement_padding_groups(
@@ -3876,7 +3930,7 @@ def _record_static_wide_measurement_table_snapshot(
     image_number_offset = _table_image_number_offset(table.header, table.rows)
     for row in table.rows:
         row_mapping = dict(zip(table.header, row, strict=True))
-        row_subject = _measurement_subject_from_export_row(table.path, row_mapping)
+        row_subject = RuntimeExportRowSubject(table.path, row_mapping).subject()
         source_name = measurement_row_source_image_name(row_mapping)
         row_object_name = measurement_row_object_name(row_mapping)
         normalized_row_object_name = (
@@ -3910,13 +3964,13 @@ def _record_static_wide_measurement_table_snapshot(
             if index in padding_indexes:
                 continue
             context, normalized_context = column_subject_contexts[index]
-            subject = _measurement_subject_from_column_context(
+            subject = RuntimeColumnContextSubject(
                 context,
                 normalized_context,
                 row_object_name,
                 normalized_row_object_name,
                 fallback_subject=row_subject,
-            )
+            ).subject()
             qualifiers = (
                 measurement_row_qualifiers_from_values(
                     qualifier_values,
@@ -4001,11 +4055,13 @@ def _record_static_wide_runtime_measurement_table(
     table_subject = RuntimeMeasurementSubjectKey.from_table_subject(table.subject)
     subject_schema = _runtime_measurement_row_subject_schema(header)
     first_row_values = tuple(first_mapping.get(field_name) for field_name in header)
-    first_subject = _measurement_subject_from_runtime_row_values(
+    first_subject_projection = RuntimeMeasurementRowSubjectProjection(
         table_subject,
+        table.source_image_name,
         first_row_values,
         subject_schema,
     )
+    first_subject = first_subject_projection.subject()
     if RuntimeMetadataMapRow(first_subject, first_mapping).matches():
         return True
 
@@ -4027,11 +4083,7 @@ def _record_static_wide_runtime_measurement_table(
     if not feature_column_indexes:
         return True
     first_source_qualification = first_subject.bind_row_source_identity(
-        _measurement_source_name_from_runtime_row_values(
-            table.source_image_name,
-            first_row_values,
-            subject_schema,
-        )
+        first_subject_projection.source_name()
     )
     if _wide_measurement_table_needs_row_derivation(
         header,
@@ -4108,11 +4160,13 @@ def _record_static_wide_runtime_measurement_table(
     for row in iter_measurement_rows((table,)):
         row_mapping = measurement_row_mapping(row)
         row_values = tuple(row_mapping.get(field_name) for field_name in header)
-        subject = _measurement_subject_from_runtime_row_values(
+        row_subject_projection = RuntimeMeasurementRowSubjectProjection(
             table_subject,
+            table.source_image_name,
             row_values,
             subject_schema,
         )
+        subject = row_subject_projection.subject()
         if (
             required_subjects is not None
             and subject.scope is MeasurementScope.OBJECT
@@ -4120,11 +4174,7 @@ def _record_static_wide_runtime_measurement_table(
         ):
             continue
         source_qualification = subject.bind_row_source_identity(
-            _measurement_source_name_from_runtime_row_values(
-                table.source_image_name,
-                row_values,
-                subject_schema,
-            )
+            row_subject_projection.source_name()
         )
         _record_runtime_primary_measurement_row_identity(
             primary_row_identities,
@@ -4483,7 +4533,7 @@ def _dedupe_runtime_measurement_table_object_subtable(
     for row in iter_measurement_rows((table,)):
         total_row_count += 1
         row_mapping = measurement_row_mapping(row)
-        if measurement_row_has_object_identity(row_mapping):
+        if RuntimeMeasurementRowMapping(row_mapping).has_object_identity():
             object_row_fingerprint.add_row_mapping(row_mapping)
             object_row_count += 1
         else:
@@ -5008,27 +5058,6 @@ def _parts_contain_adjacent_image_number(parts: tuple[str, ...]) -> bool:
     )
 
 
-def _runtime_measurement_feature_key(
-    subject: RuntimeMeasurementSubjectKey,
-    feature_name: str,
-    statistic: str = "value",
-    source_name: str | None = None,
-) -> RuntimeMeasurementFeatureKey:
-    """Build a feature key using OpenHCS image subjects for image sources."""
-    if subject.scope is MeasurementScope.IMAGE and source_name is not None:
-        return RuntimeMeasurementFeatureKey(
-            RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, source_name),
-            feature_name,
-            statistic,
-        )
-    return RuntimeMeasurementFeatureKey(
-        subject,
-        feature_name,
-        statistic,
-        source_name,
-    )
-
-
 def _measurement_feature_key_from_source_context(
     context: _MeasurementFeatureKeySourceContext,
 ) -> RuntimeMeasurementFeatureKey | None:
@@ -5079,10 +5108,10 @@ class RuntimeTableSnapshotFactExtractor:
         facts: _RuntimeMeasurementFactList = []
         for row in self.table.rows:
             row_mapping = dict(zip(self.table.header, row, strict=True))
-            row_subject = _measurement_subject_from_export_row(
+            row_subject = RuntimeExportRowSubject(
                 self.table.path,
                 row_mapping,
-            )
+            ).subject()
             if RuntimeMetadataMapRow(row_subject, row_mapping).matches():
                 continue
             source_name = measurement_row_source_image_name(row_mapping)
@@ -5115,12 +5144,12 @@ class RuntimeTableSnapshotFactExtractor:
                     self.policy.measurement_dialect
                 ).field_matches(field_name):
                     continue
-                subject = _measurement_subject_from_export_column(
+                subject = RuntimeExportColumnSubject(
                     self.table,
                     row_mapping,
                     index,
-                    fallback_subject=row_subject,
-                )
+                    row_subject,
+                ).subject()
                 key = _measurement_feature_key_from_source_context(
                     _MeasurementFeatureKeySourceContext(
                         field_name,
@@ -5159,10 +5188,10 @@ class RuntimeTableSnapshotFactExtractor:
         facts: _RuntimeMeasurementFactList = []
         for row in self.table.rows:
             row_mapping = dict(zip(self.table.header, row, strict=True))
-            row_subject = _measurement_subject_from_export_row(
+            row_subject = RuntimeExportRowSubject(
                 self.table.path,
                 row_mapping,
-            )
+            ).subject()
             if row_subject.scope is not MeasurementScope.OBJECT:
                 continue
             normalized_row_mapping = {
@@ -5195,7 +5224,7 @@ class RuntimeTableSnapshotFactExtractor:
         ):
             return None
 
-        subject = _measurement_subject_from_export_row(self.table.path, first_row)
+        subject = RuntimeExportRowSubject(self.table.path, first_row).subject()
         if RuntimeMetadataMapRow(subject, first_row).matches():
             return ()
 
@@ -5208,12 +5237,12 @@ class RuntimeTableSnapshotFactExtractor:
             ).field_matches(field_name)
             and not _is_aggregate_image_number_reference_measurement_field(field_name)
             for column_subject in (
-                _measurement_subject_from_export_column(
+                RuntimeExportColumnSubject(
                     self.table,
                     first_row,
                     index,
-                    fallback_subject=subject,
-                ),
+                    subject,
+                ).subject(),
             )
             for key in (
                 _measurement_feature_key_from_source_context(
@@ -5310,18 +5339,18 @@ def _wide_measurement_table_needs_row_derivation(
     fallback_subject = (
         RuntimeMeasurementSubjectKey(MeasurementScope.ARTIFACT, None)
         if not isinstance(table, RuntimeTableSnapshot)
-        else _measurement_subject_from_export_row(table.path, first_row)
+        else RuntimeExportRowSubject(table.path, first_row).subject()
     )
     for index in feature_column_indexes:
         subject = (
             fallback_subject
             if not isinstance(table, RuntimeTableSnapshot)
-            else _measurement_subject_from_export_column(
+            else RuntimeExportColumnSubject(
                 table,
                 first_row,
                 index,
-                fallback_subject=fallback_subject,
-            )
+                fallback_subject,
+            ).subject()
         )
         key = _measurement_feature_key_from_source_context(
             _MeasurementFeatureKeySourceContext(
@@ -5412,11 +5441,13 @@ class RuntimeMeasurementTableFactRecorder:
         header = tuple(row_mapping)
         row_values = tuple(row_mapping.get(field_name) for field_name in header)
         subject_schema = self._subject_schema(header)
-        subject = _measurement_subject_from_runtime_row_values(
+        row_subject_projection = RuntimeMeasurementRowSubjectProjection(
             table_subject,
+            table.source_image_name,
             row_values,
             subject_schema,
         )
+        subject = row_subject_projection.subject()
         if (
             self._row_required_subjects is not None
             and subject.scope is MeasurementScope.OBJECT
@@ -5424,11 +5455,7 @@ class RuntimeMeasurementTableFactRecorder:
         ):
             return
         source_qualification = subject.bind_row_source_identity(
-            _measurement_source_name_from_runtime_row_values(
-                table.source_image_name,
-                row_values,
-                subject_schema,
-            )
+            row_subject_projection.source_name()
         )
         _record_runtime_primary_measurement_row_identity(
             self.primary_row_identities,
@@ -6686,14 +6713,14 @@ def _aggregate_measurement_feature_key(
         return None
     parts = tuple(part for part in _normalize_identifier(field_name).split("_") if part)
     if len(parts) >= 2 and parts[0] == MeasurementStatistic.COUNT.value:
-        return _runtime_measurement_feature_key(
+        return RuntimeMeasurementFeatureKeyFactory(
             RuntimeMeasurementSubjectKey(
                 MeasurementScope.OBJECT,
                 "_".join(parts[1:]),
             ),
             ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
             MeasurementStatistic.COUNT.value,
-        )
+        ).key()
     aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
         parts,
         policy.measurement_dialect,
@@ -7707,10 +7734,10 @@ class RelationshipMeasurementSemantics:
 
     @property
     def target_object_number_key(self) -> RuntimeMeasurementFeatureKey:
-        return _runtime_measurement_feature_key(
+        return RuntimeMeasurementFeatureKeyFactory(
             self.target_subject,
             ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
-        )
+        ).key()
 
     def aggregate_feature_name(
         self,
@@ -7757,11 +7784,11 @@ class RelationshipMeasurementSemantics:
                 error_subject="relationship aggregate child feature",
             )
             child_keys.update(
-                _runtime_measurement_feature_key(
+                RuntimeMeasurementFeatureKeyFactory(
                     self.target_subject,
                     child_feature_name,
                     source_name=key.source_name,
-                )
+                ).key()
                 for child_feature_name in semantics.required_child_feature_names(
                     context
                 )
@@ -7836,11 +7863,11 @@ class RelationshipMeasurementSemantics:
                 continue
             if child_key.subject != self.target_subject:
                 continue
-            aggregate_key = _runtime_measurement_feature_key(
+            aggregate_key = RuntimeMeasurementFeatureKeyFactory(
                 self.source_subject,
                 self.aggregate_feature_name(child_key.feature_name),
                 source_name=child_key.source_name,
-            )
+            ).key()
             if (
                 aggregate_key in existing_measurement_keys
                 and child_key.feature_name
@@ -8151,17 +8178,6 @@ def _runtime_measurement_row_subject_schema(
     )
 
 
-def _measurement_source_name_from_runtime_row_values(
-    table_source_name: str | None,
-    row_values: tuple[object, ...],
-    subject_schema: _RuntimeMeasurementRowSubjectSchema,
-) -> str | None:
-    row_source_name = RuntimeIndexedRowValues(row_values).text_at(subject_schema[1])
-    if row_source_name is not None:
-        return row_source_name
-    return table_source_name
-
-
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementRowSubjectResolutionContext:
     """Typed subject-resolution facts for one measurement row."""
@@ -8318,150 +8334,141 @@ class ObjectIdentityRowSubjectResolutionStrategy(ImageIdentityRowSubjectResoluti
         return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
 
 
-def _measurement_subject_from_runtime_row_values(
-    table_subject: RuntimeMeasurementSubjectKey,
-    row_values: tuple[object, ...],
-    subject_schema: _RuntimeMeasurementRowSubjectSchema,
-) -> RuntimeMeasurementSubjectKey:
-    object_name_index, source_name_index, object_identity_indexes, image_identity_indexes = (
-        subject_schema
-    )
-    object_name = RuntimeIndexedRowValues(row_values).text_at(object_name_index)
-    has_object_identity = _indexed_row_has_value(row_values, object_identity_indexes)
-    has_image_identity = _indexed_row_has_value(row_values, image_identity_indexes)
-    return RuntimeMeasurementRowSubjectResolutionStrategy.resolve(
-        RuntimeMeasurementRowSubjectResolutionContext(
-            table_subject=table_subject,
-            object_name=object_name,
-            row_source_name=RuntimeIndexedRowValues(row_values).text_at(source_name_index),
-            has_object_identity=has_object_identity,
-            has_image_identity=has_image_identity,
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementRowSubjectProjection:
+    """Resolve runtime-row source and measurement subject from row values."""
+
+    table_subject: RuntimeMeasurementSubjectKey
+    table_source_name: str | None
+    row_values: tuple[object, ...]
+    subject_schema: _RuntimeMeasurementRowSubjectSchema
+
+    @property
+    def indexed_values(self) -> RuntimeIndexedRowValues:
+        return RuntimeIndexedRowValues(self.row_values)
+
+    def source_name(self) -> str | None:
+        row_source_name = self.indexed_values.text_at(self.subject_schema[1])
+        if row_source_name is not None:
+            return row_source_name
+        return self.table_source_name
+
+    def subject(self) -> RuntimeMeasurementSubjectKey:
+        (
+            object_name_index,
+            source_name_index,
+            object_identity_indexes,
+            image_identity_indexes,
+        ) = self.subject_schema
+        return RuntimeMeasurementRowSubjectResolutionStrategy.resolve(
+            RuntimeMeasurementRowSubjectResolutionContext(
+                table_subject=self.table_subject,
+                object_name=self.indexed_values.text_at(object_name_index),
+                row_source_name=self.indexed_values.text_at(source_name_index),
+                has_object_identity=self.indexed_values.has_text_at_any(
+                    object_identity_indexes
+                ),
+                has_image_identity=self.indexed_values.has_text_at_any(
+                    image_identity_indexes
+                ),
+            )
         )
-    )
 
 
-def _indexed_row_has_value(
-    row_values: tuple[object, ...],
-    indexes: tuple[int, ...],
-) -> bool:
-    for index in indexes:
-        value = row_values[index]
-        if value is None:
-            continue
-        if str(value).strip():
-            return True
-    return False
+@dataclass(frozen=True, slots=True)
+class RuntimeExportRowSubject:
+    """Resolve table-export row subject from table path and row identity."""
+
+    path: Path
+    row: Mapping[str, object]
+
+    def subject(self) -> RuntimeMeasurementSubjectKey:
+        object_name = measurement_row_object_name(self.row)
+        if object_name is not None:
+            return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
+
+        table_name = self.path.stem
+        normalized_table_name = _normalize_identifier(table_name)
+        if RuntimeMeasurementRowMapping(self.row).has_object_identity() and normalized_table_name != "image":
+            return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, table_name)
+        if normalized_table_name == "experiment":
+            return RuntimeMeasurementSubjectKey(MeasurementScope.EXPERIMENT, None)
+        return RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
 
 
-def _measurement_subject_from_export_row(
-    path: Path,
-    row: Mapping[str, object],
-) -> RuntimeMeasurementSubjectKey:
-    object_name = measurement_row_object_name(row)
-    if object_name is not None:
-        return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
+@dataclass(frozen=True, slots=True)
+class RuntimeExportColumnSubject:
+    """Resolve table-export column subject from contextual column metadata."""
 
-    table_name = path.stem
-    normalized_table_name = _normalize_identifier(table_name)
-    if _row_has_object_identity(row) and normalized_table_name != "image":
-        return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, table_name)
-    if normalized_table_name == "experiment":
-        return RuntimeMeasurementSubjectKey(MeasurementScope.EXPERIMENT, None)
-    return RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
+    table: RuntimeTableSnapshot
+    row: Mapping[str, object]
+    index: int
+    fallback_subject: RuntimeMeasurementSubjectKey
 
+    def subject(self) -> RuntimeMeasurementSubjectKey:
+        if not self.table.column_context or self.index >= len(self.table.column_context):
+            return self.fallback_subject
 
-def _measurement_subject_from_export_column(
-    table: RuntimeTableSnapshot,
-    row: Mapping[str, object],
-    index: int,
-    *,
-    fallback_subject: RuntimeMeasurementSubjectKey,
-) -> RuntimeMeasurementSubjectKey:
-    """Return a column-scoped subject when exported tables carry one."""
-    if not table.column_context or index >= len(table.column_context):
-        return fallback_subject
+        field_name = self.table.header[self.index]
+        if RuntimeMeasurementIdentityField(
+            DEFAULT_RUNTIME_MEASUREMENT_DIALECT
+        ).field_matches(field_name):
+            return self.fallback_subject
 
-    field_name = table.header[index]
-    if RuntimeMeasurementIdentityField(DEFAULT_RUNTIME_MEASUREMENT_DIALECT).field_matches(field_name):
-        return fallback_subject
+        context, normalized_context = self.context_pair()
+        row_object_name = measurement_row_object_name(self.row)
+        normalized_row_object_name = (
+            _normalize_identifier(row_object_name)
+            if row_object_name is not None
+            else None
+        )
+        return RuntimeColumnContextSubject(
+            context,
+            normalized_context,
+            row_object_name,
+            normalized_row_object_name,
+            fallback_subject=self.fallback_subject,
+        ).subject()
 
-    context, normalized_context = _export_column_subject_context(table, index)
-    row_object_name = measurement_row_object_name(row)
-    normalized_row_object_name = (
-        _normalize_identifier(row_object_name) if row_object_name is not None else None
-    )
-    return _measurement_subject_from_column_context(
-        context,
-        normalized_context,
-        row_object_name,
-        normalized_row_object_name,
-        fallback_subject=fallback_subject,
-    )
-
-
-def _export_column_subject_context(
-    table: RuntimeTableSnapshot,
-    index: int,
-) -> tuple[str | None, str | None]:
-    """Return raw and normalized context for a contextual measurement column."""
-    if not table.column_context or index >= len(table.column_context):
-        return None, None
-    context = table.column_context[index]
-    if context is None:
-        return None, None
-    normalized_context = _normalize_identifier(context)
-    if not normalized_context:
-        return None, None
-    return context, normalized_context
+    def context_pair(self) -> tuple[str | None, str | None]:
+        if not self.table.column_context or self.index >= len(self.table.column_context):
+            return None, None
+        context = self.table.column_context[self.index]
+        if context is None:
+            return None, None
+        normalized_context = _normalize_identifier(context)
+        if not normalized_context:
+            return None, None
+        return context, normalized_context
 
 
-def _measurement_subject_from_column_context(
-    context: str | None,
-    normalized_context: str | None,
-    row_object_name: str | None,
-    normalized_row_object_name: str | None,
-    *,
-    fallback_subject: RuntimeMeasurementSubjectKey,
-) -> RuntimeMeasurementSubjectKey:
-    """Return a subject implied by a contextual wide-table column."""
-    if context is None or normalized_context is None:
-        return fallback_subject
-    if normalized_context in _CSV_HEADER_CONTEXT_STOPWORDS:
-        if normalized_context == "image":
-            return RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
-        return fallback_subject
+@dataclass(frozen=True, slots=True)
+class RuntimeColumnContextSubject:
+    """Resolve a subject implied by contextual wide-table column metadata."""
 
-    if (
-        row_object_name is not None
-        and normalized_row_object_name == normalized_context
-    ):
-        return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, row_object_name)
-    return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context)
+    context: str | None
+    normalized_context: str | None
+    row_object_name: str | None
+    normalized_row_object_name: str | None
+    fallback_subject: RuntimeMeasurementSubjectKey
 
+    def subject(self) -> RuntimeMeasurementSubjectKey:
+        if self.context is None or self.normalized_context is None:
+            return self.fallback_subject
+        if self.normalized_context in _CSV_HEADER_CONTEXT_STOPWORDS:
+            if self.normalized_context == "image":
+                return RuntimeMeasurementSubjectKey(MeasurementScope.IMAGE, "Image")
+            return self.fallback_subject
 
-def _row_has_image_identity(row: Mapping[str, object]) -> bool:
-    return _row_has_identity_value(row, _IMAGE_IDENTITY_FIELDS)
-
-
-def _row_has_object_identity(row: Mapping[str, object]) -> bool:
-    return _row_has_identity_value(row, _OBJECT_IDENTITY_FIELDS)
-
-
-def _row_has_identity_value(
-    row: Mapping[str, object],
-    field_names: frozenset[str],
-) -> bool:
-    normalized_fields = {_normalize_identifier(field): field for field in row}
-    for field_name in field_names:
-        field = normalized_fields.get(field_name)
-        if field is None:
-            continue
-        value = row[field]
-        if value is None:
-            continue
-        if str(value).strip():
-            return True
-    return False
+        if (
+            self.row_object_name is not None
+            and self.normalized_row_object_name == self.normalized_context
+        ):
+            return RuntimeMeasurementSubjectKey(
+                MeasurementScope.OBJECT,
+                self.row_object_name,
+            )
+        return RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, self.context)
 
 
 def _canonical_measurement_feature_name(
