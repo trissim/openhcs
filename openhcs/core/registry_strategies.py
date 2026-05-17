@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from collections.abc import Mapping, MutableMapping
 from dataclasses import dataclass, field
-from enum import Enum, EnumMeta
+from enum import Enum
 from functools import lru_cache
 from typing import Any, ClassVar, Generic, TypeVar, cast
 
@@ -13,6 +13,7 @@ from metaclass_registry import (
     AutoRegisterMeta,
     RegistryFamily,
     RegistryKeyAttribute,
+    RegisteredEnumMeta,
     extract_key_from_class_name,
 )
 
@@ -25,10 +26,7 @@ _ContextStrategyT = TypeVar(
     "_ContextStrategyT",
     bound="MostDerivedContextStrategyMixin[Any]",
 )
-
-
-class RegisteredEnumMeta(AutoRegisterMeta, EnumMeta):
-    """Metaclass for enum families that also need AutoRegisterMeta membership."""
+ContextStrategyTypes = tuple[type[_ContextStrategyT], ...]
 
 
 class EnumKeyedStrategyMixin(Generic[_EnumT]):
@@ -44,11 +42,11 @@ class EnumKeyedStrategyMixin(Generic[_EnumT]):
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
-        member = getattr(cls, cls.__enum_member_attr__, None)
+        member = cls.__dict__.get(cls.__enum_member_attr__)
         if not isinstance(member, Enum):
             return
         label_attr = cls._enum_label_attr()
-        if getattr(cls, label_attr, None) is None:
+        if cls.__dict__.get(label_attr) is None:
             setattr(cls, label_attr, member.value)
 
     @classmethod
@@ -90,7 +88,7 @@ class EnumKeyedStrategyMixin(Generic[_EnumT]):
         """
         strategy_types: dict[tuple[type[Enum], _EnumT] | int, type[_StrategyT]] = {}
         for strategy_type in cls.__registry__.values():
-            member = getattr(strategy_type, cls.__enum_member_attr__, None)
+            member = strategy_type.__dict__.get(cls.__enum_member_attr__)
             key: tuple[type[Enum], _EnumT] | int
             if isinstance(member, Enum):
                 key = (type(member), member)
@@ -187,7 +185,7 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
     @classmethod
     def registered_strategy_types(
         cls: type[_ContextStrategyT],
-    ) -> tuple[type[_ContextStrategyT], ...]:
+    ) -> ContextStrategyTypes[_ContextStrategyT]:
         """Return registered concrete strategy classes."""
         return tuple(
             cast(type[_ContextStrategyT], item) for item in cls.__registry__.values()
@@ -224,7 +222,7 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
     def owning_strategy_types(
         cls: type[_ContextStrategyT],
         context: _ContextT,
-    ) -> tuple[type[_ContextStrategyT], ...]:
+    ) -> ContextStrategyTypes[_ContextStrategyT]:
         """Return most-derived registered strategies matching ``context``."""
         matching_strategy_types = tuple(
             strategy_type
@@ -247,7 +245,7 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
 
     @classmethod
     def _strategy_name(cls, strategy_type: type[_ContextStrategyT]) -> object:
-        return getattr(strategy_type, cls.strategy_key_attr, strategy_type.__name__)
+        return strategy_type.__dict__.get(cls.strategy_key_attr, strategy_type.__name__)
 
     @abstractmethod
     def matches(self, context: _ContextT) -> bool:
