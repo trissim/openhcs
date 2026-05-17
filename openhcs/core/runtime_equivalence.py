@@ -5976,7 +5976,7 @@ def _is_metadata_map_row(
     return normalized_fields == frozenset(("key", "value"))
 
 
-class RuntimeMeasurementFactProjectionContract(ABC, metaclass=AutoRegisterMeta):
+class RuntimeMeasurementFactProjectionContract:
     """Nominal contract for projecting runtime cells into measurement facts."""
 
     @classmethod
