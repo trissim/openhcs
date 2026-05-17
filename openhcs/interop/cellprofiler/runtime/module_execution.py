@@ -127,7 +127,7 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelVariant,
     ParentChildRelationshipPayload,
     RuntimePlaneAxis,
-    RuntimePlaneAxisProjectionStrategy,
+    RuntimePlaneAxisProjectionRequest,
     RuntimePlaneAxisProjector,
     DenseObjectLabelPairAligner,
     dense_object_label_id_domain,
@@ -6433,9 +6433,11 @@ class ObjectLabelSourceBindingProjectionRequest:
                 "Object-label plane projection requires a RuntimePlaneAxisProjector, "
                 f"got {type(self.adapter).__name__}."
             )
-        return RuntimePlaneAxisProjectionStrategy.for_enum_member(axis).plane_index(
-            self.adapter,
-            source_aliases=self.source_aliases,
+        return self.adapter.plane_index_for_axis(
+            RuntimePlaneAxisProjectionRequest(
+                axis=axis,
+                source_aliases=self.source_aliases,
+            )
         )
 
     def project_plane(self, plane_index: int) -> Any:

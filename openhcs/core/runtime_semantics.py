@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, fields, is_dataclass, replace
 from enum import Enum
 from functools import lru_cache
@@ -295,11 +295,48 @@ class ObjectLabelDomainScope(str, Enum):
         return cls.PAYLOAD
 
 
+RuntimePlaneAxisPlaneIndexResolver = Callable[
+    ["RuntimePlaneAxisProjector", tuple[str, ...]],
+    int | None,
+]
+
+
+def runtime_slice_axis_plane_index(
+    projector: "RuntimePlaneAxisProjector",
+    source_aliases: tuple[str, ...],
+) -> int | None:
+    """Resolve a runtime-slice axis through the projector."""
+    return projector.runtime_slice_plane_index()
+
+
+def source_binding_axis_plane_index(
+    projector: "RuntimePlaneAxisProjector",
+    source_aliases: tuple[str, ...],
+) -> int | None:
+    """Resolve a source-binding axis through the projector."""
+    return projector.source_binding_axis_plane_index(source_aliases)
+
+
 class RuntimePlaneAxis(str, Enum):
     """Semantic meaning of the leading plane axis on runtime array stacks."""
 
-    RUNTIME_SLICE = "runtime_slice"
-    SOURCE_BINDING = "source_binding"
+    def __new__(
+        cls,
+        value: str,
+        plane_index_resolver: RuntimePlaneAxisPlaneIndexResolver,
+    ):
+        return str_enum_member_with_payload(
+            cls,
+            value,
+            payload_attribute="_plane_index_resolver",
+            payload=plane_index_resolver,
+        )
+
+    RUNTIME_SLICE = ("runtime_slice", runtime_slice_axis_plane_index)
+    SOURCE_BINDING = ("source_binding", source_binding_axis_plane_index)
+    plane_index_resolver = AliasProperty[RuntimePlaneAxisPlaneIndexResolver](
+        "_plane_index_resolver"
+    )
 
     @classmethod
     def common(cls, axes: Any) -> "RuntimePlaneAxis":
@@ -315,6 +352,15 @@ class RuntimePlaneAxis(str, Enum):
                 f"{unique_axes!r}."
             )
         return unique_axes[0]
+
+    def plane_index(
+        self,
+        projector: "RuntimePlaneAxisProjector",
+        *,
+        source_aliases: tuple[str, ...],
+    ) -> int | None:
+        """Resolve this semantic axis against the execution-local projector."""
+        return self.plane_index_resolver(projector, source_aliases)
 
 
 class MeasurementImageReferenceDomain(str, Enum):
@@ -416,55 +462,36 @@ class RuntimePlaneAxisProjector(ABC):
     ) -> int | None:
         """Return the execution-local source-binding plane index."""
 
-
-class RuntimePlaneAxisProjectionStrategy(
-    EnumKeyedStrategyMixin[RuntimePlaneAxis],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Polymorphic projection policy for runtime plane axes."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
-    __enum_member_attr__ = "axis"
-    axis: ClassVar[RuntimePlaneAxis]
-    strategy_label: ClassVar[str | None] = None
-
-    @abstractmethod
-    def plane_index(
+    def plane_index_for_axis(
         self,
-        projector: RuntimePlaneAxisProjector,
-        *,
-        source_aliases: tuple[str, ...],
+        request: "RuntimePlaneAxisProjectionRequest",
     ) -> int | None:
-        """Return the current execution plane for this axis."""
+        """Return the execution-local plane index for a nominal runtime axis."""
+        return request.resolve(self)
 
 
-class RuntimeSlicePlaneAxisProjectionStrategy(RuntimePlaneAxisProjectionStrategy):
-    """Runtime-slice planes are selected by the current execution axis."""
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneAxisProjectionRequest:
+    """Nominal runtime-plane axis lookup against a projector."""
 
-    axis = RuntimePlaneAxis.RUNTIME_SLICE
+    axis: RuntimePlaneAxis
+    source_aliases: tuple[str, ...] = ()
 
-    def plane_index(
-        self,
-        projector: RuntimePlaneAxisProjector,
-        *,
-        source_aliases: tuple[str, ...],
-    ) -> int | None:
-        return projector.runtime_slice_plane_index()
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "axis",
+            coerce_enum(
+                RuntimePlaneAxis,
+                self.axis,
+                "RuntimePlaneAxisProjectionRequest.axis",
+            ),
+        )
+        object.__setattr__(self, "source_aliases", tuple(self.source_aliases))
 
-
-class SourceBindingPlaneAxisProjectionStrategy(RuntimePlaneAxisProjectionStrategy):
-    """Source-binding planes are selected by source alias bindings."""
-
-    axis = RuntimePlaneAxis.SOURCE_BINDING
-
-    def plane_index(
-        self,
-        projector: RuntimePlaneAxisProjector,
-        *,
-        source_aliases: tuple[str, ...],
-    ) -> int | None:
-        return projector.source_binding_axis_plane_index(source_aliases)
+    def resolve(self, projector: RuntimePlaneAxisProjector) -> int | None:
+        """Resolve this request through the typed projector contract."""
+        return self.axis.plane_index(projector, source_aliases=self.source_aliases)
 
 
 @dataclass(frozen=True, slots=True)
