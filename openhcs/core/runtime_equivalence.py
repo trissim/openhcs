@@ -21,8 +21,6 @@ from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
 from nominal_refactor_advisor.collection_algebra import sorted_tuple
-from nominal_refactor_advisor.record_algebra import product_record
-
 import openhcs.core.runtime_artifact_queries as runtime_artifact_queries
 import openhcs.core.equivalence.measurement_features as measurement_features
 import openhcs.core.runtime_semantics as runtime_semantics
@@ -1548,11 +1546,12 @@ class PrimaryRowObjectIdentifierMeasurementCompletion:
             expected_by_key.setdefault(key, Counter())[object_label] += 1
 
 
-_MeasurementScopeAggregatePolicy = product_record(
-    "_MeasurementScopeAggregatePolicy",
-    "scope: MeasurementScope; accepts_aggregate_feature_key: bool",
-    doc="Aggregate-feature parsing policy for one closed measurement scope.",
-)
+@dataclass(frozen=True, slots=True)
+class _MeasurementScopeAggregatePolicy:
+    """Aggregate-feature parsing policy for one closed measurement scope."""
+
+    scope: MeasurementScope
+    accepts_aggregate_feature_key: bool
 
 
 def _measurement_scope_aggregate_policy_by_scope(
