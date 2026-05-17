@@ -24,7 +24,10 @@ from openhcs.core.image_shapes import (
 )
 from openhcs.core.image_stack_layout import ImageStackLayout
 from openhcs.core.memory import MEMORY_TYPE_NUMPY, convert_memory, detect_memory_type
-from openhcs.core.registry_strategies import NominalTypeKeyedStrategyMixin
+from openhcs.core.registry_strategies import (
+    GeneratedLeafClassSpec,
+    NominalTypeKeyedStrategyMixin,
+)
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 from openhcs.core.runtime_semantics import (
     SourceSpatialDomain,
@@ -439,20 +442,25 @@ class SourceSpatialAlignedKwargResolutionStrategy(
         return reference_domain.extract_source_array(resolved)
 
 
-class ImageMetadataPayloadAlignedKwargResolutionStrategy(
-    SourceSpatialAlignedKwargResolutionStrategy
+for _source_spatial_aligned_kwarg_strategy in (
+    GeneratedLeafClassSpec(
+        "ImageMetadataPayloadAlignedKwargResolutionStrategy",
+        SourceSpatialAlignedKwargResolutionStrategy,
+        attributes={
+            "__doc__": "Resolve image payloads through their source-spatial metadata.",
+            "value_type": ImageMetadataPayload,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "MaskedImagePayloadAlignedKwargResolutionStrategy",
+        SourceSpatialAlignedKwargResolutionStrategy,
+        attributes={
+            "__doc__": "Resolve masked image payloads through their source-spatial metadata.",
+            "value_type": MaskedImagePayload,
+        },
+    ),
 ):
-    """Resolve image payloads through their source-spatial metadata."""
-
-    value_type = ImageMetadataPayload
-
-
-class MaskedImagePayloadAlignedKwargResolutionStrategy(
-    SourceSpatialAlignedKwargResolutionStrategy
-):
-    """Resolve masked image payloads through their source-spatial metadata."""
-
-    value_type = MaskedImagePayload
+    _source_spatial_aligned_kwarg_strategy.declare_in(globals())
 
 
 class ObjectLabelAlignedKwargResolutionStrategy(
@@ -492,20 +500,25 @@ class ObjectLabelAlignedKwargResolutionStrategy(
         return super().resolve(value, resolver)
 
 
-class ObjectLabelPayloadAlignedKwargResolutionStrategy(
-    ObjectLabelAlignedKwargResolutionStrategy
+for _object_label_aligned_kwarg_strategy in (
+    GeneratedLeafClassSpec(
+        "ObjectLabelPayloadAlignedKwargResolutionStrategy",
+        ObjectLabelAlignedKwargResolutionStrategy,
+        attributes={
+            "__doc__": "Resolve object-label payloads through declared label-domain semantics.",
+            "value_type": ObjectLabelPayload,
+        },
+    ),
+    GeneratedLeafClassSpec(
+        "ObjectLabelSetAlignedKwargResolutionStrategy",
+        ObjectLabelAlignedKwargResolutionStrategy,
+        attributes={
+            "__doc__": "Resolve object-label sets through declared label-domain semantics.",
+            "value_type": ObjectLabelSet,
+        },
+    ),
 ):
-    """Resolve object-label payloads through declared label-domain semantics."""
-
-    value_type = ObjectLabelPayload
-
-
-class ObjectLabelSetAlignedKwargResolutionStrategy(
-    ObjectLabelAlignedKwargResolutionStrategy
-):
-    """Resolve object-label sets through declared label-domain semantics."""
-
-    value_type = ObjectLabelSet
+    _object_label_aligned_kwarg_strategy.declare_in(globals())
 
 
 class PayloadSliceAlignedKwargResolutionStrategy(
