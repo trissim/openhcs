@@ -309,8 +309,6 @@ _StaticWideRuntimeQualifiersByIndex = dict[
     int,
     tuple[_RuntimeMeasurementIndexedQualifier, ...],
 ]
-
-
 @dataclass(slots=True)
 class RuntimeAggregateMeanAccumulator:
     """Running aggregate mean state without retaining per-row values."""
@@ -602,6 +600,241 @@ class RuntimeMeasurementFeatureKeyFactory:
             self.statistic,
             self.source_name,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFeatureNameProjection:
+    """Canonical feature/source projection under runtime equivalence policy."""
+
+    policy: RuntimeEquivalencePolicy
+    source_name: str | None
+    semantic_projection: "SemanticCoreFeatureAndSourceNameProjection"
+
+    @classmethod
+    def from_feature_name(
+        cls,
+        feature_name: str,
+        policy: RuntimeEquivalencePolicy,
+        source_name: str | None,
+        known_source_names: tuple[str, ...],
+    ) -> "RuntimeMeasurementFeatureNameProjection":
+        return cls(
+            policy,
+            source_name,
+            SemanticCoreFeatureAndSourceNameProjection(
+                _normalize_identifier(feature_name),
+                policy.measurement_dialect,
+                known_source_names,
+            ),
+        )
+
+    def project(self) -> tuple[str, str | None]:
+        normalized = self.semantic_projection.feature_name
+        normalized_source_name = _normalize_source_name(self.source_name)
+        if (
+            self.policy.measurement_feature_name_mode
+            is RuntimeMeasurementFeatureNameMode.FULL
+        ):
+            return normalized, normalized_source_name
+        core_feature_name, field_source_name = (
+            self.semantic_projection.project()
+        )
+        return _directional_pair_feature_name_and_source(
+            core_feature_name,
+            field_source_name or normalized_source_name,
+            self.policy.measurement_dialect,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFeatureKeyProjection:
+    """Project a runtime measurement field into its semantic feature key."""
+
+    context: "_MeasurementFeatureKeySourceContext"
+    strip_subject_suffix: bool = True
+
+    def key(self) -> RuntimeMeasurementFeatureKey | None:
+        aggregate_key = self.aggregate_key()
+        if aggregate_key is not None:
+            return aggregate_key
+        feature_name, feature_source_name = (
+            RuntimeMeasurementFeatureNameProjection.from_feature_name(
+                self.context.field_name,
+                self.context.policy,
+                self.context.source_name,
+                self.context.known_source_names,
+            ).project()
+        )
+        if self.context.qualifiers:
+            qualified_feature_name, feature_source_name = (
+                RuntimeMeasurementFeatureNameProjection.from_feature_name(
+                    "_".join((feature_name, *self.context.qualifiers)),
+                    self.context.policy,
+                    feature_source_name,
+                    self.context.known_source_names,
+                ).project()
+            )
+            feature_name = qualified_feature_name
+        if self.strip_subject_suffix:
+            feature_name = _strip_subject_suffix_feature_name(
+                feature_name,
+                self.context.subject,
+            )
+        if not feature_name:
+            return None
+        return RuntimeMeasurementFeatureKey.from_source_qualified_feature(
+            self.context.subject,
+            feature_name,
+            feature_source_name,
+            self.context.policy.measurement_dialect,
+            qualifiers=self.context.qualifiers,
+        )
+
+    def aggregate_key(self) -> RuntimeMeasurementFeatureKey | None:
+        subject = self.context.subject
+        scope_policy = _MEASUREMENT_SCOPE_AGGREGATE_POLICY_BY_SCOPE[subject.scope]
+        if not scope_policy.accepts_aggregate_feature_key:
+            return None
+        parts = tuple(
+            part
+            for part in _normalize_identifier(self.context.field_name).split("_")
+            if part
+        )
+        if len(parts) >= 2 and parts[0] == MeasurementStatistic.COUNT.value:
+            return RuntimeMeasurementFeatureKeyFactory(
+                RuntimeMeasurementSubjectKey(
+                    MeasurementScope.OBJECT,
+                    "_".join(parts[1:]),
+                ),
+                ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
+                MeasurementStatistic.COUNT.value,
+            ).key()
+        aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
+            parts,
+            self.context.policy.measurement_dialect,
+        )
+        if aggregate_identity is None:
+            return None
+        feature_name, source_name = RuntimeMeasurementFeatureNameProjection.from_feature_name(
+            aggregate_identity.feature_name,
+            self.context.policy,
+            None,
+            self.context.known_source_names,
+        ).project()
+        return RuntimeMeasurementFeatureKey.from_source_qualified_feature(
+            RuntimeMeasurementSubjectKey(
+                MeasurementScope.OBJECT,
+                aggregate_identity.object_name,
+            ),
+            feature_name,
+            source_name,
+            self.context.policy.measurement_dialect,
+            aggregate_identity.aggregate,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectZernikeDescriptorStabilityContext:
+    """Inputs needed to decide whether a Zernike descriptor is comparable."""
+
+    feature: RuntimeMeasurementFeatureKey
+    descriptor: IndexedObjectZernikeDescriptor
+    reference: "RuntimeMeasurementSnapshot"
+    candidate: "RuntimeMeasurementSnapshot"
+    policy: RuntimeEquivalencePolicy
+
+    def stability_policy(self) -> "MeasurementFeatureStabilityPolicy":
+        return MeasurementFeatureStabilityPolicy(
+            self.feature,
+            self.reference,
+            self.candidate,
+            self.policy,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class WideMeasurementTableRowDerivationRequirement:
+    """Detect wide measurement tables that require row-local fact derivation."""
+
+    table: RuntimeTableSnapshot | tuple[str, ...]
+    feature_column_indexes: tuple[int, ...]
+    policy: RuntimeEquivalencePolicy
+    source_name: str | None
+    known_source_names: tuple[str, ...]
+
+    def required(self) -> bool:
+        for index in self.feature_column_indexes:
+            key = RuntimeMeasurementFeatureKeyProjection(
+                _MeasurementFeatureKeySourceContext(
+                    self.header[index],
+                    self.subject_for_index(index),
+                    self.policy,
+                    (),
+                    self.source_name,
+                    self.known_source_names,
+                )
+            ).key()
+            if (
+                key is not None
+                and key.belongs_to_source_qualified_feature_family(
+                    self.policy.measurement_dialect,
+                    (_PAIR_REGRESSION_SLOPE_FEATURE,),
+                )
+            ):
+                return True
+        return False
+
+    @property
+    def header(self) -> tuple[str, ...]:
+        return self.table.header if isinstance(self.table, RuntimeTableSnapshot) else self.table
+
+    def subject_for_index(self, index: int) -> RuntimeMeasurementSubjectKey:
+        if not isinstance(self.table, RuntimeTableSnapshot):
+            return RuntimeMeasurementSubjectKey(MeasurementScope.ARTIFACT, None)
+        first_row = (
+            {}
+            if not self.table.rows
+            else dict(zip(self.table.header, self.table.rows[0], strict=True))
+        )
+        fallback_subject = RuntimeExportRowSubject(self.table.path, first_row).subject()
+        return RuntimeExportColumnSubject(
+            self.table,
+            first_row,
+            index,
+            fallback_subject,
+        ).subject()
+
+
+@dataclass(frozen=True, slots=True)
+class AggregateMeanKeyProjection:
+    """Project row-level object values to image-scoped aggregate mean keys."""
+
+    value_key: RuntimeMeasurementFeatureKey
+    required_keys: _RuntimeRequiredMeasurementKeys
+    key_cache: _AggregateMeanKeyCache
+
+    def key(self) -> RuntimeMeasurementFeatureKey | None:
+        cache_key = (
+            self.value_key.subject.scope,
+            self.value_key.subject.name,
+            self.value_key.feature_name,
+            self.value_key.statistic,
+            self.value_key.source_name,
+        )
+        mean_key = self.key_cache.get(cache_key, _CACHE_MISS)
+        if mean_key is _CACHE_MISS:
+            mean_key = RuntimeMeasurementFeatureKeyFactory(
+                self.value_key.subject,
+                self.value_key.feature_name,
+                MeasurementStatistic.MEAN.value,
+                source_name=self.value_key.source_name,
+            ).key()
+            if self.required_keys is not None and mean_key not in self.required_keys:
+                mean_key = None
+            elif _is_image_number_reference_feature(self.value_key):
+                mean_key = None
+            self.key_cache[cache_key] = mean_key
+        return mean_key
 
 
 @dataclass(frozen=True, slots=True)
@@ -1512,6 +1745,22 @@ class ObjectLabelMeasurementProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeObjectLabelArray:
+    """Validated object-label image array used for derived label measurements."""
+
+    labels: object
+
+    def array(self) -> np.ndarray | None:
+        try:
+            label_array = np.asarray(self.labels)
+        except (TypeError, ValueError):
+            return None
+        if label_array.ndim == 0:
+            return None
+        return label_array
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeObjectCountAuthority:
     """Nominal ownership of object-count facts before row fallback is allowed."""
 
@@ -1583,11 +1832,6 @@ class ObjectLabelMeasurementProjectionStrategy(ABC, metaclass=AutoRegisterMeta):
     ) -> tuple[ObjectLabelMeasurementProjection, ...]:
         """Return semantic label domains used for count/location facts."""
 
-    @staticmethod
-    def label_array(context: _ObjectLabelMeasurementContext) -> np.ndarray | None:
-        return _runtime_object_label_array(context.labels)
-
-
 class PayloadObjectLabelMeasurementProjectionStrategy(
     ObjectLabelMeasurementProjectionStrategy
 ):
@@ -1600,7 +1844,7 @@ class PayloadObjectLabelMeasurementProjectionStrategy(
         self,
         context: _ObjectLabelMeasurementContext,
     ) -> tuple[ObjectLabelMeasurementProjection, ...]:
-        label_array = self.label_array(context)
+        label_array = RuntimeObjectLabelArray(context.labels).array()
         if label_array is None:
             return ()
         domains = context.dense_identity_domains()
@@ -1624,7 +1868,7 @@ class PlaneObjectLabelMeasurementProjectionStrategy(
         self,
         context: _ObjectLabelMeasurementContext,
     ) -> tuple[ObjectLabelMeasurementProjection, ...]:
-        label_array = self.label_array(context)
+        label_array = RuntimeObjectLabelArray(context.labels).array()
         if label_array is None:
             return ()
         planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
@@ -1768,7 +2012,7 @@ class ObjectLabelIdentifierMeasurementCompletion:
         ).object_identifier_keys(subject)
         if not keys:
             return
-        if _runtime_object_label_array(context.labels) is None:
+        if RuntimeObjectLabelArray(context.labels).array() is None:
             return
         object_number_domains = ObjectIdentifierDomainProjectionStrategy.for_context(
             context
@@ -1858,34 +2102,6 @@ _MEASUREMENT_SCOPE_AGGREGATE_POLICY_BY_SCOPE = (
         )
     )
 )
-def _aggregate_mean_key(
-    key: RuntimeMeasurementFeatureKey,
-    *,
-    required_keys: _RuntimeRequiredMeasurementKeys,
-    key_cache: _AggregateMeanKeyCache,
-) -> RuntimeMeasurementFeatureKey | None:
-    cache_key = (
-        key.subject.scope,
-        key.subject.name,
-        key.feature_name,
-        key.statistic,
-        key.source_name,
-    )
-    mean_key = key_cache.get(cache_key, _CACHE_MISS)
-    if mean_key is _CACHE_MISS:
-        mean_key = RuntimeMeasurementFeatureKeyFactory(
-            key.subject,
-            key.feature_name,
-            MeasurementStatistic.MEAN.value,
-            source_name=key.source_name,
-        ).key()
-        if required_keys is not None and mean_key not in required_keys:
-            mean_key = None
-        elif _is_image_number_reference_feature(key):
-            mean_key = None
-        key_cache[cache_key] = mean_key
-    return mean_key
-
 
 def _finite_numeric_runtime_cell_value(value: RuntimeCellSignature) -> float | None:
     if value.kind is not RuntimeCellValueKind.NUMBER:
@@ -2280,11 +2496,7 @@ class ObjectZernikeDescriptorStabilityContract(
     @abstractmethod
     def is_stable(
         self,
-        feature: RuntimeMeasurementFeatureKey,
-        descriptor: IndexedObjectZernikeDescriptor,
-        reference: "RuntimeMeasurementSnapshot",
-        candidate: "RuntimeMeasurementSnapshot",
-        policy: RuntimeEquivalencePolicy,
+        context: ObjectZernikeDescriptorStabilityContext,
     ) -> bool:
         """Return whether the descriptor's supporting object domain is stable."""
 
@@ -2298,18 +2510,41 @@ class ShapeObjectZernikeDescriptorStabilityContract(
 
     def is_stable(
         self,
-        feature: RuntimeMeasurementFeatureKey,
-        descriptor: IndexedObjectZernikeDescriptor,
-        reference: "RuntimeMeasurementSnapshot",
-        candidate: "RuntimeMeasurementSnapshot",
-        policy: RuntimeEquivalencePolicy,
+        context: ObjectZernikeDescriptorStabilityContext,
     ) -> bool:
-        return MeasurementFeatureStabilityPolicy(
-            feature,
-            reference,
-            candidate,
-            policy,
-        ).shape_descriptor_geometry_is_stable()
+        stability = context.stability_policy()
+        matched_features = 0
+        for feature_name in _SHAPE_DESCRIPTOR_GATING_FEATURES:
+            geometry_feature, reference_values, candidate_values = (
+                stability._shape_descriptor_geometry_feature_values(feature_name)
+            )
+            if reference_values is None and candidate_values is None:
+                continue
+            if reference_values is None or candidate_values is None:
+                continue
+            if _cell_signature_counters_equivalent(
+                reference_values,
+                candidate_values,
+                context.policy,
+            ):
+                matched_features += 1
+                continue
+            if context.policy.allow_sparse_object_boundary_jitter and (
+                SparseObjectBoundaryStatisticEquivalence.for_enum_member(
+                    MeasurementStatistic.VALUE
+                ).values_equivalent(
+                    SparseObjectBoundaryEquivalence(
+                        geometry_feature,
+                        context.reference,
+                        context.candidate,
+                        context.policy,
+                    )
+                )
+            ):
+                matched_features += 1
+                continue
+            return False
+        return matched_features >= 3
 
 
 class IntensityObjectZernikeDescriptorStabilityContract(
@@ -2322,34 +2557,16 @@ class IntensityObjectZernikeDescriptorStabilityContract(
 
     def is_stable(
         self,
-        feature: RuntimeMeasurementFeatureKey,
-        descriptor: IndexedObjectZernikeDescriptor,
-        reference: "RuntimeMeasurementSnapshot",
-        candidate: "RuntimeMeasurementSnapshot",
-        policy: RuntimeEquivalencePolicy,
+        context: ObjectZernikeDescriptorStabilityContext,
     ) -> bool:
+        stability = context.stability_policy()
         return (
-            MeasurementFeatureStabilityPolicy(
-                feature,
-                reference,
-                candidate,
-                policy,
-            ).object_count_values_stable()
-            and MeasurementFeatureStabilityPolicy(
-                feature,
-                reference,
-                candidate,
-                policy,
-            ).object_measurement_role_values_stable(
+            stability.object_count_values_stable()
+            and stability.object_measurement_role_values_stable(
                 ObjectMeasurementFeatureRole.IDENTIFIER,
                 min_stable_features=1,
             )
-            and MeasurementFeatureStabilityPolicy(
-                feature,
-                reference,
-                candidate,
-                policy,
-            ).object_measurement_role_values_stable(
+            and stability.object_measurement_role_values_stable(
                 ObjectMeasurementFeatureRole.LOCATION,
                 min_stable_features=2,
             )
@@ -4112,11 +4329,13 @@ def _zernike_descriptor_values_equivalent(
     if not ObjectZernikeDescriptorStabilityContract.for_enum_member(
         descriptor.family
     ).is_stable(
-        feature,
-        descriptor,
-        reference,
-        candidate,
-        policy,
+        ObjectZernikeDescriptorStabilityContext(
+            feature,
+            descriptor,
+            reference,
+            candidate,
+            policy,
+        )
     ):
         return False
 
@@ -4204,20 +4423,21 @@ def _record_static_wide_measurement_table_snapshot(
         ).context_pair()
         for index in feature_column_indexes
     }
-    padding_groups_by_index = _contextual_measurement_padding_groups(
+    padding_projection = ContextualMeasurementPaddingProjection(
         table.column_context,
         table.header,
         feature_column_indexes,
         policy.measurement_dialect,
-        known_source_names=known_source_names,
+        known_source_names,
     )
-    if _wide_measurement_table_needs_row_derivation(
+    padding_groups_by_index = padding_projection.groups_by_index()
+    if WideMeasurementTableRowDerivationRequirement(
         table,
         feature_column_indexes,
         policy,
-        source_name=measurement_row_source_image_name(first_row),
-        known_source_names=known_source_names,
-    ):
+        measurement_row_source_image_name(first_row),
+        known_source_names,
+    ).required():
         return False
     image_number_offset = RuntimeImageNumberOffset.from_table_rows(table.header, table.rows)
 
@@ -4250,13 +4470,8 @@ def _record_static_wide_measurement_table_snapshot(
             if row_object_name is not None
             else None
         )
-        padding_indexes = _contextual_measurement_padding_indexes(
-            table.column_context,
-            table.header,
+        padding_indexes = padding_projection.padding_indexes(
             row,
-            feature_column_indexes,
-            policy.measurement_dialect,
-            known_source_names=known_source_names,
             padding_groups_by_index=padding_groups_by_index,
         )
         qualifier_values = (
@@ -4295,7 +4510,7 @@ def _record_static_wide_measurement_table_snapshot(
             cache_key = (subject, source_name, index, qualifiers)
             key = key_cache.get(cache_key, _CACHE_MISS)
             if key is _CACHE_MISS:
-                key = _measurement_feature_key_from_source_context(
+                key = RuntimeMeasurementFeatureKeyProjection(
                     _MeasurementFeatureKeySourceContext(
                         table.header[index],
                         subject,
@@ -4304,7 +4519,7 @@ def _record_static_wide_measurement_table_snapshot(
                         source_name,
                         known_source_names,
                     )
-                )
+                ).key()
                 key_cache[cache_key] = key
             if key is None:
                 continue
@@ -4365,7 +4580,7 @@ def _record_static_wide_runtime_measurement_table(
             return False
 
     table_subject = RuntimeMeasurementSubjectKey.from_table_subject(table.subject)
-    subject_schema = _runtime_measurement_row_subject_schema(header)
+    subject_schema = RuntimeMeasurementRowSubjectSchema(header).schema()
     first_row_values = tuple(first_mapping.get(field_name) for field_name in header)
     first_subject_projection = RuntimeMeasurementRowSubjectProjection(
         table_subject,
@@ -4397,13 +4612,13 @@ def _record_static_wide_runtime_measurement_table(
     first_source_qualification = first_subject.bind_row_source_identity(
         first_subject_projection.source_name()
     )
-    if _wide_measurement_table_needs_row_derivation(
+    if WideMeasurementTableRowDerivationRequirement(
         header,
         feature_column_indexes,
         policy,
-        source_name=first_source_qualification.feature_source_name,
-        known_source_names=context.known_source_names,
-    ):
+        first_source_qualification.feature_source_name,
+        context.known_source_names,
+    ).required():
         return False
 
     required_projection = RequiredRuntimeMeasurementProjection(
@@ -4488,13 +4703,13 @@ def _record_static_wide_runtime_measurement_table(
         source_qualification = subject.bind_row_source_identity(
             row_subject_projection.source_name()
         )
-        _record_runtime_primary_measurement_row_identity(
+        RuntimePrimaryMeasurementRowIdentityRecorder(
             primary_row_identities,
             row_mapping,
             context.axis_key,
             subject,
             policy,
-        )
+        ).record()
         derived_row_facts = StaticWideRuntimeRowProjector(
             row_projection_context,
             row_values,
@@ -4662,7 +4877,7 @@ class StaticWideRuntimeRowProjector:
         index: int,
         qualifiers: tuple[str, ...],
     ) -> RuntimeMeasurementFeatureKey | None:
-        return _measurement_feature_key_from_source_context(
+        return RuntimeMeasurementFeatureKeyProjection(
             _MeasurementFeatureKeySourceContext(
                 self.context.header[index],
                 self.subject,
@@ -4671,7 +4886,7 @@ class StaticWideRuntimeRowProjector:
                 self.source_name,
                 self.context.known_source_names,
             )
-        )
+        ).key()
 
     def _padding_group(
         self,
@@ -4698,11 +4913,11 @@ def _record_row_aggregate_input_value(
         return row_identity
     if key.statistic != "value":
         return row_identity
-    mean_key = _aggregate_mean_key(
+    mean_key = AggregateMeanKeyProjection(
         key,
-        required_keys=context.required_keys,
-        key_cache=context.key_cache,
-    )
+        context.required_keys,
+        context.key_cache,
+    ).key()
     if mean_key is None:
         return row_identity
     numeric_value = _finite_numeric_runtime_cell_value(value)
@@ -4948,7 +5163,9 @@ def _runtime_row_measurement_fact_priority(
 ) -> int:
     """Return dialect category priority for the row field that produced ``key``."""
     candidates: list[str] = []
-    long_form_feature = RuntimeMeasurementRowMapping(row_mapping).first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
+    long_form_feature = RuntimeMeasurementRowMapping(row_mapping).first_value(
+        _MEASUREMENT_FEATURE_NAME_FIELDS
+    )
     cache_key = RuntimeMeasurementRowPriorityCacheKey(
         row_fields=tuple(row_mapping),
         long_form_feature=str(long_form_feature) if long_form_feature is not None else None,
@@ -4991,12 +5208,12 @@ def _measurement_feature_source_priority(
     if priority is None:
         return None
     canonical_feature_name, canonical_source_name = (
-        _canonical_measurement_feature_name_and_source(
+        RuntimeMeasurementFeatureNameProjection.from_feature_name(
             feature_name,
             policy,
-            source_name=None,
-            known_source_names=(),
-        )
+            None,
+            (),
+        ).project()
     )
     if canonical_feature_name != key.feature_name or canonical_source_name != key.source_name:
         return None
@@ -5029,6 +5246,52 @@ class RuntimeMeasurementFeatureCategoryPriority:
         return -1
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimePrimaryMeasurementRowIdentityRecorder:
+    """Record primary object rows that may own row-merged measurement aliases."""
+
+    primary_row_identities: _RuntimeMeasurementPrimaryRowSet | None
+    row_mapping: Mapping[str, object]
+    axis_key: object | None
+    subject: RuntimeMeasurementSubjectKey
+    policy: RuntimeEquivalencePolicy
+
+    def record(self) -> None:
+        if self.primary_row_identities is None:
+            return
+        if self.subject.scope is not MeasurementScope.OBJECT:
+            return
+        if not self.row_has_primary_object_features():
+            return
+        identity = RuntimeObjectMeasurementRowIdentity.from_row_mapping(
+            self.row_mapping,
+            self.axis_key,
+            self.policy,
+        )
+        if identity is None:
+            return
+        self.primary_row_identities.add((self.subject, identity.row_identity))
+
+    def row_has_primary_object_features(self) -> bool:
+        primary_location_priority = _object_location_primary_row_priority(self.policy)
+        long_form_feature = RuntimeMeasurementRowMapping(
+            self.row_mapping
+        ).first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
+        feature_names = (
+            (str(long_form_feature),)
+            if long_form_feature is not None
+            else tuple(str(field_name) for field_name in self.row_mapping)
+        )
+        for feature_name in feature_names:
+            priority = RuntimeMeasurementFeatureCategoryPriority(
+                feature_name,
+                self.policy,
+            ).priority()
+            if priority is not None and priority <= primary_location_priority:
+                return True
+        return False
+
+
 def _runtime_row_merge_candidate_preferred(
     candidate: _RuntimeMeasurementRowMergeValue,
     current: _RuntimeMeasurementRowMergeValue,
@@ -5046,50 +5309,6 @@ def _runtime_row_merge_candidate_preferred(
     if candidate_missing and not current_missing:
         return False
     return candidate_priority < current_priority
-
-
-def _record_runtime_primary_measurement_row_identity(
-    primary_row_identities: _RuntimeMeasurementPrimaryRowSet | None,
-    row_mapping: Mapping[str, object],
-    axis_key: object | None,
-    subject: RuntimeMeasurementSubjectKey,
-    policy: RuntimeEquivalencePolicy,
-) -> None:
-    if primary_row_identities is None:
-        return
-    if subject.scope is not MeasurementScope.OBJECT:
-        return
-    if not _runtime_measurement_row_has_primary_object_features(row_mapping, policy):
-        return
-    identity = RuntimeObjectMeasurementRowIdentity.from_row_mapping(
-        row_mapping,
-        axis_key,
-        policy,
-    )
-    if identity is None:
-        return
-    primary_row_identities.add((subject, identity.row_identity))
-
-
-def _runtime_measurement_row_has_primary_object_features(
-    row_mapping: Mapping[str, object],
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    primary_location_priority = _object_location_primary_row_priority(policy)
-    long_form_feature = RuntimeMeasurementRowMapping(row_mapping).first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
-    feature_names = (
-        (str(long_form_feature),)
-        if long_form_feature is not None
-        else tuple(str(field_name) for field_name in row_mapping)
-    )
-    for feature_name in feature_names:
-        priority = RuntimeMeasurementFeatureCategoryPriority(
-            feature_name,
-            policy,
-        ).priority()
-        if priority is not None and priority <= primary_location_priority:
-            return True
-    return False
 
 
 class RuntimeRowMergeLocationSubjectProjection(RuntimeObjectLocationRowMergeContract):
@@ -5137,11 +5356,11 @@ def _record_runtime_row_merge_facts(
     for (key, row_identity), (_priority, _row_priority, value) in row_merge_cache.items():
         if (key.subject, row_identity) not in primary_row_identities:
             continue
-        mean_key = _aggregate_mean_key(
+        mean_key = AggregateMeanKeyProjection(
             key,
-            required_keys=required_keys,
-            key_cache=aggregate_key_cache,
-        )
+            required_keys,
+            aggregate_key_cache,
+        ).key()
         value_required = required_keys is None or key in required_keys
         if not value_required and mean_key is None:
             continue
@@ -5300,19 +5519,6 @@ def _parts_contain_adjacent_image_number(parts: tuple[str, ...]) -> bool:
     )
 
 
-def _measurement_feature_key_from_source_context(
-    context: _MeasurementFeatureKeySourceContext,
-) -> RuntimeMeasurementFeatureKey | None:
-    return _measurement_feature_key_for_field(
-        context.field_name,
-        context.subject,
-        context.policy,
-        qualifiers=context.qualifiers,
-        source_name=context.source_name,
-        known_source_names=context.known_source_names,
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class RuntimeTableSnapshotFactExtractor:
     """Project exported measurement table snapshots into semantic facts."""
@@ -5335,13 +5541,14 @@ class RuntimeTableSnapshotFactExtractor:
         )
         if not feature_indexes:
             return self.identity_facts()
-        padding_groups_by_index = _contextual_measurement_padding_groups(
+        padding_projection = ContextualMeasurementPaddingProjection(
             self.table.column_context,
             self.table.header,
             feature_indexes,
             self.policy.measurement_dialect,
-            known_source_names=self.known_source_names,
+            self.known_source_names,
         )
+        padding_groups_by_index = padding_projection.groups_by_index()
 
         image_number_offset = RuntimeImageNumberOffset.from_table_rows(
             self.table.header,
@@ -5357,16 +5564,11 @@ class RuntimeTableSnapshotFactExtractor:
             if RuntimeMetadataMapRow(row_subject, row_mapping).matches():
                 continue
             source_name = measurement_row_source_image_name(row_mapping)
-            padding_indexes = _contextual_measurement_padding_indexes(
-                self.table.column_context,
-                self.table.header,
+            padding_indexes = padding_projection.padding_indexes(
                 row,
-                feature_indexes,
-                self.policy.measurement_dialect,
-                known_source_names=self.known_source_names,
                 padding_groups_by_index=padding_groups_by_index,
             )
-            long_form_fact = _long_form_measurement_fact(
+            long_form_fact = RuntimeSnapshotLongFormMeasurementFactProjector(
                 _LongFormMeasurementContext(
                     row_mapping,
                     row_subject,
@@ -5375,7 +5577,7 @@ class RuntimeTableSnapshotFactExtractor:
                     self.known_source_names,
                     image_number_offset,
                 )
-            )
+            ).fact()
             if long_form_fact is not None:
                 facts.append(long_form_fact)
                 continue
@@ -5392,7 +5594,7 @@ class RuntimeTableSnapshotFactExtractor:
                     index,
                     row_subject,
                 ).subject()
-                key = _measurement_feature_key_from_source_context(
+                key = RuntimeMeasurementFeatureKeyProjection(
                     _MeasurementFeatureKeySourceContext(
                         field_name,
                         subject,
@@ -5405,7 +5607,7 @@ class RuntimeTableSnapshotFactExtractor:
                         source_name,
                         self.known_source_names,
                     )
-                )
+                ).key()
                 if key is None:
                     continue
                 if _is_aggregate_image_number_reference_measurement_field(field_name):
@@ -5487,7 +5689,7 @@ class RuntimeTableSnapshotFactExtractor:
                 ).subject(),
             )
             for key in (
-                _measurement_feature_key_from_source_context(
+                RuntimeMeasurementFeatureKeyProjection(
                     _MeasurementFeatureKeySourceContext(
                         field_name,
                         column_subject,
@@ -5496,7 +5698,7 @@ class RuntimeTableSnapshotFactExtractor:
                         source_name,
                         self.known_source_names,
                     )
-                ),
+                ).key(),
             )
             if key is not None
         )
@@ -5507,23 +5709,19 @@ class RuntimeTableSnapshotFactExtractor:
             self.table.rows,
         )
         feature_indexes = tuple(index for index, _key in feature_columns)
-        padding_groups_by_index = _contextual_measurement_padding_groups(
+        padding_projection = ContextualMeasurementPaddingProjection(
             self.table.column_context,
             self.table.header,
             feature_indexes,
             self.policy.measurement_dialect,
-            known_source_names=self.known_source_names,
+            self.known_source_names,
         )
+        padding_groups_by_index = padding_projection.groups_by_index()
 
         facts: _RuntimeMeasurementFactList = []
         for row in self.table.rows:
-            padding_indexes = _contextual_measurement_padding_indexes(
-                self.table.column_context,
-                self.table.header,
+            padding_indexes = padding_projection.padding_indexes(
                 row,
-                feature_indexes,
-                self.policy.measurement_dialect,
-                known_source_names=self.known_source_names,
                 padding_groups_by_index=padding_groups_by_index,
             )
             row_fact_records = tuple(
@@ -5561,58 +5759,6 @@ class RuntimeTableSnapshotFactExtractor:
                 )
             )
         return tuple(facts)
-
-
-def _wide_measurement_table_needs_row_derivation(
-    table: RuntimeTableSnapshot | tuple[str, ...],
-    feature_column_indexes: tuple[int, ...],
-    policy: RuntimeEquivalencePolicy,
-    *,
-    source_name: str | None,
-    known_source_names: tuple[str, ...],
-) -> bool:
-    """Return whether row-local derived facts require the slower projection."""
-    header = table.header if isinstance(table, RuntimeTableSnapshot) else table
-    first_row = (
-        {}
-        if not isinstance(table, RuntimeTableSnapshot) or not table.rows
-        else dict(zip(table.header, table.rows[0], strict=True))
-    )
-    fallback_subject = (
-        RuntimeMeasurementSubjectKey(MeasurementScope.ARTIFACT, None)
-        if not isinstance(table, RuntimeTableSnapshot)
-        else RuntimeExportRowSubject(table.path, first_row).subject()
-    )
-    for index in feature_column_indexes:
-        subject = (
-            fallback_subject
-            if not isinstance(table, RuntimeTableSnapshot)
-            else RuntimeExportColumnSubject(
-                table,
-                first_row,
-                index,
-                fallback_subject,
-            ).subject()
-        )
-        key = _measurement_feature_key_from_source_context(
-            _MeasurementFeatureKeySourceContext(
-                header[index],
-                subject,
-                policy,
-                (),
-                source_name,
-                known_source_names,
-            )
-        )
-        if (
-            key is not None
-            and key.belongs_to_source_qualified_feature_family(
-                policy.measurement_dialect,
-                (_PAIR_REGRESSION_SLOPE_FEATURE,),
-            )
-        ):
-            return True
-    return False
 
 
 @dataclass
@@ -5699,13 +5845,13 @@ class RuntimeMeasurementTableFactRecorder:
         source_qualification = subject.bind_row_source_identity(
             row_subject_projection.source_name()
         )
-        _record_runtime_primary_measurement_row_identity(
+        RuntimePrimaryMeasurementRowIdentityRecorder(
             self.primary_row_identities,
             row_mapping,
             self.context.axis_key,
             subject,
             self.context.policy,
-        )
+        ).record()
         row_context = RuntimeRowProjectionContext.from_row(
             row_mapping,
             subject,
@@ -5749,7 +5895,7 @@ class RuntimeMeasurementTableFactRecorder:
     ) -> _RuntimeMeasurementRowSubjectSchema:
         subject_schema = self._subject_schema_cache.get(header)
         if subject_schema is None:
-            subject_schema = _runtime_measurement_row_subject_schema(header)
+            subject_schema = RuntimeMeasurementRowSubjectSchema(header).schema()
             self._subject_schema_cache[header] = subject_schema
         return subject_schema
 
@@ -5930,7 +6076,7 @@ class RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
         cache_key = (context.subject, context.source_name, field_name, qualifiers)
         key = context.key_cache.get(cache_key, _CACHE_MISS)
         if key is _CACHE_MISS:
-            key = _measurement_feature_key_from_source_context(
+            key = RuntimeMeasurementFeatureKeyProjection(
                 _MeasurementFeatureKeySourceContext(
                     field_name,
                     context.subject,
@@ -5939,7 +6085,7 @@ class RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
                     context.source_name,
                     context.known_source_names,
                 )
-            )
+            ).key()
             context.key_cache[cache_key] = key
         return key
 
@@ -6448,103 +6594,89 @@ def _measurement_field_has_collapsed_numeric_qualifier(
     )
 
 
-def _contextual_measurement_padding_indexes(
-    column_context: tuple[str | None, ...],
-    header: tuple[str, ...],
-    row_values: tuple[object, ...],
-    feature_indexes: tuple[int, ...],
-    dialect: RuntimeMeasurementDialect,
-    *,
-    known_source_names: tuple[str, ...],
-    padding_groups_by_index: Mapping[
-        int,
-        _ContextualMeasurementPaddingGroup | None,
-    ] | None = None,
-) -> frozenset[int]:
-    """Return contextual wide-table cells that are row padding, not facts."""
-    if not column_context:
-        return frozenset()
+@dataclass(frozen=True, slots=True)
+class ContextualMeasurementPaddingProjection:
+    """Resolve contextual wide-table cells that represent padding, not facts."""
 
-    if padding_groups_by_index is None:
-        padding_groups_by_index = _contextual_measurement_padding_groups(
-            column_context,
-            header,
-            feature_indexes,
-            dialect,
-            known_source_names=known_source_names,
+    column_context: tuple[str | None, ...]
+    header: tuple[str, ...]
+    feature_indexes: tuple[int, ...]
+    dialect: RuntimeMeasurementDialect
+    known_source_names: tuple[str, ...]
+
+    def groups_by_index(
+        self,
+    ) -> Mapping[int, _ContextualMeasurementPaddingGroup | None]:
+        if not self.column_context:
+            return MappingProxyType({})
+        return MappingProxyType(
+            {
+                index: self.group_for_index(index)
+                for index in self.feature_indexes
+            }
         )
 
-    indexes_by_group: dict[_ContextualMeasurementPaddingGroup, list[int]] = {}
-    for index in feature_indexes:
-        group = padding_groups_by_index.get(index)
-        if group is None:
-            continue
-        indexes_by_group.setdefault(group, []).append(index)
+    def padding_indexes(
+        self,
+        row_values: tuple[object, ...],
+        *,
+        padding_groups_by_index: Mapping[
+            int,
+            _ContextualMeasurementPaddingGroup | None,
+        ] | None = None,
+    ) -> frozenset[int]:
+        if not self.column_context:
+            return frozenset()
+        if padding_groups_by_index is None:
+            padding_groups_by_index = self.groups_by_index()
 
-    padding_indexes: set[int] = set()
-    for indexes in indexes_by_group.values():
-        if any(RuntimeMeasurementCellPresence(row_values[index]).is_present() for index in indexes):
-            continue
-        padding_indexes.update(indexes)
-    return frozenset(padding_indexes)
+        indexes_by_group: dict[_ContextualMeasurementPaddingGroup, list[int]] = {}
+        for index in self.feature_indexes:
+            group = padding_groups_by_index.get(index)
+            if group is None:
+                continue
+            indexes_by_group.setdefault(group, []).append(index)
 
+        padding_indexes: set[int] = set()
+        for indexes in indexes_by_group.values():
+            if any(
+                RuntimeMeasurementCellPresence(row_values[index]).is_present()
+                for index in indexes
+            ):
+                continue
+            padding_indexes.update(indexes)
+        return frozenset(padding_indexes)
 
-def _contextual_measurement_padding_groups(
-    column_context: tuple[str | None, ...],
-    header: tuple[str, ...],
-    feature_indexes: tuple[int, ...],
-    dialect: RuntimeMeasurementDialect,
-    *,
-    known_source_names: tuple[str, ...],
-) -> Mapping[int, _ContextualMeasurementPaddingGroup | None]:
-    """Return reusable contextual wide-table padding groups by column index."""
-    return MappingProxyType(
-        {
-            index: (
-                _contextual_measurement_padding_group(
-                    column_context[index],
-                    header[index],
-                    dialect,
-                    known_source_names=known_source_names,
-                )
-                if index < len(column_context)
-                else None
-            )
-            for index in feature_indexes
-        }
-    )
+    def group_for_index(
+        self,
+        index: int,
+    ) -> _ContextualMeasurementPaddingGroup | None:
+        if index >= len(self.column_context):
+            return None
+        context = self.column_context[index]
+        if context is None:
+            return None
+        normalized_context = _normalize_identifier(context)
+        if not normalized_context or normalized_context in _CSV_HEADER_CONTEXT_STOPWORDS:
+            return None
+        field_name = self.header[index]
+        if RuntimeMeasurementIdentityField(self.dialect).field_matches(field_name):
+            return None
 
-
-def _contextual_measurement_padding_group(
-    context: str | None,
-    field_name: str,
-    dialect: RuntimeMeasurementDialect,
-    *,
-    known_source_names: tuple[str, ...],
-) -> _ContextualMeasurementPaddingGroup | None:
-    """Return the contextual wide-table domain implied by a measurement column."""
-    if context is None:
-        return None
-    normalized_context = _normalize_identifier(context)
-    if not normalized_context or normalized_context in _CSV_HEADER_CONTEXT_STOPWORDS:
-        return None
-    if RuntimeMeasurementIdentityField(dialect).field_matches(field_name):
-        return None
-
-    normalized_field = _normalize_identifier(field_name)
-    parts = tuple(part for part in normalized_field.split("_") if part)
-    if not parts:
-        return None
-    feature_group = RuntimeMeasurementNamePartsProjection(
-        parts,
-        dialect,
-    ).category_prefix() or parts[:1]
-    _feature_name, source_name = SemanticCoreFeatureAndSourceNameProjection(
-        normalized_field,
-        dialect,
-        known_source_names,
-    ).project()
-    return normalized_context, feature_group, source_name
+        normalized_field = _normalize_identifier(field_name)
+        parts = tuple(part for part in normalized_field.split("_") if part)
+        if not parts:
+            return None
+        feature_group = RuntimeMeasurementNamePartsProjection(
+            parts,
+            self.dialect,
+        ).category_prefix() or parts[:1]
+        _feature_name, source_name = SemanticCoreFeatureAndSourceNameProjection(
+            normalized_field,
+            self.dialect,
+            self.known_source_names,
+        ).project()
+        return normalized_context, feature_group, source_name
 
 
 @lru_cache(maxsize=256)
@@ -6589,47 +6721,46 @@ def _reverse_regression_slope(
     return (correlation * correlation) / slope
 
 
-def _long_form_measurement_fact(
-    context: _LongFormMeasurementContext,
-) -> _RuntimeLongFormMeasurementFact:
-    feature_name = RuntimeMeasurementRowMapping(context.row).first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
-    value = RuntimeMeasurementRowMapping(context.row).first_value(_MEASUREMENT_VALUE_FIELDS)
-    if feature_name is None or value is None:
-        return None
-    if _is_aggregate_image_number_reference_measurement_field(str(feature_name)):
-        return None
-    value = RuntimeImageNumberReferenceValue(
-        str(feature_name),
-        value,
-        context.image_number_offset,
-    ).normalized()
-    aggregate_key = _aggregate_measurement_feature_key(
-        str(feature_name),
-        context.subject,
-        context.policy,
-        known_source_names=context.known_source_names,
-    )
-    if aggregate_key is not None:
-        return aggregate_key, RuntimeMeasurementCellSignatureProjection(value, context.policy).signature()
-    canonical_feature_name, canonical_source_name = (
-        _canonical_measurement_feature_name_and_source(
-            str(feature_name),
-            context.policy,
-            source_name=context.source_name,
-            known_source_names=context.known_source_names,
+@dataclass(frozen=True, slots=True)
+class RuntimeSnapshotLongFormMeasurementFactProjector:
+    """Project one snapshot long-form measurement row into a semantic fact."""
+
+    context: _LongFormMeasurementContext
+
+    def fact(self) -> _RuntimeLongFormMeasurementFact:
+        row_mapping = RuntimeMeasurementRowMapping(self.context.row)
+        feature_name = row_mapping.first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
+        value = row_mapping.first_value(_MEASUREMENT_VALUE_FIELDS)
+        if feature_name is None or value is None:
+            return None
+        feature_text = str(feature_name)
+        if _is_aggregate_image_number_reference_measurement_field(feature_text):
+            return None
+        value = RuntimeImageNumberReferenceValue(
+            feature_text,
+            value,
+            self.context.image_number_offset,
+        ).normalized()
+        key = RuntimeMeasurementFeatureKeyProjection(
+            _MeasurementFeatureKeySourceContext(
+                feature_text,
+                self.context.subject,
+                self.context.policy,
+                (),
+                self.context.source_name,
+                self.context.known_source_names,
+            ),
+            strip_subject_suffix=False,
+        ).key()
+        if key is None:
+            return None
+        return (
+            key,
+            RuntimeMeasurementCellSignatureProjection(
+                value,
+                self.context.policy,
+            ).signature(),
         )
-    )
-    if not canonical_feature_name:
-        return None
-    return (
-        RuntimeMeasurementFeatureKey.from_source_qualified_feature(
-            context.subject,
-            canonical_feature_name,
-            canonical_source_name,
-            context.policy.measurement_dialect,
-        ),
-        RuntimeMeasurementCellSignatureProjection(value, context.policy).signature(),
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -6666,81 +6797,29 @@ class RuntimeMeasurementLongFormFactProjector:
             self.context.key_cache[cache_key] = key
         if key is None:
             return None
-        return key, RuntimeMeasurementCellSignatureProjection(value, self.context.policy).signature()
+        return (
+            key,
+            RuntimeMeasurementCellSignatureProjection(
+                value,
+                self.context.policy,
+            ).signature(),
+        )
 
     def _feature_key(
         self,
         feature_text: str,
     ) -> RuntimeMeasurementFeatureKey | None:
-        aggregate_key = _aggregate_measurement_feature_key(
-            feature_text,
-            self.context.subject,
-            self.context.policy,
-            known_source_names=self.context.known_source_names,
-        )
-        if aggregate_key is not None:
-            return aggregate_key
-        canonical_feature_name, canonical_source_name = (
-            _canonical_measurement_feature_name_and_source(
+        return RuntimeMeasurementFeatureKeyProjection(
+            _MeasurementFeatureKeySourceContext(
                 feature_text,
+                self.context.subject,
                 self.context.policy,
-                source_name=self.context.source_name,
-                known_source_names=self.context.known_source_names,
-            )
-        )
-        if not canonical_feature_name:
-            return None
-        return RuntimeMeasurementFeatureKey.from_source_qualified_feature(
-            self.context.subject,
-            canonical_feature_name,
-            canonical_source_name,
-            self.context.policy.measurement_dialect,
-        )
-
-
-def _measurement_feature_key_for_field(
-    field_name: str,
-    subject: RuntimeMeasurementSubjectKey,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    qualifiers: tuple[str, ...],
-    source_name: str | None,
-    known_source_names: tuple[str, ...],
-) -> RuntimeMeasurementFeatureKey | None:
-    aggregate_key = _aggregate_measurement_feature_key(
-        field_name,
-        subject,
-        policy,
-        known_source_names=known_source_names,
-    )
-    if aggregate_key is not None:
-        return aggregate_key
-    feature_name, feature_source_name = _canonical_measurement_feature_name_and_source(
-        field_name,
-        policy,
-        source_name=source_name,
-        known_source_names=known_source_names,
-    )
-    if qualifiers:
-        qualified_feature_name, feature_source_name = (
-            _canonical_measurement_feature_name_and_source(
-                "_".join((feature_name, *qualifiers)),
-                policy,
-                source_name=feature_source_name,
-                known_source_names=known_source_names,
-            )
-        )
-        feature_name = qualified_feature_name
-    feature_name = _strip_subject_suffix_feature_name(feature_name, subject)
-    if not feature_name:
-        return None
-    return RuntimeMeasurementFeatureKey.from_source_qualified_feature(
-        subject,
-        feature_name,
-        feature_source_name,
-        policy.measurement_dialect,
-        qualifiers=qualifiers,
-    )
+                (),
+                self.context.source_name,
+                self.context.known_source_names,
+            ),
+            strip_subject_suffix=False,
+        ).key()
 
 
 @dataclass(frozen=True, slots=True)
@@ -6898,63 +6977,6 @@ class RuntimeAggregateFeatureIdentity:
     def feature_name(self) -> str:
         return "_".join(self.feature_parts)
 
-    def canonical_feature_name_and_source(
-        self,
-        policy: RuntimeEquivalencePolicy,
-        *,
-        known_source_names: tuple[str, ...],
-    ) -> tuple[str, str | None]:
-        """Return the canonical runtime feature/source for the aggregate child feature."""
-        return _canonical_measurement_feature_name_and_source(
-            self.feature_name,
-            policy,
-            source_name=None,
-            known_source_names=known_source_names,
-        )
-
-
-def _aggregate_measurement_feature_key(
-    field_name: str,
-    subject: RuntimeMeasurementSubjectKey,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    known_source_names: tuple[str, ...],
-) -> RuntimeMeasurementFeatureKey | None:
-    scope_policy = _MEASUREMENT_SCOPE_AGGREGATE_POLICY_BY_SCOPE[subject.scope]
-    if not scope_policy.accepts_aggregate_feature_key:
-        return None
-    parts = tuple(part for part in _normalize_identifier(field_name).split("_") if part)
-    if len(parts) >= 2 and parts[0] == MeasurementStatistic.COUNT.value:
-        return RuntimeMeasurementFeatureKeyFactory(
-            RuntimeMeasurementSubjectKey(
-                MeasurementScope.OBJECT,
-                "_".join(parts[1:]),
-            ),
-            ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
-            MeasurementStatistic.COUNT.value,
-        ).key()
-    aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
-        parts,
-        policy.measurement_dialect,
-    )
-    if aggregate_identity is None:
-        return None
-    feature_name, source_name = aggregate_identity.canonical_feature_name_and_source(
-        policy,
-        known_source_names=known_source_names,
-    )
-    return RuntimeMeasurementFeatureKey.from_source_qualified_feature(
-        RuntimeMeasurementSubjectKey(
-            MeasurementScope.OBJECT,
-            aggregate_identity.object_name,
-        ),
-        feature_name,
-        source_name,
-        policy.measurement_dialect,
-        aggregate_identity.aggregate,
-    )
-
-
 def _aggregate_object_and_feature_parts(
     parts: tuple[str, ...],
     dialect: RuntimeMeasurementDialect,
@@ -7015,7 +7037,7 @@ class RuntimeObjectLabelMeasurementFactProjector:
         ).object_identifier_keys(subject)
         if not keys:
             return ()
-        label_array = _runtime_object_label_array(self.context.labels)
+        label_array = RuntimeObjectLabelArray(self.context.labels).array()
         if label_array is None:
             return ()
 
@@ -7060,7 +7082,7 @@ class RuntimeObjectLabelMeasurementFactProjector:
         )
         if self.context.required_keys is not None and key not in self.context.required_keys:
             return ()
-        label_array = _runtime_object_label_array(self.context.labels)
+        label_array = RuntimeObjectLabelArray(self.context.labels).array()
         if label_array is None:
             return ()
         projections = ObjectLabelMeasurementProjectionStrategy.for_scope(
@@ -7107,7 +7129,7 @@ class RuntimeObjectLabelMeasurementFactProjector:
             and not required_mean_feature_names
         ):
             return ()
-        label_array = _runtime_object_label_array(self.context.labels)
+        label_array = RuntimeObjectLabelArray(self.context.labels).array()
         if label_array is None:
             return ()
         projections = ObjectLabelMeasurementProjectionStrategy.for_scope(
@@ -7145,16 +7167,6 @@ def _object_label_measurements_required(
         return False
     subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, object_name)
     return any(key.subject == subject for key in required_keys)
-
-
-def _runtime_object_label_array(labels: object) -> np.ndarray | None:
-    try:
-        label_array = np.asarray(labels)
-    except (TypeError, ValueError):
-        return None
-    if label_array.ndim == 0:
-        return None
-    return label_array
 
 
 def _object_location_measurement_facts_for_plane(
@@ -8370,26 +8382,6 @@ def _source_name_aliases(source_name: str) -> tuple[str, ...]:
     return (source_name, *names)
 
 
-def _runtime_measurement_row_subject_schema(
-    header: tuple[str, ...],
-) -> _RuntimeMeasurementRowSubjectSchema:
-    normalized_fields = tuple(_normalize_identifier(field) for field in header)
-    normalized_field_indexes = {
-        field_name: index
-        for index, field_name in enumerate(normalized_fields)
-    }
-    return (
-        normalized_field_indexes.get(MEASUREMENT_OBJECT_NAME_FIELD),
-        normalized_field_indexes.get(MEASUREMENT_SOURCE_IMAGE_NAME_FIELD),
-        RuntimeMeasurementFieldIndexMap(normalized_field_indexes).indexes_for(
-            MEASUREMENT_OBJECT_ID_FIELDS
-        ),
-        RuntimeMeasurementFieldIndexMap(normalized_field_indexes).indexes_for(
-            tuple(sorted(_IMAGE_IDENTITY_FIELDS))
-        ),
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementRowSubjectResolutionContext:
     """Typed subject-resolution facts for one measurement row."""
@@ -8588,6 +8580,27 @@ class RuntimeMeasurementRowSubjectProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeMeasurementRowSubjectSchema:
+    """Column indexes used to resolve runtime measurement row subjects."""
+
+    header: tuple[str, ...]
+
+    def schema(self) -> _RuntimeMeasurementRowSubjectSchema:
+        normalized_fields = tuple(_normalize_identifier(field) for field in self.header)
+        normalized_field_indexes = {
+            field_name: index
+            for index, field_name in enumerate(normalized_fields)
+        }
+        field_indexes = RuntimeMeasurementFieldIndexMap(normalized_field_indexes)
+        return (
+            normalized_field_indexes.get(MEASUREMENT_OBJECT_NAME_FIELD),
+            normalized_field_indexes.get(MEASUREMENT_SOURCE_IMAGE_NAME_FIELD),
+            field_indexes.indexes_for(MEASUREMENT_OBJECT_ID_FIELDS),
+            field_indexes.indexes_for(tuple(sorted(_IMAGE_IDENTITY_FIELDS))),
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeExportRowSubject:
     """Resolve table-export row subject from table path and row identity."""
 
@@ -8687,38 +8700,12 @@ def _canonical_measurement_feature_name(
     feature_name: str,
     policy: RuntimeEquivalencePolicy,
 ) -> str:
-    return _canonical_measurement_feature_name_and_source(
+    return RuntimeMeasurementFeatureNameProjection.from_feature_name(
         feature_name,
         policy,
-        source_name=None,
-        known_source_names=(),
-    )[0]
-
-
-def _canonical_measurement_feature_name_and_source(
-    feature_name: str,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    source_name: str | None,
-    known_source_names: tuple[str, ...],
-) -> tuple[str, str | None]:
-    normalized = _normalize_identifier(feature_name)
-    normalized_source_name = _normalize_source_name(source_name)
-    if (
-        policy.measurement_feature_name_mode
-        is RuntimeMeasurementFeatureNameMode.FULL
-    ):
-        return normalized, normalized_source_name
-    core_feature_name, field_source_name = SemanticCoreFeatureAndSourceNameProjection(
-        normalized,
-        policy.measurement_dialect,
-        known_source_names,
-    ).project()
-    return _directional_pair_feature_name_and_source(
-        core_feature_name,
-        field_source_name or normalized_source_name,
-        policy.measurement_dialect,
-    )
+        None,
+        (),
+    ).project()[0]
 
 
 def _semantic_core_feature_name(feature_name: str) -> str:
