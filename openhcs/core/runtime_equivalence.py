@@ -1834,6 +1834,26 @@ class ShapeDescriptorFeatureContext:
     feature: RuntimeMeasurementFeatureKey
     policy: RuntimeEquivalencePolicy
 
+    def semantic_context(self) -> "ShapeDescriptorFeatureContext":
+        """Return the descriptor context that owns comparison semantics."""
+        child_feature_name = (
+            RelationshipAggregateFeatureSemantics.aggregate_child_feature_name_from_key(
+                self.feature,
+                self.policy.measurement_dialect,
+            )
+        )
+        if child_feature_name is None:
+            return self
+        return ShapeDescriptorFeatureContext(
+            RuntimeMeasurementFeatureKey(
+                subject=self.feature.subject,
+                feature_name=child_feature_name,
+                statistic=self.feature.statistic,
+                source_name=self.feature.source_name,
+            ),
+            self.policy,
+        )
+
 
 class ShapeDescriptorFeatureSemantics(
     MostDerivedContextStrategyMixin[ShapeDescriptorFeatureContext],
@@ -1947,96 +1967,6 @@ class ShapeZernikeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics):
             max_unstable_values=context.policy.shape_descriptor_max_unstable_values,
             max_unstable_fraction=context.policy.shape_descriptor_max_unstable_fraction,
         )
-
-
-class RelationshipAggregateShapeDescriptorFeatureSemantics(
-    ShapeDescriptorFeatureSemantics
-):
-    """Relationship aggregates inherit comparability from child descriptors."""
-
-    strategy_key = "relationship_aggregate_shape_descriptor"
-
-    def matches(self, context: ShapeDescriptorFeatureContext) -> bool:
-        return (
-            self.child_semantics(context, required=False) is not None
-        )
-
-    def descriptor_feature_name(self, context: ShapeDescriptorFeatureContext) -> str:
-        return self.child_semantics(context).descriptor_feature_name(
-            self.child_context(context)
-        )
-
-    def values_equivalent(
-        self,
-        context: ShapeDescriptorFeatureContext,
-        reference_values: Counter[RuntimeCellSignature],
-        candidate_values: Counter[RuntimeCellSignature],
-    ) -> bool:
-        return self.child_semantics(context).values_equivalent(
-            self.child_context(context),
-            reference_values,
-            candidate_values,
-        )
-
-    def boundary_jitter_values_equivalent(
-        self,
-        context: ShapeDescriptorFeatureContext,
-        reference_values: Counter[RuntimeCellSignature],
-        candidate_values: Counter[RuntimeCellSignature],
-    ) -> bool:
-        return self.child_semantics(context).boundary_jitter_values_equivalent(
-            self.child_context(context),
-            reference_values,
-            candidate_values,
-        )
-
-    def child_context(
-        self,
-        context: ShapeDescriptorFeatureContext,
-    ) -> ShapeDescriptorFeatureContext:
-        child_feature_name = self.child_feature_name(context)
-        if child_feature_name is None:
-            raise ValueError(
-                "Relationship aggregate shape descriptor strategy lost ownership."
-            )
-        return ShapeDescriptorFeatureContext(
-            RuntimeMeasurementFeatureKey(
-                subject=context.feature.subject,
-                feature_name=child_feature_name,
-                statistic=context.feature.statistic,
-                source_name=context.feature.source_name,
-            ),
-            context.policy,
-        )
-
-    def child_semantics(
-        self,
-        context: ShapeDescriptorFeatureContext,
-        *,
-        required: bool = True,
-    ) -> ShapeDescriptorFeatureSemantics | None:
-        if self.child_feature_name(context) is None:
-            if required:
-                raise ValueError(
-                    "Relationship aggregate shape descriptor strategy requires "
-                    "an aggregate child feature."
-                )
-            return None
-        return ShapeDescriptorFeatureSemantics.for_context(
-            self.child_context(context),
-            required=required,
-            error_subject="relationship aggregate shape descriptor",
-        )
-
-    def child_feature_name(
-        self,
-        context: ShapeDescriptorFeatureContext,
-    ) -> str | None:
-        return RelationshipAggregateFeatureSemantics.aggregate_child_feature_name_from_key(
-            context.feature,
-            context.policy.measurement_dialect,
-        )
-
 
 class ObjectZernikeDescriptorStabilityContract(
     EnumKeyedStrategyMixin[ObjectZernikeDescriptorFeature],
@@ -3290,7 +3220,10 @@ def _sparse_object_boundary_value_feature_equivalent(
         policy.measurement_dialect,
     ):
         return False
-    shape_descriptor_context = ShapeDescriptorFeatureContext(feature, policy)
+    shape_descriptor_context = ShapeDescriptorFeatureContext(
+        feature,
+        policy,
+    ).semantic_context()
     shape_descriptor_semantics = ShapeDescriptorFeatureSemantics.for_context(
         shape_descriptor_context,
         required=False,
@@ -3642,7 +3575,10 @@ def _unstable_shape_descriptor_values_equivalent(
         return False
     if feature.statistic != "value":
         return False
-    shape_descriptor_context = ShapeDescriptorFeatureContext(feature, policy)
+    shape_descriptor_context = ShapeDescriptorFeatureContext(
+        feature,
+        policy,
+    ).semantic_context()
     semantics = ShapeDescriptorFeatureSemantics.for_context(
         shape_descriptor_context,
         required=False,
