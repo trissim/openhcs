@@ -300,17 +300,6 @@ _RuntimeRowQualifierResolutionCache = dict[
 ]
 
 
-def _runtime_measurement_fact_counter(
-    values_by_feature: _RuntimeMeasurementFactCounters,
-    key: RuntimeMeasurementFeatureKey,
-) -> Counter[RuntimeCellSignature]:
-    counter = values_by_feature.get(key)
-    if counter is None:
-        counter = Counter()
-        values_by_feature[key] = counter
-    return counter
-
-
 _RuntimeMeasurementPaddingGroupPresence = dict[_RuntimeMeasurementPaddingGroup, bool]
 _StaticWideRuntimeKeyCache = dict[
     tuple[RuntimeMeasurementSubjectKey, str | None, int, tuple[str, ...]],
@@ -342,6 +331,54 @@ class RuntimeAggregateMeanAccumulator:
         if self.count == 0:
             raise ValueError("Cannot compute mean without values.")
         return self.total / self.count
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFactCounters:
+    """Mutable counter map for runtime measurement facts."""
+
+    values_by_feature: _RuntimeMeasurementFactCounters
+
+    def counter(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+    ) -> Counter[RuntimeCellSignature]:
+        counter = self.values_by_feature.get(key)
+        if counter is None:
+            counter = Counter()
+            self.values_by_feature[key] = counter
+        return counter
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementCellSignatureProjection:
+    """Project runtime measurement payloads into comparison cell signatures."""
+
+    value: object
+    policy: RuntimeEquivalencePolicy
+
+    def signature(self) -> RuntimeCellSignature:
+        value = canonical_scalar(self.value)
+        if value is None or isinstance(value, (str, bool, int, float)):
+            return _cached_runtime_cell_signature(
+                str(value),
+                self.policy.numeric_decimal_places,
+            )
+        array_payload = semantic_array_payload(value)
+        if array_payload is not None:
+            dtype, shape, digest = array_payload[1:]
+            return RuntimeCellSignature(
+                RuntimeCellValueKind.TEXT,
+                f"array:{dtype}:{'x'.join(str(axis) for axis in shape)}:{digest}",
+            )
+        if _runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
+            value_digest = hashlib.blake2b(digest_size=32)
+            update_measurement_table_cell_hash(value_digest, value)
+            return RuntimeCellSignature(
+                RuntimeCellValueKind.TEXT,
+                f"{type(value).__name__}:{value_digest.hexdigest()}",
+            )
+        return _cell_signature(str(value), self.policy)
 
 
 @dataclass(frozen=True, slots=True)
@@ -382,6 +419,90 @@ class RuntimeMeasurementValuePresence:
                 for nested in self.value.values()
             )
         return RuntimeMeasurementCellPresence(self.value).is_present()
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeImageNumberOffset:
+    """Compute image-number offset for table rows."""
+
+    @classmethod
+    def from_table_rows(
+        cls,
+        header: tuple[str, ...],
+        rows: tuple[tuple[str, ...], ...],
+    ) -> float:
+        image_number_indexes = tuple(
+            index
+            for index, field_name in enumerate(header)
+            if _normalize_identifier(field_name) == "image_number"
+        )
+        if not image_number_indexes:
+            return 0.0
+        image_number_index = image_number_indexes[0]
+        return cls._offset_from_values(
+            row[image_number_index]
+            for row in rows
+            if image_number_index < len(row)
+        )
+
+    @classmethod
+    def from_runtime_rows(cls, rows: Iterable[object]) -> float:
+        return cls._offset_from_values(
+            image_number
+            for row in rows
+            for image_number in (
+                RuntimeMeasurementRowMapping(
+                    measurement_row_mapping(row)
+                ).first_value(("image_number",)),
+            )
+            if image_number is not None
+        )
+
+    @classmethod
+    def _offset_from_values(cls, values: Iterable[object]) -> float:
+        image_numbers: list[float] = []
+        for value in values:
+            try:
+                image_number = float(str(value).strip())
+            except ValueError:
+                continue
+            if math.isfinite(image_number) and image_number > 0:
+                image_numbers.append(image_number)
+        if not image_numbers:
+            return 0.0
+        return min(image_numbers) - 1.0
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeImageNumberReferenceValue:
+    """Normalize image-number reference fields to axis-local numbering."""
+
+    field_name: str
+    value: object
+    image_number_offset: float
+
+    def normalized(self) -> object:
+        if self.image_number_offset == 0:
+            return self.value
+        if not _is_image_number_reference_measurement_field(self.field_name):
+            return self.value
+        if isinstance(self.value, Mapping):
+            return {
+                key: RuntimeImageNumberReferenceValue(
+                    self.field_name,
+                    nested_value,
+                    self.image_number_offset,
+                ).normalized()
+                for key, nested_value in self.value.items()
+            }
+        try:
+            numeric_value = float(str(self.value).strip())
+        except ValueError:
+            return self.value
+        if not math.isfinite(numeric_value) or numeric_value <= 0:
+            return self.value
+        normalized = numeric_value - self.image_number_offset
+        return int(normalized) if normalized.is_integer() else normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -562,7 +683,7 @@ class RuntimeObjectMeasurementRowIdentity:
                 ),
                 (
                     _OBJECT_LABEL_ROW_IDENTITY_FIELD,
-                    _runtime_measurement_cell_signature(object_label, policy),
+                    RuntimeMeasurementCellSignatureProjection(object_label, policy).signature(),
                 ),
             )
         )
@@ -920,7 +1041,7 @@ class RuntimeMeasurementCellFactProjection(
     ) -> _RuntimeMeasurementFacts:
         cell = RuntimeMeasurementCellValue(key, value, policy)
         return tuple(
-            (cell_key, _runtime_measurement_cell_signature(cell_value, policy))
+            (cell_key, RuntimeMeasurementCellSignatureProjection(cell_value, policy).signature())
             for cell_key, cell_value in cell.iter_key_values()
         )
 
@@ -931,7 +1052,7 @@ class RuntimeMeasurementCellFactProjection(
         return tuple(
             (
                 cell_key,
-                _runtime_measurement_cell_signature(cell_value, cell.policy),
+                RuntimeMeasurementCellSignatureProjection(cell_value, cell.policy).signature(),
             )
             for cell_key, cell_value in cell.iter_key_values()
         )
@@ -2764,10 +2885,9 @@ class RuntimeMeasurementSnapshotAccumulator:
     def add(self, snapshot: RuntimeMeasurementSnapshot) -> None:
         """Merge one projected runtime window into this semantic accumulator."""
         for feature, values in snapshot.values_by_feature.items():
-            _runtime_measurement_fact_counter(
-                self._values_by_feature,
-                feature,
-            ).update(values)
+            RuntimeMeasurementFactCounters(
+                self._values_by_feature
+            ).counter(feature).update(values)
 
     def snapshot(self) -> RuntimeMeasurementSnapshot:
         """Freeze the accumulated semantic facts for equivalence comparison."""
@@ -4099,7 +4219,7 @@ def _record_static_wide_measurement_table_snapshot(
         known_source_names=known_source_names,
     ):
         return False
-    image_number_offset = _table_image_number_offset(table.header, table.rows)
+    image_number_offset = RuntimeImageNumberOffset.from_table_rows(table.header, table.rows)
 
     key_cache: dict[
         tuple[RuntimeMeasurementSubjectKey, str | None, int, tuple[str, ...]],
@@ -4119,7 +4239,7 @@ def _record_static_wide_measurement_table_snapshot(
         for index in feature_column_indexes
     }
 
-    image_number_offset = _table_image_number_offset(table.header, table.rows)
+    image_number_offset = RuntimeImageNumberOffset.from_table_rows(table.header, table.rows)
     for row in table.rows:
         row_mapping = dict(zip(table.header, row, strict=True))
         row_subject = RuntimeExportRowSubject(table.path, row_mapping).subject()
@@ -4200,11 +4320,11 @@ def _record_static_wide_measurement_table_snapshot(
                     key,
                     _cell_signature(
                         str(
-                            _normalize_image_number_reference_measurement_value(
+                            RuntimeImageNumberReferenceValue(
                                 field_name,
                                 row[index],
                                 image_number_offset,
-                            )
+                            ).normalized()
                         ),
                         policy,
                     ),
@@ -4215,7 +4335,7 @@ def _record_static_wide_measurement_table_snapshot(
             row_fact_records,
             policy,
         ):
-            _runtime_measurement_fact_counter(values_by_feature, key)[value] += 1
+            RuntimeMeasurementFactCounters(values_by_feature).counter(key)[value] += 1
     return True
 
 
@@ -4626,10 +4746,9 @@ class RuntimeRowMeasurementFactRecorder:
                 self.fact_context.required_keys is None
                 or key in self.fact_context.required_keys
             ):
-                _runtime_measurement_fact_counter(
-                    self.fact_context.values_by_feature,
-                    key,
-                )[value] += 1
+                RuntimeMeasurementFactCounters(
+                    self.fact_context.values_by_feature
+                ).counter(key)[value] += 1
                 emitted_row_facts.append((key, value))
             row_identity = _record_row_aggregate_input_value(
                 self.aggregate_context,
@@ -5027,7 +5146,7 @@ def _record_runtime_row_merge_facts(
         if not value_required and mean_key is None:
             continue
         if value_required:
-            _runtime_measurement_fact_counter(values_by_feature, key)[value] += 1
+            RuntimeMeasurementFactCounters(values_by_feature).counter(key)[value] += 1
             if object_row_domain is not None:
                 object_row_domain.record_subject_row_identity(key.subject, row_identity)
         if mean_key is None or not RuntimeObjectMeasurementRowIdentity(
@@ -5057,7 +5176,7 @@ def _record_runtime_row_merge_facts(
     for (mean_key, _row_identity), accumulator in aggregate_values_by_identity.items():
         if not accumulator.has_values:
             continue
-        _runtime_measurement_fact_counter(values_by_feature, mean_key)[
+        RuntimeMeasurementFactCounters(values_by_feature).counter(mean_key)[
             _cell_signature(str(accumulator.mean), policy)
         ] += 1
 
@@ -5138,82 +5257,9 @@ def _record_runtime_aggregate_mean_facts(
             continue
         if required_keys is not None and mean_key not in required_keys:
             continue
-        _runtime_measurement_fact_counter(values_by_feature, mean_key)[
+        RuntimeMeasurementFactCounters(values_by_feature).counter(mean_key)[
             _cell_signature(str(accumulator.mean), policy)
         ] += 1
-
-
-def _table_image_number_offset(
-    header: tuple[str, ...],
-    rows: tuple[tuple[str, ...], ...],
-) -> float:
-    image_number_indexes = tuple(
-        index
-        for index, field_name in enumerate(header)
-        if _normalize_identifier(field_name) == "image_number"
-    )
-    if not image_number_indexes:
-        return 0.0
-    image_number_index = image_number_indexes[0]
-    image_numbers: list[float] = []
-    for row in rows:
-        if image_number_index >= len(row):
-            continue
-        try:
-            image_number = float(str(row[image_number_index]).strip())
-        except ValueError:
-            continue
-        if math.isfinite(image_number) and image_number > 0:
-            image_numbers.append(image_number)
-    if not image_numbers:
-        return 0.0
-    return min(image_numbers) - 1.0
-
-
-def _runtime_table_image_number_offset(rows: Iterable[object]) -> float:
-    image_numbers: list[float] = []
-    for row in rows:
-        row_mapping = measurement_row_mapping(row)
-        image_number = RuntimeMeasurementRowMapping(row_mapping).first_value(("image_number",))
-        if image_number is None:
-            continue
-        try:
-            numeric_image_number = float(str(image_number).strip())
-        except ValueError:
-            continue
-        if math.isfinite(numeric_image_number) and numeric_image_number > 0:
-            image_numbers.append(numeric_image_number)
-    if not image_numbers:
-        return 0.0
-    return min(image_numbers) - 1.0
-
-
-def _normalize_image_number_reference_measurement_value(
-    field_name: str,
-    value: object,
-    image_number_offset: float,
-) -> object:
-    if image_number_offset == 0:
-        return value
-    if not _is_image_number_reference_measurement_field(field_name):
-        return value
-    if isinstance(value, Mapping):
-        return {
-            key: _normalize_image_number_reference_measurement_value(
-                field_name,
-                nested_value,
-                image_number_offset,
-            )
-            for key, nested_value in value.items()
-        }
-    try:
-        numeric_value = float(str(value).strip())
-    except ValueError:
-        return value
-    if not math.isfinite(numeric_value) or numeric_value <= 0:
-        return value
-    normalized = numeric_value - image_number_offset
-    return int(normalized) if normalized.is_integer() else normalized
 
 
 @lru_cache(maxsize=32768)
@@ -5297,7 +5343,7 @@ class RuntimeTableSnapshotFactExtractor:
             known_source_names=self.known_source_names,
         )
 
-        image_number_offset = _table_image_number_offset(
+        image_number_offset = RuntimeImageNumberOffset.from_table_rows(
             self.table.header,
             self.table.rows,
         )
@@ -5368,11 +5414,11 @@ class RuntimeTableSnapshotFactExtractor:
                     RuntimeMeasurementCellFactProjection().project_cell(
                         RuntimeMeasurementCellValue(
                             key,
-                            _normalize_image_number_reference_measurement_value(
+                            RuntimeImageNumberReferenceValue(
                                 field_name,
                                 row_mapping[field_name],
                                 image_number_offset,
-                            ),
+                            ).normalized(),
                             self.policy,
                         )
                     )
@@ -5456,7 +5502,7 @@ class RuntimeTableSnapshotFactExtractor:
         )
         if not feature_columns:
             return ()
-        image_number_offset = _table_image_number_offset(
+        image_number_offset = RuntimeImageNumberOffset.from_table_rows(
             self.table.header,
             self.table.rows,
         )
@@ -5491,11 +5537,11 @@ class RuntimeTableSnapshotFactExtractor:
                     key,
                     _cell_signature(
                         str(
-                            _normalize_image_number_reference_measurement_value(
+                            RuntimeImageNumberReferenceValue(
                                 self.table.header[index],
                                 row[index],
                                 image_number_offset,
-                            )
+                            ).normalized()
                         ),
                         self.policy,
                     ),
@@ -5604,7 +5650,7 @@ class RuntimeMeasurementTableFactRecorder:
         table = self.context.table
         table_subject = RuntimeMeasurementSubjectKey.from_table_subject(table.subject)
         table_padding_group = _normalize_identifier(table.name) or "measurements"
-        image_number_offset = _runtime_table_image_number_offset(
+        image_number_offset = RuntimeImageNumberOffset.from_runtime_rows(
             iter_measurement_rows((table,))
         )
         fact_context = _RuntimeMeasurementFactRecordingContext(
@@ -5723,7 +5769,7 @@ class RuntimeMeasurementTableFactRecorder:
                 and mean_key not in self.context.required_keys
             ):
                 continue
-            _runtime_measurement_fact_counter(self.values_by_feature, mean_key)[
+            RuntimeMeasurementFactCounters(self.values_by_feature).counter(mean_key)[
                 _cell_signature(str(accumulator.mean), policy)
             ] += 1
 
@@ -6510,33 +6556,6 @@ def _runtime_value_is_mapping(value: object) -> bool:
     return _runtime_value_type_is_mapping(type(value))
 
 
-def _runtime_measurement_cell_signature(
-    value: object,
-    policy: RuntimeEquivalencePolicy,
-) -> RuntimeCellSignature:
-    value = canonical_scalar(value)
-    if value is None or isinstance(value, (str, bool, int, float)):
-        return _cached_runtime_cell_signature(
-            str(value),
-            policy.numeric_decimal_places,
-        )
-    array_payload = semantic_array_payload(value)
-    if array_payload is not None:
-        dtype, shape, digest = array_payload[1:]
-        return RuntimeCellSignature(
-            RuntimeCellValueKind.TEXT,
-            f"array:{dtype}:{'x'.join(str(axis) for axis in shape)}:{digest}",
-        )
-    if _runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
-        value_digest = hashlib.blake2b(digest_size=32)
-        update_measurement_table_cell_hash(value_digest, value)
-        return RuntimeCellSignature(
-            RuntimeCellValueKind.TEXT,
-            f"{type(value).__name__}:{value_digest.hexdigest()}",
-        )
-    return _cell_signature(str(value), policy)
-
-
 @lru_cache(maxsize=131072)
 def _cached_runtime_cell_signature(
     text: str,
@@ -6579,11 +6598,11 @@ def _long_form_measurement_fact(
         return None
     if _is_aggregate_image_number_reference_measurement_field(str(feature_name)):
         return None
-    value = _normalize_image_number_reference_measurement_value(
+    value = RuntimeImageNumberReferenceValue(
         str(feature_name),
         value,
         context.image_number_offset,
-    )
+    ).normalized()
     aggregate_key = _aggregate_measurement_feature_key(
         str(feature_name),
         context.subject,
@@ -6591,7 +6610,7 @@ def _long_form_measurement_fact(
         known_source_names=context.known_source_names,
     )
     if aggregate_key is not None:
-        return aggregate_key, _runtime_measurement_cell_signature(value, context.policy)
+        return aggregate_key, RuntimeMeasurementCellSignatureProjection(value, context.policy).signature()
     canonical_feature_name, canonical_source_name = (
         _canonical_measurement_feature_name_and_source(
             str(feature_name),
@@ -6609,7 +6628,7 @@ def _long_form_measurement_fact(
             canonical_source_name,
             context.policy.measurement_dialect,
         ),
-        _runtime_measurement_cell_signature(value, context.policy),
+        RuntimeMeasurementCellSignatureProjection(value, context.policy).signature(),
     )
 
 
@@ -6631,11 +6650,11 @@ class RuntimeMeasurementLongFormFactProjector:
         feature_text = str(feature_name)
         if _is_aggregate_image_number_reference_measurement_field(feature_text):
             return None
-        value = _normalize_image_number_reference_measurement_value(
+        value = RuntimeImageNumberReferenceValue(
             feature_text,
             value,
             self.context.image_number_offset,
-        )
+        ).normalized()
         cache_key = (
             self.context.subject,
             self.context.source_name,
@@ -6647,7 +6666,7 @@ class RuntimeMeasurementLongFormFactProjector:
             self.context.key_cache[cache_key] = key
         if key is None:
             return None
-        return key, _runtime_measurement_cell_signature(value, self.context.policy)
+        return key, RuntimeMeasurementCellSignatureProjection(value, self.context.policy).signature()
 
     def _feature_key(
         self,
@@ -8215,7 +8234,7 @@ def _object_measurement_values_by_label(
         object_id_field = measurement_table_object_id_field(table)
         table_source_name = table.source_image_name
         table_padding_group = _normalize_identifier(table.name) or "measurements"
-        image_number_offset = _runtime_table_image_number_offset(
+        image_number_offset = RuntimeImageNumberOffset.from_runtime_rows(
             iter_measurement_rows((table,))
         )
         for row in iter_measurement_rows((table,)):
