@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from inspect import isclass, isfunction
+from types import ModuleType
 
 
 def declared_public_names(
@@ -29,6 +30,22 @@ def declared_public_names(
         )
     )
     return declared_names + tuple(name for name in extra_names if name not in excluded)
+
+
+def exported_public_names(
+    module_globals: Mapping[str, object],
+    *,
+    excluded_names: Iterable[str] = (),
+) -> tuple[str, ...]:
+    """Return public re-export names declared by explicit module imports."""
+    excluded = set(excluded_names)
+    return tuple(
+        name
+        for name, value in module_globals.items()
+        if not name.startswith("_")
+        if name not in excluded
+        if not isinstance(value, ModuleType)
+    )
 
 
 def is_declared_public_name(
