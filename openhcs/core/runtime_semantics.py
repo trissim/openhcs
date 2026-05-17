@@ -455,12 +455,14 @@ class RuntimePlaneAxisProjector(ABC):
     def runtime_slice_plane_index(self) -> int | None:
         """Return the execution-local runtime-slice plane index."""
 
-    @abstractmethod
     def source_binding_axis_plane_index(
         self,
         source_aliases: tuple[str, ...],
     ) -> int | None:
         """Return the execution-local source-binding plane index."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not provide source-binding plane projection."
+        )
 
     def plane_index_for_axis(
         self,

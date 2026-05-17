@@ -240,7 +240,6 @@ from openhcs.interop.cellprofiler.measurement_lookup import (
 from openhcs.interop.cellprofiler.runtime.adapter import (
     CellProfilerImageNumberResolver,
     CellProfilerRuntimeAdapter,
-    SourceBindingPlaneIndexResolver,
     prepare_cellprofiler_runtime_adapter,
 )
 
@@ -6404,10 +6403,6 @@ class ObjectLabelSourceBindingProjectionRequest:
             return None
         if self.adapter is None:
             return None
-        if isinstance(self.adapter, CellProfilerRuntimeAdapter):
-            return SourceBindingPlaneIndexResolver.for_adapter(
-                self.adapter
-            ).plane_index_for_aliases(self.source_aliases)
         return self.current_axis_plane_index(RuntimePlaneAxis.SOURCE_BINDING)
 
     def current_runtime_slice_plane_index(self) -> int | None:

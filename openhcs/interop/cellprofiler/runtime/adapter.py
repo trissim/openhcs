@@ -1112,15 +1112,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         self._source_order_cache[cache_key] = 1
         return 1
 
-    def cellprofiler_image_number_for_source_paths(
-        self,
-        source_paths: tuple[str, ...],
-    ) -> int | None:
-        """Return the CellProfiler ImageNumber for source paths in image-set order."""
-        return CellProfilerImageNumberResolver.for_adapter(self).image_number_for_paths(
-            source_paths
-        )
-
     def cellprofiler_image_number_for_payload(
         self,
         payload: Any,
@@ -1195,10 +1186,6 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             request
         )
 
-    def source_binding_plane_index(self, alias: str) -> int | None:
-        """Return the current axis-local plane index for a source alias."""
-        return SourceBindingPlaneIndexResolver.for_adapter(self).plane_index(alias)
-
     def runtime_slice_plane_index(self) -> int | None:
         """Return the current axis-local runtime-slice plane index."""
         return self.plane_projection.runtime_slice_plane_index()
@@ -1208,8 +1195,142 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         source_aliases: tuple[str, ...],
     ) -> int | None:
         """Return the current axis-local source-binding plane index."""
-        return SourceBindingPlaneIndexResolver.for_adapter(self).plane_index_for_aliases(
-            source_aliases
+        indexes = tuple(
+            index
+            for alias in source_aliases
+            for index in (self.source_binding_plane_index(alias),)
+            if index is not None
+        )
+        unique_indexes = tuple(dict.fromkeys(indexes))
+        if not unique_indexes:
+            return None
+        if len(unique_indexes) != 1:
+            raise RuntimeError(
+                "Source-binding plane resolution produced conflicting indexes: "
+                f"{unique_indexes!r}."
+            )
+        return unique_indexes[0]
+
+    def source_binding_plane_index(self, alias: str) -> int | None:
+        """Return the current axis-local plane index for a source alias."""
+        return (
+            OptionalResolution(alias)
+            .bind(self.source_binding_plane_candidate_context)
+            .bind(self.source_binding_plane_matched_context)
+            .bind(self.single_source_binding_plane_index)
+            .value
+        )
+
+    def source_binding_plane_candidate_context(
+        self,
+        alias: str,
+    ) -> OptionalResolution["SourceBindingPlaneCandidateContext"]:
+        binding = self.pipeline_start_binding_for_alias(alias)
+        if binding is None:
+            return OptionalResolution(None)
+        context = self.source_binding_context
+        if not context.pipeline_input_files or not context.step_input_files:
+            return OptionalResolution(None)
+
+        step_candidates = self.source_candidates(context.step_input_files)
+        pipeline_candidates = self.source_candidates(context.pipeline_input_files)
+        axis_candidates = self.source_binding_axis_candidates(
+            binding,
+            pipeline_candidates,
+            step_candidates,
+        )
+        if not axis_candidates:
+            return OptionalResolution(None)
+        return OptionalResolution(
+            SourceBindingPlaneCandidateContext(
+                request=SourceBindingRequestBase(alias=alias, binding=binding),
+                axis_candidates=axis_candidates,
+                step_candidates=step_candidates,
+                pipeline_candidates=pipeline_candidates,
+            )
+        )
+
+    def source_binding_plane_matched_context(
+        self,
+        context: "SourceBindingPlaneCandidateContext",
+    ) -> OptionalResolution["SourceBindingPlaneMatchedContext"]:
+        matched_indexes = self.source_binding_matched_axis_indexes(
+            alias=context.request.alias,
+            binding=context.request.binding,
+            axis_candidates=context.axis_candidates,
+            step_candidates=context.step_candidates,
+            pipeline_candidates=context.pipeline_candidates,
+        )
+        if not matched_indexes:
+            return OptionalResolution(None)
+        return OptionalResolution(
+            SourceBindingPlaneMatchedContext(
+                alias=context.request.alias,
+                matched_indexes=matched_indexes,
+            )
+        )
+
+    def single_source_binding_plane_index(
+        self,
+        context: "SourceBindingPlaneMatchedContext",
+    ) -> OptionalResolution[int]:
+        matched_indexes = context.matched_indexes
+        if len(matched_indexes) != 1:
+            raise RuntimeError(
+                f"Source binding alias {context.alias!r} matched multiple source planes "
+                f"for axis {self.axis_id!r}: {matched_indexes!r}."
+            )
+        return OptionalResolution(matched_indexes[0])
+
+    def pipeline_start_binding_for_alias(self, alias: str) -> NamedSourceBinding | None:
+        binding = self.source_binding_plan.binding_for_alias(alias, self.group_key)
+        if binding is None or binding.origin is not SourceBindingOrigin.PIPELINE_START:
+            return None
+        return binding
+
+    def source_binding_axis_candidates(
+        self,
+        binding: NamedSourceBinding,
+        pipeline_candidates: tuple["ParsedSourceCandidate", ...],
+        step_candidates: tuple["ParsedSourceCandidate", ...],
+    ) -> tuple["ParsedSourceCandidate", ...]:
+        return SourceCandidateMatcher.axis_scoped_candidates(
+            SourceCandidateMatcher.ordered_binding_candidates(
+                binding=binding,
+                candidates=pipeline_candidates,
+            ),
+            axis_id=self.axis_id,
+            step_input_candidates=step_candidates,
+        )
+
+    def source_binding_matched_axis_indexes(
+        self,
+        *,
+        alias: str,
+        binding: NamedSourceBinding,
+        axis_candidates: tuple["ParsedSourceCandidate", ...],
+        step_candidates: tuple["ParsedSourceCandidate", ...],
+        pipeline_candidates: tuple["ParsedSourceCandidate", ...],
+    ) -> tuple[int, ...]:
+        target_candidates = SourceCandidateMatcher.match_candidates(
+            candidates=pipeline_candidates,
+            binding=binding,
+            inherit_components={},
+        )
+        current_candidates = SourceCandidateMatcher.match_image_set_candidates(
+            alias,
+            self.source_binding_plan.match_plan,
+            step_candidates,
+            target_candidates,
+            pipeline_candidates,
+            source_binding_plan=self.source_binding_plan,
+            group_key=self.group_key,
+        )
+        current_paths = {candidate.resolved_path for candidate in current_candidates}
+        return tuple(
+            index
+            for index, candidate in enumerate(axis_candidates)
+            if candidate.resolved_path in current_paths
         )
 
     def resolve_source_objects(
@@ -3155,157 +3276,6 @@ class SourceBindingPlaneMatchedContext:
 
     alias: str
     matched_indexes: tuple[int, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class SourceBindingPlaneIndexResolver:
-    """Resolve the current axis-local plane index for a source binding alias."""
-
-    adapter: CellProfilerRuntimeAdapter
-
-    @classmethod
-    def for_adapter(
-        cls,
-        adapter: CellProfilerRuntimeAdapter,
-    ) -> "SourceBindingPlaneIndexResolver":
-        return cls(adapter)
-
-    def plane_index(self, alias: str) -> int | None:
-        return (
-            OptionalResolution(alias)
-            .bind(self.candidate_context)
-            .bind(self.matched_context)
-            .bind(self.single_plane_index)
-            .value
-        )
-
-    def plane_index_for_aliases(self, aliases: tuple[str, ...]) -> int | None:
-        indexes = tuple(
-            index
-            for alias in aliases
-            for index in (self.plane_index(alias),)
-            if index is not None
-        )
-        unique_indexes = tuple(dict.fromkeys(indexes))
-        if not unique_indexes:
-            return None
-        if len(unique_indexes) != 1:
-            raise RuntimeError(
-                "Source-binding plane resolution produced conflicting indexes: "
-                f"{unique_indexes!r}."
-            )
-        return unique_indexes[0]
-
-    def candidate_context(
-        self,
-        alias: str,
-    ) -> OptionalResolution[SourceBindingPlaneCandidateContext]:
-        binding = self.pipeline_start_binding(alias)
-        if binding is None:
-            return OptionalResolution(None)
-        context = self.adapter.source_binding_context
-        if not context.pipeline_input_files or not context.step_input_files:
-            return OptionalResolution(None)
-
-        step_candidates = self.adapter.source_candidates(context.step_input_files)
-        pipeline_candidates = self.adapter.source_candidates(context.pipeline_input_files)
-        axis_candidates = self.axis_candidates(binding, pipeline_candidates, step_candidates)
-        if not axis_candidates:
-            return OptionalResolution(None)
-        return OptionalResolution(
-            SourceBindingPlaneCandidateContext(
-                request=SourceBindingRequestBase(alias=alias, binding=binding),
-                axis_candidates=axis_candidates,
-                step_candidates=step_candidates,
-                pipeline_candidates=pipeline_candidates,
-            )
-        )
-
-    def matched_context(
-        self,
-        context: SourceBindingPlaneCandidateContext,
-    ) -> OptionalResolution[SourceBindingPlaneMatchedContext]:
-        matched_indexes = self.matched_axis_indexes(
-            alias=context.request.alias,
-            binding=context.request.binding,
-            axis_candidates=context.axis_candidates,
-            step_candidates=context.step_candidates,
-            pipeline_candidates=context.pipeline_candidates,
-        )
-        if not matched_indexes:
-            return OptionalResolution(None)
-        return OptionalResolution(
-            SourceBindingPlaneMatchedContext(
-                alias=context.request.alias,
-                matched_indexes=matched_indexes,
-            )
-        )
-
-    def single_plane_index(
-        self,
-        context: SourceBindingPlaneMatchedContext,
-    ) -> OptionalResolution[int]:
-        matched_indexes = context.matched_indexes
-        if len(matched_indexes) != 1:
-            raise RuntimeError(
-                f"Source binding alias {context.alias!r} matched multiple source planes "
-                f"for axis {self.adapter.axis_id!r}: {matched_indexes!r}."
-            )
-        return OptionalResolution(matched_indexes[0])
-
-    def pipeline_start_binding(self, alias: str) -> NamedSourceBinding | None:
-        binding = self.adapter.source_binding_plan.binding_for_alias(
-            alias,
-            self.adapter.group_key,
-        )
-        if binding is None or binding.origin is not SourceBindingOrigin.PIPELINE_START:
-            return None
-        return binding
-
-    def axis_candidates(
-        self,
-        binding: NamedSourceBinding,
-        pipeline_candidates: tuple["ParsedSourceCandidate", ...],
-        step_candidates: tuple["ParsedSourceCandidate", ...],
-    ) -> tuple["ParsedSourceCandidate", ...]:
-        return SourceCandidateMatcher.axis_scoped_candidates(
-            SourceCandidateMatcher.ordered_binding_candidates(
-                binding=binding,
-                candidates=pipeline_candidates,
-            ),
-            axis_id=self.adapter.axis_id,
-            step_input_candidates=step_candidates,
-        )
-
-    def matched_axis_indexes(
-        self,
-        *,
-        alias: str,
-        binding: NamedSourceBinding,
-        axis_candidates: tuple["ParsedSourceCandidate", ...],
-        step_candidates: tuple["ParsedSourceCandidate", ...],
-        pipeline_candidates: tuple["ParsedSourceCandidate", ...],
-    ) -> tuple[int, ...]:
-        target_candidates = SourceCandidateMatcher.match_candidates(
-            candidates=pipeline_candidates,
-            binding=binding,
-            inherit_components={},
-        )
-        current_candidates = SourceCandidateMatcher.match_image_set_candidates(
-            alias,
-            self.adapter.source_binding_plan.match_plan,
-            step_candidates,
-            target_candidates,
-            pipeline_candidates,
-            source_binding_plan=self.adapter.source_binding_plan,
-            group_key=self.adapter.group_key,
-        )
-        current_paths = {candidate.resolved_path for candidate in current_candidates}
-        return tuple(
-            index
-            for index, candidate in enumerate(axis_candidates)
-            if candidate.resolved_path in current_paths
-        )
 
 
 @dataclass(frozen=True, slots=True)
