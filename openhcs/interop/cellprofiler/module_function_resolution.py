@@ -122,31 +122,6 @@ class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrate
         )
 
 
-class MeasureTextureFunctionResolutionStrategy(
-    ScopedMeasurementFunctionResolutionStrategy
-):
-    """Resolve MeasureTexture image-vs-object absorbed variants."""
-
-    module_name = "MeasureTexture"
-    scope_setting_name = SettingNameFamily(
-        "Measure images or objects?",
-        aliases=("Measure whole images or objects?",),
-    )
-    default_scope_value = "Images"
-    object_function_name = "measure_texture_objects"
-
-
-class MeasureColocalizationFunctionResolutionStrategy(
-    ScopedMeasurementFunctionResolutionStrategy
-):
-    """Resolve MeasureColocalization image-vs-object absorbed variants."""
-
-    module_name = "MeasureColocalization"
-    scope_setting_name = SettingNameFamily("Select where to measure correlation")
-    default_scope_value = "Across entire image"
-    object_function_name = "measure_colocalization_objects"
-
-
 class ObjectInputMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
     """Resolve object-measurement variants when object inputs are declared."""
 
@@ -167,15 +142,6 @@ class ObjectInputMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionS
                 "object_function_name",
             )
         )
-
-
-class MeasureGranularityFunctionResolutionStrategy(
-    ObjectInputMeasurementFunctionResolutionStrategy
-):
-    """Resolve MeasureGranularity image-vs-object absorbed variants."""
-
-    module_name = "MeasureGranularity"
-    object_function_name = "measure_granularity_objects"
 
 
 class ClassifyObjectsFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
@@ -262,23 +228,91 @@ class VolumetricSettingFunctionResolutionStrategy(ModuleFunctionResolutionStrate
         )
 
 
-class ResizeFunctionResolutionStrategy(VolumetricSettingFunctionResolutionStrategy):
-    """Resolve Resize to its volumetric function when CP exposes Z dimensions."""
+@dataclass(frozen=True, slots=True)
+class ModuleFunctionResolutionDeclaration:
+    """Typed declaration for metadata-only function-resolution strategies."""
 
-    module_name = "Resize"
-    volumetric_function_name = "resize_volumetric"
-    volumetric_settings = (RESIZE_FACTOR_Z_SETTING, RESIZE_PLANES_SETTING)
+    class_name: str
+    module_name: str
+    base: type[ModuleFunctionResolutionStrategy]
+    object_function_name: str | None = None
+    scope_setting_name: SettingNameFamily | None = None
+    default_scope_value: str | None = None
+    volumetric_function_name: str | None = None
+    volumetric_settings: tuple[SettingNameFamily, ...] = ()
+
+    def materialize(self) -> type[ModuleFunctionResolutionStrategy]:
+        namespace = {
+            "module_name": self.module_name,
+            "__module__": __name__,
+        }
+        if self.object_function_name is not None:
+            namespace["object_function_name"] = self.object_function_name
+        if self.scope_setting_name is not None:
+            namespace["scope_setting_name"] = self.scope_setting_name
+        if self.default_scope_value is not None:
+            namespace["default_scope_value"] = self.default_scope_value
+        if self.volumetric_function_name is not None:
+            namespace["volumetric_function_name"] = self.volumetric_function_name
+        if self.volumetric_settings:
+            namespace["volumetric_settings"] = self.volumetric_settings
+        return type(self.class_name, (self.base,), namespace)
 
 
-class ResizeObjectsFunctionResolutionStrategy(VolumetricSettingFunctionResolutionStrategy):
-    """Resolve ResizeObjects to its volumetric function when CP exposes Z dimensions."""
+MODULE_FUNCTION_RESOLUTION_DECLARATIONS: tuple[
+    ModuleFunctionResolutionDeclaration,
+    ...,
+] = (
+    ModuleFunctionResolutionDeclaration(
+        class_name="MeasureTextureFunctionResolutionStrategy",
+        module_name="MeasureTexture",
+        base=ScopedMeasurementFunctionResolutionStrategy,
+        scope_setting_name=SettingNameFamily(
+            "Measure images or objects?",
+            aliases=("Measure whole images or objects?",),
+        ),
+        default_scope_value="Images",
+        object_function_name="measure_texture_objects",
+    ),
+    ModuleFunctionResolutionDeclaration(
+        class_name="MeasureColocalizationFunctionResolutionStrategy",
+        module_name="MeasureColocalization",
+        base=ScopedMeasurementFunctionResolutionStrategy,
+        scope_setting_name=SettingNameFamily("Select where to measure correlation"),
+        default_scope_value="Across entire image",
+        object_function_name="measure_colocalization_objects",
+    ),
+    ModuleFunctionResolutionDeclaration(
+        class_name="MeasureGranularityFunctionResolutionStrategy",
+        module_name="MeasureGranularity",
+        base=ObjectInputMeasurementFunctionResolutionStrategy,
+        object_function_name="measure_granularity_objects",
+    ),
+    ModuleFunctionResolutionDeclaration(
+        class_name="ResizeFunctionResolutionStrategy",
+        module_name="Resize",
+        base=VolumetricSettingFunctionResolutionStrategy,
+        volumetric_function_name="resize_volumetric",
+        volumetric_settings=(RESIZE_FACTOR_Z_SETTING, RESIZE_PLANES_SETTING),
+    ),
+    ModuleFunctionResolutionDeclaration(
+        class_name="ResizeObjectsFunctionResolutionStrategy",
+        module_name="ResizeObjects",
+        base=VolumetricSettingFunctionResolutionStrategy,
+        volumetric_function_name="resize_objects_3d",
+        volumetric_settings=(
+            RESIZE_OBJECTS_FACTOR_Z_SETTING,
+            RESIZE_OBJECTS_PLANES_SETTING,
+        ),
+    ),
+)
 
-    module_name = "ResizeObjects"
-    volumetric_function_name = "resize_objects_3d"
-    volumetric_settings = (
-        RESIZE_OBJECTS_FACTOR_Z_SETTING,
-        RESIZE_OBJECTS_PLANES_SETTING,
-    )
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in MODULE_FUNCTION_RESOLUTION_DECLARATIONS
+    }
+)
 
 
 def measurement_target_scope(
