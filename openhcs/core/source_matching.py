@@ -130,76 +130,122 @@ class PathPredicateSourceFilterMatcher(SourceFilterMatcher):
         return type(self).path_predicate(request.file_path)
 
 
-class ContainsSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.CONTAINS
-    match_type_key = SourceFilterMatchType.CONTAINS.value
-    value_predicate = staticmethod(_string_contains)
+@dataclass(frozen=True, slots=True)
+class SourceFilterMatcherDeclaration:
+    """Declaration for one registered source-filter matcher leaf."""
+
+    class_name: str
+    match_type: SourceFilterMatchType
+    matcher_base: type[SourceFilterMatcher]
+    predicate_name: str
+    predicate: Callable[..., bool]
+
+    def materialize(self) -> type[SourceFilterMatcher]:
+        return type(
+            self.class_name,
+            (self.matcher_base,),
+            {
+                "__module__": __name__,
+                "match_type": self.match_type,
+                "match_type_key": self.match_type.value,
+                self.predicate_name: staticmethod(self.predicate),
+            },
+        )
 
 
-class DoesNotContainSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.DOES_NOT_CONTAIN
-    match_type_key = SourceFilterMatchType.DOES_NOT_CONTAIN.value
-    value_predicate = staticmethod(_string_does_not_contain)
+SOURCE_FILTER_MATCHER_DECLARATIONS: tuple[SourceFilterMatcherDeclaration, ...] = (
+    SourceFilterMatcherDeclaration(
+        "ContainsSourceFilterMatcher",
+        SourceFilterMatchType.CONTAINS,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_contains,
+    ),
+    SourceFilterMatcherDeclaration(
+        "DoesNotContainSourceFilterMatcher",
+        SourceFilterMatchType.DOES_NOT_CONTAIN,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_does_not_contain,
+    ),
+    SourceFilterMatcherDeclaration(
+        "ContainsRegexSourceFilterMatcher",
+        SourceFilterMatchType.CONTAINS_REGEX,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_contains_regex,
+    ),
+    SourceFilterMatcherDeclaration(
+        "DoesNotContainRegexSourceFilterMatcher",
+        SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_does_not_contain_regex,
+    ),
+    SourceFilterMatcherDeclaration(
+        "EqualsSourceFilterMatcher",
+        SourceFilterMatchType.EQUALS,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_equals,
+    ),
+    SourceFilterMatcherDeclaration(
+        "DoesNotEqualSourceFilterMatcher",
+        SourceFilterMatchType.DOES_NOT_EQUAL,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_does_not_equal,
+    ),
+    SourceFilterMatcherDeclaration(
+        "StartsWithSourceFilterMatcher",
+        SourceFilterMatchType.STARTS_WITH,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_starts_with,
+    ),
+    SourceFilterMatcherDeclaration(
+        "DoesNotStartWithSourceFilterMatcher",
+        SourceFilterMatchType.DOES_NOT_START_WITH,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_does_not_start_with,
+    ),
+    SourceFilterMatcherDeclaration(
+        "EndsWithSourceFilterMatcher",
+        SourceFilterMatchType.ENDS_WITH,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_ends_with,
+    ),
+    SourceFilterMatcherDeclaration(
+        "DoesNotEndWithSourceFilterMatcher",
+        SourceFilterMatchType.DOES_NOT_END_WITH,
+        ValuePredicateSourceFilterMatcher,
+        "value_predicate",
+        _string_does_not_end_with,
+    ),
+    SourceFilterMatcherDeclaration(
+        "IsImageSourceFilterMatcher",
+        SourceFilterMatchType.IS_IMAGE,
+        PathPredicateSourceFilterMatcher,
+        "path_predicate",
+        is_image_path,
+    ),
+    SourceFilterMatcherDeclaration(
+        "IsTifSourceFilterMatcher",
+        SourceFilterMatchType.IS_TIF,
+        PathPredicateSourceFilterMatcher,
+        "path_predicate",
+        is_tif_path,
+    ),
+)
 
-
-class ContainsRegexSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.CONTAINS_REGEX
-    match_type_key = SourceFilterMatchType.CONTAINS_REGEX.value
-    value_predicate = staticmethod(_string_contains_regex)
-
-
-class DoesNotContainRegexSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX
-    match_type_key = SourceFilterMatchType.DOES_NOT_CONTAIN_REGEX.value
-    value_predicate = staticmethod(_string_does_not_contain_regex)
-
-
-class EqualsSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.EQUALS
-    match_type_key = SourceFilterMatchType.EQUALS.value
-    value_predicate = staticmethod(_string_equals)
-
-
-class DoesNotEqualSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.DOES_NOT_EQUAL
-    match_type_key = SourceFilterMatchType.DOES_NOT_EQUAL.value
-    value_predicate = staticmethod(_string_does_not_equal)
-
-
-class StartsWithSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.STARTS_WITH
-    match_type_key = SourceFilterMatchType.STARTS_WITH.value
-    value_predicate = staticmethod(_string_starts_with)
-
-
-class DoesNotStartWithSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.DOES_NOT_START_WITH
-    match_type_key = SourceFilterMatchType.DOES_NOT_START_WITH.value
-    value_predicate = staticmethod(_string_does_not_start_with)
-
-
-class EndsWithSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.ENDS_WITH
-    match_type_key = SourceFilterMatchType.ENDS_WITH.value
-    value_predicate = staticmethod(_string_ends_with)
-
-
-class DoesNotEndWithSourceFilterMatcher(ValuePredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.DOES_NOT_END_WITH
-    match_type_key = SourceFilterMatchType.DOES_NOT_END_WITH.value
-    value_predicate = staticmethod(_string_does_not_end_with)
-
-
-class IsImageSourceFilterMatcher(PathPredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.IS_IMAGE
-    match_type_key = SourceFilterMatchType.IS_IMAGE.value
-    path_predicate = staticmethod(is_image_path)
-
-
-class IsTifSourceFilterMatcher(PathPredicateSourceFilterMatcher):
-    match_type = SourceFilterMatchType.IS_TIF
-    match_type_key = SourceFilterMatchType.IS_TIF.value
-    path_predicate = staticmethod(is_tif_path)
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in SOURCE_FILTER_MATCHER_DECLARATIONS
+    }
+)
 
 
 class SourceFilterTargetResolver(ABC, metaclass=AutoRegisterMeta):
@@ -322,7 +368,9 @@ def filter_clause_matches(
 ) -> bool:
     """Return whether one source path satisfies one source-filter clause."""
 
-    target = _source_filter_target_text(file_path, clause.subject)
+    target = SourceFilterTargetResolver.for_subject(clause.subject).resolve_text(
+        file_path
+    )
     return SourceFilterMatcher.for_match_type(clause.match_type).matches(
         SourceFilterMatchRequest(
             file_path=file_path,
@@ -330,14 +378,6 @@ def filter_clause_matches(
             target=target,
         )
     )
-
-
-@lru_cache(maxsize=65536)
-def _source_filter_target_text(
-    file_path: str,
-    subject: SourceFilterSubject,
-) -> str:
-    return SourceFilterTargetResolver.for_subject(subject).resolve_text(file_path)
 
 
 @lru_cache(maxsize=8192)

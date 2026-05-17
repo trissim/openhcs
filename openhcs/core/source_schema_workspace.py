@@ -15,7 +15,7 @@ from dataclasses import asdict, dataclass, field
 from enum import IntEnum
 from pathlib import Path, PurePosixPath
 from types import MappingProxyType
-from typing import ClassVar
+from typing import ClassVar, TypeAlias
 from urllib.parse import unquote, urlparse
 
 from metaclass_registry import AutoRegisterMeta
@@ -30,6 +30,7 @@ from openhcs.core.pipeline_image_schema import (
     PipelineImageSchema,
     SOURCE_IMAGE_TYPE_METADATA_FIELD,
     SourceAssignmentBase,
+    SourceArtifactAssignment,
 )
 from openhcs.core.vfs_protocol import FileManagerLike
 from openhcs.core.source_bindings import (
@@ -64,6 +65,33 @@ _PLATE_WELL_TOKEN_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _SITE_TOKEN_PATTERN = re.compile(r"(?:^|[_-])f(?P<site>[0-9]+)(?=[A-Za-z_\-.]|$)")
+
+WorkspaceComponentValues: TypeAlias = Mapping[
+    AllComponents,
+    Mapping[str, str | None],
+]
+WorkspaceSourceMetadata: TypeAlias = Mapping[str, Mapping[str, str]]
+SourceSchemaCandidatesByAlias: TypeAlias = Mapping[
+    str,
+    tuple["SourceSchemaCandidate", ...],
+]
+ImportedMetadataJoinIndex: TypeAlias = Mapping[
+    tuple[str, ...],
+    tuple[Mapping[str, str], ...],
+]
+ImageSetCandidateGroups: TypeAlias = Mapping[
+    tuple[str, ...],
+    Mapping[str, "SourceSchemaCandidate"],
+]
+ImageSetMetadataByGroup: TypeAlias = Mapping[
+    tuple[str, ...],
+    Mapping[str, str],
+]
+WorkspaceMappingResult: TypeAlias = tuple[
+    Mapping[str, str],
+    WorkspaceSourceMetadata,
+    WorkspaceComponentValues,
+]
 
 
 def cache_source_schema_auxiliary_payload(path: str | Path, payload: object) -> None:
@@ -521,7 +549,7 @@ class ImportedMetadataRows:
 
     table: ImportedMetadataTable
     rows: tuple[Mapping[str, str], ...]
-    rows_by_join_key: Mapping[tuple[str, ...], tuple[Mapping[str, str], ...]] = field(
+    rows_by_join_key: ImportedMetadataJoinIndex = field(
         init=False,
         repr=False,
         compare=False,
@@ -562,6 +590,165 @@ class ImageSetRecord:
             MappingProxyType(dict(self.candidates_by_alias)),
         )
         object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaVirtualFilename:
+    """OpenHCS component projection for one source-schema virtual filename."""
+
+    well: object
+    site: object
+    channel: object
+    z_index: object = 1
+    timepoint: object = 1
+    extension: str = ""
+
+    @classmethod
+    def from_parsed(
+        cls,
+        parsed: Mapping[str, object],
+        *,
+        well: object | None = None,
+        site: object | None = None,
+        extension: object | None = None,
+    ) -> "SourceSchemaVirtualFilename":
+        return cls(
+            parsed["well"] if well is None else well,
+            parsed["site"] if site is None else site,
+            parsed["channel"],
+            parsed["z_index"],
+            parsed["timepoint"],
+            "" if extension is None else str(extension),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SourceSchemaFilenameProjection:
+    """Authoritative formatter for source-schema virtual filenames."""
+
+    parser: SourceSchemaFilenameParser = field(
+        default_factory=SourceSchemaFilenameParser,
+    )
+
+    def filename(self, virtual_filename: SourceSchemaVirtualFilename) -> str:
+        return self.parser.construct_filename(
+            well=virtual_filename.well,
+            site=virtual_filename.site,
+            channel=virtual_filename.channel,
+            z_index=virtual_filename.z_index,
+            timepoint=virtual_filename.timepoint,
+            extension=virtual_filename.extension,
+        )
+
+    def path_for_well_site(
+        self,
+        virtual_path: str,
+        parsed: Mapping[str, object],
+        well_id: str,
+        site: object,
+    ) -> str:
+        path = PurePosixPath(virtual_path)
+        original_name = path.name
+        original_stem = self.filename(SourceSchemaVirtualFilename.from_parsed(parsed))
+        expanded_stem = self.filename(
+            SourceSchemaVirtualFilename.from_parsed(parsed, well=well_id, site=site)
+        )
+        expanded_name = (
+            f"{expanded_stem}{original_name[len(original_stem):]}"
+            if original_name.startswith(original_stem)
+            else self.filename(
+                SourceSchemaVirtualFilename.from_parsed(
+                    parsed,
+                    well=well_id,
+                    site=site,
+                    extension=parsed["extension"],
+                )
+            )
+        )
+        return str(path.with_name(expanded_name))
+
+
+@dataclass(slots=True)
+class WorkspaceMappingSink:
+    """Conflict-aware accumulator for virtual workspace mappings."""
+
+    mappings: dict[str, str]
+
+    def add(self, virtual_path: str, real_path: str) -> None:
+        existing = self.mappings.get(virtual_path)
+        if existing is not None and existing != real_path:
+            raise ValueError(
+                f"Conflicting source workspace mapping for {virtual_path!r}: "
+                f"{existing!r} != {real_path!r}."
+            )
+        self.mappings[virtual_path] = real_path
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAssignmentImageTypeProjection:
+    """Project source-assignment metadata into an optional image-type value."""
+
+    assignment: SourceAssignmentBase | None
+
+    def image_type(self) -> str | None:
+        if self.assignment is None:
+            return None
+        if isinstance(self.assignment, ImageAssignment):
+            return self.assignment.image_type
+        if isinstance(self.assignment, SourceArtifactAssignment):
+            return self.assignment.payload_type or None
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class SourceVirtualPathMetadata:
+    """Merge source metadata for one materialized virtual workspace path."""
+
+    image_set_metadata: Mapping[str, str]
+    candidate_metadata: Mapping[str, str]
+    assignment: SourceAssignmentBase | None = None
+
+    def metadata(self) -> Mapping[str, str]:
+        metadata = dict(self.image_set_metadata)
+        merge_source_metadata(metadata, self.candidate_metadata, path="source_metadata")
+        image_type = SourceAssignmentImageTypeProjection(self.assignment).image_type()
+        if image_type is not None:
+            merge_source_metadata(
+                metadata,
+                {SOURCE_SCHEMA_IMAGE_TYPE_METADATA_FIELD: image_type},
+                path="source_metadata",
+            )
+        return MappingProxyType(metadata)
+
+
+@dataclass(frozen=True, slots=True)
+class ImageSetMetadataMerge:
+    """Merge shared candidate metadata into one image-set metadata record."""
+
+    group_metadata: Mapping[str, str]
+    candidates: tuple[SourceSchemaCandidate, ...]
+
+    @classmethod
+    def from_candidates(
+        cls,
+        group_metadata: Mapping[str, str],
+        candidates: Iterable[SourceSchemaCandidate],
+    ) -> "ImageSetMetadataMerge":
+        return cls(group_metadata, tuple(candidates))
+
+    def metadata(self) -> Mapping[str, str]:
+        merged = dict(self.group_metadata)
+        merge_source_metadata(
+            merged,
+            _shared_candidate_metadata(self.candidates),
+            path="image_set",
+        )
+        merge_source_metadata(
+            merged,
+            _projected_candidate_components(merged, self.candidates),
+            path="image_set",
+        )
+        return MappingProxyType(merged)
 
 
 @dataclass(frozen=True, slots=True)
@@ -870,7 +1057,7 @@ class ImageSetAssembler(ABC, metaclass=AutoRegisterMeta):
     def image_sets(
         self,
         schema: PipelineImageSchema,
-        candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+        candidates_by_alias: SourceSchemaCandidatesByAlias,
     ) -> tuple[ImageSetRecord, ...]:
         """Assemble candidate groups for projection into OpenHCS files."""
 
@@ -882,7 +1069,7 @@ class MetadataImageSetAssembler(ImageSetAssembler):
     def image_sets(
         self,
         schema: PipelineImageSchema,
-        candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+        candidates_by_alias: SourceSchemaCandidatesByAlias,
     ) -> tuple[ImageSetRecord, ...]:
         if schema.match_plan is None:
             raise ValueError("Metadata image-set assembly requires a match plan.")
@@ -930,7 +1117,7 @@ class OrderImageSetAssembler(ImageSetAssembler):
 
     def image_set_count(
         self,
-        candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+        candidates_by_alias: SourceSchemaCandidatesByAlias,
     ) -> int:
         """Return the count of complete CellProfiler order-matched image sets."""
         return min(
@@ -941,7 +1128,7 @@ class OrderImageSetAssembler(ImageSetAssembler):
     def image_sets(
         self,
         schema: PipelineImageSchema,
-        candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+        candidates_by_alias: SourceSchemaCandidatesByAlias,
     ) -> tuple[ImageSetRecord, ...]:
         aliases = tuple(candidates_by_alias)
         image_set_count = self.image_set_count(candidates_by_alias)
@@ -955,7 +1142,10 @@ class OrderImageSetAssembler(ImageSetAssembler):
                 ImageSetRecord(
                     index=index,
                     candidates_by_alias=candidates,
-                    metadata=_merged_image_set_metadata({}, candidates.values()),
+                    metadata=ImageSetMetadataMerge.from_candidates(
+                        {},
+                        candidates.values(),
+                    ).metadata(),
                 )
             )
         return tuple(image_sets)
@@ -1115,6 +1305,7 @@ def expand_source_schema_workspace_wells(
             )
 
     used_expanded_paths: set[str] = set()
+    expanded_mapping_sink = WorkspaceMappingSink(expanded_mapping)
     for virtual_path, real_path in workspace_mapping.items():
         parsed = parser.parse_filename(str(virtual_path))
         if parsed is None:
@@ -1134,7 +1325,7 @@ def expand_source_schema_workspace_wells(
                 well_id,
                 used_paths=used_expanded_paths,
             )
-            _add_mapping(expanded_mapping, expanded_path, str(real_path))
+            expanded_mapping_sink.add(expanded_path, str(real_path))
             expanded_source_metadata[expanded_path] = with_source_component_metadata(
                 path_source_metadata,
                 AllComponents.WELL,
@@ -1157,8 +1348,8 @@ def _source_schema_virtual_path_for_well(
     *,
     used_paths: set[str],
 ) -> str:
-    preferred_path = _source_schema_virtual_path_for_well_site(
-        parser,
+    projection = SourceSchemaFilenameProjection(parser)
+    preferred_path = projection.path_for_well_site(
         virtual_path,
         parsed,
         well_id,
@@ -1170,8 +1361,7 @@ def _source_schema_virtual_path_for_well(
 
     ordinal_site = 1
     while True:
-        expanded_path = _source_schema_virtual_path_for_well_site(
-            parser,
+        expanded_path = projection.path_for_well_site(
             virtual_path,
             parsed,
             well_id,
@@ -1181,46 +1371,6 @@ def _source_schema_virtual_path_for_well(
             used_paths.add(expanded_path)
             return expanded_path
         ordinal_site += 1
-
-
-def _source_schema_virtual_path_for_well_site(
-    parser: SourceSchemaFilenameParser,
-    virtual_path: str,
-    parsed: Mapping[str, object],
-    well_id: str,
-    site: object,
-) -> str:
-    path = PurePosixPath(virtual_path)
-    original_name = path.name
-    original_stem = parser.construct_filename(
-        well=parsed["well"],
-        site=parsed["site"],
-        channel=parsed["channel"],
-        z_index=parsed["z_index"],
-        timepoint=parsed["timepoint"],
-        extension="",
-    )
-    expanded_stem = parser.construct_filename(
-        well=well_id,
-        site=site,
-        channel=parsed["channel"],
-        z_index=parsed["z_index"],
-        timepoint=parsed["timepoint"],
-        extension="",
-    )
-    expanded_name = (
-        f"{expanded_stem}{original_name[len(original_stem):]}"
-        if original_name.startswith(original_stem)
-        else parser.construct_filename(
-            well=well_id,
-            site=site,
-            channel=parsed["channel"],
-            z_index=parsed["z_index"],
-            timepoint=parsed["timepoint"],
-            extension=str(parsed["extension"]),
-        )
-    )
-    return str(path.with_name(expanded_name))
 
 
 def _partition_assignments(
@@ -1475,7 +1625,7 @@ def _read_imported_metadata_rows(
 def _indexed_imported_metadata_rows(
     rows: tuple[Mapping[str, str], ...],
     joins: tuple[ImportedMetadataJoin, ...],
-) -> Mapping[tuple[str, ...], tuple[Mapping[str, str], ...]]:
+) -> ImportedMetadataJoinIndex:
     indexed: dict[tuple[str, ...], list[Mapping[str, str]]] = {}
     for row in rows:
         key = _imported_metadata_row_join_key(row, joins)
@@ -1628,7 +1778,7 @@ def _matched_candidates_by_alias(
     assignments: tuple[SourceAssignmentBase, ...],
     *,
     require_match: bool,
-) -> Mapping[str, tuple[SourceSchemaCandidate, ...]]:
+) -> SourceSchemaCandidatesByAlias:
     matched: dict[str, tuple[SourceSchemaCandidate, ...]] = {}
     for assignment in assignments:
         alias_candidates = tuple(
@@ -1692,9 +1842,9 @@ def _candidate_matches_metadata(
 
 
 def _validated_image_sets(
-    grouped: Mapping[tuple[str, ...], Mapping[str, SourceSchemaCandidate]],
-    metadata_by_key: Mapping[tuple[str, ...], Mapping[str, str]],
-    candidates_by_alias: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+    grouped: ImageSetCandidateGroups,
+    metadata_by_key: ImageSetMetadataByGroup,
+    candidates_by_alias: SourceSchemaCandidatesByAlias,
 ) -> tuple[ImageSetRecord, ...]:
     aliases = tuple(candidates_by_alias)
     image_sets: list[ImageSetRecord] = []
@@ -1709,32 +1859,13 @@ def _validated_image_sets(
             ImageSetRecord(
                 index=index,
                 candidates_by_alias=dict(candidates),
-                metadata=_merged_image_set_metadata(
+                metadata=ImageSetMetadataMerge.from_candidates(
                     metadata_by_key[key],
                     candidates.values(),
-                ),
+                ).metadata(),
             )
         )
     return tuple(image_sets)
-
-
-def _merged_image_set_metadata(
-    group_metadata: Mapping[str, str],
-    candidates: Iterable[SourceSchemaCandidate],
-) -> Mapping[str, str]:
-    candidate_tuple = tuple(candidates)
-    merged = dict(group_metadata)
-    merge_source_metadata(
-        merged,
-        _shared_candidate_metadata(candidate_tuple),
-        path="image_set",
-    )
-    merge_source_metadata(
-        merged,
-        _projected_candidate_components(merged, candidate_tuple),
-        path="image_set",
-    )
-    return MappingProxyType(merged)
 
 
 def _shared_candidate_metadata(
@@ -1798,12 +1929,8 @@ def _primary_workspace_mappings(
     schema: PipelineImageSchema,
     image_sets: tuple[ImageSetRecord, ...],
     stack_assignments: tuple[ImageAssignment, ...],
-) -> tuple[
-    Mapping[str, str],
-    Mapping[str, Mapping[str, str]],
-    Mapping[AllComponents, Mapping[str, str | None]],
-]:
-    parser = SourceSchemaFilenameParser()
+) -> WorkspaceMappingResult:
+    filename_projection = SourceSchemaFilenameProjection()
     channel_values = {
         str(index): assignment.alias
         for index, assignment in enumerate(stack_assignments, start=1)
@@ -1811,6 +1938,7 @@ def _primary_workspace_mappings(
     wells: dict[str, None] = {}
     sites: dict[str, None] = {}
     primary_mappings: dict[str, str] = {}
+    primary_mapping_sink = WorkspaceMappingSink(primary_mappings)
     source_metadata: dict[str, Mapping[str, str]] = {}
     site_indexes_by_well: dict[str, int] = {}
     used_paths_by_well_channel: dict[tuple[str, int], set[str]] = {}
@@ -1829,7 +1957,7 @@ def _primary_workspace_mappings(
         for channel_index, assignment in enumerate(stack_assignments, start=1):
             candidate = image_set.candidates_by_alias[assignment.alias]
             site_component = _collision_free_site_component(
-                parser,
+                filename_projection,
                 well=well,
                 preferred_site_component=preferred_site_component,
                 ordinal_site_component=site_index + 1,
@@ -1841,25 +1969,26 @@ def _primary_workspace_mappings(
                 ),
             )
             sites[str(site_component)] = None
-            virtual_path = parser.construct_filename(
-                well=well,
-                site=site_component,
-                channel=channel_index,
-                z_index=1,
-                timepoint=1,
-                extension=candidate.path.suffix,
+            virtual_path = filename_projection.filename(
+                SourceSchemaVirtualFilename(
+                    well,
+                    site_component,
+                    channel_index,
+                    1,
+                    1,
+                    candidate.path.suffix,
+                )
             )
-            _add_mapping(
-                primary_mappings,
+            primary_mapping_sink.add(
                 virtual_path,
                 _workspace_relative_path(workspace_root, candidate.path),
             )
-            source_metadata[virtual_path] = _source_metadata_for_virtual_path(
+            source_metadata[virtual_path] = SourceVirtualPathMetadata(
                 image_set.metadata,
                 candidate.metadata,
                 assignment=assignment,
-            )
-    component_values: Mapping[AllComponents, Mapping[str, str | None]] = MappingProxyType(
+            ).metadata()
+    component_values: WorkspaceComponentValues = MappingProxyType(
         {
             AllComponents.CHANNEL: MappingProxyType(channel_values),
             AllComponents.WELL: MappingProxyType(wells),
@@ -1875,39 +2004,23 @@ def _primary_workspace_mappings(
     )
 
 
-def _empty_workspace_component_values(
-) -> Mapping[AllComponents, Mapping[str, str | None]]:
-    return MappingProxyType(
-        {
-            AllComponents.CHANNEL: MappingProxyType({}),
-            AllComponents.WELL: MappingProxyType({}),
-            AllComponents.SITE: MappingProxyType({}),
-            AllComponents.Z_INDEX: MappingProxyType({}),
-            AllComponents.TIMEPOINT: MappingProxyType({}),
-        }
-    )
-
-
 def _source_artifact_anchor_workspace_mappings(
     workspace_root: Path,
-    auxiliary_candidates: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+    auxiliary_candidates: SourceSchemaCandidatesByAlias,
     assignments_by_alias: Mapping[str, SourceAssignmentBase],
-) -> tuple[
-    Mapping[str, str],
-    Mapping[str, Mapping[str, str]],
-    Mapping[AllComponents, Mapping[str, str | None]],
-]:
+) -> WorkspaceMappingResult:
     anchor_alias, anchor_candidate = _source_artifact_anchor_candidate(
         auxiliary_candidates
     )
-    parser = SourceSchemaFilenameParser()
-    virtual_path = parser.construct_filename(
-        well=SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE,
-        site=1,
-        channel=1,
-        z_index=1,
-        timepoint=1,
-        extension=anchor_candidate.path.suffix,
+    virtual_path = SourceSchemaFilenameProjection().filename(
+        SourceSchemaVirtualFilename(
+            SOURCE_SCHEMA_WORKSPACE_SINGLETON_AXIS_VALUE,
+            1,
+            1,
+            1,
+            1,
+            anchor_candidate.path.suffix,
+        )
     )
     mappings = MappingProxyType(
         {
@@ -1919,11 +2032,11 @@ def _source_artifact_anchor_workspace_mappings(
     )
     source_metadata = MappingProxyType(
         {
-            virtual_path: _source_metadata_for_virtual_path(
+            virtual_path: SourceVirtualPathMetadata(
                 {"source_alias": anchor_alias},
                 anchor_candidate.metadata,
                 assignment=assignments_by_alias.get(anchor_alias),
-            )
+            ).metadata()
         }
     )
     component_values = MappingProxyType(
@@ -1941,7 +2054,7 @@ def _source_artifact_anchor_workspace_mappings(
 
 
 def _source_artifact_anchor_candidate(
-    auxiliary_candidates: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+    auxiliary_candidates: SourceSchemaCandidatesByAlias,
 ) -> tuple[str, SourceSchemaCandidate]:
     for alias in sorted(auxiliary_candidates):
         for candidate in auxiliary_candidates[alias]:
@@ -1954,7 +2067,7 @@ def _source_artifact_anchor_candidate(
 
 
 def _collision_free_site_component(
-    parser: SourceSchemaFilenameParser,
+    filename_projection: SourceSchemaFilenameProjection,
     *,
     well: str,
     preferred_site_component: int | str,
@@ -1963,13 +2076,15 @@ def _collision_free_site_component(
     extension: str,
     used_paths: set[str],
 ) -> int | str:
-    preferred_path = parser.construct_filename(
-        well=well,
-        site=preferred_site_component,
-        channel=channel_index,
-        z_index=1,
-        timepoint=1,
-        extension=extension,
+    preferred_path = filename_projection.filename(
+        SourceSchemaVirtualFilename(
+            well,
+            preferred_site_component,
+            channel_index,
+            1,
+            1,
+            extension,
+        )
     )
     if preferred_path not in used_paths:
         used_paths.add(preferred_path)
@@ -1977,13 +2092,15 @@ def _collision_free_site_component(
 
     ordinal_component = ordinal_site_component
     while True:
-        ordinal_path = parser.construct_filename(
-            well=well,
-            site=ordinal_component,
-            channel=channel_index,
-            z_index=1,
-            timepoint=1,
-            extension=extension,
+        ordinal_path = filename_projection.filename(
+            SourceSchemaVirtualFilename(
+                well,
+                ordinal_component,
+                channel_index,
+                1,
+                1,
+                extension,
+            )
         )
         if ordinal_path not in used_paths:
             used_paths.add(ordinal_path)
@@ -2074,13 +2191,14 @@ def _source_schema_component_token(value: str) -> str:
 
 def _auxiliary_workspace_mappings(
     workspace_root: Path,
-    auxiliary_candidates: Mapping[str, tuple[SourceSchemaCandidate, ...]],
+    auxiliary_candidates: SourceSchemaCandidatesByAlias,
     assignments_by_alias: Mapping[str, SourceAssignmentBase],
     *,
     filemanager: FileManagerLike | None,
     workspace_backend: str,
 ) -> tuple[Mapping[str, str], Mapping[str, Mapping[str, str]]]:
     mappings: dict[str, str] = {}
+    mapping_sink = WorkspaceMappingSink(mappings)
     source_metadata: dict[str, Mapping[str, str]] = {}
     for alias, candidates in auxiliary_candidates.items():
         for index, candidate in enumerate(candidates, start=1):
@@ -2096,8 +2214,7 @@ def _auxiliary_workspace_mappings(
                 alias=alias,
                 index=index,
             )
-            _add_mapping(
-                mappings,
+            mapping_sink.add(
                 virtual_path,
                 _workspace_relative_path(workspace_root, source_path),
             )
@@ -2108,11 +2225,11 @@ def _auxiliary_workspace_mappings(
                     workspace_root / virtual_path,
                     cached_payload,
                 )
-            source_metadata[virtual_path] = _source_metadata_for_virtual_path(
+            source_metadata[virtual_path] = SourceVirtualPathMetadata(
                 {"source_alias": alias},
                 candidate.metadata,
                 assignment=assignments_by_alias.get(alias),
-            )
+            ).metadata()
     return MappingProxyType(mappings), MappingProxyType(source_metadata)
 
 
@@ -2141,41 +2258,13 @@ def _materialized_auxiliary_source_path(
     )
 
 
-def _source_metadata_for_virtual_path(
-    image_set_metadata: Mapping[str, str],
-    candidate_metadata: Mapping[str, str],
-    *,
-    assignment: SourceAssignmentBase | None = None,
-) -> Mapping[str, str]:
-    metadata = dict(image_set_metadata)
-    merge_source_metadata(metadata, candidate_metadata, path="source_metadata")
-    if assignment is not None:
-        image_type = _source_assignment_image_type(assignment)
-        if image_type is not None:
-            merge_source_metadata(
-                metadata,
-                {SOURCE_SCHEMA_IMAGE_TYPE_METADATA_FIELD: image_type},
-                path="source_metadata",
-            )
-    return MappingProxyType(metadata)
-
-
-def _source_assignment_image_type(
-    assignment: SourceAssignmentBase,
-) -> str | None:
-    if isinstance(assignment, ImageAssignment):
-        return assignment.image_type
-    payload_type = getattr(assignment, "payload_type", "")
-    return payload_type or None
-
-
 def _write_workspace_metadata(
     metadata_path: Path,
     primary_mappings: Mapping[str, str],
     auxiliary_mappings: Mapping[str, str],
-    component_values: Mapping[AllComponents, Mapping[str, str | None]],
-    primary_source_metadata: Mapping[str, Mapping[str, str]],
-    auxiliary_source_metadata: Mapping[str, Mapping[str, str]],
+    component_values: WorkspaceComponentValues,
+    primary_source_metadata: WorkspaceSourceMetadata,
+    auxiliary_source_metadata: WorkspaceSourceMetadata,
     *,
     filemanager: FileManagerLike | None,
     backend: str,
@@ -2209,8 +2298,8 @@ def _metadata_dict(
     *,
     image_files: tuple[str, ...],
     workspace_mapping: Mapping[str, str],
-    component_values: Mapping[AllComponents, Mapping[str, str | None]],
-    source_metadata: Mapping[str, Mapping[str, str]],
+    component_values: WorkspaceComponentValues,
+    source_metadata: WorkspaceSourceMetadata,
     main: bool,
 ) -> dict[str, object]:
     return asdict(
@@ -2237,20 +2326,6 @@ def _metadata_dict(
             main=main,
         )
     )
-
-
-def _add_mapping(
-    mappings: dict[str, str],
-    virtual_path: str,
-    real_path: str,
-) -> None:
-    existing = mappings.get(virtual_path)
-    if existing is not None and existing != real_path:
-        raise ValueError(
-            f"Conflicting source workspace mapping for {virtual_path!r}: "
-            f"{existing!r} != {real_path!r}."
-        )
-    mappings[virtual_path] = real_path
 
 
 def _workspace_relative_path(workspace_root: Path, path: Path) -> str:
