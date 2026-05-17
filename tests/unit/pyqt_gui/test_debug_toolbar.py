@@ -638,3 +638,107 @@ def test_pipeline_editor_exports_debug_artifact_through_plate_manager(monkeypatc
             },
         )
     ]
+
+
+def test_debug_gui_workflow_runs_commands_inspects_snapshot_and_exports(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    import openhcs.pyqt_gui.widgets.pipeline_editor as pipeline_editor_module
+
+    monkeypatch.setattr(
+        pipeline_editor_module,
+        "DebugInspectorWindow",
+        DebugInspectorRecorder,
+    )
+    monkeypatch.setattr(
+        pipeline_editor_module.QFileDialog,
+        "getExistingDirectory",
+        lambda *_args, **_kwargs: str(tmp_path / "export"),
+    )
+    created_tasks = []
+    monkeypatch.setattr(
+        pipeline_editor_module.asyncio,
+        "create_task",
+        lambda task: created_tasks.append(task),
+    )
+
+    plate_path = str(tmp_path / "plate")
+    plate_manager = PlateManagerDebugHarness()
+    editor = PipelineEditorSnapshotHarness()
+    editor.plate_manager = plate_manager
+    plate_manager.action_export_debug_artifact = lambda **kwargs: (
+        "export-task",
+        kwargs,
+    )
+
+    asyncio.run(
+        PlateManagerWidget.action_run_debug_plate(
+            plate_manager,
+            plate_path,
+            command_type=DebugCommandType.RUN_TO_PAUSE,
+            pause_step_indices=(1,),
+        )
+    )
+    session = plate_manager._active_debug_sessions[plate_path]
+    asyncio.run(
+        PlateManagerWidget.action_run_debug_plate(
+            plate_manager,
+            plate_path,
+            command_type=DebugCommandType.STEP,
+        )
+    )
+    asyncio.run(
+        PlateManagerWidget.action_run_debug_plate(
+            plate_manager,
+            plate_path,
+            command_type=DebugCommandType.RUN,
+        )
+    )
+
+    PipelineEditorWidget.show_debug_snapshot(
+        editor,
+        debug_snapshot_notification(snapshot_store_backend="memory"),
+    )
+    artifact_ref = DebugArtifactRef(
+        kind=ArtifactKind.MEASUREMENTS,
+        name="Measurements",
+        cursor=DebugCursor(0, "scope", "default", "default:0:measure"),
+        storage_ref="/debug/measurements.csv",
+        storage_backend="memory",
+    )
+    PipelineEditorWidget._handle_debug_artifact_export_request(
+        editor,
+        DebugArtifactMaterializeRequest(artifact_ref=artifact_ref),
+    )
+    asyncio.run(
+        PlateManagerWidget.action_run_debug_plate(
+            plate_manager,
+            plate_path,
+            command_type=DebugCommandType.STOP,
+        )
+    )
+
+    assert plate_manager._batch_workflow_service.run_calls[0]["replay_mode"] is (
+        DebugReplayMode.PERSISTENT_PAUSED_WORKER
+    )
+    assert plate_manager._batch_workflow_service.worker_commands == [
+        (session.debug_session_id, DebugCommandType.STEP),
+        (session.debug_session_id, DebugCommandType.RUN),
+        (session.debug_session_id, DebugCommandType.STOP),
+    ]
+    assert plate_path not in plate_manager._active_debug_sessions
+    assert editor.debug_session_state.debug_session_id == "debug-1"
+    assert len(editor.debug_inspector_window.store_loads) == 1
+    assert created_tasks == [
+        (
+            "export-task",
+            {
+                "debug_session_id": "debug-1",
+                "artifact_ref": artifact_ref,
+                "export_root": str(tmp_path / "export"),
+                "snapshot_store_ref": "/debug",
+                "snapshot_store_backend": "memory",
+            },
+        )
+    ]

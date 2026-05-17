@@ -96,3 +96,28 @@ running it in the default unit suite unless stable and fast.
 - Export/open request creation is verified at the host GUI boundary.
 - Lower-level control tests remain passing.
 
+## Progress: 2026-05-17
+
+Completed:
+
+- Added `test_debug_gui_workflow_runs_commands_inspects_snapshot_and_exports`.
+- The test drives the GUI-facing sequence in one workflow:
+  - start persistent paused-worker debug run
+  - send step command
+  - send continue/run command
+  - inspect a snapshot through `PipelineEditorWidget.show_debug_snapshot`
+  - request artifact export through the inspector-to-plate-manager boundary
+  - stop the paused-worker session
+
+Verification:
+
+- Focused test: `1 passed`.
+- `tests/unit/pyqt_gui/test_debug_toolbar.py tests/unit/test_debug_runtime.py`:
+  `57 passed`.
+
+Remaining:
+
+- This is still a unit-level GUI command-path workflow with faked batch/ZMQ
+  seams. A heavier live server/GUI command loop test should live under
+  integration once the live harness is stable and not too expensive for default
+  unit runs.
