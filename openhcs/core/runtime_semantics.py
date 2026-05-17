@@ -329,20 +329,46 @@ class RuntimePlaneProjectionScope(str, Enum):
     GROUP = "group"
 
 
-class RuntimePlaneProjection(ABC):
+@dataclass(frozen=True, slots=True)
+class RuntimePlaneProjection:
     """Nominal runtime-plane selection for one callable invocation."""
 
-    scope: ClassVar[RuntimePlaneProjectionScope]
+    scope: RuntimePlaneProjectionScope
+    plane_index: int | None = None
+
+    def __post_init__(self) -> None:
+        scope = coerce_enum(
+            RuntimePlaneProjectionScope,
+            self.scope,
+            "RuntimePlaneProjection.scope",
+        )
+        object.__setattr__(self, "scope", scope)
+        if scope is RuntimePlaneProjectionScope.STACK:
+            if self.plane_index is not None:
+                raise ValueError(
+                    "Stack runtime-plane projection cannot carry a plane index."
+                )
+            return
+        if self.plane_index is None:
+            raise ValueError(
+                "Grouped runtime-plane projection requires a plane index."
+            )
+        plane_index = int(self.plane_index)
+        if plane_index < 0:
+            raise ValueError(
+                "Grouped runtime-plane projection plane_index cannot be negative."
+            )
+        object.__setattr__(self, "plane_index", plane_index)
 
     @classmethod
     def stack(cls) -> "RuntimePlaneProjection":
         """Preserve runtime-slice stacks for stack-scoped execution."""
-        return StackRuntimePlaneProjection()
+        return cls(RuntimePlaneProjectionScope.STACK)
 
     @classmethod
     def group(cls, plane_index: int) -> "RuntimePlaneProjection":
         """Select one runtime-slice plane for grouped execution."""
-        return GroupRuntimePlaneProjection(plane_index)
+        return cls(RuntimePlaneProjectionScope.GROUP, plane_index)
 
     @classmethod
     def for_group_key(
@@ -365,38 +391,13 @@ class RuntimePlaneProjection(ABC):
             )
         return cls.group(plane_index)
 
-    @abstractmethod
     def runtime_slice_plane_index(self) -> int | None:
         """Return selected runtime-slice plane, or None when stacks are preserved."""
-
-
-@dataclass(frozen=True, slots=True)
-class StackRuntimePlaneProjection(RuntimePlaneProjection):
-    """Stack-scoped execution preserves runtime-slice stacks."""
-
-    scope: ClassVar[RuntimePlaneProjectionScope] = RuntimePlaneProjectionScope.STACK
-
-    def runtime_slice_plane_index(self) -> None:
-        return None
-
-
-@dataclass(frozen=True, slots=True)
-class GroupRuntimePlaneProjection(RuntimePlaneProjection):
-    """Grouped execution selects one runtime-slice plane by OpenHCS group order."""
-
-    plane_index: int
-    scope: ClassVar[RuntimePlaneProjectionScope] = RuntimePlaneProjectionScope.GROUP
-
-    def __post_init__(self) -> None:
-        plane_index = int(self.plane_index)
-        if plane_index < 0:
-            raise ValueError(
-                "GroupRuntimePlaneProjection.plane_index cannot be negative."
-            )
-        object.__setattr__(self, "plane_index", plane_index)
-
-    def runtime_slice_plane_index(self) -> int:
         return self.plane_index
+
+
+StackRuntimePlaneProjection = RuntimePlaneProjection
+GroupRuntimePlaneProjection = RuntimePlaneProjection
 
 
 class RuntimePlaneAxisProjector(ABC):
