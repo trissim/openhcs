@@ -2451,39 +2451,61 @@ class CellProfilerMainFlowReplacementPolicy(
         """Return True when the declared module image output owns downstream flow."""
 
 
-class ContractImageOutputMainFlowReplacementPolicy(
-    CellProfilerMainFlowReplacementPolicy
+class MainFlowReplacementSemantics(str, Enum):
+    """Closed behaviors for CellProfiler image-output main-flow ownership."""
+
+    CONTRACT_IMAGE_OUTPUT = "contract_image_output"
+    SIDE_ARTIFACT_IMAGE_OUTPUT = "side_artifact_image_output"
+
+
+@dataclass(frozen=True, slots=True)
+class MainFlowReplacementPolicySpec(GeneratedLeafClassSpec):
+    """Declarative leaf spec for CellProfiler main-flow replacement policies."""
+
+    semantics: MainFlowReplacementSemantics
+    registry_key: str | None = None
+    module_name: str | None = None
+
+    def class_attributes(self) -> Mapping[str, object]:
+        attrs: dict[str, object] = {}
+        if self.registry_key is not None:
+            attrs["registry_key"] = self.registry_key
+        if self.module_name is not None:
+            attrs["module_name"] = self.module_name
+        semantics = self.semantics
+
+        def replaces_main_flow(
+            _policy: CellProfilerMainFlowReplacementPolicy,
+            request: CellProfilerMainFlowReplacementRequest,
+        ) -> bool:
+            if semantics is MainFlowReplacementSemantics.CONTRACT_IMAGE_OUTPUT:
+                return len(request.executor.image_outputs) == 1
+            return False
+
+        attrs["replaces_main_flow"] = replaces_main_flow
+        return attrs
+
+
+for _main_flow_policy_spec in (
+    MainFlowReplacementPolicySpec(
+        class_name="ContractImageOutputMainFlowReplacementPolicy",
+        base_type=CellProfilerMainFlowReplacementPolicy,
+        semantics=MainFlowReplacementSemantics.CONTRACT_IMAGE_OUTPUT,
+        registry_key=CellProfilerModulePolicyRegistryKey.DEFAULT.value,
+    ),
+    MainFlowReplacementPolicySpec(
+        class_name="SideArtifactImageOutputMainFlowReplacementPolicy",
+        base_type=CellProfilerMainFlowReplacementPolicy,
+        semantics=MainFlowReplacementSemantics.SIDE_ARTIFACT_IMAGE_OUTPUT,
+    ),
+    MainFlowReplacementPolicySpec(
+        class_name="CorrectIlluminationCalculateMainFlowReplacementPolicy",
+        base_type=CellProfilerMainFlowReplacementPolicy,
+        semantics=MainFlowReplacementSemantics.SIDE_ARTIFACT_IMAGE_OUTPUT,
+        module_name="CorrectIlluminationCalculate",
+    ),
 ):
-    """Use the artifact contract, not runtime slice cardinality, as the authority."""
-
-    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
-
-    def replaces_main_flow(
-        self,
-        request: CellProfilerMainFlowReplacementRequest,
-    ) -> bool:
-        return len(request.executor.image_outputs) == 1
-
-
-class SideArtifactImageOutputMainFlowReplacementPolicy(
-    CellProfilerMainFlowReplacementPolicy
-):
-    """Record declared image outputs without advancing OpenHCS main flow."""
-
-    def replaces_main_flow(
-        self,
-        request: CellProfilerMainFlowReplacementRequest,
-    ) -> bool:
-        del request
-        return False
-
-
-class CorrectIlluminationCalculateMainFlowReplacementPolicy(
-    SideArtifactImageOutputMainFlowReplacementPolicy
-):
-    """Illumination functions are side artifacts consumed by apply modules."""
-
-    module_name = "CorrectIlluminationCalculate"
+    _main_flow_policy_spec.declare_in(globals())
 
 
 class CellProfilerInvocationExecutionModePolicy(
