@@ -38,6 +38,9 @@ class ArtifactKind(str, Enum):
         obj._participates_in_measurement_source_names = bool(
             (options or {}).get("participates_in_measurement_source_names")
         )
+        obj._participates_in_main_flow_output = bool(
+            (options or {}).get("participates_in_main_flow_output")
+        )
         obj._payload_description = (options or {}).get(
             "payload_description",
             f"{payload_shape} {value} payload",
@@ -48,12 +51,16 @@ class ArtifactKind(str, Enum):
     IMAGE = (
         "image",
         ArtifactPayloadShape.ARRAY,
-        {"participates_in_measurement_source_names": True},
+        {
+            "participates_in_measurement_source_names": True,
+            "participates_in_main_flow_output": True,
+        },
     )
     OBJECT_LABELS = (
         "object_labels",
         ArtifactPayloadShape.ARRAY,
         {
+            "participates_in_main_flow_output": True,
             "payload_description": "object_labels payload",
             "uses_label_representation_payload_shape": True,
         },
@@ -83,6 +90,10 @@ class ArtifactKind(str, Enum):
     @property
     def participates_in_measurement_source_names(self) -> bool:
         return self._participates_in_measurement_source_names
+
+    @property
+    def participates_in_main_flow_output(self) -> bool:
+        return self._participates_in_main_flow_output
 
     @property
     def payload_description(self) -> str:

@@ -17,10 +17,7 @@ class RuntimeOutputRole(str, Enum):
 
     @classmethod
     def for_spec(cls, spec: ArtifactSpec) -> "RuntimeOutputRole":
-        if (
-            spec.kind in (ArtifactKind.IMAGE, ArtifactKind.OBJECT_LABELS)
-            and spec.sidecar_role is None
-        ):
+        if spec.kind.participates_in_main_flow_output and spec.sidecar_role is None:
             return cls.MAIN_FLOW
         return cls.SIDECAR
 
