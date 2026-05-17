@@ -5120,7 +5120,7 @@ class RuntimeMeasurementTableFactRecorder:
             qualifier_render_cache=self._qualifier_render_cache,
             padding_group_cache=self._padding_group_cache,
         )
-        row_facts = _measurement_facts_from_runtime_row_cached(row_context)
+        row_facts = RuntimeMeasurementRowFactProjector(row_context).facts()
         if not row_facts:
             return
         aggregate_input_context = _AggregateInputRecordingContext(
@@ -5185,7 +5185,7 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
             return _runtime_row_projection()
 
         header = tuple(context.row)
-        row_schema = _runtime_measurement_row_schema_cached(context, header)
+        row_schema = RuntimeMeasurementRowSchemaProjector(context, header).schema()
         row_values = tuple(context.row.get(field_name) for field_name in header)
         long_form_projection = self._long_form_projection(row_schema, row_values)
         if long_form_projection is not None:
@@ -5203,14 +5203,14 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
             or not row_schema.long_form_value_indexes
         ):
             return None
-        long_form_fact = _long_form_measurement_fact_cached(
+        long_form_fact = RuntimeMeasurementLongFormFactProjector(
             _CachedLongFormMeasurementContext.from_runtime_row_projection(
                 context,
                 row_values,
                 row_schema.long_form_feature_indexes,
                 row_schema.long_form_value_indexes,
             )
-        )
+        ).fact()
         if long_form_fact is None:
             return None
         if (
@@ -5360,101 +5360,153 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
         return padding_group
 
 
-def _runtime_measurement_row_schema_cached(
-    context: _RuntimeRowProjectionContext,
-    header: tuple[str, ...],
-) -> _RuntimeMeasurementRowSchema:
-    cached_schema = context.schema_cache.get(header)
-    if cached_schema is not None:
-        return cached_schema
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementRowFactProjector:
+    """Project one runtime measurement row into semantic fact views."""
 
-    normalized_fields = tuple(_normalize_identifier(field) for field in header)
-    aggregate_reference_indexes = frozenset(
-        index
-        for index, field_name in enumerate(header)
-        if _is_aggregate_image_number_reference_measurement_field(field_name)
-    )
-    normalized_field_indexes = {
-        field_name: index
-        for index, field_name in enumerate(normalized_fields)
-    }
-    feature_indexes = tuple(
-        index
-        for index, field_name in enumerate(normalized_fields)
-        if not _is_normalized_measurement_identity_field(
-            field_name,
-            context.policy.measurement_dialect,
-        )
-        and index not in aggregate_reference_indexes
-    )
-    qualifier_indexes = {
-        qualifier: tuple(
-            normalized_field_indexes.get(field_name)
-            for field_name in qualifier.field_names
-        )
-        for qualifier in context.policy.measurement_dialect.row_qualifiers
-    }
-    qualifiers_by_index = {
-        index: tuple(
-            (qualifier, qualifier_indexes[qualifier])
-            for qualifier in context.policy.measurement_dialect.row_qualifiers
-            if row_qualifier_applies_to_field(
-                qualifier,
-                tuple(
-                    part
-                    for part in normalized_fields[index].split("_")
-                    if part
-                ),
+    context: _RuntimeRowProjectionContext
+
+    def facts(self) -> _RuntimeMeasurementFacts:
+        """Project one runtime row using table-local schema/key caches."""
+        projection = _RuntimeRowProjectionEngine(
+            self.context,
+            _cell_measurement_facts,
+            lambda fact: (fact,),
+        ).project()
+        row_facts = tuple(
+            (key, value)
+            for _padding_group, key, value in RuntimeMeasurementFactProjectionContract.observed_records(
+                projection.records,
+                self.context.policy,
             )
         )
-        for index in feature_indexes
-    }
-    cached_schema = _RuntimeMeasurementRowSchema(
-        feature_indexes,
-        qualifiers_by_index,
-        _field_indexes_for_names(
-            normalized_field_indexes,
-            _MEASUREMENT_FEATURE_NAME_FIELDS,
-        ),
-        _field_indexes_for_names(
-            normalized_field_indexes,
-            _MEASUREMENT_VALUE_FIELDS,
-        ),
-    )
-    context.schema_cache[header] = cached_schema
-    return cached_schema
-
-
-def _measurement_facts_from_runtime_row_cached(
-    context: _RuntimeRowProjectionContext,
-) -> _RuntimeMeasurementFacts:
-    """Project one runtime row using table-local schema/key caches."""
-    projection = _RuntimeRowProjectionEngine(
-        context,
-        _cell_measurement_facts,
-        lambda fact: (fact,),
-    ).project()
-    row_facts = tuple(
-        (key, value)
-        for _padding_group, key, value in RuntimeMeasurementFactProjectionContract.observed_records(
-            projection.records,
-            context.policy,
+        if projection.long_form:
+            return row_facts
+        derived_facts = _derive_pair_measurement_facts(
+            RuntimeMeasurementFactProjectionContract.dedupe_alias_facts(row_facts),
+            self.context.policy,
+            known_source_names=self.context.known_source_names,
         )
-    )
-    if projection.long_form:
-        return row_facts
-    derived_facts = _derive_pair_measurement_facts(
-        RuntimeMeasurementFactProjectionContract.dedupe_alias_facts(row_facts),
-        context.policy,
-        known_source_names=context.known_source_names,
-    )
-    if context.required_keys is not None:
-        return tuple(
+        if self.context.required_keys is not None:
+            return tuple(
+                (key, value)
+                for key, value in derived_facts
+                if key in self.context.required_keys
+            )
+        return derived_facts
+
+    def numeric_values(self) -> _RuntimeNumericMeasurementValues:
+        """Project numeric runtime row values without building cell signatures."""
+        projection = _RuntimeRowProjectionEngine(
+            self.context,
+            _numeric_cell_measurement_values,
+            _numeric_long_form_measurement_values,
+        ).project()
+        row_values_by_key = _dedupe_numeric_measurement_values(
             (key, value)
-            for key, value in derived_facts
-            if key in context.required_keys
+            for _padding_group, key, value in projection.records
         )
-    return derived_facts
+        if projection.long_form:
+            return row_values_by_key
+        if not any(
+            key.belongs_to_source_qualified_feature_family(
+                self.context.policy.measurement_dialect,
+                (_PAIR_REGRESSION_SLOPE_FEATURE,),
+            )
+            for key, _value in row_values_by_key
+        ):
+            return row_values_by_key
+
+        derived_facts = _derive_pair_measurement_facts(
+            tuple(
+                (key, _cell_signature(repr(value), self.context.policy))
+                for key, value in row_values_by_key
+            ),
+            self.context.policy,
+            known_source_names=self.context.known_source_names,
+        )
+        if self.context.required_keys is not None:
+            derived_facts = tuple(
+                (key, value)
+                for key, value in derived_facts
+                if key in self.context.required_keys
+            )
+        return tuple(
+            (key, numeric_value)
+            for key, value in derived_facts
+            if (numeric_value := _cell_signature_numeric_value(value)) is not None
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementRowSchemaProjector:
+    """Project a runtime measurement row header into cached row schema."""
+
+    context: _RuntimeRowProjectionContext
+    header: tuple[str, ...]
+
+    def schema(self) -> _RuntimeMeasurementRowSchema:
+        cached_schema = self.context.schema_cache.get(self.header)
+        if cached_schema is not None:
+            return cached_schema
+
+        normalized_fields = tuple(
+            _normalize_identifier(field) for field in self.header
+        )
+        aggregate_reference_indexes = frozenset(
+            index
+            for index, field_name in enumerate(self.header)
+            if _is_aggregate_image_number_reference_measurement_field(field_name)
+        )
+        normalized_field_indexes = {
+            field_name: index
+            for index, field_name in enumerate(normalized_fields)
+        }
+        feature_indexes = tuple(
+            index
+            for index, field_name in enumerate(normalized_fields)
+            if not _is_normalized_measurement_identity_field(
+                field_name,
+                self.context.policy.measurement_dialect,
+            )
+            and index not in aggregate_reference_indexes
+        )
+        qualifier_indexes = {
+            qualifier: tuple(
+                normalized_field_indexes.get(field_name)
+                for field_name in qualifier.field_names
+            )
+            for qualifier in self.context.policy.measurement_dialect.row_qualifiers
+        }
+        qualifiers_by_index = {
+            index: tuple(
+                (qualifier, qualifier_indexes[qualifier])
+                for qualifier in self.context.policy.measurement_dialect.row_qualifiers
+                if row_qualifier_applies_to_field(
+                    qualifier,
+                    tuple(
+                        part
+                        for part in normalized_fields[index].split("_")
+                        if part
+                    ),
+                )
+            )
+            for index in feature_indexes
+        }
+        cached_schema = _RuntimeMeasurementRowSchema(
+            feature_indexes,
+            qualifiers_by_index,
+            _field_indexes_for_names(
+                normalized_field_indexes,
+                _MEASUREMENT_FEATURE_NAME_FIELDS,
+            ),
+            _field_indexes_for_names(
+                normalized_field_indexes,
+                _MEASUREMENT_VALUE_FIELDS,
+            ),
+        )
+        self.context.schema_cache[self.header] = cached_schema
+        return cached_schema
 
 
 @dataclass(frozen=True, slots=True)
@@ -6111,61 +6163,72 @@ def _long_form_measurement_fact(
     )
 
 
-def _long_form_measurement_fact_cached(
-    context: _CachedLongFormMeasurementContext,
-) -> _RuntimeLongFormMeasurementFact:
-    feature_name = _first_indexed_row_value(
-        context.row_values,
-        context.feature_indexes,
-    )
-    value = _first_indexed_row_value(context.row_values, context.value_indexes)
-    if feature_name is None or value is None:
-        return None
-    feature_text = str(feature_name)
-    if _is_aggregate_image_number_reference_measurement_field(feature_text):
-        return None
-    value = _normalize_image_number_reference_measurement_value(
-        feature_text,
-        value,
-        context.image_number_offset,
-    )
-    cache_key = (context.subject, context.source_name, feature_text)
-    key = context.key_cache.get(cache_key, _CACHE_MISS)
-    if key is _CACHE_MISS:
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementLongFormFactProjector:
+    """Project one cached long-form measurement row into a semantic fact."""
+
+    context: _CachedLongFormMeasurementContext
+
+    def fact(self) -> _RuntimeLongFormMeasurementFact:
+        feature_name = _first_indexed_row_value(
+            self.context.row_values,
+            self.context.feature_indexes,
+        )
+        value = _first_indexed_row_value(
+            self.context.row_values,
+            self.context.value_indexes,
+        )
+        if feature_name is None or value is None:
+            return None
+        feature_text = str(feature_name)
+        if _is_aggregate_image_number_reference_measurement_field(feature_text):
+            return None
+        value = _normalize_image_number_reference_measurement_value(
+            feature_text,
+            value,
+            self.context.image_number_offset,
+        )
+        cache_key = (
+            self.context.subject,
+            self.context.source_name,
+            feature_text,
+        )
+        key = self.context.key_cache.get(cache_key, _CACHE_MISS)
+        if key is _CACHE_MISS:
+            key = self._feature_key(feature_text)
+            self.context.key_cache[cache_key] = key
+        if key is None:
+            return None
+        return key, _runtime_measurement_cell_signature(value, self.context.policy)
+
+    def _feature_key(
+        self,
+        feature_text: str,
+    ) -> RuntimeMeasurementFeatureKey | None:
         aggregate_key = _aggregate_measurement_feature_key(
             feature_text,
-            context.subject,
-            context.policy,
-            known_source_names=context.known_source_names,
+            self.context.subject,
+            self.context.policy,
+            known_source_names=self.context.known_source_names,
         )
         if aggregate_key is not None:
-            context.key_cache[cache_key] = aggregate_key
-            return aggregate_key, _runtime_measurement_cell_signature(
-                value,
-                context.policy,
-            )
+            return aggregate_key
         canonical_feature_name, canonical_source_name = (
             _canonical_measurement_feature_name_and_source(
                 feature_text,
-                context.policy,
-                source_name=context.source_name,
-                known_source_names=context.known_source_names,
+                self.context.policy,
+                source_name=self.context.source_name,
+                known_source_names=self.context.known_source_names,
             )
         )
-        key = (
-            RuntimeMeasurementFeatureKey.from_source_qualified_feature(
-                context.subject,
-                canonical_feature_name,
-                canonical_source_name,
-                context.policy.measurement_dialect,
-            )
-            if canonical_feature_name
-            else None
+        if not canonical_feature_name:
+            return None
+        return RuntimeMeasurementFeatureKey.from_source_qualified_feature(
+            self.context.subject,
+            canonical_feature_name,
+            canonical_source_name,
+            self.context.policy.measurement_dialect,
         )
-        context.key_cache[cache_key] = key
-    if key is None:
-        return None
-    return key, _runtime_measurement_cell_signature(value, context.policy)
 
 
 def _field_indexes_for_names(
@@ -7780,9 +7843,9 @@ def _object_measurement_values_by_label(
                 qualifier_render_cache=qualifier_render_cache,
                 padding_group_cache=padding_group_cache,
             )
-            for key, value in _numeric_measurement_values_from_runtime_row_cached(
+            for key, value in RuntimeMeasurementRowFactProjector(
                 row_context
-            ):
+            ).numeric_values():
                 if row_required_keys is not None and key not in row_required_keys:
                     continue
                 if key.statistic != "value":
@@ -7795,51 +7858,6 @@ def _object_measurement_values_by_label(
                     )
                 ] = value
     return values_by_feature
-
-
-def _numeric_measurement_values_from_runtime_row_cached(
-    context: _RuntimeRowProjectionContext,
-) -> _RuntimeNumericMeasurementValues:
-    """Project numeric runtime row values without building cell signatures."""
-    projection = _RuntimeRowProjectionEngine(
-        context,
-        _numeric_cell_measurement_values,
-        _numeric_long_form_measurement_values,
-    ).project()
-    row_values_by_key = _dedupe_numeric_measurement_values(
-        (key, value)
-        for _padding_group, key, value in projection.records
-    )
-    if projection.long_form:
-        return row_values_by_key
-    if not any(
-        key.belongs_to_source_qualified_feature_family(
-            context.policy.measurement_dialect,
-            (_PAIR_REGRESSION_SLOPE_FEATURE,),
-        )
-        for key, _value in row_values_by_key
-    ):
-        return row_values_by_key
-
-    derived_facts = _derive_pair_measurement_facts(
-        tuple(
-            (key, _cell_signature(repr(value), context.policy))
-            for key, value in row_values_by_key
-        ),
-        context.policy,
-        known_source_names=context.known_source_names,
-    )
-    if context.required_keys is not None:
-        derived_facts = tuple(
-            (key, value)
-            for key, value in derived_facts
-            if key in context.required_keys
-        )
-    return tuple(
-        (key, numeric_value)
-        for key, value in derived_facts
-        if (numeric_value := _cell_signature_numeric_value(value)) is not None
-    )
 
 
 def _numeric_long_form_measurement_values(
