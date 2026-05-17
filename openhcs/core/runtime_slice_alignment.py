@@ -22,6 +22,25 @@ class RuntimeSliceAlignedValueSet(ABC, Generic[SliceValueT]):
     def value_for_slice(self, slice_index: int) -> SliceValueT:
         """Return the value for one runtime slice."""
 
+    def value_for_aligned_slice(
+        self,
+        slice_index: int,
+        slice_count: int,
+    ) -> SliceValueT:
+        """Return the value in an outer aligned slice context.
+
+        A single carried slice is broadcast across the outer alignment; otherwise
+        the carried slice count must match the outer count exactly.
+        """
+        if self.slice_count == slice_count:
+            return self.value_for_slice(slice_index)
+        if self.slice_count == 1:
+            return self.value_for_slice(0)
+        raise ValueError(
+            "Runtime-slice-aligned value has incompatible slice count "
+            f"{self.slice_count}; expected 1 or {slice_count}."
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeSliceAlignedValues(RuntimeSliceAlignedValueSet[SliceValueT]):

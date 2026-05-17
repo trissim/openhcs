@@ -568,13 +568,9 @@ class RuntimeSliceAlignedValueKwargResolutionStrategy(
                 "RuntimeSliceAlignedValueKwargResolutionStrategy requires "
                 "RuntimeSliceAlignedValueSet."
             )
-        if value.slice_count == resolver.slice_count:
-            return value.value_for_slice(resolver.slice_index)
-        if value.slice_count == 1:
-            return value.value_for_slice(0)
-        raise ValueError(
-            "Runtime-slice-aligned kwarg has incompatible slice count "
-            f"{value.slice_count}; expected 1 or {resolver.slice_count}."
+        return value.value_for_aligned_slice(
+            slice_index=resolver.slice_index,
+            slice_count=resolver.slice_count,
         )
 
 
