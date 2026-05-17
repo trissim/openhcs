@@ -608,6 +608,15 @@ class CountMeasurementStatisticDependencyStrategy(
         key: RuntimeMeasurementFeatureKey,
     ) -> tuple[RuntimeMeasurementFeatureKey, ...]:
         return (key,)
+
+
+class RuntimeObjectLocationRowMergeProjectionKey(Enum):
+    """Registered object-location row-merge projection identities."""
+
+    LOCATION = "location"
+    AGGREGATE_LOCATION = "aggregate_location"
+
+
 _RuntimeRowProjectionRecords = tuple[
     _RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT],
     ...,
@@ -2398,13 +2407,19 @@ class RuntimeMeasurementSnapshot:
             policy.measurement_dialect,
         )
         object_location_aggregate_subjects = (
-            RuntimeRowMergeAggregateLocationSubjectProjection(policy).subjects(row_merge_cache)
+            RuntimeObjectLocationRowMergeContract.registered_projection(
+                RuntimeObjectLocationRowMergeProjectionKey.AGGREGATE_LOCATION,
+                policy,
+            ).subjects(row_merge_cache)
         )
         object_location_subjects = object_measurement_subjects_with_role(
             values_by_feature,
             ObjectMeasurementFeatureRole.LOCATION,
             policy.measurement_dialect,
-        ) | RuntimeRowMergeLocationSubjectProjection(policy).subjects(row_merge_cache)
+        ) | RuntimeObjectLocationRowMergeContract.registered_projection(
+            RuntimeObjectLocationRowMergeProjectionKey.LOCATION,
+            policy,
+        ).subjects(row_merge_cache)
         explicit_object_count_subjects = object_measurement_subjects_with_role(
             values_by_feature,
             ObjectMeasurementFeatureRole.COUNT,
@@ -2425,7 +2440,10 @@ class RuntimeMeasurementSnapshot:
             values_by_feature,
             ObjectMeasurementFeatureRole.LOCATION,
             policy.measurement_dialect,
-        ) | RuntimeRowMergeLocationSubjectProjection(policy).subjects(row_merge_cache)
+        ) | RuntimeObjectLocationRowMergeContract.registered_projection(
+            RuntimeObjectLocationRowMergeProjectionKey.LOCATION,
+            policy,
+        ).subjects(row_merge_cache)
         record_measurement_facts(
             values_by_feature,
             _primary_row_object_count_measurement_facts(
@@ -4473,10 +4491,31 @@ def _dedupe_runtime_measurement_table_object_subtable(
 
 
 @dataclass(frozen=True, slots=True)
-class RuntimeObjectLocationRowMergeContract:
+class RuntimeObjectLocationRowMergeContract(metaclass=AutoRegisterMeta):
     """SSOT for object-location value facts merged by runtime row identity."""
 
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
     policy: RuntimeEquivalencePolicy
+
+    @classmethod
+    def registered_projection(
+        cls,
+        registry_key: RuntimeObjectLocationRowMergeProjectionKey,
+        policy: RuntimeEquivalencePolicy,
+    ) -> "RuntimeObjectLocationRowMergeContract":
+        """Return the registered row-merge projection for ``registry_key``."""
+        try:
+            projection_type = cls.__registry__[registry_key.value]
+        except KeyError as exc:
+            registered = tuple(cls.__registry__)
+            raise ValueError(
+                "Unknown runtime object-location row-merge projection "
+                f"{registry_key.value!r}; registered projections: {registered!r}."
+            ) from exc
+        return projection_type(policy)
 
     def owns_key(self, key: RuntimeMeasurementFeatureKey) -> bool:
         return (
@@ -4489,6 +4528,26 @@ class RuntimeObjectLocationRowMergeContract:
                 self.policy.measurement_dialect,
             )
         )
+
+    def subjects(
+        self,
+        row_merge_cache: _RuntimeMeasurementRowMergeCache,
+    ) -> frozenset[RuntimeMeasurementSubjectKey]:
+        """Return subjects owned by this row-merge projection."""
+        return frozenset(
+            key.subject
+            for key, row_identity in row_merge_cache
+            if self.owns_row_identity(key, row_identity)
+        )
+
+    def owns_row_identity(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+        row_identity: _RuntimeMeasurementRowIdentity,
+    ) -> bool:
+        """Return whether this projection owns a row identity."""
+        del row_identity
+        return self.owns_key(key)
 
 
 def _runtime_row_measurement_fact_priority(
@@ -4643,29 +4702,19 @@ def _measurement_feature_category_priority(
 class RuntimeRowMergeLocationSubjectProjection(RuntimeObjectLocationRowMergeContract):
     """Project subjects with measured location rows from the row-merge cache."""
 
-    def subjects(
-        self,
-        row_merge_cache: _RuntimeMeasurementRowMergeCache,
-    ) -> frozenset[RuntimeMeasurementSubjectKey]:
-        return frozenset(
-            key.subject
-            for key, row_identity in row_merge_cache
-            if self.owns_row_identity(key, row_identity)
-        )
-
-    def owns_row_identity(
-        self,
-        key: RuntimeMeasurementFeatureKey,
-        row_identity: _RuntimeMeasurementRowIdentity,
-    ) -> bool:
-        del row_identity
-        return self.owns_key(key)
+    registry_key: ClassVar[str | None] = (
+        RuntimeObjectLocationRowMergeProjectionKey.LOCATION.value
+    )
 
 
 class RuntimeRowMergeAggregateLocationSubjectProjection(
     RuntimeRowMergeLocationSubjectProjection
 ):
     """Project measured-location subjects that can derive image-scoped aggregates."""
+
+    registry_key: ClassVar[str | None] = (
+        RuntimeObjectLocationRowMergeProjectionKey.AGGREGATE_LOCATION.value
+    )
 
     def owns_row_identity(
         self,
