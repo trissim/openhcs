@@ -32,9 +32,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
     cellprofiler_backend_key,
 )
 from openhcs.core.runtime_semantics import (
+    DenseObjectLabelPairAligner,
     ObjectRelationshipPayloadKernel,
     ParentChildRelationshipPayload,
-    aligned_dense_object_label_arrays,
     object_label_parent_child_payload,
 )
 from openhcs.core.runtime_values import object_label_dense_array
@@ -292,10 +292,10 @@ def relate_objects(
 
     parent_labels = object_label_dense_array(raw_parent_labels, dtype=np.int32)
     child_labels = object_label_dense_array(raw_child_labels, dtype=np.int32)
-    parent_labels, child_labels = aligned_dense_object_label_arrays(
+    parent_labels, child_labels = DenseObjectLabelPairAligner(
         parent_labels,
         child_labels,
-    )
+    ).aligned()
 
     parent_count = int(parent_labels.max()) if parent_labels.max() > 0 else 0
     child_count = int(child_labels.max()) if child_labels.max() > 0 else 0

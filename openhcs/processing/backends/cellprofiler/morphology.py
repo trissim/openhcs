@@ -38,8 +38,7 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelDomainScope,
     ObjectLabelIdDomainStrategy,
     ParentChildRelationshipPayload,
-    aligned_dense_object_label_mask_stack_alignment,
-    aligned_dense_object_labels_and_mask,
+    DenseObjectLabelMaskAligner,
     dense_object_label_plane_id_domains,
     object_label_lineage_payload,
 )
@@ -4397,7 +4396,7 @@ class MaskObjectsPlaneOperation:
         import scipy.ndimage as ndi
 
         label_image = np.asarray(label_image, dtype=np.int32)
-        _aligned_labels, mask = aligned_dense_object_labels_and_mask(label_image, mask)
+        _aligned_labels, mask = DenseObjectLabelMaskAligner(label_image, mask).aligned()
         label_image = _aligned_labels.astype(np.int32, copy=False)
 
         binary_mask = mask > 0 if mask.max() > 1 else mask.astype(bool)
@@ -4578,11 +4577,10 @@ def mask_objects(
     if stack_slice_count is None and label_array.ndim == 3:
         stack_slice_count = int(label_array.shape[0])
     if stack_slice_count is not None and stack_slice_count > 1:
-        stack_alignment = aligned_dense_object_label_mask_stack_alignment(
+        stack_alignment = DenseObjectLabelMaskAligner(
             label_array,
             mask,
-            slice_count=stack_slice_count,
-        )
+        ).aligned_stack_context(stack_slice_count)
         if stack_alignment is not None:
             plane_results = tuple(
                 operation.apply(

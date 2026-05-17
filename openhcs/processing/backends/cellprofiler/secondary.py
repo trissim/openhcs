@@ -23,12 +23,11 @@ from openhcs.core.pipeline.function_contracts import (
 )
 from openhcs.core.registry_strategies import RegisteredLeafClassSpec
 from openhcs.core.runtime_semantics import (
+    DenseObjectLabelPairAligner,
     ExplicitObjectLabelDomainDeclaration,
     ObjectLabelDomain,
     ObjectLabelDomainScope,
     ParentChildRelationshipPayload,
-    aligned_dense_object_label_arrays,
-    aligned_dense_object_label_stack_alignment,
     dense_object_label_plane_id_domains,
     object_label_parent_child_payload,
 )
@@ -1705,10 +1704,10 @@ class TertiaryObjectInputs:
         primary_labels: np.ndarray | ObjectLabelPayload,
         secondary_labels: np.ndarray | ObjectLabelPayload,
     ) -> "TertiaryObjectInputs":
-        primary_array, secondary_array = aligned_dense_object_label_arrays(
+        primary_array, secondary_array = DenseObjectLabelPairAligner(
             primary_labels,
             secondary_labels,
-        )
+        ).aligned()
         primary_array = np.asarray(primary_array, dtype=np.int32)
         secondary_array = np.asarray(secondary_array, dtype=np.int32)
         if primary_array.ndim == 3:
@@ -1778,11 +1777,10 @@ def _identify_tertiary_objects_batch(
 ) -> list[object]:
     kwargs = request.kwargs
     slice_count = request.slice_count
-    alignment = aligned_dense_object_label_stack_alignment(
+    alignment = DenseObjectLabelPairAligner(
         kwargs["primary_labels"],
         kwargs["secondary_labels"],
-        slice_count=slice_count,
-    )
+    ).aligned_stack_context(slice_count)
     if alignment is None:
         return [request.execute_one(slice_index) for slice_index in range(slice_count)]
 

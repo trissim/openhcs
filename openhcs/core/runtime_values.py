@@ -49,7 +49,7 @@ from openhcs.core.runtime_semantics import (
     RuntimePlaneAxis,
     SpatialGridOrigin,
     SpatialGridOrdering,
-    aligned_dense_object_label_arrays,
+    DenseObjectLabelPairAligner,
     coerce_enum,
     measurement_table_row_layout,
     measurement_table_row_layout_from_fields,
@@ -2438,19 +2438,18 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
             labels=self.aggregate_variant(ObjectLabelVariant.FINAL),
             unedited_labels=(
                 self.aggregate_variant(ObjectLabelVariant.UNEDITED)
-                if self.has_variant(ObjectLabelVariant.UNEDITED)
+                if ObjectLabelVariantDataStrategy.for_enum_member(
+                    ObjectLabelVariant.UNEDITED
+                ).present(self.values)
                 else None
             ),
             small_removed_labels=(
                 self.aggregate_variant(ObjectLabelVariant.SMALL_REMOVED)
-                if self.has_variant(ObjectLabelVariant.SMALL_REMOVED)
+                if ObjectLabelVariantDataStrategy.for_enum_member(
+                    ObjectLabelVariant.SMALL_REMOVED
+                ).present(self.values)
                 else None
             ),
-        )
-
-    def has_variant(self, variant: ObjectLabelVariant) -> bool:
-        return ObjectLabelVariantDataStrategy.for_enum_member(variant).present(
-            self.values
         )
 
     def aggregate_variant(self, variant: ObjectLabelVariant) -> Any:
@@ -2463,7 +2462,7 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
         if not self.expands_to_source_domain:
             return value.labels_for_variant(variant)
         domain_value = self.domain_value_for_variant(value, variant)
-        aligned, _ = aligned_dense_object_label_arrays(domain_value, domain_value)
+        aligned, _ = DenseObjectLabelPairAligner(domain_value, domain_value).aligned()
         return aligned
 
     @abstractmethod

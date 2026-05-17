@@ -130,7 +130,7 @@ from openhcs.core.runtime_semantics import (
     RuntimePlaneAxis,
     RuntimePlaneAxisProjectionStrategy,
     RuntimePlaneAxisProjector,
-    aligned_dense_object_label_arrays,
+    DenseObjectLabelPairAligner,
     dense_object_label_id_domain,
     measurement_row_axis_field_names,
     parent_child_relationship_artifact_endpoints,
@@ -9543,10 +9543,10 @@ class RelateObjectsRelationshipMeasurementRows(RelationshipMeasurementRows):
             child_labels,
             dtype=np.int32,
         )
-        parent_array, child_array = aligned_dense_object_label_arrays(
+        parent_array, child_array = DenseObjectLabelPairAligner(
             parent_array,
             child_array,
-        )
+        ).aligned()
         parents_of = np.zeros(
             int(child_array.max()) if child_array.size else 0,
             dtype=np.int32,

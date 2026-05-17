@@ -2900,20 +2900,19 @@ class DenseObjectRelationshipPayloadStrategy(ObjectRelationshipPayloadStrategy):
 
         slice_count = self.relationship_slice_count(context)
         if slice_count is not None:
-            aligned_stacks = aligned_dense_object_label_stacks(
+            aligned_stacks = DenseObjectLabelPairAligner(
                 context.parent_labels,
                 context.child_labels,
-                slice_count=slice_count,
-            )
+            ).aligned_stacks(slice_count)
             if aligned_stacks is not None:
                 return self.stack_payload(context, *aligned_stacks)
 
         parent_array, child_array = (
             object_label_dense_array(labels, dtype=np.int32)
-            for labels in aligned_dense_object_label_arrays(
+            for labels in DenseObjectLabelPairAligner(
                 context.parent_labels,
                 context.child_labels,
-            )
+            ).aligned()
         )
         child_count = int(child_array.max()) if child_array.size else 0
         if child_count <= 0:
@@ -3405,45 +3404,6 @@ class ObjectLabelInstanceDomains:
         )
 
 
-def aligned_dense_object_label_arrays(
-    first_labels: Any,
-    second_labels: Any,
-) -> tuple[Any, Any]:
-    """Align two dense object-label payloads to a common label geometry.
-
-    OpenHCS can carry labels as stacks, while compatibility shims and many
-    module semantics operate on one dense XY label plane. Projection is only
-    allowed when it is deterministic: singleton stacks collapse, identical
-    shapes pass through, and stack-to-plane projection rejects conflicting
-    positive labels at the same XY coordinate.
-    """
-    return DenseObjectLabelPairAligner(first_labels, second_labels).aligned()
-
-
-def aligned_dense_object_label_stacks(
-    first_labels: Any,
-    second_labels: Any,
-    *,
-    slice_count: int,
-) -> tuple[Any, Any] | None:
-    """Align two dense object-label payloads and expose matching slice stacks."""
-    return DenseObjectLabelPairAligner(first_labels, second_labels).aligned_stacks(
-        slice_count
-    )
-
-
-def aligned_dense_object_label_stack_alignment(
-    first_labels: Any,
-    second_labels: Any,
-    *,
-    slice_count: int,
-) -> "DenseObjectLabelStackAlignment | None":
-    """Return aligned object-label stacks plus native-domain restoration hooks."""
-    return DenseObjectLabelPairAligner(first_labels, second_labels).aligned_stack_context(
-        slice_count
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class SourceSpatialDomainProjection:
     """Projection from source-image dense coordinates back to native XY shape."""
@@ -3824,24 +3784,6 @@ class DenseObjectLabelMaskAligner:
         if array.ndim == 2:
             return np.ascontiguousarray(np.broadcast_to(array, (slice_count, *array.shape)))
         return None
-
-
-def aligned_dense_object_labels_and_mask(
-    labels: Any,
-    mask: Any,
-) -> tuple[Any, Any]:
-    """Align dense object labels with a binary/image mask without label coercion."""
-    return DenseObjectLabelMaskAligner(labels, mask).aligned()
-
-
-def aligned_dense_object_label_mask_stack_alignment(
-    labels: Any,
-    mask: Any,
-    *,
-    slice_count: int,
-) -> DenseObjectLabelMaskStackAlignment | None:
-    """Return aligned object-label/mask stacks plus native-domain restoration."""
-    return DenseObjectLabelMaskAligner(labels, mask).aligned_stack_context(slice_count)
 
 
 @dataclass(frozen=True, slots=True)
@@ -4267,14 +4209,14 @@ def object_label_parent_child_payload(
         )
         return ObjectRelationshipPayloadStrategy.for_context(request).payload(request)
     else:
-        parent_array, context_array = aligned_dense_object_label_arrays(
+        parent_array, context_array = DenseObjectLabelPairAligner(
             parent_labels,
             child_region_labels,
-        )
-        child_array, context_array = aligned_dense_object_label_arrays(
+        ).aligned()
+        child_array, context_array = DenseObjectLabelPairAligner(
             child_labels,
             context_array,
-        )
+        ).aligned()
 
     child_ids_array, parent_ids_array = kernel.dominant_parent_ids_by_child(
         parent_array,
@@ -4310,7 +4252,7 @@ def object_label_lineage_geometry(
 ) -> ObjectLabelLineageGeometry:
     """Classify the geometry contract for object-label lineage derivation."""
     try:
-        aligned_dense_object_label_arrays(parent_labels, child_labels)
+        DenseObjectLabelPairAligner(parent_labels, child_labels).aligned()
     except ValueError:
         return ObjectLabelLineageGeometry.IDENTITY_DOMAIN
     return ObjectLabelLineageGeometry.SHARED_GEOMETRY

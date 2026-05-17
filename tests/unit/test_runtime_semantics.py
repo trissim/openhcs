@@ -18,10 +18,8 @@ from openhcs.core.runtime_semantics import (
     SourceSpatialDomainAdapter,
     StackRuntimePlaneProjection,
     DenseObjectLabelConsecutiveRelabelingStrategy,
+    DenseObjectLabelPairAligner,
     ObjectLabelIdDomainStrategy,
-    aligned_dense_object_label_arrays,
-    aligned_dense_object_label_stack_alignment,
-    aligned_dense_object_label_stacks,
     dense_object_label_extent_id_domain,
     dense_object_label_id_domain,
     dense_object_label_identity_domains,
@@ -73,10 +71,10 @@ def test_aligned_dense_object_label_arrays_projects_unambiguous_stack() -> None:
         dtype=np.int32,
     )
 
-    aligned_stack, aligned_reference = aligned_dense_object_label_arrays(
+    aligned_stack, aligned_reference = DenseObjectLabelPairAligner(
         stack,
         reference,
-    )
+    ).aligned()
 
     np.testing.assert_array_equal(aligned_stack, first_plane)
     np.testing.assert_array_equal(aligned_reference, reference)
@@ -253,10 +251,10 @@ def test_aligned_dense_object_label_arrays_rejects_conflicting_stack_projection(
     second_plane = np.array([[2, 0]], dtype=np.int32)
 
     with pytest.raises(ValueError, match="conflicting positive labels"):
-        aligned_dense_object_label_arrays(
+        DenseObjectLabelPairAligner(
             np.stack((first_plane, second_plane)),
             np.array([[1, 0]], dtype=np.int32),
-        )
+        ).aligned()
 
 
 def test_object_label_parent_child_payload_aligns_parent_stack_to_child_plane() -> None:
@@ -337,7 +335,10 @@ def test_aligned_dense_object_label_arrays_applies_payload_domain_to_matching_ra
         SourceSpatialDomainAdapter.for_value(parent_payload),
         ObjectLabelPayloadSourceSpatialDomainAdapter,
     )
-    parent, child = aligned_dense_object_label_arrays(parent_payload, compact_child)
+    parent, child = DenseObjectLabelPairAligner(
+        parent_payload,
+        compact_child,
+    ).aligned()
 
     assert parent.shape == (6, 7)
     assert child.shape == (6, 7)
@@ -359,11 +360,10 @@ def test_aligned_dense_object_label_stacks_share_payload_source_domain() -> None
         source_spatial_shape_yx=(5, 6),
     )
 
-    stacks = aligned_dense_object_label_stacks(
+    stacks = DenseObjectLabelPairAligner(
         primary_payload,
         compact_secondary,
-        slice_count=2,
-    )
+    ).aligned_stacks(2)
 
     assert stacks is not None
     primary_stack, secondary_stack = stacks
@@ -386,11 +386,10 @@ def test_aligned_dense_object_label_stack_alignment_restores_secondary_domain() 
         spatial_origin_yx=(1, 2),
         source_spatial_shape_yx=(5, 6),
     )
-    alignment = aligned_dense_object_label_stack_alignment(
+    alignment = DenseObjectLabelPairAligner(
         primary_payload,
         compact_secondary,
-        slice_count=2,
-    )
+    ).aligned_stack_context(2)
 
     assert alignment is not None
     source_domain_output = np.zeros_like(alignment.second_stack)

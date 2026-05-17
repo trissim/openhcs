@@ -28,7 +28,7 @@ from openhcs.core.runtime_semantics import (
     ObjectLabelIdDomainStrategy,
     ObjectLabelMeasurementValues,
     ParentChildRelationshipPayload,
-    aligned_dense_object_label_arrays,
+    DenseObjectLabelPairAligner,
 )
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
@@ -110,10 +110,10 @@ class FilterObjectsLabelPlane:
         ).project_xy_plane_without_relabeling()
 
     def aligned_to(self, reference_labels: np.ndarray) -> np.ndarray:
-        _aligned_reference, aligned_labels = aligned_dense_object_label_arrays(
+        _aligned_reference, aligned_labels = DenseObjectLabelPairAligner(
             reference_labels,
             object_label_dense_array(self.labels, dtype=np.int32),
-        )
+        ).aligned()
         return aligned_labels.astype(np.int32, copy=False)
 
     @classmethod
