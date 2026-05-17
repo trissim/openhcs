@@ -27,6 +27,7 @@ from openhcs.core.config import (
     ZarrConfig,
     NapariVariableSizeHandling,
 )
+from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
 from openhcs.core.config import (
     LazyStepMaterializationConfig,
     LazyNapariStreamingConfig,
@@ -717,10 +718,12 @@ def _execute_pipeline_zmq(
 
         # Execute pipeline - server will create orchestrator and get wells
         response = client.execute_pipeline(
-            plate_id=str(test_config.plate_dir),
-            pipeline_steps=pipeline.steps,
-            global_config=global_config,
-            pipeline_config=pipeline_config,
+            OpenHCSExecutionSubmission(
+                plate_id=str(test_config.plate_dir),
+                pipeline_steps=pipeline.steps,
+                global_config=global_config,
+                pipeline_config=pipeline_config,
+            )
         )
 
         # Check response

@@ -25,6 +25,7 @@ from typing import Dict, List, Optional, Callable, Any, Tuple
 
 from openhcs.core.config import PipelineConfig
 from openhcs.core.log_utils import get_current_log_file_path
+from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
 
 from PIL import Image
 from textual.reactive import reactive
@@ -851,10 +852,12 @@ class PlateManagerWidget(ButtonListWidget):
                 # Execute via ZMQ (in executor to avoid blocking UI)
                 def _execute():
                     return self.zmq_client.execute_pipeline(
-                        plate_id=str(plate_path),
-                        pipeline_steps=definition_pipeline,
-                        global_config=effective_config,
-                        pipeline_config=pipeline_config,
+                        OpenHCSExecutionSubmission(
+                            plate_id=str(plate_path),
+                            pipeline_steps=definition_pipeline,
+                            global_config=effective_config,
+                            pipeline_config=pipeline_config,
+                        )
                     )
 
                 response = await loop.run_in_executor(None, _execute)

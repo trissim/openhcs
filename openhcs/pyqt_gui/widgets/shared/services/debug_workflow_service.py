@@ -27,6 +27,7 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
     RunSpec,
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
+from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
 
 logger = logging.getLogger(__name__)
 
@@ -161,11 +162,14 @@ class DebugWorkflowService:
 
         def submit_debug() -> Dict[str, Any]:
             return self._client_service.zmq_client.submit_debug_pipeline(
-                plate_id=plate_path,
-                pipeline_steps=definition_pipeline,
-                global_config=run_spec.global_config,
-                pipeline_config=run_spec.pipeline_config,
-                compile_artifact_id=compile_artifact_id,
+                OpenHCSExecutionSubmission(
+                    plate_id=plate_path,
+                    pipeline_steps=definition_pipeline,
+                    global_config=run_spec.global_config,
+                    pipeline_config=run_spec.pipeline_config,
+                    compile_artifact_id=compile_artifact_id,
+                    config_params=debug_request.config_params,
+                ),
                 debug_session_id=debug_request.debug_session_id,
                 snapshot_store_ref=debug_request.snapshot_store_ref,
                 snapshot_store_backend=debug_request.snapshot_store_backend,
@@ -175,7 +179,6 @@ class DebugWorkflowService:
                 start_step_index=debug_request.start_step_index,
                 start_after_invocation_key=debug_request.start_after_invocation_key,
                 replay_mode=debug_request.replay_mode,
-                config_params=debug_request.config_params,
             )
 
         response = await self._run_blocking(loop, submit_debug)

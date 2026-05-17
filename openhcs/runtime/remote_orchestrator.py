@@ -11,7 +11,10 @@ This wrapper is maintained for backward compatibility with existing code.
 import logging
 import warnings
 from typing import Any, Dict, List, Optional
-from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+from openhcs.runtime.zmq_execution_client import (
+    OpenHCSExecutionSubmission,
+    ZMQExecutionClient,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -24,15 +27,17 @@ class RemoteOrchestrator:
     For new code, use ZMQExecutionClient directly:
 
     ```python
-    from openhcs.runtime.zmq_execution_client import ZMQExecutionClient
+    from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission, ZMQExecutionClient
 
     client = ZMQExecutionClient(host='remote-server', port=7777, persistent=True)
     client.connect()
     response = client.execute_pipeline(
-        plate_id=plate_id,
-        pipeline_steps=pipeline_steps,
-        global_config=global_config,
-        pipeline_config=pipeline_config
+        OpenHCSExecutionSubmission(
+            plate_id=plate_id,
+            pipeline_steps=pipeline_steps,
+            global_config=global_config,
+            pipeline_config=pipeline_config,
+        )
     )
     ```
 
@@ -120,10 +125,12 @@ class RemoteOrchestrator:
         logger.info(f"Executing pipeline on remote server {self.server_host}:{self.server_port}...")
 
         response = self.client.execute_pipeline(
-            plate_id=str(plate_id),
-            pipeline_steps=pipeline_steps,
-            global_config=global_config,
-            pipeline_config=pipeline_config
+            OpenHCSExecutionSubmission(
+                plate_id=str(plate_id),
+                pipeline_steps=pipeline_steps,
+                global_config=global_config,
+                pipeline_config=pipeline_config,
+            )
         )
 
         # Convert response format for backward compatibility
@@ -193,4 +200,3 @@ class RemoteOrchestrator:
     def __exit__(self, exc_type, exc_val, exc_tb):
         """Context manager exit."""
         self._disconnect()
-

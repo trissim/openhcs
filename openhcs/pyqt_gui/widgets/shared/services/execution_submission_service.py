@@ -21,6 +21,7 @@ from openhcs.pyqt_gui.widgets.shared.services.terminal_result_builder import (
     TerminalExecutionResultBuilder,
 )
 from openhcs.pyqt_gui.widgets.shared.services.zmq_client_service import ZMQClientService
+from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
 from zmqruntime.execution import (
     CallbackExecutionStatusPollPolicy,
     ExecutionStatusPoller,
@@ -76,11 +77,13 @@ class ExecutionSubmissionService:
 
         def submit() -> Dict[str, Any]:
             return self._client_service.zmq_client.submit_pipeline(
-                plate_id=plate_path,
-                pipeline_steps=definition_pipeline,
-                global_config=run_spec.global_config,
-                pipeline_config=run_spec.pipeline_config,
-                compile_artifact_id=compile_artifact_id,
+                OpenHCSExecutionSubmission(
+                    plate_id=plate_path,
+                    pipeline_steps=definition_pipeline,
+                    global_config=run_spec.global_config,
+                    pipeline_config=run_spec.pipeline_config,
+                    compile_artifact_id=compile_artifact_id,
+                )
             )
 
         response = await self._run_blocking(loop, submit)

@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, TypeVar
 
+from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
 from zmqruntime.execution import CallbackBatchSubmitWaitPolicy
 
 logger = logging.getLogger(__name__)
@@ -138,11 +139,13 @@ class CompileWorkflowService:
                 self.pipeline_fingerprint(definition_pipeline),
             )
             return zmq_client.submit_compile(
-                plate_id=plate_path,
-                pipeline_steps=definition_pipeline,
-                global_config=self._global_config_provider(),
-                pipeline_config=pipeline_config,
-                config_params=config_params,
+                OpenHCSExecutionSubmission(
+                    plate_id=plate_path,
+                    pipeline_steps=definition_pipeline,
+                    global_config=self._global_config_provider(),
+                    pipeline_config=pipeline_config,
+                    config_params=config_params,
+                )
             )
 
         response = await self._run_blocking(loop, submit_compile)
