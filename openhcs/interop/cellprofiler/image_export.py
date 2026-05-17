@@ -9,9 +9,13 @@ can be used with materialization decorators to save images.
 """
 
 import numpy as np
-from typing import Tuple, Optional
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from typing import ClassVar, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
+import skimage.util
+from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
@@ -54,6 +58,85 @@ class SaveMetadata:
     max_value: float
 
 
+class BitDepthConversionStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal image conversion policy for one SaveImages bit depth."""
+
+    __registry_key__ = "bit_depth_label"
+    __skip_if_no_key__ = True
+
+    bit_depth: ClassVar[BitDepth | None] = None
+    bit_depth_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_bit_depth(cls, bit_depth: BitDepth) -> "BitDepthConversionStrategy":
+        strategy_type = cls.__registry__.get(bit_depth.value)
+        if strategy_type is None:
+            raise ValueError(f"Unsupported SaveImages bit depth: {bit_depth.value!r}")
+        return strategy_type()
+
+    @abstractmethod
+    def convert(self, image: np.ndarray) -> np.ndarray:
+        """Return image converted to this strategy's output bit depth."""
+
+    @abstractmethod
+    def binary_mask(self, image: np.ndarray) -> np.ndarray:
+        """Return binary mask/cropping output in this strategy's bit depth."""
+
+
+class IntegerBitDepthConversionStrategy(BitDepthConversionStrategy):
+    """Shared conversion policy for unsigned integer SaveImages outputs."""
+
+    true_value: ClassVar[int]
+    dtype: ClassVar[type[np.integer]]
+    converter: ClassVar[Callable[[np.ndarray], np.ndarray]]
+
+    def convert(self, image: np.ndarray) -> np.ndarray:
+        if image.dtype == np.bool_:
+            return (image * self.true_value).astype(self.dtype)
+        return self.converter(image)
+
+    def binary_mask(self, image: np.ndarray) -> np.ndarray:
+        return (image > 0).astype(self.dtype) * self.true_value
+
+
+class EightBitConversionStrategy(IntegerBitDepthConversionStrategy):
+    bit_depth = BitDepth.BIT_8
+    bit_depth_label = bit_depth.value
+    true_value = 255
+    dtype = np.uint8
+    converter = staticmethod(skimage.util.img_as_ubyte)
+
+
+class SixteenBitConversionStrategy(IntegerBitDepthConversionStrategy):
+    bit_depth = BitDepth.BIT_16
+    bit_depth_label = bit_depth.value
+    true_value = 65535
+    dtype = np.uint16
+    converter = staticmethod(skimage.util.img_as_uint)
+
+
+class FloatBitConversionStrategy(BitDepthConversionStrategy):
+    bit_depth = BitDepth.BIT_FLOAT
+    bit_depth_label = bit_depth.value
+
+    def convert(self, image: np.ndarray) -> np.ndarray:
+        return skimage.util.img_as_float32(image)
+
+    def binary_mask(self, image: np.ndarray) -> np.ndarray:
+        return (image > 0).astype(np.float32)
+
+
+class RawBitConversionStrategy(BitDepthConversionStrategy):
+    bit_depth = BitDepth.RAW
+    bit_depth_label = bit_depth.value
+
+    def convert(self, image: np.ndarray) -> np.ndarray:
+        return image.copy()
+
+    def binary_mask(self, image: np.ndarray) -> np.ndarray:
+        return (image > 0).astype(np.float32)
+
+
 @numpy(contract=ProcessingContract.PURE_2D)
 @special_outputs(("save_metadata", csv_materializer(
     fields=["slice_index", "filename", "bit_depth", "file_format", 
@@ -86,35 +169,12 @@ def save_images(
     Returns:
         Tuple of (converted_image, save_metadata)
     """
-    import skimage.util
-    
-    # Convert image based on bit depth
-    if bit_depth == BitDepth.BIT_8:
-        # Convert to 8-bit unsigned integer
-        if image.dtype == np.bool_:
-            output = (image * 255).astype(np.uint8)
-        else:
-            output = skimage.util.img_as_ubyte(image)
-    elif bit_depth == BitDepth.BIT_16:
-        # Convert to 16-bit unsigned integer
-        if image.dtype == np.bool_:
-            output = (image * 65535).astype(np.uint16)
-        else:
-            output = skimage.util.img_as_uint(image)
-    elif bit_depth == BitDepth.BIT_FLOAT:
-        # Convert to 32-bit float
-        output = skimage.util.img_as_float32(image)
-    else:  # RAW - no conversion
-        output = image.copy()
+    conversion_strategy = BitDepthConversionStrategy.for_bit_depth(bit_depth)
+    output = conversion_strategy.convert(image)
     
     # Handle mask/cropping types - ensure binary output
     if image_type == ImageType.MASK or image_type == ImageType.CROPPING:
-        if bit_depth == BitDepth.BIT_8:
-            output = (output > 0).astype(np.uint8) * 255
-        elif bit_depth == BitDepth.BIT_16:
-            output = (output > 0).astype(np.uint16) * 65535
-        else:
-            output = (output > 0).astype(np.float32)
+        output = conversion_strategy.binary_mask(output)
     
     # Generate metadata
     metadata = SaveMetadata(
@@ -162,8 +222,6 @@ def save_images_3d(
     Returns:
         Tuple of (converted_image, save_metadata)
     """
-    import skimage.util
-    
     # Validate format supports 3D
     volumetric_formats = [FileFormat.TIFF, FileFormat.NPY, FileFormat.H5]
     if file_format not in volumetric_formats:
@@ -172,15 +230,7 @@ def save_images_3d(
             f"Use one of: {[f.value for f in volumetric_formats]}"
         )
     
-    # Convert based on bit depth
-    if bit_depth == BitDepth.BIT_8:
-        output = skimage.util.img_as_ubyte(image)
-    elif bit_depth == BitDepth.BIT_16:
-        output = skimage.util.img_as_uint(image)
-    elif bit_depth == BitDepth.BIT_FLOAT:
-        output = skimage.util.img_as_float32(image)
-    else:  # RAW
-        output = image.copy()
+    output = BitDepthConversionStrategy.for_bit_depth(bit_depth).convert(image)
     
     metadata = SaveMetadata(
         slice_index=0,
