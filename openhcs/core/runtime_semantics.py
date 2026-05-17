@@ -3447,8 +3447,11 @@ class SourceSpatialDomainProjection:
 
 
 @dataclass(frozen=True, slots=True)
-class DenseObjectLabelProjectionAlignment:
+class DenseObjectLabelProjectionAlignment(metaclass=AutoRegisterMeta):
     """Shared source-to-native projection metadata for dense label alignment."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
 
     first_projection: SourceSpatialDomainProjection | None
     second_projection: SourceSpatialDomainProjection | None
@@ -4008,8 +4011,11 @@ def dense_object_label_extent_id_domain(labels: Any) -> tuple[int, ...]:
     return tuple(range(1, max_present_id + 1))
 
 
-class ObjectLabelDomainDeclaration(ABC):
+class ObjectLabelDomainDeclaration(ABC, metaclass=AutoRegisterMeta):
     """Nominal declaration for transformed object-label identity domains."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
 
     @abstractmethod
     def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
