@@ -1,78 +1,194 @@
-# CellProfiler Runtime Compatibility Deletion and Parity Rerun Plan
+# CellProfiler Runtime Compatibility Deletion And Parity Rerun Plan
 
 ## Goal
 
-Remove legacy CellProfiler runtime compatibility paths only after proving they
-are unused by current generated pipelines and preserving parity on the benchmark
-corpus.
+Delete remaining CellProfiler compatibility paths only when they are proven to be
+legacy migration support rather than current product runtime authority, then
+rerun generated-pipeline and official parity gates.
 
-Generated pipeline boilerplate has been removed from the current target shape.
-The remaining risk is old compatibility machinery retained for migration. That
-machinery should be deleted deliberately, with generated-pipeline tests and
-official parity gates after each deletion batch.
+Generated `.cppipe` output no longer needs the old generated-runtime boilerplate
+target. Current risk is accidental deletion of load-bearing runtime/import
+semantics while chasing compatibility-looking names such as `legacy`, `sidecar`,
+or `CellProfilerModuleExecutor`.
 
-## Current Evidence
+## Verified Current State
 
-Current generated-source tests already assert:
+Generated boilerplate removal is complete for the main target:
 
-- no `CELLPROFILER_MODULE_CONTRACTS` in generated source
-- no generated `ModuleArtifactContract(...)` literals
-- no generated `CellProfilerModuleExecutor`
-- no generated direct `cellprofiler_module_callable(...)` calls
-- no generated per-artifact decorator use
+- generated source does not emit `CELLPROFILER_MODULE_CONTRACTS`
+- generated source does not emit `ModuleArtifactContract(...)` literals
+- generated source does not emit per-module `CellProfilerModuleExecutor`
+  globals
+- generated source does not directly call `cellprofiler_module_callable(...)`
+- generated source uses normal backend callables and `FunctionStep`
+  declarations, with product runtime/import code applying wrappers and
+  contract sidecars
 
-Remaining compatibility areas to inventory:
+Current compatibility grep shows several categories:
 
-- `openhcs/interop/cellprofiler/runtime/generated_pipeline.py`
-- `openhcs/interop/cellprofiler/runtime/module_execution.py`
-- `openhcs/interop/cellprofiler/runtime/__init__.py`
-- any benchmark/import code still accepting old generated modules
-- contract sidecar codecs and registry hydration paths
+### Current Runtime Authorities, Not Deletion Targets Yet
 
-## Target Shape
+- `CellProfilerModuleExecutor`
+  - product runtime executor in `openhcs/interop/cellprofiler/runtime/module_execution.py`
+  - directly tested by runtime adapter/module execution tests
+- `cellprofiler_module_callable`
+  - product-owned binding factory used by generated runtime step binding
+- `attach_callable_contract_metadata`
+  - product metadata attachment detail used by runtime callable binding
+- `GeneratedPipelineContractSidecar`
+  - versioned JSON sidecar for generated module contracts
 
-- Current generated modules remain declarative.
-- Runtime wrappers, contract registry, adapter preparation, and materialization
-  sidecars remain product-owned.
-- Old generated-boilerplate import shims are deleted once tests prove no current
-  path needs them.
-- Sidecar schema/version checks stay fail-loud.
+### True Legacy/Compatibility Candidates
+
+- broad package re-export surfaces in `openhcs/interop/cellprofiler/__init__.py`
+  and `openhcs/interop/cellprofiler/runtime/__init__.py`
+- `pipeline_generator.py` legacy registry loader path
+- parser/source-schema legacy settings support:
+  - legacy indented/unindented cppipe parser modes
+  - legacy escaped match metadata
+  - legacy `LoadImages` source type checks
+  - legacy original-color aliases
+- module-settings legacy upgrade paths:
+  - legacy threshold log-transform defaults
+  - legacy Align/Tile bindings
+  - legacy MeasureColocalization accuracy choices
+- benchmark compatibility cache keys and legacy source-tree digests
+
+### Advisor Findings In CP Area
+
+Fresh advisor scan over `openhcs/interop/cellprofiler` reports broad remaining
+cleanup opportunities:
+
+- metadata-only setting binding and ignore classes in
+  `module_settings_binding.py`
+- `ExpandShrinkOperationModeBinding` declaration family
+- function-name/grid variant registry opportunity
+- manual `__all__` surfaces
+- private helper shadowing public authority:
+  `_filter_objects_child_count_object_names` vs
+  `filter_objects_child_count_object_names`
+- threshold binding repeated keyword bundles
+- typed aliases for worm/untangle kwargs
+- display plot role-prefixed subrecords
+- `product_record` usage in `module_roles.py`
+- optional/effect carrier opportunities in measurement/worm parsing
+
+These are not all compatibility deletion tasks; most are CP settings/runtime
+architecture cleanup tasks. Do not conflate them with deleting migration
+support.
+
+## Target Architecture
+
+- Current generated modules stay declarative.
+- Product runtime owns execution wrappers, artifact contracts, adapter
+  construction, and sidecar hydration.
+- Versioned generated sidecars stay fail-loud and tested.
+- Legacy import/parser/settings branches are only retained when tests prove they
+  are needed for real historical `.cppipe` inputs.
+- Public exports derive from module authority or are explicitly documented as
+  compatibility surface.
+- Official parity is rerun after behavior-affecting deletions.
 
 ## Non-Goals
 
-- Do not remove versioned sidecar support used by current generated modules.
-- Do not remove public runtime exports until import tests prove they are unused
-  or callers have migrated.
-- Do not run expensive official30 after docs-only or pure GUI changes.
-- Do not chase advisor cleanliness over compatibility semantics.
+- Do not delete `CellProfilerModuleExecutor` until there is a replacement
+  product runtime executor.
+- Do not delete `cellprofiler_module_callable` until runtime step binding no
+  longer needs it.
+- Do not delete generated contract sidecars; they are current architecture.
+- Do not delete parser/source-schema legacy support unless replacement fixtures
+  prove it is unused.
+- Do not run official30 for docs-only or import-surface-only changes.
 
-## Implementation Sequence
+## Implementation Passes
 
-### Stage 1: Compatibility Inventory
+### Pass 1: Compatibility Inventory Table
 
-1. Search for old generated symbols:
-   - `CELLPROFILER_MODULE_CONTRACTS`
-   - `attach_callable_contract_metadata`
-   - `cellprofiler_module_callable`
-   - `CellProfilerModuleExecutor`
-   - artifact decorator emission
-2. Classify each remaining hit as:
-   - current product runtime authority
-   - current generated source test
-   - legacy compatibility shim
-   - historical documentation
-3. Write the inventory into this plan before deleting code.
+Create an inventory table in this plan or a follow-up doc with columns:
 
-### Stage 2: Delete One Compatibility Path
+- symbol/path
+- current callers
+- category:
+  - current runtime authority
+  - public compatibility export
+  - legacy parser/import support
+  - benchmark-only compatibility
+  - test-only historical fixture
+- deletion precondition
+- required test gate
 
-For each deletion:
+Commands:
 
-1. Add or update a test proving current generated pipelines do not need the path.
-2. Delete the path.
-3. Run focused generated-pipeline tests.
-4. Commit if clean.
+```bash
+rg "CELLPROFILER_MODULE_CONTRACTS|ModuleArtifactContract\\(|CellProfilerModuleExecutor|cellprofiler_module_callable|attach_callable_contract_metadata|legacy|compat|sidecar" \
+  openhcs/interop/cellprofiler tests docs/plans
+```
 
-### Stage 3: Generated Pipeline Parity Gate
+### Pass 2: Public Export Surface Cleanup
+
+1. Audit `__all__` findings.
+2. Derive public names from module authority where safe.
+3. Keep explicit exports only for stable public API or compatibility.
+4. Add import tests before deleting exports.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_interop_import_records.py -q
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_strategy_registries.py -q
+```
+
+### Pass 3: Settings Declaration Tables
+
+1. Convert metadata-only setting ignore/binding leaves into typed declarations.
+2. Prioritize:
+   - `ModuleUnmappedSettingIgnore`
+   - declarative module settings binding leaves
+   - structuring-element module binding leaves
+   - expand/shrink mode bindings
+3. Preserve registry lookup semantics exactly.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/unit/test_settings_binder.py \
+  tests/unit/test_cellprofiler_strategy_registries.py \
+  tests/unit/test_cellprofiler_generated_pipeline_execution.py \
+  -q
+```
+
+### Pass 4: Public Authority Deduplication
+
+1. Replace private helper duplicates with public authorities, starting with
+   `_filter_objects_child_count_object_names`.
+2. Convert `product_record` runtime schemas to explicit dataclasses where
+   advisor flags them.
+3. Add semantic aliases/subrecords for worm and display plot record shapes.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_module_execution.py -q
+```
+
+### Pass 5: Legacy Parser/Source-Schema Audit
+
+1. List every legacy parser/source-schema branch.
+2. Match each branch to a test fixture.
+3. Delete only branches with no fixture and no real `.cppipe` corpus need.
+4. Add fixtures before retaining any branch that currently lacks coverage.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/unit/test_cppipe_parser.py \
+  tests/unit/test_cellprofiler_source_schema.py \
+  -q
+```
+
+### Pass 6: Generated Pipeline Gate
 
 Run:
 
@@ -81,75 +197,40 @@ Run:
   tests/unit/test_cellprofiler_symbol_table.py \
   tests/unit/test_cellprofiler_generated_pipeline_execution.py \
   tests/integration/test_cellprofiler_generated_pipeline.py \
-  -q --tb=short --disable-warnings
+  -q
 ```
 
-If integration tests are too slow, run the failing/affected subset first, then
-the full integration gate before claiming completion.
+If integration is slow or environment-sensitive, run focused unit gates first
+but do not claim compatibility deletion complete until integration has passed or
+been explicitly deferred with a reason.
 
-### Stage 4: Official30 Cached Parity Rerun
+### Pass 7: Official30 Parity Gate
 
-Use the current benchmark manifest and cached CP references where available.
-Prefer rerunning only affected/missing cases until all generated-pipeline tests
-are green.
+Only after behavior-affecting CP runtime/planner/import changes:
 
-Required outputs:
+1. Use cached CP references where available.
+2. Rerun missing/affected cases first.
+3. Then run all 30 if parity-risk code changed.
+4. Persist summary CSV, parity status, skip reasons, and figure/table updates.
 
-- summary CSV
-- parity status
+Required report fields:
+
+- pipelines passed parity
+- pipelines failed parity
 - speedup status if runtime behavior changed
-- list of skipped cases and skip reasons
+- skipped cases and why
+- CP reference source/cache path
 
-### Stage 5: Final Full Unit Gate
+### Pass 8: Full Unit Gate
 
 ```bash
-.venv/bin/python -m pytest tests/unit -q --tb=short --disable-warnings
+.venv/bin/python -m pytest tests/unit -q
 ```
 
 ## Completion Criteria
 
-- Every deleted compatibility path has a test proving current generated pipeline
-  behavior.
-- Generated-pipeline unit/integration tests pass.
-- Official30 parity is rerun for affected runtime changes.
-- Remaining compatibility exports are either current runtime authority or
-  explicitly documented migration support.
-
-## Progress: 2026-05-17
-
-Inventory result:
-
-- `CELLPROFILER_MODULE_CONTRACTS`: only present in tests/docs proving generated
-  source does not emit it.
-- `ModuleArtifactContract(...)` literals: current product/runtime tests and
-  sidecar codecs use typed contracts; generated source tests prove literals are
-  absent.
-- `CellProfilerModuleExecutor`: still current product runtime authority in
-  `runtime.module_execution`; unit tests instantiate it directly. It is not
-  generated pipeline boilerplate.
-- `cellprofiler_module_callable`: still current product-owned runtime binding
-  factory used by `CellProfilerRuntimeStepBinding.load`; generated source tests
-  prove generated modules do not call it directly.
-- `attach_callable_contract_metadata`: still current runtime callable metadata
-  implementation detail; generated source tests prove generated modules do not
-  call it.
-
-Deleted compatibility path:
-
-- Removed `CellProfilerModuleExecutor` and `cellprofiler_module_callable` from
-  the broad `openhcs.interop.cellprofiler.runtime` package re-export surface.
-- Updated remaining internal/test compatibility imports to use the concrete
-  `openhcs.interop.cellprofiler.runtime.module_execution` authority.
-
-Verification:
-
-- `tests/unit/test_cellprofiler_symbol_table.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_cellprofiler_runtime_adapter.py tests/unit/test_cellprofiler_module_execution.py`:
-  `389 passed`.
-
-Remaining:
-
-- Do not delete `CellProfilerModuleExecutor` or `cellprofiler_module_callable`
-  without first replacing the product runtime binding authority; they are no
-  longer generated boilerplate.
-- Official30 parity rerun is only needed after behavior-changing CP runtime or
-  planner changes. This slice changed import surface only.
+- Every deleted compatibility path has a test proving current behavior.
+- Remaining compatibility paths are classified and justified.
+- Generated-pipeline unit/integration gates pass.
+- Official30 parity is rerun after behavior-changing CP runtime/planner changes.
+- No compatibility shim is added without a deletion criterion.

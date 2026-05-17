@@ -2,148 +2,223 @@
 
 ## Goal
 
-Remove the remaining source-assignment model debt without weakening the typed
-source-binding editor or CellProfiler import semantics.
+Finish the source-assignment cleanup below the GUI layer. The editor is no
+longer the main problem; the remaining debt is in source matching and workspace
+materialization.
 
-The source-binding UI is already advisor-clean. The remaining smell is in the
-core model layer: repeated validation loops, metadata-only source-role leaves,
-and compatibility property aliases split source-assignment semantics across
-`source_bindings.py` and `pipeline_image_schema.py`.
+The target is one coherent source-assignment model where selectors, filters,
+image-set grouping, virtual workspace filenames, imported metadata joins, and
+auxiliary artifact mappings are represented by typed domain records instead of
+repeated structural mappings and helper pipelines.
 
-## Current Evidence
+## Verified Current State
 
-Fresh advisor spot-check from `plan_completion_audit_20260517.md`:
+Advisor scan run on:
 
-- `openhcs/core/source_bindings.py`: `4` findings.
-- `openhcs/core/pipeline_image_schema.py`: `3` findings.
-- `openhcs/pyqt_gui/widgets/source_bindings_editor.py`: `0` findings.
+```bash
+.venv/bin/python -m nominal_refactor_advisor \
+  openhcs/core/source_bindings.py \
+  openhcs/core/pipeline_image_schema.py \
+  openhcs/core/source_schema_workspace.py \
+  openhcs/core/source_matching.py
+```
 
-Relevant files:
+Current findings are concentrated in:
 
-- `openhcs/core/source_bindings.py`
-- `openhcs/core/pipeline_image_schema.py`
-- `openhcs/core/source_bindings_view.py`
+- `openhcs/core/source_matching.py`
 - `openhcs/core/source_schema_workspace.py`
-- `openhcs/interop/cellprofiler/source_schema.py`
+
+Previously completed and currently not the target:
+
+- `openhcs/core/source_bindings.py` was reduced to zero findings in the earlier
+  source-binding pass.
+- `openhcs/core/pipeline_image_schema.py` was reduced to zero findings in the
+  earlier source-role pass.
+- `openhcs/pyqt_gui/widgets/source_bindings_editor.py` is already a typed editor
+  over `SourceBindingsViewModel`, `EditableSourceBindingRow`,
+  `StructuredSelectorCellWidget`, and semantic picker dialogs.
+
+Relevant tests:
+
+- `tests/unit/test_source_matching.py`
+- `tests/unit/test_source_schema_workspace.py`
 - `tests/unit/test_source_bindings.py`
 - `tests/unit/test_pipeline_image_schema.py`
 - `tests/unit/test_source_bindings_view.py`
-- `tests/unit/test_source_schema_workspace.py`
 - `tests/unit/test_cellprofiler_source_schema.py`
 - `tests/unit/pyqt_gui/test_source_bindings_editor.py`
 
-## Target Shape
+## Concrete Findings To Address
 
-- Source assignment identity is owned by one nominal source-assignment domain.
-- Dataclass validation uses a typed validation/coercion record only when it owns
-  real source-binding semantics.
-- Source roles are either declared through a generated leaf table or explicitly
-  justified as behavior-bearing registered leaves.
-- Compatibility aliases remain only when public API or serialized state requires
-  them; otherwise callers consume the nominal field directly.
+### Source Filter Matching
+
+`openhcs/core/source_matching.py` has 12 metadata-only matcher leaves:
+
+- value predicates: contains, not contains, regex contains, equals, starts/ends
+- path predicates: image and TIFF checks
+
+These should be generated from typed matcher declarations rather than
+hand-written class shells. The existing nominal family is good; the leaf
+declaration mechanism is the missing layer.
+
+Also remove `_source_filter_target_text`, which is now a trivial forwarding
+wrapper over `SourceFilterTargetResolver.for_subject(...).resolve_text(...)`.
+
+### Workspace Source Schema
+
+`openhcs/core/source_schema_workspace.py` has the larger remaining model debt:
+
+- repeated `construct_filename(...)` projections in primary, auxiliary, anchor,
+  and collision-free site mappings
+- repeated structural annotations:
+  - `Mapping[AllComponents, Mapping[str, str | None]]`
+  - `Mapping[str, tuple[SourceSchemaCandidate, ...]]`
+  - `Mapping[tuple[str, ...], tuple[Mapping[str, str], ...]]`
+  - tuple return shapes combining virtual path, metadata, and component values
+- unused `_empty_workspace_component_values`
+- helper candidates that should become nominal authorities:
+  - `_add_mapping`
+  - `_merged_image_set_metadata`
+  - `_source_metadata_for_virtual_path`
+
+## Target Architecture
+
+Introduce or promote these load-bearing source-workspace domain objects:
+
+- `SourceFilterMatcherDeclaration`
+  - generates value/path matcher leaves for `SourceFilterMatcher`
+  - owns `match_type`, registry key, and predicate semantics
+
+- `SourceSchemaCandidateGroups`
+  - semantic alias or dataclass around `Mapping[str, tuple[SourceSchemaCandidate, ...]]`
+  - used by metadata/order image-set assemblers and validation
+
+- `WorkspaceComponentValueMap`
+  - semantic alias or dataclass around component-to-value projection
+  - used by filename construction and metadata writing
+
+- `ImportedMetadataJoinIndex`
+  - semantic alias or dataclass around join-key to imported rows
+
+- `WorkspaceVirtualPathProjection`
+  - authoritative builder for `construct_filename(...)` calls
+  - owns defaults for well/site/channel/z/timepoint/extension
+
+- `WorkspaceMappingSink`
+  - replaces `_add_mapping`
+  - owns conflict handling and map mutation semantics, not just argument
+    forwarding
+
+- `WorkspaceVirtualPathMetadata`
+  - replaces `_source_metadata_for_virtual_path`
+  - owns how image-set metadata, candidate metadata, and source assignment
+    metadata combine
+
+- `ImageSetMetadataMerge`
+  - moves `_merged_image_set_metadata` into the image-set assembler boundary
 
 ## Non-Goals
 
-- Do not rewrite the source-binding editor; it is already advisor-clean.
-- Do not convert CellProfiler source-bound images into artifact consumers.
-- Do not add generic private helper functions that merely hide repeated loops.
-- Do not change serialized field names for `NamedSourceBinding`,
-  `ImageAssignment`, `SourceArtifactAssignment`, or `StepSourceBindingsConfig`.
+- Do not rewrite `SourceBindingsEditorWidget` in this campaign.
+- Do not change serialized dataclass field names for source-binding configs.
+- Do not make generic private helpers whose only value is hiding repeated code.
+- Do not weaken CellProfiler `Images` / `Metadata` / `NamesAndTypes` import
+  compatibility.
 
-## Implementation Sequence
+## Implementation Passes
 
-### Stage 1: Source Role Decision
+### Pass 1: Matcher Declarations
 
-1. Inspect `SourceRole` leaves and call sites.
-2. If leaves are metadata-only and closed over stable fields, replace hand-written
-   leaves with a generated declaration table that preserves registry lookup.
-3. If leaves carry enough documentation/behavior to remain explicit, encode that
-   decision in this plan and do not chase the advisor finding locally.
-
-Verification:
-
-- `tests/unit/test_pipeline_image_schema.py`
-- advisor on `openhcs/core/pipeline_image_schema.py`
-
-### Stage 2: Validation Domain Object
-
-1. Identify the repeated `__post_init__` loops in source-binding dataclasses.
-2. Introduce a named validation/coercion value object only if it owns a semantic
-   domain, for example "non-empty tuple of typed source filters" or "match plan
-   dimensions".
-3. Replace repeated loops through that object while preserving constructor
-   compatibility.
+1. Add `SourceFilterMatcherDeclaration`.
+2. Materialize the 12 matcher leaves from a declaration tuple.
+3. Keep `SourceFilterMatcher.for_match_type(...)` stable.
+4. Delete `_source_filter_target_text` and call the resolver directly or via a
+   behavior-bearing request object.
 
 Verification:
 
-- `tests/unit/test_source_bindings.py`
-- `tests/unit/test_source_schema_workspace.py`
-- advisor on `openhcs/core/source_bindings.py`
+```bash
+.venv/bin/python -m pytest tests/unit/test_source_matching.py -q
+.venv/bin/python -m nominal_refactor_advisor openhcs/core/source_matching.py
+```
 
-### Stage 3: Alias Audit
+### Pass 2: Source Workspace Type Aliases
 
-1. Audit `SourceFilterMatchType.requires_value` call sites.
-2. Audit `SourceArtifactAssignment.artifact_kind` call sites.
-3. Replace internal callers with nominal fields where safe.
-4. Keep aliases only if external/generated compatibility needs them, with a
-   short comment and no extra wrapper abstractions.
+1. Add semantic aliases or small frozen dataclasses for the repeated mapping
+   shapes.
+2. Replace annotations only where the alias names a real domain.
+3. Avoid wrappers that merely rename a `dict`.
 
 Verification:
 
-- `rg "requires_value|artifact_kind" openhcs tests`
-- focused tests above
+```bash
+.venv/bin/python -m py_compile openhcs/core/source_schema_workspace.py
+.venv/bin/python -m pytest tests/unit/test_source_schema_workspace.py -q
+```
 
-### Stage 4: Integrated Source-Binding Gate
+### Pass 3: Virtual Filename Builder
 
-Run:
+1. Introduce `WorkspaceVirtualPathProjection`.
+2. Route every `construct_filename(...)` call in workspace materialization
+   through it.
+3. Preserve exact generated virtual paths in existing tests.
+4. Add a regression test for collision-free site component generation if one is
+   missing.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_source_schema_workspace.py -q
+```
+
+### Pass 4: Mapping And Metadata Authorities
+
+1. Replace `_add_mapping` with `WorkspaceMappingSink`.
+2. Replace `_source_metadata_for_virtual_path` with
+   `WorkspaceVirtualPathMetadata`.
+3. Move `_merged_image_set_metadata` into the image-set assembler boundary.
+4. Delete `_empty_workspace_component_values` if still unreferenced.
+
+Verification:
 
 ```bash
 .venv/bin/python -m pytest \
+  tests/unit/test_source_schema_workspace.py \
+  tests/unit/test_cellprofiler_source_schema.py \
+  -q
+```
+
+### Pass 5: Integrated Gate
+
+Run the complete source-assignment gate:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/unit/test_source_matching.py \
   tests/unit/test_source_bindings.py \
   tests/unit/test_pipeline_image_schema.py \
   tests/unit/test_source_bindings_view.py \
   tests/unit/test_source_schema_workspace.py \
   tests/unit/test_cellprofiler_source_schema.py \
   tests/unit/pyqt_gui/test_source_bindings_editor.py \
-  -q --tb=short --disable-warnings
+  -q
 ```
 
-Then run:
+Run advisor:
 
 ```bash
-.venv/bin/python -m nominal_refactor_advisor openhcs/core/source_bindings.py --json --min-hardcoded-string-sites 3 --min-builder-keywords 3
-.venv/bin/python -m nominal_refactor_advisor openhcs/core/pipeline_image_schema.py --json --min-hardcoded-string-sites 3 --min-builder-keywords 3
+.venv/bin/python -m nominal_refactor_advisor \
+  openhcs/core/source_bindings.py \
+  openhcs/core/pipeline_image_schema.py \
+  openhcs/core/source_schema_workspace.py \
+  openhcs/core/source_matching.py
 ```
 
 ## Completion Criteria
 
-- Source-assignment advisor findings are either resolved or explicitly justified
-  in this plan as stable compatibility/noise.
-- Focused source-binding and CP source-schema tests pass.
-- No generated or serialized source-binding shape changes unless covered by
-  migration tests.
-
-## Progress: 2026-05-17
-
-Completed:
-
-- `SourceFilterMatchType.requires_value` is now real enum member state rather
-  than a property alias.
-- Repeated tuple/type validation is owned by `SourceBindingTypedValues`.
-- Repeated unique-identity validation is owned by `SourceBindingUniqueValues`.
-- Runtime source-path provenance lookup is owned by `SourceRuntimePathLookup`,
-  and the CP runtime adapter consumes that nominal object directly instead of
-  going through trivial context forwarding methods.
-- Pipeline image-type role shells are declared from
-  `ImageTypeSourceRoleClassSpec`, preserving the nominal class hierarchy used by
-  source-image loading strategy dispatch without hand-written metadata-only
-  class shells.
-- `SourceArtifactAssignment` now uses the nominal `artifact_kind` field directly
-  instead of the `kind` field plus an `artifact_kind` alias.
-
-Verification:
-
-- Focused source-binding/source-schema/runtime-adapter gate: `215 passed`.
-- Advisor:
-  - `openhcs/core/source_bindings.py`: `0`.
-  - `openhcs/core/pipeline_image_schema.py`: `0`.
+- Source matching and source workspace advisor findings are resolved or
+  explicitly documented as stable analyzer noise.
+- Existing source-binding serialization and CP source-schema import behavior are
+  unchanged.
+- Focused source tests pass.
+- Full `tests/unit` passes before merging this campaign.

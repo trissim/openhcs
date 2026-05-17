@@ -1,170 +1,180 @@
-# ZMQ Server Decomposition Plan
+# ZMQ Server And Runtime Transport Decomposition Plan
 
 ## Goal
 
-Split `ZMQExecutionServer` along real transport and execution boundaries while
-preserving the existing client/server protocol.
+Complete the ZMQ/server-side decomposition without regressing the established
+protocol, debug control loop, progress events, or orchestrator execution path.
 
-The server currently owns request normalization, execution signature building,
-debug replay signature building, worker debug commands, snapshot reads, artifact
-exports, orchestrator lifecycle, and progress emission. The refactor must name
-those boundaries before touching the large orchestration method.
+The original `ZMQExecutionServer` split is mostly complete. The next large
+campaign is not more arbitrary extraction from that file; it is consolidating
+adjacent runtime transport/viewer systems that still carry duplicated protocol,
+viewer, process-launch, and platform-dispatch logic.
 
-## Current Evidence
+## Verified Current State
 
-Fresh advisor spot-check on `openhcs/runtime/zmq_execution_server.py`: `10`
-findings.
-
-Main signals:
-
-- attribute probes
-- repeated `_emit_zmq_progress(...)` builder calls
-- broad `ZMQExecutionServer` class role quotient
-- `_execute_with_orchestrator` orchestration hub
-- repeated semantic parameter family across request signature helpers
-
-Relevant files:
+Core ZMQ files now exist:
 
 - `openhcs/runtime/zmq_execution_server.py`
 - `openhcs/runtime/zmq_execution_client.py`
-- `openhcs/core/debug.py`
-- `openhcs/pyqt_gui/widgets/shared/services/batch_workflow_service.py`
-- `tests/unit/test_debug_runtime.py`
-- ZMQ-related integration tests under `tests/integration`
+- `openhcs/runtime/zmq_debug_control.py`
+- `openhcs/runtime/zmq_execution_signature.py`
+- `openhcs/runtime/zmq_progress.py`
+- `openhcs/runtime/zmq_orchestrator_environment.py`
+- `openhcs/runtime/zmq_compilation.py`
+- `openhcs/runtime/zmq_worker_execution.py`
+- `openhcs/runtime/zmq_server_hooks.py`
 
-## Target Shape
+Prior verification recorded:
 
-- `ZMQExecutionSignatureBuilder`
-  - owns run, compile, debug replay, and cache signature construction from one
-    typed request record.
-- `ZMQProgressEventEmitter` or `ZMQProgressEventFactory`
-  - owns status/progress payload construction before sending through the server.
-- `DebugControlRequestRouter`
-  - owns snapshot read, artifact export, and worker command dispatch.
-- `ZMQOrchestratorExecutionDriver`
-  - owns the phase split currently inside `_execute_with_orchestrator`.
-- `ZMQExecutionServer`
-  - remains the socket/protocol facade and delegates to the above services.
+- `tests/unit/test_debug_runtime.py`: passing
+- `tests/unit`: passing
+- advisor-clean extracted ZMQ service files
+
+Fresh runtime advisor scan shows that the biggest remaining runtime debt is now
+outside the core ZMQ execution server:
+
+- duplicated Napari viewer/server code
+- duplicated Fiji/Napari streaming server code
+- string/numeric dispatch for viewer protocols
+- manual process-launch keyword bundles
+- platform dispatch by raw strings
+- manual bidirectional registries in viewer state
+- repeated `_create_pong_response`
+- class-marker membership checks in stream visualizers
+
+This means the next ZMQ/runtime campaign should be named more accurately:
+`runtime transport and viewer server consolidation`.
+
+## Target Architecture
+
+### ZMQ Execution Core
+
+Keep:
+
+- `ZMQExecutionServer` as protocol/socket facade.
+- `ZMQExecutionClient` as client protocol facade.
+- `ZMQProgressEmitter` as semantic progress event builder.
+- `DebugControlMessageStrategy` as debug control router.
+- `ZMQWorkerExecutionRequest` as worker execution boundary.
+- `ZMQCompilationRequest` as compile/cache boundary.
+- `ZMQOrchestratorEnvironmentRequest` as environment setup boundary.
+
+Do not reopen these unless a focused advisor or test shows real debt.
+
+### Viewer/Transport Runtime
+
+Introduce:
+
+- `ViewerType`
+  - enum for `napari`, `fiji`, and any future viewer identity
+- `ViewerProtocolStatus`
+  - enum/value object for `success`, `error`, `complete`, etc.
+- `StreamingDataKind`
+  - image, points, shapes, ROI payloads
+- `ViewerLayerKind`
+  - image, labels, points, shapes, ROI layer behavior
+- `ViewerProcessLaunchRequest`
+  - command, cwd, env, stdout/stderr policy, platform flags
+- `ViewerPlatformPolicy`
+  - Linux/Darwin/Windows launch-env and process-spawn behavior
+- `ViewerHeartbeatResponse`
+  - shared `_create_pong_response` payload for Fiji/Napari servers
+- `ViewerStateRegistry`
+  - owns layer/window/pending-update bidirectional registries
+- `StreamingVisualizerLifecycle`
+  - replaces class-marker checks in `is_running` and connect/reuse paths
 
 ## Non-Goals
 
-- Do not change the wire protocol unless a compatibility test is updated first.
-- Do not split `_execute_with_orchestrator` mechanically before typed request and
-  progress records exist.
-- Do not introduce structural `getattr`/`hasattr` replacements; define nominal
-  request records instead.
-- Do not mix with GUI widget decomposition in the same commit.
+- Do not change ZMQ wire protocol without compatibility tests.
+- Do not rewrite Napari/Fiji feature behavior in the same pass.
+- Do not merge GUI server browser refactors into runtime server refactors.
+- Do not add generic wrappers around `Popen`; create a typed process launch
+  request that owns platform behavior.
 
-## Implementation Sequence
+## Implementation Passes
 
-### Stage 1: Characterization
+### Pass 1: ZMQ Core Regression Gate
 
-1. Add focused tests for request signature stability if missing.
-2. Add focused tests for debug control routing using typed request/response
-   records.
-3. Snapshot representative progress payloads emitted during orchestrator phases.
-
-### Stage 2: Debug Control Router
-
-1. Move `_handle_debug_snapshot_read`, `_handle_debug_artifact_export`, and
-   `_handle_debug_worker_command` behavior into a router object.
-2. Keep server methods as compatibility delegators only if tests or external
-   callers need them.
-3. Run debug runtime tests and advisor.
-
-### Stage 3: Signature Builder
-
-1. Introduce a typed execution signature input record.
-2. Move `_build_request_signature` and `_build_debug_replay_signature` logic into
-   the builder.
-3. Ensure compile/run/debug replay signatures remain byte-for-byte stable where
-   existing cache behavior depends on it.
-
-### Stage 4: Progress Event Factory
-
-1. Introduce typed progress request records for queued/running/completed/error
-   states.
-2. Replace repeated `_emit_zmq_progress(...)` keyword bundles with request
-   objects.
-3. Keep `_emit_zmq_progress` as the socket-send boundary.
-
-### Stage 5: Orchestrator Driver
-
-1. Split `_execute_with_orchestrator` by phases after stages 2-4 have removed
-   repeated parameter threading.
-2. Preserve cleanup/finalization guarantees.
-3. Run focused and full unit gates.
-
-## Verification
-
-Focused:
+Before touching runtime viewer transport, run:
 
 ```bash
-.venv/bin/python -m pytest tests/unit/test_debug_runtime.py -q --tb=short --disable-warnings
+.venv/bin/python -m pytest tests/unit/test_debug_runtime.py -q
+.venv/bin/python -m nominal_refactor_advisor openhcs/runtime/zmq_execution_server.py
 ```
 
-Broader:
+If ZMQ core findings appear, fix those first. Otherwise leave ZMQ core stable.
+
+### Pass 2: Viewer Protocol Domain
+
+1. Add `ViewerType`, `ViewerProtocolStatus`, `StreamingDataKind`, and
+   `ViewerLayerKind`.
+2. Replace repeated hardcoded strings in Napari/Fiji viewer server responses.
+3. Replace string dispatch for data/layer kinds with typed strategies.
+
+Affected files:
+
+- `openhcs/runtime/fiji_viewer_server.py`
+- `openhcs/runtime/napari_stream_visualizer.py`
+- `openhcs/runtime/napari_viewer_server.py`
+
+### Pass 3: Process Launch Domain
+
+1. Add `ViewerProcessLaunchRequest`.
+2. Add `ViewerPlatformPolicy`.
+3. Route Napari and Fiji detached process launching through typed requests.
+4. Preserve exact environment variables and platform flags.
+
+Advisor targets:
+
+- repeated `Popen(...)` keyword bundles
+- raw `platform.system()` string dispatch
+- repeated `cocoa` / `xcb` strings
+
+### Pass 4: Shared Viewer Server Base
+
+1. Move `_create_pong_response` into the shared streaming viewer server base.
+2. Replace concrete constant residue with `ViewerType`.
+3. Add tests for Fiji and Napari pong response payloads.
+
+### Pass 5: Viewer State Registry
+
+1. Introduce `ViewerStateRegistry` or per-viewer typed registries.
+2. Replace manual mirrored dictionaries for:
+   - layers
+   - dimension labels
+   - pending updates
+   - hyperstack metadata
+3. Preserve update/removal semantics with tests.
+
+### Pass 6: Visualizer Lifecycle
+
+1. Replace class-marker membership checks with a nominal lifecycle state object.
+2. Remove structural `hasattr` checks by introducing typed optional capability
+   adapters for subprocess, socket, viewer process, and control channel.
+3. Add tests for running, stopped, reused, and failed viewer lifecycle states.
+
+### Pass 7: Integrated Runtime Gate
+
+Run:
 
 ```bash
-.venv/bin/python -m pytest tests/unit -q --tb=short --disable-warnings
+.venv/bin/python -m pytest tests/unit/test_debug_runtime.py -q
+.venv/bin/python -m pytest tests/unit -q
+.venv/bin/python -m nominal_refactor_advisor openhcs/runtime
 ```
 
-Advisor:
+Manual smoke, if viewer dependencies are available:
 
 ```bash
-.venv/bin/python -m nominal_refactor_advisor openhcs/runtime/zmq_execution_server.py --json --min-hardcoded-string-sites 3 --min-builder-keywords 3
+.venv/bin/python -m pytest tests/pyqt_gui/integration -q
 ```
 
 ## Completion Criteria
 
-- Debug control routing is separated from socket facade concerns.
-- Signature construction is centralized and typed.
-- Repeated progress payload construction is removed.
-- `_execute_with_orchestrator` is smaller because real phase collaborators own
-  behavior, not because code was relocated into anonymous helpers.
-
-## Progress: 2026-05-17
-
-Completed safe decomposition slices:
-
-- `openhcs.runtime.zmq_debug_control.DebugControlMessageStrategy` now owns
-  snapshot read, artifact export, and paused-worker command control messages as
-  a registered message-strategy family.
-- `openhcs.runtime.zmq_execution_signature.ZMQExecutionRequestPayload` owns
-  request/debug-replay signatures and pipeline SHA projection.
-- `openhcs.runtime.zmq_progress.ZMQProgressEmitter` owns semantic progress
-  events for compile/init/axis compilation phases.
-- `openhcs.runtime.zmq_orchestrator_environment.ZMQOrchestratorEnvironmentRequest`
-  owns per-execution environment preparation: GPU cleanup, debug replay policy,
-  global config context setup, and OMERO plate path preparation.
-- `openhcs.runtime.zmq_compilation.ZMQCompilationRequest` owns compile artifact
-  reuse, fresh compilation, compile progress, and compile-only artifact storage.
-- `openhcs.runtime.zmq_worker_execution.ZMQWorkerExecutionRequest` owns worker
-  start-method resolution, progress-forwarder lifecycle, and final compiled
-  worker execution.
-- `openhcs.runtime.zmq_server_hooks` owns OpenHCS enrichment around private
-  `zmqruntime.ExecutionServer` hook overrides, keeping the server override
-  methods thin framework bridges.
-
-Verification:
-
-- `tests/unit/test_debug_runtime.py`: `39 passed`.
-- `tests/unit`: `1485 passed`.
-- Advisor:
-  - `openhcs/runtime/zmq_debug_control.py`: `0`.
-  - `openhcs/runtime/zmq_execution_signature.py`: `0`.
-  - `openhcs/runtime/zmq_progress.py`: `0`.
-  - `openhcs/runtime/zmq_orchestrator_environment.py`: `0`.
-  - `openhcs/runtime/zmq_compilation.py`: `0`.
-  - `openhcs/runtime/zmq_worker_execution.py`: `0`.
-  - `openhcs/runtime/zmq_server_hooks.py`: `0`.
-  - `openhcs/runtime/zmq_execution_server.py`: reduced from `10` to `2`.
-
-Remaining:
-
-- Decide whether the remaining base-class hook overrides (`_run_execution`,
-  `_handle_status`) should be marked as acceptable framework hook noise in the
-  advisor or pushed upstream into `zmqruntime` as public extension points.
-- Remove attribute-probe sites by introducing typed views over execution
-  records/compiled pipeline definitions where the probes are not base-protocol
+- Core ZMQ execution files remain stable and tests pass.
+- Viewer protocol strings are represented by nominal enums/value objects.
+- Detached process launching is owned by typed launch requests.
+- Napari/Fiji duplicate server code is reduced through shared base behavior.
+- Runtime advisor findings are materially reduced without weakening protocol
   compatibility.
