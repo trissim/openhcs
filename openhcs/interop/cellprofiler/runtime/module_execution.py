@@ -6558,10 +6558,22 @@ class PlaneObjectLabelSourceBindingProjectionStrategy(
 
 
 class CellProfilerMeasurementRecordBuilder(
+    CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=CellProfilerModulePolicyMeta,
+    metaclass=AutoRegisterMeta,
 ):
     """Nominal module-specific measurement-row enrichment."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    __key_extractor__ = staticmethod(
+        CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
+    )
+    registry_key: ClassVar[str | None] = None
+    module_name: ClassVar[str | None] = None
+    fallback_registry_key: ClassVar[str | None] = (
+        CellProfilerModulePolicyRegistryKey.DEFAULT.value
+    )
 
     @abstractmethod
     def build(
