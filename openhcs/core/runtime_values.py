@@ -69,9 +69,11 @@ _ARRAY_PAYLOAD_PREDICATES: list[Callable[[Any], bool]] = []
 logger = logging.getLogger(__name__)
 
 
-class RuntimeArrayPayload(ABC):
+class RuntimeArrayPayload(ABC, metaclass=AutoRegisterMeta):
     """Nominal ABC for array payload types accepted by runtime artifacts."""
 
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
     __array_priority__ = 1000
 
     @property
@@ -1599,8 +1601,11 @@ class RuntimeValue:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class NativeRuntimeValue(ABC):
+class NativeRuntimeValue(ABC, metaclass=AutoRegisterMeta):
     """Native OpenHCS value that can become a validated RuntimeValue."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
 
     name: str
 
