@@ -580,6 +580,52 @@ Remaining work:
 - Decide whether `RuntimeMeasurementFactProjectionContract` should remain a static utility namespace or become a keyed projection family; do not keep `AutoRegisterMeta` on it unless it has a real stable key axis.
 - Normalize `RuntimeObjectLocationRowMergeContract` into a registered family or remove the inheritance if the two leaves are better represented as explicit projection policies.
 
+## 2026-05-17 Runtime Equivalence Follow-Through
+
+Checkpoint:
+
+- Latest pushed checkpoint before this update: `2529335e Centralize measurement feature category priority`.
+- Focused runtime-equivalence tests passed at each slice: `145 passed`.
+- Full unit suite passed at each pushed checkpoint: `1485 passed, 10 warnings`.
+- Advisor scan on `openhcs/core/runtime_equivalence.py`: 55 findings.
+
+Completed since the previous status block:
+
+- Runtime measurement cell projection is nominalized through `RuntimeMeasurementCellValue`, `RuntimeMeasurementCellFactProjection`, and `RuntimeMeasurementCellNumericProjection`; the old cell-fact/numeric private helpers and wrapper adapters are gone.
+- `RuntimeMeasurementFactProjectionContract` no longer pretends to be an `AutoRegisterMeta` family without leaves.
+- `RuntimeObjectLocationRowMergeContract` is now a real registered projection family with enum-backed projection keys.
+- Object-label domain projection, artifact plane identity, expected measurement fact completion, runtime-equivalence shape aliases, aggregate scope policy, and local record schemas now have explicit owning abstractions.
+- Orientation boundary-jitter, pair-derivation, threshold-pair, `sorted_tuple`, and dead-helper wrappers were removed.
+
+Current intentionally deferred/noise findings:
+
+- `strategy_key` and `strategy_label` literal reports are deliberate `AutoRegisterMeta` key-axis declarations. A constants experiment made advisor rent detection worse, so do not hide these literals unless `metaclass_registry` itself learns a first-class key-axis declaration API.
+- `ShapeObjectZernikeDescriptorStabilityContract.is_stable` is a forwarding leaf because the enum-keyed registry requires one leaf for `ObjectZernikeDescriptorFeature.SHAPE`. Proper cleanup should make the stability policy itself the registered strategy leaf, not delete the leaf.
+- `RelationshipAggregateShapeDescriptorFeatureSemantics` forwarding methods represent child-descriptor adaptation. Proper cleanup needs a resolved-child descriptor view that owns `child_context + child_semantics`; deleting the methods would lose aggregate descriptor behavior.
+
+Next runtime-equivalence sequence:
+
+1. Add a `ResolvedRelationshipShapeDescriptorSemantics` record that owns child context resolution and child semantics lookup.
+2. Change `RelationshipAggregateShapeDescriptorFeatureSemantics` methods to use the resolved child object. If advisor still sees forwarding, move the aggregate strategy out of the child-delegating family or make the resolved child object the load-bearing collaborator at the caller.
+3. Introduce a required-measurement projection authority for:
+   - `_required_measurement_input_keys`
+   - `_required_measurement_subjects`
+   - `_required_object_identifier_keys`
+   - `_required_object_location_feature_names`
+4. Introduce a sparse-object boundary equivalence authority for:
+   - `_sparse_object_boundary_mean_feature_equivalent`
+   - `_sparse_object_boundary_value_feature_equivalent`
+   - `_sparse_object_boundary_values_equivalent`
+   - `_sparse_object_identifier_counters_equivalent`
+5. Only after those semantic owners exist, split the row/table runtime-measurement cohort into a dedicated module. Moving code before ownership is clearer will create an import tangle.
+
+Verification gate for each runtime-equivalence slice:
+
+- `tests/unit/test_runtime_equivalence.py -q --tb=short --disable-warnings`
+- `tests/unit -q --tb=short --disable-warnings`
+- Advisor scan on `openhcs/core/runtime_equivalence.py`
+- Commit and push before the next slice.
+
 ## Commit and Benchmark Policy
 
 Each risky sequence must be independently revertible:
