@@ -10,7 +10,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any, ClassVar, Self, TypeVar
 
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 
@@ -1153,8 +1153,7 @@ class ObjectLabelVariantDataStrategy(
 ):
     """Registered semantics for object-label variant payload selection."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "variant"
     variant: ClassVar[ObjectLabelVariant]
     strategy_label: ClassVar[str | None] = None
@@ -1950,8 +1949,7 @@ class ObjectLabelDenseDataStrategy(
 ):
     """Registered dense-label extractor for one nominal object-label runtime type."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
     value_type_label: ClassVar[str | None] = None
 
     @classmethod
@@ -2115,8 +2113,7 @@ class ObjectLabelDataRuntimeSliceStackContract(
 ):
     """Declare runtime-slice preservation for a concrete label representation."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def preserves_runtime_slice_stack(
@@ -2237,8 +2234,7 @@ class ObjectLabelRuntimeSliceStackContract(
 ):
     """Declare whether an object-label payload carries the runtime slice axis."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def preserves_runtime_slice_stack(
@@ -2626,8 +2622,7 @@ class ObjectLabelPayloadBuilderStrategy(
 
     value_type: ClassVar[type[object] | None] = None
     value_type_label: ClassVar[str | None] = None
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def for_source(cls, source: object) -> "ObjectLabelPayloadBuilderStrategy":
@@ -2884,8 +2879,7 @@ class ObjectLabelVariantCompatibilityStrategy(
 
     value_type: ClassVar[type[object] | None] = None
     value_type_label: ClassVar[str | None] = None
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def for_variant(
@@ -2970,8 +2964,7 @@ class ObjectLabelMeasurementPayloadStrategy(
 
     value_type: ClassVar[type[object] | None] = None
     value_type_label: ClassVar[str | None] = None
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def for_source(cls, source: object) -> "ObjectLabelMeasurementPayloadStrategy":
@@ -3051,8 +3044,7 @@ class SingletonObjectLabelStackCollapseStrategy(
 
     value_type: ClassVar[type[object] | None] = None
     value_type_label: ClassVar[str | None] = None
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def for_labels(cls, labels: object) -> "SingletonObjectLabelStackCollapseStrategy":
@@ -3170,8 +3162,7 @@ class RuntimeSliceAlignedPayloadNormalizationStrategy(
 ):
     """Normalize nominal slice-aligned payloads before runtime storage."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "kind"
 
     kind: ClassVar[ArtifactKind]

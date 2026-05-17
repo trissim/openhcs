@@ -18,7 +18,7 @@ import time
 from types import MappingProxyType
 from typing import Any, ClassVar, TypeVar, get_args, get_origin, get_type_hints
 
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 from openhcs.core.aligned_image_payload import (
@@ -2531,8 +2531,7 @@ class CellProfilerInvocationExecutionModePolicy(
 ):
     """Nominal policy for modules whose settings change stack execution mode."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
     __key_extractor__ = staticmethod(
         CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
     )
@@ -2614,8 +2613,7 @@ class CellProfilerPayloadSpatialRankStrategy(
 ):
     """Resolve spatial rank from nominal runtime payload types."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def resolve_rank(cls, value: Any) -> int | None:
@@ -3358,8 +3356,7 @@ class CellProfilerSpecialInputValueStrategy(
 ):
     """Resolve special-input payloads by declared role semantics."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     strategy_key: ClassVar[CellProfilerSpecialInputPayloadSemantics | None] = None
     strategy_label: ClassVar[str | None] = None
 
@@ -3404,8 +3401,7 @@ class DenseLabelImageSpecialInputValueStrategy(CellProfilerSpecialInputValueStra
 class RuntimeInputBindingRequestBase(ABC, metaclass=AutoRegisterMeta):
     """Shared runtime context for artifact-backed runtime-input binding."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
 
     registry_key: ClassVar[str | None] = None
 
@@ -3577,8 +3573,7 @@ class CellProfilerObjectMeasurementVectorSourceStrategy(
 ):
     """Nominal source strategy for object-measurement vector binding."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "source"
     source: ClassVar[CellProfilerObjectMeasurementVectorSource]
     strategy_label: ClassVar[str | None] = None
@@ -3955,8 +3950,7 @@ class CellProfilerObjectInputPolicy(
 ):
     """Nominal binding policy for CellProfiler object-label inputs."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
     __key_extractor__ = staticmethod(
         CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
     )
@@ -3983,8 +3977,7 @@ class CellProfilerPrimaryImageInputPolicy(
 ):
     """Nominal policy for image artifacts that drive absorbed execution."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
     __key_extractor__ = staticmethod(
         CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
     )
@@ -4156,8 +4149,7 @@ class MissingObjectMeasurementValueStrategy(
 ):
     """Registered materialization policy for missing object-measurement values."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "value_policy"
     value_policy: ClassVar[MissingObjectMeasurementValuePolicy]
     strategy_label: ClassVar[str | None] = None
@@ -4247,8 +4239,7 @@ class CellProfilerObjectMeasurementRowPolicy(
 ):
     """Nominal export-row policy for object-scoped measurement modules."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
     __key_extractor__ = staticmethod(
         CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
     )
@@ -5679,8 +5670,7 @@ class MeasurementLabelExecutionModeStrategy(
 ):
     """Choose object-measurement execution mode from the label domain shape."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @abstractmethod
     def execution_mode(
@@ -5845,20 +5835,7 @@ class SliceAlignedLabelArgumentStrategy(
 ):
     """Choose the executor-facing label payload for slice-aligned measurements."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
-
-    @classmethod
-    def for_request(
-        cls,
-        request: CellProfilerObjectMeasurementLabelArgumentRequest,
-    ) -> "SliceAlignedLabelArgumentStrategy":
-        strategy = cls.for_nominal_value(request.measurement_image_payload)
-        return (
-            strategy
-            if strategy is not None
-            else DenseSliceAlignedLabelArgumentStrategy()
-        )
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @abstractmethod
     def label_argument(
@@ -5897,8 +5874,7 @@ class CellProfilerObjectMeasurementLabelArgumentPolicy(
 ):
     """Bind object-measurement labels from the declared callable domain contract."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "execution_mode"
 
     execution_mode: ClassVar[ObjectLabelMeasurementExecution]
@@ -5923,9 +5899,12 @@ class SliceAlignedObjectMeasurementLabelArgumentPolicy(
         self,
         request: CellProfilerObjectMeasurementLabelArgumentRequest,
     ) -> Any:
-        return SliceAlignedLabelArgumentStrategy.for_request(request).label_argument(
-            request
+        strategy = SliceAlignedLabelArgumentStrategy.for_nominal_value(
+            request.measurement_image_payload
         )
+        if strategy is None:
+            return request.dense_labels
+        return strategy.label_argument(request)
 
 
 class FullStackObjectMeasurementLabelArgumentPolicy(
@@ -6349,8 +6328,7 @@ class CellProfilerMeasurementImagePlaneCountStrategy(
 ):
     """Nominal execution-plane count contract for measurement images."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
     value_type: ClassVar[type[Any] | None] = None
     value_type_label: ClassVar[str | None] = None
 
@@ -6517,8 +6495,7 @@ class ObjectLabelSourceBindingProjectionStrategy(
 ):
     """Project object labels by source binding only for plane-scoped domains."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "scope"
     scope: ClassVar[ObjectLabelDomainScope]
     strategy_label: ClassVar[str | None] = None
@@ -6575,8 +6552,7 @@ class CellProfilerMeasurementRecordBuilder(
 ):
     """Nominal module-specific measurement-row enrichment."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
     __key_extractor__ = staticmethod(
         CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
     )
@@ -7067,8 +7043,7 @@ class CellProfilerImageOutputContextStrategy(
 ):
     """Attach runtime image context to declared image outputs."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
     value_type: ClassVar[type[Any] | None] = None
 
     @classmethod
@@ -7430,8 +7405,7 @@ class AlignMeasurementFeature(str, Enum):
 class CellProfilerMeasurementRows(ABC, metaclass=AutoRegisterMeta):
     """Base contract for emitted CellProfiler measurement fact rows."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
 
     registry_key: ClassVar[str | None] = None
 
@@ -8340,8 +8314,7 @@ class MeasurementObjectRowIdentityProjectionStrategy(
 ):
     """Registered projection from source object IDs to exported row identity."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "object_identity"
     object_identity: ClassVar[MeasurementObjectRowIdentity]
     strategy_label: ClassVar[str | None] = None
@@ -8959,8 +8932,7 @@ class MeasurementLabelSourceAlignmentStrategy(
 ):
     """Align measurement labels to the source domain of a measurement image."""
 
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def align(
@@ -9904,8 +9876,7 @@ class CellProfilerSpecialInputPolicy(
 ):
     """Nominal module-specific binding for CellProfiler special_inputs."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
     __key_extractor__ = staticmethod(
         CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
     )
@@ -9993,8 +9964,7 @@ class WatershedSpecialInputBindingStrategy(
 ):
     """Bind Watershed special input roles for one nominal watershed method."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     strategy_key: ClassVar[WatershedMethod | None] = None
     strategy_label: ClassVar[str | None] = None
 

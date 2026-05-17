@@ -9,7 +9,7 @@ from enum import Enum
 from functools import lru_cache
 from typing import Any, ClassVar, cast
 
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 
@@ -109,8 +109,7 @@ class SourceSpatialDomainAdapter(
 
     value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
     value_type_label: ClassVar[str | None] = None
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def for_value(
