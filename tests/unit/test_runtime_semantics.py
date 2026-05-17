@@ -5,9 +5,9 @@ import pytest
 
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
+    AlignedImageStackKwargResolver,
+    ImagePayloadBundleContext,
     ObjectLabelPayloadSourceSpatialDomainAdapter,
-    aligned_image_stack_kwarg,
-    compose_one_image_bundle,
 )
 from openhcs.core.runtime_semantics import (
     ObjectLabelDomain,
@@ -183,7 +183,7 @@ def test_compose_one_image_bundle_preserves_shared_crop_domain() -> None:
         metadata=metadata,
     )
 
-    bundle = compose_one_image_bundle((first, second))
+    bundle = ImagePayloadBundleContext.from_payloads((first, second)).compose()
 
     assert image_payload_data(bundle).shape[-2:] == (5, 5)
     assert image_payload_metadata(bundle).spatial_origin_yx == (1, 2)
@@ -215,12 +215,11 @@ def test_aligned_image_stack_kwarg_resolver_selects_nominal_stack_slice() -> Non
     second = np.ones((3, 4), dtype=np.int32)
     stack = AlignedImageStack((first, second))
 
-    resolved = aligned_image_stack_kwarg(
-        stack,
+    resolved = AlignedImageStackKwargResolver(
         slice_index=1,
         slice_count=2,
         reference_payload=second,
-    )
+    ).resolve(stack)
 
     assert resolved is second
 

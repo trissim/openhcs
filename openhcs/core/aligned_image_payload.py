@@ -1038,20 +1038,20 @@ def compose_aligned_image_payload(
 
     if max_slice_count == 1:
         return ImagePayloadComposition(
-            payload=compose_one_image_bundle(
+            payload=ImagePayloadBundleContext.from_payloads(
                 tuple(slices[0] for slices in payload_slices)
-            ),
+            ).compose(),
             execution_mode=ImagePayloadExecutionMode.FULL_STACK,
         )
     return ImagePayloadComposition(
         payload=AlignedImageStack(
             slices=tuple(
-                compose_one_image_bundle(
+                ImagePayloadBundleContext.from_payloads(
                     tuple(
                         aligned_payload_slice(slices, slice_index)
                         for slices in payload_slices
                     )
-                )
+                ).compose()
                 for slice_index in range(max_slice_count)
             )
         ),
@@ -1149,28 +1149,6 @@ def aligned_image_stack_kwargs(
         name: resolver.resolve(value)
         for name, value in kwargs.items()
     }
-
-
-def aligned_image_stack_kwarg(
-    value: Any,
-    slice_index: int,
-    slice_count: int,
-    *,
-    reference_payload: Any | None = None,
-) -> Any:
-    """Slice one runtime-array kwarg when it shares the aligned stack length."""
-    return AlignedImageStackKwargResolver(
-        slice_index=slice_index,
-        slice_count=slice_count,
-        reference_payload=reference_payload,
-    ).resolve(value)
-
-
-def compose_one_image_bundle(
-    image_payloads: tuple[Any, ...],
-) -> Any:
-    """Stack same-slice image payloads into one multi-image bundle."""
-    return ImagePayloadBundleContext.from_payloads(image_payloads).compose()
 
 
 def _normalize_bundle_image_payload(payload: Any) -> Any:

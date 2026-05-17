@@ -8,10 +8,10 @@ import skimage.morphology
 
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
+    ImagePayloadBundleContext,
     ImagePayloadSliceProjector,
     ImagePayloadExecutionMode,
     compose_aligned_image_payload,
-    compose_one_image_bundle,
     aligned_image_stack_kwargs,
     payload_slice_count,
     payload_slices_for_alignment,
@@ -1721,7 +1721,7 @@ def test_compose_one_image_bundle_stacks_per_image_masks_for_volume_bundle() -> 
         mask=np.zeros((3, 4, 5), dtype=bool),
     )
 
-    bundle = compose_one_image_bundle((first, second))
+    bundle = ImagePayloadBundleContext.from_payloads((first, second)).compose()
 
     assert isinstance(bundle, MaskedImagePayload)
     assert bundle.data.shape == (2, 3, 4, 5)
@@ -3151,7 +3151,7 @@ def test_compose_image_bundle_promotes_grayscale_into_color_bundle():
     color[:, :, 0] = 1
     grayscale = np.full((4, 5), 7, dtype=np.float32)
 
-    bundle = compose_one_image_bundle((color, grayscale))
+    bundle = ImagePayloadBundleContext.from_payloads((color, grayscale)).compose()
 
     assert bundle.shape == (2, 4, 5, 3)
     np.testing.assert_array_equal(bundle[0], color)
@@ -3164,7 +3164,7 @@ def test_compose_image_bundle_collapses_singleton_grayscale_plane_stacks():
     singleton = np.full((1, 4, 5), 3, dtype=np.float32)
     plane = np.full((4, 5), 7, dtype=np.float32)
 
-    bundle = compose_one_image_bundle((singleton, plane))
+    bundle = ImagePayloadBundleContext.from_payloads((singleton, plane)).compose()
 
     assert bundle.shape == (2, 4, 5)
     np.testing.assert_array_equal(bundle[0], singleton[0])
@@ -3191,12 +3191,12 @@ def test_compose_image_bundle_intersects_masks() -> None:
         )
     )
 
-    bundle = compose_one_image_bundle(
+    bundle = ImagePayloadBundleContext.from_payloads(
         (
             MaskedImagePayload(data=image_a, mask=mask_a),
             MaskedImagePayload(data=image_b, mask=mask_b),
         )
-    )
+    ).compose()
 
     assert isinstance(bundle, MaskedImagePayload)
     assert bundle.data.shape == (2, 4, 5)
@@ -3219,7 +3219,7 @@ def test_compose_image_bundle_aligns_cropped_payload_to_source_domain() -> None:
         ),
     )
 
-    bundle = compose_one_image_bundle((full, cropped))
+    bundle = ImagePayloadBundleContext.from_payloads((full, cropped)).compose()
 
     assert isinstance(bundle, ImageMetadataPayload)
     assert bundle.metadata.spatial_origin_yx == (0, 0)
