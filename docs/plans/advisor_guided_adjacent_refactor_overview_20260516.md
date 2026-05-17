@@ -62,6 +62,8 @@ Validated non-actions at this checkpoint:
   - Consolidates runtime semantic and artifact payload families where the advisor reports under-amortized infrastructure.
 - `debug_source_binding_followthrough_20260516.md`
   - Finishes adjacent debug/source-binding UX hardening without mixing it into runtime parity work.
+- `cellprofiler_runtime_deep_refactor_remaining_findings.md`
+  - Tracks remaining risky runtime/source-binding authority refactors, including the queued `NamedSourceBinding`/`SourceAssignmentBase` unification sequence.
 
 ## Execution Order
 
@@ -70,7 +72,8 @@ Validated non-actions at this checkpoint:
 3. If registry work requires changing metaclass/advisor expectations, add focused registry tests before implementation.
 4. Move to runtime boundary decomposition only after registry behavior is stable.
 5. Treat under-amortized runtime semantic findings as fanout questions, not automatic collapse targets.
-6. Finish debug/source-binding polish only after runtime/planner tests are green.
+6. When advisor exposes a large but necessary refactor, add it to the queued plan immediately instead of skipping it as too large.
+7. Finish debug/source-binding polish only after runtime/planner tests are green.
 
 ## Verification Gates
 

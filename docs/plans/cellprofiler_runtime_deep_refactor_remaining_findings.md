@@ -412,6 +412,78 @@ Verification gate:
   - dynamic dispatch target
   - registry/metaclass analyzer limitation.
 
+## Sequence 8: Unify Source-Binding Assignment Authority
+
+Primary files:
+
+- `openhcs/core/source_bindings.py`
+- `openhcs/core/pipeline_image_schema.py`
+- `openhcs/core/source_bindings_view.py`
+- `openhcs/interop/cellprofiler/source_schema.py`
+- `openhcs/interop/cellprofiler/pipeline_generator.py`
+
+Advisor signal:
+
+- `existing_nominal_authority_reuse` on `NamedSourceBinding`
+- `semantic_inheritance_family_ssot` on `SourceAssignmentBase`
+
+Problem:
+
+`SourceAssignmentBase` already owns the source-assignment identity contract:
+
+- alias normalization
+- selector type
+- origin type
+- artifact-kind participation semantics
+
+`NamedSourceBinding` repeats the same core fields in `openhcs/core/source_bindings.py` because the modules are split around two historical concerns:
+
+- `pipeline_image_schema.py` owns pipeline-level image/source assignments.
+- `source_bindings.py` owns step-local runtime binding declarations.
+
+That split now creates two authorities for the same source-binding identity. The correct fix is not a local inheritance tweak in `NamedSourceBinding`; that would likely introduce a circular import or preserve two parallel models. The load-bearing refactor is to move the shared assignment identity to a neutral core module, then make both pipeline schema assignments and step-local named bindings depend on that one authority.
+
+Target shape:
+
+- Create a neutral source-assignment contract module, for example `openhcs/core/source_assignment.py`, that owns:
+  - `SourceSelector` or a dependency-safe selector protocol/record, if the selector can be moved without cycles.
+  - `SourceBindingOrigin`.
+  - `SourceAssignmentIdentity` / `SourceAssignmentBase` with alias, selector, origin normalization.
+  - artifact-kind participation helpers.
+- Make `NamedSourceBinding` inherit or wrap that shared identity instead of re-declaring `alias`, `selector`, and `origin` semantics.
+- Make `ImageAssignment` and `SourceArtifactAssignment` use the same identity base.
+- Preserve serialized dataclass field names and constructor compatibility for:
+  - `NamedSourceBinding(alias=..., artifact_kind=..., selector=..., origin=..., required=...)`
+  - existing `StepSourceBindingsConfig` pickle/state restoration.
+- Keep CellProfiler import/generation logic source-binding-first. Do not convert source-bound images into artifact consumers.
+
+Migration strategy:
+
+1. Map import dependencies between `source_bindings.py`, `pipeline_image_schema.py`, and `source_bindings_view.py`.
+2. Move only the dependency-neutral pieces first. If `SourceSelector` cannot move cleanly, introduce a neutral identity base that accepts the existing selector type through a nominal import direction.
+3. Convert `NamedSourceBinding` to reuse the shared identity while preserving its public dataclass fields and `required` semantics.
+4. Convert `SourceAssignmentBase` users to the same shared identity.
+5. Delete duplicated alias/origin/selector validation after both sides route through the same authority.
+6. Re-run source-binding GUI/model tests before touching CellProfiler generator code.
+
+Verification gate:
+
+- `tests/unit/test_source_bindings.py`
+- `tests/unit/test_source_bindings_view.py`
+- `tests/unit/test_cellprofiler_source_schema.py`
+- `tests/unit/test_cellprofiler_generated_pipeline_execution.py`
+- full `tests/unit`
+- advisor scan on the source-binding files.
+
+Risk:
+
+Medium-high. This is a core model refactor under source-binding GUI, CP pipeline import, generated pipeline execution, and debug replay. It should be an isolated commit series, not mixed with runtime-equivalence or benchmark changes.
+
+Stop condition:
+
+- Stop and diagnose if any serialized config/pickle compatibility test fails.
+- Do not add compatibility helper shims unless they are explicitly temporary and queued for deletion in the same sequence.
+
 ## Commit and Benchmark Policy
 
 Each risky sequence must be independently revertible:
