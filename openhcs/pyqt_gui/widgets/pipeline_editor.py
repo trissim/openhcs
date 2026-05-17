@@ -562,6 +562,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
         # Also auto-processes PREVIEW_FIELD_CONFIGS declaratively
         super().__init__(service_adapter, color_scheme, gui_config, parent)
+        self.code_execution_workflow = PipelineEditorCodeWorkflow(self)
+        self.deletion_workflow = PipelineEditorDeletionWorkflow(self)
 
         # Setup UI (after base and subclass state is ready)
         self.setup_ui()
@@ -1200,18 +1202,6 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 f"Failed to open code editor: {str(e)}"
             )
 
-    # === Code Execution Hooks (ABC _handle_edited_code template) ===
-
-    def _handle_code_execution_error(
-        self, code: str, error: Exception, namespace: dict
-    ) -> Optional[dict]:
-        """Handle old-format step constructors by retrying with migration patch."""
-        return PipelineEditorCodeWorkflow(self).migration_namespace(code, error)
-
-    def _apply_executed_code(self, namespace: dict) -> bool:
-        """Extract pipeline_steps from namespace and apply to widget state."""
-        return PipelineEditorCodeWorkflow(self).apply_namespace(namespace)
-
     def _get_code_missing_error_message(self) -> str:
         """Error message when pipeline_steps variable is missing."""
         return "No 'pipeline_steps = [...]' assignment found in edited code"
@@ -1410,7 +1400,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
     # ========== Time-Travel Hooks (ABC overrides) ==========
 
-    def _get_item_insert_index(self, item: Any, scope_key: str) -> Optional[int]:
+    def get_item_insert_index(self, item: Any, scope_key: str) -> Optional[int]:
         """Get correct position for step re-insertion during time-travel."""
         # Token format is e.g. "functionstep_3" - parse index from it
         del item
@@ -1650,11 +1640,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         """Add steps via dialog (required abstract method)."""
         self.action_add_step()  # Delegate to existing implementation
 
-    def _perform_delete(self, items: List[Any]) -> None:
-        """Remove steps from backing list (required abstract method)."""
-        PipelineEditorDeletionWorkflow(self).delete(items)
-
-    def _show_item_editor(self, item: Any) -> None:
+    def show_item_editor(self, item: Any) -> None:
         """Show DualEditorWindow for step (required abstract method)."""
         step_to_edit = item
         plate_scope = self.current_plate or "no_plate"
@@ -1721,7 +1707,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             return ("No plate selected - select a plate to view pipeline", None)
         return None
 
-    def _pre_update_list(self) -> Any:
+    def prepare_list_update(self) -> Any:
         """Normalize scope tokens before list update.
 
         ObjectState provides resolved values directly - no need to collect
@@ -1757,7 +1743,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         # Call parent closeEvent
         super().closeEvent(event)
 
-    def _on_time_travel_complete(self, dirty_states, triggering_scope):
+    def on_time_travel_complete(self, dirty_states, triggering_scope):
         """Refresh pipeline list after time travel to reflect restored step order."""
         PipelineEditorListWorkflow(self).restore_after_time_travel()
 

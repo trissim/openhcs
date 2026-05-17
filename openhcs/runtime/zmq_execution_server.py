@@ -234,7 +234,7 @@ class ZMQExecutionServer(ExecutionServer):
             execution_payload=execution_payload,
         )
 
-    def _run_execution(self, execution_id, request, record):
+    def run_execution(self, execution_id, request, record):
         """Run an execution and enrich results_summary with output plate path.
 
         The base zmqruntime ExecutionServer only populates well_count/wells in
@@ -242,7 +242,7 @@ class ZMQExecutionServer(ExecutionServer):
         path planning during compilation) so the UI can optionally auto-add it
         as a new orchestrator in Plate Manager.
         """
-        super()._run_execution(execution_id, request, record)
+        super().run_execution(execution_id, request, record)
 
         try:
             self._attach_results_summary_extras(
@@ -255,8 +255,8 @@ class ZMQExecutionServer(ExecutionServer):
                 e,
             )
 
-    def _handle_status(self, msg):
-        response = super()._handle_status(msg)
+    def handle_status(self, msg):
+        response = super().handle_status(msg)
         return ZMQResultsSummaryEnricher(
             self.active_executions
         ).attach_to_status_response(

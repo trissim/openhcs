@@ -281,6 +281,8 @@ class PlateManagerWidget(AbstractManagerWidget):
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
         super().__init__(service_adapter, color_scheme, gui_config, parent)
+        self.code_execution_workflow = PlateManagerCodeWorkflow(self)
+        self.deletion_workflow = PlateManagerDeletionWorkflow(self)
 
         # Setup UI (after base and subclass state is ready)
         self.setup_ui()
@@ -314,7 +316,7 @@ class PlateManagerWidget(AbstractManagerWidget):
 
         logger.info("✅ PlateManagerWidget cleanup completed")
 
-    def _on_time_travel_complete(self, dirty_states, triggering_scope):
+    def on_time_travel_complete(self, dirty_states, triggering_scope):
         """Refresh UI after time travel.
 
         Called automatically by ObjectStateRegistry when time travel completes.
@@ -1405,10 +1407,6 @@ class PlateManagerWidget(AbstractManagerWidget):
         if main_window is not None:
             main_window.show_pipeline_editor()
 
-    def _apply_executed_code(self, namespace: dict) -> bool:
-        """Extract orchestrator variables from namespace and apply to widget state."""
-        return PlateManagerCodeWorkflow(self).apply_namespace(namespace)
-
     # _broadcast_config_to_event_bus() and _broadcast_pipeline_to_event_bus() REMOVED
     # Now using ABC's generic _broadcast_to_event_bus(event_type, data)
 
@@ -1634,15 +1632,7 @@ class PlateManagerWidget(AbstractManagerWidget):
         """Add plates via directory chooser."""
         self.action_add_plate()
 
-    def _validate_delete(self, items: List[Any]) -> bool:
-        """Check if delete is allowed - no running plates (required abstract method)."""
-        return PlateManagerDeletionWorkflow(self).validate(items)
-
-    def _perform_delete(self, items: List[Any]) -> None:
-        """Remove plates from backing list and cleanup orchestrators (required abstract method)."""
-        PlateManagerDeletionWorkflow(self).delete(items)
-
-    def _show_item_editor(self, item: Any) -> None:
+    def show_item_editor(self, item: Any) -> None:
         """Show config window for plate (required abstract method)."""
         self.action_edit_config()  # Delegate to existing implementation
 
