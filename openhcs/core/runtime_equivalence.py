@@ -4526,11 +4526,11 @@ def _measurement_feature_source_priority(
     key: RuntimeMeasurementFeatureKey,
     policy: RuntimeEquivalencePolicy,
 ) -> int | None:
-    normalized = _normalize_identifier(feature_name)
-    if _is_normalized_measurement_identity_field(
-        normalized,
-        policy.measurement_dialect,
-    ):
+    priority = RuntimeMeasurementFeatureCategoryPriority(
+        feature_name,
+        policy,
+    ).priority()
+    if priority is None:
         return None
     canonical_feature_name, canonical_source_name = (
         _canonical_measurement_feature_name_and_source(
@@ -4542,12 +4542,30 @@ def _measurement_feature_source_priority(
     )
     if canonical_feature_name != key.feature_name or canonical_source_name != key.source_name:
         return None
+    return priority if canonical_feature_name else None
 
-    parts = tuple(part for part in normalized.split("_") if part)
-    for index, prefix in enumerate(policy.measurement_dialect.category_prefixes):
-        if _should_strip_measurement_category_prefix(parts, prefix):
-            return index
-    return -1 if canonical_feature_name else None
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFeatureCategoryPriority:
+    """Dialect category-prefix priority for runtime measurement feature names."""
+
+    feature_name: str
+    policy: RuntimeEquivalencePolicy
+
+    def priority(self) -> int | None:
+        normalized = _normalize_identifier(self.feature_name)
+        if _is_normalized_measurement_identity_field(
+            normalized,
+            self.policy.measurement_dialect,
+        ):
+            return None
+        parts = tuple(part for part in normalized.split("_") if part)
+        for index, prefix in enumerate(
+            self.policy.measurement_dialect.category_prefixes
+        ):
+            if _should_strip_measurement_category_prefix(parts, prefix):
+                return index
+        return -1
 
 
 def _runtime_row_merge_candidate_preferred(
@@ -4604,31 +4622,13 @@ def _runtime_measurement_row_has_primary_object_features(
         else tuple(str(field_name) for field_name in row_mapping)
     )
     for feature_name in feature_names:
-        normalized = _normalize_identifier(feature_name)
-        if _is_normalized_measurement_identity_field(
-            normalized,
-            policy.measurement_dialect,
-        ):
-            continue
-        priority = _measurement_feature_category_priority(
+        priority = RuntimeMeasurementFeatureCategoryPriority(
             feature_name,
             policy,
-        )
+        ).priority()
         if priority is not None and priority <= primary_location_priority:
             return True
     return False
-
-
-def _measurement_feature_category_priority(
-    feature_name: str,
-    policy: RuntimeEquivalencePolicy,
-) -> int | None:
-    normalized = _normalize_identifier(feature_name)
-    parts = tuple(part for part in normalized.split("_") if part)
-    for index, prefix in enumerate(policy.measurement_dialect.category_prefixes):
-        if _should_strip_measurement_category_prefix(parts, prefix):
-            return index
-    return -1
 
 
 class RuntimeRowMergeLocationSubjectProjection(RuntimeObjectLocationRowMergeContract):
