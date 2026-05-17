@@ -553,15 +553,13 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
     """Immutable compile-time source binding plan for one step."""
 
     registry_key: ClassVar[str] = "compiled"
-    bindings_by_group: SourceBindingGroupMap
+    bindings_by_group: SourceBindingGroupMap = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     @classmethod
     def empty(cls) -> "CompiledSourceBindingPlan":
-        return cls(
-            bindings_by_group=MappingProxyType({}),
-            metadata_rules=(),
-            match_plan=None,
-        )
+        return cls()
 
     @classmethod
     def from_config(
