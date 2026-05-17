@@ -62,7 +62,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerProcessingContractAuthority,
     CellProfilerPure2DOutputAggregator,
     CallableInvocationKwargSpec,
-    CellProfilerGlobalImageNumberProjection,
+    CellProfilerMeasurementRowsProjection,
     CellProfilerMeasurementProjectionSource,
     CellProfilerMeasurementProjectionRequest,
     CellProfilerMeasurementImageResolver,
@@ -220,7 +220,7 @@ def test_source_qualified_image_rows_use_current_image_number_not_slice_index() 
         np.zeros((2, 2), dtype=np.float32),
         metadata=ImagePayloadMetadata(source_path="/plate/A01_s007_w1.tif"),
     )
-    rows, _mappings = CellProfilerGlobalImageNumberProjection(
+    rows, _mappings = CellProfilerMeasurementRowsProjection(
         CellProfilerMeasurementProjectionRequest(
             source=CellProfilerMeasurementProjectionSource(
                 adapter=adapter,
@@ -871,7 +871,7 @@ def test_global_image_number_projection_ignores_missing_axis_values() -> None:
         {"slice_index": np.nan, "object_label": 2, "value": np.nan},
     ]
 
-    projected, projected_mappings = CellProfilerGlobalImageNumberProjection(
+    projected, projected_mappings = CellProfilerMeasurementRowsProjection(
         CellProfilerMeasurementProjectionRequest(
             source=CellProfilerMeasurementProjectionSource(
                 adapter=_FakeCellProfilerRuntime({}),
@@ -896,7 +896,7 @@ def test_global_image_number_projection_applies_to_columnar_rows() -> None:
         }
     )
 
-    projected, projected_mappings = CellProfilerGlobalImageNumberProjection(
+    projected, projected_mappings = CellProfilerMeasurementRowsProjection(
         CellProfilerMeasurementProjectionRequest(
             source=CellProfilerMeasurementProjectionSource(
                 adapter=_FakeCellProfilerRuntime(
@@ -933,7 +933,7 @@ def test_global_image_number_projection_uses_source_payload_for_columnar_rows() 
         metadata=ImagePayloadMetadata(source_path="well-h12-w1.tif"),
     )
 
-    projected, _projected_mappings = CellProfilerGlobalImageNumberProjection(
+    projected, _projected_mappings = CellProfilerMeasurementRowsProjection(
         CellProfilerMeasurementProjectionRequest(
             source=CellProfilerMeasurementProjectionSource(
                 adapter=_FakeCellProfilerRuntime(

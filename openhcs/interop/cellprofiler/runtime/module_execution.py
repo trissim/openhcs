@@ -1300,16 +1300,14 @@ class CellProfilerModuleExecutor:
                         "Columnar measurement ownership annotation must preserve "
                         f"ColumnarRows, got {type(owned_rows).__name__}."
                     ).apply()
-                projected_rows, _projected_row_mappings = (
-                    CellProfilerGlobalImageNumberProjection(
-                        CellProfilerMeasurementProjectionRequest(
-                            source=projection_source,
-                            rows=owned_rows,
-                            object_name=object_spec.name,
-                            need_row_mappings=False,
-                        )
-                    ).apply()
-                )
+                projected_rows, _projected_row_mappings = CellProfilerMeasurementRowsProjection(
+                    CellProfilerMeasurementProjectionRequest(
+                        source=projection_source,
+                        rows=owned_rows,
+                        object_name=object_spec.name,
+                        need_row_mappings=False,
+                    )
+                ).apply()
                 if not isinstance(projected_rows, ColumnarRows):
                     raise TypeError(
                         "Columnar measurement axis projection must preserve "
@@ -1328,16 +1326,14 @@ class CellProfilerModuleExecutor:
             )
             annotated_rows = owned_rows.annotate_rows(measurement_rows)
             if isinstance(annotated_rows, ColumnarRows):
-                projected_rows, _projected_row_mappings = (
-                    CellProfilerGlobalImageNumberProjection(
-                        CellProfilerMeasurementProjectionRequest(
-                            source=projection_source,
-                            rows=annotated_rows,
-                            object_name=None,
-                            need_row_mappings=False,
-                        )
-                    ).apply()
-                )
+                projected_rows, _projected_row_mappings = CellProfilerMeasurementRowsProjection(
+                    CellProfilerMeasurementProjectionRequest(
+                        source=projection_source,
+                        rows=annotated_rows,
+                        object_name=None,
+                        need_row_mappings=False,
+                    )
+                ).apply()
                 if not isinstance(projected_rows, ColumnarRows):
                     raise TypeError(
                         "Columnar measurement axis projection must preserve "
@@ -1345,16 +1341,14 @@ class CellProfilerModuleExecutor:
                     ).apply()
                 columnar_rows.append(projected_rows)
             else:
-                projected_rows, _projected_row_mappings = (
-                    CellProfilerGlobalImageNumberProjection(
-                        CellProfilerMeasurementProjectionRequest(
-                            source=projection_source,
-                            rows=annotated_rows,
-                            object_name=None,
-                            need_row_mappings=False,
-                        )
-                    ).apply()
-                )
+                projected_rows, _projected_row_mappings = CellProfilerMeasurementRowsProjection(
+                    CellProfilerMeasurementProjectionRequest(
+                        source=projection_source,
+                        rows=annotated_rows,
+                        object_name=None,
+                        need_row_mappings=False,
+                    )
+                ).apply()
                 combined_rows.extend(projected_rows)
             annotate_seconds += time.perf_counter() - annotate_started_at
 
@@ -1853,16 +1847,14 @@ class CellProfilerModuleExecutor:
                 source_image_name=measurement_record.source_image_name,
                 source_image_payload=measurement_record.source_image_payload,
             )
-            projected_rows, _projected_row_mappings = (
-                CellProfilerGlobalImageNumberProjection(
-                    CellProfilerMeasurementProjectionRequest(
-                        source=projection_source,
-                        rows=measurement_record.rows,
-                        object_name=measurement_record.object_name,
-                        need_row_mappings=False,
-                    )
-                ).apply()
-            )
+            projected_rows, _projected_row_mappings = CellProfilerMeasurementRowsProjection(
+                CellProfilerMeasurementProjectionRequest(
+                    source=projection_source,
+                    rows=measurement_record.rows,
+                    object_name=measurement_record.object_name,
+                    need_row_mappings=False,
+                )
+            ).apply()
             combined_rows.extend(
                 MeasurementRowOwnership(
                     source_image_name=measurement_record.source_image_name,
@@ -8486,7 +8478,7 @@ class CellProfilerMeasurementMaterializer:
         projected_rows: Sequence[Any] | ColumnarRows
         projected_row_mappings: ProjectedMeasurementRows
         projected_rows, projected_row_mappings = (
-            CellProfilerGlobalImageNumberProjection(projection_request).apply()
+            CellProfilerMeasurementRowsProjection(projection_request).apply()
         )
         _log_module_profile(
             "record_measurements_project_rows",
@@ -8583,7 +8575,7 @@ class CellProfilerColumnarImageNumberProjection:
         image_numbers = [
             int(value)
             for value in self.columns[image_number_field]
-            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(value)
+            if CellProfilerMeasurementRowsProjection.axis_value_is_present(value)
         ]
         if not image_numbers or min(image_numbers) >= self.start:
             return None
@@ -8591,7 +8583,7 @@ class CellProfilerColumnarImageNumberProjection:
         projected_columns = dict(self.columns)
         projected_columns[image_number_field] = tuple(
             int(value) + offset
-            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(value)
+            if CellProfilerMeasurementRowsProjection.axis_value_is_present(value)
             else value
             for value in self.columns[image_number_field]
         )
@@ -8611,7 +8603,7 @@ class CellProfilerColumnarSliceIndexProjection:
         projected_columns = dict(self.columns)
         projected_columns[MeasurementRowAxisField.IMAGE_NUMBER.value] = tuple(
             int(value) + self.start
-            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(value)
+            if CellProfilerMeasurementRowsProjection.axis_value_is_present(value)
             else value
             for value in self.columns[MeasurementRowAxisField.SLICE_INDEX.value]
         )
@@ -8684,7 +8676,7 @@ class CellProfilerRowSequenceAxisProjection:
         return tuple(
             int(row[field_name])
             for row in self.row_mappings
-            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(
+            if CellProfilerMeasurementRowsProjection.axis_value_is_present(
                 row.get(field_name)
             )
         )
@@ -8699,7 +8691,7 @@ class CellProfilerRowSequenceAxisProjection:
         """Return rows with present source-axis values projected into a target."""
         projected_rows = [dict(row) for row in self.row_mappings]
         for row in projected_rows:
-            if CellProfilerGlobalImageNumberProjection.axis_value_is_present(
+            if CellProfilerMeasurementRowsProjection.axis_value_is_present(
                 row.get(source_field_name)
             ):
                 row[target_field_name] = transform(int(row[source_field_name]))
@@ -8736,7 +8728,7 @@ class CellProfilerRowSequenceAxisProjection:
 
 
 @dataclass(frozen=True, slots=True)
-class CellProfilerGlobalImageNumberProjection:
+class CellProfilerMeasurementRowsProjection:
     """Project local runtime measurement axes into CP global ImageNumber space."""
 
     request: CellProfilerMeasurementProjectionRequest
