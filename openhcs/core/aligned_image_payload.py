@@ -718,7 +718,7 @@ class ImagePayloadBundleContext:
         return cls(ImageBundleSourceDomainAligner(normalized).align())
 
     def compose(self) -> Any:
-        composed = _compose_unmasked_image_bundle(
+        composed = self.compose_unmasked(
             tuple(image_payload_data(payload) for payload in self.image_payloads)
         )
         return image_payload_with_context(
@@ -736,7 +736,7 @@ class ImagePayloadBundleContext:
         complete_masks = self.complete_masks()
         if complete_masks is None:
             return combined
-        return _compose_unmasked_image_bundle(complete_masks).astype(bool, copy=False)
+        return self.compose_unmasked(complete_masks).astype(bool, copy=False)
 
     def combined_mask(self) -> Any | None:
         masks = tuple(
@@ -767,6 +767,22 @@ class ImagePayloadBundleContext:
         mask_shape = tuple(np.asarray(mask).shape)
         composed_shape = tuple(np.asarray(composed).shape)
         return mask_shape == composed_shape or mask_shape == composed_shape[-2:]
+
+    @staticmethod
+    def compose_unmasked(image_payloads: tuple[Any, ...]) -> Any:
+        """Compose image payload arrays without mask/metadata wrapping."""
+        memory_type = detect_memory_type(image_payloads[0])
+        if _is_homogeneous_image_bundle(image_payloads):
+            return ImageStackLayout.for_slices(image_payloads).stack(
+                slices=image_payloads,
+                memory_type=memory_type,
+                gpu_id=0,
+            )
+        return ImageBundleLayout.for_slices(image_payloads).stack(
+            slices=image_payloads,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -991,8 +1007,9 @@ def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
         return (payload,)
     if is_image_stack(data):
         memory_type = detect_memory_type(data)
+        slice_projector = ImagePayloadSliceProjector(mask=mask, metadata=metadata)
         return tuple(
-            _payload_slice(data_slice, mask, metadata, index)
+            slice_projector.payload_for_slice(data_slice, index)
             for index, data_slice in enumerate(
                 ImageStackLayout.for_stack(data).unstack(
                     array=data,
@@ -1043,18 +1060,6 @@ def _shares_pairwise_slice_grid_axes(mask: Any, payload: Any) -> bool:
     )
 
 
-def _payload_slice(
-    data_slice: Any,
-    mask: Any | None,
-    metadata: Any,
-    index: int,
-) -> Any:
-    return ImagePayloadSliceProjector(mask=mask, metadata=metadata).payload_for_slice(
-        data_slice,
-        index,
-    )
-
-
 def _payload_spatial_shape(payload: Any) -> tuple[int, ...]:
     array = np.asarray(payload)
     if is_color_image_slice(payload):
@@ -1066,23 +1071,6 @@ def _payload_spatial_shape(payload: Any) -> tuple[int, ...]:
         )
     return tuple(int(axis) for axis in array.shape[-2:])
 
-
-
-def _compose_unmasked_image_bundle(
-    image_payloads: tuple[Any, ...],
-) -> Any:
-    memory_type = detect_memory_type(image_payloads[0])
-    if _is_homogeneous_image_bundle(image_payloads):
-        return ImageStackLayout.for_slices(image_payloads).stack(
-            slices=image_payloads,
-            memory_type=memory_type,
-            gpu_id=0,
-        )
-    return ImageBundleLayout.for_slices(image_payloads).stack(
-        slices=image_payloads,
-        memory_type=memory_type,
-        gpu_id=0,
-    )
 
 
 def aligned_payload_slice(
