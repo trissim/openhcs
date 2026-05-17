@@ -616,18 +616,6 @@ _RuntimeProjectedCell = tuple[
     RuntimeMeasurementFeatureKey,
     _RuntimeRowProjectionValueT,
 ]
-_RuntimeRowValueProjector = Callable[
-    [
-        RuntimeMeasurementFeatureKey,
-        object,
-        RuntimeEquivalencePolicy,
-    ],
-    tuple[_RuntimeProjectedCell[_RuntimeRowProjectionValueT], ...],
-]
-_RuntimeRowLongFormProjector = Callable[
-    [_RuntimeMeasurementFact],
-    tuple[_RuntimeProjectedCell[_RuntimeRowProjectionValueT], ...],
-]
 
 
 @dataclass(frozen=True, slots=True)
@@ -694,6 +682,151 @@ class _RuntimeRowProjectionContext:
             qualifier_render_cache=qualifier_render_cache,
             padding_group_cache=padding_group_cache,
         )
+
+
+class RuntimeRowValueProjection(
+    ABC,
+    Generic[_RuntimeRowProjectionValueT],
+):
+    """Project wide-form runtime measurement values for row fact extraction."""
+
+    @abstractmethod
+    def project(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+        value: object,
+        policy: RuntimeEquivalencePolicy,
+    ) -> tuple[_RuntimeProjectedCell[_RuntimeRowProjectionValueT], ...]:
+        """Project one wide-form cell into semantic values."""
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementCellValue:
+    """Runtime measurement cell plus nested value expansion policy."""
+
+    key: RuntimeMeasurementFeatureKey
+    value: object
+    policy: RuntimeEquivalencePolicy
+    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None = None
+
+    def iter_key_values(
+        self,
+    ) -> Iterable[tuple[RuntimeMeasurementFeatureKey, object]]:
+        if not _runtime_value_is_mapping(self.value):
+            if self.required_keys is not None and self.key not in self.required_keys:
+                return ()
+            return ((self.key, self.value),)
+        return tuple(
+            (nested_key, nested_value)
+            for name, nested_value in self.value.items()
+            for nested_key in (self.nested_key(name),)
+            if self.required_keys is None or nested_key in self.required_keys
+        )
+
+    def nested_key(self, name: object) -> RuntimeMeasurementFeatureKey:
+        return _runtime_measurement_feature_key(
+            self.key.subject,
+            f"{self.key.feature_name}_{_canonical_measurement_feature_name(str(name), self.policy)}",
+            self.key.statistic,
+            source_name=self.key.source_name,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementCellFactProjection(
+    RuntimeRowValueProjection[RuntimeCellSignature],
+):
+    """Project runtime measurement cells into cell-signature facts."""
+
+    def project(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+        value: object,
+        policy: RuntimeEquivalencePolicy,
+    ) -> _RuntimeMeasurementFacts:
+        cell = RuntimeMeasurementCellValue(key, value, policy)
+        return tuple(
+            (cell_key, _runtime_measurement_cell_signature(cell_value, policy))
+            for cell_key, cell_value in cell.iter_key_values()
+        )
+
+    def project_cell(
+        self,
+        cell: RuntimeMeasurementCellValue,
+    ) -> _RuntimeMeasurementFacts:
+        return tuple(
+            (
+                cell_key,
+                _runtime_measurement_cell_signature(cell_value, cell.policy),
+            )
+            for cell_key, cell_value in cell.iter_key_values()
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementCellNumericProjection(
+    RuntimeRowValueProjection[float],
+):
+    """Project runtime measurement cells into numeric values."""
+
+    def project(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+        value: object,
+        policy: RuntimeEquivalencePolicy,
+    ) -> _RuntimeNumericMeasurementValues:
+        cell = RuntimeMeasurementCellValue(key, value, policy)
+        return self.project_cell(cell)
+
+    def project_cell(
+        self,
+        cell: RuntimeMeasurementCellValue,
+    ) -> _RuntimeNumericMeasurementValues:
+        return tuple(
+            (cell_key, numeric_value)
+            for cell_key, cell_value in cell.iter_key_values()
+            if (
+                numeric_value := _measurement_numeric_runtime_value(
+                    cell_value,
+                    cell.policy,
+                )
+            )
+            is not None
+        )
+
+
+class RuntimeRowLongFormProjection(
+    ABC,
+    Generic[_RuntimeRowProjectionValueT],
+):
+    """Project normalized long-form measurement facts for row extraction."""
+
+    @abstractmethod
+    def project(
+        self,
+        fact: _RuntimeMeasurementFact,
+    ) -> tuple[_RuntimeProjectedCell[_RuntimeRowProjectionValueT], ...]:
+        """Project one normalized long-form fact into semantic values."""
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeRowLongFormFactProjection(
+    RuntimeRowLongFormProjection[RuntimeCellSignature],
+):
+    """Preserve long-form cell-signature facts as row facts."""
+
+    def project(self, fact: _RuntimeMeasurementFact) -> _RuntimeMeasurementFacts:
+        return (fact,)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeRowLongFormNumericProjection(
+    RuntimeRowLongFormProjection[float],
+):
+    """Project long-form cell-signature facts into numeric values."""
+
+    def project(self, fact: _RuntimeMeasurementFact) -> _RuntimeNumericMeasurementValues:
+        return _numeric_long_form_measurement_values(fact)
 
 
 _LongFormMeasurementContext = _frozen_slots_record(
@@ -4028,11 +4161,13 @@ class StaticWideRuntimeRowProjector:
                 and not _runtime_value_is_mapping(value)
             ):
                 continue
-            for fact_key, fact_value in _cell_measurement_facts_for_required_keys(
-                key,
-                value,
-                self.context.policy,
-                required_keys=self.context.input_keys,
+            for fact_key, fact_value in RuntimeMeasurementCellFactProjection().project_cell(
+                RuntimeMeasurementCellValue(
+                    key,
+                    value,
+                    self.context.policy,
+                    required_keys=self.context.input_keys,
+                )
             ):
                 derives_directional_pair_facts = (
                     derives_directional_pair_facts
@@ -4930,14 +5065,16 @@ class RuntimeTableSnapshotFactExtractor:
                 if _is_aggregate_image_number_reference_measurement_field(field_name):
                     continue
                 facts.extend(
-                    _cell_measurement_facts(
-                        key,
-                        _normalize_image_number_reference_measurement_value(
-                            field_name,
-                            row_mapping[field_name],
-                            image_number_offset,
-                        ),
-                        self.policy,
+                    RuntimeMeasurementCellFactProjection().project_cell(
+                        RuntimeMeasurementCellValue(
+                            key,
+                            _normalize_image_number_reference_measurement_value(
+                                field_name,
+                                row_mapping[field_name],
+                                image_number_offset,
+                            ),
+                            self.policy,
+                        )
                     )
                 )
         return tuple(facts)
@@ -5297,8 +5434,8 @@ class RuntimeMeasurementTableFactRecorder:
 @dataclass(frozen=True, slots=True)
 class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
     context: _RuntimeRowProjectionContext
-    value_projector: _RuntimeRowValueProjector[_RuntimeRowProjectionValueT]
-    long_form_projector: _RuntimeRowLongFormProjector[_RuntimeRowProjectionValueT]
+    value_projector: RuntimeRowValueProjection[_RuntimeRowProjectionValueT]
+    long_form_projector: RuntimeRowLongFormProjection[_RuntimeRowProjectionValueT]
 
     def project(self) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
         """Project one runtime row through shared schema/key/padding caches."""
@@ -5343,7 +5480,7 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
         return _runtime_row_projection(
             (
                 ((context.subject, context.source_name, ()), key, value)
-                for key, value in self.long_form_projector(long_form_fact)
+                for key, value in self.long_form_projector.project(long_form_fact)
                 if context.required_keys is None or key in context.required_keys
             ),
             long_form=True,
@@ -5409,7 +5546,7 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
             and not _runtime_value_is_mapping(value)
         ):
             return ()
-        projected_values = self.value_projector(key, value, context.policy)
+        projected_values = self.value_projector.project(key, value, context.policy)
         if context.required_keys is not None:
             projected_values = tuple(
                 (cell_key, cell_value)
@@ -5492,8 +5629,8 @@ class RuntimeMeasurementRowFactProjector:
         """Project one runtime row using table-local schema/key caches."""
         projection = _RuntimeRowProjectionEngine(
             self.context,
-            _cell_measurement_facts,
-            lambda fact: (fact,),
+            RuntimeMeasurementCellFactProjection(),
+            RuntimeRowLongFormFactProjection(),
         ).project()
         row_facts = tuple(
             (key, value)
@@ -5521,8 +5658,8 @@ class RuntimeMeasurementRowFactProjector:
         """Project numeric runtime row values without building cell signatures."""
         projection = _RuntimeRowProjectionEngine(
             self.context,
-            _numeric_cell_measurement_values,
-            _numeric_long_form_measurement_values,
+            RuntimeMeasurementCellNumericProjection(),
+            RuntimeRowLongFormNumericProjection(),
         ).project()
         row_values_by_key = _dedupe_numeric_measurement_values(
             (key, value)
@@ -6371,56 +6508,6 @@ def _first_indexed_row_value(
     if not indexes:
         return None
     return row_values[indexes[0]]
-
-
-def _cell_measurement_facts(
-    key: RuntimeMeasurementFeatureKey,
-    value: object,
-    policy: RuntimeEquivalencePolicy,
-) -> _RuntimeMeasurementFacts:
-    if _runtime_value_is_mapping(value):
-        return tuple(
-            (
-                _runtime_measurement_feature_key(
-                    key.subject,
-                    f"{key.feature_name}_{_canonical_measurement_feature_name(str(name), policy)}",
-                    key.statistic,
-                    source_name=key.source_name,
-                ),
-                _runtime_measurement_cell_signature(nested_value, policy),
-            )
-            for name, nested_value in value.items()
-        )
-    return ((key, _runtime_measurement_cell_signature(value, policy)),)
-
-
-def _cell_measurement_facts_for_required_keys(
-    key: RuntimeMeasurementFeatureKey,
-    value: object,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    required_keys: frozenset[RuntimeMeasurementFeatureKey] | None,
-) -> _RuntimeMeasurementFacts:
-    if required_keys is None:
-        return _cell_measurement_facts(key, value, policy)
-    if not _runtime_value_is_mapping(value):
-        if key not in required_keys:
-            return ()
-        return ((key, _runtime_measurement_cell_signature(value, policy)),)
-
-    facts: list[tuple[RuntimeMeasurementFeatureKey, RuntimeCellSignature]] = []
-    for name, nested_value in value.items():
-        nested_key = _runtime_measurement_feature_key(
-            key.subject,
-            f"{key.feature_name}_{_canonical_measurement_feature_name(str(name), policy)}",
-            key.statistic,
-            source_name=key.source_name,
-        )
-        if nested_key in required_keys:
-            facts.append(
-                (nested_key, _runtime_measurement_cell_signature(nested_value, policy))
-            )
-    return tuple(facts)
 
 
 def _measurement_feature_key_for_field(
@@ -7987,37 +8074,6 @@ def _numeric_long_form_measurement_values(
 ) -> _RuntimeNumericMeasurementValues:
     key, cell_value = fact
     numeric_value = _cell_signature_numeric_value(cell_value)
-    if numeric_value is None:
-        return ()
-    return ((key, numeric_value),)
-
-
-def _numeric_cell_measurement_values(
-    key: RuntimeMeasurementFeatureKey,
-    value: object,
-    policy: RuntimeEquivalencePolicy,
-) -> _RuntimeNumericMeasurementValues:
-    if isinstance(value, Mapping):
-        return tuple(
-            (
-                _runtime_measurement_feature_key(
-                    key.subject,
-                    f"{key.feature_name}_{_canonical_measurement_feature_name(str(name), policy)}",
-                    key.statistic,
-                    source_name=key.source_name,
-                ),
-                numeric_value,
-            )
-            for name, nested_value in value.items()
-            if (
-                numeric_value := _measurement_numeric_runtime_value(
-                    nested_value,
-                    policy,
-                )
-            )
-            is not None
-        )
-    numeric_value = _measurement_numeric_runtime_value(value, policy)
     if numeric_value is None:
         return ()
     return ((key, numeric_value),)
