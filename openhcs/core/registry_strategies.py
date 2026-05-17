@@ -281,6 +281,20 @@ class RegisteredLeafClassSpec(ABC, metaclass=AutoRegisterMeta):
         return declared_type
 
 
+def str_enum_member_with_payload(
+    enum_type: type[str],
+    value: str,
+    *,
+    payload_attribute: str,
+    payload: object,
+) -> str:
+    """Construct a string enum member while attaching one payload attribute."""
+    member = str.__new__(enum_type, value)
+    member._value_ = value
+    setattr(member, payload_attribute, payload)
+    return member
+
+
 @dataclass(frozen=True, slots=True)
 class GeneratedLeafClassSpec(RegisteredLeafClassSpec):
     """Concrete generated-leaf declaration with explicit class and base identity."""

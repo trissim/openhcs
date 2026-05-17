@@ -172,6 +172,7 @@ from openhcs.core.registry_strategies import (
     NominalTypeKeyedStrategyMixin,
     RegisteredLeafClassSpec,
     RegisteredEnumMeta,
+    str_enum_member_with_payload,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import (
     ProcessingContract,
@@ -459,10 +460,12 @@ class CellProfilerSpecialInputPayloadSemantics(str, Enum):
     DENSE_LABEL_IMAGE = ("dense_label_image", True)
 
     def __new__(cls, value: str, dense_label_domain: bool):
-        member = str.__new__(cls, value)
-        member._value_ = value
-        member.dense_label_domain = dense_label_domain
-        return member
+        return str_enum_member_with_payload(
+            cls,
+            value,
+            payload_attribute="dense_label_domain",
+            payload=dense_label_domain,
+        )
 
     dense_label_domain: bool
 

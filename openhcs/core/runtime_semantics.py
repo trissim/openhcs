@@ -20,6 +20,7 @@ from openhcs.core.registry_strategies import (
     GeneratedLeafClassSpec,
     MostDerivedContextStrategyMixin,
     NominalTypeKeyedStrategyMixin,
+    str_enum_member_with_payload,
 )
 from openhcs.core.process_local_cache import ProcessLocalBoundedCache
 
@@ -259,10 +260,12 @@ class ObjectLabelRepresentation(str, Enum):
     """Storage representation used by an object-label artifact payload."""
 
     def __new__(cls, value: str, payload_shape: ArtifactPayloadShape):
-        obj = str.__new__(cls, value)
-        obj._value_ = value
-        obj._payload_shape = payload_shape
-        return obj
+        return str_enum_member_with_payload(
+            cls,
+            value,
+            payload_attribute="_payload_shape",
+            payload=payload_shape,
+        )
 
     DENSE_LABELS = ("dense_labels", ArtifactPayloadShape.ARRAY)
     SPARSE_IJV = ("sparse_ijv", ArtifactPayloadShape.TABLE)
