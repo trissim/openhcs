@@ -562,6 +562,24 @@ Stop condition:
 - Stop on the first semantic test failure and inspect before stacking further extraction.
 - If cache identity changes, add a regression test for the old key semantics before proceeding.
 
+Status:
+
+- Implemented and pushed:
+  - `RuntimeTableSnapshotFactExtractor` owns exported table snapshot fact projection.
+  - `RuntimeMeasurementRowFactProjector`, `RuntimeMeasurementRowSchemaProjector`, and `RuntimeMeasurementLongFormFactProjector` own cached runtime-row projection.
+  - `MeasurementFeatureStabilityPolicy` owns object-count, shape-geometry, and role-gated feature stability checks.
+  - `RuntimeObjectLabelMeasurementFactProjector` owns implicit object-label count/location facts.
+  - `RuntimeRowMeasurementFactRecorder` owns row fact emission, row-merge deferral, aggregate input recording, and object-row domain emission.
+  - `ArtifactKind.participates_in_axis_plane_identity` owns the measurement/relationship plane-identity policy.
+- Focused runtime-equivalence tests and full `tests/unit` passed before each pushed checkpoint.
+
+Remaining work:
+
+- Split the now-nominal row projection and table snapshot projectors into dedicated modules so `runtime_equivalence.py` stops acting as the storage site for all private runtime-row cohorts.
+- Recover the remaining latent feature-key/cell-value authority around `_cell_measurement_facts`, `_numeric_cell_measurement_values`, `_aggregate_mean_key`, and source-qualified aggregate feature naming.
+- Decide whether `RuntimeMeasurementFactProjectionContract` should remain a static utility namespace or become a keyed projection family; do not keep `AutoRegisterMeta` on it unless it has a real stable key axis.
+- Normalize `RuntimeObjectLocationRowMergeContract` into a registered family or remove the inheritance if the two leaves are better represented as explicit projection policies.
+
 ## Commit and Benchmark Policy
 
 Each risky sequence must be independently revertible:
