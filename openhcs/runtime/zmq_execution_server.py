@@ -18,7 +18,7 @@ from zmqruntime.messages import (
 
 from zmqruntime.transport import coerce_transport_mode
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
+from openhcs.runtime.zmq_debug_control import DebugControlMessageRouter
 from openhcs.runtime.zmq_compilation import (
     ZMQCompilationRequest,
     ZMQCompileArtifactRecord,
@@ -66,14 +66,8 @@ class ZMQExecutionServer(ExecutionServer):
         self._compiled_artifact_ttl_seconds: float = 30.0 * 60.0
 
     def handle_control_message(self, message):
-        from openhcs.core.debug import DebugControlMessageType
-
-        if message.get(MessageFields.TYPE) in {
-            DebugControlMessageType.READ_SNAPSHOT.value,
-            DebugControlMessageType.WORKER_COMMAND.value,
-            DebugControlMessageType.EXPORT_ARTIFACT.value,
-        }:
-            return DebugControlMessageStrategy.for_message(message).handle(message)
+        if DebugControlMessageRouter.handles(message):
+            return DebugControlMessageRouter.handle(message)
         return super().handle_control_message(message)
 
     @staticmethod

@@ -71,6 +71,34 @@ class DebugControlMessageStrategy(metaclass=AutoRegisterMeta):
         }
 
 
+class DebugControlMessageRouter:
+    """Nominal facade for ZMQ debug-control message routing."""
+
+    from openhcs.core.debug import DebugControlMessageType
+
+    message_types: ClassVar[frozenset[str]] = frozenset(
+        (
+            DebugControlMessageType.READ_SNAPSHOT.value,
+            DebugControlMessageType.WORKER_COMMAND.value,
+            DebugControlMessageType.EXPORT_ARTIFACT.value,
+        )
+    )
+
+    @classmethod
+    def handles(cls, message: dict) -> bool:
+        return message.get(MessageFields.TYPE) in cls.message_types
+
+    @classmethod
+    def handle(cls, message: dict) -> dict:
+        message_type = message.get(MessageFields.TYPE)
+        strategy_type = DebugControlMessageStrategy.__registry__.get(message_type)
+        if strategy_type is None:
+            raise ValueError(
+                f"Unsupported debug control message type {message_type!r}."
+            )
+        return strategy_type().handle(message)
+
+
 class DebugSnapshotReadMessageStrategy(DebugControlMessageStrategy):
     """Handle debug snapshot read control messages."""
 

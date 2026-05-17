@@ -1094,7 +1094,7 @@ def test_debug_artifact_export_plan_materializes_vfs_payload(tmp_path):
 
 
 def test_zmq_server_reads_local_debug_snapshot_by_control_request(tmp_path):
-    from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
+    from openhcs.runtime.zmq_debug_control import DebugControlMessageRouter
 
     snapshot = DebugRuntimeFixture.debug_event(
         event_type=DebugEventType.AFTER_INVOCATION
@@ -1111,13 +1111,13 @@ def test_zmq_server_reads_local_debug_snapshot_by_control_request(tmp_path):
     )
 
     message = DebugSnapshotReadControlPayload.from_request(request).to_dict()
-    response = DebugControlMessageStrategy.for_message(message).handle(message)
+    response = DebugControlMessageRouter.handle(message)
 
     assert DebugSnapshotReadResponse.from_control_response(response).snapshot == snapshot
 
 
 def test_zmq_server_exports_debug_artifact_by_control_request(tmp_path):
-    from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
+    from openhcs.runtime.zmq_debug_control import DebugControlMessageRouter
 
     source_path = tmp_path / "source.csv"
     source_path.write_text("value\n1\n", encoding="utf-8")
@@ -1135,7 +1135,7 @@ def test_zmq_server_exports_debug_artifact_by_control_request(tmp_path):
     )
 
     message = DebugArtifactExportControlPayload.from_request(request).to_dict()
-    response = DebugControlMessageStrategy.for_message(message).handle(message)
+    response = DebugControlMessageRouter.handle(message)
 
     exported = Path(DebugArtifactExportResponse.from_control_response(response).exported_ref)
     assert exported.read_text(encoding="utf-8") == "value\n1\n"
@@ -1202,7 +1202,7 @@ def test_paused_worker_controller_blocks_and_steps_after_snapshot_boundary():
 
 
 def test_zmq_server_routes_paused_worker_command_by_control_request():
-    from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
+    from openhcs.runtime.zmq_debug_control import DebugControlMessageRouter
 
     request = DebugWorkerCommandRequest(
         debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
@@ -1210,7 +1210,7 @@ def test_zmq_server_routes_paused_worker_command_by_control_request():
     )
 
     message = DebugWorkerCommandControlPayload.from_request(request).to_dict()
-    response = DebugControlMessageStrategy.for_message(message).handle(message)
+    response = DebugControlMessageRouter.handle(message)
 
     assert DebugWorkerCommandResponse.from_control_response(response).status.debug_session_id == (
         DebugRuntimeFixture.DEBUG_SESSION_ID
