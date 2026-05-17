@@ -156,6 +156,9 @@ Remaining:
   template contract. Eliminating the forwarding-wrapper findings properly
   requires a dependency-level refactor of that base contract to accept nominal
   hook providers instead of private subclass methods.
+- Removed one stale in-repo bridge after extraction:
+  `PipelineEditorWidget._unregister_step_state`; cascade unregister ownership now
+  lives in `PipelineEditorDeletionWorkflow`.
 - Larger widget role-quotient findings remain for editor display formatting,
   debug command routing, time-travel handling, and plate-manager status/progress
   formatting. Continue extracting cohesive services rather than adding local

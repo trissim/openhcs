@@ -83,7 +83,7 @@ class PipelineEditorDeletionWorkflow:
 
         with ObjectStateRegistry.atomic(label):
             for step in items:
-                self.editor._unregister_step_state(step)
+                self.unregister_step_state(step)
 
             deleted_step_ids = {id(step) for step in items}
             self.editor.pipeline_steps = [
@@ -101,6 +101,15 @@ class PipelineEditorDeletionWorkflow:
 
         if self.editor.selected_step in [step.name for step in items]:
             self.editor.selected_step = ""
+
+    def unregister_step_state(self, step: Any) -> None:
+        scope_id = self.editor._build_step_scope_id(step)
+        count = ObjectStateRegistry.unregister_scope_and_descendants(scope_id)
+        logger.debug(
+            "Cascade unregistered %d ObjectState(s) for deleted step: %s",
+            count,
+            scope_id,
+        )
 
 
 @dataclass(frozen=True, slots=True)

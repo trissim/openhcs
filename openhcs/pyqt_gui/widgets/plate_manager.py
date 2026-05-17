@@ -1412,19 +1412,6 @@ class PlateManagerWidget(AbstractManagerWidget):
     # _broadcast_config_to_event_bus() and _broadcast_pipeline_to_event_bus() REMOVED
     # Now using ABC's generic _broadcast_to_event_bus(event_type, data)
 
-    def _invalidate_orchestrator_compilation_state(self, plate_path: str):
-        """Invalidate compilation state for an orchestrator when its pipeline changes.
-
-        This ensures that tier 3 changes properly invalidate ALL affected orchestrators,
-        not just the currently visible one.
-
-        Args:
-            plate_path: Path of the plate whose orchestrator state should be invalidated
-        """
-        PlateManagerCodeWorkflow(self).invalidate_orchestrator_compilation_state(
-            plate_path
-        )
-
     def action_view_metadata(self):
         """View plate images and metadata in tabbed window."""
         selected_items = self.get_selected_items()
