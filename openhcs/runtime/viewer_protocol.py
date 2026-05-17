@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import os
+import platform
+import subprocess
+import sys
 from dataclasses import dataclass, field
 from enum import Enum
+from pathlib import Path
 from typing import Any, Mapping
 
 from polystore.streaming_constants import StreamingDataType
@@ -22,6 +26,33 @@ class ViewerProtocolStatus(Enum):
 
     SUCCESS = "success"
     ERROR = "error"
+
+
+class QtPlatformName(Enum):
+    """Qt platform plugin names used by detached viewer processes."""
+
+    COCOA = "cocoa"
+    XCB = "xcb"
+
+
+class ViewerProcessPlatform(Enum):
+    """Host platform family for detached viewer launch behavior."""
+
+    WINDOWS = "win32"
+    DARWIN = "Darwin"
+    LINUX = "Linux"
+    OTHER = "other"
+
+    @classmethod
+    def current(cls) -> "ViewerProcessPlatform":
+        if sys.platform == cls.WINDOWS.value:
+            return cls.WINDOWS
+        system_name = platform.system()
+        if system_name == cls.DARWIN.value:
+            return cls.DARWIN
+        if system_name == cls.LINUX.value:
+            return cls.LINUX
+        return cls.OTHER
 
 
 class NapariLayerKind(Enum):
@@ -80,6 +111,64 @@ class ViewerHeartbeatDescriptor:
 
 NAPARI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.NAPARI, "NapariViewer")
 FIJI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.FIJI, "FijiViewerServer")
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerQtEnvironmentPolicy:
+    """Apply viewer-safe Qt environment defaults for the current platform."""
+
+    platform: ViewerProcessPlatform = field(
+        default_factory=ViewerProcessPlatform.current
+    )
+
+    def apply_to(self, env: dict[str, str]) -> dict[str, str]:
+        if "QT_QPA_PLATFORM" not in env:
+            if self.platform is ViewerProcessPlatform.DARWIN:
+                env["QT_QPA_PLATFORM"] = QtPlatformName.COCOA.value
+            elif self.platform is ViewerProcessPlatform.LINUX:
+                env["QT_QPA_PLATFORM"] = QtPlatformName.XCB.value
+                env["QT_X11_NO_MITSHM"] = "1"
+        elif self.platform is ViewerProcessPlatform.LINUX:
+            env["QT_X11_NO_MITSHM"] = "1"
+        return env
+
+
+@dataclass(frozen=True, slots=True)
+class DetachedViewerProcessRequest:
+    """Launch request for a detached Python viewer process."""
+
+    python_code: str
+    log_file: Path
+    cwd: Path = field(default_factory=lambda: Path.cwd())
+    env: Mapping[str, str] | None = None
+    platform: ViewerProcessPlatform = field(
+        default_factory=ViewerProcessPlatform.current
+    )
+
+    def launch(self) -> subprocess.Popen:
+        self.log_file.parent.mkdir(parents=True, exist_ok=True)
+        launch_env = dict(os.environ if self.env is None else self.env)
+        ViewerQtEnvironmentPolicy(self.platform).apply_to(launch_env)
+        log_handle = self.log_file.open("w")
+        command = [sys.executable, "-c", self.python_code]
+        if self.platform is ViewerProcessPlatform.WINDOWS:
+            return subprocess.Popen(
+                command,
+                creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
+                | subprocess.DETACHED_PROCESS,
+                env=launch_env,
+                cwd=str(self.cwd),
+                stdout=log_handle,
+                stderr=subprocess.STDOUT,
+            )
+        return subprocess.Popen(
+            command,
+            env=launch_env,
+            cwd=str(self.cwd),
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
 
 
 @dataclass(frozen=True, slots=True)

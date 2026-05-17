@@ -23,6 +23,7 @@ from openhcs.core.config import (
     TransportMode as OpenHCSTransportMode,
     FijiStreamingConfig,
 )
+from openhcs.runtime.viewer_protocol import DetachedViewerProcessRequest
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.config import TransportMode as ZMQTransportMode
 from zmqruntime.streaming import VisualizerProcessManager
@@ -80,7 +81,6 @@ def _spawn_detached_fiji_process(
         display_config: Display configuration
         transport_mode: ZMQ transport mode (IPC or TCP)
     """
-    import sys
     import os
 
     current_dir = os.getcwd()
@@ -130,37 +130,11 @@ except Exception as e:
 
         python_code = textwrap.dedent(python_code).strip()
 
-        # Use subprocess.Popen with detachment flags
-        if sys.platform == "win32":
-            env = os.environ.copy()
-            with open(log_file, "w") as log_f:
-                process = subprocess.Popen(
-                    [sys.executable, "-c", python_code],
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS,
-                    env=env,
-                    cwd=os.getcwd(),
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                )
-        else:
-            # Unix: Use start_new_session to detach
-            env = os.environ.copy()
-
-            # Ensure display environment is preserved
-            if "QT_QPA_PLATFORM" not in env:
-                env["QT_QPA_PLATFORM"] = "xcb"
-            env["QT_X11_NO_MITSHM"] = "1"
-
-            log_f = open(log_file, "w")
-            process = subprocess.Popen(
-                [sys.executable, "-c", python_code],
-                env=env,
-                cwd=os.getcwd(),
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,  # CRITICAL: Detach from parent
-            )
+        process = DetachedViewerProcessRequest(
+            python_code=python_code,
+            log_file=Path(log_file),
+            cwd=Path.cwd(),
+        ).launch()
 
         logger.info(
             f"🔬 FIJI VISUALIZER: Detached Fiji process started (PID: {process.pid}), logging to {log_file}"

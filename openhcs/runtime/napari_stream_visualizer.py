@@ -21,6 +21,7 @@ import threading
 import time
 import zmq
 import numpy as np
+from pathlib import Path
 from typing import Any, Dict, Optional
 from qtpy.QtCore import QTimer
 
@@ -32,7 +33,9 @@ from openhcs.core.config import (
 )
 from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
+    DetachedViewerProcessRequest,
     NAPARI_HEARTBEAT,
+    ViewerQtEnvironmentPolicy,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.config import TransportMode as ZMQTransportMode
@@ -1646,50 +1649,11 @@ except Exception as e:
             repr(current_dir + "/.napari_log_path_placeholder"), repr(log_file)
         )
 
-        # Use subprocess.Popen with detachment flags
-        if sys.platform == "win32":
-            # Windows: Use CREATE_NEW_PROCESS_GROUP to detach but preserve display environment
-            env = os.environ.copy()  # Preserve environment variables
-            with open(log_file, "w") as log_f:
-                process = subprocess.Popen(
-                    [sys.executable, "-c", python_code],
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS,
-                    env=env,
-                    cwd=os.getcwd(),
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                )
-        else:
-            # Unix: Use start_new_session to detach but preserve display environment
-            env = os.environ.copy()  # Preserve DISPLAY and other environment variables
-
-            # Ensure Qt platform is set for GUI display
-            import platform
-
-            if "QT_QPA_PLATFORM" not in env:
-                if platform.system() == "Darwin":  # macOS
-                    env["QT_QPA_PLATFORM"] = "cocoa"
-                elif platform.system() == "Linux":
-                    env["QT_QPA_PLATFORM"] = "xcb"
-                    env["QT_X11_NO_MITSHM"] = "1"
-                # Windows doesn't need QT_QPA_PLATFORM set
-            elif platform.system() == "Linux":
-                # Ensure Qt can find the display
-                env["QT_X11_NO_MITSHM"] = (
-                    "1"  # Disable shared memory for X11 (helps with some display issues)
-                )
-
-            # Redirect stdout/stderr to log file for debugging
-            log_f = open(log_file, "w")
-            process = subprocess.Popen(
-                [sys.executable, "-c", python_code],
-                env=env,
-                cwd=os.getcwd(),
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,  # CRITICAL: Detach from parent process group
-            )
+        process = DetachedViewerProcessRequest(
+            python_code=python_code,
+            log_file=Path(log_file),
+            cwd=Path.cwd(),
+        ).launch()
 
         logger.info(
             f"🔬 VISUALIZER: Detached napari process started (PID: {process.pid}), logging to {log_file}"
@@ -2308,18 +2272,9 @@ _napari_viewer_process({self.port}, {repr(self.viewer_title)}, {self.replace_lay
 
     def get_launch_env(self) -> dict:
         import os
-        import platform
 
         env = os.environ.copy()
-        if "QT_QPA_PLATFORM" not in env:
-            if platform.system() == "Darwin":
-                env["QT_QPA_PLATFORM"] = "cocoa"
-            elif platform.system() == "Linux":
-                env["QT_QPA_PLATFORM"] = "xcb"
-                env["QT_X11_NO_MITSHM"] = "1"
-        elif platform.system() == "Linux":
-            env["QT_X11_NO_MITSHM"] = "1"
-        return env
+        return ViewerQtEnvironmentPolicy().apply_to(env)
 
     def start(self, detached: bool = True):
         self.start_viewer(async_mode=False)
