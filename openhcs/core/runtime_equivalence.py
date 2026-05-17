@@ -20,7 +20,6 @@ from typing import Any, ClassVar, Generic, TypeVar
 from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
-from nominal_refactor_advisor.collection_algebra import sorted_tuple
 import openhcs.core.runtime_artifact_queries as runtime_artifact_queries
 import openhcs.core.equivalence.measurement_features as measurement_features
 import openhcs.core.runtime_semantics as runtime_semantics
@@ -1532,8 +1531,12 @@ def _measurement_scope_aggregate_policy_by_scope(
 ) -> Mapping[MeasurementScope, _MeasurementScopeAggregatePolicy]:
     by_scope = {row.scope: row for row in rows}
     if set(by_scope) != set(MeasurementScope):
-        missing = sorted_tuple(scope.value for scope in set(MeasurementScope) - set(by_scope))
-        extra = sorted_tuple(scope.value for scope in set(by_scope) - set(MeasurementScope))
+        missing = tuple(
+            sorted(scope.value for scope in set(MeasurementScope) - set(by_scope))
+        )
+        extra = tuple(
+            sorted(scope.value for scope in set(by_scope) - set(MeasurementScope))
+        )
         raise ValueError(
             "Measurement scope aggregate policy must cover MeasurementScope "
             f"exactly: missing={missing!r}, extra={extra!r}."
@@ -3144,7 +3147,7 @@ class RuntimeThresholdSensitivePairToleranceContract:
         comparable_features = set(reference.values_by_feature) & set(
             candidate.values_by_feature
         )
-        return sorted_tuple(
+        return tuple(sorted(
             (
                 other
                 for other in comparable_features
@@ -3155,7 +3158,7 @@ class RuntimeThresholdSensitivePairToleranceContract:
                 )
             ),
             key=lambda key: key.sort_key,
-        )
+        ))
 
     def is_companion_feature(
         self,
@@ -6681,16 +6684,6 @@ def _starts_with_measurement_category(
     )
 
 
-def _required_mean_measurement_keys(
-    required_keys: _RuntimeRequiredMeasurementKeys,
-) -> _RuntimeRequiredMeasurementKeys:
-    if required_keys is None:
-        return None
-    return frozenset(
-        key for key in required_keys if key.statistic == MeasurementStatistic.MEAN.value
-    )
-
-
 @dataclass(frozen=True, slots=True)
 class RuntimeObjectLabelMeasurementFactProjector:
     """Project object-label runtime values into implicit object measurement facts."""
@@ -8118,7 +8111,7 @@ def _measurement_source_names_from_artifact_execution(
                 )
                 if row_source_name is not None:
                     source_names.update(_source_name_aliases(row_source_name))
-    return sorted_tuple(source_names, key=_normalize_identifier)
+    return tuple(sorted(source_names, key=_normalize_identifier))
 
 
 def _source_name_aliases(source_name: str) -> tuple[str, ...]:
@@ -8145,7 +8138,7 @@ def _runtime_measurement_row_subject_schema(
         ),
         _field_indexes_for_names(
             normalized_field_indexes,
-            sorted_tuple(_IMAGE_IDENTITY_FIELDS),
+            tuple(sorted(_IMAGE_IDENTITY_FIELDS)),
         ),
     )
 
@@ -8758,7 +8751,7 @@ def _source_name_token_groups(
         )
         if normalized
     )
-    return sorted_tuple(groups, key=lambda group: (-len(group[1]), group[0]))
+    return tuple(sorted(groups, key=lambda group: (-len(group[1]), group[0])))
 
 
 def _matching_source_name_at(
