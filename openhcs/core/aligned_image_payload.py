@@ -9,6 +9,7 @@ from enum import Enum
 from typing import Any, ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 
 from openhcs.core.image_shapes import (
@@ -55,6 +56,8 @@ class ImagePayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
     value_type_label = "image_payload"
     value: Any
     source_domain: SourceSpatialDomain
+    array = AliasProperty[Any]("value")
+    domain = AliasProperty[SourceSpatialDomain]("source_domain")
 
     @classmethod
     def for_value(
@@ -87,14 +90,6 @@ class ImagePayloadSourceSpatialDomainAdapter(SourceSpatialDomainAdapter):
             fill_value=fill_value,
             value_name=value_name,
         )
-
-    @property
-    def array(self) -> Any:
-        return self.value
-
-    @property
-    def domain(self) -> SourceSpatialDomain:
-        return self.source_domain
 
     @property
     def spatial_shape_yx(self) -> tuple[int, int]:
