@@ -10,22 +10,38 @@ The goal is not to chase analyzer count mechanically. The goal is to use the adv
 
 ## Current Checkpoint
 
-- Stable pushed checkpoint: `9802b42e Register remaining runtime value semantics`.
+- Stable pushed checkpoint: `b3b15c26 Generate aligned kwarg strategy leaves`.
 - Full unit suite at checkpoint: `1485 passed, 10 warnings`.
 - Targeted advisor scan files:
+  - `openhcs/core/runtime_slice_alignment.py`
   - `openhcs/core/runtime_semantics.py`
   - `openhcs/core/runtime_values.py`
+  - `openhcs/core/aligned_image_payload.py`
   - `openhcs/interop/cellprofiler/runtime/module_execution.py`
-  - `openhcs/interop/cellprofiler/runtime/invocation.py`
-- Current targeted advisor finding count: `10`.
+  - `openhcs/interop/cellprofiler/runtime/invocation.py` for broader runtime work; the current focused residual scan omits it because the active debt is in aligned payload/runtime execution.
+- Current focused advisor finding count: `9`.
 
 Current finding profile:
 
-- `repeated_hardcoded_strings`: `6`
-- `trivial_forwarding_wrapper`: `2`
-- `under_amortized_infrastructure`: `2`
+- `repeated_hardcoded_strings`: `4`
+- `trivial_forwarding_wrapper`: `3`
+- `repeated_builder_calls`: `2`
 
 This is the post-cleanup baseline. Any follow-up branch work should compare against this baseline before claiming architectural improvement.
+
+Cleanup completed after the earlier `10`-finding baseline:
+
+- `ImageArrayShapeSemantics` now owns pairwise-grid and singleton-stack array shape conventions shared by OpenHCS payload alignment and CellProfiler unstacking.
+- `RuntimeSliceAlignedValueSet.value_for_aligned_slice(...)` owns singleton broadcast and incompatible-count validation for non-image aligned values.
+- Trivial aligned payload convenience facades were removed; tests call the owning runtime types directly.
+- Image payload source-domain aliases now use the existing `AliasProperty` descriptor pattern.
+- Metadata-only aligned-kwarg strategy leaves now use `GeneratedLeafClassSpec`.
+
+Validated non-actions at this checkpoint:
+
+- A proposed `ImageStackLayout.stack_slices(...)` classmethod reduced repeated call sites locally but introduced a new forwarding shell and worse advisor output when `image_stack_layout.py` was included. Keep direct `ImageStackLayout.for_slices(...).stack(...)` calls until a real request object or behavior-bearing stack materializer exists.
+- The repeated `image_payload_with_context(...)` finding points at calls to the existing authoritative image payload builder. Do not add a local wrapper merely to change the analyzer count.
+- The remaining nested-stack aligned kwarg wrapper is an intentional strategy boundary: it selects an `AlignedImageStack` slice, then re-enters the normal resolver without aligned-payload recursion. Removing it should be part of a broader resolver ownership redesign, not a one-line wrapper shuffle.
 
 ## Hard Constraints
 
@@ -80,4 +96,3 @@ For planner/runtime behavior changes:
 - Collapsing metadata leaves into behaviorful bases when the class family is intentionally nominal.
 - Replacing explicit policy families with loose dict dispatch.
 - Treating object-label/image/table runtime semantics as interchangeable just because they share storage shape.
-

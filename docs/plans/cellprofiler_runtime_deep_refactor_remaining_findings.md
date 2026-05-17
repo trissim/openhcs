@@ -387,12 +387,16 @@ Advisor signals likely to remain:
 - some `trivial_forwarding_wrapper` on public compatibility or strategy methods
 - some `semantic_inheritance_family_ssot` where metaclass registration is already correct
 - repeated `__registry_key__` literals in registered strategy roots.
+- repeated builder calls to existing authorities such as `image_payload_with_context(...)` or `ImageStackLayout.for_slices(...).stack(...)` when the proposed extraction would only create a forwarding shell.
 
 Known reasoning:
 
 - `_execute_flexible` and `_execute_volumetric_to_slice` are dynamic `ProcessingContract` dispatch targets. Renaming/deleting them would break enum-driven execution.
 - Several trivial wrappers are required by ABC contracts or preserve public API.
 - Registry root literals are recognized by `AutoRegisterMeta`; previous constant extraction attempts risk breaking registration.
+- The aligned-payload cleanup validated that replacing repeated `ImageStackLayout.for_slices(...).stack(...)` calls with a `stack_slices(...)` classmethod made advisor output worse because it introduced an identity keyword-forwarding shell. Keep those calls direct until the extracted type carries real policy, state, or validation.
+- Repeated calls to `image_payload_with_context(...)` are already routed through the runtime image payload builder. A local wrapper would be a compatibility helper, not a nominal fix.
+- `NestedAlignedImageStackKwargResolutionStrategy.resolve(...)` remains a thin strategy method because the strategy is the dispatch owner for nested `AlignedImageStack` values. Moving the body elsewhere without changing resolver ownership just relocates the wrapper smell.
 
 Target shape:
 
