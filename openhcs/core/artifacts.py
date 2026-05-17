@@ -27,7 +27,7 @@ class ArtifactKind(str, Enum):
         cls,
         value: str,
         payload_shape: "ArtifactPayloadShape",
-        options: Mapping[str, bool] | None = None,
+        options: Mapping[str, bool | str] | None = None,
     ):
         obj = str.__new__(cls, value)
         obj._value_ = value
@@ -40,6 +40,9 @@ class ArtifactKind(str, Enum):
         )
         obj._participates_in_main_flow_output = bool(
             (options or {}).get("participates_in_main_flow_output")
+        )
+        obj._participates_in_axis_plane_identity = bool(
+            (options or {}).get("participates_in_axis_plane_identity")
         )
         obj._payload_description = (options or {}).get(
             "payload_description",
@@ -65,8 +68,16 @@ class ArtifactKind(str, Enum):
             "uses_label_representation_payload_shape": True,
         },
     )
-    MEASUREMENTS = ("measurements", ArtifactPayloadShape.TABLE)
-    RELATIONSHIPS = ("relationships", ArtifactPayloadShape.TABLE)
+    MEASUREMENTS = (
+        "measurements",
+        ArtifactPayloadShape.TABLE,
+        {"participates_in_axis_plane_identity": True},
+    )
+    RELATIONSHIPS = (
+        "relationships",
+        ArtifactPayloadShape.TABLE,
+        {"participates_in_axis_plane_identity": True},
+    )
     TABLE = ("table", ArtifactPayloadShape.TABLE)
     SPATIAL_GRID = (
         "spatial_grid",
@@ -94,6 +105,10 @@ class ArtifactKind(str, Enum):
     @property
     def participates_in_main_flow_output(self) -> bool:
         return self._participates_in_main_flow_output
+
+    @property
+    def participates_in_axis_plane_identity(self) -> bool:
+        return self._participates_in_axis_plane_identity
 
     @property
     def payload_description(self) -> str:

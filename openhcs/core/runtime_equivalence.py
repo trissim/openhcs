@@ -960,8 +960,7 @@ class RuntimeAxisRecordPlaneIdentityResolver:
             Counter(
                 (record.key.kind, record.key.name)
                 for record in records
-                if record.key.kind
-                in (ArtifactKind.MEASUREMENTS, ArtifactKind.RELATIONSHIPS)
+                if record.key.kind.participates_in_axis_plane_identity
             )
         )
 
