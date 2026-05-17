@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+
 from openhcs.interop.cellprofiler.setting_names import SettingNameFamily
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 
@@ -26,13 +28,8 @@ class RelateObjectsDistanceMethod(Enum):
         self._calculates_centroid_distance = calculates_centroid_distance
         self._calculates_minimum_distance = calculates_minimum_distance
 
-    @property
-    def calculates_centroid_distance(self) -> bool:
-        return self._calculates_centroid_distance
-
-    @property
-    def calculates_minimum_distance(self) -> bool:
-        return self._calculates_minimum_distance
+    calculates_centroid_distance = AliasProperty[bool]("_calculates_centroid_distance")
+    calculates_minimum_distance = AliasProperty[bool]("_calculates_minimum_distance")
 
 
 RELATE_OBJECTS_DISTANCE_SETTING = SettingNameFamily("Calculate child-parent distances?")

@@ -8,6 +8,7 @@ from enum import Enum
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.special_outputs import (
@@ -54,13 +55,8 @@ class ArtifactSettingRole(Enum):
         self._direction = direction
         self._artifact_kind = artifact_kind
 
-    @property
-    def direction(self) -> ArtifactSettingDirection:
-        return self._direction
-
-    @property
-    def artifact_kind(self) -> ArtifactKind:
-        return self._artifact_kind
+    direction = AliasProperty[ArtifactSettingDirection]("_direction")
+    artifact_kind = AliasProperty[ArtifactKind]("_artifact_kind")
 
     @property
     def is_input(self) -> bool:

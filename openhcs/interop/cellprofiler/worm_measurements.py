@@ -14,6 +14,69 @@ from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_OBJECT_NUMBER_FIELD,
 )
 
+WormMeasurementRows = tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]]
+
+
+@dataclass(frozen=True, slots=True)
+class WormMeasurementRowSelection:
+    """Object-scoped worm measurement rows with explicit absence semantics."""
+
+    rows: tuple[Mapping[str, Any], ...]
+
+    @classmethod
+    def from_rows(
+        cls,
+        rows: WormMeasurementRows,
+        *,
+        object_name: str | None,
+    ) -> "WormMeasurementRowSelection":
+        filtered_rows = tuple(
+            row
+            for row in rows
+            if object_name is None
+            or row.get(MEASUREMENT_OBJECT_NAME_FIELD) == object_name
+        )
+        return cls(
+            tuple(
+                sorted(
+                    filtered_rows,
+                    key=lambda row: int(row.get(MEASUREMENT_OBJECT_NUMBER_FIELD, 0)),
+                )
+            )
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.rows
+
+    def control_point_array(
+        self,
+        schema: "WormControlPointMeasurementSchema",
+    ) -> np.ndarray:
+        control_points = np.zeros(
+            (len(self.rows), 2, schema.num_control_points),
+            dtype=float,
+        )
+        for row_index, row in enumerate(self.rows):
+            for control_point_index in range(schema.num_control_points):
+                field_index = control_point_index + 1
+                row_field = schema.field(WormControlPointAxis.ROW, field_index).name
+                column_field = schema.field(
+                    WormControlPointAxis.COLUMN,
+                    field_index,
+                ).name
+                try:
+                    row_value = row[row_field]
+                    column_value = row[column_field]
+                except KeyError as exc:
+                    raise ValueError(
+                        "UntangleWorms measurement rows are missing required "
+                        f"control-point field {exc.args[0]!r}."
+                    ) from exc
+                control_points[row_index, 0, control_point_index] = float(row_value)
+                control_points[row_index, 1, control_point_index] = float(column_value)
+        return control_points
+
 
 class WormControlPointAxis(str, Enum):
     """Axes encoded by UntangleWorms control-point measurement fields."""
@@ -76,60 +139,30 @@ class WormControlPointMeasurementSchema:
 
     def control_points_from_rows(
         self,
-        rows: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]],
+        rows: WormMeasurementRows,
         *,
         object_name: str | None = None,
     ) -> np.ndarray | None:
-        if not rows:
+        selection = self.select_rows(rows, object_name=object_name)
+        if selection.is_empty:
             return None
-        rows = self.rows_for_object(rows, object_name=object_name)
-        if not rows:
-            return None
-        control_points = np.zeros((len(rows), 2, self.num_control_points), dtype=float)
-        for row_index, row in enumerate(rows):
-            for control_point_index in range(self.num_control_points):
-                field_index = control_point_index + 1
-                row_field = self.field(WormControlPointAxis.ROW, field_index).name
-                column_field = self.field(WormControlPointAxis.COLUMN, field_index).name
-                try:
-                    row_value = row[row_field]
-                    column_value = row[column_field]
-                except KeyError as exc:
-                    raise ValueError(
-                        "UntangleWorms measurement rows are missing required "
-                        f"control-point field {exc.args[0]!r}."
-                    ) from exc
-                control_points[row_index, 0, control_point_index] = float(row_value)
-                control_points[row_index, 1, control_point_index] = float(column_value)
-        return control_points
+        return selection.control_point_array(self)
+
+    def select_rows(
+        self,
+        rows: WormMeasurementRows,
+        *,
+        object_name: str | None,
+    ) -> WormMeasurementRowSelection:
+        return WormMeasurementRowSelection.from_rows(
+            rows,
+            object_name=object_name,
+        )
 
     def rows_for_object(
         self,
-        rows: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]],
+        rows: WormMeasurementRows,
         *,
         object_name: str | None,
     ) -> tuple[Mapping[str, Any], ...]:
-        filtered_rows = tuple(
-            row
-            for row in rows
-            if object_name is None
-            or row.get(MEASUREMENT_OBJECT_NAME_FIELD) == object_name
-        )
-        return tuple(
-            sorted(
-                filtered_rows,
-                key=lambda row: int(row.get(MEASUREMENT_OBJECT_NUMBER_FIELD, 0)),
-            )
-        )
-
-
-def control_points_from_worm_measurement_rows(
-    rows: tuple[Mapping[str, Any], ...] | list[Mapping[str, Any]],
-    *,
-    num_control_points: int,
-    object_name: str | None = None,
-) -> np.ndarray | None:
-    """Return StraightenWorms control points from UntangleWorms measurement rows."""
-    return WormControlPointMeasurementSchema(
-        num_control_points=num_control_points,
-    ).control_points_from_rows(rows, object_name=object_name)
+        return self.select_rows(rows, object_name=object_name).rows

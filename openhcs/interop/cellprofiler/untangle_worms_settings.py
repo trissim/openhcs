@@ -54,16 +54,17 @@ _TRAINING_MATRIX_TAGS: tuple[tuple[str, str], ...] = (
     ("inv-angles-covariance-matrix", "inv_angles_covariance_matrix"),
 )
 
+UntangleWormsBoundKwargs = dict[str, str | int | float | tuple[Any, ...]]
+UntangleWormsTrainingParameters = dict[str, float | int | tuple[Any, ...]]
 
-def untangle_worms_bound_kwargs(module: ModuleBlock) -> dict[str, str | int | float | tuple[Any, ...]]:
+
+def untangle_worms_bound_kwargs(module: ModuleBlock) -> UntangleWormsBoundKwargs:
     """Bind UntangleWorms settings that affect runtime output semantics."""
     overlap_style = coerce_cellprofiler_enum(
         UntangleWormsOverlapStyle,
         module.get_setting("Overlap style", "Without overlap"),
     )
-    kwargs: dict[str, str | int | float | tuple[Any, ...]] = {
-        "overlap_style": overlap_style.value
-    }
+    kwargs: UntangleWormsBoundKwargs = {"overlap_style": overlap_style.value}
     kwargs["overlapping_object_name"] = required_setting_value(
         module,
         UNTANGLE_WORMS_OVERLAPPING_OBJECTS_SETTING,
@@ -81,12 +82,12 @@ def untangle_worms_bound_kwargs(module: ModuleBlock) -> dict[str, str | int | fl
     return kwargs
 
 
-def _training_parameter_kwargs(module: ModuleBlock) -> dict[str, float | int | tuple[Any, ...]]:
+def _training_parameter_kwargs(module: ModuleBlock) -> UntangleWormsTrainingParameters:
     training_path = _training_file_path(module)
     if training_path is None:
         return {}
     doc = parse(str(training_path))
-    kwargs: dict[str, float | int | tuple[Any, ...]] = {}
+    kwargs: UntangleWormsTrainingParameters = {}
     for tag_name, parameter_name, coerce in _TRAINING_PARAMETER_TAGS:
         elements = doc.documentElement.getElementsByTagName(tag_name)
         if len(elements) != 1:

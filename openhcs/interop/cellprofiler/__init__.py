@@ -207,7 +207,6 @@ from openhcs.interop.cellprofiler.worm_measurements import (
     WormControlPointAxis,
     WormControlPointMeasurementField,
     WormControlPointMeasurementSchema,
-    control_points_from_worm_measurement_rows,
 )
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,

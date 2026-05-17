@@ -28,7 +28,6 @@ from scipy.ndimage import (
 from openhcs.core.memory.decorators import numpy
 from openhcs.interop.cellprofiler.worm_measurements import (
     WormControlPointMeasurementSchema,
-    control_points_from_worm_measurement_rows,
 )
 from openhcs.core.runtime_semantics import ObjectLabelRepresentation
 from openhcs.core.runtime_values import (

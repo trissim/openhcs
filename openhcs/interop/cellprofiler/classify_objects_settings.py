@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
+
 from .parser import ModuleBlock
 from .setting_names import SettingNameFamily, setting_values
 from .settings_binder import SettingsBinder
@@ -42,9 +44,7 @@ class ClassifyObjectsVariant(str, Enum):
             f"Unsupported ClassifyObjects measurement count setting: {value!r}."
         )
 
-    @property
-    def function_name(self) -> str:
-        return self.value
+    function_name = AliasProperty[str]("value")
 
 
 def classify_objects_bound_kwargs(

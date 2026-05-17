@@ -206,7 +206,7 @@ from openhcs.interop.cellprofiler.image_module_settings import (
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.interop.cellprofiler.worm_measurements import (
-    control_points_from_worm_measurement_rows,
+    WormControlPointMeasurementSchema,
 )
 from openhcs.interop.cellprofiler.measurement_scope import (
     CELLPROFILER_MEASUREMENT_TARGET_SCOPE_KWARG,
@@ -10072,9 +10072,10 @@ class StraightenWormsSpecialInputPolicy(CellProfilerSpecialInputPolicy):
                 f"input; got {[spec.name for spec in measurement_inputs]}."
             )
         num_control_points = int(request.kwargs.get("num_control_points", 21))
-        control_points = control_points_from_worm_measurement_rows(
-            request.runtime_value(measurement_inputs[0]),
+        control_points = WormControlPointMeasurementSchema(
             num_control_points=num_control_points,
+        ).control_points_from_rows(
+            request.runtime_value(measurement_inputs[0]),
             object_name=object_inputs[0].name,
         )
         if control_points is not None:
