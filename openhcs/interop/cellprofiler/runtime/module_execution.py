@@ -2806,7 +2806,7 @@ class NaturalImageExecutionStrategy(CellProfilerImageExecutionStrategy):
             contract is ProcessingContract.PURE_2D
             and Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs) is not None
         ):
-            result = executor._execute_pure_2d(func, image, **kwargs)
+            result = executor.execute_pure_2d(func, image, **kwargs)
         else:
             result = contract.execute(
                 executor,
@@ -2836,7 +2836,7 @@ class FullStackImageExecutionStrategy(CellProfilerImageExecutionStrategy):
         image: Any,
         kwargs: Mapping[str, Any],
     ) -> Any:
-        return executor._execute_pure_3d(func, image, **kwargs)
+        return executor.execute_pure_3d(func, image, **kwargs)
 
 
 class AlignedMultiImageStackExecutionStrategy(CellProfilerImageExecutionStrategy):
@@ -10786,7 +10786,7 @@ class CellProfilerFunctionContractExecutor:
         )
         return result
 
-    def _execute_pure_3d(
+    def execute_pure_3d(
         self,
         func: Callable[..., Any],
         image: Any,
@@ -10864,7 +10864,7 @@ class CellProfilerFunctionContractExecutor:
             ),
         )
 
-    def _execute_pure_2d(
+    def execute_pure_2d(
         self,
         func: Callable[..., Any],
         image: Any,
@@ -10968,7 +10968,7 @@ class CellProfilerFunctionContractExecutor:
         )
         return result
 
-    def _execute_flexible(
+    def execute_flexible(
         self,
         func: Callable[..., Any],
         image: Any,
@@ -10976,10 +10976,10 @@ class CellProfilerFunctionContractExecutor:
     ) -> Any:
         slice_by_slice = bool(kwargs.pop("slice_by_slice", False))
         if slice_by_slice:
-            return self._execute_pure_2d(func, image, **kwargs)
-        return self._execute_pure_3d(func, image, **kwargs)
+            return self.execute_pure_2d(func, image, **kwargs)
+        return self.execute_pure_3d(func, image, **kwargs)
 
-    def _execute_volumetric_to_slice(
+    def execute_volumetric_to_slice(
         self,
         func: Callable[..., Any],
         image: Any,

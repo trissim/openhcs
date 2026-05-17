@@ -832,10 +832,10 @@ class ProcessingContract(Enum):
     """
     Unified contract classification with direct method execution.
     """
-    PURE_3D = "_execute_pure_3d"
-    PURE_2D = "_execute_pure_2d"
-    FLEXIBLE = "_execute_flexible"
-    VOLUMETRIC_TO_SLICE = "_execute_volumetric_to_slice"
+    PURE_3D = "execute_pure_3d"
+    PURE_2D = "execute_pure_2d"
+    FLEXIBLE = "execute_flexible"
+    VOLUMETRIC_TO_SLICE = "execute_volumetric_to_slice"
 
     @classmethod
     def from_declared_name(cls, contract_name: str) -> "ProcessingContract | None":
@@ -1191,11 +1191,11 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
             return stack_slices(results, mem, 0)
         return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
 
-    def _execute_pure_3d(self, func, image, *args, **kwargs):
+    def execute_pure_3d(self, func, image, *args, **kwargs):
         """Execute 3D→3D function directly (no change)."""
         return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
 
-    def _execute_pure_2d(self, func, image, *args, **kwargs):
+    def execute_pure_2d(self, func, image, *args, **kwargs):
         """Execute 2D→2D function with unstack/restack wrapper."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
@@ -1222,18 +1222,18 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         )
         return (stacked_main_output, *aggregated_auxiliary_outputs)
 
-    def _execute_flexible(self, func, image, *args, **kwargs):
+    def execute_flexible(self, func, image, *args, **kwargs):
         """Execute function that handles both 3D→3D and 2D→2D with toggle."""
         # Check if slice_by_slice attribute is set on the function
         slice_by_slice = getattr(func, 'slice_by_slice', False)
         if slice_by_slice:
             # Reuse the 2D-only execution logic (unstack -> process -> restack)
-            return self._execute_pure_2d(func, image, *args, **kwargs)
+            return self.execute_pure_2d(func, image, *args, **kwargs)
         else:
             # Use 3D-only execution logic (no modification)
-            return self._execute_pure_3d(func, image, *args, **kwargs)
+            return self.execute_pure_3d(func, image, *args, **kwargs)
 
-    def _execute_volumetric_to_slice(self, func, image, *args, **kwargs):
+    def execute_volumetric_to_slice(self, func, image, *args, **kwargs):
         """Execute 3D→2D function returning slice 3D array."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
