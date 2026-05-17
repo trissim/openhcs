@@ -46,7 +46,7 @@ def test_pipeline_image_schema_builder_rejects_alias_kind_conflicts():
         builder.declare_source_artifact(
             SourceArtifactAssignment(
                 alias="Nuclei",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_kind=ArtifactKind.OBJECT_LABELS,
                 selector=SourceSelector(),
                 origin=SourceBindingOrigin.PIPELINE_START,
             )
@@ -66,7 +66,7 @@ def test_pipeline_image_schema_measurement_source_names_exclude_object_artifacts
     builder.declare_source_artifact(
         SourceArtifactAssignment(
             alias="Embryos",
-            kind=ArtifactKind.OBJECT_LABELS,
+            artifact_kind=ArtifactKind.OBJECT_LABELS,
             selector=SourceSelector(),
             origin=SourceBindingOrigin.STEP_INPUT,
         )

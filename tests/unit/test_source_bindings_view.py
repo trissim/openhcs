@@ -88,7 +88,7 @@ def test_source_bindings_view_model_projects_pipeline_and_step_bindings():
         source_artifacts_by_alias={
             "Nuclei": SourceArtifactAssignment(
                 alias="Nuclei",
-                kind=ArtifactKind.OBJECT_LABELS,
+                artifact_kind=ArtifactKind.OBJECT_LABELS,
                 payload_type="Objects",
                 selector=SourceSelector(
                     metadata=(MetadataSelector("object_type", "nuclei"),),

@@ -694,7 +694,7 @@ class NamesAndTypesModuleCompiler(SetupModuleCompiler):
                 state.declare_source_artifact(
                     SourceArtifactAssignment(
                         alias=alias,
-                        kind=artifact_kind,
+                        artifact_kind=artifact_kind,
                         selector=selector,
                         origin=(
                             cellprofiler_source_binding_origin_policy()

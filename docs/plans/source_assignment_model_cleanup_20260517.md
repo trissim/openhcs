@@ -123,3 +123,27 @@ Then run:
 - No generated or serialized source-binding shape changes unless covered by
   migration tests.
 
+## Progress: 2026-05-17
+
+Completed:
+
+- `SourceFilterMatchType.requires_value` is now real enum member state rather
+  than a property alias.
+- Repeated tuple/type validation is owned by `SourceBindingTypedValues`.
+- Repeated unique-identity validation is owned by `SourceBindingUniqueValues`.
+- Runtime source-path provenance lookup is owned by `SourceRuntimePathLookup`,
+  and the CP runtime adapter consumes that nominal object directly instead of
+  going through trivial context forwarding methods.
+- Pipeline image-type role shells are declared from
+  `ImageTypeSourceRoleClassSpec`, preserving the nominal class hierarchy used by
+  source-image loading strategy dispatch without hand-written metadata-only
+  class shells.
+- `SourceArtifactAssignment` now uses the nominal `artifact_kind` field directly
+  instead of the `kind` field plus an `artifact_kind` alias.
+
+Verification:
+
+- Focused source-binding/source-schema/runtime-adapter gate: `215 passed`.
+- Advisor:
+  - `openhcs/core/source_bindings.py`: `0`.
+  - `openhcs/core/pipeline_image_schema.py`: `0`.

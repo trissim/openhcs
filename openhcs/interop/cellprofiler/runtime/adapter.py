@@ -36,6 +36,7 @@ from openhcs.core.source_bindings import (
     SourceBindingMatchPlan,
     SourceBindingRuntimeContext,
     SourceBindingOrigin,
+    SourceRuntimePathLookup,
 )
 from openhcs.core.source_schema_workspace import source_schema_auxiliary_payload
 from openhcs.core.source_matching import (
@@ -3390,7 +3391,10 @@ def _candidate_metadata(
             file_path,
             adapter,
             parser,
-            strict=context.step_input_source_path(file_path) is None,
+            strict=SourceRuntimePathLookup(
+                file_path,
+                context.step_input_dir,
+            ).first_value(context.step_input_source_paths) is None,
         )
     if virtual_path is not None and virtual_path not in {file_path, resolved_path}:
         _merge_candidate_path_metadata(
@@ -3436,7 +3440,13 @@ def _context_source_metadata(
     file_path: str,
     context: SourceBindingRuntimeContext,
 ) -> Mapping[str, str] | None:
-    return context.source_metadata_for_path(file_path)
+    return SourceRuntimePathLookup(
+        file_path,
+        context.step_input_dir,
+    ).first_value(
+        context.source_metadata_by_path,
+        include_native_path_fallback=True,
+    )
 
 
 def _merge_candidate_path_metadata(
@@ -3473,7 +3483,7 @@ def _candidate_virtual_workspace_path(
     resolved_path: str,
     context: SourceBindingRuntimeContext,
 ) -> str | None:
-    for key in context.source_path_lookup_keys(file_path):
+    for key in SourceRuntimePathLookup(file_path, context.step_input_dir).keys():
         if key in context.step_input_source_paths:
             return key
     return _virtual_workspace_path_for_source(resolved_path, context)
@@ -4175,7 +4185,10 @@ def _resolved_source_path(
     file_path: str,
     adapter: CellProfilerRuntimeAdapter,
 ) -> str:
-    source_path = adapter.source_binding_context.step_input_source_path(file_path)
+    source_path = SourceRuntimePathLookup(
+        file_path,
+        adapter.source_binding_context.step_input_dir,
+    ).first_value(adapter.source_binding_context.step_input_source_paths)
     if source_path is not None:
         return source_path
     path = Path(file_path)

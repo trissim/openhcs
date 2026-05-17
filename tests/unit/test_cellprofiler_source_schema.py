@@ -424,7 +424,7 @@ def test_compile_image_schema_lowers_object_loads_to_source_artifacts():
     )
 
     assert source_artifact is not None
-    assert source_artifact.kind is ArtifactKind.OBJECT_LABELS
+    assert source_artifact.artifact_kind is ArtifactKind.OBJECT_LABELS
     assert source_artifact.selector.metadata == (
         MetadataSelector("channel", "3"),
     )

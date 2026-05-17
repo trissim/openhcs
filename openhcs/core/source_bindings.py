@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, ClassVar, Mapping
+from typing import Any, Callable, ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -52,7 +52,7 @@ class SourceFilterMatchType(Enum):
     def __new__(cls, value: str, requires_value: bool = True):
         obj = object.__new__(cls)
         obj._value_ = value
-        obj._requires_value = requires_value
+        obj.requires_value = requires_value
         return obj
 
     CONTAINS = ("contains", True)
@@ -67,10 +67,6 @@ class SourceFilterMatchType(Enum):
     DOES_NOT_END_WITH = ("does_not_end_with", True)
     IS_IMAGE = ("is_image", False)
     IS_TIF = ("is_tif", False)
-
-    @property
-    def requires_value(self) -> bool:
-        return self._requires_value
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +105,50 @@ class SourceFilterClause:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceBindingTypedValues:
+    """Validated tuple of values for a typed source-binding field."""
+
+    field_name: str
+    values: tuple[object, ...]
+    value_type: type[object]
+
+    def normalized(self) -> tuple[object, ...]:
+        normalized_values = tuple(self.values)
+        for value in normalized_values:
+            if not isinstance(value, self.value_type):
+                raise TypeError(
+                    f"{self.field_name} must contain {self.value_type.__name__} "
+                    f"values, got {type(value).__name__}."
+                )
+        return normalized_values
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingUniqueValues:
+    """Validated source-binding values with unique semantic identities."""
+
+    field_name: str
+    values: tuple[object, ...]
+    value_type: type[object]
+    identity: Callable[[Any], object]
+    duplicate_message: Callable[[object], str]
+
+    def normalized(self) -> tuple[object, ...]:
+        normalized_values = SourceBindingTypedValues(
+            self.field_name,
+            self.values,
+            self.value_type,
+        ).normalized()
+        seen: set[object] = set()
+        for value in normalized_values:
+            identity = self.identity(value)
+            if identity in seen:
+                raise ValueError(self.duplicate_message(identity))
+            seen.add(identity)
+        return normalized_values
+
+
+@dataclass(frozen=True, slots=True)
 class MetadataExtractionRule:
     """Regex-backed metadata extraction rule for source binding resolution."""
 
@@ -135,13 +175,15 @@ class MetadataExtractionRule:
                 "capture group."
             )
         object.__setattr__(self, "pattern", str(self.pattern))
-        object.__setattr__(self, "filters", tuple(self.filters))
-        for clause in self.filters:
-            if not isinstance(clause, SourceFilterClause):
-                raise TypeError(
-                    "MetadataExtractionRule.filters must contain SourceFilterClause "
-                    f"values, got {type(clause).__name__}."
-                )
+        object.__setattr__(
+            self,
+            "filters",
+            SourceBindingTypedValues(
+                "MetadataExtractionRule.filters",
+                self.filters,
+                SourceFilterClause,
+            ).normalized(),
+        )
 
 
 class SourceBindingMatchMethod(Enum):
@@ -169,27 +211,36 @@ class SourceBindingMatchField:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceBindingMatchFields:
+    """Validated match fields with one field per source alias."""
+
+    fields: tuple[SourceBindingMatchField, ...]
+
+    def normalized(self) -> tuple[SourceBindingMatchField, ...]:
+        return SourceBindingUniqueValues(
+            "SourceBindingMatchDimension.fields",
+            self.fields,
+            SourceBindingMatchField,
+            lambda field: field.alias,
+            lambda alias: (
+                "SourceBindingMatchDimension contains duplicate alias "
+                f"{alias!r}."
+            ),
+        ).normalized()
+
+
+@dataclass(frozen=True, slots=True)
 class SourceBindingMatchDimension:
     """One logical image-set matching slot shared across aliases."""
 
     fields: tuple[SourceBindingMatchField, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "fields", tuple(self.fields))
-        seen_aliases: set[str] = set()
-        for field in self.fields:
-            if not isinstance(field, SourceBindingMatchField):
-                raise TypeError(
-                    "SourceBindingMatchDimension.fields must contain "
-                    "SourceBindingMatchField values, got "
-                    f"{type(field).__name__}."
-                )
-            if field.alias in seen_aliases:
-                raise ValueError(
-                    "SourceBindingMatchDimension contains duplicate alias "
-                    f"{field.alias!r}."
-                )
-            seen_aliases.add(field.alias)
+        object.__setattr__(
+            self,
+            "fields",
+            SourceBindingMatchFields(self.fields).normalized(),
+        )
 
     def field_for_alias(self, alias: str) -> str | None:
         for field in self.fields:
@@ -215,14 +266,15 @@ class SourceBindingMatchPlan:
                 "SourceBindingMatchPlan.method",
             ),
         )
-        object.__setattr__(self, "dimensions", tuple(self.dimensions))
-        for dimension in self.dimensions:
-            if not isinstance(dimension, SourceBindingMatchDimension):
-                raise TypeError(
-                    "SourceBindingMatchPlan.dimensions must contain "
-                    "SourceBindingMatchDimension values, got "
-                    f"{type(dimension).__name__}."
-                )
+        object.__setattr__(
+            self,
+            "dimensions",
+            SourceBindingTypedValues(
+                "SourceBindingMatchPlan.dimensions",
+                self.dimensions,
+                SourceBindingMatchDimension,
+            ).normalized(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,27 +320,33 @@ class SourceSelector:
     inherit_current_scope: bool = True
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "components", tuple(self.components))
-        object.__setattr__(self, "metadata", tuple(self.metadata))
-        object.__setattr__(self, "filters", tuple(self.filters))
-        for selector in self.components:
-            if not isinstance(selector, ComponentSelector):
-                raise TypeError(
-                    "SourceSelector.components must contain ComponentSelector values, "
-                    f"got {type(selector).__name__}."
-                )
-        for selector in self.metadata:
-            if not isinstance(selector, MetadataSelector):
-                raise TypeError(
-                    "SourceSelector.metadata must contain MetadataSelector values, "
-                    f"got {type(selector).__name__}."
-                )
-        for clause in self.filters:
-            if not isinstance(clause, SourceFilterClause):
-                raise TypeError(
-                    "SourceSelector.filters must contain SourceFilterClause values, "
-                    f"got {type(clause).__name__}."
-                )
+        object.__setattr__(
+            self,
+            "components",
+            SourceBindingTypedValues(
+                "SourceSelector.components",
+                self.components,
+                ComponentSelector,
+            ).normalized(),
+        )
+        object.__setattr__(
+            self,
+            "metadata",
+            SourceBindingTypedValues(
+                "SourceSelector.metadata",
+                self.metadata,
+                MetadataSelector,
+            ).normalized(),
+        )
+        object.__setattr__(
+            self,
+            "filters",
+            SourceBindingTypedValues(
+                "SourceSelector.filters",
+                self.filters,
+                SourceFilterClause,
+            ).normalized(),
+        )
 
 
 def source_alias_measurement_names(alias: str) -> tuple[str, ...]:
@@ -439,6 +497,25 @@ class GroupedSourceBindings:
             seen_aliases.add(binding.alias)
 
 
+@dataclass(frozen=True, slots=True)
+class SourceBindingGroups:
+    """Validated grouped binding declarations keyed by source group."""
+
+    groups: tuple[GroupedSourceBindings, ...]
+
+    def normalized(self) -> tuple[GroupedSourceBindings, ...]:
+        return SourceBindingUniqueValues(
+            "StepSourceBindingsConfig.groups",
+            self.groups,
+            GroupedSourceBindings,
+            lambda group: group.group_key,
+            lambda group_key: (
+                "StepSourceBindingsConfig contains duplicate group key "
+                f"{group_key!r}."
+            ),
+        ).normalized()
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _SourceBindingPlanBase(ABC, metaclass=AutoRegisterMeta):
     """Shared typed source-binding plan fields across editable and compiled views."""
@@ -496,20 +573,11 @@ class StepSourceBindingsConfig(_SourceBindingPlanBase):
     groups: tuple[GroupedSourceBindings, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "groups", tuple(self.groups))
-        seen_group_keys: set[str | None] = set()
-        for group in self.groups:
-            if not isinstance(group, GroupedSourceBindings):
-                raise TypeError(
-                    "StepSourceBindingsConfig.groups must contain GroupedSourceBindings values, "
-                    f"got {type(group).__name__}."
-                )
-            if group.group_key in seen_group_keys:
-                raise ValueError(
-                    f"StepSourceBindingsConfig contains duplicate group key "
-                    f"{group.group_key!r}."
-                )
-            seen_group_keys.add(group.group_key)
+        object.__setattr__(
+            self,
+            "groups",
+            SourceBindingGroups(self.groups).normalized(),
+        )
         self._normalize_common_fields()
 
     @property
@@ -661,6 +729,40 @@ class CompiledSourceBindingPlan(_SourceBindingPlanBase):
 
 
 @dataclass(frozen=True, slots=True)
+class SourceRuntimePathLookup:
+    """Runtime path identities used by source-binding provenance maps."""
+
+    file_path: str
+    step_input_dir: str | None = None
+
+    def keys(self) -> tuple[str, ...]:
+        path = Path(self.file_path)
+        keys = dict.fromkeys((str(self.file_path), path.as_posix()))
+        if path.is_absolute() and self.step_input_dir is not None:
+            try:
+                relative_path = path.relative_to(self.step_input_dir)
+            except ValueError:
+                pass
+            else:
+                keys[relative_path.as_posix()] = None
+        return tuple(keys)
+
+    def first_value(
+        self,
+        mapping: Mapping[str, Any],
+        *,
+        include_native_path_fallback: bool = False,
+    ) -> Any | None:
+        for key in self.keys():
+            value = mapping.get(key)
+            if value is not None:
+                return value
+        if include_native_path_fallback:
+            return mapping.get(str(Path(self.file_path)))
+        return None
+
+
+@dataclass(frozen=True, slots=True)
 class SourceBindingRuntimeContext:
     """Execution-local file universe for selector-bearing source bindings."""
 
@@ -757,38 +859,6 @@ class SourceBindingRuntimeContext:
             (path, tuple(sorted(self.source_metadata_by_path.get(path, {}).items())))
             for path in paths
         )
-
-    def source_path_lookup_keys(self, file_path: str) -> tuple[str, ...]:
-        """Return all runtime-context keys that can identify a source path."""
-
-        path = Path(file_path)
-        keys = dict.fromkeys((str(file_path), path.as_posix()))
-        if path.is_absolute() and self.step_input_dir is not None:
-            try:
-                relative_path = path.relative_to(self.step_input_dir)
-            except ValueError:
-                pass
-            else:
-                keys[relative_path.as_posix()] = None
-        return tuple(keys)
-
-    def step_input_source_path(self, file_path: str) -> str | None:
-        """Return the original source path for a step-input workspace path."""
-
-        for key in self.source_path_lookup_keys(file_path):
-            source_path = self.step_input_source_paths.get(key)
-            if source_path is not None:
-                return source_path
-        return None
-
-    def source_metadata_for_path(self, file_path: str) -> Mapping[str, str] | None:
-        """Return context-declared source metadata for a path identity."""
-
-        for key in self.source_path_lookup_keys(file_path):
-            metadata = self.source_metadata_by_path.get(key)
-            if metadata is not None:
-                return metadata
-        return self.source_metadata_by_path.get(str(Path(file_path)))
 
     def __reduce__(
         self,

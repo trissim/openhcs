@@ -18,6 +18,7 @@ from openhcs.core.source_bindings import (
     SourceBindingMatchPlan,
     SourceBindingOrigin,
     SourceAssignmentBase,
+    SourceBindingTypedValues,
     SourceFilterClause,
     SourceSelector,
 )
@@ -50,13 +51,15 @@ class ImagesRule:
     filters: tuple[SourceFilterClause, ...] = ()
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "filters", tuple(self.filters))
-        for clause in self.filters:
-            if not isinstance(clause, SourceFilterClause):
-                raise TypeError(
-                    "ImagesRule.filters must contain SourceFilterClause values, "
-                    f"got {type(clause).__name__}."
-                )
+        object.__setattr__(
+            self,
+            "filters",
+            SourceBindingTypedValues(
+                "ImagesRule.filters",
+                self.filters,
+                SourceFilterClause,
+            ).normalized(),
+        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -80,21 +83,17 @@ class SourceArtifactAssignment(SourceAssignmentBase):
     """One pipeline-start or step-input source artifact declaration."""
 
     assignment_kind = "source_artifact"
-    kind: ArtifactKind
+    artifact_kind: ArtifactKind
     payload_type: str = ""
 
     def __post_init__(self) -> None:
         SourceAssignmentBase.__post_init__(self)
-        if not isinstance(self.kind, ArtifactKind):
+        if not isinstance(self.artifact_kind, ArtifactKind):
             raise TypeError(
-                "SourceArtifactAssignment.kind must be ArtifactKind, "
-                f"got {type(self.kind).__name__}."
+                "SourceArtifactAssignment.artifact_kind must be ArtifactKind, "
+                f"got {type(self.artifact_kind).__name__}."
             )
         object.__setattr__(self, "payload_type", self.payload_type.strip())
-
-    @property
-    def artifact_kind(self) -> ArtifactKind:
-        return self.kind
 
     @classmethod
     def from_image_assignment(
@@ -103,7 +102,7 @@ class SourceArtifactAssignment(SourceAssignmentBase):
     ) -> "SourceArtifactAssignment":
         return cls(
             alias=assignment.alias,
-            kind=ArtifactKind.IMAGE,
+            artifact_kind=ArtifactKind.IMAGE,
             selector=assignment.selector,
             origin=assignment.origin,
             payload_type=assignment.image_type,
@@ -156,34 +155,60 @@ class ImageTypeSourceRole(ABC, metaclass=AutoRegisterMeta):
         return type(self).MATERIALIZE_SOURCE_MASK
 
 
-class ImageStackSourceRole(ImageTypeSourceRole):
-    """Image type that projects into the OpenHCS channel stack."""
+@dataclass(frozen=True, slots=True)
+class ImageTypeSourceRoleClassSpec:
+    """Typed declaration for one source-role class in the nominal hierarchy."""
 
-    PARTICIPATES_IN_IMAGE_STACK = True
-    MATERIALIZE_SOURCE_MASK = True
+    class_name: str
+    base_type: type[ImageTypeSourceRole]
+    participates_in_image_stack: bool
+    artifact_kind: ArtifactKind = ArtifactKind.IMAGE
+    load_as_monochrome: bool = False
+    materialize_source_mask: bool = False
+
+    def declare(self) -> type[ImageTypeSourceRole]:
+        return type(
+            self.class_name,
+            (self.base_type,),
+            {
+                "__module__": __name__,
+                "PARTICIPATES_IN_IMAGE_STACK": self.participates_in_image_stack,
+                "ARTIFACT_KIND": self.artifact_kind,
+                "LOAD_AS_MONOCHROME": self.load_as_monochrome,
+                "MATERIALIZE_SOURCE_MASK": self.materialize_source_mask,
+            },
+        )
 
 
-class MonochromeImageStackSourceRole(ImageStackSourceRole):
-    """Image stack role whose source reader must emit one grayscale plane."""
-
-    LOAD_AS_MONOCHROME = True
-
-
-class SourceArtifactImageTypeSourceRole(ImageTypeSourceRole):
-    """Image type that remains an external source artifact."""
-
-    PARTICIPATES_IN_IMAGE_STACK = False
-
-
-class ObjectLabelsImageTypeSourceRole(SourceArtifactImageTypeSourceRole):
-    """Image type representing externally supplied object labels."""
-
-    ARTIFACT_KIND = ArtifactKind.OBJECT_LABELS
+ImageStackSourceRole = ImageTypeSourceRoleClassSpec(
+    "ImageStackSourceRole",
+    ImageTypeSourceRole,
+    participates_in_image_stack=True,
+    materialize_source_mask=True,
+).declare()
+MonochromeImageStackSourceRole = ImageTypeSourceRoleClassSpec(
+    "MonochromeImageStackSourceRole",
+    ImageStackSourceRole,
+    participates_in_image_stack=True,
+    load_as_monochrome=True,
+    materialize_source_mask=True,
+).declare()
+SourceArtifactImageTypeSourceRole = ImageTypeSourceRoleClassSpec(
+    "SourceArtifactImageTypeSourceRole",
+    ImageTypeSourceRole,
+    participates_in_image_stack=False,
+).declare()
+ObjectLabelsImageTypeSourceRole = ImageTypeSourceRoleClassSpec(
+    "ObjectLabelsImageTypeSourceRole",
+    SourceArtifactImageTypeSourceRole,
+    participates_in_image_stack=False,
+    artifact_kind=ArtifactKind.OBJECT_LABELS,
+).declare()
 
 
 @dataclass(frozen=True, slots=True)
 class ImageTypeSourceRoleSpec:
-    """Typed declaration for one pipeline image-type role class."""
+    """Typed declaration for one concrete pipeline image-type role class."""
 
     class_name: str
     image_type_key: str
@@ -324,14 +349,15 @@ class ImportedMetadataTable:
             None if self.location is None else self.location.strip() or None
         )
         object.__setattr__(self, "location", normalized_location)
-        object.__setattr__(self, "joins", tuple(self.joins))
-        for join in self.joins:
-            if not isinstance(join, ImportedMetadataJoin):
-                raise TypeError(
-                    "ImportedMetadataTable.joins must contain "
-                    "ImportedMetadataJoin values, got "
-                    f"{type(join).__name__}."
-                )
+        object.__setattr__(
+            self,
+            "joins",
+            SourceBindingTypedValues(
+                "ImportedMetadataTable.joins",
+                self.joins,
+                ImportedMetadataJoin,
+            ).normalized(),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -355,13 +381,29 @@ class PipelineImageSchema:
         object.__setattr__(
             self,
             "image_plane_sources",
-            tuple(self.image_plane_sources),
+            SourceBindingTypedValues(
+                "PipelineImageSchema.image_plane_sources",
+                self.image_plane_sources,
+                ImagePlaneSource,
+            ).normalized(),
         )
-        object.__setattr__(self, "metadata_rules", tuple(self.metadata_rules))
+        object.__setattr__(
+            self,
+            "metadata_rules",
+            SourceBindingTypedValues(
+                "PipelineImageSchema.metadata_rules",
+                self.metadata_rules,
+                MetadataExtractionRule,
+            ).normalized(),
+        )
         object.__setattr__(
             self,
             "imported_metadata_tables",
-            tuple(self.imported_metadata_tables),
+            SourceBindingTypedValues(
+                "PipelineImageSchema.imported_metadata_tables",
+                self.imported_metadata_tables,
+                ImportedMetadataTable,
+            ).normalized(),
         )
         object.__setattr__(
             self,
@@ -373,19 +415,6 @@ class PipelineImageSchema:
             "source_artifacts_by_alias",
             MappingProxyType(dict(self.source_artifacts_by_alias)),
         )
-        for table in self.imported_metadata_tables:
-            if not isinstance(table, ImportedMetadataTable):
-                raise TypeError(
-                    "PipelineImageSchema.imported_metadata_tables must "
-                    "contain ImportedMetadataTable values, got "
-                    f"{type(table).__name__}."
-                )
-        for source in self.image_plane_sources:
-            if not isinstance(source, ImagePlaneSource):
-                raise TypeError(
-                    "PipelineImageSchema.image_plane_sources must contain "
-                    f"ImagePlaneSource values, got {type(source).__name__}."
-                )
         for alias, assignment in self.assignments_by_alias.items():
             if alias != assignment.alias:
                 raise ValueError(
@@ -461,10 +490,10 @@ class PipelineImageSchema:
         artifact_assignment = self.source_artifact_for_alias(alias)
         if artifact_assignment is None:
             return None
-        if artifact_assignment.kind is not kind:
+        if artifact_assignment.artifact_kind is not kind:
             raise ValueError(
                 f"Pipeline source artifact {alias!r} is declared as "
-                f"{artifact_assignment.kind.value}, not {kind.value}."
+                f"{artifact_assignment.artifact_kind.value}, not {kind.value}."
             )
         return artifact_assignment
 

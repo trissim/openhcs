@@ -1226,7 +1226,7 @@ def test_materialize_A01_schema_workspace_skips_imported_metadata_partial_join(
             source_artifacts_by_alias={
                     "Illum": SourceArtifactAssignment(
                         alias="Illum",
-                        kind=ArtifactKind.IMAGE,
+                        artifact_kind=ArtifactKind.IMAGE,
                     selector=SourceSelector(
                         filters=(
                             SourceFilterClause(
@@ -1287,7 +1287,7 @@ def test_materialize_A01_schema_workspace_supports_source_artifact_only_schema(
             source_artifacts_by_alias={
                 "A": SourceArtifactAssignment(
                     alias="A",
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_kind=ArtifactKind.OBJECT_LABELS,
                     selector=SourceSelector(
                         filters=(
                             SourceFilterClause(
@@ -1302,7 +1302,7 @@ def test_materialize_A01_schema_workspace_supports_source_artifact_only_schema(
                 ),
                 "B": SourceArtifactAssignment(
                     alias="B",
-                    kind=ArtifactKind.OBJECT_LABELS,
+                    artifact_kind=ArtifactKind.OBJECT_LABELS,
                     selector=SourceSelector(
                         filters=(
                             SourceFilterClause(
