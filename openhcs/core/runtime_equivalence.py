@@ -1968,7 +1968,12 @@ class ShapeObjectZernikeDescriptorStabilityContract(
         candidate: "RuntimeMeasurementSnapshot",
         policy: RuntimeEquivalencePolicy,
     ) -> bool:
-        return _shape_descriptor_geometry_is_stable(feature, reference, candidate, policy)
+        return MeasurementFeatureStabilityPolicy(
+            feature,
+            reference,
+            candidate,
+            policy,
+        ).shape_descriptor_geometry_is_stable()
 
 
 class IntensityObjectZernikeDescriptorStabilityContract(
@@ -1988,21 +1993,28 @@ class IntensityObjectZernikeDescriptorStabilityContract(
         policy: RuntimeEquivalencePolicy,
     ) -> bool:
         return (
-            _object_count_values_stable(feature, reference, candidate, policy)
-            and _object_measurement_role_values_stable(
+            MeasurementFeatureStabilityPolicy(
                 feature,
-                ObjectMeasurementFeatureRole.IDENTIFIER,
                 reference,
                 candidate,
                 policy,
+            ).object_count_values_stable()
+            and MeasurementFeatureStabilityPolicy(
+                feature,
+                reference,
+                candidate,
+                policy,
+            ).object_measurement_role_values_stable(
+                ObjectMeasurementFeatureRole.IDENTIFIER,
                 min_stable_features=1,
             )
-            and _object_measurement_role_values_stable(
+            and MeasurementFeatureStabilityPolicy(
                 feature,
-                ObjectMeasurementFeatureRole.LOCATION,
                 reference,
                 candidate,
                 policy,
+            ).object_measurement_role_values_stable(
+                ObjectMeasurementFeatureRole.LOCATION,
                 min_stable_features=2,
             )
         )
@@ -2728,7 +2740,12 @@ def _feature_numeric_tolerance_values_equivalent(
             continue
         if (
             tolerance.require_object_count_stability
-            and not _object_count_values_stable(feature, reference, candidate, policy)
+            and not MeasurementFeatureStabilityPolicy(
+                feature,
+                reference,
+                candidate,
+                policy,
+            ).object_count_values_stable()
         ):
             continue
         feature_policy = RuntimeEquivalencePolicy(
@@ -3021,7 +3038,12 @@ def _sparse_object_boundary_value_feature_equivalent(
             feature,
             policy.measurement_dialect,
         )
-        and not _object_count_values_stable(feature, reference, candidate, policy)
+        and not MeasurementFeatureStabilityPolicy(
+            feature,
+            reference,
+            candidate,
+            policy,
+        ).object_count_values_stable()
     ):
         return False
     if object_measurement_feature_has_role(
@@ -3190,32 +3212,149 @@ _SPARSE_OBJECT_BOUNDARY_EQUIVALENCE_BY_STATISTIC = MappingProxyType(
 )
 
 
-def _object_count_values_stable(
-    feature: RuntimeMeasurementFeatureKey,
-    reference: RuntimeMeasurementSnapshot,
-    candidate: RuntimeMeasurementSnapshot,
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    count_feature = RuntimeMeasurementFeatureKey(
-        subject=feature.subject,
-        feature_name=ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
-        statistic=MeasurementStatistic.COUNT.value,
-    )
-    reference_counts = reference.values_by_feature.get(count_feature)
-    candidate_counts = candidate.values_by_feature.get(count_feature)
-    if reference_counts is None or candidate_counts is None:
-        reference_values = reference.values_by_feature.get(feature)
-        candidate_values = candidate.values_by_feature.get(feature)
-        return (
-            reference_values is not None
-            and candidate_values is not None
-            and sum(reference_values.values()) == sum(candidate_values.values())
+@dataclass(frozen=True, slots=True)
+class MeasurementFeatureStabilityPolicy:
+    """Evaluate supporting measurement stability for feature equivalence."""
+
+    feature: RuntimeMeasurementFeatureKey
+    reference: RuntimeMeasurementSnapshot
+    candidate: RuntimeMeasurementSnapshot
+    policy: RuntimeEquivalencePolicy
+
+    def object_count_values_stable(self) -> bool:
+        count_feature = RuntimeMeasurementFeatureKey(
+            subject=self.feature.subject,
+            feature_name=ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
+            statistic=MeasurementStatistic.COUNT.value,
         )
-    return _cell_signature_counters_equivalent(
-        reference_counts,
-        candidate_counts,
-        policy,
-    )
+        reference_counts = self.reference.values_by_feature.get(count_feature)
+        candidate_counts = self.candidate.values_by_feature.get(count_feature)
+        if reference_counts is None or candidate_counts is None:
+            reference_values = self.reference.values_by_feature.get(self.feature)
+            candidate_values = self.candidate.values_by_feature.get(self.feature)
+            return (
+                reference_values is not None
+                and candidate_values is not None
+                and sum(reference_values.values()) == sum(candidate_values.values())
+            )
+        return _cell_signature_counters_equivalent(
+            reference_counts,
+            candidate_counts,
+            self.policy,
+        )
+
+    def shape_descriptor_geometry_is_stable(self) -> bool:
+        matched_features = 0
+        for feature_name in _SHAPE_DESCRIPTOR_GATING_FEATURES:
+            geometry_feature, reference_values, candidate_values = (
+                self._shape_descriptor_geometry_feature_values(feature_name)
+            )
+            if reference_values is None and candidate_values is None:
+                continue
+            if reference_values is None or candidate_values is None:
+                continue
+            if _cell_signature_counters_equivalent(
+                reference_values,
+                candidate_values,
+                self.policy,
+            ):
+                matched_features += 1
+                continue
+            if self.policy.allow_sparse_object_boundary_jitter and (
+                _sparse_object_boundary_value_feature_equivalent(
+                    geometry_feature,
+                    self.reference,
+                    self.candidate,
+                    self.policy,
+                )
+            ):
+                matched_features += 1
+                continue
+            else:
+                return False
+        return matched_features >= 3
+
+    def object_measurement_role_values_stable(
+        self,
+        role: ObjectMeasurementFeatureRole,
+        *,
+        min_stable_features: int,
+    ) -> bool:
+        matched_features = 0
+        candidate_keys = (
+            self.reference.values_by_feature.keys()
+            | self.candidate.values_by_feature.keys()
+        )
+        for candidate_key in candidate_keys:
+            if not self._candidate_key_has_role(candidate_key, role):
+                continue
+            reference_values = self.reference.values_by_feature.get(candidate_key)
+            candidate_values = self.candidate.values_by_feature.get(candidate_key)
+            if reference_values is None or candidate_values is None:
+                continue
+            if not _cell_signature_counters_equivalent(
+                reference_values,
+                candidate_values,
+                self.policy,
+            ):
+                continue
+            matched_features += 1
+        return matched_features >= min_stable_features
+
+    def _shape_descriptor_geometry_feature_values(
+        self,
+        feature_name: str,
+    ) -> tuple[
+        RuntimeMeasurementFeatureKey | None,
+        Counter[RuntimeCellSignature] | None,
+        Counter[RuntimeCellSignature] | None,
+    ]:
+        geometry_source_names = (
+            (self.feature.source_name, None)
+            if self.feature.source_name is not None
+            else (None,)
+        )
+        for source_name in geometry_source_names:
+            candidate_geometry_feature = RuntimeMeasurementFeatureKey(
+                subject=self.feature.subject,
+                feature_name=feature_name,
+                statistic=self.feature.statistic,
+                source_name=source_name,
+            )
+            candidate_reference_values = self.reference.values_by_feature.get(
+                candidate_geometry_feature
+            )
+            candidate_candidate_values = self.candidate.values_by_feature.get(
+                candidate_geometry_feature
+            )
+            if (
+                candidate_reference_values is None
+                and candidate_candidate_values is None
+            ):
+                continue
+            return (
+                candidate_geometry_feature,
+                candidate_reference_values,
+                candidate_candidate_values,
+            )
+        return None, None, None
+
+    def _candidate_key_has_role(
+        self,
+        candidate_key: RuntimeMeasurementFeatureKey,
+        role: ObjectMeasurementFeatureRole,
+    ) -> bool:
+        if candidate_key.subject != self.feature.subject:
+            return False
+        if candidate_key.source_name is not None:
+            return False
+        if candidate_key.statistic != MeasurementStatistic.VALUE.value:
+            return False
+        return object_measurement_feature_has_role(
+            candidate_key,
+            role,
+            self.policy.measurement_dialect,
+        )
 
 
 def _object_count_counters_sparse_equivalent(
@@ -3340,7 +3479,12 @@ def _unstable_shape_descriptor_values_equivalent(
     )
     if semantics is None:
         return False
-    if not _shape_descriptor_geometry_is_stable(feature, reference, candidate, policy):
+    if not MeasurementFeatureStabilityPolicy(
+        feature,
+        reference,
+        candidate,
+        policy,
+    ).shape_descriptor_geometry_is_stable():
         return False
 
     reference_values = reference.values_by_feature[feature]
@@ -3350,108 +3494,6 @@ def _unstable_shape_descriptor_values_equivalent(
         reference_values,
         candidate_values,
     )
-
-
-def _shape_descriptor_geometry_is_stable(
-    feature: RuntimeMeasurementFeatureKey,
-    reference: RuntimeMeasurementSnapshot,
-    candidate: RuntimeMeasurementSnapshot,
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    matched_features = 0
-    for feature_name in _SHAPE_DESCRIPTOR_GATING_FEATURES:
-        geometry_source_names = (
-            (feature.source_name, None)
-            if feature.source_name is not None
-            else (None,)
-        )
-        geometry_feature = None
-        reference_values = None
-        candidate_values = None
-        for source_name in geometry_source_names:
-            candidate_geometry_feature = RuntimeMeasurementFeatureKey(
-                subject=feature.subject,
-                feature_name=feature_name,
-                statistic=feature.statistic,
-                source_name=source_name,
-            )
-            candidate_reference_values = reference.values_by_feature.get(
-                candidate_geometry_feature
-            )
-            candidate_candidate_values = candidate.values_by_feature.get(
-                candidate_geometry_feature
-            )
-            if (
-                candidate_reference_values is None
-                and candidate_candidate_values is None
-            ):
-                continue
-            geometry_feature = candidate_geometry_feature
-            reference_values = candidate_reference_values
-            candidate_values = candidate_candidate_values
-            break
-        if reference_values is None and candidate_values is None:
-            continue
-        if reference_values is None or candidate_values is None:
-            continue
-        if _cell_signature_counters_equivalent(
-            reference_values,
-            candidate_values,
-            policy,
-        ):
-            matched_features += 1
-            continue
-        if policy.allow_sparse_object_boundary_jitter and (
-            _sparse_object_boundary_value_feature_equivalent(
-                geometry_feature,
-                reference,
-                candidate,
-                policy,
-            )
-        ):
-            matched_features += 1
-            continue
-        else:
-            return False
-    return matched_features >= 3
-
-
-def _object_measurement_role_values_stable(
-    feature: RuntimeMeasurementFeatureKey,
-    role: ObjectMeasurementFeatureRole,
-    reference: RuntimeMeasurementSnapshot,
-    candidate: RuntimeMeasurementSnapshot,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    min_stable_features: int,
-) -> bool:
-    matched_features = 0
-    candidate_keys = reference.values_by_feature.keys() | candidate.values_by_feature.keys()
-    for candidate_key in candidate_keys:
-        if candidate_key.subject != feature.subject:
-            continue
-        if candidate_key.source_name is not None:
-            continue
-        if candidate_key.statistic != MeasurementStatistic.VALUE.value:
-            continue
-        if not object_measurement_feature_has_role(
-            candidate_key,
-            role,
-            policy.measurement_dialect,
-        ):
-            continue
-        reference_values = reference.values_by_feature.get(candidate_key)
-        candidate_values = candidate.values_by_feature.get(candidate_key)
-        if reference_values is None or candidate_values is None:
-            continue
-        if not _cell_signature_counters_equivalent(
-            reference_values,
-            candidate_values,
-            policy,
-        ):
-            continue
-        matched_features += 1
-    return matched_features >= min_stable_features
 
 
 def _feature_label(feature: RuntimeMeasurementFeatureKey) -> str:
