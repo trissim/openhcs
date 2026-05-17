@@ -21,6 +21,7 @@ from openhcs.core.runtime_semantics import coerce_enum
 SourceBindingGroupMap = Mapping[str | None, tuple["NamedSourceBinding", ...]]
 SourceBindingGroupDict = dict[str | None, tuple["NamedSourceBinding", ...]]
 SourceMetadataIdentity = tuple[tuple[str, tuple[tuple[str, str], ...]], ...]
+SOURCE_ALIAS_PART_SEPARATOR = "__"
 
 
 class SourceBindingOrigin(Enum):
@@ -290,31 +291,39 @@ class SourceSelector:
                 )
 
 
+def source_alias_measurement_names(alias: str) -> tuple[str, ...]:
+    """Return measurement source-name tokens represented by a source alias."""
+    normalized_alias = alias.strip()
+    if not normalized_alias:
+        return ()
+    parts = tuple(
+        part
+        for part in normalized_alias.split(SOURCE_ALIAS_PART_SEPARATOR)
+        if part
+    )
+    return parts or (normalized_alias,)
+
+
 @dataclass(frozen=True, slots=True)
-class NamedSourceBinding:
-    """Semantic alias mapped to a typed selector over step input space."""
+class SourceAssignmentBase(metaclass=AutoRegisterMeta):
+    """Shared source-assignment identity and selector contract."""
+
+    __registry_key__ = "assignment_kind"
+    __skip_if_no_key__ = True
+    assignment_kind: ClassVar[str | None] = None
 
     alias: str
-    artifact_kind: ArtifactKind = ArtifactKind.IMAGE
     selector: SourceSelector = SourceSelector()
     origin: SourceBindingOrigin = SourceBindingOrigin.STEP_INPUT
-    required: bool = True
 
     def __post_init__(self) -> None:
-        _require_name(self.alias, "NamedSourceBinding.alias")
-        object.__setattr__(self, "alias", str(self.alias))
-        object.__setattr__(
-            self,
-            "artifact_kind",
-            coerce_enum(
-                ArtifactKind,
-                self.artifact_kind,
-                "NamedSourceBinding.artifact_kind",
-            ),
-        )
+        normalized_alias = str(self.alias).strip()
+        if not normalized_alias:
+            raise ValueError(f"{type(self).__name__}.alias cannot be empty.")
+        object.__setattr__(self, "alias", normalized_alias)
         if not isinstance(self.selector, SourceSelector):
             raise TypeError(
-                "NamedSourceBinding.selector must be SourceSelector, "
+                f"{type(self).__name__}.selector must be SourceSelector, "
                 f"got {type(self.selector).__name__}."
             )
         object.__setattr__(
@@ -323,7 +332,51 @@ class NamedSourceBinding:
             coerce_enum(
                 SourceBindingOrigin,
                 self.origin,
-                "NamedSourceBinding.origin",
+                f"{type(self).__name__}.origin",
+            ),
+        )
+
+    @property
+    def artifact_kind(self) -> ArtifactKind:
+        """Artifact kind bound by this source assignment."""
+        raise NotImplementedError(
+            f"{type(self).__name__} must provide artifact_kind."
+        )
+
+    @property
+    def measurement_source_names(self) -> tuple[str, ...]:
+        """Return measurement feature source qualifiers declared by this alias."""
+        if not self.artifact_kind.participates_in_measurement_source_names:
+            return ()
+        return source_alias_measurement_names(self.alias)
+
+    def to_binding(self) -> "NamedSourceBinding":
+        """Project this source assignment into a step-local source binding."""
+        return NamedSourceBinding(
+            alias=self.alias,
+            artifact_kind=self.artifact_kind,
+            selector=self.selector,
+            origin=self.origin,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class NamedSourceBinding(SourceAssignmentBase):
+    """Semantic alias mapped to a typed selector over step input space."""
+
+    assignment_kind = "named_source_binding"
+    artifact_kind: ArtifactKind = ArtifactKind.IMAGE
+    required: bool = True
+
+    def __post_init__(self) -> None:
+        SourceAssignmentBase.__post_init__(self)
+        object.__setattr__(
+            self,
+            "artifact_kind",
+            coerce_enum(
+                ArtifactKind,
+                self.artifact_kind,
+                "NamedSourceBinding.artifact_kind",
             ),
         )
 

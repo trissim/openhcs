@@ -17,15 +17,13 @@ from openhcs.core.source_bindings import (
     NamedSourceBinding,
     SourceBindingMatchPlan,
     SourceBindingOrigin,
+    SourceAssignmentBase,
     SourceFilterClause,
     SourceSelector,
 )
 
 
 SOURCE_IMAGE_TYPE_METADATA_FIELD = "OpenHCSImageType"
-SOURCE_ALIAS_PART_SEPARATOR = "__"
-
-
 @dataclass(frozen=True, slots=True)
 class ImagePlaneSource:
     """One explicit CellProfiler image-plane source URI embedded in a pipeline."""
@@ -62,54 +60,10 @@ class ImagesRule:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class SourceAssignmentBase(ABC):
-    """Shared source-assignment identity and selector contract."""
-
-    alias: str
-    selector: SourceSelector
-    origin: SourceBindingOrigin
-
-    def __post_init__(self) -> None:
-        normalized_alias = self.alias.strip()
-        if not normalized_alias:
-            raise ValueError(f"{type(self).__name__}.alias cannot be empty.")
-        object.__setattr__(self, "alias", normalized_alias)
-        if not isinstance(self.selector, SourceSelector):
-            raise TypeError(
-                f"{type(self).__name__}.selector must be SourceSelector, "
-                f"got {type(self.selector).__name__}."
-            )
-        if not isinstance(self.origin, SourceBindingOrigin):
-            raise TypeError(
-                f"{type(self).__name__}.origin must be SourceBindingOrigin, "
-                f"got {type(self.origin).__name__}."
-            )
-
-    @property
-    @abstractmethod
-    def artifact_kind(self) -> ArtifactKind:
-        """Artifact kind bound by this source assignment."""
-
-    @property
-    def measurement_source_names(self) -> tuple[str, ...]:
-        """Return measurement feature source qualifiers declared by this alias."""
-        if not self.artifact_kind.participates_in_measurement_source_names:
-            return ()
-        return source_alias_measurement_names(self.alias)
-
-    def to_binding(self) -> NamedSourceBinding:
-        return NamedSourceBinding(
-            alias=self.alias,
-            artifact_kind=self.artifact_kind,
-            selector=self.selector,
-            origin=self.origin,
-        )
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
 class ImageAssignment(SourceAssignmentBase):
     """One pipeline-level semantic image alias assignment."""
 
+    assignment_kind = "image"
     image_type: str
 
     def __post_init__(self) -> None:
@@ -125,6 +79,7 @@ class ImageAssignment(SourceAssignmentBase):
 class SourceArtifactAssignment(SourceAssignmentBase):
     """One pipeline-start or step-input source artifact declaration."""
 
+    assignment_kind = "source_artifact"
     kind: ArtifactKind
     payload_type: str = ""
 
@@ -590,20 +545,6 @@ class PipelineImageSchemaBuilder:
                 "match plan."
             )
         self.match_plan = match_plan
-
-
-def source_alias_measurement_names(alias: str) -> tuple[str, ...]:
-    """Return measurement source-name tokens represented by a schema alias."""
-    normalized_alias = alias.strip()
-    if not normalized_alias:
-        return ()
-    parts = tuple(
-        part
-        for part in normalized_alias.split(SOURCE_ALIAS_PART_SEPARATOR)
-        if part
-    )
-    return parts or (normalized_alias,)
-
 
 class LegacyImageAssignmentStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal fallback family for legacy semantic image aliases."""
