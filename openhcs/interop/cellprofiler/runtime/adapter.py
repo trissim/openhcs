@@ -730,7 +730,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             return None
 
         image_numbers_by_set: dict[SourceImageSetIdentity, int] = {}
-        for candidate in _ordered_source_candidates(candidates):
+        for candidate in SourceCandidateMatcher.ordered_source_candidates(candidates):
             image_set_key = SourceImageSetIdentity.from_metadata(
                 candidate.metadata,
                 fallback_source_path=candidate.resolved_path,
@@ -827,20 +827,23 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
 
         step_candidates = self.source_candidates(context.step_input_files)
         pipeline_candidates = self.source_candidates(context.pipeline_input_files)
-        axis_candidates = _axis_scoped_source_candidates(
-            _ordered_binding_candidates(binding=binding, candidates=pipeline_candidates),
+        axis_candidates = SourceCandidateMatcher.axis_scoped_candidates(
+            SourceCandidateMatcher.ordered_binding_candidates(
+                binding=binding,
+                candidates=pipeline_candidates,
+            ),
             axis_id=self.axis_id,
             step_input_candidates=step_candidates,
         )
         if not axis_candidates:
             return None
 
-        target_candidates = _match_candidates(
+        target_candidates = SourceCandidateMatcher.match_candidates(
             candidates=pipeline_candidates,
             binding=binding,
             inherit_components={},
         )
-        current_candidates = _match_image_set_candidates(
+        current_candidates = SourceCandidateMatcher.match_image_set_candidates(
             alias,
             self.source_binding_plan.match_plan,
             step_candidates,
@@ -2646,10 +2649,12 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
             request.adapter.source_binding_context.current_step_input_files
         )
         match_started_at = time.perf_counter()
-        matched = _match_candidates(
+        matched = SourceCandidateMatcher.match_candidates(
             candidates=parsed_candidates,
             binding=request.binding,
-            inherit_components=_inherited_scope_components(current_candidates),
+            inherit_components=SourceCandidateMatcher.inherited_scope_components(
+                current_candidates
+            ),
         )
         _log_adapter_profile(
             "source_candidates_match",
@@ -2689,18 +2694,18 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
         step_input_candidates = request.adapter.source_candidates(
             request.adapter.source_binding_context.current_step_input_files
         )
-        inherit_components = _pipeline_start_inherited_components(
+        inherit_components = SourceCandidateMatcher.pipeline_start_inherited_components(
             request.adapter.source_binding_plan,
             step_input_candidates,
         )
         parsed_candidates = request.adapter.source_candidates(pipeline_input_files)
         match_started_at = time.perf_counter()
-        initially_matched = _match_candidates(
+        initially_matched = SourceCandidateMatcher.match_candidates(
             candidates=parsed_candidates,
             binding=request.binding,
             inherit_components=inherit_components,
         )
-        matched = _match_image_set_candidates(
+        matched = SourceCandidateMatcher.match_image_set_candidates(
             request.alias,
             request.adapter.source_binding_plan.match_plan,
             step_input_candidates,
@@ -3241,16 +3246,10 @@ def _source_payload_for_declared_image_type(
 ) -> Any:
     """Apply setup-declared source image semantics before module execution."""
 
-    source_metadata = _context_source_metadata(
-        source_path,
-        request.adapter.source_binding_context,
-    )
-    return apply_source_image_loading_semantics(
+    return ContextSourceMetadataAuthority.apply_loading_semantics(
         payload,
-        source_metadata=source_metadata,
         source_path=source_path,
-        read_backend=request.backend,
-        filemanager=_require_processing_context(request.adapter).filemanager,
+        request=request,
     )
 
 
@@ -3347,12 +3346,8 @@ def _candidate_metadata(
         context,
     )
     context_paths = _candidate_metadata_paths(file_path, resolved_path, virtual_path)
-    has_context_metadata = any(
-        _context_source_metadata(path, context) is not None
-        for path in context_paths
-    )
-    if has_context_metadata:
-        _merge_context_source_metadata(metadata, context_paths, context)
+    if ContextSourceMetadataAuthority.has_metadata_for_any(context_paths, context):
+        ContextSourceMetadataAuthority.merge_into(metadata, context_paths, context)
         _merge_candidate_path_metadata(
             metadata,
             resolved_path,
@@ -3404,7 +3399,7 @@ def _candidate_metadata(
             parser,
             strict=False,
         )
-    _merge_context_source_metadata(
+    ContextSourceMetadataAuthority.merge_into(
         metadata,
         _candidate_metadata_paths(file_path, resolved_path, virtual_path),
         context,
@@ -3425,28 +3420,60 @@ def _candidate_metadata_paths(
     return tuple(dict.fromkeys(paths))
 
 
-def _merge_context_source_metadata(
-    metadata: dict[str, Any],
-    paths: tuple[str, ...],
-    context: SourceBindingRuntimeContext,
-) -> None:
-    for path in dict.fromkeys(paths):
-        context_metadata = _context_source_metadata(path, context)
-        if context_metadata is not None:
-            merge_source_metadata(metadata, context_metadata, path=path)
+class ContextSourceMetadataAuthority:
+    """Lookup authority for runtime source metadata attached to source paths."""
 
+    @classmethod
+    def apply_loading_semantics(
+        cls,
+        payload: Any,
+        *,
+        source_path: str,
+        request: PipelineStartSourceLoadRequest,
+    ) -> Any:
+        return apply_source_image_loading_semantics(
+            payload,
+            source_metadata=cls._source_metadata(
+                source_path,
+                request.adapter.source_binding_context,
+            ),
+            source_path=source_path,
+            read_backend=request.backend,
+            filemanager=_require_processing_context(request.adapter).filemanager,
+        )
 
-def _context_source_metadata(
-    file_path: str,
-    context: SourceBindingRuntimeContext,
-) -> Mapping[str, str] | None:
-    return SourceRuntimePathLookup(
-        file_path,
-        context.step_input_dir,
-    ).first_value(
-        context.source_metadata_by_path,
-        include_native_path_fallback=True,
-    )
+    @classmethod
+    def has_metadata_for_any(
+        cls,
+        paths: tuple[str, ...],
+        context: SourceBindingRuntimeContext,
+    ) -> bool:
+        return any(cls._source_metadata(path, context) is not None for path in paths)
+
+    @classmethod
+    def merge_into(
+        cls,
+        metadata: dict[str, Any],
+        paths: tuple[str, ...],
+        context: SourceBindingRuntimeContext,
+    ) -> None:
+        for path in dict.fromkeys(paths):
+            context_metadata = cls._source_metadata(path, context)
+            if context_metadata is not None:
+                merge_source_metadata(metadata, context_metadata, path=path)
+
+    @staticmethod
+    def _source_metadata(
+        file_path: str,
+        context: SourceBindingRuntimeContext,
+    ) -> Mapping[str, str] | None:
+        return SourceRuntimePathLookup(
+            file_path,
+            context.step_input_dir,
+        ).first_value(
+            context.source_metadata_by_path,
+            include_native_path_fallback=True,
+        )
 
 
 def _merge_candidate_path_metadata(
@@ -3500,14 +3527,64 @@ def _virtual_workspace_path_for_source(
     return None
 
 
-def _match_candidates(
-    *,
-    candidates: tuple[ParsedSourceCandidate, ...],
-    binding: NamedSourceBinding,
-    inherit_components: Mapping[str, str],
-) -> tuple[ParsedSourceCandidate, ...]:
-    metadata_fields = {selector.field for selector in binding.selector.metadata}
-    if metadata_fields:
+class SourceCandidateMatcher:
+    """Nominal owner for source-binding candidate selection semantics."""
+
+    @classmethod
+    def match_candidates(
+        cls,
+        *,
+        candidates: tuple[ParsedSourceCandidate, ...],
+        binding: NamedSourceBinding,
+        inherit_components: Mapping[str, str],
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        cls.validate_metadata_selectors(candidates, binding)
+        component_selectors = {
+            selector.component.value: selector.value
+            for selector in binding.selector.components
+        }
+        explicit_metadata_fields = {
+            selector.field for selector in binding.selector.metadata
+        }
+        effective_components = (
+            {
+                **{
+                    name: value
+                    for name, value in inherit_components.items()
+                    if name not in component_selectors
+                    and name not in explicit_metadata_fields
+                },
+                **component_selectors,
+            }
+            if binding.selector.inherit_current_scope
+            else component_selectors
+        )
+        inherited_component_items = tuple(
+            (name, value)
+            for name, value in effective_components.items()
+            if name not in component_selectors
+        )
+
+        return tuple(
+            candidate
+            for candidate in candidates
+            if cls.matches_explicit_components(candidate, component_selectors)
+            and cls.matches_inherited_scope(
+                candidate,
+                inherited_component_items,
+            )
+            and cls.matches_metadata(candidate, binding.selector.metadata)
+            and source_filters_match(candidate.resolved_path, binding.selector.filters)
+        )
+
+    @staticmethod
+    def validate_metadata_selectors(
+        candidates: tuple[ParsedSourceCandidate, ...],
+        binding: NamedSourceBinding,
+    ) -> None:
+        metadata_fields = {selector.field for selector in binding.selector.metadata}
+        if not metadata_fields:
+            return
         unsupported = tuple(
             field
             for field in sorted(metadata_fields)
@@ -3523,120 +3600,350 @@ def _match_candidates(
                 f"fields: {list(unsupported)}."
             )
 
-    component_selectors = {
-        selector.component.value: selector.value
-        for selector in binding.selector.components
-    }
-    explicit_metadata_fields = {
-        selector.field for selector in binding.selector.metadata
-    }
-    effective_components = (
-        {
-            **{
-                name: value
-                for name, value in inherit_components.items()
-                if name not in component_selectors
-                and name not in explicit_metadata_fields
-            },
-            **component_selectors,
+    @classmethod
+    def matches_explicit_components(
+        cls,
+        candidate: ParsedSourceCandidate,
+        expected_components: Mapping[str, str],
+    ) -> bool:
+        return all(
+            cls.matches_explicit_component(candidate, component_name, value)
+            for component_name, value in expected_components.items()
+        )
+
+    @staticmethod
+    def matches_explicit_component(
+        candidate: ParsedSourceCandidate,
+        component_name: str,
+        expected_value: str,
+    ) -> bool:
+        component = source_metadata_component(component_name)
+        if component is None:
+            metadata_value = source_metadata_value(candidate.metadata, component_name)
+            return metadata_value is not None and source_metadata_values_equal(
+                metadata_value,
+                expected_value,
+            )
+        return any(
+            source_metadata_values_equal(metadata_value, expected_value)
+            for metadata_value in source_component_metadata_values(
+                candidate.metadata,
+                component,
+            )
+        )
+
+    @staticmethod
+    def matches_inherited_scope(
+        candidate: ParsedSourceCandidate,
+        inherited_scope: tuple[tuple[str, str], ...],
+    ) -> bool:
+        return all(
+            (
+                metadata_value := semantic_source_metadata_value(
+                    candidate.metadata,
+                    field_name,
+                )
+            )
+            is None
+            or source_metadata_values_equal(metadata_value, value)
+            for field_name, value in inherited_scope
+        )
+
+    @staticmethod
+    def matches_metadata(
+        candidate: ParsedSourceCandidate,
+        metadata_selectors: tuple[Any, ...],
+    ) -> bool:
+        return all(
+            (metadata_value := source_metadata_value(candidate.metadata, selector.field))
+            is not None
+            and source_metadata_values_equal(metadata_value, selector.value)
+            for selector in metadata_selectors
+        )
+
+    @staticmethod
+    def matches_image_set_metadata(
+        candidate: ParsedSourceCandidate,
+        image_set_metadata: Mapping[str, str],
+    ) -> bool:
+        return all(
+            (
+                metadata_value := semantic_source_metadata_value(
+                    candidate.metadata,
+                    field_name,
+                )
+            )
+            is not None
+            and source_metadata_values_equal(metadata_value, value)
+            for field_name, value in image_set_metadata.items()
+        )
+
+    @staticmethod
+    def ordered_source_candidates(
+        candidates: tuple[ParsedSourceCandidate, ...],
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        return tuple(sorted(candidates, key=lambda candidate: candidate.resolved_path))
+
+    @classmethod
+    def inherited_scope_components(
+        cls,
+        candidates: tuple[ParsedSourceCandidate, ...],
+    ) -> Mapping[str, str]:
+        if not candidates:
+            return {}
+        shared: dict[str, str] = {}
+        first_metadata = candidates[0].metadata
+        for field_name, value in first_metadata.items():
+            if value is None:
+                continue
+            normalized_value = str(value)
+            if all(
+                (
+                    candidate_value := semantic_source_metadata_value(
+                        candidate.metadata,
+                        field_name,
+                    )
+                )
+                is not None
+                and source_metadata_values_equal(candidate_value, normalized_value)
+                for candidate in candidates[1:]
+            ):
+                shared[field_name] = normalized_value
+        return MappingProxyType(shared)
+
+    @classmethod
+    def pipeline_start_inherited_components(
+        cls,
+        source_binding_plan: CompiledSourceBindingPlan,
+        step_input_candidates: tuple[ParsedSourceCandidate, ...],
+    ) -> Mapping[str, str]:
+        if source_binding_plan.match_plan is not None:
+            return MappingProxyType({})
+        return cls.inherited_scope_components(step_input_candidates)
+
+    @classmethod
+    def match_image_set_candidates(
+        cls,
+        alias: str,
+        match_plan: SourceBindingMatchPlan | None,
+        step_input_candidates: tuple[ParsedSourceCandidate, ...],
+        target_candidates: tuple[ParsedSourceCandidate, ...],
+        full_pipeline_candidates: tuple[ParsedSourceCandidate, ...],
+        *,
+        source_binding_plan: CompiledSourceBindingPlan,
+        group_key: str | None,
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        if match_plan is None or not step_input_candidates or not target_candidates:
+            return target_candidates
+        return SourceBindingMatchPlanResolver.for_method(
+            match_plan.method
+        ).match_candidates(
+            SourceBindingMatchPlanRequest(
+                alias=alias,
+                plan=match_plan,
+                step_input_candidates=step_input_candidates,
+                target_candidates=target_candidates,
+                full_pipeline_candidates=full_pipeline_candidates,
+                source_binding_plan=source_binding_plan,
+                group_key=group_key,
+            )
+        )
+
+    @classmethod
+    def axis_scoped_candidates(
+        cls,
+        candidates: tuple[ParsedSourceCandidate, ...],
+        *,
+        axis_id: str,
+        step_input_candidates: tuple[ParsedSourceCandidate, ...],
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        axis_scope = cls.axis_scope_components(
+            axis_id=axis_id,
+            step_input_candidates=step_input_candidates,
+        )
+        if not axis_scope:
+            return candidates
+        axis_scope_items = tuple(axis_scope.items())
+        return tuple(
+            candidate
+            for candidate in candidates
+            if cls.matches_inherited_scope(candidate, axis_scope_items)
+        )
+
+    @staticmethod
+    def axis_scope_components(
+        *,
+        axis_id: str,
+        step_input_candidates: tuple[ParsedSourceCandidate, ...],
+    ) -> Mapping[str, str]:
+        constraints: dict[str, str] = {}
+        for candidate in step_input_candidates:
+            for field_name, value in candidate.metadata.items():
+                if value is None:
+                    continue
+                normalized_value = str(value)
+                if not source_metadata_values_equal(normalized_value, axis_id):
+                    continue
+                existing = constraints.get(field_name)
+                if existing is not None and existing != normalized_value:
+                    raise RuntimeError(
+                        f"Conflicting axis scope values for field {field_name!r}: "
+                        f"{existing!r} != {normalized_value!r}."
+                    )
+                constraints[field_name] = normalized_value
+        return MappingProxyType(constraints)
+
+    @classmethod
+    def target_candidates_in_current_scope(
+        cls,
+        step_input_candidates: tuple[ParsedSourceCandidate, ...],
+        target_candidates: tuple[ParsedSourceCandidate, ...],
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        current_scope = cls.inherited_scope_components(step_input_candidates)
+        if not current_scope:
+            return ()
+        current_scope_items = tuple(current_scope.items())
+        return tuple(
+            candidate
+            for candidate in target_candidates
+            if cls.matches_inherited_scope(candidate, current_scope_items)
+        )
+
+    @classmethod
+    def order_match_indexes(
+        cls,
+        request: SourceBindingMatchPlanRequest,
+    ) -> tuple[int, ...]:
+        indexes = {
+            index
+            for candidate in request.step_input_candidates
+            for index in (cls.source_alias_order_index(candidate=candidate, request=request),)
+            if index is not None
         }
-        if binding.selector.inherit_current_scope
-        else component_selectors
-    )
-    inherited_component_items = tuple(
-        (name, value)
-        for name, value in effective_components.items()
-        if name not in component_selectors
-    )
+        return tuple(sorted(indexes))
 
-    return tuple(
-        candidate
-        for candidate in candidates
-        if _candidate_matches_explicit_components(candidate, component_selectors)
-        and _candidate_matches_inherited_scope(
-            candidate,
-            inherited_component_items,
-        )
-        and _candidate_matches_metadata(candidate, binding.selector.metadata)
-        and source_filters_match(candidate.resolved_path, binding.selector.filters)
-    )
+    @classmethod
+    def source_alias_order_index(
+        cls,
+        *,
+        candidate: ParsedSourceCandidate,
+        request: SourceBindingMatchPlanRequest,
+    ) -> int | None:
+        matched_indexes: set[int] = set()
+        for binding in request.source_binding_plan.bindings_for_group(request.group_key):
+            if binding.alias == request.alias:
+                continue
+            for index, ordered_candidate in enumerate(
+                cls.ordered_binding_candidates(
+                    binding=binding,
+                    candidates=request.full_pipeline_candidates,
+                )
+            ):
+                if ordered_candidate.resolved_path == candidate.resolved_path:
+                    matched_indexes.add(index)
+                    break
+        if not matched_indexes:
+            return None
+        if len(matched_indexes) != 1:
+            raise RuntimeError(
+                f"Order-based image-set matching could not uniquely assign source file "
+                f"{candidate.resolved_path!r} to one alias order index."
+            )
+        return next(iter(matched_indexes))
 
-
-def _candidate_matches_explicit_components(
-    candidate: ParsedSourceCandidate,
-    expected_components: Mapping[str, str],
-) -> bool:
-    return all(
-        _candidate_matches_explicit_component(candidate, component_name, value)
-        for component_name, value in expected_components.items()
-    )
-
-
-def _candidate_matches_explicit_component(
-    candidate: ParsedSourceCandidate,
-    component_name: str,
-    expected_value: str,
-) -> bool:
-    component = source_metadata_component(component_name)
-    if component is None:
-        metadata_value = source_metadata_value(candidate.metadata, component_name)
-        return metadata_value is not None and source_metadata_values_equal(
-            metadata_value,
-            expected_value,
-        )
-    return any(
-        source_metadata_values_equal(metadata_value, expected_value)
-        for metadata_value in source_component_metadata_values(
-            candidate.metadata,
-            component,
-        )
-    )
-
-
-def _candidate_matches_inherited_scope(
-    candidate: ParsedSourceCandidate,
-    inherited_scope: tuple[tuple[str, str], ...],
-) -> bool:
-    return all(
-        (
-            metadata_value := semantic_source_metadata_value(
-                candidate.metadata,
-                field_name,
+    @classmethod
+    def ordered_binding_candidates(
+        cls,
+        *,
+        binding: NamedSourceBinding,
+        candidates: tuple[ParsedSourceCandidate, ...],
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        return cls.ordered_source_candidates(
+            cls.match_candidates(
+                candidates=candidates,
+                binding=binding,
+                inherit_components={},
             )
         )
-        is None
-        or source_metadata_values_equal(metadata_value, value)
-        for field_name, value in inherited_scope
-    )
 
-
-def _candidate_matches_metadata(
-    candidate: ParsedSourceCandidate,
-    metadata_selectors: tuple[Any, ...],
-) -> bool:
-    return all(
-        (metadata_value := source_metadata_value(candidate.metadata, selector.field))
-        is not None
-        and source_metadata_values_equal(metadata_value, selector.value)
-        for selector in metadata_selectors
-    )
-
-
-def _candidate_matches_image_set_metadata(
-    candidate: ParsedSourceCandidate,
-    image_set_metadata: Mapping[str, str],
-) -> bool:
-    return all(
-        (
-            metadata_value := semantic_source_metadata_value(
-                candidate.metadata,
-                field_name,
+    @classmethod
+    def dimension_match_value(
+        cls,
+        *,
+        dimension: SourceBindingMatchDimension,
+        request: SourceBindingMatchPlanRequest,
+    ) -> str | None:
+        target_alias = request.alias
+        candidate_values = {
+            value
+            for field in dimension.fields
+            if field.alias != target_alias
+            for value in cls.source_match_field_values(field, request)
+        }
+        if not candidate_values:
+            return None
+        if len(candidate_values) > 1:
+            raise RuntimeError(
+                "Current step input candidates produce conflicting image-set match "
+                f"values for alias {target_alias!r}: {sorted(candidate_values)!r}."
             )
+        return next(iter(candidate_values))
+
+    @classmethod
+    def source_match_field_values(
+        cls,
+        field: SourceBindingMatchField,
+        request: SourceBindingMatchPlanRequest,
+    ) -> tuple[str, ...]:
+        try:
+            return cls.shared_candidate_values(field, request.step_input_candidates)
+        except RuntimeError:
+            alias_candidates = cls.alias_scoped_step_input_candidates(field.alias, request)
+            if not alias_candidates:
+                raise
+            return cls.shared_candidate_values(field, alias_candidates)
+
+    @classmethod
+    def alias_scoped_step_input_candidates(
+        cls,
+        alias: str,
+        request: SourceBindingMatchPlanRequest,
+    ) -> tuple[ParsedSourceCandidate, ...]:
+        binding = request.source_binding_plan.binding_for_alias(alias, request.group_key)
+        if binding is None:
+            return ()
+        matched = cls.match_candidates(
+            candidates=request.step_input_candidates,
+            binding=binding,
+            inherit_components={},
         )
-        is not None
-        and source_metadata_values_equal(metadata_value, value)
-        for field_name, value in image_set_metadata.items()
-    )
+        if matched == request.step_input_candidates:
+            return ()
+        return matched
+
+    @staticmethod
+    def shared_candidate_values(
+        field: SourceBindingMatchField,
+        step_input_candidates: tuple[ParsedSourceCandidate, ...],
+    ) -> tuple[str, ...]:
+        values = tuple(
+            metadata_value
+            for candidate in step_input_candidates
+            for metadata_value in (
+                source_metadata_value(candidate.metadata, field.metadata_field),
+            )
+            if metadata_value is not None
+        )
+        if not values:
+            return ()
+        shared_values = set(values)
+        if len(shared_values) != 1:
+            raise RuntimeError(
+                "Current step input candidates do not share a single image-set match "
+                f"value for metadata field {field.metadata_field!r}: "
+                f"{sorted(shared_values)!r}."
+            )
+        return (values[0],)
 
 
 def _source_candidate_summary(
@@ -3681,7 +3988,7 @@ def _select_step_input_stack(
         return _natural_step_input_payload(current_image)
     slices = _unstack_payload(current_image)
     selected_slices = [slices[index] for index in selected_indexes]
-    return _restack_like_payload(selected_slices, current_image)
+    return RestackLikePayloadAuthority.restack(selected_slices, current_image)
 
 
 def _load_step_input_stack(
@@ -3705,7 +4012,7 @@ def _load_step_input_stack(
         raise RuntimeError(
             f"Step-input source resolution loaded no payloads from {list(full_paths)}."
         )
-    return _restack_like_payload(list(loaded), request.current_image)
+    return RestackLikePayloadAuthority.restack(list(loaded), request.current_image)
 
 
 def _natural_step_input_payload(current_image: Any) -> Any:
@@ -3713,7 +4020,10 @@ def _natural_step_input_payload(current_image: Any) -> Any:
         return current_image
     if current_image.ndim == 2:
         return current_image
-    return _restack_like_payload(_unstack_payload(current_image), current_image)
+    return RestackLikePayloadAuthority.restack(
+        _unstack_payload(current_image),
+        current_image,
+    )
 
 
 def _load_pipeline_start_stack(
@@ -3756,7 +4066,7 @@ def _load_pipeline_start_stack(
             "Pipeline-start source resolution loaded no payloads from "
             f"{list(selected_paths)}."
         )
-    return _restack_like_payload(loaded_payloads, current_image)
+    return RestackLikePayloadAuthority.restack(list(loaded_payloads), current_image)
 
 
 def _pipeline_start_payload_cache_key(
@@ -3793,82 +4103,52 @@ def _unstack_payload(payload: Any) -> list[Any]:
     return list(payload_slices_for_alignment(payload))
 
 
-def _restack_like_payload(
-    slices: list[Any],
-    reference_payload: Any,
-) -> Any:
-    if not slices:
-        raise ValueError("Cannot restack an empty slice list.")
-    if len(slices) == 1:
-        return slices[0]
-    slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
-    memory_type = detect_memory_type(image_payload_data(reference_payload))
-    stacked = ImageStackLayout.for_slices(slice_data).stack(
-        slices=slice_data,
-        memory_type=memory_type,
-        gpu_id=0,
-    )
-    return image_payload_with_context(
-        stacked,
-        mask=_stack_payload_masks(slices, memory_type),
-        metadata=compose_image_payload_metadata(slices),
-    )
+class RestackLikePayloadAuthority:
+    """Restack selected image payload slices while preserving payload context."""
 
+    @classmethod
+    def restack(
+        cls,
+        slices: list[Any],
+        reference_payload: Any,
+    ) -> Any:
+        if not slices:
+            raise ValueError("Cannot restack an empty slice list.")
+        if len(slices) == 1:
+            return slices[0]
+        slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
+        memory_type = detect_memory_type(image_payload_data(reference_payload))
+        stacked = ImageStackLayout.for_slices(slice_data).stack(
+            slices=slice_data,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
+        return image_payload_with_context(
+            stacked,
+            mask=cls.stack_masks(slices, memory_type),
+            metadata=compose_image_payload_metadata(slices),
+        )
 
-def _stack_payload_masks(
-    slices: list[Any],
-    memory_type: str,
-) -> Any | None:
-    masks = tuple(image_payload_mask(slice_payload) for slice_payload in slices)
-    if not any(mask is not None for mask in masks):
-        return None
-    slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
-    resolved_masks = [
-        np.ones(np.asarray(data).shape[:2], dtype=bool)
-        if mask is None
-        else np.asarray(mask, dtype=bool)
-        for data, mask in zip(slice_data, masks)
-    ]
-    return ImageStackLayout.for_slices(resolved_masks).stack(
-        slices=resolved_masks,
-        memory_type=memory_type,
-        gpu_id=0,
-    )
-
-
-def _inherited_scope_components(
-    candidates: tuple[ParsedSourceCandidate, ...],
-) -> Mapping[str, str]:
-    if not candidates:
-        return {}
-    shared: dict[str, str] = {}
-    first_metadata = candidates[0].metadata
-    for field_name, value in first_metadata.items():
-        if value is None:
-            continue
-        normalized_value = str(value)
-        if all(
-            (
-                candidate_value := semantic_source_metadata_value(
-                    candidate.metadata,
-                    field_name,
-                )
-            )
-            is not None
-            and source_metadata_values_equal(candidate_value, normalized_value)
-            for candidate in candidates[1:]
-        ):
-            shared[field_name] = normalized_value
-    return MappingProxyType(shared)
-
-
-def _pipeline_start_inherited_components(
-    source_binding_plan: CompiledSourceBindingPlan,
-    step_input_candidates: tuple[ParsedSourceCandidate, ...],
-) -> Mapping[str, str]:
-    if source_binding_plan.match_plan is not None:
-        return MappingProxyType({})
-    return _inherited_scope_components(step_input_candidates)
+    @staticmethod
+    def stack_masks(
+        slices: list[Any],
+        memory_type: str,
+    ) -> Any | None:
+        masks = tuple(image_payload_mask(slice_payload) for slice_payload in slices)
+        if not any(mask is not None for mask in masks):
+            return None
+        slice_data = tuple(image_payload_data(slice_payload) for slice_payload in slices)
+        resolved_masks = [
+            np.ones(np.asarray(data).shape[:2], dtype=bool)
+            if mask is None
+            else np.asarray(mask, dtype=bool)
+            for data, mask in zip(slice_data, masks)
+        ]
+        return ImageStackLayout.for_slices(resolved_masks).stack(
+            slices=resolved_masks,
+            memory_type=memory_type,
+            gpu_id=0,
+        )
 
 
 class SourceBindingMatchPlanResolver(ABC, metaclass=AutoRegisterMeta):
@@ -3908,7 +4188,7 @@ class MetadataSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
             target_field = dimension.field_for_alias(request.alias)
             if target_field is None:
                 continue
-            match_value = _dimension_match_value(
+            match_value = SourceCandidateMatcher.dimension_match_value(
                 dimension=dimension,
                 request=request,
             )
@@ -3925,7 +4205,10 @@ class MetadataSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
         return tuple(
             candidate
             for candidate in request.target_candidates
-            if _candidate_matches_image_set_metadata(candidate, metadata_constraints)
+            if SourceCandidateMatcher.matches_image_set_metadata(
+                candidate,
+                metadata_constraints,
+            )
         )
 
 
@@ -3937,239 +4220,21 @@ class OrderSourceBindingMatchPlanResolver(SourceBindingMatchPlanResolver):
         self,
         request: SourceBindingMatchPlanRequest,
     ) -> tuple[ParsedSourceCandidate, ...]:
-        current_indexes = _order_match_indexes(request)
+        current_indexes = SourceCandidateMatcher.order_match_indexes(request)
         if not current_indexes:
-            scoped_candidates = _target_candidates_in_current_scope(
+            scoped_candidates = SourceCandidateMatcher.target_candidates_in_current_scope(
                 request.step_input_candidates,
                 request.target_candidates,
             )
             return scoped_candidates or request.target_candidates
-        ordered_target_candidates = _ordered_source_candidates(request.target_candidates)
+        ordered_target_candidates = SourceCandidateMatcher.ordered_source_candidates(
+            request.target_candidates
+        )
         return tuple(
             ordered_target_candidates[index]
             for index in current_indexes
             if index < len(ordered_target_candidates)
         )
-
-
-def _match_image_set_candidates(
-    alias: str,
-    match_plan: SourceBindingMatchPlan | None,
-    step_input_candidates: tuple[ParsedSourceCandidate, ...],
-    target_candidates: tuple[ParsedSourceCandidate, ...],
-    full_pipeline_candidates: tuple[ParsedSourceCandidate, ...],
-    *,
-    source_binding_plan: CompiledSourceBindingPlan,
-    group_key: str | None,
-) -> tuple[ParsedSourceCandidate, ...]:
-    if match_plan is None or not step_input_candidates or not target_candidates:
-        return target_candidates
-    return SourceBindingMatchPlanResolver.for_method(
-        match_plan.method
-    ).match_candidates(
-        SourceBindingMatchPlanRequest(
-            alias=alias,
-            plan=match_plan,
-            step_input_candidates=step_input_candidates,
-            target_candidates=target_candidates,
-            full_pipeline_candidates=full_pipeline_candidates,
-            source_binding_plan=source_binding_plan,
-            group_key=group_key,
-        )
-    )
-
-
-def _ordered_source_candidates(
-    candidates: tuple[ParsedSourceCandidate, ...],
-) -> tuple[ParsedSourceCandidate, ...]:
-    return tuple(sorted(candidates, key=lambda candidate: candidate.resolved_path))
-
-
-def _axis_scoped_source_candidates(
-    candidates: tuple[ParsedSourceCandidate, ...],
-    *,
-    axis_id: str,
-    step_input_candidates: tuple[ParsedSourceCandidate, ...],
-) -> tuple[ParsedSourceCandidate, ...]:
-    axis_scope = _axis_scope_components(
-        axis_id=axis_id,
-        step_input_candidates=step_input_candidates,
-    )
-    if not axis_scope:
-        return candidates
-    axis_scope_items = tuple(axis_scope.items())
-    return tuple(
-        candidate
-        for candidate in candidates
-        if _candidate_matches_inherited_scope(candidate, axis_scope_items)
-    )
-
-
-def _axis_scope_components(
-    *,
-    axis_id: str,
-    step_input_candidates: tuple[ParsedSourceCandidate, ...],
-) -> Mapping[str, str]:
-    constraints: dict[str, str] = {}
-    for candidate in step_input_candidates:
-        for field_name, value in candidate.metadata.items():
-            if value is None:
-                continue
-            normalized_value = str(value)
-            if not source_metadata_values_equal(normalized_value, axis_id):
-                continue
-            existing = constraints.get(field_name)
-            if existing is not None and existing != normalized_value:
-                raise RuntimeError(
-                    f"Conflicting axis scope values for field {field_name!r}: "
-                    f"{existing!r} != {normalized_value!r}."
-                )
-            constraints[field_name] = normalized_value
-    return MappingProxyType(constraints)
-
-
-def _target_candidates_in_current_scope(
-    step_input_candidates: tuple[ParsedSourceCandidate, ...],
-    target_candidates: tuple[ParsedSourceCandidate, ...],
-) -> tuple[ParsedSourceCandidate, ...]:
-    current_scope = _inherited_scope_components(step_input_candidates)
-    if not current_scope:
-        return ()
-    current_scope_items = tuple(current_scope.items())
-    return tuple(
-        candidate
-        for candidate in target_candidates
-        if _candidate_matches_inherited_scope(candidate, current_scope_items)
-    )
-
-
-def _order_match_indexes(
-    request: SourceBindingMatchPlanRequest,
-) -> tuple[int, ...]:
-    indexes = {
-        index
-        for candidate in request.step_input_candidates
-        for index in (_source_alias_order_index(candidate=candidate, request=request),)
-        if index is not None
-    }
-    return tuple(sorted(indexes))
-
-
-def _source_alias_order_index(
-    *,
-    candidate: ParsedSourceCandidate,
-    request: SourceBindingMatchPlanRequest,
-) -> int | None:
-    matched_indexes: set[int] = set()
-    for binding in request.source_binding_plan.bindings_for_group(request.group_key):
-        if binding.alias == request.alias:
-            continue
-        for index, ordered_candidate in enumerate(
-            _ordered_binding_candidates(
-                binding=binding,
-                candidates=request.full_pipeline_candidates,
-            )
-        ):
-            if ordered_candidate.resolved_path == candidate.resolved_path:
-                matched_indexes.add(index)
-                break
-    if not matched_indexes:
-        return None
-    if len(matched_indexes) != 1:
-        raise RuntimeError(
-            f"Order-based image-set matching could not uniquely assign source file "
-            f"{candidate.resolved_path!r} to one alias order index."
-        )
-    return next(iter(matched_indexes))
-
-
-def _ordered_binding_candidates(
-    *,
-    binding: NamedSourceBinding,
-    candidates: tuple[ParsedSourceCandidate, ...],
-) -> tuple[ParsedSourceCandidate, ...]:
-    return _ordered_source_candidates(
-        _match_candidates(
-            candidates=candidates,
-            binding=binding,
-            inherit_components={},
-        )
-    )
-
-
-def _dimension_match_value(
-    *,
-    dimension: SourceBindingMatchDimension,
-    request: SourceBindingMatchPlanRequest,
-) -> str | None:
-    target_alias = request.alias
-    candidate_values = {
-        value
-        for field in dimension.fields
-        if field.alias != target_alias
-        for value in _source_match_field_values(field, request)
-    }
-    if not candidate_values:
-        return None
-    if len(candidate_values) > 1:
-        raise RuntimeError(
-            "Current step input candidates produce conflicting image-set match "
-            f"values for alias {target_alias!r}: {sorted(candidate_values)!r}."
-        )
-    return next(iter(candidate_values))
-
-
-def _source_match_field_values(
-    field: SourceBindingMatchField,
-    request: SourceBindingMatchPlanRequest,
-) -> tuple[str, ...]:
-    try:
-        return _shared_candidate_values(field, request.step_input_candidates)
-    except RuntimeError:
-        alias_candidates = _alias_scoped_step_input_candidates(field.alias, request)
-        if not alias_candidates:
-            raise
-        return _shared_candidate_values(field, alias_candidates)
-
-
-def _alias_scoped_step_input_candidates(
-    alias: str,
-    request: SourceBindingMatchPlanRequest,
-) -> tuple[ParsedSourceCandidate, ...]:
-    binding = request.source_binding_plan.binding_for_alias(alias, request.group_key)
-    if binding is None:
-        return ()
-    matched = _match_candidates(
-        candidates=request.step_input_candidates,
-        binding=binding,
-        inherit_components={},
-    )
-    if matched == request.step_input_candidates:
-        return ()
-    return matched
-
-
-def _shared_candidate_values(
-    field: SourceBindingMatchField,
-    step_input_candidates: tuple[ParsedSourceCandidate, ...],
-) -> tuple[str, ...]:
-    values = tuple(
-        metadata_value
-        for candidate in step_input_candidates
-        for metadata_value in (
-            source_metadata_value(candidate.metadata, field.metadata_field),
-        )
-        if metadata_value is not None
-    )
-    if not values:
-        return ()
-    shared_values = set(values)
-    if len(shared_values) != 1:
-        raise RuntimeError(
-            "Current step input candidates do not share a single image-set match "
-            f"value for metadata field {field.metadata_field!r}: {sorted(shared_values)!r}."
-        )
-    return (values[0],)
 
 
 def _require_processing_context(adapter: CellProfilerRuntimeAdapter) -> Any:
