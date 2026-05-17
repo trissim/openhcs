@@ -1209,8 +1209,11 @@ class SmallRemovedObjectLabelVariantDataStrategy(ObjectLabelVariantDataStrategy)
         return any(payload.small_removed_labels is not None for payload in payloads)
 
 
-class ColumnarRows(ABC):
+class ColumnarRows(ABC, metaclass=AutoRegisterMeta):
     """Nominal ABC for table payloads exposing named columns."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
 
     @property
     @abstractmethod
@@ -1451,8 +1454,11 @@ def register_columnar_rows_type(payload_type: _TPayload) -> _TPayload:
 
 
 @dataclass(frozen=True, kw_only=True)
-class SourceImageContext:
+class SourceImageContext(metaclass=AutoRegisterMeta):
     """Shared source-image semantic context for values and schemas."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
 
     dimensions: tuple[str, ...] = ()
     source_image_name: str | None = None

@@ -726,8 +726,11 @@ class RuntimeObjectLabelMeasurementQuery(RuntimeObjectMeasurementQuery):
             object.__setattr__(self, "image_number", int(self.image_number))
 
 
-class ObjectLabelDomainMetadata(ABC):
+class ObjectLabelDomainMetadata(ABC, metaclass=AutoRegisterMeta):
     """Nominal provider for object-label ID domain metadata."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
 
     @abstractmethod
     def object_label_domain(self) -> ObjectLabelDomain:
