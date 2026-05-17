@@ -4,19 +4,21 @@ from __future__ import annotations
 
 import cProfile
 import os
+from abc import ABC, abstractmethod
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import Iterator
 
 
 WORKER_PROFILE_DIR_ENV = "OPENHCS_WORKER_PROFILE_DIR"
 
 
-class WorkerProfilingPolicy(Protocol):
+class WorkerProfilingPolicy(ABC):
     """Policy boundary for optional worker-side execution profiling."""
 
     @contextmanager
+    @abstractmethod
     def profile(
         self,
         *,
@@ -30,7 +32,7 @@ class WorkerProfilingPolicy(Protocol):
 
 
 @dataclass(frozen=True)
-class DisabledWorkerProfilingPolicy:
+class DisabledWorkerProfilingPolicy(WorkerProfilingPolicy):
     """No-op worker profiling policy."""
 
     @contextmanager
@@ -47,7 +49,7 @@ class DisabledWorkerProfilingPolicy:
 
 
 @dataclass(frozen=True)
-class CProfileWorkerProfilingPolicy:
+class CProfileWorkerProfilingPolicy(WorkerProfilingPolicy):
     """Dump cProfile stats for worker execution regions."""
 
     output_dir: Path
