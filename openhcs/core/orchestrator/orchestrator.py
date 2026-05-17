@@ -845,6 +845,9 @@ class PipelineOrchestrator:
     # editable parameters from pipeline_config (a dataclass) instead of the orchestrator.
     # This enables time-travel to track the orchestrator lifecycle while forms edit the config.
     __objectstate_delegate__ = "pipeline_config"
+    plate_path: Optional[Path] = None
+    _plate_path_frozen: bool = False
+    _metadata_cache_service: Optional["MetadataCache"] = None
 
     def __init__(
         self,
@@ -988,13 +991,17 @@ class PipelineOrchestrator:
 
         This proves that plate_path is truly immutable after initialization.
         """
-        if name == "plate_path" and getattr(self, "_plate_path_frozen", False):
+        if name == "plate_path" and object.__getattribute__(
+            self,
+            "_plate_path_frozen",
+        ):
             import traceback
 
             stack_trace = "".join(traceback.format_stack())
+            current_plate_path = object.__getattribute__(self, "plate_path")
             error_msg = (
                 f"🚫 IMMUTABLE PLATE_PATH VIOLATION: Cannot modify plate_path after freezing!\n"
-                f"Current value: {getattr(self, 'plate_path', 'UNSET')}\n"
+                f"Current value: {current_plate_path}\n"
                 f"Attempted new value: {value}\n"
                 f"Stack trace:\n{stack_trace}"
             )
@@ -2107,14 +2114,13 @@ class PipelineOrchestrator:
         self._pipeline_config = value
         # CRITICAL FIX: Also update public attribute for dual-axis resolver discovery
         # This ensures the resolver can always find the current pipeline config
-        if hasattr(self, "__dict__"):  # Avoid issues during __init__
-            self.__dict__["pipeline_config"] = value
+        self.__dict__["pipeline_config"] = value
         if self._auto_sync_enabled and value is not None:
             self._sync_to_thread_local()
 
     def _sync_to_thread_local(self) -> None:
         """Internal method to sync current pipeline_config to thread-local context."""
-        if self._pipeline_config and hasattr(self, "plate_path"):
+        if self._pipeline_config and self.plate_path is not None:
             self.apply_pipeline_config(self._pipeline_config)
 
     def apply_pipeline_config(self, pipeline_config: "PipelineConfig") -> None:
@@ -2178,7 +2184,7 @@ class PipelineOrchestrator:
         # No need to modify thread-local storage when clearing orchestrator config
         self.pipeline_config = None
         # Clear metadata cache for this orchestrator
-        if hasattr(self, "_metadata_cache_service") and self._metadata_cache_service:
+        if self._metadata_cache_service is not None:
             self._metadata_cache_service.clear_cache()
         logger.info(f"Cleared per-orchestrator config for plate: {self.plate_path}")
 
