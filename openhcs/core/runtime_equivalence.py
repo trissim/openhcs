@@ -2258,7 +2258,7 @@ class RuntimeMeasurementSnapshot:
         for record in object_label_records:
             record_measurement_facts(
                 values_by_feature,
-                _object_label_measurement_facts(
+                RuntimeObjectLabelMeasurementFactProjector(
                     _ObjectLabelMeasurementContext.from_runtime_value(
                         record.value,
                         policy,
@@ -2269,7 +2269,7 @@ class RuntimeMeasurementSnapshot:
                         required_measurement_keys,
                         object_location_aggregate_subjects,
                     ),
-                ),
+                ).facts(),
                 required_keys=required_measurement_keys,
             )
         explicit_measurement_keys = frozenset(values_by_feature)
@@ -6539,22 +6539,155 @@ def _required_mean_measurement_keys(
     )
 
 
-def _object_label_measurement_facts(
-    context: _ObjectLabelMeasurementContext,
-) -> _RuntimeMeasurementFacts:
-    if not _object_label_measurements_required(
-        context.object_name,
-        context.required_keys,
-    ):
-        return ()
-    return (
-        *_object_count_measurement_facts(
-            context,
-        ),
-        *_object_location_measurement_facts(
-            context,
-        ),
-    )
+@dataclass(frozen=True, slots=True)
+class RuntimeObjectLabelMeasurementFactProjector:
+    """Project object-label runtime values into implicit object measurement facts."""
+
+    context: _ObjectLabelMeasurementContext
+
+    def facts(self) -> _RuntimeMeasurementFacts:
+        if not _object_label_measurements_required(
+            self.context.object_name,
+            self.context.required_keys,
+        ):
+            return ()
+        return (
+            *self.count_facts(),
+            *self.location_facts(),
+        )
+
+    def identifier_facts(self) -> _RuntimeMeasurementFacts:
+        if self.context.object_name is None:
+            return ()
+        subject = RuntimeMeasurementSubjectKey(
+            MeasurementScope.OBJECT,
+            self.context.object_name,
+        )
+        keys = _required_object_identifier_keys(
+            subject,
+            self.context.required_keys,
+            self.context.policy,
+        )
+        if not keys:
+            return ()
+        label_array = _runtime_object_label_array(self.context.labels)
+        if label_array is None:
+            return ()
+
+        object_number_domains = ObjectIdentifierDomainProjectionStrategy.for_context(
+            self.context
+        ).domains(self.context)
+        facts: _RuntimeMeasurementFactList = []
+        emitted_counts_by_key: dict[
+            RuntimeMeasurementFeatureKey,
+            Counter[RuntimeCellSignature],
+        ] = {key: Counter() for key in keys}
+        for object_ids in object_number_domains:
+            for key in keys:
+                explicit_counter = (
+                    self.context.values_by_feature.get(key, Counter())
+                    if subject in self.context.object_identifier_subjects
+                    else Counter()
+                )
+                emitted_counter = emitted_counts_by_key[key]
+                for object_id in object_ids:
+                    signature = _cell_signature(str(object_id), self.context.policy)
+                    if emitted_counter[signature] < explicit_counter[signature]:
+                        emitted_counter[signature] += 1
+                        continue
+                    emitted_counter[signature] += 1
+                    facts.append((key, signature))
+        return tuple(facts)
+
+    def count_facts(self) -> _RuntimeMeasurementFacts:
+        if self.context.object_name is None:
+            return ()
+        subject = RuntimeMeasurementSubjectKey(
+            MeasurementScope.OBJECT,
+            self.context.object_name,
+        )
+        if subject in self.context.object_count_subjects:
+            return ()
+        key = RuntimeMeasurementFeatureKey(
+            subject,
+            ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
+            MeasurementStatistic.COUNT.value,
+        )
+        if self.context.required_keys is not None and key not in self.context.required_keys:
+            return ()
+        label_array = _runtime_object_label_array(self.context.labels)
+        if label_array is None:
+            return ()
+        projections = ObjectLabelMeasurementProjectionStrategy.for_scope(
+            self.context.domain_scope
+        ).projections(self.context)
+        return tuple(
+            (
+                key,
+                _cell_signature(
+                    str(len(projection.object_ids)),
+                    self.context.policy,
+                ),
+            )
+            for projection in projections
+        )
+
+    def location_facts(self) -> _RuntimeMeasurementFacts:
+        if self.context.object_name is None:
+            return ()
+        subject = RuntimeMeasurementSubjectKey(
+            MeasurementScope.OBJECT,
+            self.context.object_name,
+        )
+        required_feature_names = _required_object_location_feature_names(
+            subject,
+            self.context.required_keys,
+            self.context.policy,
+            statistic=MeasurementStatistic.VALUE,
+        )
+        required_mean_feature_names = _required_object_location_feature_names(
+            subject,
+            self.context.required_keys,
+            self.context.policy,
+            statistic=MeasurementStatistic.MEAN,
+        )
+        if subject in self.context.object_location_subjects:
+            required_feature_names = frozenset()
+        if subject in self.context.object_location_aggregate_subjects:
+            required_mean_feature_names = frozenset()
+        if (
+            required_feature_names is not None
+            and not required_feature_names
+            and required_mean_feature_names is not None
+            and not required_mean_feature_names
+        ):
+            return ()
+        label_array = _runtime_object_label_array(self.context.labels)
+        if label_array is None:
+            return ()
+        projections = ObjectLabelMeasurementProjectionStrategy.for_scope(
+            self.context.domain_scope
+        ).projections(self.context)
+        if not any(projection.object_ids for projection in projections):
+            return ()
+
+        facts: _RuntimeMeasurementFactList = []
+        include_missing_locations = (
+            label_array.ndim <= 2 and self.context.declared_object_count is not None
+        )
+        for projection in projections:
+            facts.extend(
+                _object_location_measurement_facts_for_plane(
+                    projection.labels,
+                    subject,
+                    self.context.policy,
+                    required_feature_names=required_feature_names,
+                    required_mean_feature_names=required_mean_feature_names,
+                    object_ids=projection.object_ids,
+                    include_missing=include_missing_locations,
+                )
+            )
+        return tuple(facts)
 
 
 def _object_label_measurements_required(
@@ -6579,49 +6712,6 @@ def _runtime_object_label_array(labels: object) -> np.ndarray | None:
     return label_array
 
 
-def _object_identifier_measurement_facts(
-    context: _ObjectLabelMeasurementContext,
-) -> _RuntimeMeasurementFacts:
-    if context.object_name is None:
-        return ()
-    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
-    keys = _required_object_identifier_keys(
-        subject,
-        context.required_keys,
-        context.policy,
-    )
-    if not keys:
-        return ()
-    label_array = _runtime_object_label_array(context.labels)
-    if label_array is None:
-        return ()
-
-    object_number_domains = ObjectIdentifierDomainProjectionStrategy.for_context(
-        context
-    ).domains(context)
-    facts: _RuntimeMeasurementFactList = []
-    emitted_counts_by_key: dict[
-        RuntimeMeasurementFeatureKey,
-        Counter[RuntimeCellSignature],
-    ] = {key: Counter() for key in keys}
-    for object_ids in object_number_domains:
-        for key in keys:
-            explicit_counter = (
-                context.values_by_feature.get(key, Counter())
-                if subject in context.object_identifier_subjects
-                else Counter()
-            )
-            emitted_counter = emitted_counts_by_key[key]
-            for object_id in object_ids:
-                signature = _cell_signature(str(object_id), context.policy)
-                if emitted_counter[signature] < explicit_counter[signature]:
-                    emitted_counter[signature] += 1
-                    continue
-                emitted_counter[signature] += 1
-                facts.append((key, signature))
-    return tuple(facts)
-
-
 def _required_object_identifier_keys(
     subject: RuntimeMeasurementSubjectKey,
     required_keys: _RuntimeRequiredMeasurementKeys,
@@ -6644,96 +6734,6 @@ def _required_object_identifier_keys(
             policy.measurement_dialect,
         )
     )
-
-
-def _object_count_measurement_facts(
-    context: _ObjectLabelMeasurementContext,
-) -> _RuntimeMeasurementFacts:
-    if context.object_name is None:
-        return ()
-    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
-    if subject in context.object_count_subjects:
-        return ()
-    key = RuntimeMeasurementFeatureKey(
-        subject,
-        ObjectCoreMeasurementFeature.OBJECT_COUNT.value,
-        MeasurementStatistic.COUNT.value,
-    )
-    if context.required_keys is not None and key not in context.required_keys:
-        return ()
-    label_array = _runtime_object_label_array(context.labels)
-    if label_array is None:
-        return ()
-    projections = ObjectLabelMeasurementProjectionStrategy.for_scope(
-        context.domain_scope
-    ).projections(context)
-    return tuple(
-        (
-            key,
-            _cell_signature(
-                str(len(projection.object_ids)),
-                context.policy,
-            ),
-        )
-        for projection in projections
-    )
-
-
-def _object_location_measurement_facts(
-    context: _ObjectLabelMeasurementContext,
-) -> _RuntimeMeasurementFacts:
-    if context.object_name is None:
-        return ()
-    subject = RuntimeMeasurementSubjectKey(MeasurementScope.OBJECT, context.object_name)
-    required_feature_names = _required_object_location_feature_names(
-        subject,
-        context.required_keys,
-        context.policy,
-        statistic=MeasurementStatistic.VALUE,
-    )
-    required_mean_feature_names = _required_object_location_feature_names(
-        subject,
-        context.required_keys,
-        context.policy,
-        statistic=MeasurementStatistic.MEAN,
-    )
-    if subject in context.object_location_subjects:
-        required_feature_names = frozenset()
-    if subject in context.object_location_aggregate_subjects:
-        required_mean_feature_names = frozenset()
-    if (
-        required_feature_names is not None
-        and not required_feature_names
-        and required_mean_feature_names is not None
-        and not required_mean_feature_names
-    ):
-        return ()
-    label_array = _runtime_object_label_array(context.labels)
-    if label_array is None:
-        return ()
-    projections = ObjectLabelMeasurementProjectionStrategy.for_scope(
-        context.domain_scope
-    ).projections(context)
-    if not any(projection.object_ids for projection in projections):
-        return ()
-
-    facts: _RuntimeMeasurementFactList = []
-    include_missing_locations = (
-        label_array.ndim <= 2 and context.declared_object_count is not None
-    )
-    for projection in projections:
-        facts.extend(
-            _object_location_measurement_facts_for_plane(
-                projection.labels,
-                subject,
-                context.policy,
-                required_feature_names=required_feature_names,
-                required_mean_feature_names=required_mean_feature_names,
-                object_ids=projection.object_ids,
-                include_missing=include_missing_locations,
-            )
-        )
-    return tuple(facts)
 
 
 def _required_object_location_feature_names(
