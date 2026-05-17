@@ -3357,15 +3357,6 @@ class PipelineStartSourceFileLoader(ABC, metaclass=AutoRegisterMeta):
         )
 
 
-def prepare_cellprofiler_runtime_adapter() -> None:
-    """Materialize nominal runtime-adapter registries before execution."""
-    for origin in SourceBindingOrigin:
-        SourceBindingResolver.for_origin(origin)
-    for method in SourceBindingMatchMethod:
-        SourceBindingMatchPlanResolver.for_method(method)
-    tuple(PipelineStartSourceFileLoader.__registry__.values())
-
-
 def _label_stack_repeats_first_plane(label_array: np.ndarray) -> bool:
     if label_array.ndim <= 2:
         return False

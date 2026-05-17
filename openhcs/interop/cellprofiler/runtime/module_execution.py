@@ -111,6 +111,7 @@ from openhcs.core.special_outputs import (
     SpecialOutputKindClassifier,
     special_output_name,
 )
+from openhcs.core.source_bindings import SourceBindingMatchMethod, SourceBindingOrigin
 from openhcs.core.runtime_semantics import (
     MeasurementScope,
     FieldSpec,
@@ -240,7 +241,9 @@ from openhcs.interop.cellprofiler.measurement_lookup import (
 from openhcs.interop.cellprofiler.runtime.adapter import (
     CellProfilerImageNumberResolver,
     CellProfilerRuntimeAdapter,
-    prepare_cellprofiler_runtime_adapter,
+    PipelineStartSourceFileLoader,
+    SourceBindingMatchPlanResolver,
+    SourceBindingResolver,
 )
 
 _MODULE_NAME_REGISTRY_KEY = "module_name"
@@ -930,7 +933,11 @@ class CellProfilerModuleExecutor:
 
     def prepare(self, func: Callable[..., Any]) -> None:
         """Resolve nominal policies used by this executor before timed execution."""
-        prepare_cellprofiler_runtime_adapter()
+        for origin in SourceBindingOrigin:
+            SourceBindingResolver.for_origin(origin)
+        for method in SourceBindingMatchMethod:
+            SourceBindingMatchPlanResolver.for_method(method)
+        tuple(PipelineStartSourceFileLoader.__registry__.values())
         for mode in ImagePayloadExecutionMode:
             CellProfilerImageExecutionStrategy.for_mode(mode)
         for kind in tuple(RuntimeArtifactKindStrategy.__registry__.keys()):
