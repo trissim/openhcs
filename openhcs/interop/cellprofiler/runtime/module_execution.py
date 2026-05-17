@@ -4464,10 +4464,9 @@ class CellProfilerObjectMeasurementRowPolicy(
             axis_fields=schema.axis_fields,
             row_policy=self,
         )
-        projection = MeasurementObjectRowIdentityProjectionStrategy.project(
-            object_identity,
-            projection_request,
-        )
+        projection = MeasurementObjectRowIdentityProjectionStrategy.for_enum_member(
+            object_identity
+        ).project_rows(projection_request)
         projected_rows = projection.rows
         if projected_rows and not any(
             object_id is not None for object_id, _axis_key in projection.row_keys
@@ -8170,15 +8169,6 @@ class MeasurementObjectRowIdentityProjectionStrategy(
     object_identity: ClassVar[MeasurementObjectRowIdentity]
     strategy_label: ClassVar[str | None] = None
 
-    @classmethod
-    def project(
-        cls,
-        object_identity: MeasurementObjectRowIdentity,
-        request: ObjectMeasurementRowIdentityProjectionRequest,
-    ) -> ObjectMeasurementRowIdentityProjectionResult:
-        """Project rows using the strategy declared by ``object_identity``."""
-        return cls.for_enum_member(object_identity).project_rows(request)
-
     @abstractmethod
     def project_rows(
         self,
@@ -10653,6 +10643,10 @@ def _unstack_cellprofiler_image_slices(image: Any, memory_type: str) -> tuple[An
     image_data = image_payload_data(image)
     image_mask = image_payload_mask(image)
     image_metadata = image_payload_metadata(image)
+    slice_projector = ImagePayloadSliceProjector(
+        mask=image_mask,
+        metadata=image_metadata,
+    )
     if is_pairwise_slice_grid(image_data):
         pairwise_shape = image_data.shape
         image_data = collapse_pairwise_slice_grid(image_data)
@@ -10669,7 +10663,7 @@ def _unstack_cellprofiler_image_slices(image: Any, memory_type: str) -> tuple[An
         if source_type != memory_type:
             image_data = _convert_memory(image_data, source_type, memory_type)
         return tuple(
-            _image_payload_slice(image_data[index], image_mask, image_metadata, index)
+            slice_projector.payload_for_slice(image_data[index], index)
             for index in range(image_data.shape[0])
         )
     if (
@@ -10679,11 +10673,11 @@ def _unstack_cellprofiler_image_slices(image: Any, memory_type: str) -> tuple[An
         )
     ) is not None:
         return tuple(
-            _image_payload_slice(plane_stack[index], image_mask, image_metadata, index)
+            slice_projector.payload_for_slice(plane_stack[index], index)
             for index in range(plane_stack.shape[0])
         )
     return tuple(
-        _image_payload_slice(slice_data, image_mask, image_metadata, index)
+        slice_projector.payload_for_slice(slice_data, index)
         for index, slice_data in enumerate(
             ImageStackLayout.for_stack(image_data).unstack(
                 array=image_data,
@@ -10691,13 +10685,6 @@ def _unstack_cellprofiler_image_slices(image: Any, memory_type: str) -> tuple[An
                 gpu_id=0,
             )
         )
-    )
-
-
-def _image_payload_slice(data: Any, mask: Any | None, metadata: Any, index: int) -> Any:
-    return ImagePayloadSliceProjector(mask=mask, metadata=metadata).payload_for_slice(
-        data,
-        index,
     )
 
 
