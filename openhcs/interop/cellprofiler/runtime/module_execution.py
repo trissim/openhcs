@@ -235,7 +235,6 @@ from openhcs.interop.cellprofiler.runtime.invocation import (
 )
 from openhcs.interop.cellprofiler.measurement_lookup import (
     CellProfilerMeasurementFeature,
-    CellProfilerMeasurementFeatureKind,
     count_feature_object_name,
 )
 from openhcs.interop.cellprofiler.runtime.adapter import (
@@ -5195,23 +5194,6 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicy):
         return label_array.shape[0] if label_array.ndim == 3 else None
 
 
-def _filter_objects_child_count_object_names(
-    kwargs: Mapping[str, Any],
-) -> tuple[str, ...]:
-    feature_names = tuple(kwargs.get("measurement_features", ()))
-    child_names = tuple(
-        parsed.object_name
-        for feature_name in feature_names
-        for parsed in (CellProfilerMeasurementFeature.parse(str(feature_name)),)
-        if (
-            parsed is not None
-            and parsed.kind is CellProfilerMeasurementFeatureKind.CHILD_COUNT
-            and parsed.object_name is not None
-        )
-    )
-    return tuple(dict.fromkeys(child_names))
-
-
 @dataclass(frozen=True, slots=True)
 class FilterObjectsRuntimeInputPlan:
     """Runtime object-label partition for one FilterObjects invocation."""
@@ -5256,7 +5238,10 @@ class FilterObjectsRuntimeInputPlan:
                     ArtifactKind.RELATIONSHIPS,
                 )
         if object_specs:
-            for child_object_name in _filter_objects_child_count_object_names(kwargs):
+            feature_names = tuple(kwargs.get("measurement_features", ()))
+            for child_object_name in (
+                CellProfilerMeasurementFeature.child_count_object_names(feature_names)
+            ):
                 relationship = ArtifactSpecCollection(runtime_inputs).by_name_and_kind(
                     parent_child_relationship_artifact_name(
                         object_specs[0].name,

@@ -36,16 +36,15 @@ class CellProfilerMeasurementFeature:
     @classmethod
     def parse(cls, feature_name: str | None) -> "CellProfilerMeasurementFeature | None":
         """Parse a CellProfiler feature name into nominal feature semantics."""
-        if feature_name is None:
+        candidate = CellProfilerMeasurementFeatureParseCandidate.from_feature_name(
+            feature_name
+        )
+        if candidate.is_absent:
             return None
-        normalized = feature_name.strip()
-        if not normalized:
-            return None
-        for parser_type in CellProfilerMeasurementFeatureParser.__registry__.values():
-            parsed = parser_type().parse_feature(normalized)
-            if parsed is not None:
-                return parsed
-        return cls(normalized, CellProfilerMeasurementFeatureKind.OTHER)
+        parsed = candidate.parse_registered()
+        if parsed is not None:
+            return parsed
+        return candidate.other_feature()
 
     @classmethod
     def object_count(cls, object_name: str) -> "CellProfilerMeasurementFeature":
@@ -58,6 +57,62 @@ class CellProfilerMeasurementFeature:
         return CellProfilerMeasurementFeatureParser.for_kind(
             CellProfilerMeasurementFeatureKind.CHILD_COUNT
         ).feature_from_object_name(child_object_name)
+
+    @classmethod
+    def child_count_object_names(
+        cls,
+        feature_names: tuple[object, ...],
+    ) -> tuple[str, ...]:
+        """Return ordered unique child object names referenced by count features."""
+        child_names = tuple(
+            parsed.object_name
+            for feature_name in feature_names
+            for parsed in (cls.parse(str(feature_name)),)
+            if (
+                parsed is not None
+                and parsed.kind is CellProfilerMeasurementFeatureKind.CHILD_COUNT
+                and parsed.object_name is not None
+            )
+        )
+        return tuple(dict.fromkeys(child_names))
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerMeasurementFeatureParseCandidate:
+    """Normalized candidate for fail-soft CellProfiler feature parsing."""
+
+    normalized: str | None
+
+    @classmethod
+    def from_feature_name(
+        cls,
+        feature_name: str | None,
+    ) -> "CellProfilerMeasurementFeatureParseCandidate":
+        if feature_name is None:
+            return cls(None)
+        normalized = feature_name.strip()
+        return cls(normalized or None)
+
+    @property
+    def is_absent(self) -> bool:
+        return self.normalized is None
+
+    def parse_registered(self) -> CellProfilerMeasurementFeature | None:
+        if self.normalized is None:
+            return None
+        for parser_type in CellProfilerMeasurementFeatureParser.__registry__.values():
+            parsed = parser_type().parse_feature(self.normalized)
+            if parsed is not None:
+                return parsed
+        return None
+
+    def other_feature(self) -> CellProfilerMeasurementFeature:
+        if self.normalized is None:
+            raise ValueError("Cannot materialize an absent measurement feature.")
+        return CellProfilerMeasurementFeature(
+            self.normalized,
+            CellProfilerMeasurementFeatureKind.OTHER,
+        )
 
 
 class CellProfilerMeasurementFeatureParser(ABC, metaclass=AutoRegisterMeta):

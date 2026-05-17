@@ -12,7 +12,7 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.public_api import declared_public_names
 from openhcs.core.runtime_semantics import parent_child_relationship_artifact_name
-from .measurement_lookup import child_count_feature_child_name
+from .measurement_lookup import CellProfilerMeasurementFeature
 from .parser import ModuleBlock, ModuleSetting
 from .setting_names import (
     SettingNameFamily,
@@ -533,13 +533,9 @@ def filter_objects_measurement_rules(
 
 def filter_objects_child_count_object_names(module: ModuleBlock) -> tuple[str, ...]:
     """Return child object names needed by Children_<object>_Count rules."""
-    child_names = tuple(
-        child_name
-        for rule in filter_objects_measurement_rules(module)
-        for child_name in (child_count_feature_child_name(rule.feature_name),)
-        if child_name is not None
+    return CellProfilerMeasurementFeature.child_count_object_names(
+        tuple(rule.feature_name for rule in filter_objects_measurement_rules(module))
     )
-    return tuple(dict.fromkeys(child_names))
 
 
 __all__ = declared_public_names(globals(), constant_prefixes=("FILTER_OBJECTS_",))
