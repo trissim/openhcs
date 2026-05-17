@@ -524,6 +524,348 @@ def _log_adapter_profile(label: str, seconds: float, **fields: Any) -> None:
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
+class AdapterProfileLog:
+    """Authoritative projection for runtime adapter profiling event fields."""
+
+    @staticmethod
+    def object_feature(
+        label: str,
+        seconds: float,
+        *,
+        object_name: str,
+        feature_name: str,
+        count: int | None = None,
+        cached: object | None = None,
+        ndim: int | None = None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "object": object_name,
+            "feature": feature_name,
+        }
+        if count is not None:
+            fields["count"] = count
+        if cached is not None:
+            fields["cached"] = cached
+        if ndim is not None:
+            fields["ndim"] = ndim
+        _log_adapter_profile(label, seconds, **fields)
+
+    @staticmethod
+    def label_batch(
+        label: str,
+        seconds: float,
+        *,
+        feature_name: str,
+        count: int | None = None,
+        cached: object | None = None,
+        requested: int | None = None,
+        uncached: int | None = None,
+        fallback: str | None = None,
+    ) -> None:
+        fields: dict[str, object] = {"feature": feature_name}
+        if count is not None:
+            fields["count"] = count
+        if cached is not None:
+            fields["cached"] = cached
+        if requested is not None:
+            fields["requested"] = requested
+        if uncached is not None:
+            fields["uncached"] = uncached
+        if fallback is not None:
+            fields["fallback"] = fallback
+        _log_adapter_profile(label, seconds, **fields)
+
+    @staticmethod
+    def artifact(
+        label: str,
+        seconds: float,
+        *,
+        artifact_name: str,
+        kind: ArtifactKind | str | None = None,
+        payload_type: str | None = None,
+        group_key: str | None = None,
+    ) -> None:
+        fields: dict[str, object] = {"artifact": artifact_name}
+        if kind is not None:
+            fields["kind"] = kind.value if isinstance(kind, ArtifactKind) else kind
+        if payload_type is not None:
+            fields["payload_type"] = payload_type
+        if group_key is not None:
+            fields["group_key"] = group_key
+        _log_adapter_profile(label, seconds, **fields)
+
+    @staticmethod
+    def measurement_artifact(
+        label: str,
+        seconds: float,
+        *,
+        artifact_name: str,
+        object_name: str | None = None,
+        fields_declared: bool | None = None,
+    ) -> None:
+        fields: dict[str, object] = {"artifact": artifact_name}
+        if object_name is not None:
+            fields["object"] = object_name
+        if fields_declared is not None:
+            fields["fields"] = fields_declared
+        _log_adapter_profile(label, seconds, **fields)
+
+    @staticmethod
+    def measurement_cache(
+        label: str,
+        seconds: float,
+        *,
+        object_count: int,
+        feature_count: int,
+    ) -> None:
+        _log_adapter_profile(
+            label,
+            seconds,
+            objects=object_count,
+            features=feature_count,
+        )
+
+    @staticmethod
+    def measurement_cache_policy(
+        seconds: float,
+        *,
+        object_count: int,
+        feature_count: int,
+        policy_name: str,
+    ) -> None:
+        _log_adapter_profile(
+            "adapter_measurement_cache_policy",
+            seconds,
+            policy=policy_name,
+            objects=object_count,
+            features=feature_count,
+        )
+
+    @staticmethod
+    def measurement_slice_mismatch(
+        seconds: float,
+        *,
+        object_name: str,
+        measurement_slices: int,
+        label_slices: int,
+    ) -> None:
+        _log_adapter_profile(
+            "adapter_multiplane_measurement_slice_mismatch",
+            seconds,
+            object=object_name,
+            measurement_slices=measurement_slices,
+            label_slices=label_slices,
+        )
+
+    @staticmethod
+    def source_candidates(
+        label: str,
+        seconds: float,
+        *,
+        count: int,
+        alias: str | None = None,
+        source: SourceBindingOrigin | None = None,
+    ) -> None:
+        fields: dict[str, object] = {"count": count}
+        if alias is not None:
+            fields["alias"] = alias
+        if source is not None:
+            fields["source"] = source.value
+        _log_adapter_profile(label, seconds, **fields)
+
+
+@dataclass(frozen=True, slots=True)
+class NativeRecordProfileContext:
+    """Profiling context for one native artifact materialization."""
+
+    artifact_name: str
+    kind: ArtifactKind
+
+    def event(
+        self,
+        label: str,
+        seconds: float,
+        *,
+        payload_type: str | None = None,
+        group_key: str | None = None,
+    ) -> None:
+        AdapterProfileLog.artifact(
+            label,
+            seconds,
+            artifact_name=self.artifact_name,
+            kind=self.kind,
+            payload_type=payload_type,
+            group_key=group_key,
+        )
+
+    def group_event(
+        self,
+        label: str,
+        seconds: float,
+        group_key: str | None,
+    ) -> None:
+        self.event(label, seconds, group_key=group_key)
+
+    def normalized_value(
+        self,
+        seconds: float,
+        *,
+        payload_type: str,
+        group_key: str | None,
+    ) -> None:
+        self.event(
+            "adapter_normalize_artifact_value",
+            seconds,
+            payload_type=payload_type,
+            group_key=group_key,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectFeatureProfileContext:
+    """Profiling context for one object/feature measurement query."""
+
+    object_name: str
+    feature_name: str
+
+    def domain(self, seconds: float, *, count: int, ndim: int | None = None) -> None:
+        AdapterProfileLog.object_feature(
+            "adapter_object_label_query_domain",
+            seconds,
+            object_name=self.object_name,
+            feature_name=self.feature_name,
+            count=count,
+            ndim=ndim,
+        )
+
+    def get_objects(self, seconds: float) -> None:
+        AdapterProfileLog.object_feature(
+            "adapter_object_feature_get_objects",
+            seconds,
+            object_name=self.object_name,
+            feature_name=self.feature_name,
+        )
+
+    def counted_event(self, label: str, seconds: float, *, count: int) -> None:
+        AdapterProfileLog.object_feature(
+            label,
+            seconds,
+            object_name=self.object_name,
+            feature_name=self.feature_name,
+            count=count,
+        )
+
+    def object_domain(self, seconds: float, *, count: int) -> None:
+        self.counted_event(
+            "adapter_object_feature_domain",
+            seconds,
+            count=count,
+        )
+
+    def query_tables(self, seconds: float, *, count: int) -> None:
+        self.counted_event(
+            "adapter_object_label_query_tables",
+            seconds,
+            count=count,
+        )
+
+    def feature_tables(self, seconds: float, *, count: int) -> None:
+        self.counted_event(
+            "adapter_object_feature_tables",
+            seconds,
+            count=count,
+        )
+
+    def query_extract(self, seconds: float, *, count: int) -> None:
+        self.counted_event(
+            "adapter_object_label_query_extract",
+            seconds,
+            count=count,
+        )
+
+    def feature_extract(self, seconds: float, *, count: int) -> None:
+        self.counted_event(
+            "adapter_object_feature_extract",
+            seconds,
+            count=count,
+        )
+
+    def query_values(self, seconds: float, *, cached: object) -> None:
+        AdapterProfileLog.object_feature(
+            "adapter_object_label_query_values",
+            seconds,
+            object_name=self.object_name,
+            feature_name=self.feature_name,
+            cached=cached,
+        )
+
+    def feature_values(self, seconds: float, *, cached: object) -> None:
+        AdapterProfileLog.object_feature(
+            "adapter_object_feature_values",
+            seconds,
+            object_name=self.object_name,
+            feature_name=self.feature_name,
+            cached=cached,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class LabelBatchProfileContext:
+    """Profiling context for one label-slice measurement batch."""
+
+    feature_name: str
+
+    def cache(self, seconds: float, *, requested: int, uncached: int) -> None:
+        AdapterProfileLog.label_batch(
+            "adapter_object_label_batch_cache",
+            seconds,
+            feature_name=self.feature_name,
+            requested=requested,
+            uncached=uncached,
+        )
+
+    def values(
+        self,
+        seconds: float,
+        *,
+        cached: object,
+        count: int,
+        fallback: str | None = None,
+    ) -> None:
+        AdapterProfileLog.label_batch(
+            "adapter_object_label_batch_values",
+            seconds,
+            feature_name=self.feature_name,
+            cached=cached,
+            count=count,
+            fallback=fallback,
+        )
+
+    def tables(self, seconds: float, *, count: int) -> None:
+        AdapterProfileLog.label_batch(
+            "adapter_object_label_batch_tables",
+            seconds,
+            feature_name=self.feature_name,
+            count=count,
+        )
+
+    def indexes(self, seconds: float, *, count: int) -> None:
+        AdapterProfileLog.label_batch(
+            "adapter_object_label_batch_indexes",
+            seconds,
+            feature_name=self.feature_name,
+            count=count,
+        )
+
+    def align(self, seconds: float, *, count: int) -> None:
+        AdapterProfileLog.label_batch(
+            "adapter_object_label_batch_align",
+            seconds,
+            feature_name=self.feature_name,
+            count=count,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class ObjectLabelSourceImageDomain:
     """Source-domain metadata inherited by object labels produced from an image."""
@@ -1063,11 +1405,11 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 dimensions=dimensions,
                 representation=representation,
             )
-        _log_adapter_profile(
+        AdapterProfileLog.artifact(
             "adapter_construct_object_labels",
             time.perf_counter() - construct_started_at,
-            artifact=name,
-            kind=ArtifactKind.OBJECT_LABELS.value,
+            artifact_name=name,
+            kind=ArtifactKind.OBJECT_LABELS,
             payload_type=type(labels).__name__,
         )
         return self._record_native_value(
@@ -1258,11 +1600,11 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 name=object_name,
                 kind=ArtifactKind.OBJECT_LABELS,
             )
-        _log_adapter_profile(
+        AdapterProfileLog.measurement_artifact(
             "adapter_measurement_subject_validation",
             time.perf_counter() - validation_started_at,
-            artifact=name,
-            object=object_name,
+            artifact_name=name,
+            object_name=object_name,
         )
         table_started_at = time.perf_counter()
         measurement_table = MeasurementTable(
@@ -1274,12 +1616,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             source_image_name=source_image_name,
             validated_runtime_schema=bool(fields),
         )
-        _log_adapter_profile(
+        AdapterProfileLog.measurement_artifact(
             "adapter_measurement_table_construct",
             time.perf_counter() - table_started_at,
-            artifact=name,
-            object=object_name,
-            fields=bool(fields),
+            artifact_name=name,
+            object_name=object_name,
+            fields_declared=bool(fields),
         )
         record_started_at = time.perf_counter()
         stored_value = self._record_native_value(
@@ -1287,11 +1629,11 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             ArtifactKind.MEASUREMENTS,
             measurement_table,
         )
-        _log_adapter_profile(
+        AdapterProfileLog.measurement_artifact(
             "adapter_measurement_record_native",
             time.perf_counter() - record_started_at,
-            artifact=name,
-            object=object_name,
+            artifact_name=name,
+            object_name=object_name,
         )
         return stored_value
 
@@ -1448,14 +1790,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     ) -> tuple[Any, ...]:
         """Return object measurements aligned to label planes with adapter caching."""
         started_at = time.perf_counter()
+        profile = ObjectFeatureProfileContext(object_name, feature_name)
         label_array = np.asarray(labels)
         domain_started_at = time.perf_counter()
         label_domain = self._dense_label_domain(labels)
-        _log_adapter_profile(
-            "adapter_object_label_query_domain",
+        profile.domain(
             time.perf_counter() - domain_started_at,
-            object=object_name,
-            feature=feature_name,
             count=len(label_domain),
             ndim=label_array.ndim,
         )
@@ -1470,11 +1810,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         )
         cached = self._measurement_cache.get(query)
         if cached is not None:
-            _log_adapter_profile(
-                "adapter_object_label_query_values",
+            profile.query_values(
                 time.perf_counter() - started_at,
-                object=object_name,
-                feature=feature_name,
                 cached="adapter",
             )
             return cached
@@ -1482,11 +1819,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         cached = object_label_values_cache.get(query)
         if cached is not None:
             self._measurement_cache[query] = cached
-            _log_adapter_profile(
-                "adapter_object_label_query_values",
+            profile.query_values(
                 time.perf_counter() - started_at,
-                object=object_name,
-                feature=feature_name,
                 cached="store",
             )
             return cached
@@ -1498,11 +1832,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 group_key=group_key,
                 image_number=image_number,
             )
-            _log_adapter_profile(
-                "adapter_object_label_query_tables",
+            profile.query_tables(
                 time.perf_counter() - tables_started_at,
-                object=object_name,
-                feature=feature_name,
                 count=len(tables),
             )
             extract_started_at = time.perf_counter()
@@ -1516,20 +1847,14 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                     dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
                 ),
             )
-            _log_adapter_profile(
-                "adapter_object_label_query_extract",
+            profile.query_extract(
                 time.perf_counter() - extract_started_at,
-                object=object_name,
-                feature=feature_name,
                 count=len(values[0]),
             )
             self._measurement_cache[query] = values
             object_label_values_cache[query] = values
-            _log_adapter_profile(
-                "adapter_object_label_query_values",
+            profile.query_values(
                 time.perf_counter() - started_at,
-                object=object_name,
-                feature=feature_name,
                 cached=False,
             )
             return values
@@ -1539,11 +1864,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             labels,
             group_key=group_key,
         )
-        _log_adapter_profile(
-            "adapter_object_label_query_tables",
+        profile.query_tables(
             time.perf_counter() - tables_started_at,
-            object=object_name,
-            feature=feature_name,
             count=len(tables),
         )
         extract_started_at = time.perf_counter()
@@ -1573,20 +1895,14 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 )
                 for slice_index, label_plane in enumerate(label_planes)
             )
-        _log_adapter_profile(
-            "adapter_object_label_query_extract",
+        profile.query_extract(
             time.perf_counter() - extract_started_at,
-            object=object_name,
-            feature=feature_name,
             count=len(values),
         )
         self._measurement_cache[query] = values
         object_label_values_cache[query] = values
-        _log_adapter_profile(
-            "adapter_object_label_query_values",
+        profile.query_values(
             time.perf_counter() - started_at,
-            object=object_name,
-            feature=feature_name,
             cached=False,
         )
         return values
@@ -1602,6 +1918,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         started_at = time.perf_counter()
         if not requests:
             return MappingProxyType({})
+        profile = LabelBatchProfileContext(feature_name)
 
         resolved_group_key = self.group_key if group_key is None else group_key
         label_domains: dict[str, tuple[int, ...]] = {}
@@ -1632,19 +1949,15 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 uncached_queries[object_name] = query
                 continue
             values_by_object[object_name] = cached
-        _log_adapter_profile(
-            "adapter_object_label_batch_cache",
+        profile.cache(
             time.perf_counter() - cache_started_at,
-            feature=feature_name,
             requested=len(requests),
             uncached=len(uncached_queries),
         )
 
         if not uncached_queries:
-            _log_adapter_profile(
-                "adapter_object_label_batch_values",
+            profile.values(
                 time.perf_counter() - started_at,
-                feature=feature_name,
                 cached=True,
                 count=len(values_by_object),
             )
@@ -1659,10 +1972,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                     group_key=group_key,
                     image_number=requests[object_name][2],
                 )
-            _log_adapter_profile(
-                "adapter_object_label_batch_values",
+            profile.values(
                 time.perf_counter() - started_at,
-                feature=feature_name,
                 cached=False,
                 fallback="multiplane",
                 count=len(values_by_object),
@@ -1680,10 +1991,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             for object_name in uncached_queries
             for image_number in (requests[object_name][2],)
         }
-        _log_adapter_profile(
-            "adapter_object_label_batch_tables",
+        profile.tables(
             time.perf_counter() - tables_started_at,
-            feature=feature_name,
             count=sum(len(tables) for tables in tables_by_object.values()),
         )
         indexes_started_at = time.perf_counter()
@@ -1709,10 +2018,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 f"{exc} Visible measurement tables in group "
                 f"{context.group_key!r}: {table_context!r}."
             ) from exc
-        _log_adapter_profile(
-            "adapter_object_label_batch_indexes",
+        profile.indexes(
             time.perf_counter() - indexes_started_at,
-            feature=feature_name,
             count=len(value_indexes_by_object),
         )
         align_started_at = time.perf_counter()
@@ -1743,16 +2050,12 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             self._measurement_cache[query] = value_slices
             object_label_values_cache[query] = value_slices
             values_by_object[object_name] = value_slices
-        _log_adapter_profile(
-            "adapter_object_label_batch_align",
+        profile.align(
             time.perf_counter() - align_started_at,
-            feature=feature_name,
             count=len(uncached_queries),
         )
-        _log_adapter_profile(
-            "adapter_object_label_batch_values",
+        profile.values(
             time.perf_counter() - started_at,
-            feature=feature_name,
             cached=False,
             count=len(values_by_object),
         )
@@ -1767,21 +2070,14 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
     ) -> Any:
         """Return one object feature vector over the object's declared domain."""
         started_at = time.perf_counter()
+        profile = ObjectFeatureProfileContext(object_name, feature_name)
         objects_started_at = time.perf_counter()
         objects = self.get_objects(object_name, group_key=group_key)
-        _log_adapter_profile(
-            "adapter_object_feature_get_objects",
-            time.perf_counter() - objects_started_at,
-            object=object_name,
-            feature=feature_name,
-        )
+        profile.get_objects(time.perf_counter() - objects_started_at)
         domain_started_at = time.perf_counter()
         object_domain = dense_object_label_id_domain(objects)
-        _log_adapter_profile(
-            "adapter_object_feature_domain",
+        profile.object_domain(
             time.perf_counter() - domain_started_at,
-            object=object_name,
-            feature=feature_name,
             count=len(object_domain),
         )
         resolved_group_key = self.group_key if group_key is None else group_key
@@ -1794,11 +2090,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         object_feature_cache = self.object_feature_value_cache()
         cached = object_feature_cache.get(cache_key)
         if cached is not None:
-            _log_adapter_profile(
-                "adapter_object_feature_values",
+            profile.feature_values(
                 time.perf_counter() - started_at,
-                object=object_name,
-                feature=feature_name,
                 cached=True,
             )
             return cached
@@ -1807,11 +2100,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             object_name,
             group_key=group_key,
         )
-        _log_adapter_profile(
-            "adapter_object_feature_tables",
+        profile.feature_tables(
             time.perf_counter() - tables_started_at,
-            object=object_name,
-            feature=feature_name,
             count=len(tables),
         )
         values_started_at = time.perf_counter()
@@ -1823,19 +2113,13 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             object_name=object_name,
             dialect=CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
         )
-        _log_adapter_profile(
-            "adapter_object_feature_extract",
+        profile.feature_extract(
             time.perf_counter() - values_started_at,
-            object=object_name,
-            feature=feature_name,
             count=len(values),
         )
         object_feature_cache[cache_key] = values
-        _log_adapter_profile(
-            "adapter_object_feature_values",
+        profile.feature_values(
             time.perf_counter() - started_at,
-            object=object_name,
-            feature=feature_name,
             cached=False,
         )
         return values
@@ -1849,11 +2133,11 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         table_semantics = (
             MeasurementTableObjectFeatureSemantics.from_table(table)
         )
-        _log_adapter_profile(
+        AdapterProfileLog.measurement_cache(
             "adapter_measurement_table_semantics",
             time.perf_counter() - semantics_started_at,
-            objects=len(table_semantics.object_names),
-            features=len(table_semantics.feature_names),
+            object_count=len(table_semantics.object_names),
+            feature_count=len(table_semantics.feature_names),
         )
         mutation = MeasurementTableCacheMutation(
             adapter=self,
@@ -1863,12 +2147,11 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         for policy in MeasurementTableCacheMutationPolicy.registered_policies():
             policy_started_at = time.perf_counter()
             policy.apply(mutation)
-            _log_adapter_profile(
-                "adapter_measurement_cache_policy",
+            AdapterProfileLog.measurement_cache_policy(
                 time.perf_counter() - policy_started_at,
-                policy=type(policy).__name__,
-                objects=len(table_semantics.object_names),
-                features=len(table_semantics.feature_names),
+                policy_name=type(policy).__name__,
+                object_count=len(table_semantics.object_names),
+                feature_count=len(table_semantics.feature_names),
             )
 
     def _measurement_tables_for_multiplane_labels(
@@ -1964,10 +2247,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             for table_group_key, table in scoped_tables
         )
         if offset and label_array.ndim > 2 and offset != label_array.shape[0]:
-            _log_adapter_profile(
-                "adapter_multiplane_measurement_slice_mismatch",
+            AdapterProfileLog.measurement_slice_mismatch(
                 0.0,
-                object=object_name,
+                object_name=object_name,
                 measurement_slices=offset,
                 label_slices=label_array.shape[0],
             )
@@ -2142,6 +2424,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         native_value: Any,
     ) -> StoredRuntimeValue:
         total_started_at = time.perf_counter()
+        profile = NativeRecordProfileContext(name, expected_kind)
         plan_started_at = time.perf_counter()
         output_plan = self._require_output_plan(name, expected_kind)
         slice_count = RuntimeSliceProjection.slice_count_from_values((native_value,))
@@ -2149,11 +2432,9 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             requested_group_key=self.group_key,
             slice_count=slice_count,
         )
-        _log_adapter_profile(
+        profile.event(
             "adapter_require_output_plan",
             time.perf_counter() - plan_started_at,
-            artifact=name,
-            kind=expected_kind.value,
         )
         store_started_at = time.perf_counter()
         stored_value: StoredRuntimeValue | None = None
@@ -2174,23 +2455,18 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 group_native_value,
                 axis_id=self.axis_id,
             )
-            _log_adapter_profile(
-                "adapter_normalize_artifact_value",
+            profile.normalized_value(
                 time.perf_counter() - normalize_started_at,
-                artifact=name,
-                kind=expected_kind.value,
                 payload_type=type(runtime_value.data).__name__,
                 group_key=output_group_key,
             )
             save_started_at = time.perf_counter()
             runtime_path = plan.path
             self._save_payload(runtime_value.data, runtime_path)
-            _log_adapter_profile(
+            profile.group_event(
                 "adapter_save_payload",
                 time.perf_counter() - save_started_at,
-                artifact=name,
-                kind=expected_kind.value,
-                group_key=output_group_key,
+                output_group_key,
             )
             replace_started_at = time.perf_counter()
             stored_value = self.runtime_value_store.replace(
@@ -2198,29 +2474,25 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 path=runtime_path,
                 backend=self.backend,
             )
-            _log_adapter_profile(
+            profile.group_event(
                 "adapter_runtime_store_replace_only",
                 time.perf_counter() - replace_started_at,
-                artifact=name,
-                kind=expected_kind.value,
-                group_key=output_group_key,
+                output_group_key,
             )
             if expected_kind is ArtifactKind.MEASUREMENTS:
                 table_started_at = time.perf_counter()
                 measurement_table = MeasurementTable.from_runtime_value(runtime_value)
-                _log_adapter_profile(
+                profile.group_event(
                     "adapter_measurement_table_from_runtime_value",
                     time.perf_counter() - table_started_at,
-                    artifact=name,
-                    group_key=output_group_key,
+                    output_group_key,
                 )
                 cache_mutation_started_at = time.perf_counter()
                 self.apply_measurement_table_cache_mutation(measurement_table)
-                _log_adapter_profile(
+                profile.group_event(
                     "adapter_measurement_cache_mutation",
                     time.perf_counter() - cache_mutation_started_at,
-                    artifact=name,
-                    group_key=output_group_key,
+                    output_group_key,
                 )
         if stored_value is None:
             raise RuntimeError(
@@ -2229,23 +2501,17 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             )
         invalidation_started_at = time.perf_counter()
         self.invalidate_runtime_query_caches_for_kind(expected_kind)
-        _log_adapter_profile(
+        profile.event(
             "adapter_runtime_query_cache_invalidation",
             time.perf_counter() - invalidation_started_at,
-            artifact=name,
-            kind=expected_kind.value,
         )
-        _log_adapter_profile(
+        profile.event(
             "adapter_runtime_store_replace",
             time.perf_counter() - store_started_at,
-            artifact=name,
-            kind=expected_kind.value,
         )
-        _log_adapter_profile(
+        profile.event(
             "adapter_record_native_value",
             time.perf_counter() - total_started_at,
-            artifact=name,
-            kind=expected_kind.value,
         )
         return stored_value
 
@@ -2450,7 +2716,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             _SOURCE_CANDIDATE_PROCESS_CACHE.move_to_end(cache_key)
             if len(_SOURCE_CANDIDATE_PROCESS_CACHE) > _SOURCE_CANDIDATE_CACHE_LIMIT:
                 _SOURCE_CANDIDATE_PROCESS_CACHE.popitem(last=False)
-            _log_adapter_profile(
+            AdapterProfileLog.source_candidates(
                 "source_candidates_parse",
                 time.perf_counter() - started_at,
                 count=len(candidates),
@@ -2632,11 +2898,11 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
                 current_candidates
             ),
         )
-        _log_adapter_profile(
+        AdapterProfileLog.source_candidates(
             "source_candidates_match",
             time.perf_counter() - match_started_at,
             alias=request.alias,
-            source=SourceBindingOrigin.STEP_INPUT.value,
+            source=SourceBindingOrigin.STEP_INPUT,
             count=len(matched),
         )
         selected_files = self.require_matched_candidates(
@@ -2701,11 +2967,11 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             source_binding_plan=request.adapter.source_binding_plan,
             group_key=request.adapter.group_key,
         )
-        _log_adapter_profile(
+        AdapterProfileLog.source_candidates(
             "source_candidates_match",
             time.perf_counter() - match_started_at,
             alias=request.alias,
-            source=SourceBindingOrigin.PIPELINE_START.value,
+            source=SourceBindingOrigin.PIPELINE_START,
             count=len(matched),
         )
         selected_files = self.require_matched_candidates(
@@ -2722,7 +2988,7 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             selected_paths=tuple(candidate.path for candidate in selected_files),
             current_image=request.current_image,
         )
-        _log_adapter_profile(
+        AdapterProfileLog.source_candidates(
             "source_candidates_load",
             time.perf_counter() - load_started_at,
             alias=request.alias,
