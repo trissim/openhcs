@@ -67,7 +67,6 @@ from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 import openhcs.serialization.pycodify_formatters  # noqa: F401
 from pycodify import Assignment, generate_python_source
 from openhcs.utils.pipeline_migration import (
-    patch_step_constructors_for_migration,
     load_pipeline_with_migration,
 )
 from openhcs.pyqt_gui.windows.dual_editor_window import DualEditorWindow
@@ -87,6 +86,12 @@ from openhcs.pyqt_gui.widgets.shared.services.batch_workflow_service import (
     DebugSnapshotAvailableNotification,
 )
 from openhcs.pyqt_gui.widgets.shared.services.manager_item_hooks import ManagerItemHooks
+from openhcs.pyqt_gui.widgets.shared.services.pipeline_editor_workflows import (
+    PipelineEditorCodeWorkflow,
+    PipelineEditorDeletionWorkflow,
+    PipelineEditorListWorkflow,
+    PipelineStepSaveWorkflow,
+)
 from openhcs.pyqt_gui.widgets.shared.services.widget_action_dispatch import (
     WidgetActionRoute,
     dispatch_widget_action,
@@ -1201,52 +1206,11 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self, code: str, error: Exception, namespace: dict
     ) -> Optional[dict]:
         """Handle old-format step constructors by retrying with migration patch."""
-        error_msg = str(error)
-        if "unexpected keyword argument" in error_msg and (
-            "group_by" in error_msg or "variable_components" in error_msg
-        ):
-            logger.info(
-                f"Detected old-format step constructor, retrying with migration patch: {error}"
-            )
-            new_namespace = {}
-            with (
-                self._patch_lazy_constructors(),
-                patch_step_constructors_for_migration(),
-            ):
-                exec(code, new_namespace)
-            return new_namespace
-        return None  # Re-raise error
+        return PipelineEditorCodeWorkflow(self).migration_namespace(code, error)
 
     def _apply_executed_code(self, namespace: dict) -> bool:
         """Extract pipeline_steps from namespace and apply to widget state."""
-        if "pipeline_steps" not in namespace:
-            return False
-
-        new_pipeline_steps = namespace["pipeline_steps"]
-        self.pipeline_steps = new_pipeline_steps
-        # Don't register here; update_pipeline_for_plate handles atomic registration
-        self._normalize_step_scope_tokens(register=False)
-
-        # Update Pipeline ObjectState with new step list
-        if self.current_plate:
-            self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
-            logger.debug(
-                f"Updated Pipeline ObjectState ({len(self.pipeline_steps)} steps) for plate: {self.current_plate}"
-            )
-
-        self.update_item_list()
-        self._suppress_pipeline_state_sync = True
-        try:
-            self.pipeline_changed.emit(self.pipeline_steps)
-        finally:
-            self._suppress_pipeline_state_sync = False
-        self.status_message.emit(
-            f"Pipeline updated with {len(new_pipeline_steps)} steps"
-        )
-
-        # Broadcast to global event bus for ALL windows to receive
-        self._broadcast_to_event_bus("pipeline", new_pipeline_steps)
-        return True
+        return PipelineEditorCodeWorkflow(self).apply_namespace(namespace)
 
     def _get_code_missing_error_message(self) -> str:
         """Error message when pipeline_steps variable is missing."""
@@ -1698,28 +1662,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
     def _perform_delete(self, items: List[Any]) -> None:
         """Remove steps from backing list (required abstract method)."""
-        # Build descriptive label for undo
-        step_names = [step.name for step in items]
-        label = f"delete step{'s' if len(items) > 1 else ''} {', '.join(step_names)}"
-
-        with ObjectStateRegistry.atomic(label):
-            # Unregister ObjectStates for deleted steps
-            for step in items:
-                self._unregister_step_state(step)
-
-            # Build set of steps to delete (by identity, not equality)
-            steps_to_delete = set(id(step) for step in items)
-            self.pipeline_steps = [
-                s for s in self.pipeline_steps if id(s) not in steps_to_delete
-            ]
-            self._normalize_step_scope_tokens(register=False)
-
-            # Sync to Pipeline ObjectState
-            if self.current_plate:
-                self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
-
-        if self.selected_step in [step.name for step in items]:
-            self.selected_step = ""
+        PipelineEditorDeletionWorkflow(self).delete(items)
 
     def _show_item_editor(self, item: Any) -> None:
         """Show DualEditorWindow for step (required abstract method)."""
@@ -1735,21 +1678,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         def handle_save(edited_step):
             """Handle step save from editor."""
-            # Find and replace the step in the pipeline
-            for i, step in enumerate(self.pipeline_steps):
-                if step is step_to_edit:
-                    # Transfer scope token from old to new step
-                    prefix = ScopeTokenService._get_prefix(step_to_edit)
-                    ScopeTokenService.get_generator(plate_scope, prefix).transfer(
-                        step_to_edit, edited_step
-                    )
-                    self.pipeline_steps[i] = edited_step
-                    break
-
-            # Update the display
-            self.update_item_list()
-            self.pipeline_changed.emit(self.pipeline_steps)
-            self.status_message.emit(f"Updated step: {edited_step.name}")
+            PipelineStepSaveWorkflow(self, step_to_edit, plate_scope).save(edited_step)
 
         orchestrator = self._get_current_orchestrator()
 
@@ -1808,24 +1737,12 @@ class PipelineEditorWidget(AbstractManagerWidget):
         ObjectState provides resolved values directly - no need to collect
         LiveContextSnapshot. Just ensure scope tokens are normalized.
         """
-        self._normalize_step_scope_tokens(register=False)
+        PipelineEditorListWorkflow(self).prepare_update()
         return None  # ObjectState provides values, no context needed
 
     def _post_reorder(self) -> None:
         """Additional cleanup after reorder - normalize tokens and emit signal."""
-        self._normalize_step_scope_tokens(register=False)
-
-        # Sync to Pipeline ObjectState
-        if self.current_plate:
-            self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
-
-        self.pipeline_changed.emit(self.pipeline_steps)
-        # Broadcast to global event bus so open step editors update their colors
-        self._broadcast_to_event_bus("pipeline", self.pipeline_steps)
-        # Record snapshot for time-travel (reordering is a significant state change)
-        ObjectStateRegistry.record_snapshot(
-            "reorder steps", scope_id=str(self.current_plate)
-        )
+        PipelineEditorListWorkflow(self).post_reorder()
 
     # === Config Resolution Hook (domain-specific) ===
 
@@ -1852,16 +1769,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
     def _on_time_travel_complete(self, dirty_states, triggering_scope):
         """Refresh pipeline list after time travel to reflect restored step order."""
-        if self.current_plate:
-            self.pipeline_steps = self._get_steps_from_pipeline_state(
-                self.current_plate
-            )
-        else:
-            self.pipeline_steps = []
-
-        self._normalize_step_scope_tokens(register=False)
-        self.update_item_list()
-        self.update_button_states()
+        PipelineEditorListWorkflow(self).restore_after_time_travel()
 
     def _action_copy_steps(self):
         """Copy selected steps to clipboard (Ctrl+C)."""

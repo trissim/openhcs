@@ -122,3 +122,41 @@ Run:
 - Extracted classes own real GUI workflow semantics, not shallow forwarding.
 - Existing debug/source-binding GUI behavior is unchanged.
 
+## Progress: 2026-05-17
+
+Completed decomposition slices:
+
+- `PipelineEditorCodeWorkflow` owns edited pipeline-code application and legacy
+  constructor migration fallback.
+- `PipelineEditorDeletionWorkflow` owns atomic step deletion and backing
+  `ObjectState` synchronization.
+- `PipelineEditorListWorkflow` owns list preparation, reorder side effects, and
+  time-travel restoration.
+- `PipelineStepSaveWorkflow` owns edited-step replacement while preserving
+  scope-token continuity.
+- `PlateManagerCodeWorkflow` owns orchestrator-code application, plate entry
+  creation, config propagation, pipeline data propagation, and compilation
+  invalidation.
+- `PlateManagerDeletionWorkflow` owns delete validation and plate/ObjectState
+  cleanup.
+
+Verification:
+
+- `tests/unit/pyqt_gui/test_debug_toolbar.py tests/unit/pyqt_gui/test_source_bindings_editor.py`:
+  `33 passed`.
+- `tests/unit/pyqt_gui`: `89 passed`.
+- Advisor:
+  - `pipeline_editor_workflows.py`: `0`.
+  - `plate_manager_workflows.py`: `0`.
+
+Remaining:
+
+- `PipelineEditorWidget` and `PlateManagerWidget` still expose private hook
+  bridges required by the external `pyqt_reactive.AbstractManagerWidget`
+  template contract. Eliminating the forwarding-wrapper findings properly
+  requires a dependency-level refactor of that base contract to accept nominal
+  hook providers instead of private subclass methods.
+- Larger widget role-quotient findings remain for editor display formatting,
+  debug command routing, time-travel handling, and plate-manager status/progress
+  formatting. Continue extracting cohesive services rather than adding local
+  private helpers.
