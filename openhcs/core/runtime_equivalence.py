@@ -2050,11 +2050,11 @@ class RuntimeMeasurementSnapshot:
                 continue
             record_measurement_facts(
                 values_by_feature,
-                _measurement_facts_from_table_snapshot(
+                RuntimeTableSnapshotFactExtractor(
                     table,
-                    policy,
                     known_source_names=known_source_names,
-                ),
+                    policy=policy,
+                ).measurement_facts(),
             )
         return cls(values_by_feature=values_by_feature)
 
@@ -3501,7 +3501,11 @@ def _record_static_wide_measurement_table_snapshot(
     if not feature_column_indexes:
         record_measurement_facts(
             values_by_feature,
-            _identity_facts_from_table_snapshot(table, policy),
+            RuntimeTableSnapshotFactExtractor(
+                table,
+                policy=policy,
+                known_source_names=known_source_names,
+            ).identity_facts(),
         )
         return True
     feature_column_indexes = tuple(
@@ -3514,7 +3518,11 @@ def _record_static_wide_measurement_table_snapshot(
     if not feature_column_indexes:
         record_measurement_facts(
             values_by_feature,
-            _identity_facts_from_table_snapshot(table, policy),
+            RuntimeTableSnapshotFactExtractor(
+                table,
+                policy=policy,
+                known_source_names=known_source_names,
+            ).identity_facts(),
         )
         return True
     column_subject_contexts = {
@@ -4701,246 +4709,254 @@ def _measurement_feature_key_from_source_context(
     )
 
 
-def _measurement_facts_from_table_snapshot(
-    table: RuntimeTableSnapshot,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    known_source_names: tuple[str, ...],
-) -> _RuntimeMeasurementFacts:
-    static_facts = _static_wide_measurement_facts_from_table_snapshot(
-        table,
-        policy,
-        known_source_names=known_source_names,
-    )
-    if static_facts is not None:
-        return static_facts
+@dataclass(frozen=True, slots=True)
+class RuntimeTableSnapshotFactExtractor:
+    """Project exported measurement table snapshots into semantic facts."""
 
-    feature_indexes = tuple(
-        index
-        for index, field_name in enumerate(table.header)
-        if not _is_measurement_identity_field(
-            field_name,
-            policy.measurement_dialect,
+    table: RuntimeTableSnapshot
+    policy: RuntimeEquivalencePolicy
+    known_source_names: tuple[str, ...] = ()
+
+    def measurement_facts(self) -> _RuntimeMeasurementFacts:
+        static_facts = self.static_wide_measurement_facts()
+        if static_facts is not None:
+            return static_facts
+
+        feature_indexes = tuple(
+            index
+            for index, field_name in enumerate(self.table.header)
+            if not _is_measurement_identity_field(
+                field_name,
+                self.policy.measurement_dialect,
+            )
         )
-    )
-    if not feature_indexes:
-        return _identity_facts_from_table_snapshot(table, policy)
-    padding_groups_by_index = _contextual_measurement_padding_groups(
-        table.column_context,
-        table.header,
-        feature_indexes,
-        policy.measurement_dialect,
-        known_source_names=known_source_names,
-    )
-
-    image_number_offset = _table_image_number_offset(table.header, table.rows)
-    facts: _RuntimeMeasurementFactList = []
-    for row in table.rows:
-        row_mapping = dict(zip(table.header, row, strict=True))
-        row_subject = _measurement_subject_from_export_row(table.path, row_mapping)
-        if _is_metadata_map_row(row_subject, row_mapping):
-            continue
-        source_name = measurement_row_source_image_name(row_mapping)
-        padding_indexes = _contextual_measurement_padding_indexes(
-            table.column_context,
-            table.header,
-            row,
+        if not feature_indexes:
+            return self.identity_facts()
+        padding_groups_by_index = _contextual_measurement_padding_groups(
+            self.table.column_context,
+            self.table.header,
             feature_indexes,
-            policy.measurement_dialect,
-            known_source_names=known_source_names,
-            padding_groups_by_index=padding_groups_by_index,
+            self.policy.measurement_dialect,
+            known_source_names=self.known_source_names,
         )
-        long_form_fact = _long_form_measurement_fact(
-            _LongFormMeasurementContext(
-                row_mapping,
-                row_subject,
-                policy,
-                source_name,
-                known_source_names,
-                image_number_offset,
-            )
+
+        image_number_offset = _table_image_number_offset(
+            self.table.header,
+            self.table.rows,
         )
-        if long_form_fact is not None:
-            facts.append(long_form_fact)
-            continue
-        for index, field_name in enumerate(table.header):
-            if index in padding_indexes:
-                continue
-            if _is_measurement_identity_field(field_name, policy.measurement_dialect):
-                continue
-            subject = _measurement_subject_from_export_column(
-                table,
+        facts: _RuntimeMeasurementFactList = []
+        for row in self.table.rows:
+            row_mapping = dict(zip(self.table.header, row, strict=True))
+            row_subject = _measurement_subject_from_export_row(
+                self.table.path,
                 row_mapping,
-                index,
-                fallback_subject=row_subject,
             )
-            key = _measurement_feature_key_from_source_context(
-                _MeasurementFeatureKeySourceContext(
-                    field_name,
-                    subject,
-                    policy,
-                    measurement_row_qualifiers(
-                        row_mapping,
-                        policy.measurement_dialect,
-                        field_name,
-                    ),
-                    source_name,
-                    known_source_names,
-                )
-            )
-            if key is None:
+            if _is_metadata_map_row(row_subject, row_mapping):
                 continue
-            if _is_aggregate_image_number_reference_measurement_field(field_name):
-                continue
-            facts.extend(
-                _cell_measurement_facts(
-                    key,
-                    _normalize_image_number_reference_measurement_value(
-                        field_name,
-                        row_mapping[field_name],
-                        _table_image_number_offset(table.header, table.rows),
-                    ),
-                    policy,
-                )
+            source_name = measurement_row_source_image_name(row_mapping)
+            padding_indexes = _contextual_measurement_padding_indexes(
+                self.table.column_context,
+                self.table.header,
+                row,
+                feature_indexes,
+                self.policy.measurement_dialect,
+                known_source_names=self.known_source_names,
+                padding_groups_by_index=padding_groups_by_index,
             )
-    return tuple(facts)
-
-
-def _identity_facts_from_table_snapshot(
-    table: RuntimeTableSnapshot,
-    policy: RuntimeEquivalencePolicy,
-) -> _RuntimeMeasurementFacts:
-    """Project object identity-only exports into semantic object-number facts."""
-    facts: _RuntimeMeasurementFactList = []
-    for row in table.rows:
-        row_mapping = dict(zip(table.header, row, strict=True))
-        row_subject = _measurement_subject_from_export_row(table.path, row_mapping)
-        if row_subject.scope is not MeasurementScope.OBJECT:
-            continue
-        normalized_row_mapping = {
-            _normalize_identifier(field_name): value
-            for field_name, value in row_mapping.items()
-        }
-        object_number = measurement_object_label(normalized_row_mapping)
-        if object_number is None:
-            continue
-        facts.append(
-            (
-                RuntimeMeasurementFeatureKey(
+            long_form_fact = _long_form_measurement_fact(
+                _LongFormMeasurementContext(
+                    row_mapping,
                     row_subject,
-                    ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
-                ),
-                _cell_signature(str(object_number), policy),
-            )
-        )
-    return tuple(facts)
-
-
-def _static_wide_measurement_facts_from_table_snapshot(
-    table: RuntimeTableSnapshot,
-    policy: RuntimeEquivalencePolicy,
-    *,
-    known_source_names: tuple[str, ...],
-) -> _RuntimeMeasurementFacts | None:
-    """Project wide exported tables by caching column-level feature semantics."""
-    if not table.rows:
-        return ()
-
-    first_row = dict(zip(table.header, table.rows[0], strict=True))
-    if not is_static_wide_measurement_table(
-        first_row,
-        measurement_qualifier_field_names(policy.measurement_dialect),
-    ):
-        return None
-
-    subject = _measurement_subject_from_export_row(table.path, first_row)
-    if _is_metadata_map_row(subject, first_row):
-        return ()
-
-    source_name = measurement_row_source_image_name(first_row)
-    feature_columns = tuple(
-        (index, key)
-        for index, field_name in enumerate(table.header)
-        if not _is_measurement_identity_field(field_name, policy.measurement_dialect)
-        and not _is_aggregate_image_number_reference_measurement_field(field_name)
-        for column_subject in (
-            _measurement_subject_from_export_column(
-                table,
-                first_row,
-                index,
-                fallback_subject=subject,
-            ),
-        )
-        for key in (
-            _measurement_feature_key_from_source_context(
-                _MeasurementFeatureKeySourceContext(
-                    field_name,
-                    column_subject,
-                    policy,
-                    (),
+                    self.policy,
                     source_name,
-                    known_source_names,
+                    self.known_source_names,
+                    image_number_offset,
                 )
-            ),
-        )
-        if key is not None
-    )
-    if not feature_columns:
-        return ()
-    image_number_offset = _table_image_number_offset(table.header, table.rows)
-    padding_groups_by_index = _contextual_measurement_padding_groups(
-        table.column_context,
-        table.header,
-        tuple(index for index, _key in feature_columns),
-        policy.measurement_dialect,
-        known_source_names=known_source_names,
-    )
-
-    facts: _RuntimeMeasurementFactList = []
-    for row in table.rows:
-        padding_indexes = _contextual_measurement_padding_indexes(
-            table.column_context,
-            table.header,
-            row,
-            tuple(index for index, _key in feature_columns),
-            policy.measurement_dialect,
-            known_source_names=known_source_names,
-            padding_groups_by_index=padding_groups_by_index,
-        )
-        row_fact_records = tuple(
-            (
-                    RuntimeMeasurementFactProjectionContract.padding_group(
-                        _normalize_identifier(table.path.stem) or "measurements",
-                        table.header[index],
+            )
+            if long_form_fact is not None:
+                facts.append(long_form_fact)
+                continue
+            for index, field_name in enumerate(self.table.header):
+                if index in padding_indexes:
+                    continue
+                if _is_measurement_identity_field(
+                    field_name,
+                    self.policy.measurement_dialect,
+                ):
+                    continue
+                subject = _measurement_subject_from_export_column(
+                    self.table,
+                    row_mapping,
+                    index,
+                    fallback_subject=row_subject,
+                )
+                key = _measurement_feature_key_from_source_context(
+                    _MeasurementFeatureKeySourceContext(
+                        field_name,
+                        subject,
+                        self.policy,
+                        measurement_row_qualifiers(
+                            row_mapping,
+                            self.policy.measurement_dialect,
+                            field_name,
+                        ),
+                        source_name,
+                        self.known_source_names,
+                    )
+                )
+                if key is None:
+                    continue
+                if _is_aggregate_image_number_reference_measurement_field(field_name):
+                    continue
+                facts.extend(
+                    _cell_measurement_facts(
                         key,
-                    policy.measurement_dialect,
-                ),
-                key,
-                _cell_signature(
-                    str(
                         _normalize_image_number_reference_measurement_value(
-                            table.header[index],
-                            row[index],
+                            field_name,
+                            row_mapping[field_name],
                             image_number_offset,
-                        )
+                        ),
+                        self.policy,
+                    )
+                )
+        return tuple(facts)
+
+    def identity_facts(self) -> _RuntimeMeasurementFacts:
+        """Project object identity-only exports into semantic object-number facts."""
+        facts: _RuntimeMeasurementFactList = []
+        for row in self.table.rows:
+            row_mapping = dict(zip(self.table.header, row, strict=True))
+            row_subject = _measurement_subject_from_export_row(
+                self.table.path,
+                row_mapping,
+            )
+            if row_subject.scope is not MeasurementScope.OBJECT:
+                continue
+            normalized_row_mapping = {
+                _normalize_identifier(field_name): value
+                for field_name, value in row_mapping.items()
+            }
+            object_number = measurement_object_label(normalized_row_mapping)
+            if object_number is None:
+                continue
+            facts.append(
+                (
+                    RuntimeMeasurementFeatureKey(
+                        row_subject,
+                        ObjectCoreMeasurementFeature.OBJECT_NUMBER.value,
                     ),
-                    policy,
+                    _cell_signature(str(object_number), self.policy),
+                )
+            )
+        return tuple(facts)
+
+    def static_wide_measurement_facts(self) -> _RuntimeMeasurementFacts | None:
+        """Project wide exported tables by caching column-level feature semantics."""
+        if not self.table.rows:
+            return ()
+
+        first_row = dict(zip(self.table.header, self.table.rows[0], strict=True))
+        if not is_static_wide_measurement_table(
+            first_row,
+            measurement_qualifier_field_names(self.policy.measurement_dialect),
+        ):
+            return None
+
+        subject = _measurement_subject_from_export_row(self.table.path, first_row)
+        if _is_metadata_map_row(subject, first_row):
+            return ()
+
+        source_name = measurement_row_source_image_name(first_row)
+        feature_columns = tuple(
+            (index, key)
+            for index, field_name in enumerate(self.table.header)
+            if not _is_measurement_identity_field(
+                field_name,
+                self.policy.measurement_dialect,
+            )
+            and not _is_aggregate_image_number_reference_measurement_field(field_name)
+            for column_subject in (
+                _measurement_subject_from_export_column(
+                    self.table,
+                    first_row,
+                    index,
+                    fallback_subject=subject,
                 ),
             )
-            for index, key in feature_columns
-            if index not in padding_indexes
-        )
-        facts.extend(
-            _derive_pair_measurement_facts(
-                RuntimeMeasurementFactProjectionContract.dedupe_observed_alias_records(
-                    row_fact_records,
-                    policy,
+            for key in (
+                _measurement_feature_key_from_source_context(
+                    _MeasurementFeatureKeySourceContext(
+                        field_name,
+                        column_subject,
+                        self.policy,
+                        (),
+                        source_name,
+                        self.known_source_names,
+                    )
                 ),
-                policy,
-                known_source_names=known_source_names,
             )
+            if key is not None
         )
-    return tuple(facts)
+        if not feature_columns:
+            return ()
+        image_number_offset = _table_image_number_offset(
+            self.table.header,
+            self.table.rows,
+        )
+        feature_indexes = tuple(index for index, _key in feature_columns)
+        padding_groups_by_index = _contextual_measurement_padding_groups(
+            self.table.column_context,
+            self.table.header,
+            feature_indexes,
+            self.policy.measurement_dialect,
+            known_source_names=self.known_source_names,
+        )
+
+        facts: _RuntimeMeasurementFactList = []
+        for row in self.table.rows:
+            padding_indexes = _contextual_measurement_padding_indexes(
+                self.table.column_context,
+                self.table.header,
+                row,
+                feature_indexes,
+                self.policy.measurement_dialect,
+                known_source_names=self.known_source_names,
+                padding_groups_by_index=padding_groups_by_index,
+            )
+            row_fact_records = tuple(
+                (
+                    RuntimeMeasurementFactProjectionContract.padding_group(
+                        _normalize_identifier(self.table.path.stem) or "measurements",
+                        self.table.header[index],
+                        key,
+                        self.policy.measurement_dialect,
+                    ),
+                    key,
+                    _cell_signature(
+                        str(
+                            _normalize_image_number_reference_measurement_value(
+                                self.table.header[index],
+                                row[index],
+                                image_number_offset,
+                            )
+                        ),
+                        self.policy,
+                    ),
+                )
+                for index, key in feature_columns
+                if index not in padding_indexes
+            )
+            facts.extend(
+                _derive_pair_measurement_facts(
+                    RuntimeMeasurementFactProjectionContract.dedupe_observed_alias_records(
+                        row_fact_records,
+                        self.policy,
+                    ),
+                    self.policy,
+                    known_source_names=self.known_source_names,
+                )
+            )
+        return tuple(facts)
 
 
 def _wide_measurement_table_needs_row_derivation(
