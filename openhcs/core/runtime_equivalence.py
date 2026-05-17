@@ -1889,29 +1889,20 @@ class OrientationShapeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics
         candidate_values: Counter[RuntimeCellSignature],
     ) -> bool:
         if context.policy.allow_sparse_object_boundary_jitter:
-            return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
+            return _sparse_absolute_numeric_counters_equivalent(
                 reference_values,
                 candidate_values,
                 context.policy,
+                abs_tolerance=context.policy.object_boundary_jitter_abs_tolerance,
+                rel_tolerance=context.policy.object_boundary_jitter_rel_tolerance,
+                max_unstable_values=context.policy.object_boundary_jitter_max_unstable_values,
+                max_unstable_fraction=context.policy.object_boundary_jitter_max_unstable_fraction,
             )
         return _absolute_numeric_counters_equivalent(
             reference_values,
             candidate_values,
             context.policy,
         )
-
-    def boundary_jitter_values_equivalent(
-        self,
-        context: ShapeDescriptorFeatureContext,
-        reference_values: Counter[RuntimeCellSignature],
-        candidate_values: Counter[RuntimeCellSignature],
-    ) -> bool:
-        return _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
-            reference_values,
-            candidate_values,
-            context.policy,
-        )
-
 
 class ShapeZernikeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics):
     """Shape Zernike descriptors compare with shape-descriptor tolerance policy."""
@@ -3371,22 +3362,6 @@ def _sparse_object_boundary_mean_feature_equivalent(
         reference.values_by_feature[feature],
         candidate.values_by_feature[feature],
         mean_policy,
-    )
-
-
-def _object_boundary_jitter_sparse_absolute_numeric_counters_equivalent(
-    reference: Counter[RuntimeCellSignature],
-    candidate: Counter[RuntimeCellSignature],
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    return _sparse_absolute_numeric_counters_equivalent(
-        reference,
-        candidate,
-        policy,
-        abs_tolerance=policy.object_boundary_jitter_abs_tolerance,
-        rel_tolerance=policy.object_boundary_jitter_rel_tolerance,
-        max_unstable_values=policy.object_boundary_jitter_max_unstable_values,
-        max_unstable_fraction=policy.object_boundary_jitter_max_unstable_fraction,
     )
 
 
