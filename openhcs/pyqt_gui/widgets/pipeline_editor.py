@@ -35,6 +35,7 @@ from PyQt6.QtGui import QFont, QColor
 from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
 from openhcs.constants import Backend
 from openhcs.constants.constants import OrchestratorState
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.config import GlobalPipelineConfig
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.core.steps.function_step import FunctionStep
@@ -194,8 +195,7 @@ class NapariStreamingConfigDetailFormatter(StepPreviewConfigDetailFormatter):
     config_field = StepPreviewConfigField.NAPARI_STREAMING
 
     def format_detail(self, config: object) -> str:
-        port = getattr(config, "port", "default")
-        return f"• Napari Streaming: Port {port}"
+        return f"• Napari Streaming: Port {config.port}"
 
 
 class FijiStreamingConfigDetailFormatter(StepPreviewConfigDetailFormatter):
@@ -209,8 +209,7 @@ class WellFilterConfigDetailFormatter(StepPreviewConfigDetailFormatter):
     config_field = StepPreviewConfigField.STEP_WELL_FILTER
 
     def format_detail(self, config: object) -> str:
-        well_filter = getattr(config, "well_filter", "default")
-        return f"• Well Filter: {well_filter}"
+        return f"• Well Filter: {config.well_filter}"
 
 
 def dispatch_pipeline_debug_run_command(editor: "PipelineEditorWidget") -> None:
@@ -402,7 +401,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             func_names = [self._get_func_name(f) for f in func if f is not None]
             return f"func=[{', '.join(func_names)}]"
         elif callable(func):
-            func_name = getattr(func, "__name__", str(func))
+            func_name = CallableContract.from_callable(func).function_name
             return f"func={func_name}"
         elif isinstance(func, dict):
             # Use orchestrator's metadata cache for key→name mapping if available
@@ -497,7 +496,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         """Extract function name from various func entry formats."""
         if isinstance(func_entry, tuple) and len(func_entry) >= 1:
             # (func, kwargs) pattern
-            return getattr(func_entry[0], "__name__", str(func_entry[0]))
+            return CallableContract.from_callable(func_entry[0]).function_name
         elif isinstance(func_entry, list) and func_entry:
             # Chain pattern - show first→last
             first = self._get_func_name(func_entry[0])
@@ -506,12 +505,12 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 return f"{first}→{last}"
             return first
         elif callable(func_entry):
-            return getattr(func_entry, "__name__", str(func_entry))
+            return CallableContract.from_callable(func_entry).function_name
         return str(func_entry)
 
     def _format_input_source_preview(self, input_source) -> Optional[str]:
         """Format input_source field (only show if not default)."""
-        source_name = getattr(input_source, "name", str(input_source))
+        source_name = input_source.name
         if source_name != "PREVIOUS_STEP":
             return f"input={source_name}"
         return None  # Skip default value
@@ -662,7 +661,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         return tuple(
             index
             for index, step in enumerate(self.pipeline_steps)
-            if getattr(step, "debug_pause", False)
+            if step.debug_pause
         )
 
     def _debug_start_step_index(self, command_type: DebugCommandType) -> int:
@@ -937,8 +936,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
         Returns:
             Tuple of (StyledText with segments, step_name)
         """
-        step_name: str = getattr(step, "name", "Unknown Step") or "Unknown Step"
-        if getattr(step, "debug_pause", False):
+        step_name: str = step.name or "Unknown Step"
+        if step.debug_pause:
             step_name = f"Pause | {step_name}"
 
         # Use declarative format from LIST_ITEM_FORMAT
@@ -950,23 +949,23 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
     def _create_step_tooltip(self, step: FunctionStep) -> str:
         """Create detailed tooltip for a step showing all constructor values."""
-        step_name = getattr(step, "name", "Unknown Step")
+        step_name = step.name
         tooltip_lines = [f"Step: {step_name}"]
 
         # Function details
-        func = getattr(step, "func", None)
+        func = step.func
         if func:
             if isinstance(func, list):
                 if len(func) == 1:
-                    func_name = getattr(func[0], "__name__", str(func[0]))
+                    func_name = self._get_func_name(func[0])
                     tooltip_lines.append(f"Function: {func_name}")
                 else:
-                    func_names = [getattr(f, "__name__", str(f)) for f in func[:3]]
+                    func_names = [self._get_func_name(f) for f in func[:3]]
                     if len(func) > 3:
                         func_names.append(f"... +{len(func) - 3} more")
                     tooltip_lines.append(f"Functions: {', '.join(func_names)}")
             elif callable(func):
-                func_name = getattr(func, "__name__", str(func))
+                func_name = self._get_func_name(func)
                 tooltip_lines.append(f"Function: {func_name}")
             elif isinstance(func, dict):
                 tooltip_lines.append(
@@ -976,26 +975,24 @@ class PipelineEditorWidget(AbstractManagerWidget):
             tooltip_lines.append("Function: None")
 
         # Variable components
-        var_components = getattr(step, "variable_components", None)
+        var_components = step.processing_config.variable_components
         if var_components:
-            comp_names = [getattr(c, "name", str(c)) for c in var_components]
+            comp_names = [c.name for c in var_components]
             tooltip_lines.append(f"Variable Components: [{', '.join(comp_names)}]")
         else:
             tooltip_lines.append("Variable Components: None")
 
         # Group by
-        group_by = getattr(step, "group_by", None)
+        group_by = step.processing_config.group_by
         if group_by and group_by.value is not None:  # Check for GroupBy.NONE
-            group_name = getattr(group_by, "name", str(group_by))
-            tooltip_lines.append(f"Group By: {group_name}")
+            tooltip_lines.append(f"Group By: {group_by.name}")
         else:
             tooltip_lines.append("Group By: None")
 
         # Input source (access from FunctionStep processing_config)
         input_source = step.processing_config.input_source
         if input_source:
-            source_name = getattr(input_source, "name", str(input_source))
-            tooltip_lines.append(f"Input Source: {source_name}")
+            tooltip_lines.append(f"Input Source: {input_source.name}")
         else:
             tooltip_lines.append("Input Source: None")
 
@@ -1452,7 +1449,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
     def _get_item_insert_index(self, item: Any, scope_key: str) -> Optional[int]:
         """Get correct position for step re-insertion during time-travel."""
         # Token format is e.g. "functionstep_3" - parse index from it
-        token = getattr(item, "_scope_token", None)
+        del item
+        token = scope_key.rsplit("::", 1)[-1]
         if token:
             parts = token.rsplit("_", 1)
             if len(parts) == 2 and parts[1].isdigit():
@@ -1701,7 +1699,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
     def _perform_delete(self, items: List[Any]) -> None:
         """Remove steps from backing list (required abstract method)."""
         # Build descriptive label for undo
-        step_names = [getattr(step, "name", "?") for step in items]
+        step_names = [step.name for step in items]
         label = f"delete step{'s' if len(items) > 1 else ''} {', '.join(step_names)}"
 
         with ObjectStateRegistry.atomic(label):
@@ -1720,7 +1718,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             if self.current_plate:
                 self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
 
-        if self.selected_step in [getattr(step, "name", "") for step in items]:
+        if self.selected_step in [step.name for step in items]:
             self.selected_step = ""
 
     def _show_item_editor(self, item: Any) -> None:
@@ -1873,7 +1871,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             return
 
         self._clipboard_steps = [copy.deepcopy(step) for step in selected_steps]
-        step_names = [getattr(step, "name", "?") for step in selected_steps]
+        step_names = [step.name for step in selected_steps]
         self.status_message.emit(
             f"Copied {len(selected_steps)} step(s): {', '.join(step_names)}"
         )
@@ -1895,7 +1893,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         else:
             insert_after_index = len(self.pipeline_steps) - 1
 
-        step_names = [getattr(step, "name", "?") for step in self._clipboard_steps]
+        step_names = [step.name for step in self._clipboard_steps]
         label = f"paste {len(self._clipboard_steps)} step(s): {', '.join(step_names)}"
 
         with ObjectStateRegistry.atomic(label):
