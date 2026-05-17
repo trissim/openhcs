@@ -1196,6 +1196,26 @@ class _ObjectLabelMeasurementContext:
             object_location_aggregate_subjects,
         )
 
+    def dense_identity_domains(self) -> tuple[tuple[int, ...], ...]:
+        """Return dense object identity domains for this object-label payload."""
+        return dense_object_label_identity_domains(
+            self.labels,
+            declared_object_count=self.declared_object_count,
+            declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
+            domain_scope=self.domain_scope,
+        )
+
+    def dense_plane_id_domains(self) -> tuple[tuple[int, ...], ...]:
+        """Return dense object ID domains aligned to measurement planes."""
+        return dense_object_label_plane_id_domains(
+            self.labels,
+            declared_object_count=self.declared_object_count,
+            declared_object_ids=self.declared_object_ids,
+            declared_object_id_domains=self.declared_object_id_domains,
+            domain_scope=self.domain_scope,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ObjectLabelMeasurementProjection:
@@ -1298,13 +1318,7 @@ class PayloadObjectLabelMeasurementProjectionStrategy(
         label_array = self.label_array(context)
         if label_array is None:
             return ()
-        domains = dense_object_label_identity_domains(
-            context.labels,
-            declared_object_count=context.declared_object_count,
-            declared_object_ids=context.declared_object_ids,
-            declared_object_id_domains=context.declared_object_id_domains,
-            domain_scope=context.domain_scope,
-        )
+        domains = context.dense_identity_domains()
         if len(domains) != 1:
             raise ValueError(
                 "Payload-scoped object labels must project to exactly one "
@@ -1330,13 +1344,7 @@ class PlaneObjectLabelMeasurementProjectionStrategy(
             return ()
         planes = (label_array,) if label_array.ndim <= 2 else tuple(label_array)
         plane_indexes = (None,) if label_array.ndim <= 2 else tuple(range(len(planes)))
-        domains = dense_object_label_plane_id_domains(
-            context.labels,
-            declared_object_count=context.declared_object_count,
-            declared_object_ids=context.declared_object_ids,
-            declared_object_id_domains=context.declared_object_id_domains,
-            domain_scope=context.domain_scope,
-        )
+        domains = context.dense_plane_id_domains()
         return tuple(
             ObjectLabelMeasurementProjection(plane, object_ids, plane_index)
             for plane, object_ids, plane_index in zip(
@@ -1383,13 +1391,7 @@ class PayloadObjectIdentifierDomainProjectionStrategy(
         self,
         context: _ObjectLabelMeasurementContext,
     ) -> tuple[tuple[int, ...], ...]:
-        return dense_object_label_identity_domains(
-            context.labels,
-            declared_object_count=context.declared_object_count,
-            declared_object_ids=context.declared_object_ids,
-            declared_object_id_domains=context.declared_object_id_domains,
-            domain_scope=context.domain_scope,
-        )
+        return context.dense_identity_domains()
 
 
 class DeclaredObjectIdentifierPlaneDomainProjectionStrategy(
@@ -1410,13 +1412,7 @@ class DeclaredObjectIdentifierPlaneDomainProjectionStrategy(
         self,
         context: _ObjectLabelMeasurementContext,
     ) -> tuple[tuple[int, ...], ...]:
-        return dense_object_label_plane_id_domains(
-            context.labels,
-            declared_object_count=context.declared_object_count,
-            declared_object_ids=context.declared_object_ids,
-            declared_object_id_domains=context.declared_object_id_domains,
-            domain_scope=context.domain_scope,
-        )
+        return context.dense_plane_id_domains()
 
 
 @dataclass(frozen=True, slots=True)
