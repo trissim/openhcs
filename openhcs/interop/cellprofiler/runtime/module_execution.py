@@ -3939,9 +3939,31 @@ class CellProfilerObjectInputPolicy(
 
 class CellProfilerPrimaryImageInputPolicy(
     ABC,
-    metaclass=CellProfilerModulePolicyMeta,
+    metaclass=AutoRegisterMeta,
 ):
     """Nominal policy for image artifacts that drive absorbed execution."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    __key_extractor__ = staticmethod(
+        CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
+    )
+    registry_key: ClassVar[str | None] = None
+    module_name: ClassVar[str | None] = None
+    fallback_registry_key: ClassVar[str | None] = (
+        CellProfilerModulePolicyRegistryKey.DEFAULT.value
+    )
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def for_module(cls, module_name: str) -> Any:
+        """Return the policy registered for a module, or the root's fallback."""
+        policy_type = cls.__registry__.get(canonical_module_name(module_name))
+        if policy_type is None and cls.fallback_registry_key is not None:
+            policy_type = cls.__registry__.get(cls.fallback_registry_key)
+        if policy_type is None:
+            return None
+        return policy_type()
 
     @abstractmethod
     def primary_image_inputs(
@@ -3983,6 +4005,8 @@ class DefaultPrimaryImageInputPolicy(CellProfilerPrimaryImageInputPolicy):
 
 class ObjectLabelDrivenPrimaryImageInputPolicy(DefaultPrimaryImageInputPolicy):
     """Treat declared images as carriers; object labels define the domain."""
+
+    registry_key = None
 
     def primary_image_inputs(
         self,
