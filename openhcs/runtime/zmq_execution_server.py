@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import time
-import threading
 import json
 from typing import Any
 
@@ -20,22 +19,24 @@ from zmqruntime.messages import (
 from zmqruntime.transport import coerce_transport_mode
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
+from openhcs.runtime.zmq_compilation import (
+    ZMQCompilationRequest,
+    ZMQCompileArtifactRecord,
+)
 from openhcs.runtime.zmq_execution_signature import ZMQExecutionRequestPayload
-from openhcs.runtime.zmq_progress import ZMQProgressEmitter
+from openhcs.runtime.zmq_orchestrator_environment import (
+    ZMQOrchestratorEnvironmentRequest,
+)
+from openhcs.runtime.zmq_progress import ImmediateZMQProgressQueue, ZMQProgressEmitter
+from openhcs.runtime.zmq_server_hooks import (
+    ZMQPongResponseEnricher,
+    ZMQResultsSummaryEnricher,
+    ZMQWorkerCleanup,
+)
+from openhcs.runtime.zmq_worker_execution import ZMQWorkerExecutionRequest
 
 
 logger = logging.getLogger(__name__)
-
-
-class _ImmediateProgressQueue:
-    """Queue adapter that forwards progress updates immediately to ZMQ."""
-
-    def __init__(self, server: "ZMQExecutionServer"):
-        self._server = server
-
-    def put(self, progress_update: dict) -> None:
-        self._server._enqueue_progress(progress_update)
-        self._server._flush_progress_only()
 
 
 class ZMQExecutionServer(ExecutionServer):
@@ -74,26 +75,6 @@ class ZMQExecutionServer(ExecutionServer):
         }:
             return DebugControlMessageStrategy.for_message(message).handle(message)
         return super().handle_control_message(message)
-
-    @staticmethod
-    def _extract_compiled_axis_ids(compiled_contexts: dict[str, Any]) -> list[str]:
-        """Extract unique axis ids from compiled context keys.
-
-        Context keys may be either plain axis ids (e.g. "A01") or sequential keys
-        (e.g. "A01__combo_0"). Worker ownership must always be at axis granularity.
-        """
-        axis_ids: list[str] = []
-        seen: set[str] = set()
-        for context_key in compiled_contexts.keys():
-            axis_id = (
-                context_key.split("__combo_", 1)[0]
-                if "__combo_" in context_key
-                else context_key
-            )
-            if axis_id not in seen:
-                seen.add(axis_id)
-                axis_ids.append(axis_id)
-        return sorted(axis_ids)
 
     @staticmethod
     def _validate_worker_claim(
@@ -172,30 +153,10 @@ class ZMQExecutionServer(ExecutionServer):
 
     def _create_pong_response(self):
         self._cleanup_compiled_artifacts()
-        response = super()._create_pong_response()
-
-        # Add OpenHCS-specific compile status
-        compile_status, compile_message = self._get_compile_status()
-        if compile_status is not None:
-            response[MessageFields.COMPILE_STATUS] = compile_status
-        if compile_message is not None:
-            response[MessageFields.COMPILE_MESSAGE] = compile_message
-
-        queued = [
-            (execution_id, record)
-            for execution_id, record in self.active_executions.items()
-            if record.status == ExecutionStatus.QUEUED.value
-        ]
-        response["queued_executions"] = [
-            {
-                MessageFields.EXECUTION_ID: execution_id,
-                MessageFields.PLATE_ID: str(record.plate_id),
-                "queue_position": index + 1,
-            }
-            for index, (execution_id, record) in enumerate(queued)
-        ]
-
-        return response
+        return ZMQPongResponseEnricher(
+            active_executions=self.active_executions,
+            compile_status=self._get_compile_status,
+        ).enrich(super()._create_pong_response())
 
     def _enqueue_progress(self, progress_update: dict) -> None:
         # DEBUG: Log what's being enqueued
@@ -267,31 +228,10 @@ class ZMQExecutionServer(ExecutionServer):
     def _attach_results_summary_extras(
         self, execution_id: str, record, execution_payload: dict | None = None
     ) -> None:
-        if record.status != ExecutionStatus.COMPLETE.value:
-            return
-
-        summary = record.results_summary
-        if not isinstance(summary, dict):
-            summary = {}
-            record.results_summary = summary
-
-        output_plate_root = record.get_extra("output_plate_root")
-        auto_add_output_plate = record.get_extra("auto_add_output_plate")
-        if output_plate_root:
-            summary["output_plate_root"] = str(output_plate_root)
-        if auto_add_output_plate is not None:
-            summary["auto_add_output_plate_to_plate_manager"] = bool(
-                auto_add_output_plate
-            )
-
-        if isinstance(execution_payload, dict):
-            execution_payload[MessageFields.RESULTS_SUMMARY] = summary
-
-        logger.info(
-            "[%s] Attached results_summary extras: output_plate_root=%s auto_add=%s",
-            execution_id,
-            summary.get("output_plate_root"),
-            summary.get("auto_add_output_plate_to_plate_manager"),
+        ZMQResultsSummaryEnricher(self.active_executions).attach(
+            execution_id=execution_id,
+            record=record,
+            execution_payload=execution_payload,
         )
 
     def _run_execution(self, execution_id, request, record):
@@ -317,26 +257,12 @@ class ZMQExecutionServer(ExecutionServer):
 
     def _handle_status(self, msg):
         response = super()._handle_status(msg)
-        if response.get(MessageFields.STATUS) != ResponseType.OK.value:
-            return response
-
-        execution_id = StatusRequest.from_dict(msg).execution_id
-        if not execution_id:
-            return response
-
-        record = self.active_executions[execution_id]
-        if record.status != ExecutionStatus.COMPLETE.value:
-            return response
-
-        execution_payload = response.get(MessageFields.EXECUTION)
-        self._attach_results_summary_extras(
-            execution_id=execution_id,
-            record=record,
-            execution_payload=execution_payload
-            if isinstance(execution_payload, dict)
-            else None,
+        return ZMQResultsSummaryEnricher(
+            self.active_executions
+        ).attach_to_status_response(
+            execution_id=StatusRequest.from_dict(msg).execution_id,
+            response=response,
         )
-        return response
 
     def execute_task(self, execution_id: str, request: ExecuteRequest) -> Any:
         return self._execute_pipeline(
@@ -349,7 +275,6 @@ class ZMQExecutionServer(ExecutionServer):
         execution_id: str,
         request_payload: ZMQExecutionRequestPayload,
     ):
-        from openhcs.constants import AllComponents, VariableComponents, GroupBy
         from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
 
         plate_id = request_payload.plate_id
@@ -490,96 +415,30 @@ class ZMQExecutionServer(ExecutionServer):
         request_signature: str | None = None,
         debug_replay_signature: str | None = None,
     ):
-        from dataclasses import replace
         from pathlib import Path
-        from openhcs.config_framework.lazy_factory import ensure_global_config_context
-        from openhcs.core.config import GlobalPipelineConfig
-        from openhcs.core.orchestrator.gpu_scheduler import setup_global_gpu_registry
         from openhcs.core.orchestrator.orchestrator import PipelineOrchestrator
-        from openhcs.core.worker_start_policy import WorkerStartExecutionFacts
-        from openhcs.core.worker_start_policy import resolve_worker_start_context
         from openhcs.core.debug import (
-            DebugExecutionPolicy,
             DebugPausedWorkerRegistry,
             DebugReplayMode,
-            ProgressDebugExecutionPolicy,
         )
-        from openhcs.constants import (
-            AllComponents,
-            VariableComponents,
-            GroupBy,
-            MULTIPROCESSING_AXIS,
-        )
-        from polystore.base import reset_memory_backend, storage_registry
+        from openhcs.constants import MULTIPROCESSING_AXIS
 
-        reset_memory_backend()
-
-        try:
-            from openhcs.core.memory import cleanup_all_gpu_frameworks
-
-            cleanup_all_gpu_frameworks()
-        except Exception as cleanup_error:
-            logger.warning(
-                "[%s] Failed to trigger GPU cleanup: %s", execution_id, cleanup_error
-            )
-
-        if not isinstance(global_config, GlobalPipelineConfig):
-            raise TypeError(
-                f"Expected GlobalPipelineConfig, got {type(global_config).__name__}"
-            )
-
-        debug_execution_policy = DebugExecutionPolicy.from_config_params(config_params)
-        debug_execution_config = (
-            debug_execution_policy.config
-            if isinstance(debug_execution_policy, ProgressDebugExecutionPolicy)
-            else None
-        )
-        if (
-            debug_execution_config is not None
-            and debug_execution_config.replay_mode
-            is DebugReplayMode.PERSISTENT_PAUSED_WORKER
-        ):
-            global_config = replace(global_config, use_threading=True, num_workers=1)
-
-        setup_global_gpu_registry(global_config=global_config)
-        ensure_global_config_context(GlobalPipelineConfig, global_config)
-
-        plate_path_str = str(plate_id)
-        is_omero_plate_id = False
-        try:
-            int(plate_path_str)
-            is_omero_plate_id = True
-        except ValueError:
-            is_omero_plate_id = plate_path_str.startswith("/omero/")
-
-        if is_omero_plate_id:
-            # Lazy-load OMERO dependencies only when OMERO is actually used
-            # Import OMERO parsers BEFORE creating backend to ensure registration
-            # This is required because OMEROLocalBackend accesses FilenameParser.__registry__
-            # which is a LazyDiscoveryDict that only populates when first accessed
-            from openhcs.runtime.omero_instance_manager import OMEROInstanceManager
-            from openhcs.microscopes import omero  # noqa: F401 - Import OMERO parsers to register them
-            from polystore.omero_local import OMEROLocalBackend
-
-            omero_manager = OMEROInstanceManager()
-            if not omero_manager.connect(timeout=60):
-                raise RuntimeError("OMERO server not available")
-            storage_registry["omero_local"] = OMEROLocalBackend(
-                omero_conn=omero_manager.conn,
-                namespace_prefix="openhcs",
-                lock_dir_name=".openhcs",
-            )
-
-            if not plate_path_str.startswith("/omero/"):
-                plate_path_str = f"/omero/plate_{plate_path_str}"
+        environment = ZMQOrchestratorEnvironmentRequest(
+            execution_id=execution_id,
+            plate_id=plate_id,
+            global_config=global_config,
+            config_params=config_params,
+        ).prepare()
+        global_config = environment.global_config
+        debug_execution_policy = environment.debug_execution_policy
+        debug_execution_config = environment.debug_execution_config
+        plate_path_str = environment.plate_path_str
 
         progress_context = {
             MessageFields.EXECUTION_ID: execution_id,
             MessageFields.PLATE_ID: plate_id,
             MessageFields.AXIS_ID: "",
         }
-        worker_progress_queue = None
-        progress_forwarder = None
         compiled_contexts: dict[str, Any] | None = None
         progress_emitter = ZMQProgressEmitter(
             self._enqueue_progress,
@@ -619,9 +478,6 @@ class ZMQExecutionServer(ExecutionServer):
                     available_axis_ids
                 )
 
-            # Initialize compiled_pipeline_definition - will be set by either artifact reuse or fresh compilation
-            compiled_pipeline_definition = None
-
             if compile_artifact_id is None:
                 step_names = [step.name for step in pipeline_steps]
                 progress_emitter.planned_init_started(
@@ -631,167 +487,41 @@ class ZMQExecutionServer(ExecutionServer):
 
             if compile_artifact_id is not None:
                 self._cleanup_compiled_artifacts()
-                retain_compile_artifact = (
+            compilation = ZMQCompilationRequest(
+                execution_id=execution_id,
+                plate_id=plate_id,
+                pipeline_steps=pipeline_steps,
+                orchestrator=orchestrator,
+                wells=wells,
+                compile_artifact_id=compile_artifact_id,
+                request_signature=request_signature,
+                debug_replay_signature=debug_replay_signature,
+                retain_compile_artifact=(
                     debug_execution_config is not None
                     and debug_execution_config.replay_mode.retains_compile_artifact
+                ),
+                compiled_artifacts=self._compiled_artifacts,
+                progress_emitter=progress_emitter,
+                flush_progress=self._flush_progress_only,
+                immediate_progress_queue=ImmediateZMQProgressQueue(
+                    enqueue=self._enqueue_progress,
+                    flush=self._flush_progress_only,
+                ),
+            ).resolve()
+            compiled_contexts = compilation.compiled_contexts
+            execution_bundle = compilation.execution_bundle
+            worker_assignments = compilation.worker_assignments
+            compiled_pipeline_definition = compilation.compiled_pipeline_definition
+            self._worker_assignments_by_execution[execution_id] = worker_assignments
+            if compilation.output_plate_root:
+                self.active_executions[execution_id].set_extra(
+                    "output_plate_root",
+                    compilation.output_plate_root,
                 )
-                artifact = self._compiled_artifacts.get(compile_artifact_id)
-                if artifact is not None and not retain_compile_artifact:
-                    artifact = self._compiled_artifacts.pop(compile_artifact_id)
-                if artifact is None:
-                    raise ValueError(
-                        f"Missing compile artifact '{compile_artifact_id}'. "
-                        "Re-run compilation before execution."
-                    )
-                signature_key = (
-                    "debug_replay_signature"
-                    if retain_compile_artifact
-                    else "request_signature"
-                )
-                expected_signature = (
-                    debug_replay_signature
-                    if retain_compile_artifact
-                    else request_signature
-                )
-                if expected_signature is None:
-                    raise ValueError(
-                        "Missing request signature for artifact validation"
-                    )
-                if artifact[signature_key] != expected_signature:
-                    logger.error(
-                        "[%s] Compile artifact signature mismatch: artifact_id=%s artifact_sig=%s request_sig=%s",
-                        execution_id,
-                        compile_artifact_id,
-                        str(artifact[signature_key])[:12],
-                        expected_signature[:12],
-                    )
-                    raise ValueError(
-                        f"Compile artifact '{compile_artifact_id}' does not match execution request"
-                    )
-                if artifact[MessageFields.PLATE_ID] != str(plate_id):
-                    raise ValueError(
-                        f"Compile artifact '{compile_artifact_id}' is for plate "
-                        f"{artifact[MessageFields.PLATE_ID]}, not {plate_id}"
-                    )
-
-                execution_bundle = artifact["execution_bundle"]
-                compiled_contexts = execution_bundle.runtime_contexts
-                if compiled_contexts is None:
-                    raise ValueError("Compile artifact missing compiled_contexts")
-                compiled_pipeline_definition = artifact.get(
-                    "compiled_pipeline_definition"
-                )  # Get the stripped pipeline_definition from artifact
-                worker_assignments = dict(execution_bundle.worker_assignments)
-                self._worker_assignments_by_execution[execution_id] = worker_assignments
-                compiled_axis_ids = self._extract_compiled_axis_ids(compiled_contexts)
-
-                # Emit filtered metadata for this execution id.
-                step_names = [step.name for step in pipeline_steps]
-                progress_emitter.artifact_init_started(
-                    compiled_axis_ids=compiled_axis_ids,
-                    worker_assignments=worker_assignments,
-                    step_names=step_names,
-                )
-
-                logger.info(
-                    "[%s] Reused compile artifact %s for plate %s (sig=%s)",
-                    execution_id,
-                    compile_artifact_id,
-                    plate_id,
-                    expected_signature[:12],
-                )
-
-                output_plate_root = artifact.get("output_plate_root")
-                if output_plate_root:
-                    self.active_executions[execution_id].set_extra(
-                        "output_plate_root",
-                        str(output_plate_root),
-                    )
-                if artifact.get("auto_add_output_plate") is not None:
-                    self.active_executions[execution_id].set_extra(
-                        "auto_add_output_plate", bool(artifact["auto_add_output_plate"])
-                    )
-            else:
-                # Compilation runs in THIS process (queue worker thread), not a
-                # separate worker process. Use an immediate adapter so compile
-                # events are forwarded to ZMQ as soon as they are emitted.
-                from openhcs.core.progress import set_progress_queue
-
-                set_progress_queue(_ImmediateProgressQueue(self))
-                try:
-                    compilation = orchestrator.compile_pipelines(
-                        pipeline_definition=pipeline_steps,
-                        well_filter=wells,
-                        is_zmq_execution=True,
-                    )
-                finally:
-                    set_progress_queue(None)
-
-                if (
-                    not isinstance(compilation, dict)
-                    or "execution_bundle" not in compilation
-                ):
-                    raise ValueError("Compilation did not return execution_bundle")
-                execution_bundle = compilation["execution_bundle"]
-                compiled_contexts = execution_bundle.runtime_contexts
-                # CRITICAL: Use the returned pipeline_definition, not the original pipeline_steps
-                # The compiler modifies pipeline_definition in-place (converts functions to FunctionReference)
-                # and returns the modified version
-                compiled_pipeline_definition = compilation.get(
-                    "pipeline_definition", pipeline_steps
-                )
-
-                # DEBUG: Check if they're the same object
-                logger.info(
-                    f"🔍 ZMQ: pipeline_steps is compiled_pipeline_definition? {pipeline_steps is compiled_pipeline_definition}"
-                )
-                logger.info(
-                    f"🔍 ZMQ: pipeline_steps[0].func = {type(getattr(pipeline_steps[0], 'func', None)).__name__ if getattr(pipeline_steps[0], 'func', None) else 'None'}"
-                )
-                logger.info(
-                    f"🔍 ZMQ: compiled_pipeline_definition[0].func = {type(getattr(compiled_pipeline_definition[0], 'func', None)).__name__ if getattr(compiled_pipeline_definition[0], 'func', None) else 'None'}"
-                )
-                if not compiled_contexts:
-                    raise ValueError("Compilation produced no compiled contexts")
-
-                # Get worker_assignments from compiler result (uses PipelineConfig's num_workers)
-                worker_assignments = compilation["worker_assignments"]
-                self._worker_assignments_by_execution[execution_id] = worker_assignments
-                compiled_axis_ids = self._extract_compiled_axis_ids(compiled_contexts)
-
-                # Emit filtered metadata for this execution id.
-                progress_emitter.compiled_init_started(
-                    compiled_axis_ids=compiled_axis_ids,
-                    worker_assignments=worker_assignments,
-                )
-
-                progress_emitter.compile_succeeded(
-                    step_count=len(pipeline_steps),
-                    compiled_axis_ids=compiled_axis_ids,
-                    worker_assignments=worker_assignments,
-                )
-                self._flush_progress_only()
-
-                for axis_id in compiled_axis_ids:
-                    progress_emitter.axis_compile_succeeded(axis_id)
-                self._flush_progress_only()
-
-                first_context = next(iter(compiled_contexts.values()))
-                output_plate_root = first_context.output_plate_root
-                if output_plate_root:
-                    self.active_executions[execution_id].set_extra(
-                        "output_plate_root",
-                        str(output_plate_root),
-                    )
+            if compilation.auto_add_output_plate is not None:
                 self.active_executions[execution_id].set_extra(
                     "auto_add_output_plate",
-                    bool(first_context.auto_add_output_plate_to_plate_manager),
-                )
-                logger.info(
-                    "[%s] Captured auto_add_output_plate=%s output_plate_root=%s",
-                    execution_id,
-                    bool(first_context.auto_add_output_plate_to_plate_manager),
-                    output_plate_root,
+                    compilation.auto_add_output_plate,
                 )
 
             if (
@@ -809,20 +539,13 @@ class ZMQExecutionServer(ExecutionServer):
                     raise ValueError(
                         "Missing request signature for compile artifact storage"
                     )
-                self._compiled_artifacts[execution_id] = {
-                    "created_at": time.time(),
-                    "request_signature": request_signature,
-                    "debug_replay_signature": debug_replay_signature,
-                    MessageFields.PLATE_ID: str(plate_id),
-                    "execution_bundle": execution_bundle,
-                    "compiled_pipeline_definition": compiled_pipeline_definition,  # Store the stripped pipeline_definition
-                    "output_plate_root": self.active_executions[execution_id].get_extra(
-                        "output_plate_root"
-                    ),
-                    "auto_add_output_plate": self.active_executions[
-                        execution_id
-                    ].get_extra("auto_add_output_plate"),
-                }
+                self._compiled_artifacts[execution_id] = ZMQCompileArtifactRecord(
+                    execution_id=execution_id,
+                    plate_id=plate_id,
+                    request_signature=request_signature,
+                    debug_replay_signature=debug_replay_signature,
+                    compilation=compilation,
+                ).as_dict()
                 logger.info(
                     "[%s] Compilation-only request completed and artifact stored (artifact_id=%s sig=%s)",
                     execution_id,
@@ -832,94 +555,21 @@ class ZMQExecutionServer(ExecutionServer):
                 self._set_compile_status("compiled success")
                 return compiled_contexts
 
-            log_dir = Path.home() / ".local" / "share" / "openhcs" / "logs"
-            log_dir.mkdir(parents=True, exist_ok=True)
-
-            worker_start_decision = resolve_worker_start_context(
-                global_config,
-                server_mode=True,
-                gpu_enabled=WorkerStartExecutionFacts.from_compiled_contexts(
-                    compiled_contexts
-                ).gpu_enabled,
-            )
-            if worker_start_decision.changed:
-                global_config = replace(
-                    global_config,
-                    multiprocessing_start_method=worker_start_decision.resolved,
-                )
-                ensure_global_config_context(GlobalPipelineConfig, global_config)
-            logger.info(
-                "[%s] Worker start method requested=%s resolved=%s reason=%s",
-                execution_id,
-                worker_start_decision.requested.value,
-                worker_start_decision.resolved.value,
-                worker_start_decision.reason,
-            )
-
-            worker_progress_queue = worker_start_decision.context.Queue()
-            progress_forwarder = threading.Thread(
-                target=self._forward_worker_progress,
-                args=(worker_progress_queue,),
-                daemon=True,
-            )
-            progress_forwarder.start()
-
-            if (
-                self.active_executions[execution_id].status
-                == ExecutionStatus.CANCELLED.value
-            ):
-                logger.info(
-                    "[%s] Execution cancelled before starting workers, aborting",
-                    execution_id,
-                )
-                raise RuntimeError("Execution cancelled by user")
-
-            # DEBUG: Check steps right before execution
-            logger.info(
-                f"🔍 PRE-EXEC: compiled_pipeline_definition is None? {compiled_pipeline_definition is None}"
-            )
-            if compiled_pipeline_definition is not None:
-                logger.info(
-                    f"🔍 PRE-EXEC: compiled_pipeline_definition[0].func = {type(getattr(compiled_pipeline_definition[0], 'func', None)).__name__ if getattr(compiled_pipeline_definition[0], 'func', None) else 'None'}"
-                )
-            logger.info(
-                f"🔍 PRE-EXEC: pipeline_steps[0].func = {type(getattr(pipeline_steps[0], 'func', None)).__name__ if getattr(pipeline_steps[0], 'func', None) else 'None'}"
-            )
-
-            # Use compiled pipeline_definition if available (from fresh compilation),
-            # otherwise use original pipeline_steps (from artifact reuse)
-            # NOTE: For artifact reuse, we don't have the compiled pipeline_definition,
-            # so we use the original pipeline_steps (functions will be resolved from context)
-            steps_to_execute = (
-                compiled_pipeline_definition
-                if compiled_pipeline_definition is not None
-                else pipeline_steps
-            )
-
-            # DEBUG: Log what we're passing to execution
-            logger.info(
-                f"🚀 ZMQ SERVER: Passing {len(steps_to_execute)} steps to execution"
-            )
-            for i, step in enumerate(steps_to_execute):
-                func_attr = getattr(step, "func", None)
-                func_type = type(func_attr).__name__ if func_attr else "None"
-                logger.info(f"🚀 ZMQ SERVER: step[{i}].func = {func_type}")
-
-            return orchestrator.execute_compiled_plate(
-                pipeline_definition=steps_to_execute,
+            return ZMQWorkerExecutionRequest(
+                execution_id=execution_id,
+                global_config=global_config,
+                orchestrator=orchestrator,
+                pipeline_steps=pipeline_steps,
+                compiled_pipeline_definition=compiled_pipeline_definition,
                 compiled_contexts=compiled_contexts,
                 execution_bundle=execution_bundle,
-                log_file_base=str(log_dir / f"zmq_worker_exec_{execution_id}"),
-                progress_queue=worker_progress_queue,
                 progress_context=progress_context,
                 worker_assignments=worker_assignments,
                 debug_execution_policy=debug_execution_policy,
-            )
+                active_execution_record=self.active_executions[execution_id],
+                forward_worker_progress=self._forward_worker_progress,
+            ).execute()
         finally:
-            if worker_progress_queue is not None:
-                worker_progress_queue.put(None)
-            if progress_forwarder is not None:
-                progress_forwarder.join()
             if (
                 debug_execution_config is not None
                 and debug_execution_config.replay_mode
@@ -932,12 +582,5 @@ class ZMQExecutionServer(ExecutionServer):
 
     def _kill_worker_processes(self) -> int:
         """OpenHCS-specific worker cleanup (graceful cancellation + kill)."""
-        for eid, record in self.active_executions.items():
-            orchestrator = record.get_extra("orchestrator")
-            if orchestrator is not None:
-                try:
-                    logger.info("[%s] Requesting graceful cancellation...", eid)
-                    orchestrator.cancel_execution()
-                except Exception as e:
-                    logger.warning("[%s] Graceful cancellation failed: %s", eid, e)
+        ZMQWorkerCleanup(self.active_executions).cancel_orchestrators()
         return super()._kill_worker_processes()

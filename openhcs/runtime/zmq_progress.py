@@ -11,6 +11,18 @@ from openhcs.core.progress import ProgressEvent, ProgressPhase, ProgressStatus
 
 
 @dataclass(frozen=True, slots=True)
+class ImmediateZMQProgressQueue:
+    """Queue adapter that forwards compiler progress updates immediately."""
+
+    enqueue: Callable[[dict], None]
+    flush: Callable[[], None]
+
+    def put(self, progress_update: dict) -> None:
+        self.enqueue(progress_update)
+        self.flush()
+
+
+@dataclass(frozen=True, slots=True)
 class ZMQProgressEmitter:
     """Semantic progress-event emitter for one ZMQ execution."""
 
@@ -124,4 +136,3 @@ class ZMQProgressEmitter:
             **kwargs,
         )
         self.enqueue(event.to_dict())
-

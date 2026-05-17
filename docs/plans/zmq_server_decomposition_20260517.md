@@ -134,22 +134,37 @@ Completed safe decomposition slices:
   request/debug-replay signatures and pipeline SHA projection.
 - `openhcs.runtime.zmq_progress.ZMQProgressEmitter` owns semantic progress
   events for compile/init/axis compilation phases.
+- `openhcs.runtime.zmq_orchestrator_environment.ZMQOrchestratorEnvironmentRequest`
+  owns per-execution environment preparation: GPU cleanup, debug replay policy,
+  global config context setup, and OMERO plate path preparation.
+- `openhcs.runtime.zmq_compilation.ZMQCompilationRequest` owns compile artifact
+  reuse, fresh compilation, compile progress, and compile-only artifact storage.
+- `openhcs.runtime.zmq_worker_execution.ZMQWorkerExecutionRequest` owns worker
+  start-method resolution, progress-forwarder lifecycle, and final compiled
+  worker execution.
+- `openhcs.runtime.zmq_server_hooks` owns OpenHCS enrichment around private
+  `zmqruntime.ExecutionServer` hook overrides, keeping the server override
+  methods thin framework bridges.
 
 Verification:
 
 - `tests/unit/test_debug_runtime.py`: `39 passed`.
+- `tests/unit`: `1485 passed`.
 - Advisor:
   - `openhcs/runtime/zmq_debug_control.py`: `0`.
   - `openhcs/runtime/zmq_execution_signature.py`: `0`.
   - `openhcs/runtime/zmq_progress.py`: `0`.
-  - `openhcs/runtime/zmq_execution_server.py`: reduced from `10` to `6`.
+  - `openhcs/runtime/zmq_orchestrator_environment.py`: `0`.
+  - `openhcs/runtime/zmq_compilation.py`: `0`.
+  - `openhcs/runtime/zmq_worker_execution.py`: `0`.
+  - `openhcs/runtime/zmq_server_hooks.py`: `0`.
+  - `openhcs/runtime/zmq_execution_server.py`: reduced from `10` to `2`.
 
 Remaining:
 
-- Split `_execute_with_orchestrator` through real phase objects.
-- Decide whether base-class hook methods (`_run_execution`, `_handle_status`,
-  `_create_pong_response`, `_kill_worker_processes`) are acceptable facade hooks
-  or need named extension records.
+- Decide whether the remaining base-class hook overrides (`_run_execution`,
+  `_handle_status`) should be marked as acceptable framework hook noise in the
+  advisor or pushed upstream into `zmqruntime` as public extension points.
 - Remove attribute-probe sites by introducing typed views over execution
   records/compiled pipeline definitions where the probes are not base-protocol
   compatibility.
