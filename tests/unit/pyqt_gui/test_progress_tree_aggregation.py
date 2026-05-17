@@ -56,7 +56,6 @@ def _execution_server_info(
 def test_worker_tree_uses_pipeline_percent_for_well_and_parent_aggregation(
     monkeypatch,
 ):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._worker_assignments = {("exec-1", "/tmp/plate"): {"worker_0": ["A01"]}}
@@ -94,7 +93,6 @@ def test_worker_tree_uses_pipeline_percent_for_well_and_parent_aggregation(
 
 
 def test_compile_tree_marks_plate_as_compiled_at_100_percent(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._worker_assignments = {}
@@ -124,7 +122,6 @@ def test_compile_tree_marks_plate_as_compiled_at_100_percent(monkeypatch):
 
 
 def test_compile_tree_marks_failed_compilation(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._worker_assignments = {}
@@ -148,7 +145,6 @@ def test_compile_tree_marks_failed_compilation(monkeypatch):
 
 
 def test_worker_tree_marks_failed_well_and_plate_status(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._worker_assignments = {("exec-1", "/tmp/plate"): {"worker_0": ["A01"]}}
@@ -176,7 +172,6 @@ def test_worker_tree_marks_failed_well_and_plate_status(monkeypatch):
 
 
 def test_queued_plates_are_injected_without_progress_events(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
 
@@ -203,7 +198,6 @@ def test_queued_plates_are_injected_without_progress_events(monkeypatch):
 
 
 def test_queued_overrides_compiled_plate_node(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._worker_assignments = {}
@@ -246,7 +240,6 @@ def test_queued_overrides_compiled_plate_node(monkeypatch):
 
 
 def test_running_plate_is_injected_without_progress_events(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._get_plate_name = lambda plate_id, exec_id=None: (
@@ -274,7 +267,6 @@ def test_running_plate_is_injected_without_progress_events(monkeypatch):
 
 
 def test_running_snapshot_without_progress_defaults_to_executing(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._get_plate_name = lambda plate_id, exec_id=None: plate_id.split("/")[-1]
@@ -293,7 +285,6 @@ def test_running_snapshot_without_progress_defaults_to_executing(monkeypatch):
 
 
 def test_running_compile_only_snapshot_without_compile_status_is_compiling(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._get_plate_name = lambda plate_id, exec_id=None: plate_id.split("/")[-1]
@@ -317,7 +308,6 @@ def test_running_compile_only_snapshot_without_compile_status_is_compiling(monke
 
 
 def test_progress_client_connection_tracks_execution_server_presence(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
 
     class _DummyClient:
@@ -339,19 +329,19 @@ def test_progress_client_connection_tracks_execution_server_presence(monkeypatch
 
     manager._setup_progress_client = _setup
 
-    manager._sync_progress_client_connection(
+    manager.sync_progress_client_connection(
         [_execution_server_info(running=[], queued=[])]
     )
     assert calls["setup"] == 1
     assert manager._zmq_client is not None
 
-    manager._sync_progress_client_connection(
+    manager.sync_progress_client_connection(
         [_execution_server_info(running=[], queued=[])]
     )
     assert calls["setup"] == 1
 
     client = manager._zmq_client
-    manager._sync_progress_client_connection([])
+    manager.sync_progress_client_connection([])
     assert manager._zmq_client is None
     assert client.disconnected is True
 
@@ -359,7 +349,6 @@ def test_progress_client_connection_tracks_execution_server_presence(monkeypatch
 def test_init_only_execution_with_assignments_renders_as_queued_not_compiling(
     monkeypatch,
 ):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._worker_assignments = {("exec-run", "/tmp/plate"): {"worker_0": ["A01"]}}
@@ -387,7 +376,6 @@ def test_init_only_execution_with_assignments_renders_as_queued_not_compiling(
 
 
 def test_running_snapshot_does_not_override_progress_queued_node(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._get_plate_name = lambda plate_id, exec_id=None: plate_id.split("/")[-1]
@@ -424,7 +412,6 @@ def test_running_snapshot_does_not_override_progress_queued_node(monkeypatch):
 
 
 def test_compile_events_with_worker_assignments_stay_in_compile_mode(monkeypatch):
-    monkeypatch.setattr(ZMQServerManagerWidget, "__del__", lambda self: None)
     manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
     manager._progress_tree_builder = ProgressTreeBuilder()
     manager._worker_assignments = {

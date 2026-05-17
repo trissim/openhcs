@@ -96,7 +96,7 @@ class DualEditorWindow(BaseFormDialog):
         """
         super().__init__(parent)
 
-        # Store step_index for border pattern (used by ScopedBorderMixin._init_scope_border)
+        # Store step_index for border pattern (used by ScopedBorderMixin.init_scope_border)
         self._step_index = step_index
         self._function_invocation_badge_provider = function_invocation_badge_provider
 
@@ -144,7 +144,7 @@ class DualEditorWindow(BaseFormDialog):
         self.class_hierarchy: List = []  # Store inheritance hierarchy info
 
         # Editors are created during setup_ui(); initialize here so scope styling
-        # hooks can run during _init_scope_border() without attribute errors.
+        # hooks can run during init_scope_border() without attribute errors.
         self.step_editor = None
         self.func_editor = None
 
@@ -334,17 +334,17 @@ class DualEditorWindow(BaseFormDialog):
             )
         self.scope_id = self._build_step_scope_id()
         logger.debug(
-            "[DUAL_EDITOR] Set scope_id to: %s, calling _init_scope_border()",
+            "[DUAL_EDITOR] Set scope_id to: %s, calling init_scope_border()",
             self.scope_id,
         )
-        self._init_scope_border()
+        self.init_scope_border()
 
         # Create tabs (this adds content to the tab widget)
         self.create_step_tab()
         self.create_function_tab()
 
         # Editors now exist; apply scope styling to their widget trees.
-        self._apply_scope_accent_styling()
+        self.apply_scope_accent_styling()
 
         # Add the tab widget's content area (stacked widget) below the tab row
         # The tab bar is already in tab_row, so we only add the content pane here
@@ -477,7 +477,7 @@ class DualEditorWindow(BaseFormDialog):
         if getattr(self, "_save_button_base_style", ""):
             self.save_button.setStyleSheet(self._save_button_base_style)
 
-    def _apply_scope_accent_styling(self) -> None:
+    def apply_scope_accent_styling(self) -> None:
         """Apply scope accent color to dual editor window elements.
 
         Overrides the empty implementation in ScopedBorderMixin to style:
@@ -488,7 +488,7 @@ class DualEditorWindow(BaseFormDialog):
         accent_color = self.get_scope_accent_color()
         if accent_color is None:
             raise RuntimeError(
-                "Scope accent color is missing; call _init_scope_border() after setting scope_id"
+                "Scope accent color is missing; call init_scope_border() after setting scope_id"
             )
 
         # Store for child widgets that need the computed accent.
@@ -569,7 +569,7 @@ class DualEditorWindow(BaseFormDialog):
                 )
 
             # Apply scope color scheme to function panes (for enableable styling and colors)
-            # Use inheritance - _scope_color_scheme is set by ScopedBorderMixin._init_scope_border()
+            # Use inheritance - _scope_color_scheme is set by ScopedBorderMixin.init_scope_border()
             if self._scope_color_scheme:
                 self.func_editor.set_scope_color_scheme(self._scope_color_scheme)
 
@@ -580,7 +580,7 @@ class DualEditorWindow(BaseFormDialog):
             self._flash_overlay = WindowFlashOverlay(self)
             self._flash_overlay_cleaned = False
 
-        super()._apply_scope_accent_styling()
+        super().apply_scope_accent_styling()
 
     def _build_step_scope_id(self) -> str:
         return ScopeTokenService.build_scope_id(

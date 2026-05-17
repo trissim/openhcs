@@ -9,6 +9,7 @@ import logging
 import dataclasses
 import copy
 import os
+from enum import Enum
 from typing import Type, Any, Callable, Optional, Dict
 
 from PyQt6.QtWidgets import (
@@ -70,6 +71,65 @@ from openhcs.core.lazy_placeholder_simplified import (
 
 
 logger = logging.getLogger(__name__)
+
+
+class ConfigTreeItemType(str, Enum):
+    """Closed tree item variants emitted by ConfigHierarchyTreeHelper."""
+
+    DATACLASS = "dataclass"
+    INHERITANCE_LINK = "inheritance_link"
+
+    @classmethod
+    def from_tree_data(cls, data: dict[str, Any]) -> "ConfigTreeItemType | None":
+        item_type = data.get("type")
+        try:
+            return cls(item_type)
+        except ValueError:
+            return None
+
+    def handle_double_click(self, window: "ConfigWindow", data: dict[str, Any]) -> None:
+        CONFIG_TREE_ITEM_HANDLERS[self](window, data)
+
+
+def _handle_dataclass_tree_item(window: "ConfigWindow", data: dict[str, Any]) -> None:
+    field_path = data.get("field_path") or data.get("field_name")
+    if field_path:
+        window._scroll_to_section(field_path)
+        logger.debug("Navigating to section: %s", field_path)
+        return
+
+    class_obj = data.get("class")
+    class_name = class_obj.__name__ if isinstance(class_obj, type) else "Unknown"
+    logger.debug("Double-clicked on root dataclass: %s", class_name)
+
+
+def _handle_inheritance_link_tree_item(
+    window: "ConfigWindow", data: dict[str, Any]
+) -> None:
+    target_class = data.get("target_class")
+    if not isinstance(target_class, type):
+        return
+
+    field_name = window._find_field_for_class(target_class)
+    if field_name:
+        window._scroll_to_section(field_name)
+        logger.debug(
+            "Navigating to inherited section: %s (class: %s)",
+            field_name,
+            target_class.__name__,
+        )
+        return
+
+    logger.warning("Could not find field for class %s", target_class.__name__)
+
+
+CONFIG_TREE_ITEM_HANDLERS: dict[
+    ConfigTreeItemType,
+    Callable[["ConfigWindow", dict[str, Any]], None],
+] = {
+    ConfigTreeItemType.DATACLASS: _handle_dataclass_tree_item,
+    ConfigTreeItemType.INHERITANCE_LINK: _handle_inheritance_link_tree_item,
+}
 
 
 class _StagedButtonWrap(QWidget):
@@ -242,8 +302,15 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self.style_generator = StyleSheetGenerator(self.color_scheme)
         self.tree_helper = ConfigHierarchyTreeHelper()
 
-        # NOTE: _init_scope_border() will be called AFTER setup_ui() creates the widgets
-        # This ensures widgets exist when _apply_scope_accent_styling() tries to style them
+        # NOTE: init_scope_border() will be called AFTER setup_ui() creates the widgets
+        # This ensures widgets exist when apply_scope_accent_styling() tries to style them
+        self._scope_accent_color = None
+        self._header_label: QLabel | None = None
+        self._save_button: QPushButton | None = None
+        self._help_btn: HelpButton | None = None
+        self.tree_widget: QTreeWidget | None = None
+        self.form_manager: ParameterFormManager | None = None
+        self._default_size_applied = False
 
         # SIMPLIFIED: Use dual-axis resolution
         # Determine placeholder prefix based on actual instance type (not class type)
@@ -278,7 +345,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         if (
             self.config_class is PipelineConfig
             and self.scope_id not in (None, "")
-            and getattr(self.state, "_delegate_attr", None) is not None
+            and self.state.has_delegate
         ):
             self._restore_descendants_on_close = False
 
@@ -287,9 +354,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             parent=None,
             scope_id=self.scope_id,
             color_scheme=self.color_scheme,
-            scope_accent_color=getattr(
-                self, "_scope_accent_color", None
-            ),  # Pass scope accent color
+            scope_accent_color=self._scope_accent_color,
         )
         # Provide canonical dotted `field_id` for this root form
         # Root forms use an empty `field_id` (top-level) so no traversal is attempted
@@ -314,7 +379,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         self.changes_detected.connect(self.on_changes_detected)
 
         # Setup UI
-        self._default_size_applied = False
         self.setup_ui()
 
         # Connect automatic change detection (BaseManagedWindow feature)
@@ -344,7 +408,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             self.setWindowTitle(self._base_window_title)
 
         # Update header label with both asterisk and underline (matches DualEditorWindow)
-        if hasattr(self, "_header_label"):
+        if self._header_label is not None:
             header_text = (
                 f"{'* ' if is_dirty else ''}Configure {self.config_class.__name__}"
             )
@@ -423,7 +487,6 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         group_reset_layout.addWidget(reset_button)
         group_reset_layout.addWidget(view_code_button)
 
-        self._help_btn = None
         group_help = QWidget()
         group_help_layout = QHBoxLayout(group_help)
         group_help_layout.setContentsMargins(0, 0, 0, 0)
@@ -434,7 +497,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 help_target=self.config_class,
                 text="Help",
                 color_scheme=self.color_scheme,
-                scope_accent_color=getattr(self, "_scope_accent_color", None),
+                scope_accent_color=self._scope_accent_color,
             )
             self._help_btn.setMaximumWidth(80)
             self._help_btn.setFixedHeight(CURRENT_LAYOUT.button_height)
@@ -515,14 +578,14 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         )
 
         # CRITICAL: Initialize scope-based border styling AFTER widgets are created
-        # This ensures widgets exist when _apply_scope_accent_styling() tries to style them
-        # (mirrors DualEditorWindow pattern which calls _init_scope_border in setup_connections)
+        # This ensures widgets exist when apply_scope_accent_styling() tries to style them
+        # (mirrors DualEditorWindow pattern which calls init_scope_border in setup_connections)
         if self.scope_id:
-            self._init_scope_border()
+            self.init_scope_border()
 
     def showEvent(self, a0) -> None:
         super().showEvent(a0)
-        if not getattr(self, "_default_size_applied", False):
+        if not self._default_size_applied:
             self.resize(550, 600)
             QTimer.singleShot(0, lambda: self.resize(550, 600))
             self._default_size_applied = True
@@ -544,13 +607,13 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             self.y(),
         )
 
-    def _apply_scope_accent_styling(self) -> None:
+    def apply_scope_accent_styling(self) -> None:
         """Apply scope accent color to ConfigWindow-specific elements.
 
         Extends base class to add: Save button, header label, tree selection.
         """
         # Call base class for common elements (input focus, HelpButtons)
-        super()._apply_scope_accent_styling()
+        super().apply_scope_accent_styling()
 
         accent_color = self.get_scope_accent_color()
         if not accent_color:
@@ -571,21 +634,21 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
                 background-color: {accent_color.lighter(115).name()};
             }}
         """
-        if hasattr(self, "_save_button"):
+        if self._save_button is not None:
             self._save_button.setStyleSheet(save_button_style)
 
         # Style header label with scope accent color
-        if hasattr(self, "_header_label"):
+        if self._header_label is not None:
             self._header_label.setStyleSheet(f"color: {hex_color};")
 
         # Style tree selection with scope accent
         tree_style = self.get_scope_tree_selection_stylesheet()
-        if tree_style and hasattr(self, "tree_widget"):
+        if tree_style and self.tree_widget is not None:
             current_style = self.tree_widget.styleSheet() or ""
             self.tree_widget.setStyleSheet(f"{current_style}\n{tree_style}")
 
         # Style help button with scope accent color
-        if hasattr(self, "_help_btn") and self._help_btn:
+        if self._help_btn is not None:
             self._help_btn.set_scope_accent_color(accent_color)
 
     def _create_inheritance_tree(self) -> QTreeWidget:
@@ -622,38 +685,9 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
             logger.debug("Ignoring double-click on ui_hidden item")
             return
 
-        item_type = data.get("type")
-
-        if item_type == "dataclass":
-            # Navigate to the dataclass section in the form
-            field_path = data.get("field_path") or data.get("field_name")
-            if field_path:
-                self._scroll_to_section(field_path)
-                logger.debug(f"Navigating to section: {field_path}")
-            else:
-                class_obj = data.get("class")
-                class_name = (
-                    getattr(class_obj, "__name__", "Unknown")
-                    if class_obj
-                    else "Unknown"
-                )
-                logger.debug(f"Double-clicked on root dataclass: {class_name}")
-
-        elif item_type == "inheritance_link":
-            # Navigate to the parent class section in the form
-            target_class = data.get("target_class")
-            if target_class:
-                # Find the field that has this type (or its lazy version)
-                field_name = self._find_field_for_class(target_class)
-                if field_name:
-                    self._scroll_to_section(field_name)
-                    logger.debug(
-                        f"Navigating to inherited section: {field_name} (class: {target_class.__name__})"
-                    )
-                else:
-                    logger.warning(
-                        f"Could not find field for class {target_class.__name__}"
-                    )
+        item_type = ConfigTreeItemType.from_tree_data(data)
+        if item_type is not None:
+            item_type.handle_double_click(self, data)
 
     def _find_field_for_class(self, target_class) -> str:
         """Find the field name that has the given class type (or its lazy version)."""
@@ -911,7 +945,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         # Restore global config context if dirty
         if (
             is_global_config_type(self.config_class)
-            and getattr(self, "_global_context_dirty", False)
+            and self._global_context_dirty
             and self._original_global_config_snapshot is not None
         ):
             set_global_config_for_editing(
@@ -936,9 +970,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
 
     def _get_form_managers(self):
         """Return list of form managers to unregister (required by BaseFormDialog)."""
-        if hasattr(self, "form_manager"):
-            return [self.form_manager]
-        return []
+        return [self.form_manager] if self.form_manager is not None else []
 
     def closeEvent(self, a0):
         """Override to cleanup dirty subscriptions before closing."""

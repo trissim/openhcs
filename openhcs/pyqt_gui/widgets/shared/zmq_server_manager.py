@@ -75,7 +75,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
 
                 QMetaObject.invokeMethod(
                     self,
-                    "_refresh_launching_viewers_only",
+                    "refresh_launching_viewers_only",
                     Qt.ConnectionType.QueuedConnection,
                 )
             except Exception as error:
@@ -114,14 +114,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         self._progress_timer.timeout.connect(self._update_from_progress)
         self._progress_timer.start(100)  # 100ms for smooth updates
 
-    def __del__(self):
-        try:
-            self._is_cleaning_up
-        except (AttributeError, RuntimeError):
-            return
-        self.cleanup()
-
-    def _populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
+    def populate_tree(self, parsed_servers: List[BaseServerInfo]) -> None:
         """Populate tree with servers, avoiding duplicates since tree.clear() is bypassed."""
         scanned_ports = {info.port for info in parsed_servers}
         for port in scanned_ports:
@@ -265,6 +258,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         """Override to bypass TreeRebuildCoordinator's tree.clear() which causes flicker."""
         self.servers = servers
         parsed_servers = [self._server_info_parser.parse(server) for server in servers]
+        self.sync_progress_client_connection(parsed_servers)
 
         for server in servers:
             port = server.get("port")
@@ -272,14 +266,14 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
                 self._last_known_servers[port] = server
 
         # Direct call to populate_tree bypasses the rebuild coordinator
-        self._populate_tree(parsed_servers)
+        self.populate_tree(parsed_servers)
 
-    def _periodic_domain_cleanup(self) -> None:
+    def periodic_domain_cleanup(self) -> None:
         removed = self._progress_tracker.cleanup_old_executions()
         if removed > 0:
             logger.info(f"Periodic cleanup: removed {removed} old completed executions")
 
-    def _kill_ports_with_plan(
+    def kill_ports_with_plan(
         self,
         *,
         ports: List[int],
@@ -295,15 +289,15 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             log_error=logger.error,
         )
 
-    def _on_browser_shown(self) -> None:
+    def on_browser_shown(self) -> None:
         self._setup_progress_client()
 
-    def _on_browser_hidden(self) -> None:
+    def on_browser_hidden(self) -> None:
         if self._zmq_client is not None:
             self._zmq_client.disconnect()
             self._zmq_client = None
 
-    def _on_browser_cleanup(self) -> None:
+    def on_browser_cleanup(self) -> None:
         if self._zmq_client is not None:
             try:
                 self._zmq_client.disconnect()
@@ -385,8 +379,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
     @pyqtSlot()
     def _update_from_progress(self) -> None:
         """Real-time progress update - called every 100ms by timer."""
-        dirty = getattr(self, "_progress_dirty", False)
-        if not dirty:
+        if not self._progress_dirty:
             return
         self._progress_dirty = False
         try:
@@ -429,7 +422,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             get_plate_name=self._get_plate_name,
         )
 
-    def _sync_progress_client_connection(
+    def sync_progress_client_connection(
         self, parsed_servers: List[BaseServerInfo]
     ) -> None:
         """Keep the progress client connected while an execution server is present."""
@@ -437,14 +430,12 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
             isinstance(server, ExecutionServerInfo) for server in parsed_servers
         )
         if has_execution_server:
-            client = getattr(self, "_zmq_client", None)
-            if client is None or not client.is_connected():
+            if self._zmq_client is None or not self._zmq_client.is_connected():
                 self._setup_progress_client()
             return
 
-        client = getattr(self, "_zmq_client", None)
-        if client is not None:
-            client.disconnect()
+        if self._zmq_client is not None:
+            self._zmq_client.disconnect()
             self._zmq_client = None
 
     def _update_execution_server_item(
@@ -608,7 +599,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
         return item
 
     @pyqtSlot()
-    def _refresh_launching_viewers_only(self) -> None:
-        if self._is_cleaning_up:
+    def refresh_launching_viewers_only(self) -> None:
+        if self._lifecycle_state.is_cleaning_up():
             return
         self._update_server_list(self.servers)

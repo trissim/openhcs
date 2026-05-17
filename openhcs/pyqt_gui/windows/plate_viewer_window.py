@@ -59,7 +59,7 @@ class PlateViewerWindow(BaseFormDialog):
         # CRITICAL: Initialize scope-based styling BEFORE creating child widgets
         # This sets self._scope_accent_color for use in this class
         if self._style_scope_id:
-            self._init_scope_border()
+            self.init_scope_border()
 
         # Get scope accent color and create color scheme from it
         from pyqt_reactive.services.scope_color_service import ScopeColorService
@@ -97,7 +97,7 @@ class PlateViewerWindow(BaseFormDialog):
 
         self._setup_ui()
 
-    def _init_scope_border(self) -> None:
+    def init_scope_border(self) -> None:
         """Override to use plate-level styling (not step-level).
 
         PlateViewerWindow uses scope_id with ::plate_viewer suffix for WindowManager,
@@ -108,7 +108,7 @@ class PlateViewerWindow(BaseFormDialog):
         original_scope_id = self.scope_id
         self.scope_id = self._style_scope_id
         try:
-            super()._init_scope_border()
+            super().init_scope_border()
         finally:
             self.scope_id = original_scope_id
 
