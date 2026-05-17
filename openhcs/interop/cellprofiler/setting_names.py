@@ -52,11 +52,6 @@ class CellProfilerSettingLiteralNormalizer:
     """Normalize CellProfiler UI labels and blank-literal sentinels."""
 
     @staticmethod
-    def label(value: str) -> str:
-        """Return the decoded label form used for setting-name comparisons."""
-        return decode_cellprofiler_setting_literal(value).strip().rstrip(":").strip()
-
-    @staticmethod
     def blank_literal(value: str) -> str:
         """Return the decoded lowercase token form used for blank sentinels."""
         return "_".join(
@@ -184,18 +179,21 @@ def setting_name_matches(
     expected: str | SettingNameFamily,
 ) -> bool:
     """Return whether a parsed CellProfiler setting label matches a family."""
-    decoded_actual = CellProfilerSettingLiteralNormalizer.label(actual)
+    decoded_actual = decode_cellprofiler_setting_literal(actual).strip().rstrip(":").strip()
     return any(
-        decoded_actual == CellProfilerSettingLiteralNormalizer.label(name)
+        decoded_actual
+        == decode_cellprofiler_setting_literal(name).strip().rstrip(":").strip()
         for name in setting_names(expected)
     )
 
 
 def setting_name_startswith(actual: str, prefix: str | SettingNameFamily) -> bool:
     """Return whether a parsed CellProfiler setting label starts with a family."""
-    decoded_actual = CellProfilerSettingLiteralNormalizer.label(actual)
+    decoded_actual = decode_cellprofiler_setting_literal(actual).strip().rstrip(":").strip()
     return any(
-        decoded_actual.startswith(CellProfilerSettingLiteralNormalizer.label(name))
+        decoded_actual.startswith(
+            decode_cellprofiler_setting_literal(name).strip().rstrip(":").strip()
+        )
         for name in setting_names(prefix)
     )
 
@@ -250,4 +248,3 @@ def repeating_setting_blocks(
     if current_block:
         blocks.append(current_block)
     return tuple(tuple(block) for block in blocks)
-
