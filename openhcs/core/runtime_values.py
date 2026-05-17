@@ -3404,112 +3404,103 @@ class MeasurementTable(NativeRuntimeValue):
 
 
 @dataclass(frozen=True, slots=True)
-class SpatialGridTopology:
-    """Nominal object-number topology and centers for a spatial grid."""
+class SpatialGridAxis:
+    """One physical axis of a rectangular spatial grid."""
+
+    spacing: float
+    origin: float
+    locations: tuple[float, ...] | None = None
+
+    def normalized(self, count: int, field_name: str) -> "SpatialGridAxis":
+        """Return this axis with explicit center locations for every index."""
+        spacing = float(self.spacing)
+        origin = float(self.origin)
+        if spacing <= 0:
+            raise ValueError(f"{field_name}.spacing must be positive.")
+        if self.locations is None:
+            locations = tuple(origin + index * spacing for index in range(count))
+        elif len(self.locations) != count:
+            raise ValueError(f"{field_name}.locations must match axis length.")
+        else:
+            locations = tuple(float(value) for value in self.locations)
+        return type(self)(spacing=spacing, origin=origin, locations=locations)
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialGridDimensions:
+    """Row and column cardinality for a rectangular spatial grid."""
 
     rows: int
     columns: int
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "rows", int(self.rows))
+        object.__setattr__(self, "columns", int(self.columns))
+        if self.rows <= 0 or self.columns <= 0:
+            raise ValueError("SpatialGrid dimensions must be positive.")
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialGridCoordinateSystem:
+    """Origin and object-number ordering for a spatial grid."""
+
     origin: SpatialGridOrigin
     ordering: SpatialGridOrdering
-    x_spacing: float
-    y_spacing: float
-    x_origin: float
-    y_origin: float
-    x_locations: tuple[float, ...] | None = None
-    y_locations: tuple[float, ...] | None = None
-    spot_table: tuple[tuple[int, ...], ...] | None = None
-
-    @classmethod
-    def from_mapping(
-        cls,
-        data: Mapping[str, Any],
-        *,
-        rows: int,
-        columns: int,
-        origin: SpatialGridOrigin,
-        ordering: SpatialGridOrdering,
-        x_spacing: float,
-        y_spacing: float,
-        x_origin: float,
-        y_origin: float,
-    ) -> "SpatialGridTopology":
-        x_locations_value = data.get("x_locations")
-        y_locations_value = data.get("y_locations")
-        spot_table_value = data.get("spot_table")
-        return cls(
-            rows=rows,
-            columns=columns,
-            origin=origin,
-            ordering=ordering,
-            x_spacing=x_spacing,
-            y_spacing=y_spacing,
-            x_origin=x_origin,
-            y_origin=y_origin,
-            x_locations=(
-                None
-                if x_locations_value is None
-                else tuple(float(item) for item in x_locations_value)
-            ),
-            y_locations=(
-                None
-                if y_locations_value is None
-                else tuple(float(item) for item in y_locations_value)
-            ),
-            spot_table=(
-                None
-                if spot_table_value is None
-                else tuple(
-                    tuple(int(item) for item in row)
-                    for row in spot_table_value
-                )
-            ),
-        )
 
     def __post_init__(self) -> None:
         object.__setattr__(
             self,
             "origin",
-            coerce_enum(SpatialGridOrigin, self.origin, "SpatialGridTopology.origin"),
+            coerce_enum(SpatialGridOrigin, self.origin, "SpatialGrid.origin"),
         )
         object.__setattr__(
             self,
             "ordering",
-            coerce_enum(
-                SpatialGridOrdering,
-                self.ordering,
-                "SpatialGridTopology.ordering",
+            coerce_enum(SpatialGridOrdering, self.ordering, "SpatialGrid.ordering"),
+        )
+
+
+@dataclass(frozen=True, slots=True, init=False)
+class SpatialGridTopology:
+    """Nominal object-number topology and centers for a spatial grid."""
+
+    dimensions: SpatialGridDimensions
+    coordinate_system: SpatialGridCoordinateSystem
+    column_axis: SpatialGridAxis
+    row_axis: SpatialGridAxis
+    spot_table: tuple[tuple[int, ...], ...] | None = None
+
+    def __init__(
+        self,
+        *,
+        dimensions: SpatialGridDimensions,
+        coordinate_system: SpatialGridCoordinateSystem,
+        column_axis: SpatialGridAxis,
+        row_axis: SpatialGridAxis,
+        spot_table: tuple[tuple[int, ...], ...] | None = None,
+    ) -> None:
+        object.__setattr__(self, "dimensions", dimensions)
+        object.__setattr__(self, "coordinate_system", coordinate_system)
+        object.__setattr__(
+            self,
+            "column_axis",
+            column_axis.normalized(
+                count=self.dimensions.columns,
+                field_name="SpatialGridTopology.column_axis",
             ),
         )
-        if self.rows <= 0 or self.columns <= 0:
-            raise ValueError("SpatialGridTopology dimensions must be positive.")
-        if self.x_locations is None:
-            object.__setattr__(
-                self,
-                "x_locations",
-                tuple(self.x_origin + index * self.x_spacing for index in range(self.columns)),
-            )
-        elif len(self.x_locations) != self.columns:
-            raise ValueError("SpatialGridTopology.x_locations must match columns.")
-        else:
-            object.__setattr__(
-                self,
-                "x_locations",
-                tuple(float(value) for value in self.x_locations),
-            )
-        if self.y_locations is None:
-            object.__setattr__(
-                self,
-                "y_locations",
-                tuple(self.y_origin + index * self.y_spacing for index in range(self.rows)),
-            )
-        elif len(self.y_locations) != self.rows:
-            raise ValueError("SpatialGridTopology.y_locations must match rows.")
-        else:
-            object.__setattr__(
-                self,
-                "y_locations",
-                tuple(float(value) for value in self.y_locations),
-            )
+        object.__setattr__(
+            self,
+            "row_axis",
+            row_axis.normalized(
+                count=self.dimensions.rows,
+                field_name="SpatialGridTopology.row_axis",
+            ),
+        )
+        object.__setattr__(self, "spot_table", spot_table)
+        self.__post_init__()
+
+    def __post_init__(self) -> None:
         if self.spot_table is None:
             object.__setattr__(self, "spot_table", self.derived_spot_table())
         elif len(self.spot_table) != self.rows or any(
@@ -3522,6 +3513,50 @@ class SpatialGridTopology:
                 "spot_table",
                 tuple(tuple(int(value) for value in row) for row in self.spot_table),
             )
+
+    @property
+    def x_spacing(self) -> float:
+        return self.column_axis.spacing
+
+    @property
+    def y_spacing(self) -> float:
+        return self.row_axis.spacing
+
+    @property
+    def x_origin(self) -> float:
+        return self.column_axis.origin
+
+    @property
+    def y_origin(self) -> float:
+        return self.row_axis.origin
+
+    @property
+    def x_locations(self) -> tuple[float, ...]:
+        if self.column_axis.locations is None:
+            raise ValueError("SpatialGridTopology.column_axis is not normalized.")
+        return self.column_axis.locations
+
+    @property
+    def y_locations(self) -> tuple[float, ...]:
+        if self.row_axis.locations is None:
+            raise ValueError("SpatialGridTopology.row_axis is not normalized.")
+        return self.row_axis.locations
+
+    @property
+    def rows(self) -> int:
+        return self.dimensions.rows
+
+    @property
+    def columns(self) -> int:
+        return self.dimensions.columns
+
+    @property
+    def origin(self) -> SpatialGridOrigin:
+        return self.coordinate_system.origin
+
+    @property
+    def ordering(self) -> SpatialGridOrdering:
+        return self.coordinate_system.ordering
 
     def derived_spot_table(self) -> tuple[tuple[int, ...], ...]:
         """Return the CellProfiler-compatible object-number topology."""
@@ -3537,27 +3572,94 @@ class SpatialGridTopology:
         return tuple(tuple(int(value) for value in row) for row in table)
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, init=False)
 class SpatialGrid(NativeRuntimeValue):
     """Native OpenHCS rectangular spatial grid definition."""
 
     rows: int
     columns: int
-    x_spacing: float
-    y_spacing: float
-    x_origin: float
-    y_origin: float
-    slice_index: int = 0
-    total_width: float | None = None
-    total_height: float | None = None
-    origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT
-    ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS
-    x_locations: tuple[float, ...] | None = None
-    y_locations: tuple[float, ...] | None = None
-    spot_table: tuple[tuple[int, ...], ...] | None = None
-    source_spatial_shape_yx: tuple[int, int] | None = None
+    column_axis: SpatialGridAxis
+    row_axis: SpatialGridAxis
+    slice_index: int
+    total_width: float | None
+    total_height: float | None
+    origin: SpatialGridOrigin
+    ordering: SpatialGridOrdering
+    spot_table: tuple[tuple[int, ...], ...] | None
+    source_spatial_shape_yx: tuple[int, int] | None
     x_location_of_lowest_x_spot = AliasProperty[float]("x_origin")
     y_location_of_lowest_y_spot = AliasProperty[float]("y_origin")
+
+    def __init__(
+        self,
+        *,
+        name: str,
+        rows: int,
+        columns: int,
+        x_spacing: float | None = None,
+        y_spacing: float | None = None,
+        x_origin: float | None = None,
+        y_origin: float | None = None,
+        slice_index: int = 0,
+        total_width: float | None = None,
+        total_height: float | None = None,
+        origin: SpatialGridOrigin = SpatialGridOrigin.TOP_LEFT,
+        ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
+        x_locations: tuple[float, ...] | None = None,
+        y_locations: tuple[float, ...] | None = None,
+        column_axis: SpatialGridAxis | None = None,
+        row_axis: SpatialGridAxis | None = None,
+        spot_table: tuple[tuple[int, ...], ...] | None = None,
+        source_spatial_shape_yx: tuple[int, int] | None = None,
+    ) -> None:
+        object.__setattr__(self, "name", name)
+        object.__setattr__(self, "rows", int(rows))
+        object.__setattr__(self, "columns", int(columns))
+        object.__setattr__(self, "slice_index", int(slice_index))
+        object.__setattr__(self, "total_width", total_width)
+        object.__setattr__(self, "total_height", total_height)
+        object.__setattr__(self, "origin", origin)
+        object.__setattr__(self, "ordering", ordering)
+        topology = SpatialGridTopology(
+            dimensions=SpatialGridDimensions(self.rows, self.columns),
+            coordinate_system=SpatialGridCoordinateSystem(origin, ordering),
+            column_axis=(
+                column_axis
+                if column_axis is not None
+                else SpatialGridAxis(
+                    spacing=_required_constructor_float(
+                        x_spacing,
+                        "SpatialGrid.x_spacing",
+                    ),
+                    origin=_required_constructor_float(
+                        x_origin,
+                        "SpatialGrid.x_origin",
+                    ),
+                    locations=x_locations,
+                )
+            ),
+            row_axis=(
+                row_axis
+                if row_axis is not None
+                else SpatialGridAxis(
+                    spacing=_required_constructor_float(
+                        y_spacing,
+                        "SpatialGrid.y_spacing",
+                    ),
+                    origin=_required_constructor_float(
+                        y_origin,
+                        "SpatialGrid.y_origin",
+                    ),
+                    locations=y_locations,
+                )
+            ),
+            spot_table=spot_table,
+        )
+        object.__setattr__(self, "column_axis", topology.column_axis)
+        object.__setattr__(self, "row_axis", topology.row_axis)
+        object.__setattr__(self, "spot_table", topology.spot_table)
+        object.__setattr__(self, "source_spatial_shape_yx", source_spatial_shape_yx)
+        self.__post_init__()
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -3597,16 +3699,38 @@ class SpatialGrid(NativeRuntimeValue):
             else coerce_enum(SpatialGridOrigin, data["origin"], "SpatialGrid.origin")
         )
         ordering = OptionalMappingField(data, "ordering").grid_ordering()
-        topology = SpatialGridTopology.from_mapping(
-            data,
-            rows=rows,
-            columns=columns,
-            origin=origin,
-            ordering=ordering,
-            x_spacing=x_spacing,
-            y_spacing=y_spacing,
-            x_origin=x_origin,
-            y_origin=y_origin,
+        x_locations_value = data.get("x_locations")
+        y_locations_value = data.get("y_locations")
+        spot_table_value = data.get("spot_table")
+        topology = SpatialGridTopology(
+            dimensions=SpatialGridDimensions(rows, columns),
+            coordinate_system=SpatialGridCoordinateSystem(origin, ordering),
+            column_axis=SpatialGridAxis(
+                spacing=x_spacing,
+                origin=x_origin,
+                locations=(
+                    None
+                    if x_locations_value is None
+                    else tuple(float(item) for item in x_locations_value)
+                ),
+            ),
+            row_axis=SpatialGridAxis(
+                spacing=y_spacing,
+                origin=y_origin,
+                locations=(
+                    None
+                    if y_locations_value is None
+                    else tuple(float(item) for item in y_locations_value)
+                ),
+            ),
+            spot_table=(
+                None
+                if spot_table_value is None
+                else tuple(
+                    tuple(int(item) for item in row)
+                    for row in spot_table_value
+                )
+            ),
         )
         return cls(
             name=name,
@@ -3653,30 +3777,10 @@ class SpatialGrid(NativeRuntimeValue):
             raise ValueError("SpatialGrid.rows must be positive.")
         if self.columns <= 0:
             raise ValueError("SpatialGrid.columns must be positive.")
-        if self.x_spacing <= 0:
-            raise ValueError("SpatialGrid.x_spacing must be positive.")
-        if self.y_spacing <= 0:
-            raise ValueError("SpatialGrid.y_spacing must be positive.")
         if self.total_width is None:
             object.__setattr__(self, "total_width", self.x_spacing * self.columns)
         if self.total_height is None:
             object.__setattr__(self, "total_height", self.y_spacing * self.rows)
-        topology = SpatialGridTopology(
-            rows=self.rows,
-            columns=self.columns,
-            origin=self.origin,
-            ordering=self.ordering,
-            x_spacing=self.x_spacing,
-            y_spacing=self.y_spacing,
-            x_origin=self.x_origin,
-            y_origin=self.y_origin,
-            x_locations=self.x_locations,
-            y_locations=self.y_locations,
-            spot_table=self.spot_table,
-        )
-        object.__setattr__(self, "x_locations", topology.x_locations)
-        object.__setattr__(self, "y_locations", topology.y_locations)
-        object.__setattr__(self, "spot_table", topology.spot_table)
         if self.source_spatial_shape_yx is not None:
             object.__setattr__(
                 self,
@@ -3686,6 +3790,34 @@ class SpatialGrid(NativeRuntimeValue):
                     field_name="SpatialGrid.source_spatial_shape_yx",
                 ).as_tuple(),
             )
+
+    @property
+    def x_spacing(self) -> float:
+        return self.column_axis.spacing
+
+    @property
+    def y_spacing(self) -> float:
+        return self.row_axis.spacing
+
+    @property
+    def x_origin(self) -> float:
+        return self.column_axis.origin
+
+    @property
+    def y_origin(self) -> float:
+        return self.row_axis.origin
+
+    @property
+    def x_locations(self) -> tuple[float, ...]:
+        if self.column_axis.locations is None:
+            raise ValueError("SpatialGrid.column_axis is not normalized.")
+        return self.column_axis.locations
+
+    @property
+    def y_locations(self) -> tuple[float, ...]:
+        if self.row_axis.locations is None:
+            raise ValueError("SpatialGrid.row_axis is not normalized.")
+        return self.row_axis.locations
 
     def with_name(self, name: str) -> Self:
         """Return the same grid under a different artifact name."""
@@ -4286,6 +4418,12 @@ def _required_float(
     aliases: tuple[str, ...] = (),
 ) -> float:
     return float(RequiredMappingField(data, name, aliases).value())
+
+
+def _required_constructor_float(value: float | None, name: str) -> float:
+    if value is None:
+        raise TypeError(f"{name} is required.")
+    return float(value)
 
 
 def _require_name(value: str, field_name: str) -> None:
