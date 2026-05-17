@@ -8,7 +8,6 @@ from types import MappingProxyType
 from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
-from nominal_refactor_advisor.record_algebra import product_record
 
 from .module_semantics import (
     CELLPROFILER_MODULE_SEMANTICS,
@@ -93,13 +92,11 @@ class CellProfilerInfrastructureImportNote(metaclass=AutoRegisterMeta):
         return self.note_text or ""
 
 
-DefaultInfrastructureImportNote = product_record(
-    "DefaultInfrastructureImportNote",
-    "note_text: str",
-    bases=(CellProfilerInfrastructureImportNote,),
-    doc="Default generated-source note for infrastructure modules.",
-    module_name=__name__,
-)
+@dataclass(frozen=True, slots=True)
+class DefaultInfrastructureImportNote(CellProfilerInfrastructureImportNote):
+    """Default generated-source note for infrastructure modules."""
+
+    note_text: str
 
 
 class LoadDataInfrastructureImportNote(CellProfilerInfrastructureImportNote):
