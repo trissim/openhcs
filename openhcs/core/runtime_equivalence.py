@@ -2035,6 +2035,171 @@ class IntensityPhaseObjectZernikeDescriptorStabilityContract(
     descriptor_family = ObjectZernikeDescriptorFeature.INTENSITY_PHASE
 
 
+@dataclass(slots=True)
+class RuntimeMeasurementObservationProjector:
+    """Project runtime artifact observations into mutable measurement facts."""
+
+    observation: RuntimeArtifactExecutionObservation
+    policy: RuntimeEquivalencePolicy = RuntimeEquivalencePolicy()
+    known_source_names: tuple[str, ...] = ()
+    required_measurement_keys: _RuntimeRequiredMeasurementKeys = None
+    values_by_feature: _RuntimeMeasurementFactCounters = field(init=False)
+    row_merge_cache: _RuntimeMeasurementRowMergeCache = field(init=False)
+    primary_row_identities: _RuntimeMeasurementPrimaryRowSet | None = field(init=False)
+    object_row_domain: RuntimeObjectMeasurementFactRowDomain = field(init=False)
+    object_label_records: list[object] = field(init=False)
+    object_label_records_by_axis: dict[object, list[object]] = field(init=False)
+    relationship_records_by_axis: dict[
+        object,
+        list[RuntimeScopedObjectRelationship],
+    ] = field(init=False)
+    measurement_tables_by_axis: dict[
+        object,
+        list[RuntimeScopedMeasurementTable],
+    ] = field(init=False)
+    _seen_aggregate_measurement_tables: set[RuntimeMeasurementTableIdentity] = field(
+        init=False
+    )
+
+    def __post_init__(self) -> None:
+        cache_plan = RuntimeMeasurementProjectionCachePlan(
+            self.required_measurement_keys,
+            self.policy,
+        )
+        self.values_by_feature = {}
+        self.row_merge_cache = cache_plan.row_merge_cache()
+        self.primary_row_identities = cache_plan.primary_row_identities()
+        self.object_row_domain = RuntimeObjectMeasurementFactRowDomain()
+        self.object_label_records = []
+        self.object_label_records_by_axis = {}
+        self.relationship_records_by_axis = {}
+        self.measurement_tables_by_axis = {}
+        self._seen_aggregate_measurement_tables = set()
+
+    def record_artifacts(self) -> None:
+        for axis_key, records in self.observation.records_by_axis.items():
+            self._record_axis(axis_key, tuple(records))
+
+    def _record_axis(
+        self,
+        axis_key: object,
+        axis_records: tuple[object, ...],
+    ) -> None:
+        plane_identity_resolver = RuntimeAxisRecordPlaneIdentityResolver.from_records(
+            axis_records
+        )
+        seen_exact_measurement_tables: set[tuple[object, ...]] = set()
+        seen_object_subtables: _RuntimeMeasurementObjectSubtableSet = set()
+        for record in axis_records:
+            if record.key.kind is ArtifactKind.SPATIAL_GRID:
+                self._record_spatial_grid(record)
+                continue
+            if record.key.kind is ArtifactKind.MEASUREMENTS:
+                self._record_measurement_table(
+                    axis_key,
+                    record,
+                    plane_identity_resolver,
+                    seen_exact_measurement_tables,
+                    seen_object_subtables,
+                )
+                continue
+            if record.key.kind is ArtifactKind.OBJECT_LABELS:
+                self.object_label_records.append(record)
+                self.object_label_records_by_axis.setdefault(axis_key, []).append(
+                    record
+                )
+                continue
+            if record.key.kind is ArtifactKind.RELATIONSHIPS:
+                self._record_relationship(
+                    axis_key,
+                    record,
+                    plane_identity_resolver,
+                )
+
+    def _record_spatial_grid(self, record: object) -> None:
+        record_measurement_facts(
+            self.values_by_feature,
+            spatial_grid_measurement_facts(record.value, self.policy),
+            required_keys=self.required_measurement_keys,
+        )
+
+    def _record_measurement_table(
+        self,
+        axis_key: object,
+        record: object,
+        plane_identity_resolver: RuntimeAxisRecordPlaneIdentityResolver,
+        seen_exact_measurement_tables: set[tuple[object, ...]],
+        seen_object_subtables: _RuntimeMeasurementObjectSubtableSet,
+    ) -> None:
+        table = MeasurementTable.from_runtime_value(record.value)
+        if record.key.scope.group_key is None:
+            exact_table_key = exact_measurement_table_key(table)
+            if exact_table_key in seen_exact_measurement_tables:
+                return
+            seen_exact_measurement_tables.add(exact_table_key)
+            table = _dedupe_runtime_measurement_table_object_subtable(
+                table,
+                seen_object_subtables,
+            )
+        if record.key.scope.group_key is not None:
+            aggregate_table_key = aggregate_measurement_table_key(table)
+            if aggregate_table_key is not None:
+                if aggregate_table_key in self._seen_aggregate_measurement_tables:
+                    return
+                self._seen_aggregate_measurement_tables.add(aggregate_table_key)
+        plane_identity = plane_identity_resolver.plane_identity_for_record(
+            kind=record.key.kind,
+            name=record.key.name,
+            scope=record.key.scope,
+        )
+        self.measurement_tables_by_axis.setdefault(axis_key, []).append(
+            RuntimeScopedMeasurementTable(
+                table,
+                plane_identity=plane_identity,
+            )
+        )
+        table_projection_context = _RuntimeMeasurementTableProjectionContext(
+            table,
+            self.policy,
+            axis_key,
+            self.known_source_names,
+            self.required_measurement_keys,
+        )
+        if _record_static_wide_runtime_measurement_table(
+            self.values_by_feature,
+            table_projection_context,
+            row_merge_cache=self.row_merge_cache,
+            primary_row_identities=self.primary_row_identities,
+            object_row_domain=self.object_row_domain,
+        ):
+            return
+        RuntimeMeasurementTableFactRecorder(
+            self.values_by_feature,
+            table_projection_context,
+            row_merge_cache=self.row_merge_cache,
+            primary_row_identities=self.primary_row_identities,
+            object_row_domain=self.object_row_domain,
+        ).record()
+
+    def _record_relationship(
+        self,
+        axis_key: object,
+        record: object,
+        plane_identity_resolver: RuntimeAxisRecordPlaneIdentityResolver,
+    ) -> None:
+        plane_identity = plane_identity_resolver.plane_identity_for_record(
+            kind=record.key.kind,
+            name=record.key.name,
+            scope=record.key.scope,
+        )
+        self.relationship_records_by_axis.setdefault(axis_key, []).append(
+            RuntimeScopedObjectRelationship(
+                ObjectRelationship.from_runtime_value(record.value),
+                plane_identity=plane_identity,
+            )
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementSnapshot:
     """Semantic measurement facts independent of table layout."""
@@ -2079,102 +2244,21 @@ class RuntimeMeasurementSnapshot:
         required_measurement_keys: _RuntimeRequiredMeasurementKeys = None,
     ) -> "RuntimeMeasurementSnapshot":
         """Project typed runtime measurement artifacts into semantic facts."""
-        values_by_feature: _RuntimeMeasurementFactCounters = {}
-        cache_plan = RuntimeMeasurementProjectionCachePlan(
-            required_measurement_keys,
-            policy,
+        projector = RuntimeMeasurementObservationProjector(
+            observation,
+            policy=policy,
+            known_source_names=known_source_names,
+            required_measurement_keys=required_measurement_keys,
         )
-        row_merge_cache = cache_plan.row_merge_cache()
-        primary_row_identities = cache_plan.primary_row_identities()
-        object_row_domain = RuntimeObjectMeasurementFactRowDomain()
-        object_label_records = []
-        object_label_records_by_axis: dict[object, list[object]] = {}
-        relationship_records_by_axis: dict[object, list[RuntimeScopedObjectRelationship]] = {}
-        measurement_tables_by_axis: dict[object, list[RuntimeScopedMeasurementTable]] = {}
-        seen_aggregate_measurement_tables: set[RuntimeMeasurementTableIdentity] = set()
-        for axis_key, records in observation.records_by_axis.items():
-            axis_records = tuple(records)
-            plane_identity_resolver = (
-                RuntimeAxisRecordPlaneIdentityResolver.from_records(axis_records)
-            )
-            seen_exact_measurement_tables: set[tuple[object, ...]] = set()
-            seen_object_subtables: _RuntimeMeasurementObjectSubtableSet = set()
-            for record in axis_records:
-                if record.key.kind is ArtifactKind.SPATIAL_GRID:
-                    record_measurement_facts(
-                        values_by_feature,
-                        spatial_grid_measurement_facts(record.value, policy),
-                        required_keys=required_measurement_keys,
-                    )
-                    continue
-                if record.key.kind is ArtifactKind.MEASUREMENTS:
-                    table = MeasurementTable.from_runtime_value(record.value)
-                    if record.key.scope.group_key is None:
-                        exact_table_key = exact_measurement_table_key(table)
-                        if exact_table_key in seen_exact_measurement_tables:
-                            continue
-                        seen_exact_measurement_tables.add(exact_table_key)
-                    if record.key.scope.group_key is None:
-                        table = _dedupe_runtime_measurement_table_object_subtable(
-                            table,
-                            seen_object_subtables,
-                        )
-                    if record.key.scope.group_key is not None:
-                        aggregate_table_key = aggregate_measurement_table_key(table)
-                        if aggregate_table_key is not None:
-                            if aggregate_table_key in seen_aggregate_measurement_tables:
-                                continue
-                            seen_aggregate_measurement_tables.add(aggregate_table_key)
-                    plane_identity = plane_identity_resolver.plane_identity_for_record(
-                        kind=record.key.kind,
-                        name=record.key.name,
-                        scope=record.key.scope,
-                    )
-                    measurement_tables_by_axis.setdefault(axis_key, []).append(
-                        RuntimeScopedMeasurementTable(
-                            table,
-                            plane_identity=plane_identity,
-                        )
-                    )
-                    table_projection_context = _RuntimeMeasurementTableProjectionContext(
-                        table,
-                        policy,
-                        axis_key,
-                        known_source_names,
-                        required_measurement_keys,
-                    )
-                    if _record_static_wide_runtime_measurement_table(
-                        values_by_feature,
-                        table_projection_context,
-                        row_merge_cache=row_merge_cache,
-                        primary_row_identities=primary_row_identities,
-                        object_row_domain=object_row_domain,
-                    ):
-                        continue
-                    RuntimeMeasurementTableFactRecorder(
-                        values_by_feature,
-                        table_projection_context,
-                        row_merge_cache=row_merge_cache,
-                        primary_row_identities=primary_row_identities,
-                        object_row_domain=object_row_domain,
-                    ).record()
-                    continue
-                if record.key.kind is ArtifactKind.OBJECT_LABELS:
-                    object_label_records.append(record)
-                    object_label_records_by_axis.setdefault(axis_key, []).append(record)
-                    continue
-                if record.key.kind is ArtifactKind.RELATIONSHIPS:
-                    plane_identity = plane_identity_resolver.plane_identity_for_record(
-                        kind=record.key.kind,
-                        name=record.key.name,
-                        scope=record.key.scope,
-                    )
-                    relationship_records_by_axis.setdefault(axis_key, []).append(
-                        RuntimeScopedObjectRelationship(
-                            ObjectRelationship.from_runtime_value(record.value),
-                            plane_identity=plane_identity,
-                        )
-                    )
+        projector.record_artifacts()
+        values_by_feature = projector.values_by_feature
+        row_merge_cache = projector.row_merge_cache
+        primary_row_identities = projector.primary_row_identities
+        object_row_domain = projector.object_row_domain
+        object_label_records = projector.object_label_records
+        object_label_records_by_axis = projector.object_label_records_by_axis
+        relationship_records_by_axis = projector.relationship_records_by_axis
+        measurement_tables_by_axis = projector.measurement_tables_by_axis
         object_identifier_subjects = object_measurement_subjects_with_role(
             values_by_feature,
             ObjectMeasurementFeatureRole.IDENTIFIER,
