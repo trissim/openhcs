@@ -3865,12 +3865,12 @@ def _record_static_wide_runtime_measurement_table(
             subject,
             policy,
         )
-        derived_row_facts = _static_wide_runtime_measurement_row_facts(
+        derived_row_facts = StaticWideRuntimeRowProjector(
             row_projection_context,
             row_values,
             subject,
             source_qualification.feature_source_name,
-        )
+        ).facts()
         if not derived_row_facts:
             continue
         aggregate_input_context = _AggregateInputRecordingContext(
@@ -3903,174 +3903,159 @@ def _record_static_wide_runtime_measurement_table(
     return True
 
 
-def _static_wide_runtime_measurement_row_facts(
-    context: _StaticWideRuntimeRowProjectionContext,
-    row_values: tuple[object, ...],
-    subject: RuntimeMeasurementSubjectKey,
-    source_name: str | None,
-) -> _RuntimeMeasurementFacts:
-    row_fact_records: list[_RuntimeRowProjectionRecord[RuntimeCellSignature]] = []
-    padding_group_presence: dict[
-        tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
-        bool,
-    ] = {}
-    row_qualifier_cache: _RuntimeMeasurementIndexedQualifierCache = {}
-    derives_directional_pair_facts = False
-    for index in context.feature_column_indexes:
-        if index in context.aggregate_reference_indexes:
-            continue
-        field_name = context.header[index]
-        value = row_values[index]
-        qualifiers = _static_wide_runtime_row_qualifiers(
-            context,
-            row_values,
-            index,
-            row_qualifier_cache,
-        )
-        key = _static_wide_runtime_row_feature_key(
-            context,
-            subject,
-            source_name,
-            index,
-            qualifiers,
-        )
-        if key is None:
-            continue
-        derives_directional_pair_facts = (
-            derives_directional_pair_facts
-            or key.belongs_to_source_qualified_feature_family(
-                context.policy.measurement_dialect,
-                (_PAIR_REGRESSION_SLOPE_FEATURE,),
-            )
-        )
-        padding_group = _static_wide_runtime_padding_group(
-            context,
-            field_name,
-            key,
-            qualifiers,
-        )
-        padding_group_presence[padding_group] = (
-            padding_group_presence.get(padding_group, False)
-            or _measurement_value_is_present(value)
-        )
-        if (
-            context.input_keys is not None
-            and key not in context.input_keys
-            and not _runtime_value_is_mapping(value)
-        ):
-            continue
-        for fact_key, fact_value in _cell_measurement_facts_for_required_keys(
-            key,
-            value,
-            context.policy,
-            required_keys=context.input_keys,
-        ):
+@dataclass(frozen=True, slots=True)
+class StaticWideRuntimeRowProjector:
+    """Project one static-wide runtime measurement row into semantic facts."""
+
+    context: _StaticWideRuntimeRowProjectionContext
+    row_values: tuple[object, ...]
+    subject: RuntimeMeasurementSubjectKey
+    source_name: str | None
+
+    def facts(self) -> _RuntimeMeasurementFacts:
+        row_fact_records: list[_RuntimeRowProjectionRecord[RuntimeCellSignature]] = []
+        padding_group_presence: dict[
+            tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]],
+            bool,
+        ] = {}
+        row_qualifier_cache: _RuntimeMeasurementIndexedQualifierCache = {}
+        derives_directional_pair_facts = False
+        for index in self.context.feature_column_indexes:
+            if index in self.context.aggregate_reference_indexes:
+                continue
+            field_name = self.context.header[index]
+            value = self.row_values[index]
+            qualifiers = self.qualifiers(index, row_qualifier_cache)
+            key = self.feature_key(index, qualifiers)
+            if key is None:
+                continue
             derives_directional_pair_facts = (
                 derives_directional_pair_facts
-                or fact_key.belongs_to_source_qualified_feature_family(
-                    context.policy.measurement_dialect,
-                    (_PAIR_REGRESSION_SLOPE_FEATURE,),
-                )
+                or self.derives_directional_pair_facts(key)
             )
-            row_fact_records.append((padding_group, fact_key, fact_value))
+            padding_group = self.padding_group(field_name, key, qualifiers)
+            padding_group_presence[padding_group] = (
+                padding_group_presence.get(padding_group, False)
+                or _measurement_value_is_present(value)
+            )
+            if (
+                self.context.input_keys is not None
+                and key not in self.context.input_keys
+                and not _runtime_value_is_mapping(value)
+            ):
+                continue
+            for fact_key, fact_value in _cell_measurement_facts_for_required_keys(
+                key,
+                value,
+                self.context.policy,
+                required_keys=self.context.input_keys,
+            ):
+                derives_directional_pair_facts = (
+                    derives_directional_pair_facts
+                    or self.derives_directional_pair_facts(fact_key)
+                )
+                row_fact_records.append((padding_group, fact_key, fact_value))
 
-    facts = RuntimeMeasurementFactProjectionContract.dedupe_observed_alias_records(
-        (
-            record
-            for record in row_fact_records
-            if padding_group_presence.get(record[0], True)
-        ),
-        context.policy,
-    )
-    if not derives_directional_pair_facts:
-        return facts
-    return _derive_pair_measurement_facts(
-        facts,
-        context.policy,
-        known_source_names=context.known_source_names,
-    )
-
-
-def _static_wide_runtime_row_qualifiers(
-    context: _StaticWideRuntimeRowProjectionContext,
-    row_values: tuple[object, ...],
-    index: int,
-    row_qualifier_cache: _RuntimeMeasurementIndexedQualifierCache,
-) -> tuple[str, ...]:
-    indexed_qualifiers = context.qualifiers_by_index[index]
-    if not indexed_qualifiers:
-        return ()
-    qualifier_cache_key = id(indexed_qualifiers)
-    qualifiers = row_qualifier_cache.get(qualifier_cache_key)
-    if qualifiers is None:
-        qualifiers = measurement_row_qualifiers_from_indexed_values_cached(
-            row_values,
-            indexed_qualifiers,
-            context.qualifier_render_cache,
+        facts = RuntimeMeasurementFactProjectionContract.dedupe_observed_alias_records(
+            (
+                record
+                for record in row_fact_records
+                if padding_group_presence.get(record[0], True)
+            ),
+            self.context.policy,
         )
-        row_qualifier_cache[qualifier_cache_key] = qualifiers
-    return qualifiers
+        if not derives_directional_pair_facts:
+            return facts
+        return _derive_pair_measurement_facts(
+            facts,
+            self.context.policy,
+            known_source_names=self.context.known_source_names,
+        )
 
+    def qualifiers(
+        self,
+        index: int,
+        row_qualifier_cache: _RuntimeMeasurementIndexedQualifierCache,
+    ) -> tuple[str, ...]:
+        indexed_qualifiers = self.context.qualifiers_by_index[index]
+        if not indexed_qualifiers:
+            return ()
+        qualifier_cache_key = id(indexed_qualifiers)
+        qualifiers = row_qualifier_cache.get(qualifier_cache_key)
+        if qualifiers is None:
+            qualifiers = measurement_row_qualifiers_from_indexed_values_cached(
+                self.row_values,
+                indexed_qualifiers,
+                self.context.qualifier_render_cache,
+            )
+            row_qualifier_cache[qualifier_cache_key] = qualifiers
+        return qualifiers
 
-def _static_wide_runtime_row_feature_key(
-    context: _StaticWideRuntimeRowProjectionContext,
-    subject: RuntimeMeasurementSubjectKey,
-    source_name: str | None,
-    index: int,
-    qualifiers: tuple[str, ...],
-) -> RuntimeMeasurementFeatureKey | None:
-    if qualifiers:
+    def feature_key(
+        self,
+        index: int,
+        qualifiers: tuple[str, ...],
+    ) -> RuntimeMeasurementFeatureKey | None:
+        if qualifiers:
+            return self._feature_key(index, qualifiers)
+        cache_key = (self.subject, self.source_name, index, qualifiers)
+        key = self.context.key_cache.get(cache_key, _CACHE_MISS)
+        if key is _CACHE_MISS:
+            key = self._feature_key(index, qualifiers)
+            self.context.key_cache[cache_key] = key
+        return key
+
+    def padding_group(
+        self,
+        field_name: str,
+        key: RuntimeMeasurementFeatureKey,
+        qualifiers: tuple[str, ...],
+    ) -> tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]]:
+        if qualifiers:
+            return self._padding_group(field_name, key)
+        padding_group_cache_key = (field_name, key)
+        padding_group = self.context.padding_group_cache.get(padding_group_cache_key)
+        if padding_group is None:
+            padding_group = self._padding_group(field_name, key)
+            self.context.padding_group_cache[padding_group_cache_key] = padding_group
+        return padding_group
+
+    def derives_directional_pair_facts(
+        self,
+        key: RuntimeMeasurementFeatureKey,
+    ) -> bool:
+        return key.belongs_to_source_qualified_feature_family(
+            self.context.policy.measurement_dialect,
+            (_PAIR_REGRESSION_SLOPE_FEATURE,),
+        )
+
+    def _feature_key(
+        self,
+        index: int,
+        qualifiers: tuple[str, ...],
+    ) -> RuntimeMeasurementFeatureKey | None:
         return _measurement_feature_key_from_source_context(
             _MeasurementFeatureKeySourceContext(
-                context.header[index],
-                subject,
-                context.policy,
+                self.context.header[index],
+                self.subject,
+                self.context.policy,
                 qualifiers,
-                source_name,
-                context.known_source_names,
+                self.source_name,
+                self.context.known_source_names,
             )
         )
-    cache_key = (subject, source_name, index, qualifiers)
-    key = context.key_cache.get(cache_key, _CACHE_MISS)
-    if key is _CACHE_MISS:
-        key = _measurement_feature_key_from_source_context(
-            _MeasurementFeatureKeySourceContext(
-                context.header[index],
-                subject,
-                context.policy,
-                qualifiers,
-                source_name,
-                context.known_source_names,
-            )
-        )
-        context.key_cache[cache_key] = key
-    return key
 
-
-def _static_wide_runtime_padding_group(
-    context: _StaticWideRuntimeRowProjectionContext,
-    field_name: str,
-    key: RuntimeMeasurementFeatureKey,
-    qualifiers: tuple[str, ...],
-) -> tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]]:
-    if qualifiers:
+    def _padding_group(
+        self,
+        field_name: str,
+        key: RuntimeMeasurementFeatureKey,
+    ) -> tuple[RuntimeMeasurementSubjectKey, str | None, tuple[str, ...]]:
         return RuntimeMeasurementFactProjectionContract.padding_group(
-            context.table_padding_group,
+            self.context.table_padding_group,
             field_name,
             key,
-            context.policy.measurement_dialect,
+            self.context.policy.measurement_dialect,
         )
-    padding_group_cache_key = (field_name, key)
-    padding_group = context.padding_group_cache.get(padding_group_cache_key)
-    if padding_group is None:
-        padding_group = RuntimeMeasurementFactProjectionContract.padding_group(
-            context.table_padding_group,
-            field_name,
-            key,
-            context.policy.measurement_dialect,
-        )
-        context.padding_group_cache[padding_group_cache_key] = padding_group
-    return padding_group
 
 
 def _record_row_aggregate_input_value(
