@@ -44,18 +44,68 @@ class ColorMap(Enum):
 
 
 @dataclass
+class DensityPlotAxis:
+    """One density plot axis range and scale."""
+
+    min_value: float
+    max_value: float
+    scale: str
+
+
+@dataclass
 class DensityPlotData:
     """Density plot histogram data for visualization."""
+
     slice_index: int
-    x_min: float
-    x_max: float
-    y_min: float
-    y_max: float
+    x_axis: DensityPlotAxis
+    y_axis: DensityPlotAxis
     gridsize: int
     num_points: int
-    x_scale: str
-    y_scale: str
     colorbar_scale: str
+
+    @classmethod
+    def from_axes(
+        cls,
+        *,
+        slice_index: int,
+        x_axis: DensityPlotAxis,
+        y_axis: DensityPlotAxis,
+        gridsize: int,
+        num_points: int,
+        colorbar_scale: str,
+    ) -> "DensityPlotData":
+        return cls(
+            slice_index=slice_index,
+            x_axis=x_axis,
+            y_axis=y_axis,
+            gridsize=gridsize,
+            num_points=num_points,
+            colorbar_scale=colorbar_scale,
+        )
+
+    @property
+    def x_min(self) -> float:
+        return self.x_axis.min_value
+
+    @property
+    def x_max(self) -> float:
+        return self.x_axis.max_value
+
+    @property
+    def y_min(self) -> float:
+        return self.y_axis.min_value
+
+    @property
+    def y_max(self) -> float:
+        return self.y_axis.max_value
+
+    @property
+    def x_scale(self) -> str:
+        return self.x_axis.scale
+
+    @property
+    def y_scale(self) -> str:
+        return self.y_axis.scale
 
 
 class DensityPlotMeasurementPairExtractor(ABC, metaclass=AutoRegisterMeta):
@@ -150,16 +200,12 @@ def display_density_plot(
     if len(x_data) == 0:
         # No valid data, return empty histogram
         histogram = np.zeros((gridsize, gridsize), dtype=np.float32)
-        return histogram[np.newaxis, :, :], DensityPlotData(
+        return histogram[np.newaxis, :, :], DensityPlotData.from_axes(
             slice_index=0,
-            x_min=0.0,
-            x_max=1.0,
-            y_min=0.0,
-            y_max=1.0,
+            x_axis=DensityPlotAxis(0.0, 1.0, x_scale.value),
+            y_axis=DensityPlotAxis(0.0, 1.0, y_scale.value),
             gridsize=gridsize,
             num_points=0,
-            x_scale=x_scale.value,
-            y_scale=y_scale.value,
             colorbar_scale=colorbar_scale.value
         )
     
@@ -183,16 +229,12 @@ def display_density_plot(
     if len(x_data) == 0:
         # No valid data after log transform
         histogram = np.zeros((gridsize, gridsize), dtype=np.float32)
-        return histogram[np.newaxis, :, :], DensityPlotData(
+        return histogram[np.newaxis, :, :], DensityPlotData.from_axes(
             slice_index=0,
-            x_min=0.0,
-            x_max=1.0,
-            y_min=0.0,
-            y_max=1.0,
+            x_axis=DensityPlotAxis(0.0, 1.0, x_scale.value),
+            y_axis=DensityPlotAxis(0.0, 1.0, y_scale.value),
             gridsize=gridsize,
             num_points=0,
-            x_scale=x_scale.value,
-            y_scale=y_scale.value,
             colorbar_scale=colorbar_scale.value
         )
     
@@ -227,15 +269,11 @@ def display_density_plot(
     histogram = histogram.astype(np.float32)
     
     # Return with batch dimension
-    return histogram[np.newaxis, :, :], DensityPlotData(
+    return histogram[np.newaxis, :, :], DensityPlotData.from_axes(
         slice_index=0,
-        x_min=x_min,
-        x_max=x_max,
-        y_min=y_min,
-        y_max=y_max,
+        x_axis=DensityPlotAxis(x_min, x_max, x_scale.value),
+        y_axis=DensityPlotAxis(y_min, y_max, y_scale.value),
         gridsize=gridsize,
         num_points=len(x_data),
-        x_scale=x_scale.value,
-        y_scale=y_scale.value,
         colorbar_scale=colorbar_scale.value
     )

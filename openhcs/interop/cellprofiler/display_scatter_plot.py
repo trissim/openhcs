@@ -28,17 +28,65 @@ class ScaleType(Enum):
 
 
 @dataclass
+class ScatterPlotAxis:
+    """One scatter plot axis payload and display metadata."""
+
+    values: str
+    label: str
+    scale: str
+
+
+@dataclass
 class ScatterPlotData:
     """Data structure for scatter plot output."""
+
     slice_index: int
-    x_values: str  # JSON-encoded array of x values
-    y_values: str  # JSON-encoded array of y values
-    x_label: str
-    y_label: str
-    x_scale: str
-    y_scale: str
+    x_axis: ScatterPlotAxis
+    y_axis: ScatterPlotAxis
     title: str
     point_count: int
+
+    @classmethod
+    def from_axes(
+        cls,
+        *,
+        slice_index: int,
+        x_axis: ScatterPlotAxis,
+        y_axis: ScatterPlotAxis,
+        title: str,
+        point_count: int,
+    ) -> "ScatterPlotData":
+        return cls(
+            slice_index=slice_index,
+            x_axis=x_axis,
+            y_axis=y_axis,
+            title=title,
+            point_count=point_count,
+        )
+
+    @property
+    def x_values(self) -> str:
+        return self.x_axis.values
+
+    @property
+    def y_values(self) -> str:
+        return self.y_axis.values
+
+    @property
+    def x_label(self) -> str:
+        return self.x_axis.label
+
+    @property
+    def y_label(self) -> str:
+        return self.y_axis.label
+
+    @property
+    def x_scale(self) -> str:
+        return self.x_axis.scale
+
+    @property
+    def y_scale(self) -> str:
+        return self.y_axis.scale
 
 
 @numpy(contract=ProcessingContract.PURE_2D)
@@ -113,14 +161,18 @@ def display_scatter_plot(
     plot_title = title if title else f"{x_axis_label} vs {y_axis_label}"
     
     # Create scatter plot data
-    scatter_data = ScatterPlotData(
+    scatter_data = ScatterPlotData.from_axes(
         slice_index=0,
-        x_values=json.dumps(x_vals.tolist()),
-        y_values=json.dumps(y_vals.tolist()),
-        x_label=x_axis_label,
-        y_label=y_axis_label,
-        x_scale=x_scale.value,
-        y_scale=y_scale.value,
+        x_axis=ScatterPlotAxis(
+            json.dumps(x_vals.tolist()),
+            x_axis_label,
+            x_scale.value,
+        ),
+        y_axis=ScatterPlotAxis(
+            json.dumps(y_vals.tolist()),
+            y_axis_label,
+            y_scale.value,
+        ),
         title=plot_title,
         point_count=len(x_vals)
     )
