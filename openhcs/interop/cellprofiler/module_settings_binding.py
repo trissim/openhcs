@@ -2022,35 +2022,6 @@ class MeasureColocalizationModuleSettingsBindingStrategy(
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
 
-class ConvertObjectsToImageModuleSettingsBindingStrategy(
-    DeclarativeModuleSettingsBindingStrategy
-):
-    """Bind object-label rendering mode into the absorbed image renderer."""
-
-    module_name = "ConvertObjectsToImage"
-    setting_bindings = (
-        SettingToKeywordBinding(
-            "Select the color format",
-            "image_mode",
-            cellprofiler_enum_value_setting_parser(ConvertObjectsToImageMode),
-        ),
-        SettingToKeywordBinding("Select the colormap", "colormap_value"),
-    )
-
-
-class CombineObjectsModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
-    """Bind object-overlap policy into CombineObjects' nominal method enum."""
-
-    module_name = "CombineObjects"
-    setting_bindings = (
-        SettingToKeywordBinding(
-            "Select how to handle overlapping objects",
-            "method",
-            cellprofiler_enum_value_setting_parser(CombineObjectsMethod),
-        ),
-    )
-
-
 class WatershedModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
     """Bind Watershed settings that control object-domain semantics."""
 
@@ -2445,32 +2416,6 @@ class MedianFilterModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         )
 
 
-class GaussianFilterModuleSettingsBindingStrategy(
-    DeclarativeModuleSettingsBindingStrategy
-):
-    """Bind GaussianFilter's smoothing sigma setting."""
-
-    module_name = "GaussianFilter"
-    setting_bindings = (
-        SettingToKeywordBinding("Sigma", "sigma", parse_cellprofiler_float),
-    )
-
-
-class ReduceNoiseModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStrategy):
-    """Bind ReduceNoise non-local means parameters."""
-
-    module_name = "ReduceNoise"
-    setting_bindings = (
-        SettingToKeywordBinding("Size", "patch_size", parse_cellprofiler_int),
-        SettingToKeywordBinding("Distance", "patch_distance", parse_cellprofiler_int),
-        SettingToKeywordBinding(
-            "Cut-off distance",
-            "cutoff_distance",
-            parse_cellprofiler_float,
-        ),
-    )
-
-
 class RemoveHolesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
     """Bind RemoveHoles' diameter setting."""
 
@@ -2740,6 +2685,55 @@ DECLARATIVE_MODULE_SETTINGS_BINDING_DECLARATIONS: tuple[
     DeclarativeModuleSettingsBindingStrategyDeclaration,
     ...,
 ] = (
+    DeclarativeModuleSettingsBindingStrategyDeclaration(
+        "ConvertObjectsToImageModuleSettingsBindingStrategy",
+        "ConvertObjectsToImage",
+        (
+            SettingToKeywordBinding(
+                "Select the color format",
+                "image_mode",
+                cellprofiler_enum_value_setting_parser(ConvertObjectsToImageMode),
+            ),
+            SettingToKeywordBinding("Select the colormap", "colormap_value"),
+        ),
+        doc="Bind object-label rendering mode into the absorbed image renderer.",
+    ),
+    DeclarativeModuleSettingsBindingStrategyDeclaration(
+        "CombineObjectsModuleSettingsBindingStrategy",
+        "CombineObjects",
+        (
+            SettingToKeywordBinding(
+                "Select how to handle overlapping objects",
+                "method",
+                cellprofiler_enum_value_setting_parser(CombineObjectsMethod),
+            ),
+        ),
+        doc="Bind object-overlap policy into CombineObjects' nominal method enum.",
+    ),
+    DeclarativeModuleSettingsBindingStrategyDeclaration(
+        "GaussianFilterModuleSettingsBindingStrategy",
+        "GaussianFilter",
+        (SettingToKeywordBinding("Sigma", "sigma", parse_cellprofiler_float),),
+        doc="Bind GaussianFilter's smoothing sigma setting.",
+    ),
+    DeclarativeModuleSettingsBindingStrategyDeclaration(
+        "ReduceNoiseModuleSettingsBindingStrategy",
+        "ReduceNoise",
+        (
+            SettingToKeywordBinding("Size", "patch_size", parse_cellprofiler_int),
+            SettingToKeywordBinding(
+                "Distance",
+                "patch_distance",
+                parse_cellprofiler_int,
+            ),
+            SettingToKeywordBinding(
+                "Cut-off distance",
+                "cutoff_distance",
+                parse_cellprofiler_float,
+            ),
+        ),
+        doc="Bind ReduceNoise non-local means parameters.",
+    ),
     DeclarativeModuleSettingsBindingStrategyDeclaration(
         "CorrectIlluminationCalculateModuleSettingsBindingStrategy",
         "CorrectIlluminationCalculate",
@@ -3111,40 +3105,59 @@ class _GrayToColorIndexedSchemeBindingStrategy(GrayToColorSchemeBindingStrategy)
         return BoundModuleSettings(kwargs)
 
 
-class GrayToColorRgbBindingStrategy(_GrayToColorIndexedSchemeBindingStrategy):
-    scheme_literal = GrayToColorScheme.RGB.value
-    image_settings = tuple(
-        zip(
-            GRAY_TO_COLOR_RGB_IMAGE_SETTINGS,
-            ("red_channel", "green_channel", "blue_channel"),
-            strict=True,
+@dataclass(frozen=True, slots=True)
+class GrayToColorIndexedSchemeBindingDeclaration:
+    """Declaration for indexed GrayToColor channel/weight schemes."""
+
+    class_name: str
+    scheme: GrayToColorScheme
+    image_settings: tuple[str, ...]
+    image_parameters: tuple[str, ...]
+    weight_settings: tuple[str, ...]
+    weight_parameters: tuple[str, ...]
+
+    def materialize(self) -> type[GrayToColorSchemeBindingStrategy]:
+        return type(
+            self.class_name,
+            (_GrayToColorIndexedSchemeBindingStrategy,),
+            {
+                "__module__": __name__,
+                "scheme_literal": self.scheme.value,
+                "image_settings": tuple(
+                    zip(self.image_settings, self.image_parameters, strict=True)
+                ),
+                "weight_settings": tuple(
+                    zip(self.weight_settings, self.weight_parameters, strict=True)
+                ),
+            },
         )
-    )
-    weight_settings = tuple(
-        zip(
-            GRAY_TO_COLOR_RGB_WEIGHT_SETTINGS,
-            ("red_weight", "green_weight", "blue_weight"),
-            strict=True,
-        )
-    )
 
 
-class GrayToColorCmykBindingStrategy(_GrayToColorIndexedSchemeBindingStrategy):
-    scheme_literal = GrayToColorScheme.CMYK.value
-    image_settings = tuple(
-        zip(
-            GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
-            ("cyan_channel", "magenta_channel", "yellow_channel", "gray_channel"),
-            strict=True,
-        )
-    )
-    weight_settings = tuple(
-        zip(
-            GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
-            ("cyan_weight", "magenta_weight", "yellow_weight", "gray_weight"),
-            strict=True,
-        )
-    )
+GRAY_TO_COLOR_INDEXED_SCHEME_BINDING_DECLARATIONS = (
+    GrayToColorIndexedSchemeBindingDeclaration(
+        "GrayToColorRgbBindingStrategy",
+        GrayToColorScheme.RGB,
+        GRAY_TO_COLOR_RGB_IMAGE_SETTINGS,
+        ("red_channel", "green_channel", "blue_channel"),
+        GRAY_TO_COLOR_RGB_WEIGHT_SETTINGS,
+        ("red_weight", "green_weight", "blue_weight"),
+    ),
+    GrayToColorIndexedSchemeBindingDeclaration(
+        "GrayToColorCmykBindingStrategy",
+        GrayToColorScheme.CMYK,
+        GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
+        ("cyan_channel", "magenta_channel", "yellow_channel", "gray_channel"),
+        GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
+        ("cyan_weight", "magenta_weight", "yellow_weight", "gray_weight"),
+    ),
+)
+
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in GRAY_TO_COLOR_INDEXED_SCHEME_BINDING_DECLARATIONS
+    }
+)
 
 
 class _GrayToColorStackFamilyBindingStrategy(GrayToColorSchemeBindingStrategy):
@@ -3179,12 +3192,41 @@ class _GrayToColorStackFamilyBindingStrategy(GrayToColorSchemeBindingStrategy):
         return BoundModuleSettings(kwargs)
 
 
-class GrayToColorStackBindingStrategy(_GrayToColorStackFamilyBindingStrategy):
-    scheme_literal = GrayToColorScheme.STACK.value
+@dataclass(frozen=True, slots=True)
+class GrayToColorStackSchemeBindingDeclaration:
+    """Declaration for stack-family GrayToColor schemes."""
+
+    class_name: str
+    scheme: GrayToColorScheme
+
+    def materialize(self) -> type[GrayToColorSchemeBindingStrategy]:
+        return type(
+            self.class_name,
+            (_GrayToColorStackFamilyBindingStrategy,),
+            {
+                "__module__": __name__,
+                "scheme_literal": self.scheme.value,
+            },
+        )
 
 
-class GrayToColorCompositeBindingStrategy(_GrayToColorStackFamilyBindingStrategy):
-    scheme_literal = GrayToColorScheme.COMPOSITE.value
+GRAY_TO_COLOR_STACK_SCHEME_BINDING_DECLARATIONS = (
+    GrayToColorStackSchemeBindingDeclaration(
+        "GrayToColorStackBindingStrategy",
+        GrayToColorScheme.STACK,
+    ),
+    GrayToColorStackSchemeBindingDeclaration(
+        "GrayToColorCompositeBindingStrategy",
+        GrayToColorScheme.COMPOSITE,
+    ),
+)
+
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in GRAY_TO_COLOR_STACK_SCHEME_BINDING_DECLARATIONS
+    }
+)
 
 
 def _translate_bound_kwargs(
