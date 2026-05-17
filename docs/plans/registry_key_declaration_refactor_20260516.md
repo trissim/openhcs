@@ -93,3 +93,10 @@ These families are not all equivalent. Some are CellProfiler module-policy regis
 - No increase in advisor findings.
 - Any remaining repeated registry-key findings are either removed or classified as analyzer noise with a concrete reason.
 
+## Attempt Log
+
+### 2026-05-16: Rejected `CellProfilerModulePolicyMeta` Root Migration
+
+Several CellProfiler module-policy roots still spell out the same `registry_key` defaults already installed by `CellProfilerModulePolicyMeta`. Migrating those roots to `CellProfilerModulePolicyMeta` looked like the nominal fix, but the advisor regressed from `10` to `18` findings because the explicit root declarations were the current SSOT evidence for those semantic families.
+
+This means the remaining `registry_key` string repetition should not be removed by simply changing metaclasses. A viable fix needs a deeper declaration substrate that remains visible both to `AutoRegisterMeta` and to the advisor as the family membership authority.
