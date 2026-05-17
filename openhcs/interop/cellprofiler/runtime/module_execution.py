@@ -2526,10 +2526,22 @@ for _main_flow_policy_spec in (
 
 
 class CellProfilerInvocationExecutionModePolicy(
+    CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=CellProfilerModulePolicyMeta,
+    metaclass=AutoRegisterMeta,
 ):
     """Nominal policy for modules whose settings change stack execution mode."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    __key_extractor__ = staticmethod(
+        CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
+    )
+    registry_key: ClassVar[str | None] = None
+    module_name: ClassVar[str | None] = None
+    fallback_registry_key: ClassVar[str | None] = (
+        CellProfilerModulePolicyRegistryKey.DEFAULT.value
+    )
 
     def execution_mode(
         self,
