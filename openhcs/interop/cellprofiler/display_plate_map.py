@@ -8,12 +8,18 @@ measurement aggregation function that produces plate map data for
 visualization by the frontend.
 """
 
-import numpy as np
-from typing import Tuple, Dict, List, Optional, Any
-from dataclasses import dataclass, field
+from abc import ABC, abstractmethod
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
+from typing import Any, ClassVar, Dict, List, Optional, Tuple
+
+import numpy as np
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -64,6 +70,138 @@ class PlatemapSummary:
     well_count: int
 
 
+class PlateDimensionStrategy(
+    EnumKeyedStrategyMixin[PlateType],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal dimensions for one CellProfiler plate type."""
+
+    __registry_key__ = "plate_type_label"
+    __skip_if_no_key__ = True
+
+    plate_type: ClassVar[PlateType | None] = None
+    plate_type_label: ClassVar[str | None] = None
+    __enum_member_attr__ = "plate_type"
+    __enum_label_attr__ = "plate_type_label"
+
+    @classmethod
+    def for_plate_type(cls, plate_type: PlateType) -> "PlateDimensionStrategy":
+        return cls.for_enum_member(plate_type)
+
+    @abstractmethod
+    def dimensions(self) -> Tuple[int, int]:
+        """Return row and column count for this plate type."""
+
+
+class Plate96DimensionStrategy(PlateDimensionStrategy):
+    """96-well plate dimensions."""
+
+    plate_type = PlateType.PLATE_96
+
+    def dimensions(self) -> Tuple[int, int]:
+        return 8, 12
+
+
+class Plate384DimensionStrategy(PlateDimensionStrategy):
+    """384-well plate dimensions."""
+
+    plate_type = PlateType.PLATE_384
+
+    def dimensions(self) -> Tuple[int, int]:
+        return 16, 24
+
+
+class AggregationMethodStrategy(
+    EnumKeyedStrategyMixin[AggregationMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal aggregation behavior for one CellProfiler plate-map method."""
+
+    __registry_key__ = "aggregation_method_label"
+    __skip_if_no_key__ = True
+
+    aggregation_method: ClassVar[AggregationMethod | None] = None
+    aggregation_method_label: ClassVar[str | None] = None
+    helper: ClassVar[Callable[[np.ndarray], Any] | None] = None
+    __enum_member_attr__ = "aggregation_method"
+    __enum_label_attr__ = "aggregation_method_label"
+
+    @classmethod
+    def for_method(
+        cls,
+        method: AggregationMethod,
+    ) -> "AggregationMethodStrategy":
+        return cls.for_enum_member(method)
+
+    def aggregate(self, values: np.ndarray) -> float:
+        """Aggregate a non-empty numeric value vector."""
+        if self.helper is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} must declare an aggregation helper."
+            )
+        return float(self.helper(values))
+
+
+class CoefficientOfVariationAggregationStrategy(AggregationMethodStrategy):
+    """Coefficient-of-variation aggregation."""
+
+    aggregation_method = AggregationMethod.CV
+
+    def aggregate(self, values: np.ndarray) -> float:
+        mean_value = np.mean(values)
+        if mean_value == 0:
+            return np.nan
+        return float(np.std(values) / mean_value)
+
+
+@dataclass(frozen=True, slots=True)
+class HelperBackedAggregationDeclaration:
+    """Metadata row for helper-backed aggregation strategies."""
+
+    class_name: str
+    aggregation_method: AggregationMethod
+    helper: Callable[[np.ndarray], Any]
+
+    def materialize(self) -> type[AggregationMethodStrategy]:
+        return type(
+            self.class_name,
+            (AggregationMethodStrategy,),
+            {
+                "__module__": __name__,
+                "aggregation_method": self.aggregation_method,
+                "helper": staticmethod(self.helper),
+            },
+        )
+
+
+HELPER_BACKED_AGGREGATION_DECLARATIONS = (
+    HelperBackedAggregationDeclaration(
+        "AverageAggregationStrategy",
+        AggregationMethod.AVG,
+        np.mean,
+    ),
+    HelperBackedAggregationDeclaration(
+        "StandardDeviationAggregationStrategy",
+        AggregationMethod.STDEV,
+        np.std,
+    ),
+    HelperBackedAggregationDeclaration(
+        "MedianAggregationStrategy",
+        AggregationMethod.MEDIAN,
+        np.median,
+    ),
+)
+
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in HELPER_BACKED_AGGREGATION_DECLARATIONS
+    }
+)
+
+
 def _parse_well_name(well: str) -> Tuple[str, str]:
     """Parse well name like 'A01' into row 'A' and column '01'."""
     if len(well) >= 2:
@@ -73,33 +211,11 @@ def _parse_well_name(well: str) -> Tuple[str, str]:
     return "", ""
 
 
-def _get_plate_dimensions(plate_type: PlateType) -> Tuple[int, int]:
-    """Get (rows, columns) for plate type."""
-    if plate_type == PlateType.PLATE_96:
-        return 8, 12
-    elif plate_type == PlateType.PLATE_384:
-        return 16, 24
-    return 8, 12
-
-
 def _aggregate_values(values: np.ndarray, method: AggregationMethod) -> float:
     """Aggregate array of values using specified method."""
     if len(values) == 0:
         return np.nan
-    
-    if method == AggregationMethod.AVG:
-        return float(np.mean(values))
-    elif method == AggregationMethod.STDEV:
-        return float(np.std(values))
-    elif method == AggregationMethod.MEDIAN:
-        return float(np.median(values))
-    elif method == AggregationMethod.CV:
-        mean_val = np.mean(values)
-        if mean_val == 0:
-            return np.nan
-        return float(np.std(values) / mean_val)
-    else:
-        return float(np.mean(values))
+    return AggregationMethodStrategy.for_method(method).aggregate(values)
 
 
 @numpy
