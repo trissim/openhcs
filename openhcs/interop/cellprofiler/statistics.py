@@ -28,6 +28,30 @@ class StatisticsResult:
     ec50: float
 
 
+@dataclass(frozen=True, slots=True)
+class LocShrinkMeanStd:
+    """Grouped mean/std summary for CellProfiler statistics calculations."""
+
+    labels: np.ndarray
+    values: np.ndarray
+
+    def compute(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        ncols = self.values.shape[1]
+        labels, labnum, xs = _loc_vector_labels(self.labels)
+        avers = np.zeros((labnum, ncols))
+        stds = avers.copy()
+
+        for ilab in range(labnum):
+            labinds = labels == ilab
+            labmatr = self.values[labinds, :]
+            if labmatr.shape[0] == 1:
+                avers[ilab, :] = labmatr[0, :]
+            else:
+                avers[ilab, :] = np.mean(labmatr, 0)
+                stds[ilab, :] = np.std(labmatr, 0)
+        return xs, avers, stds
+
+
 def _loc_vector_labels(x: np.ndarray) -> Tuple[np.ndarray, int, np.ndarray]:
     """Identify unique labels from the vector of image labels.
     
@@ -51,34 +75,6 @@ def _loc_vector_labels(x: np.ndarray) -> Tuple[np.ndarray, int, np.ndarray]:
     return labels, len(uniqsortvals), uniqsortvals
 
 
-def _loc_shrink_mean_std(xcol: np.ndarray, ymatr: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Compute mean and standard deviation per label.
-    
-    Args:
-        xcol: Column of image labels or doses
-        ymatr: Matrix with rows of values per image, columns for measurements
-        
-    Returns:
-        xs: Vector of unique doses
-        avers: Average value per label
-        stds: Standard deviation per label
-    """
-    ncols = ymatr.shape[1]
-    labels, labnum, xs = _loc_vector_labels(xcol)
-    avers = np.zeros((labnum, ncols))
-    stds = avers.copy()
-    
-    for ilab in range(labnum):
-        labinds = labels == ilab
-        labmatr = ymatr[labinds, :]
-        if labmatr.shape[0] == 1:
-            avers[ilab, :] = labmatr[0, :]
-        else:
-            avers[ilab, :] = np.mean(labmatr, 0)
-            stds[ilab, :] = np.std(labmatr, 0)
-    return xs, avers, stds
-
-
 def _z_factors(xcol: np.ndarray, ymatr: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Calculate Z' factors for assay quality.
     
@@ -92,7 +88,7 @@ def _z_factors(xcol: np.ndarray, ymatr: np.ndarray) -> Tuple[np.ndarray, np.ndar
         xs: Ordered unique doses
         avers: Ordered average values
     """
-    xs, avers, stds = _loc_shrink_mean_std(xcol, ymatr)
+    xs, avers, stds = LocShrinkMeanStd(xcol, ymatr).compute()
     
     # Z' factor from positive and negative controls (extremes by dose)
     zrange = np.abs(avers[0, :] - avers[-1, :])
@@ -136,7 +132,7 @@ def _v_factors(xcol: np.ndarray, ymatr: np.ndarray) -> np.ndarray:
     Returns:
         v: V factors for each measurement
     """
-    xs, avers, stds = _loc_shrink_mean_std(xcol, ymatr)
+    xs, avers, stds = LocShrinkMeanStd(xcol, ymatr).compute()
     vrange = np.max(avers, 0) - np.min(avers, 0)
     
     vstd = np.zeros(len(vrange))
