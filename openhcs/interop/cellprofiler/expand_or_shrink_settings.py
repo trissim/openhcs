@@ -2,11 +2,9 @@
 
 from __future__ import annotations
 
-from abc import ABC
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar
-
-from metaclass_registry import AutoRegisterMeta
+from typing import Any
 
 from .parser import ModuleBlock
 from .settings_binder import (
@@ -44,15 +42,33 @@ class ExpandShrinkMode(Enum):
     SKELETONIZE = "skeletonize"
 
 
-class ExpandShrinkOperationModeBinding(ABC, metaclass=AutoRegisterMeta):
-    """Registered lowering from CP UI operation literals to runtime modes."""
+@dataclass(frozen=True)
+class ExpandShrinkOperationModeDeclaration:
+    """Declared lowering from CP UI operation literals to one runtime mode."""
 
-    __registry_key__ = "mode_label"
-    __skip_if_no_key__ = True
+    mode: ExpandShrinkMode
+    operations: tuple[CellProfilerExpandShrinkOperation, ...]
 
-    mode: ClassVar[ExpandShrinkMode | None] = None
-    mode_label: ClassVar[str | None] = None
-    operations: ClassVar[tuple[CellProfilerExpandShrinkOperation, ...]] = ()
+    @property
+    def mode_label(self) -> str:
+        return self.mode.value
+
+    def includes_operation(self, operation: CellProfilerExpandShrinkOperation) -> bool:
+        return operation in self.operations
+
+
+class ExpandShrinkOperationModeBinding:
+    """Authoritative registry projection for ExpandOrShrinkObjects modes."""
+
+    __registry__: dict[str, ExpandShrinkOperationModeDeclaration] = {}
+
+    @classmethod
+    def declare(
+        cls,
+        declaration: ExpandShrinkOperationModeDeclaration,
+    ) -> ExpandShrinkOperationModeDeclaration:
+        cls.__registry__[declaration.mode_label] = declaration
+        return declaration
 
     @classmethod
     def mode_for(
@@ -61,11 +77,11 @@ class ExpandShrinkOperationModeBinding(ABC, metaclass=AutoRegisterMeta):
     ) -> ExpandShrinkMode:
         resolved = coerce_cellprofiler_enum(CellProfilerExpandShrinkOperation, operation)
         matches = tuple(
-            binding_type.mode
-            for binding_type in cls.__registry__.values()
-            if resolved in binding_type.operations
+            declaration.mode
+            for declaration in cls.__registry__.values()
+            if declaration.includes_operation(resolved)
         )
-        if len(matches) != 1 or matches[0] is None:
+        if len(matches) != 1:
             raise ValueError(
                 "Expected exactly one ExpandOrShrinkObjects mode for operation "
                 f"{resolved.value!r}; found {len(matches)}."
@@ -73,52 +89,48 @@ class ExpandShrinkOperationModeBinding(ABC, metaclass=AutoRegisterMeta):
         return matches[0]
 
 
-class ExpandDefinedPixelsModeBinding(ExpandShrinkOperationModeBinding):
-    mode = ExpandShrinkMode.EXPAND_DEFINED_PIXELS
-    mode_label = mode.value
-    operations = (
-        CellProfilerExpandShrinkOperation.EXPAND_DEFINED_PIXELS,
-        CellProfilerExpandShrinkOperation.EXPAND_BY_MEASUREMENT,
-    )
+EXPAND_SHRINK_OPERATION_MODE_DECLARATIONS: tuple[
+    ExpandShrinkOperationModeDeclaration,
+    ...,
+] = (
+    ExpandShrinkOperationModeDeclaration(
+        ExpandShrinkMode.EXPAND_DEFINED_PIXELS,
+        (
+            CellProfilerExpandShrinkOperation.EXPAND_DEFINED_PIXELS,
+            CellProfilerExpandShrinkOperation.EXPAND_BY_MEASUREMENT,
+        ),
+    ),
+    ExpandShrinkOperationModeDeclaration(
+        ExpandShrinkMode.EXPAND_INFINITE,
+        (CellProfilerExpandShrinkOperation.EXPAND_UNTIL_TOUCHING,),
+    ),
+    ExpandShrinkOperationModeDeclaration(
+        ExpandShrinkMode.SHRINK_DEFINED_PIXELS,
+        (
+            CellProfilerExpandShrinkOperation.SHRINK_DEFINED_PIXELS,
+            CellProfilerExpandShrinkOperation.SHRINK_BY_MEASUREMENT,
+        ),
+    ),
+    ExpandShrinkOperationModeDeclaration(
+        ExpandShrinkMode.SHRINK_TO_POINT,
+        (CellProfilerExpandShrinkOperation.SHRINK_TO_POINT,),
+    ),
+    ExpandShrinkOperationModeDeclaration(
+        ExpandShrinkMode.ADD_DIVIDING_LINES,
+        (CellProfilerExpandShrinkOperation.ADD_DIVIDING_LINES,),
+    ),
+    ExpandShrinkOperationModeDeclaration(
+        ExpandShrinkMode.DESPUR,
+        (CellProfilerExpandShrinkOperation.DESPUR,),
+    ),
+    ExpandShrinkOperationModeDeclaration(
+        ExpandShrinkMode.SKELETONIZE,
+        (CellProfilerExpandShrinkOperation.SKELETONIZE,),
+    ),
+)
 
-
-class ExpandInfiniteModeBinding(ExpandShrinkOperationModeBinding):
-    mode = ExpandShrinkMode.EXPAND_INFINITE
-    mode_label = mode.value
-    operations = (CellProfilerExpandShrinkOperation.EXPAND_UNTIL_TOUCHING,)
-
-
-class ShrinkDefinedPixelsModeBinding(ExpandShrinkOperationModeBinding):
-    mode = ExpandShrinkMode.SHRINK_DEFINED_PIXELS
-    mode_label = mode.value
-    operations = (
-        CellProfilerExpandShrinkOperation.SHRINK_DEFINED_PIXELS,
-        CellProfilerExpandShrinkOperation.SHRINK_BY_MEASUREMENT,
-    )
-
-
-class ShrinkToPointModeBinding(ExpandShrinkOperationModeBinding):
-    mode = ExpandShrinkMode.SHRINK_TO_POINT
-    mode_label = mode.value
-    operations = (CellProfilerExpandShrinkOperation.SHRINK_TO_POINT,)
-
-
-class AddDividingLinesModeBinding(ExpandShrinkOperationModeBinding):
-    mode = ExpandShrinkMode.ADD_DIVIDING_LINES
-    mode_label = mode.value
-    operations = (CellProfilerExpandShrinkOperation.ADD_DIVIDING_LINES,)
-
-
-class DespurModeBinding(ExpandShrinkOperationModeBinding):
-    mode = ExpandShrinkMode.DESPUR
-    mode_label = mode.value
-    operations = (CellProfilerExpandShrinkOperation.DESPUR,)
-
-
-class SkeletonizeModeBinding(ExpandShrinkOperationModeBinding):
-    mode = ExpandShrinkMode.SKELETONIZE
-    mode_label = mode.value
-    operations = (CellProfilerExpandShrinkOperation.SKELETONIZE,)
+for declaration in EXPAND_SHRINK_OPERATION_MODE_DECLARATIONS:
+    ExpandShrinkOperationModeBinding.declare(declaration)
 
 
 EXPAND_OR_SHRINK_OBJECTS_SETTINGS: tuple[SettingToKeywordBinding, ...] = (
