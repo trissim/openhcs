@@ -156,11 +156,16 @@ class ImportStatementExtractor(ast.NodeVisitor):
 
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Visit function definitions to extract inline imports."""
+        self.visit_function_scope(node)
+
+    def visit_function_scope(
+        self,
+        node: ast.FunctionDef | ast.AsyncFunctionDef,
+    ) -> None:
+        """Visit any function-like scope while preserving inline import discovery."""
         self.generic_visit(node)
 
-    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
-        """Visit async function definitions to extract inline imports."""
-        self.generic_visit(node)
+    visit_AsyncFunctionDef = visit_FunctionDef
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         """Visit from-import statements (AST uses node.level for relative imports)."""
