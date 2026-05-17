@@ -384,27 +384,91 @@ class MeasurementQueryCacheInvalidationPolicy(MeasurementQueryCacheMutationPolic
             self.delete_entry(mutation, entry)
 
 
-class ObjectFeatureValueCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
-    """Invalidate object-feature vector cache entries touched by a table write."""
+@dataclass(frozen=True, slots=True)
+class MeasurementQueryCacheInvalidationDeclaration:
+    """Typed declaration for one measurement-query cache invalidation policy."""
 
-    policy_name = "object_feature_value"
-    entry_type = RuntimeObjectMeasurementQuery
-    feature_scoped = True
+    class_name: str
+    policy_name: str
+    entry_type: type[object]
+    feature_scoped: bool = False
+    doc: str = ""
+
+    def materialize(self) -> type[MeasurementQueryCacheInvalidationPolicy]:
+        namespace = {
+            "__module__": __name__,
+            "__doc__": self.doc,
+            "policy_name": self.policy_name,
+            "entry_type": self.entry_type,
+            "feature_scoped": self.feature_scoped,
+        }
+        return type(
+            self.class_name,
+            (MeasurementQueryCacheInvalidationPolicy,),
+            namespace,
+        )
 
 
-class ObjectLabelMeasurementValuesCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
-    """Invalidate label-aligned measurement vector cache entries touched by a write."""
+class MeasurementQueryCacheInvalidationFamily:
+    """Authoritative materializer for measurement-query cache policy classes."""
 
-    policy_name = "object_label_measurement_values"
-    entry_type = RuntimeObjectLabelMeasurementQuery
-    feature_scoped = True
+    declarations: ClassVar[tuple[MeasurementQueryCacheInvalidationDeclaration, ...]] = (
+        MeasurementQueryCacheInvalidationDeclaration(
+            class_name="ObjectFeatureValueCacheInvalidationPolicy",
+            policy_name="object_feature_value",
+            entry_type=RuntimeObjectMeasurementQuery,
+            feature_scoped=True,
+            doc="Invalidate object-feature vector cache entries touched by a table write.",
+        ),
+        MeasurementQueryCacheInvalidationDeclaration(
+            class_name="ObjectLabelMeasurementValuesCacheInvalidationPolicy",
+            policy_name="object_label_measurement_values",
+            entry_type=RuntimeObjectLabelMeasurementQuery,
+            feature_scoped=True,
+            doc="Invalidate label-aligned measurement vector cache entries touched by a write.",
+        ),
+        MeasurementQueryCacheInvalidationDeclaration(
+            class_name="ObjectMeasurementTableCacheInvalidationPolicy",
+            policy_name="object_measurement_table",
+            entry_type=ObjectMeasurementTableCacheKey,
+            doc="Invalidate object-subject measurement table query cache entries.",
+        ),
+    )
+
+    @classmethod
+    def materialize_exports(
+        cls,
+        namespace: MutableMapping[str, object],
+    ) -> tuple[type[MeasurementQueryCacheInvalidationPolicy], ...]:
+        policy_types = tuple(
+            declaration.materialize()
+            for declaration in cls.declarations
+        )
+        namespace.update(
+            {policy_type.__name__: policy_type for policy_type in policy_types}
+        )
+        return policy_types
+
+    @staticmethod
+    def bind_adapter_caches(
+        adapter_type: type["CellProfilerRuntimeAdapter"],
+    ) -> None:
+        ObjectFeatureValueCacheInvalidationPolicy.adapter_cache_accessor = (
+            adapter_type.object_feature_value_cache
+        )
+        ObjectLabelMeasurementValuesCacheInvalidationPolicy.adapter_cache_accessor = (
+            adapter_type.object_label_measurement_values_cache
+        )
+        ObjectMeasurementTableCacheInvalidationPolicy.adapter_cache_accessor = (
+            adapter_type.object_measurement_table_cache
+        )
 
 
-class ObjectMeasurementTableCacheInvalidationPolicy(MeasurementQueryCacheInvalidationPolicy):
-    """Invalidate object-subject measurement table query cache entries."""
-
-    policy_name = "object_measurement_table"
-    entry_type = ObjectMeasurementTableCacheKey
+(
+    ObjectFeatureValueCacheInvalidationPolicy,
+    ObjectLabelMeasurementValuesCacheInvalidationPolicy,
+    ObjectMeasurementTableCacheInvalidationPolicy,
+) = MeasurementQueryCacheInvalidationFamily.materialize_exports(globals())
 
 
 class ObjectMeasurementTableIndexInvalidationPolicy(MeasurementQueryCacheMutationPolicy):
@@ -2471,15 +2535,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         return candidates
 
 
-ObjectFeatureValueCacheInvalidationPolicy.adapter_cache_accessor = (
-    CellProfilerRuntimeAdapter.object_feature_value_cache
-)
-ObjectLabelMeasurementValuesCacheInvalidationPolicy.adapter_cache_accessor = (
-    CellProfilerRuntimeAdapter.object_label_measurement_values_cache
-)
-ObjectMeasurementTableCacheInvalidationPolicy.adapter_cache_accessor = (
-    CellProfilerRuntimeAdapter.object_measurement_table_cache
-)
+MeasurementQueryCacheInvalidationFamily.bind_adapter_caches(CellProfilerRuntimeAdapter)
 
 
 class RuntimeArtifactCacheInvalidationPolicy(
