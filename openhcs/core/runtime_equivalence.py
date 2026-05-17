@@ -344,6 +344,131 @@ class RuntimeAggregateMeanAccumulator:
         return self.total / self.count
 
 
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementCellPresence:
+    """Presence semantics for runtime measurement cell payloads."""
+
+    value: object
+
+    def is_present(self) -> bool:
+        value = canonical_scalar(self.value)
+        if value is None:
+            return False
+        array_payload = semantic_array_payload(value)
+        if array_payload is not None:
+            return any(axis > 0 for axis in array_payload[2])
+        if _runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
+            return bool(value)
+        text = str(value).strip()
+        if not text:
+            return False
+        try:
+            numeric = float(text)
+        except ValueError:
+            return True
+        return not math.isnan(numeric)
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementValuePresence:
+    """Presence semantics for scalar or nested runtime measurement values."""
+
+    value: object
+
+    def is_present(self) -> bool:
+        if _runtime_value_is_mapping(self.value):
+            return any(
+                RuntimeMeasurementValuePresence(nested).is_present()
+                for nested in self.value.values()
+            )
+        return RuntimeMeasurementCellPresence(self.value).is_present()
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFieldIndexMap:
+    """Normalized field-name lookup for runtime measurement rows."""
+
+    normalized_field_indexes: Mapping[str, int]
+
+    def indexes_for(self, field_names: tuple[str, ...]) -> tuple[int, ...]:
+        return tuple(
+            index
+            for field_name in field_names
+            if (index := self.normalized_field_indexes.get(field_name)) is not None
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeIndexedRowValues:
+    """Typed accessors for row values indexed by schema positions."""
+
+    row_values: tuple[object, ...]
+
+    def first_at(self, indexes: tuple[int, ...]) -> object | None:
+        if not indexes:
+            return None
+        return self.row_values[indexes[0]]
+
+    def text_at(self, index: int | None) -> str | None:
+        if index is None:
+            return None
+        value = self.row_values[index]
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementRowMapping:
+    """Normalized field-name lookup for runtime measurement row mappings."""
+
+    row: Mapping[str, object]
+
+    def first_value(self, field_names: tuple[str, ...]) -> object | None:
+        normalized_fields = {_normalize_identifier(field): field for field in self.row}
+        for field_name in field_names:
+            field = normalized_fields.get(field_name)
+            if field is not None:
+                return self.row[field]
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMetadataMapRow:
+    """Experiment metadata key/value row predicate."""
+
+    subject: RuntimeMeasurementSubjectKey
+    row: Mapping[str, object]
+
+    def matches(self) -> bool:
+        if self.subject.scope is not MeasurementScope.EXPERIMENT:
+            return False
+        normalized_fields = frozenset(
+            _normalize_identifier(field_name) for field_name in self.row
+        )
+        return normalized_fields == frozenset(("key", "value"))
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementIdentityField:
+    """Runtime measurement identity-field predicate for a dialect."""
+
+    dialect: RuntimeMeasurementDialect
+
+    def field_matches(self, field_name: str) -> bool:
+        return self.normalized_field_matches(_normalize_identifier(field_name))
+
+    def normalized_field_matches(self, normalized: str) -> bool:
+        if normalized in _MEASUREMENT_IDENTITY_FIELDS:
+            return True
+        if normalized in measurement_qualifier_field_names(self.dialect):
+            return True
+        if normalized.startswith(_NON_MEASUREMENT_FIELD_PREFIXES):
+            return True
+        return normalized.startswith("metadata_")
+
+
 _AggregateValuesByFeature = dict[
     tuple[RuntimeMeasurementFeatureKey, tuple[tuple[str, object], ...]],
     RuntimeAggregateMeanAccumulator,
@@ -3666,14 +3791,16 @@ def _record_static_wide_measurement_table_snapshot(
         return False
 
     first_subject = _measurement_subject_from_export_row(table.path, first_row)
-    if _is_metadata_map_row(first_subject, first_row):
+    if RuntimeMetadataMapRow(first_subject, first_row).matches():
         return True
 
     normalized_fields = tuple(_normalize_identifier(field) for field in table.header)
     identity_indexes = {
         index
         for index, field_name in enumerate(normalized_fields)
-        if _is_measurement_identity_field(field_name, policy.measurement_dialect)
+        if RuntimeMeasurementIdentityField(
+            policy.measurement_dialect
+        ).normalized_field_matches(field_name)
     }
     feature_column_indexes = tuple(
         index
@@ -3879,7 +4006,7 @@ def _record_static_wide_runtime_measurement_table(
         first_row_values,
         subject_schema,
     )
-    if _is_metadata_map_row(first_subject, first_mapping):
+    if RuntimeMetadataMapRow(first_subject, first_mapping).matches():
         return True
 
     normalized_fields = tuple(_normalize_identifier(field) for field in header)
@@ -3890,10 +4017,9 @@ def _record_static_wide_runtime_measurement_table(
     identity_indexes = {
         index
         for index, field_name in enumerate(normalized_fields)
-        if _is_normalized_measurement_identity_field(
-            field_name,
-            policy.measurement_dialect,
-        )
+        if RuntimeMeasurementIdentityField(
+            policy.measurement_dialect
+        ).normalized_field_matches(field_name)
     }
     feature_column_indexes = tuple(
         index for index in range(len(header)) if index not in identity_indexes
@@ -4075,7 +4201,7 @@ class StaticWideRuntimeRowProjector:
             padding_group = self.padding_group(field_name, key, qualifiers)
             padding_group_presence[padding_group] = (
                 padding_group_presence.get(padding_group, False)
-                or _measurement_value_is_present(value)
+                or RuntimeMeasurementValuePresence(value).is_present()
             )
             if (
                 self.context.input_keys is not None
@@ -4461,7 +4587,7 @@ def _runtime_row_measurement_fact_priority(
 ) -> int:
     """Return dialect category priority for the row field that produced ``key``."""
     candidates: list[str] = []
-    long_form_feature = _first_row_value(row_mapping, _MEASUREMENT_FEATURE_NAME_FIELDS)
+    long_form_feature = RuntimeMeasurementRowMapping(row_mapping).first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
     cache_key = RuntimeMeasurementRowPriorityCacheKey(
         row_fields=tuple(row_mapping),
         long_form_feature=str(long_form_feature) if long_form_feature is not None else None,
@@ -4525,10 +4651,9 @@ class RuntimeMeasurementFeatureCategoryPriority:
 
     def priority(self) -> int | None:
         normalized = _normalize_identifier(self.feature_name)
-        if _is_normalized_measurement_identity_field(
-            normalized,
-            self.policy.measurement_dialect,
-        ):
+        if RuntimeMeasurementIdentityField(
+            self.policy.measurement_dialect
+        ).normalized_field_matches(normalized):
             return None
         parts = tuple(part for part in normalized.split("_") if part)
         for index, prefix in enumerate(
@@ -4586,7 +4711,7 @@ def _runtime_measurement_row_has_primary_object_features(
     policy: RuntimeEquivalencePolicy,
 ) -> bool:
     primary_location_priority = _object_location_primary_row_priority(policy)
-    long_form_feature = _first_row_value(row_mapping, _MEASUREMENT_FEATURE_NAME_FIELDS)
+    long_form_feature = RuntimeMeasurementRowMapping(row_mapping).first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
     feature_names = (
         (str(long_form_feature),)
         if long_form_feature is not None
@@ -4803,7 +4928,7 @@ def _runtime_table_image_number_offset(rows: Iterable[object]) -> float:
     image_numbers: list[float] = []
     for row in rows:
         row_mapping = measurement_row_mapping(row)
-        image_number = _first_row_value(row_mapping, ("image_number",))
+        image_number = RuntimeMeasurementRowMapping(row_mapping).first_value(("image_number",))
         if image_number is None:
             continue
         try:
@@ -4933,10 +5058,9 @@ class RuntimeTableSnapshotFactExtractor:
         feature_indexes = tuple(
             index
             for index, field_name in enumerate(self.table.header)
-            if not _is_measurement_identity_field(
-                field_name,
-                self.policy.measurement_dialect,
-            )
+            if not RuntimeMeasurementIdentityField(
+                self.policy.measurement_dialect
+            ).field_matches(field_name)
         )
         if not feature_indexes:
             return self.identity_facts()
@@ -4959,7 +5083,7 @@ class RuntimeTableSnapshotFactExtractor:
                 self.table.path,
                 row_mapping,
             )
-            if _is_metadata_map_row(row_subject, row_mapping):
+            if RuntimeMetadataMapRow(row_subject, row_mapping).matches():
                 continue
             source_name = measurement_row_source_image_name(row_mapping)
             padding_indexes = _contextual_measurement_padding_indexes(
@@ -4987,10 +5111,9 @@ class RuntimeTableSnapshotFactExtractor:
             for index, field_name in enumerate(self.table.header):
                 if index in padding_indexes:
                     continue
-                if _is_measurement_identity_field(
-                    field_name,
-                    self.policy.measurement_dialect,
-                ):
+                if RuntimeMeasurementIdentityField(
+                    self.policy.measurement_dialect
+                ).field_matches(field_name):
                     continue
                 subject = _measurement_subject_from_export_column(
                     self.table,
@@ -5073,17 +5196,16 @@ class RuntimeTableSnapshotFactExtractor:
             return None
 
         subject = _measurement_subject_from_export_row(self.table.path, first_row)
-        if _is_metadata_map_row(subject, first_row):
+        if RuntimeMetadataMapRow(subject, first_row).matches():
             return ()
 
         source_name = measurement_row_source_image_name(first_row)
         feature_columns = tuple(
             (index, key)
             for index, field_name in enumerate(self.table.header)
-            if not _is_measurement_identity_field(
-                field_name,
-                self.policy.measurement_dialect,
-            )
+            if not RuntimeMeasurementIdentityField(
+                self.policy.measurement_dialect
+            ).field_matches(field_name)
             and not _is_aggregate_image_number_reference_measurement_field(field_name)
             for column_subject in (
                 _measurement_subject_from_export_column(
@@ -5392,7 +5514,7 @@ class RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
     def project(self) -> RuntimeRowProjection[_RuntimeRowProjectionValueT]:
         """Project one runtime row through shared schema/key/padding caches."""
         context = self.context
-        if _is_metadata_map_row(context.subject, context.row):
+        if RuntimeMetadataMapRow(context.subject, context.row).matches():
             return runtime_row_projection()
 
         header = tuple(context.row)
@@ -5490,7 +5612,7 @@ class RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
         padding_group = self._padding_group(field_name, key)
         padding_group_presence[padding_group] = (
             padding_group_presence.get(padding_group, False)
-            or _measurement_value_is_present(value)
+            or RuntimeMeasurementValuePresence(value).is_present()
         )
         if (
             context.required_keys is not None
@@ -5678,10 +5800,9 @@ class RuntimeMeasurementRowSchemaProjector:
         feature_indexes = tuple(
             index
             for index, field_name in enumerate(normalized_fields)
-            if not _is_normalized_measurement_identity_field(
-                field_name,
-                self.context.policy.measurement_dialect,
-            )
+            if not RuntimeMeasurementIdentityField(
+                self.context.policy.measurement_dialect
+            ).normalized_field_matches(field_name)
             and index not in aggregate_reference_indexes
         )
         qualifier_indexes = {
@@ -5709,13 +5830,11 @@ class RuntimeMeasurementRowSchemaProjector:
         cached_schema = _RuntimeMeasurementRowSchema(
             feature_indexes,
             qualifiers_by_index,
-            _field_indexes_for_names(
-                normalized_field_indexes,
-                _MEASUREMENT_FEATURE_NAME_FIELDS,
+            RuntimeMeasurementFieldIndexMap(normalized_field_indexes).indexes_for(
+                _MEASUREMENT_FEATURE_NAME_FIELDS
             ),
-            _field_indexes_for_names(
-                normalized_field_indexes,
-                _MEASUREMENT_VALUE_FIELDS,
+            RuntimeMeasurementFieldIndexMap(normalized_field_indexes).indexes_for(
+                _MEASUREMENT_VALUE_FIELDS
             ),
         )
         self.context.schema_cache[self.header] = cached_schema
@@ -5864,18 +5983,6 @@ class RuntimeDirectionalPairMeasurementDerivationContract:
             if correlation_value is not None:
                 return correlation_value
         return None
-
-
-def _is_metadata_map_row(
-    subject: RuntimeMeasurementSubjectKey,
-    row: Mapping[str, object],
-) -> bool:
-    if subject.scope is not MeasurementScope.EXPERIMENT:
-        return False
-    normalized_fields = frozenset(
-        _normalize_identifier(field_name) for field_name in row
-    )
-    return normalized_fields == frozenset(("key", "value"))
 
 
 class RuntimeMeasurementFactProjectionContract:
@@ -6098,7 +6205,7 @@ def _contextual_measurement_padding_indexes(
 
     padding_indexes: set[int] = set()
     for indexes in indexes_by_group.values():
-        if any(_measurement_cell_is_present(row_values[index]) for index in indexes):
+        if any(RuntimeMeasurementCellPresence(row_values[index]).is_present() for index in indexes):
             continue
         padding_indexes.update(indexes)
     return frozenset(padding_indexes)
@@ -6143,7 +6250,7 @@ def _contextual_measurement_padding_group(
     normalized_context = _normalize_identifier(context)
     if not normalized_context or normalized_context in _CSV_HEADER_CONTEXT_STOPWORDS:
         return None
-    if _is_measurement_identity_field(field_name, dialect):
+    if RuntimeMeasurementIdentityField(dialect).field_matches(field_name):
         return None
 
     normalized_field = _normalize_identifier(field_name)
@@ -6172,31 +6279,6 @@ def _measurement_category_prefix(
     if not matches:
         return ()
     return max(matches, key=len)
-
-
-def _measurement_cell_is_present(value: object) -> bool:
-    value = canonical_scalar(value)
-    if value is None:
-        return False
-    array_payload = semantic_array_payload(value)
-    if array_payload is not None:
-        return any(axis > 0 for axis in array_payload[2])
-    if _runtime_value_is_mapping(value) or isinstance(value, (tuple, list)):
-        return bool(value)
-    text = str(value).strip()
-    if not text:
-        return False
-    try:
-        numeric = float(text)
-    except ValueError:
-        return True
-    return not math.isnan(numeric)
-
-
-def _measurement_value_is_present(value: object) -> bool:
-    if _runtime_value_is_mapping(value):
-        return any(_measurement_value_is_present(nested) for nested in value.values())
-    return _measurement_cell_is_present(value)
 
 
 @lru_cache(maxsize=256)
@@ -6271,8 +6353,8 @@ def _reverse_regression_slope(
 def _long_form_measurement_fact(
     context: _LongFormMeasurementContext,
 ) -> _RuntimeLongFormMeasurementFact:
-    feature_name = _first_row_value(context.row, _MEASUREMENT_FEATURE_NAME_FIELDS)
-    value = _first_row_value(context.row, _MEASUREMENT_VALUE_FIELDS)
+    feature_name = RuntimeMeasurementRowMapping(context.row).first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
+    value = RuntimeMeasurementRowMapping(context.row).first_value(_MEASUREMENT_VALUE_FIELDS)
     if feature_name is None or value is None:
         return None
     if _is_aggregate_image_number_reference_measurement_field(str(feature_name)):
@@ -6318,13 +6400,11 @@ class RuntimeMeasurementLongFormFactProjector:
     context: _CachedLongFormMeasurementContext
 
     def fact(self) -> _RuntimeLongFormMeasurementFact:
-        feature_name = _first_indexed_row_value(
-            self.context.row_values,
-            self.context.feature_indexes,
+        feature_name = RuntimeIndexedRowValues(self.context.row_values).first_at(
+            self.context.feature_indexes
         )
-        value = _first_indexed_row_value(
-            self.context.row_values,
-            self.context.value_indexes,
+        value = RuntimeIndexedRowValues(self.context.row_values).first_at(
+            self.context.value_indexes
         )
         if feature_name is None or value is None:
             return None
@@ -6377,26 +6457,6 @@ class RuntimeMeasurementLongFormFactProjector:
             canonical_source_name,
             self.context.policy.measurement_dialect,
         )
-
-
-def _field_indexes_for_names(
-    normalized_field_indexes: Mapping[str, int],
-    field_names: tuple[str, ...],
-) -> tuple[int, ...]:
-    return tuple(
-        index
-        for field_name in field_names
-        if (index := normalized_field_indexes.get(field_name)) is not None
-    )
-
-
-def _first_indexed_row_value(
-    row_values: tuple[object, ...],
-    indexes: tuple[int, ...],
-) -> object | None:
-    if not indexes:
-        return None
-    return row_values[indexes[0]]
 
 
 def _measurement_feature_key_for_field(
@@ -8082,13 +8142,11 @@ def _runtime_measurement_row_subject_schema(
     return (
         normalized_field_indexes.get(MEASUREMENT_OBJECT_NAME_FIELD),
         normalized_field_indexes.get(MEASUREMENT_SOURCE_IMAGE_NAME_FIELD),
-        _field_indexes_for_names(
-            normalized_field_indexes,
-            MEASUREMENT_OBJECT_ID_FIELDS,
+        RuntimeMeasurementFieldIndexMap(normalized_field_indexes).indexes_for(
+            MEASUREMENT_OBJECT_ID_FIELDS
         ),
-        _field_indexes_for_names(
-            normalized_field_indexes,
-            tuple(sorted(_IMAGE_IDENTITY_FIELDS)),
+        RuntimeMeasurementFieldIndexMap(normalized_field_indexes).indexes_for(
+            tuple(sorted(_IMAGE_IDENTITY_FIELDS))
         ),
     )
 
@@ -8098,7 +8156,7 @@ def _measurement_source_name_from_runtime_row_values(
     row_values: tuple[object, ...],
     subject_schema: _RuntimeMeasurementRowSubjectSchema,
 ) -> str | None:
-    row_source_name = _indexed_row_text(row_values, subject_schema[1])
+    row_source_name = RuntimeIndexedRowValues(row_values).text_at(subject_schema[1])
     if row_source_name is not None:
         return row_source_name
     return table_source_name
@@ -8268,31 +8326,18 @@ def _measurement_subject_from_runtime_row_values(
     object_name_index, source_name_index, object_identity_indexes, image_identity_indexes = (
         subject_schema
     )
-    object_name = _indexed_row_text(row_values, object_name_index)
+    object_name = RuntimeIndexedRowValues(row_values).text_at(object_name_index)
     has_object_identity = _indexed_row_has_value(row_values, object_identity_indexes)
     has_image_identity = _indexed_row_has_value(row_values, image_identity_indexes)
     return RuntimeMeasurementRowSubjectResolutionStrategy.resolve(
         RuntimeMeasurementRowSubjectResolutionContext(
             table_subject=table_subject,
             object_name=object_name,
-            row_source_name=_indexed_row_text(row_values, source_name_index),
+            row_source_name=RuntimeIndexedRowValues(row_values).text_at(source_name_index),
             has_object_identity=has_object_identity,
             has_image_identity=has_image_identity,
         )
     )
-
-
-def _indexed_row_text(
-    row_values: tuple[object, ...],
-    index: int | None,
-) -> str | None:
-    if index is None:
-        return None
-    value = row_values[index]
-    if value is None:
-        return None
-    text = str(value).strip()
-    return text or None
 
 
 def _indexed_row_has_value(
@@ -8337,7 +8382,7 @@ def _measurement_subject_from_export_column(
         return fallback_subject
 
     field_name = table.header[index]
-    if _is_measurement_identity_field(field_name, DEFAULT_RUNTIME_MEASUREMENT_DIALECT):
+    if RuntimeMeasurementIdentityField(DEFAULT_RUNTIME_MEASUREMENT_DIALECT).field_matches(field_name):
         return fallback_subject
 
     context, normalized_context = _export_column_subject_context(table, index)
@@ -8417,18 +8462,6 @@ def _row_has_identity_value(
         if str(value).strip():
             return True
     return False
-
-
-def _first_row_value(
-    row: Mapping[str, object],
-    field_names: tuple[str, ...],
-) -> object | None:
-    normalized_fields = {_normalize_identifier(field): field for field in row}
-    for field_name in field_names:
-        field = normalized_fields.get(field_name)
-        if field is not None:
-            return row[field]
-    return None
 
 
 def _canonical_measurement_feature_name(
@@ -8731,27 +8764,6 @@ def _strip_subject_suffix_feature_name(
     ):
         return "_".join(feature_parts[: -len(subject_parts)])
     return feature_name
-
-
-def _is_measurement_identity_field(
-    field_name: str,
-    dialect: RuntimeMeasurementDialect,
-) -> bool:
-    normalized = _normalize_identifier(field_name)
-    return _is_normalized_measurement_identity_field(normalized, dialect)
-
-
-def _is_normalized_measurement_identity_field(
-    normalized: str,
-    dialect: RuntimeMeasurementDialect,
-) -> bool:
-    if normalized in _MEASUREMENT_IDENTITY_FIELDS:
-        return True
-    if normalized in measurement_qualifier_field_names(dialect):
-        return True
-    if normalized.startswith(_NON_MEASUREMENT_FIELD_PREFIXES):
-        return True
-    return normalized.startswith("metadata_")
 
 
 _MEASUREMENT_FEATURE_NAME_FIELDS = MEASUREMENT_FEATURE_NAME_FIELDS
