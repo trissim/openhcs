@@ -17,7 +17,7 @@ from pathlib import Path
 from types import MappingProxyType, ModuleType
 from typing import Any, ClassVar, Generic, TypeVar
 
-from metaclass_registry import AutoRegisterMeta
+from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 import numpy as np
 
 import openhcs.core.runtime_artifact_queries as runtime_artifact_queries
@@ -348,6 +348,145 @@ class RuntimeMeasurementFactCounters:
         return counter
 
 
+class SparseNumericCounterToleranceProfile(Enum):
+    """Sparse numeric comparison tolerance profile."""
+
+    OBJECT_BOUNDARY = auto()
+    SHAPE_DESCRIPTOR = auto()
+    BINARY_NUMERIC = auto()
+    ZERNIKE_DESCRIPTOR = auto()
+
+    def equivalent(
+        self,
+        reference_values: Counter[RuntimeCellSignature],
+        candidate_values: Counter[RuntimeCellSignature],
+        policy: RuntimeEquivalencePolicy,
+        *,
+        descriptor: IndexedObjectZernikeDescriptor | None = None,
+    ) -> bool:
+        tolerance = SparseNumericCounterToleranceStrategy.for_enum_member(
+            self
+        ).tolerance(policy, descriptor=descriptor)
+        return _sparse_numeric_counters_equivalent(
+            reference_values,
+            candidate_values,
+            policy,
+            abs_tolerance=tolerance[0],
+            rel_tolerance=tolerance[1],
+            max_unstable_values=tolerance[2],
+            max_unstable_fraction=tolerance[3],
+        )
+
+
+class SparseNumericCounterToleranceStrategy(
+    EnumKeyedStrategyMixin[SparseNumericCounterToleranceProfile],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Sparse numeric tolerance profile strategy."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
+    __enum_member_attr__ = "profile"
+
+    profile: ClassVar[SparseNumericCounterToleranceProfile]
+    strategy_label: ClassVar[str | None] = None
+
+    @abstractmethod
+    def tolerance(
+        self,
+        policy: RuntimeEquivalencePolicy,
+        *,
+        descriptor: IndexedObjectZernikeDescriptor | None,
+    ) -> tuple[float, float, int, float]:
+        """Return sparse numeric tolerance settings."""
+
+
+class ObjectBoundarySparseNumericTolerance(SparseNumericCounterToleranceStrategy):
+    """Object-boundary sparse jitter tolerance."""
+
+    profile = SparseNumericCounterToleranceProfile.OBJECT_BOUNDARY
+
+    def tolerance(
+        self,
+        policy: RuntimeEquivalencePolicy,
+        *,
+        descriptor: IndexedObjectZernikeDescriptor | None,
+    ) -> tuple[float, float, int, float]:
+        del descriptor
+        return (
+            policy.object_boundary_jitter_abs_tolerance,
+            policy.object_boundary_jitter_rel_tolerance,
+            policy.object_boundary_jitter_max_unstable_values,
+            policy.object_boundary_jitter_max_unstable_fraction,
+        )
+
+
+class ShapeDescriptorSparseNumericTolerance(SparseNumericCounterToleranceStrategy):
+    """Shape-descriptor sparse tolerance."""
+
+    profile = SparseNumericCounterToleranceProfile.SHAPE_DESCRIPTOR
+
+    def tolerance(
+        self,
+        policy: RuntimeEquivalencePolicy,
+        *,
+        descriptor: IndexedObjectZernikeDescriptor | None,
+    ) -> tuple[float, float, int, float]:
+        del descriptor
+        return (
+            policy.shape_descriptor_abs_tolerance,
+            policy.shape_descriptor_rel_tolerance,
+            policy.shape_descriptor_max_unstable_values,
+            policy.shape_descriptor_max_unstable_fraction,
+        )
+
+
+class BinarySparseNumericTolerance(SparseNumericCounterToleranceStrategy):
+    """Binary numeric sparse tolerance."""
+
+    profile = SparseNumericCounterToleranceProfile.BINARY_NUMERIC
+
+    def tolerance(
+        self,
+        policy: RuntimeEquivalencePolicy,
+        *,
+        descriptor: IndexedObjectZernikeDescriptor | None,
+    ) -> tuple[float, float, int, float]:
+        del descriptor
+        return (
+            policy.numeric_abs_tolerance,
+            policy.numeric_rel_tolerance,
+            policy.object_boundary_jitter_max_unstable_values,
+            policy.object_boundary_jitter_max_unstable_fraction,
+        )
+
+
+class ZernikeDescriptorSparseNumericTolerance(SparseNumericCounterToleranceStrategy):
+    """Zernike descriptor sparse tolerance."""
+
+    profile = SparseNumericCounterToleranceProfile.ZERNIKE_DESCRIPTOR
+
+    def tolerance(
+        self,
+        policy: RuntimeEquivalencePolicy,
+        *,
+        descriptor: IndexedObjectZernikeDescriptor | None,
+    ) -> tuple[float, float, int, float]:
+        if descriptor is None:
+            raise ValueError("Zernike sparse tolerance requires a descriptor.")
+        abs_tolerance = (
+            policy.zernike_descriptor_phase_abs_tolerance
+            if descriptor.family is ObjectZernikeDescriptorFeature.INTENSITY_PHASE
+            else policy.zernike_descriptor_magnitude_abs_tolerance
+        )
+        return (
+            abs_tolerance,
+            policy.zernike_descriptor_rel_tolerance,
+            policy.object_boundary_jitter_max_unstable_values,
+            policy.object_boundary_jitter_max_unstable_fraction,
+        )
+
+
 @dataclass(frozen=True, slots=True)
 class RuntimeMeasurementCellSignatureProjection:
     """Project runtime measurement payloads into comparison cell signatures."""
@@ -518,6 +657,28 @@ class RuntimeMeasurementFieldIndexMap:
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeIndexedRowText:
+    """Normalized optional text at an indexed row position."""
+
+    row_values: tuple[object, ...]
+    index: int | None
+
+    @property
+    def text(self) -> str | None:
+        if self.index is None:
+            return None
+        value = self.row_values[self.index]
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    @property
+    def present(self) -> bool:
+        return self.text is not None
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeIndexedRowValues:
     """Typed accessors for row values indexed by schema positions."""
 
@@ -528,20 +689,10 @@ class RuntimeIndexedRowValues:
             return None
         return self.row_values[indexes[0]]
 
-    def text_at(self, index: int | None) -> str | None:
-        if index is None:
-            return None
-        value = self.row_values[index]
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
-
     def has_text_at_any(self, indexes: tuple[int, ...]) -> bool:
-        for index in indexes:
-            if self.text_at(index) is not None:
-                return True
-        return False
+        return any(
+            RuntimeIndexedRowText(self.row_values, index).present for index in indexes
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1061,8 +1212,7 @@ class RuntimeMeasurementStatisticDependencyStrategy(
 ):
     """Declare input measurement keys required by one output statistic."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "statistic"
 
     statistic: ClassVar[MeasurementStatistic]
@@ -1801,8 +1951,7 @@ class RuntimeObjectCountAuthority:
 class ObjectLabelMeasurementProjectionStrategy(ABC, metaclass=AutoRegisterMeta):
     """Project object-label payloads into measurement domains by declared scope."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
 
     scope: ClassVar[ObjectLabelDomainScope]
     strategy_label: ClassVar[str | None] = None
@@ -1892,8 +2041,7 @@ class ObjectIdentifierDomainProjectionStrategy(
 ):
     """Project object-label domains into ObjectNumber measurement rows."""
 
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_KEY)
 
     strategy_key: ClassVar[str | None] = None
 
@@ -2228,8 +2376,7 @@ class TieSensitiveLocationValueFeatureStrategy(
 ):
     """Registered resolver for location-feature value dependencies."""
 
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_KEY)
 
     strategy_key: ClassVar[str | None] = None
 
@@ -2373,8 +2520,7 @@ class ShapeDescriptorFeatureSemantics(
 ):
     """Classify direct and derived shape descriptor measurement features."""
 
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_KEY)
 
     strategy_key: ClassVar[str | None] = None
 
@@ -2402,14 +2548,10 @@ class ShapeDescriptorFeatureSemantics(
         candidate_values: Counter[RuntimeCellSignature],
     ) -> bool:
         """Return sparse-boundary equivalence for descriptor values."""
-        return _sparse_numeric_counters_equivalent(
+        return SparseNumericCounterToleranceProfile.OBJECT_BOUNDARY.equivalent(
             reference_values,
             candidate_values,
             context.policy,
-            abs_tolerance=context.policy.object_boundary_jitter_abs_tolerance,
-            rel_tolerance=context.policy.object_boundary_jitter_rel_tolerance,
-            max_unstable_values=context.policy.object_boundary_jitter_max_unstable_values,
-            max_unstable_fraction=context.policy.object_boundary_jitter_max_unstable_fraction,
         )
 
 
@@ -2469,14 +2611,10 @@ class ShapeZernikeDescriptorFeatureSemantics(ShapeDescriptorFeatureSemantics):
         reference_values: Counter[RuntimeCellSignature],
         candidate_values: Counter[RuntimeCellSignature],
     ) -> bool:
-        return _sparse_numeric_counters_equivalent(
+        return SparseNumericCounterToleranceProfile.SHAPE_DESCRIPTOR.equivalent(
             reference_values,
             candidate_values,
             context.policy,
-            abs_tolerance=context.policy.shape_descriptor_abs_tolerance,
-            rel_tolerance=context.policy.shape_descriptor_rel_tolerance,
-            max_unstable_values=context.policy.shape_descriptor_max_unstable_values,
-            max_unstable_fraction=context.policy.shape_descriptor_max_unstable_fraction,
         )
 
 class ObjectZernikeDescriptorStabilityContract(
@@ -2486,8 +2624,7 @@ class ObjectZernikeDescriptorStabilityContract(
 ):
     """Declare which object-domain facts make a Zernike descriptor comparable."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "descriptor_family"
 
     descriptor_family: ClassVar[ObjectZernikeDescriptorFeature]
@@ -3826,6 +3963,56 @@ class RuntimeMeasurementNamePartsProjection:
 
 
 @dataclass(frozen=True, slots=True)
+class SemanticAggregatePrefixedFeatureProjection:
+    """Projection of an aggregate-prefixed feature into semantic core form."""
+
+    parts: tuple[str, ...]
+    dialect: RuntimeMeasurementDialect
+    known_source_names: tuple[str, ...]
+
+    def project(self) -> tuple[str, str | None] | None:
+        aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
+            self.parts,
+            self.dialect,
+        )
+        if aggregate_identity is None:
+            return None
+        projected_child = SemanticCoreFeatureAndSourceNameProjection(
+            aggregate_identity.feature_name,
+            self.dialect,
+            self.known_source_names,
+        ).project()
+        return SemanticAggregateFeatureProjection(
+            aggregate_identity,
+            projected_child,
+        ).feature_name_and_source()
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticAggregateFeatureProjection:
+    """Resolved aggregate identity and projected child feature."""
+
+    aggregate_identity: RuntimeAggregateFeatureIdentity
+    projected_child: tuple[str, str | None]
+
+    def feature_name_and_source(self) -> tuple[str, str | None] | None:
+        feature_name, source_name = self.projected_child
+        feature_name_parts = tuple(part for part in feature_name.split("_") if part)
+        if not feature_name_parts:
+            return None
+        return (
+            "_".join(
+                (
+                    self.aggregate_identity.aggregate,
+                    *self.aggregate_identity.object_name_parts,
+                    *feature_name_parts,
+                )
+            ),
+            source_name,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class SemanticCoreFeatureAndSourceNameProjection:
     """Project a runtime feature name to its semantic core and source qualifier."""
 
@@ -3839,9 +4026,11 @@ class SemanticCoreFeatureAndSourceNameProjection:
             self.dialect,
             known_source_names=self.known_source_names,
         )
-        aggregate_feature = self.aggregate_prefixed_feature_name_and_source(
-            parts_projection.parts
-        )
+        aggregate_feature = SemanticAggregatePrefixedFeatureProjection(
+            parts_projection.parts,
+            self.dialect,
+            self.known_source_names,
+        ).project()
         if aggregate_feature is not None:
             return aggregate_feature
         parts_projection = parts_projection.strip_category_prefix_for_core()
@@ -3862,36 +4051,6 @@ class SemanticCoreFeatureAndSourceNameProjection:
         ).semantic_core_parts()
         source_name = "__".join(source_names) if source_names else None
         return "_".join(core_parts), source_name
-
-    def aggregate_prefixed_feature_name_and_source(
-        self,
-        parts: tuple[str, ...],
-    ) -> tuple[str, str | None] | None:
-        aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
-            parts,
-            self.dialect,
-        )
-        if aggregate_identity is None:
-            return None
-        feature_name, source_name = SemanticCoreFeatureAndSourceNameProjection(
-            aggregate_identity.feature_name,
-            self.dialect,
-            self.known_source_names,
-        ).project()
-        feature_name_parts = tuple(part for part in feature_name.split("_") if part)
-        if not feature_name_parts:
-            return None
-        return (
-            "_".join(
-                (
-                    aggregate_identity.aggregate,
-                    *aggregate_identity.object_name_parts,
-                    *feature_name_parts,
-                )
-            ),
-            source_name,
-        )
-
 
 @dataclass(frozen=True, slots=True)
 class SparseObjectBoundaryEquivalence:
@@ -3916,14 +4075,10 @@ class SparseObjectBoundaryEquivalence:
         ).values_equivalent(self)
 
     def boundary_numeric_counters_equivalent(self) -> bool:
-        return _sparse_numeric_counters_equivalent(
+        return SparseNumericCounterToleranceProfile.OBJECT_BOUNDARY.equivalent(
             self.reference.values_by_feature[self.feature],
             self.candidate.values_by_feature[self.feature],
             self.policy,
-            abs_tolerance=self.policy.object_boundary_jitter_abs_tolerance,
-            rel_tolerance=self.policy.object_boundary_jitter_rel_tolerance,
-            max_unstable_values=self.policy.object_boundary_jitter_max_unstable_values,
-            max_unstable_fraction=self.policy.object_boundary_jitter_max_unstable_fraction,
         )
 
     def shape_descriptor_values_equivalent(self) -> bool:
@@ -3945,14 +4100,10 @@ class SparseObjectBoundaryEquivalence:
             self.reference.values_by_feature[self.feature],
             self.candidate.values_by_feature[self.feature],
         ):
-            return _sparse_numeric_counters_equivalent(
+            return SparseNumericCounterToleranceProfile.BINARY_NUMERIC.equivalent(
                 self.reference.values_by_feature[self.feature],
                 self.candidate.values_by_feature[self.feature],
                 self.policy,
-                abs_tolerance=self.policy.numeric_abs_tolerance,
-                rel_tolerance=self.policy.numeric_rel_tolerance,
-                max_unstable_values=self.policy.object_boundary_jitter_max_unstable_values,
-                max_unstable_fraction=self.policy.object_boundary_jitter_max_unstable_fraction,
             )
         return self.boundary_numeric_counters_equivalent()
 
@@ -3987,8 +4138,7 @@ class SparseObjectBoundaryStatisticEquivalence(
 ):
     """Statistic-specific sparse object-boundary equivalence."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "statistic"
 
     statistic: ClassVar[MeasurementStatistic]
@@ -4339,19 +4489,11 @@ def _zernike_descriptor_values_equivalent(
     ):
         return False
 
-    abs_tolerance = (
-        policy.zernike_descriptor_phase_abs_tolerance
-        if descriptor.family is ObjectZernikeDescriptorFeature.INTENSITY_PHASE
-        else policy.zernike_descriptor_magnitude_abs_tolerance
-    )
-    return _sparse_numeric_counters_equivalent(
+    return SparseNumericCounterToleranceProfile.ZERNIKE_DESCRIPTOR.equivalent(
         reference.values_by_feature[feature],
         candidate.values_by_feature[feature],
         policy,
-        abs_tolerance=abs_tolerance,
-        rel_tolerance=policy.zernike_descriptor_rel_tolerance,
-        max_unstable_values=policy.object_boundary_jitter_max_unstable_values,
-        max_unstable_fraction=policy.object_boundary_jitter_max_unstable_fraction,
+        descriptor=descriptor,
     )
 
 
@@ -5099,8 +5241,7 @@ def _dedupe_runtime_measurement_table_object_subtable(
 class RuntimeObjectLocationRowMergeContract(metaclass=AutoRegisterMeta):
     """SSOT for object-location value facts merged by runtime row identity."""
 
-    __registry_key__ = "registry_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
 
     registry_key: ClassVar[str | None] = None
     policy: RuntimeEquivalencePolicy
@@ -6595,6 +6736,53 @@ def _measurement_field_has_collapsed_numeric_qualifier(
 
 
 @dataclass(frozen=True, slots=True)
+class ContextualMeasurementPaddingColumn:
+    """One contextual wide-table column that may belong to a padding group."""
+
+    context: str | None
+    field_name: str
+    dialect: RuntimeMeasurementDialect
+    known_source_names: tuple[str, ...]
+
+    @property
+    def normalized_context(self) -> str | None:
+        if self.context is None:
+            return None
+        normalized = _normalize_identifier(self.context)
+        if not normalized or normalized in _CSV_HEADER_CONTEXT_STOPWORDS:
+            return None
+        return normalized
+
+    @property
+    def normalized_field_parts(self) -> tuple[str, ...]:
+        if RuntimeMeasurementIdentityField(self.dialect).field_matches(
+            self.field_name
+        ):
+            return ()
+        return tuple(
+            part
+            for part in _normalize_identifier(self.field_name).split("_")
+            if part
+        )
+
+    def group(self) -> _ContextualMeasurementPaddingGroup | None:
+        normalized_context = self.normalized_context
+        parts = self.normalized_field_parts
+        if normalized_context is None or not parts:
+            return None
+        feature_group = RuntimeMeasurementNamePartsProjection(
+            parts,
+            self.dialect,
+        ).category_prefix() or parts[:1]
+        _feature_name, source_name = SemanticCoreFeatureAndSourceNameProjection(
+            _normalize_identifier(self.field_name),
+            self.dialect,
+            self.known_source_names,
+        ).project()
+        return normalized_context, feature_group, source_name
+
+
+@dataclass(frozen=True, slots=True)
 class ContextualMeasurementPaddingProjection:
     """Resolve contextual wide-table cells that represent padding, not facts."""
 
@@ -6653,30 +6841,12 @@ class ContextualMeasurementPaddingProjection:
     ) -> _ContextualMeasurementPaddingGroup | None:
         if index >= len(self.column_context):
             return None
-        context = self.column_context[index]
-        if context is None:
-            return None
-        normalized_context = _normalize_identifier(context)
-        if not normalized_context or normalized_context in _CSV_HEADER_CONTEXT_STOPWORDS:
-            return None
-        field_name = self.header[index]
-        if RuntimeMeasurementIdentityField(self.dialect).field_matches(field_name):
-            return None
-
-        normalized_field = _normalize_identifier(field_name)
-        parts = tuple(part for part in normalized_field.split("_") if part)
-        if not parts:
-            return None
-        feature_group = RuntimeMeasurementNamePartsProjection(
-            parts,
-            self.dialect,
-        ).category_prefix() or parts[:1]
-        _feature_name, source_name = SemanticCoreFeatureAndSourceNameProjection(
-            normalized_field,
+        return ContextualMeasurementPaddingColumn(
+            self.column_context[index],
+            self.header[index],
             self.dialect,
             self.known_source_names,
-        ).project()
-        return normalized_context, feature_group, source_name
+        ).group()
 
 
 @lru_cache(maxsize=256)
@@ -6722,28 +6892,94 @@ def _reverse_regression_slope(
 
 
 @dataclass(frozen=True, slots=True)
+class RuntimeLongFormMeasurementSource:
+    """Valid feature/value pair extracted from a long-form measurement row."""
+
+    feature_text: str
+    value: object
+
+    @classmethod
+    def from_mapping(
+        cls,
+        row: Mapping[str, object],
+    ) -> "RuntimeLongFormMeasurementSource | None":
+        row_mapping = RuntimeMeasurementRowMapping(row)
+        feature_name = row_mapping.first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
+        value = row_mapping.first_value(_MEASUREMENT_VALUE_FIELDS)
+        return cls.from_feature_value(feature_name, value)
+
+    @classmethod
+    def from_indexed_values(
+        cls,
+        row_values: tuple[object, ...],
+        feature_indexes: tuple[int, ...],
+        value_indexes: tuple[int, ...],
+    ) -> "RuntimeLongFormMeasurementSource | None":
+        indexed_values = RuntimeIndexedRowValues(row_values)
+        return cls.from_feature_value(
+            indexed_values.first_at(feature_indexes),
+            indexed_values.first_at(value_indexes),
+        )
+
+    @classmethod
+    def from_feature_value(
+        cls,
+        feature_name: object | None,
+        value: object | None,
+    ) -> "RuntimeLongFormMeasurementSource | None":
+        if feature_name is None or value is None:
+            return None
+        feature_text = str(feature_name)
+        if _is_aggregate_image_number_reference_measurement_field(feature_text):
+            return None
+        return cls(feature_text, value)
+
+    def cell_signature(
+        self,
+        image_number_offset: float,
+        policy: RuntimeEquivalencePolicy,
+    ) -> RuntimeCellSignature:
+        normalized_value = RuntimeImageNumberReferenceValue(
+            self.feature_text,
+            self.value,
+            image_number_offset,
+        ).normalized()
+        return RuntimeMeasurementCellSignatureProjection(
+            normalized_value,
+            policy,
+        ).signature()
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeLongFormMeasurementFact:
+    """Resolved or missing long-form measurement fact."""
+
+    key: RuntimeMeasurementFeatureKey | None
+    value: RuntimeCellSignature | None
+
+    @property
+    def as_tuple(self) -> _RuntimeLongFormMeasurementFact:
+        if self.key is None or self.value is None:
+            return None
+        return self.key, self.value
+
+
+@dataclass(frozen=True, slots=True)
 class RuntimeSnapshotLongFormMeasurementFactProjector:
     """Project one snapshot long-form measurement row into a semantic fact."""
 
     context: _LongFormMeasurementContext
 
     def fact(self) -> _RuntimeLongFormMeasurementFact:
-        row_mapping = RuntimeMeasurementRowMapping(self.context.row)
-        feature_name = row_mapping.first_value(_MEASUREMENT_FEATURE_NAME_FIELDS)
-        value = row_mapping.first_value(_MEASUREMENT_VALUE_FIELDS)
-        if feature_name is None or value is None:
-            return None
-        feature_text = str(feature_name)
-        if _is_aggregate_image_number_reference_measurement_field(feature_text):
-            return None
-        value = RuntimeImageNumberReferenceValue(
-            feature_text,
-            value,
-            self.context.image_number_offset,
-        ).normalized()
+        return self.resolved_fact().as_tuple
+
+    def resolved_fact(self) -> RuntimeLongFormMeasurementFact:
+        source = RuntimeLongFormMeasurementSource.from_mapping(self.context.row)
+        if source is None:
+            return RuntimeLongFormMeasurementFact(None, None)
         key = RuntimeMeasurementFeatureKeyProjection(
             _MeasurementFeatureKeySourceContext(
-                feature_text,
+                source.feature_text,
                 self.context.subject,
                 self.context.policy,
                 (),
@@ -6753,13 +6989,13 @@ class RuntimeSnapshotLongFormMeasurementFactProjector:
             strip_subject_suffix=False,
         ).key()
         if key is None:
-            return None
-        return (
+            return RuntimeLongFormMeasurementFact(None, None)
+        return RuntimeLongFormMeasurementFact(
             key,
-            RuntimeMeasurementCellSignatureProjection(
-                value,
+            source.cell_signature(
+                self.context.image_number_offset,
                 self.context.policy,
-            ).signature(),
+            ),
         )
 
 
@@ -6770,39 +7006,33 @@ class RuntimeMeasurementLongFormFactProjector:
     context: _CachedLongFormMeasurementContext
 
     def fact(self) -> _RuntimeLongFormMeasurementFact:
-        feature_name = RuntimeIndexedRowValues(self.context.row_values).first_at(
-            self.context.feature_indexes
+        return self.resolved_fact().as_tuple
+
+    def resolved_fact(self) -> RuntimeLongFormMeasurementFact:
+        source = RuntimeLongFormMeasurementSource.from_indexed_values(
+            self.context.row_values,
+            self.context.feature_indexes,
+            self.context.value_indexes,
         )
-        value = RuntimeIndexedRowValues(self.context.row_values).first_at(
-            self.context.value_indexes
-        )
-        if feature_name is None or value is None:
-            return None
-        feature_text = str(feature_name)
-        if _is_aggregate_image_number_reference_measurement_field(feature_text):
-            return None
-        value = RuntimeImageNumberReferenceValue(
-            feature_text,
-            value,
-            self.context.image_number_offset,
-        ).normalized()
+        if source is None:
+            return RuntimeLongFormMeasurementFact(None, None)
         cache_key = (
             self.context.subject,
             self.context.source_name,
-            feature_text,
+            source.feature_text,
         )
         key = self.context.key_cache.get(cache_key, _CACHE_MISS)
         if key is _CACHE_MISS:
-            key = self._feature_key(feature_text)
+            key = self._feature_key(source.feature_text)
             self.context.key_cache[cache_key] = key
         if key is None:
-            return None
-        return (
+            return RuntimeLongFormMeasurementFact(None, None)
+        return RuntimeLongFormMeasurementFact(
             key,
-            RuntimeMeasurementCellSignatureProjection(
-                value,
+            source.cell_signature(
+                self.context.image_number_offset,
                 self.context.policy,
-            ).signature(),
+            ),
         )
 
     def _feature_key(
@@ -7401,8 +7631,7 @@ class ObjectInstanceKeyPlaneAlignmentStrategy(
 ):
     """Nominal projection between relationship and measurement-row plane identity."""
 
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_KEY)
 
     strategy_key: ClassVar[str | None] = None
 
@@ -7718,6 +7947,56 @@ class RelationshipAggregateFeatureContext:
     feature_name: str
 
 
+@dataclass(frozen=True, slots=True)
+class RelationshipAggregateFeatureKeyProjection:
+    """Parsed relationship aggregate measurement key."""
+
+    feature: RuntimeMeasurementFeatureKey
+    dialect: RuntimeMeasurementDialect
+
+    def resolution(self) -> "RelationshipAggregateFeatureResolution":
+        aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
+            tuple(part for part in self.feature.feature_name.split("_") if part),
+            self.dialect,
+        )
+        if aggregate_identity is None:
+            return RelationshipAggregateFeatureResolution(None, None)
+        context = RelationshipAggregateFeatureContext(
+            source_name=self.feature.subject.name or "",
+            target_name=aggregate_identity.object_name,
+            feature_name=aggregate_identity.feature_name,
+        )
+        semantics = RelationshipAggregateFeatureSemantics.for_context(
+            context,
+            required=False,
+        )
+        if semantics is None:
+            return RelationshipAggregateFeatureResolution(context, None)
+        return RelationshipAggregateFeatureResolution(context, semantics)
+
+    def aggregate_child_feature_name(self) -> str | None:
+        return self.resolution().aggregate_child_feature_name()
+
+
+@dataclass(frozen=True, slots=True)
+class RelationshipAggregateFeatureResolution:
+    """Relationship aggregate feature context with its owning semantics."""
+
+    context: RelationshipAggregateFeatureContext | None
+    semantics: "RelationshipAggregateFeatureSemantics | None"
+
+    @property
+    def is_resolved(self) -> bool:
+        return self.context is not None and self.semantics is not None
+
+    def aggregate_child_feature_name(self) -> str | None:
+        if not self.is_resolved:
+            return None
+        assert self.context is not None
+        assert self.semantics is not None
+        return self.semantics.aggregate_child_feature_name(self.context)
+
+
 class RelationshipAggregateFeatureSemantics(
     MostDerivedContextStrategyMixin[RelationshipAggregateFeatureContext],
     ABC,
@@ -7725,8 +8004,7 @@ class RelationshipAggregateFeatureSemantics(
 ):
     """Map child measurement features onto relationship aggregate features."""
 
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_KEY)
 
     strategy_key: ClassVar[str | None] = None
 
@@ -7791,25 +8069,11 @@ class RelationshipAggregateFeatureSemantics(
         dialect: RuntimeMeasurementDialect,
     ) -> str | None:
         """Return child feature represented by a relationship aggregate key."""
-        parts = tuple(part for part in feature.feature_name.split("_") if part)
-        aggregate_identity = RuntimeAggregateFeatureIdentity.from_parts(
-            parts,
+        del cls
+        return RelationshipAggregateFeatureKeyProjection(
+            feature,
             dialect,
-        )
-        if aggregate_identity is None:
-            return None
-        context = RelationshipAggregateFeatureContext(
-            source_name=feature.subject.name or "",
-            target_name=aggregate_identity.object_name,
-            feature_name=aggregate_identity.feature_name,
-        )
-        semantics = cls.for_context(
-            context,
-            required=False,
-        )
-        if semantics is None:
-            return None
-        return semantics.aggregate_child_feature_name(context)
+        ).aggregate_child_feature_name()
 
 
 class GenericRelationshipAggregateFeatureSemantics(
@@ -8400,8 +8664,7 @@ class RuntimeMeasurementRowSubjectResolutionStrategy(
 ):
     """Nominal row-subject resolver for runtime measurement tables."""
 
-    __registry_key__ = "strategy_key"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_KEY)
 
     strategy_key: ClassVar[str | None] = None
 
@@ -8552,7 +8815,9 @@ class RuntimeMeasurementRowSubjectProjection:
         return RuntimeIndexedRowValues(self.row_values)
 
     def source_name(self) -> str | None:
-        row_source_name = self.indexed_values.text_at(self.subject_schema[1])
+        row_source_name = RuntimeIndexedRowText(
+            self.row_values, self.subject_schema[1]
+        ).text
         if row_source_name is not None:
             return row_source_name
         return self.table_source_name
@@ -8564,17 +8829,20 @@ class RuntimeMeasurementRowSubjectProjection:
             object_identity_indexes,
             image_identity_indexes,
         ) = self.subject_schema
+        indexed_values = self.indexed_values
         return RuntimeMeasurementRowSubjectResolutionStrategy.resolve(
             RuntimeMeasurementRowSubjectResolutionContext(
                 table_subject=self.table_subject,
-                object_name=self.indexed_values.text_at(object_name_index),
-                row_source_name=self.indexed_values.text_at(source_name_index),
-                has_object_identity=self.indexed_values.has_text_at_any(
+                object_name=RuntimeIndexedRowText(
+                    self.row_values, object_name_index
+                ).text,
+                row_source_name=RuntimeIndexedRowText(
+                    self.row_values, source_name_index
+                ).text,
+                has_object_identity=indexed_values.has_text_at_any(
                     object_identity_indexes
                 ),
-                has_image_identity=self.indexed_values.has_text_at_any(
-                    image_identity_indexes
-                ),
+                has_image_identity=indexed_values.has_text_at_any(image_identity_indexes),
             )
         )
 
