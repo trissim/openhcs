@@ -4230,11 +4230,22 @@ class SourcePairObjectMeasurementInvocation(ObjectMeasurementInvocation):
 
 
 class CellProfilerObjectMeasurementRowPolicy(
+    CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=CellProfilerModulePolicyMeta,
+    metaclass=AutoRegisterMeta,
 ):
     """Nominal export-row policy for object-scoped measurement modules."""
 
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    __key_extractor__ = staticmethod(
+        CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
+    )
+    registry_key: ClassVar[str | None] = None
+    module_name: ClassVar[str | None] = None
+    fallback_registry_key: ClassVar[str | None] = (
+        CellProfilerModulePolicyRegistryKey.DEFAULT.value
+    )
     row_identity: ClassVar[MeasurementObjectRowIdentity] = (
         MeasurementObjectRowIdentity.LABEL_ID
     )
@@ -9846,10 +9857,22 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
 
 
 class CellProfilerSpecialInputPolicy(
+    CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=CellProfilerModulePolicyMeta,
+    metaclass=AutoRegisterMeta,
 ):
     """Nominal module-specific binding for CellProfiler special_inputs."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    __key_extractor__ = staticmethod(
+        CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
+    )
+    registry_key: ClassVar[str | None] = None
+    module_name: ClassVar[str | None] = None
+    fallback_registry_key: ClassVar[str | None] = (
+        CellProfilerModulePolicyRegistryKey.DEFAULT.value
+    )
 
     def special_image_inputs(
         self,
