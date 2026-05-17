@@ -309,6 +309,8 @@ def _runtime_measurement_fact_counter(
         counter = Counter()
         values_by_feature[key] = counter
     return counter
+
+
 _RuntimeMeasurementPaddingGroupPresence = dict[_RuntimeMeasurementPaddingGroup, bool]
 _StaticWideRuntimeKeyCache = dict[
     tuple[RuntimeMeasurementSubjectKey, str | None, int, tuple[str, ...]],
@@ -617,22 +619,22 @@ _RuntimeProjectedCells = tuple[
 
 
 @dataclass(frozen=True, slots=True)
-class _RuntimeRowProjection(Generic[_RuntimeRowProjectionValueT]):
+class RuntimeRowProjection(Generic[_RuntimeRowProjectionValueT]):
     records: _RuntimeRowProjectionRecords[_RuntimeRowProjectionValueT]
     long_form: bool = False
 
 
-def _runtime_row_projection(
+def runtime_row_projection(
     records: Iterable[_RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT]] = (),
     *,
     long_form: bool = False,
-) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
+) -> RuntimeRowProjection[_RuntimeRowProjectionValueT]:
     """Build a row projection through one normalized record boundary."""
-    return _RuntimeRowProjection(tuple(records), long_form=long_form)
+    return RuntimeRowProjection(tuple(records), long_form=long_form)
 
 
 @dataclass(frozen=True, slots=True)
-class _RuntimeRowProjectionContext:
+class RuntimeRowProjectionContext:
     row: Mapping[str, object]
     subject: RuntimeMeasurementSubjectKey
     policy: RuntimeEquivalencePolicy
@@ -664,7 +666,7 @@ class _RuntimeRowProjectionContext:
         long_form_key_cache: _RuntimeMeasurementLongFormKeyCache,
         qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache,
         padding_group_cache: _RuntimeMeasurementPaddingGroupCache,
-    ) -> "_RuntimeRowProjectionContext":
+    ) -> "RuntimeRowProjectionContext":
         return cls(
             row=row,
             subject=subject,
@@ -854,7 +856,7 @@ class _CachedLongFormMeasurementContext:
     @classmethod
     def from_runtime_row_projection(
         cls,
-        context: _RuntimeRowProjectionContext,
+        context: RuntimeRowProjectionContext,
         row_values: tuple[object, ...],
         feature_indexes: tuple[int, ...],
         value_indexes: tuple[int, ...],
@@ -2770,10 +2772,11 @@ def _measurement_differences(
         reference_features - candidate_features,
         key=lambda key: key.sort_key,
     ):
+        feature_label = RuntimeMeasurementFeatureSemantics(feature, policy).label
         differences.append(
             RuntimeEquivalenceDifference(
                 RuntimeEquivalenceDifferenceKind.MEASUREMENT_FEATURE,
-                f"candidate is missing measurement feature {_feature_label(feature)}",
+                f"candidate is missing measurement feature {feature_label}",
             )
         )
     if not policy.allow_extra_candidate_measurements:
@@ -2781,10 +2784,11 @@ def _measurement_differences(
             candidate_features - reference_features,
             key=lambda key: key.sort_key,
         ):
+            feature_label = RuntimeMeasurementFeatureSemantics(feature, policy).label
             differences.append(
                 RuntimeEquivalenceDifference(
                     RuntimeEquivalenceDifferenceKind.MEASUREMENT_FEATURE,
-                    f"candidate has extra measurement feature {_feature_label(feature)}",
+                    f"candidate has extra measurement feature {feature_label}",
                 )
             )
     for feature in sorted(
@@ -2798,10 +2802,11 @@ def _measurement_differences(
             policy,
         ):
             continue
+        feature_label = RuntimeMeasurementFeatureSemantics(feature, policy).label
         differences.append(
             RuntimeEquivalenceDifference(
                 RuntimeEquivalenceDifferenceKind.MEASUREMENT_CONTENT,
-                f"measurement feature {_feature_label(feature)} values differ",
+                f"measurement feature {feature_label} values differ",
             )
         )
     return tuple(differences)
@@ -2848,12 +2853,10 @@ def _measurement_feature_values_equivalent(
         policy,
     ):
         return True
-    return _unstable_shape_descriptor_values_equivalent(
+    return RuntimeMeasurementFeatureSemantics(
         feature,
-        reference,
-        candidate,
         policy,
-    )
+    ).unstable_shape_descriptor_values_equivalent(reference, candidate)
 
 
 def _feature_numeric_tolerance_values_equivalent(
@@ -2862,8 +2865,9 @@ def _feature_numeric_tolerance_values_equivalent(
     candidate: RuntimeMeasurementSnapshot,
     policy: RuntimeEquivalencePolicy,
 ) -> bool:
+    feature_semantics = RuntimeMeasurementFeatureSemantics(feature, policy)
     for tolerance in policy.feature_numeric_tolerances:
-        if not _feature_numeric_tolerance_matches(feature, tolerance, policy):
+        if not feature_semantics.matches_numeric_tolerance(tolerance):
             continue
         if (
             tolerance.require_object_count_stability
@@ -2889,62 +2893,6 @@ def _feature_numeric_tolerance_values_equivalent(
         ):
             return True
     return False
-
-
-def _feature_numeric_tolerance_matches(
-    feature: RuntimeMeasurementFeatureKey,
-    tolerance: RuntimeMeasurementFeatureNumericTolerance,
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    if (
-        tolerance.subject_scope is not None
-        and feature.subject.scope is not tolerance.subject_scope
-    ):
-        return False
-    if tolerance.statistic is not None and feature.statistic != tolerance.statistic:
-        return False
-    if feature.feature_name in tolerance.feature_names:
-        return True
-    if (
-        tolerance.feature_names
-        and policy.measurement_dialect.source_qualified_feature_family(
-            feature.feature_name,
-            feature.source_name,
-            feature.subject.scope,
-            tolerance.feature_names,
-        )
-        is not None
-    ):
-        return True
-    aggregate_child_feature_name = (
-        RelationshipAggregateFeatureSemantics.aggregate_child_feature_name_from_key(
-            feature,
-            policy.measurement_dialect,
-        )
-    )
-    if aggregate_child_feature_name is not None:
-        if aggregate_child_feature_name in tolerance.feature_names:
-            return True
-        if (
-            tolerance.feature_names
-            and policy.measurement_dialect.source_qualified_feature_family(
-                aggregate_child_feature_name,
-                feature.source_name,
-                feature.subject.scope,
-                tolerance.feature_names,
-            )
-            is not None
-        ):
-            return True
-        if any(
-            aggregate_child_feature_name.startswith(prefix)
-            for prefix in tolerance.feature_name_prefixes
-        ):
-            return True
-    return any(
-        feature.feature_name.startswith(prefix)
-        for prefix in tolerance.feature_name_prefixes
-    )
 
 
 def _tie_sensitive_location_values_equivalent(
@@ -3122,6 +3070,125 @@ class RuntimeThresholdSensitivePairToleranceContract:
             )
             == source_tokens
         )
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeMeasurementFeatureSemantics:
+    """Feature-local runtime measurement semantics used during equivalence."""
+
+    feature: RuntimeMeasurementFeatureKey
+    policy: RuntimeEquivalencePolicy
+
+    @property
+    def label(self) -> str:
+        """Return a stable human-readable feature label."""
+        subject = self.feature.subject
+        if subject.name is None:
+            subject_label = subject.scope.value
+        else:
+            subject_label = f"{subject.scope.value}:{subject.name}"
+        feature_label = self.feature.feature_name
+        if self.feature.source_name is not None:
+            feature_label = f"{feature_label}@{self.feature.source_name}"
+        if self.feature.statistic == MeasurementStatistic.VALUE.value:
+            return f"{subject_label}/{feature_label}"
+        return f"{subject_label}/{self.feature.statistic}({feature_label})"
+
+    def matches_numeric_tolerance(
+        self,
+        tolerance: RuntimeMeasurementFeatureNumericTolerance,
+    ) -> bool:
+        """Return whether ``tolerance`` applies to this feature."""
+        if (
+            tolerance.subject_scope is not None
+            and self.feature.subject.scope is not tolerance.subject_scope
+        ):
+            return False
+        if (
+            tolerance.statistic is not None
+            and self.feature.statistic != tolerance.statistic
+        ):
+            return False
+        if self._feature_name_matches_numeric_tolerance(
+            self.feature.feature_name,
+            tolerance,
+        ):
+            return True
+        aggregate_child_feature_name = (
+            RelationshipAggregateFeatureSemantics.aggregate_child_feature_name_from_key(
+                self.feature,
+                self.policy.measurement_dialect,
+            )
+        )
+        return (
+            aggregate_child_feature_name is not None
+            and self._feature_name_matches_numeric_tolerance(
+                aggregate_child_feature_name,
+                tolerance,
+            )
+        )
+
+    def _feature_name_matches_numeric_tolerance(
+        self,
+        feature_name: str,
+        tolerance: RuntimeMeasurementFeatureNumericTolerance,
+    ) -> bool:
+        if feature_name in tolerance.feature_names:
+            return True
+        if (
+            tolerance.feature_names
+            and self.policy.measurement_dialect.source_qualified_feature_family(
+                feature_name,
+                self.feature.source_name,
+                self.feature.subject.scope,
+                tolerance.feature_names,
+            )
+            is not None
+        ):
+            return True
+        return any(
+            feature_name.startswith(prefix)
+            for prefix in tolerance.feature_name_prefixes
+        )
+
+    def unstable_shape_descriptor_values_equivalent(
+        self,
+        reference: RuntimeMeasurementSnapshot,
+        candidate: RuntimeMeasurementSnapshot,
+    ) -> bool:
+        """Return whether unstable shape-descriptor values are equivalent."""
+        if not self.policy.allow_unstable_shape_descriptors:
+            return False
+        if self.feature.subject.scope is not MeasurementScope.OBJECT:
+            return False
+        if self.feature.statistic != "value":
+            return False
+        shape_descriptor_context = ShapeDescriptorFeatureContext(
+            self.feature,
+            self.policy,
+        ).semantic_context()
+        semantics = ShapeDescriptorFeatureSemantics.for_context(
+            shape_descriptor_context,
+            required=False,
+        )
+        if semantics is None:
+            return False
+        if not MeasurementFeatureStabilityPolicy(
+            self.feature,
+            reference,
+            candidate,
+            self.policy,
+        ).shape_descriptor_geometry_is_stable():
+            return False
+
+        reference_values = reference.values_by_feature[self.feature]
+        candidate_values = candidate.values_by_feature[self.feature]
+        return semantics.values_equivalent(
+            shape_descriptor_context,
+            reference_values,
+            candidate_values,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class SparseObjectBoundaryEquivalence:
@@ -3581,59 +3648,6 @@ def _zernike_descriptor_values_equivalent(
         max_unstable_values=policy.object_boundary_jitter_max_unstable_values,
         max_unstable_fraction=policy.object_boundary_jitter_max_unstable_fraction,
     )
-
-
-def _unstable_shape_descriptor_values_equivalent(
-    feature: RuntimeMeasurementFeatureKey,
-    reference: RuntimeMeasurementSnapshot,
-    candidate: RuntimeMeasurementSnapshot,
-    policy: RuntimeEquivalencePolicy,
-) -> bool:
-    if not policy.allow_unstable_shape_descriptors:
-        return False
-    if feature.subject.scope is not MeasurementScope.OBJECT:
-        return False
-    if feature.statistic != "value":
-        return False
-    shape_descriptor_context = ShapeDescriptorFeatureContext(
-        feature,
-        policy,
-    ).semantic_context()
-    semantics = ShapeDescriptorFeatureSemantics.for_context(
-        shape_descriptor_context,
-        required=False,
-    )
-    if semantics is None:
-        return False
-    if not MeasurementFeatureStabilityPolicy(
-        feature,
-        reference,
-        candidate,
-        policy,
-    ).shape_descriptor_geometry_is_stable():
-        return False
-
-    reference_values = reference.values_by_feature[feature]
-    candidate_values = candidate.values_by_feature[feature]
-    return semantics.values_equivalent(
-        shape_descriptor_context,
-        reference_values,
-        candidate_values,
-    )
-
-
-def _feature_label(feature: RuntimeMeasurementFeatureKey) -> str:
-    subject = feature.subject
-    if subject.name is None:
-        subject_label = subject.scope.value
-    else:
-        subject_label = f"{subject.scope.value}:{subject.name}"
-    feature_label = feature.feature_name
-    if feature.source_name is not None:
-        feature_label = f"{feature_label}@{feature.source_name}"
-    if feature.statistic == MeasurementStatistic.VALUE.value:
-        return f"{subject_label}/{feature_label}"
-    return f"{subject_label}/{feature.statistic}({feature_label})"
 
 
 def _record_static_wide_measurement_table_snapshot(
@@ -5301,7 +5315,7 @@ class RuntimeMeasurementTableFactRecorder:
             subject,
             self.context.policy,
         )
-        row_context = _RuntimeRowProjectionContext.from_row(
+        row_context = RuntimeRowProjectionContext.from_row(
             row_mapping,
             subject,
             self.context.policy,
@@ -5370,16 +5384,16 @@ class RuntimeMeasurementTableFactRecorder:
 
 
 @dataclass(frozen=True, slots=True)
-class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
-    context: _RuntimeRowProjectionContext
+class RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
+    context: RuntimeRowProjectionContext
     value_projector: RuntimeRowValueProjection[_RuntimeRowProjectionValueT]
     long_form_projector: RuntimeRowLongFormProjection[_RuntimeRowProjectionValueT]
 
-    def project(self) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
+    def project(self) -> RuntimeRowProjection[_RuntimeRowProjectionValueT]:
         """Project one runtime row through shared schema/key/padding caches."""
         context = self.context
         if _is_metadata_map_row(context.subject, context.row):
-            return _runtime_row_projection()
+            return runtime_row_projection()
 
         header = tuple(context.row)
         row_schema = RuntimeMeasurementRowSchemaProjector(context, header).schema()
@@ -5393,7 +5407,7 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
         self,
         row_schema: _RuntimeMeasurementRowSchema,
         row_values: tuple[object, ...],
-    ) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT] | None:
+    ) -> RuntimeRowProjection[_RuntimeRowProjectionValueT] | None:
         context = self.context
         if (
             not row_schema.long_form_feature_indexes
@@ -5414,8 +5428,8 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
             context.required_keys is not None
             and long_form_fact[0] not in context.required_keys
         ):
-            return _runtime_row_projection(long_form=True)
-        return _runtime_row_projection(
+            return runtime_row_projection(long_form=True)
+        return runtime_row_projection(
             (
                 ((context.subject, context.source_name, ()), key, value)
                 for key, value in self.long_form_projector.project(long_form_fact)
@@ -5429,7 +5443,7 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
         header: tuple[str, ...],
         row_schema: _RuntimeMeasurementRowSchema,
         row_values: tuple[object, ...],
-    ) -> _RuntimeRowProjection[_RuntimeRowProjectionValueT]:
+    ) -> RuntimeRowProjection[_RuntimeRowProjectionValueT]:
         records: list[_RuntimeRowProjectionRecord[_RuntimeRowProjectionValueT]] = []
         padding_group_presence: _RuntimeMeasurementPaddingGroupPresence = {}
         row_qualifier_cache: _RuntimeRowQualifierResolutionCache = {}
@@ -5444,7 +5458,7 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
                     padding_group_presence,
                 )
             )
-        return _runtime_row_projection(
+        return runtime_row_projection(
             (
                 (padding_group, key, value)
                 for padding_group, key, value in records
@@ -5561,11 +5575,11 @@ class _RuntimeRowProjectionEngine(Generic[_RuntimeRowProjectionValueT]):
 class RuntimeMeasurementRowFactProjector:
     """Project one runtime measurement row into semantic fact views."""
 
-    context: _RuntimeRowProjectionContext
+    context: RuntimeRowProjectionContext
 
     def facts(self) -> _RuntimeMeasurementFacts:
         """Project one runtime row using table-local schema/key caches."""
-        projection = _RuntimeRowProjectionEngine(
+        projection = RuntimeRowProjectionEngine(
             self.context,
             RuntimeMeasurementCellFactProjection(),
             RuntimeRowLongFormFactProjection(),
@@ -5595,7 +5609,7 @@ class RuntimeMeasurementRowFactProjector:
 
     def numeric_values(self) -> _RuntimeNumericMeasurementValues:
         """Project numeric runtime row values without building cell signatures."""
-        projection = _RuntimeRowProjectionEngine(
+        projection = RuntimeRowProjectionEngine(
             self.context,
             RuntimeMeasurementCellNumericProjection(),
             RuntimeRowLongFormNumericProjection(),
@@ -5641,7 +5655,7 @@ class RuntimeMeasurementRowFactProjector:
 class RuntimeMeasurementRowSchemaProjector:
     """Project a runtime measurement row header into cached row schema."""
 
-    context: _RuntimeRowProjectionContext
+    context: RuntimeRowProjectionContext
     header: tuple[str, ...]
 
     def schema(self) -> _RuntimeMeasurementRowSchema:
@@ -7947,7 +7961,7 @@ def _object_measurement_values_by_label(
                     continue
             else:
                 subject = table_object_subject
-            row_context = _RuntimeRowProjectionContext.from_row(
+            row_context = RuntimeRowProjectionContext.from_row(
                 row_mapping,
                 subject,
                 policy,
