@@ -111,24 +111,24 @@ class CallableContract(ArtifactPlanKeySelector):
     @classmethod
     def from_callable(cls, func: Any) -> "CallableContract":
         """Build a contract from callable attributes once at compiler boundary."""
-        namespace = _callable_namespace(func)
-        function_name = _callable_name(func)
-        metadata = CallableMetadataReader(namespace, function_name)
+        projection = CallableProjection.from_callable(func)
+        namespace = projection.namespace
+        metadata = CallableMetadataReader(namespace, projection.name)
         raw_processing_function = namespace.get(RAW_PROCESSING_FUNCTION_ATTR)
         return cls(
             func=func,
-            function_name=function_name,
-            module_name=_callable_module(func),
+            function_name=projection.name,
+            module_name=projection.module_name,
             input_memory_type=metadata.optional_string("input_memory_type"),
             output_memory_type=metadata.optional_string("output_memory_type"),
             artifact_inputs=_artifact_spec_items(
                 namespace,
-                function_name,
+                projection.name,
                 "__artifact_inputs__",
             ),
             artifact_outputs=_artifact_spec_items(
                 namespace,
-                function_name,
+                projection.name,
                 "__artifact_outputs__",
             ),
             runtime_adapter=runtime_adapter_spec_from_callable(func),
@@ -138,7 +138,7 @@ class CallableContract(ArtifactPlanKeySelector):
             ),
             module_artifact_contract=module_artifact_contract_from_namespace(
                 namespace,
-                owner_name=function_name,
+                owner_name=projection.name,
             ),
             raw_processing_function=raw_processing_function,
             runtime_image_execution_mode=metadata.optional_execution_mode(
@@ -186,13 +186,6 @@ class CallableContract(ArtifactPlanKeySelector):
         if self.runtime_batch_executors is None:
             return None
         return self.runtime_batch_executors.get(domain)
-
-def _callable_namespace(func: Any) -> CallableNamespace:
-    """Return user-declared callable metadata."""
-    if _is_function_reference(func):
-        return func.preserved_attrs
-    return func.__dict__
-
 
 def attach_callable_contract_metadata(
     func: Any,
@@ -310,29 +303,8 @@ def attach_processing_prepare(func: Any, prepare: Any) -> None:
             "attach_processing_prepare prepare must be callable, "
             f"got {type(prepare).__name__}."
         )
-    for target in _callable_prepare_targets(func):
+    for target in CallableProjection.from_callable(func).prepare_targets():
         setattr(target, PROCESSING_PREPARE_ATTR, prepare)
-
-
-def _callable_prepare_targets(func: Any) -> tuple[Any, ...]:
-    """Return wrapper/raw callables that may appear at compiler/runtime boundary."""
-    targets: list[Any] = []
-    seen: set[int] = set()
-    pending = [func]
-    while pending:
-        target = pending.pop()
-        target_id = id(target)
-        if target_id in seen:
-            continue
-        seen.add(target_id)
-        targets.append(target)
-        raw = getattr(target, RAW_PROCESSING_FUNCTION_ATTR, None)
-        if callable(raw):
-            pending.append(raw)
-        wrapped = getattr(target, "__wrapped__", None)
-        if callable(wrapped):
-            pending.append(wrapped)
-    return tuple(targets)
 
 
 def runtime_image_execution_mode(
@@ -354,23 +326,22 @@ def runtime_image_execution_mode(
 
 def prepare_processing_callable(func: Any) -> None:
     """Run an optional callable preparation hook before timed data processing."""
-    module_name = _callable_module(func)
-    if module_name is not None:
-        _prepare_module_autoregister_families(module_name)
-        _prepare_processing_module(module_name)
+    projection = CallableProjection.from_callable(func)
+    if projection.module_name is not None:
+        _prepare_module_autoregister_families(projection.module_name)
+        _prepare_processing_module(projection.module_name)
 
-    namespace = _callable_namespace(func)
-    prepare = namespace.get(PROCESSING_PREPARE_ATTR)
+    prepare = projection.namespace.get(PROCESSING_PREPARE_ATTR)
     if prepare is None:
         return
     if not callable(prepare):
         raise TypeError(
-            f"{_callable_name(func)!r}.{PROCESSING_PREPARE_ATTR} must be "
+            f"{projection.name!r}.{PROCESSING_PREPARE_ATTR} must be "
             f"callable, got {type(prepare).__name__}."
         )
     prepare_key = (
         "callable",
-        f"{module_name or '<unknown>'}.{_callable_name(func)}",
+        f"{projection.module_name or '<unknown>'}.{projection.name}",
         id(prepare),
     )
     with _PREPARED_CALLABLE_LOCK:
@@ -413,34 +384,63 @@ def _prepare_module_autoregister_families(module_name: str) -> None:
         candidate.prepare_registered_family()
 
 
-def _callable_name(func: Any) -> str:
-    """Return the callable's nominal function name."""
-    name = func.function_name if _is_function_reference(func) else func.__name__
-    if not isinstance(name, str):
-        raise TypeError(f"Callable name must be a string, got {type(name).__name__}.")
-    return name
-
-
-def _callable_module(func: Any) -> str | None:
-    """Return the callable's declaring module when available."""
-    module_name = (
-        func.original_module
-        if _is_function_reference(func)
-        else func.__module__
-    )
-    if module_name is None or isinstance(module_name, str):
-        return module_name
-    raise TypeError(
-        f"{_callable_name(func)!r}.__module__ must be a string or None, "
-        f"got {type(module_name).__name__}."
-    )
-
-
 def _is_function_reference(func: Any) -> bool:
     """Return whether func is the compiler's nominal picklable reference."""
     from openhcs.core.pipeline.compiler import FunctionReference
 
     return isinstance(func, FunctionReference)
+
+
+@dataclass(frozen=True, slots=True)
+class CallableProjection:
+    """Nominal view over callable metadata used at compiler/runtime boundaries."""
+
+    func: Any
+    name: str
+    module_name: str | None
+    namespace: CallableNamespace
+
+    @classmethod
+    def from_callable(cls, func: Any) -> "CallableProjection":
+        """Project a callable or compiler function reference into stable metadata."""
+        if _is_function_reference(func):
+            name = func.function_name
+            module_name = func.original_module
+            namespace = func.preserved_attrs
+        else:
+            name = func.__name__
+            module_name = func.__module__
+            namespace = func.__dict__
+        if not isinstance(name, str):
+            raise TypeError(
+                f"Callable name must be a string, got {type(name).__name__}."
+            )
+        if module_name is not None and not isinstance(module_name, str):
+            raise TypeError(
+                f"{name!r}.__module__ must be a string or None, "
+                f"got {type(module_name).__name__}."
+            )
+        return cls(func=func, name=name, module_name=module_name, namespace=namespace)
+
+    def prepare_targets(self) -> tuple[Any, ...]:
+        """Return wrapper/raw callables that may carry preparation metadata."""
+        targets: list[Any] = []
+        seen: set[int] = set()
+        pending = [self.func]
+        while pending:
+            target = pending.pop()
+            target_id = id(target)
+            if target_id in seen:
+                continue
+            seen.add(target_id)
+            targets.append(target)
+            raw = getattr(target, RAW_PROCESSING_FUNCTION_ATTR, None)
+            if callable(raw):
+                pending.append(raw)
+            wrapped = getattr(target, "__wrapped__", None)
+            if callable(wrapped):
+                pending.append(wrapped)
+        return tuple(targets)
 
 
 @dataclass(frozen=True, slots=True)
