@@ -13,7 +13,7 @@ import os
 from pathlib import Path
 import time
 from types import MappingProxyType
-from typing import Any, Callable, ClassVar
+from typing import Any, Callable, ClassVar, Generic, TypeVar
 from weakref import WeakKeyDictionary
 
 from metaclass_registry import AutoRegisterMeta
@@ -126,6 +126,8 @@ from openhcs.interop.cellprofiler.measurement_dialect import (
 
 _PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
+U = TypeVar("U")
 _SOURCE_CANDIDATE_CACHE_LIMIT = 64
 _SOURCE_CANDIDATE_PROCESS_CACHE: OrderedDict[
     tuple[Hashable, ...],
@@ -773,45 +775,8 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
         source_paths: tuple[str, ...],
     ) -> int | None:
         """Return the CellProfiler ImageNumber for source paths in image-set order."""
-        if not source_paths:
-            return None
-        pipeline_paths = tuple(
-            path
-            for path in self.source_binding_context.pipeline_input_files
-            if is_image_path(path)
-        )
-        if not pipeline_paths:
-            return None
-        first_source_path = self.cellprofiler_source_order_path(source_paths[0])
-        candidates = self.source_candidates(pipeline_paths)
-        matched_candidate = next(
-            (
-                candidate
-                for candidate in candidates
-                if first_source_path
-                in {
-                    self.cellprofiler_source_order_path(candidate.path),
-                    self.cellprofiler_source_order_path(candidate.resolved_path),
-                }
-            ),
-            None,
-        )
-        if matched_candidate is None:
-            return None
-
-        image_numbers_by_set: dict[SourceImageSetIdentity, int] = {}
-        for candidate in SourceCandidateMatcher.ordered_source_candidates(candidates):
-            image_set_key = SourceImageSetIdentity.from_metadata(
-                candidate.metadata,
-                fallback_source_path=candidate.resolved_path,
-            )
-            if image_set_key not in image_numbers_by_set:
-                image_numbers_by_set[image_set_key] = len(image_numbers_by_set) + 1
-        return image_numbers_by_set.get(
-            SourceImageSetIdentity.from_metadata(
-                matched_candidate.metadata,
-                fallback_source_path=matched_candidate.resolved_path,
-            )
+        return CellProfilerImageNumberResolver.for_adapter(self).image_number_for_paths(
+            source_paths
         )
 
     def cellprofiler_image_number_for_payload(
@@ -888,54 +853,7 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
 
     def source_binding_plane_index(self, alias: str) -> int | None:
         """Return the current axis-local plane index for a source alias."""
-        binding = self.source_binding_plan.binding_for_alias(alias, self.group_key)
-        if binding is None or binding.origin is not SourceBindingOrigin.PIPELINE_START:
-            return None
-        context = self.source_binding_context
-        if not context.pipeline_input_files or not context.step_input_files:
-            return None
-
-        step_candidates = self.source_candidates(context.step_input_files)
-        pipeline_candidates = self.source_candidates(context.pipeline_input_files)
-        axis_candidates = SourceCandidateMatcher.axis_scoped_candidates(
-            SourceCandidateMatcher.ordered_binding_candidates(
-                binding=binding,
-                candidates=pipeline_candidates,
-            ),
-            axis_id=self.axis_id,
-            step_input_candidates=step_candidates,
-        )
-        if not axis_candidates:
-            return None
-
-        target_candidates = SourceCandidateMatcher.match_candidates(
-            candidates=pipeline_candidates,
-            binding=binding,
-            inherit_components={},
-        )
-        current_candidates = SourceCandidateMatcher.match_image_set_candidates(
-            alias,
-            self.source_binding_plan.match_plan,
-            step_candidates,
-            target_candidates,
-            pipeline_candidates,
-            source_binding_plan=self.source_binding_plan,
-            group_key=self.group_key,
-        )
-        current_paths = {candidate.resolved_path for candidate in current_candidates}
-        matched_indexes = tuple(
-            index
-            for index, candidate in enumerate(axis_candidates)
-            if candidate.resolved_path in current_paths
-        )
-        if not matched_indexes:
-            return None
-        if len(matched_indexes) != 1:
-            raise RuntimeError(
-                f"Source binding alias {alias!r} matched multiple source planes "
-                f"for axis {self.axis_id!r}: {matched_indexes!r}."
-            )
-        return matched_indexes[0]
+        return SourceBindingPlaneIndexResolver.for_adapter(self).plane_index(alias)
 
     def runtime_slice_plane_index(self) -> int | None:
         """Return the current axis-local runtime-slice plane index."""
@@ -2821,6 +2739,300 @@ class PipelineStartSourceBindingResolver(SourceBindingResolver):
             count=len(selected_files),
         )
         return payload
+
+
+@dataclass(frozen=True, slots=True)
+class OptionalResolution(Generic[T]):
+    """Typed carrier for adapter lookups where absence is a valid result."""
+
+    value: T | None
+
+    @classmethod
+    def from_optional(cls, value: T | None) -> "OptionalResolution[T]":
+        return cls(value)
+
+    def bind(
+        self,
+        step: Callable[[T], "OptionalResolution[U]"],
+    ) -> "OptionalResolution[U]":
+        if self.value is None:
+            return OptionalResolution(None)
+        return step(self.value)
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerImageNumberCandidateContext:
+    """Candidate universe for resolving one source path to a CP image number."""
+
+    source_path: str
+    candidates: tuple["ParsedSourceCandidate", ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerImageNumberMatchedContext:
+    """Matched source candidate with its image-set candidate universe."""
+
+    matched_candidate: "ParsedSourceCandidate"
+    candidates: tuple["ParsedSourceCandidate", ...]
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerImageNumberResolver:
+    """Resolve source paths to CellProfiler image numbers with explicit absence flow."""
+
+    adapter: CellProfilerRuntimeAdapter
+
+    @classmethod
+    def for_adapter(
+        cls,
+        adapter: CellProfilerRuntimeAdapter,
+    ) -> "CellProfilerImageNumberResolver":
+        return cls(adapter)
+
+    def image_number_for_paths(self, source_paths: tuple[str, ...]) -> int | None:
+        return (
+            OptionalResolution.from_optional(source_paths[0] if source_paths else None)
+            .bind(self.candidate_context)
+            .bind(self.matched_context)
+            .bind(self.image_number)
+            .value
+        )
+
+    def candidate_context(
+        self,
+        source_path: str,
+    ) -> OptionalResolution[CellProfilerImageNumberCandidateContext]:
+        pipeline_paths = self.pipeline_paths()
+        if not pipeline_paths:
+            return OptionalResolution(None)
+        return OptionalResolution(
+            CellProfilerImageNumberCandidateContext(
+                source_path=source_path,
+                candidates=self.adapter.source_candidates(pipeline_paths),
+            )
+        )
+
+    def matched_context(
+        self,
+        context: CellProfilerImageNumberCandidateContext,
+    ) -> OptionalResolution[CellProfilerImageNumberMatchedContext]:
+        matched_candidate = self.matched_source_candidate(
+            context.source_path,
+            context.candidates,
+        )
+        if matched_candidate is None:
+            return OptionalResolution(None)
+        return OptionalResolution(
+            CellProfilerImageNumberMatchedContext(
+                matched_candidate=matched_candidate,
+                candidates=context.candidates,
+            )
+        )
+
+    def image_number(
+        self,
+        context: CellProfilerImageNumberMatchedContext,
+    ) -> OptionalResolution[int]:
+        return OptionalResolution.from_optional(
+            self.image_numbers_by_set(context.candidates).get(
+                SourceImageSetIdentity.from_metadata(
+                    context.matched_candidate.metadata,
+                    fallback_source_path=context.matched_candidate.resolved_path,
+                )
+            )
+        )
+
+    def pipeline_paths(self) -> tuple[str, ...]:
+        return tuple(
+            path
+            for path in self.adapter.source_binding_context.pipeline_input_files
+            if is_image_path(path)
+        )
+
+    def matched_source_candidate(
+        self,
+        source_path: str,
+        candidates: tuple["ParsedSourceCandidate", ...],
+    ) -> "ParsedSourceCandidate | None":
+        first_source_path = self.adapter.cellprofiler_source_order_path(source_path)
+        return next(
+            (
+                candidate
+                for candidate in candidates
+                if first_source_path
+                in {
+                    self.adapter.cellprofiler_source_order_path(candidate.path),
+                    self.adapter.cellprofiler_source_order_path(candidate.resolved_path),
+                }
+            ),
+            None,
+        )
+
+    @staticmethod
+    def image_numbers_by_set(
+        candidates: tuple["ParsedSourceCandidate", ...],
+    ) -> Mapping[SourceImageSetIdentity, int]:
+        image_numbers: dict[SourceImageSetIdentity, int] = {}
+        for candidate in SourceCandidateMatcher.ordered_source_candidates(candidates):
+            image_set_key = SourceImageSetIdentity.from_metadata(
+                candidate.metadata,
+                fallback_source_path=candidate.resolved_path,
+            )
+            if image_set_key not in image_numbers:
+                image_numbers[image_set_key] = len(image_numbers) + 1
+        return MappingProxyType(image_numbers)
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingPlaneCandidateContext:
+    """Candidate universe for resolving an alias to a current source plane."""
+
+    request: SourceBindingRequestBase
+    axis_candidates: tuple["ParsedSourceCandidate", ...]
+    step_candidates: tuple["ParsedSourceCandidate", ...]
+    pipeline_candidates: tuple["ParsedSourceCandidate", ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingPlaneMatchedContext:
+    """Matched axis indexes for one source-binding alias."""
+
+    alias: str
+    matched_indexes: tuple[int, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingPlaneIndexResolver:
+    """Resolve the current axis-local plane index for a source binding alias."""
+
+    adapter: CellProfilerRuntimeAdapter
+
+    @classmethod
+    def for_adapter(
+        cls,
+        adapter: CellProfilerRuntimeAdapter,
+    ) -> "SourceBindingPlaneIndexResolver":
+        return cls(adapter)
+
+    def plane_index(self, alias: str) -> int | None:
+        return (
+            OptionalResolution(alias)
+            .bind(self.candidate_context)
+            .bind(self.matched_context)
+            .bind(self.single_plane_index)
+            .value
+        )
+
+    def candidate_context(
+        self,
+        alias: str,
+    ) -> OptionalResolution[SourceBindingPlaneCandidateContext]:
+        binding = self.pipeline_start_binding(alias)
+        if binding is None:
+            return OptionalResolution(None)
+        context = self.adapter.source_binding_context
+        if not context.pipeline_input_files or not context.step_input_files:
+            return OptionalResolution(None)
+
+        step_candidates = self.adapter.source_candidates(context.step_input_files)
+        pipeline_candidates = self.adapter.source_candidates(context.pipeline_input_files)
+        axis_candidates = self.axis_candidates(binding, pipeline_candidates, step_candidates)
+        if not axis_candidates:
+            return OptionalResolution(None)
+        return OptionalResolution(
+            SourceBindingPlaneCandidateContext(
+                request=SourceBindingRequestBase(alias=alias, binding=binding),
+                axis_candidates=axis_candidates,
+                step_candidates=step_candidates,
+                pipeline_candidates=pipeline_candidates,
+            )
+        )
+
+    def matched_context(
+        self,
+        context: SourceBindingPlaneCandidateContext,
+    ) -> OptionalResolution[SourceBindingPlaneMatchedContext]:
+        matched_indexes = self.matched_axis_indexes(
+            alias=context.request.alias,
+            binding=context.request.binding,
+            axis_candidates=context.axis_candidates,
+            step_candidates=context.step_candidates,
+            pipeline_candidates=context.pipeline_candidates,
+        )
+        if not matched_indexes:
+            return OptionalResolution(None)
+        return OptionalResolution(
+            SourceBindingPlaneMatchedContext(
+                alias=context.request.alias,
+                matched_indexes=matched_indexes,
+            )
+        )
+
+    def single_plane_index(
+        self,
+        context: SourceBindingPlaneMatchedContext,
+    ) -> OptionalResolution[int]:
+        matched_indexes = context.matched_indexes
+        if len(matched_indexes) != 1:
+            raise RuntimeError(
+                f"Source binding alias {context.alias!r} matched multiple source planes "
+                f"for axis {self.adapter.axis_id!r}: {matched_indexes!r}."
+            )
+        return OptionalResolution(matched_indexes[0])
+
+    def pipeline_start_binding(self, alias: str) -> NamedSourceBinding | None:
+        binding = self.adapter.source_binding_plan.binding_for_alias(
+            alias,
+            self.adapter.group_key,
+        )
+        if binding is None or binding.origin is not SourceBindingOrigin.PIPELINE_START:
+            return None
+        return binding
+
+    def axis_candidates(
+        self,
+        binding: NamedSourceBinding,
+        pipeline_candidates: tuple["ParsedSourceCandidate", ...],
+        step_candidates: tuple["ParsedSourceCandidate", ...],
+    ) -> tuple["ParsedSourceCandidate", ...]:
+        return SourceCandidateMatcher.axis_scoped_candidates(
+            SourceCandidateMatcher.ordered_binding_candidates(
+                binding=binding,
+                candidates=pipeline_candidates,
+            ),
+            axis_id=self.adapter.axis_id,
+            step_input_candidates=step_candidates,
+        )
+
+    def matched_axis_indexes(
+        self,
+        *,
+        alias: str,
+        binding: NamedSourceBinding,
+        axis_candidates: tuple["ParsedSourceCandidate", ...],
+        step_candidates: tuple["ParsedSourceCandidate", ...],
+        pipeline_candidates: tuple["ParsedSourceCandidate", ...],
+    ) -> tuple[int, ...]:
+        target_candidates = SourceCandidateMatcher.match_candidates(
+            candidates=pipeline_candidates,
+            binding=binding,
+            inherit_components={},
+        )
+        current_candidates = SourceCandidateMatcher.match_image_set_candidates(
+            alias,
+            self.adapter.source_binding_plan.match_plan,
+            step_candidates,
+            target_candidates,
+            pipeline_candidates,
+            source_binding_plan=self.adapter.source_binding_plan,
+            group_key=self.adapter.group_key,
+        )
+        current_paths = {candidate.resolved_path for candidate in current_candidates}
+        return tuple(
+            index
+            for index, candidate in enumerate(axis_candidates)
+            if candidate.resolved_path in current_paths
+        )
 
 
 @dataclass(frozen=True, slots=True)
