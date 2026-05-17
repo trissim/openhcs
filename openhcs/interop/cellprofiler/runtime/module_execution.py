@@ -455,8 +455,16 @@ class CellProfilerModulePolicyMultiBaseLeafSpec(CellProfilerModulePolicyLeafSpec
 class CellProfilerSpecialInputPayloadSemantics(str, Enum):
     """Runtime value semantics for declared CellProfiler special inputs."""
 
-    INTENSITY_IMAGE = "intensity_image"
-    DENSE_LABEL_IMAGE = "dense_label_image"
+    INTENSITY_IMAGE = ("intensity_image", False)
+    DENSE_LABEL_IMAGE = ("dense_label_image", True)
+
+    def __new__(cls, value: str, dense_label_domain: bool):
+        member = str.__new__(cls, value)
+        member._value_ = value
+        member.dense_label_domain = dense_label_domain
+        return member
+
+    dense_label_domain: bool
 
 
 def _runtime_profile_enabled() -> bool:
@@ -3347,54 +3355,6 @@ class SpatialGridArtifactKindStrategy(RuntimeArtifactKindStrategy):
         request: RuntimeArtifactInputRequest,
     ) -> str | None:
         return None
-
-
-class CellProfilerSpecialInputValueStrategy(
-    EnumKeyedStrategyMixin[CellProfilerSpecialInputPayloadSemantics],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Resolve special-input payloads by declared role semantics."""
-
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
-    strategy_key: ClassVar[CellProfilerSpecialInputPayloadSemantics | None] = None
-    strategy_label: ClassVar[str | None] = None
-
-    @abstractmethod
-    def runtime_input_value(
-        self,
-        request: RuntimeArtifactInputRequest,
-    ) -> Any:
-        """Return the callable value for one role-resolved special input."""
-
-
-class IntensityImageSpecialInputValueStrategy(CellProfilerSpecialInputValueStrategy):
-    """Bind image-like special inputs in CellProfiler's intensity domain."""
-
-    strategy_key = CellProfilerSpecialInputPayloadSemantics.INTENSITY_IMAGE
-
-    def runtime_input_value(
-        self,
-        request: RuntimeArtifactInputRequest,
-    ) -> Any:
-        return RuntimeArtifactKindStrategy.for_kind(
-            request.spec.kind
-        ).runtime_input_value(request)
-
-
-class DenseLabelImageSpecialInputValueStrategy(CellProfilerSpecialInputValueStrategy):
-    """Bind image-carried label IDs without intensity normalization."""
-
-    strategy_key = CellProfilerSpecialInputPayloadSemantics.DENSE_LABEL_IMAGE
-
-    def runtime_input_value(
-        self,
-        request: RuntimeArtifactInputRequest,
-    ) -> np.ndarray:
-        raw_value = RuntimeArtifactKindStrategy.for_kind(
-            request.spec.kind
-        ).raw_runtime_input_value(request)
-        return object_label_dense_array(raw_value, dtype=np.int32)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -9827,18 +9787,21 @@ class SpecialInputBindingRequest(RuntimeInputBindingRequestBase):
             CellProfilerSpecialInputPayloadSemantics.INTENSITY_IMAGE
         ),
     ) -> Any:
-        return CellProfilerSpecialInputValueStrategy.for_enum_member(
-            semantics
-        ).runtime_input_value(
-            RuntimeArtifactInputRequest(
-                spec=spec,
-                adapter=self.adapter,
-                current_image=self.current_image,
-                external_image_names=self.external_image_names,
-                external_object_names=self.external_object_names,
-                runtime_image_names=self.runtime_image_names,
-            )
+        request = RuntimeArtifactInputRequest(
+            spec=spec,
+            adapter=self.adapter,
+            current_image=self.current_image,
+            external_image_names=self.external_image_names,
+            external_object_names=self.external_object_names,
+            runtime_image_names=self.runtime_image_names,
         )
+        artifact_strategy = RuntimeArtifactKindStrategy.for_kind(spec.kind)
+        if semantics.dense_label_domain:
+            return object_label_dense_array(
+                artifact_strategy.raw_runtime_input_value(request),
+                dtype=np.int32,
+            )
+        return artifact_strategy.runtime_input_value(request)
 
     def artifact_input_request(self, spec: ArtifactSpec) -> RuntimeArtifactInputRequest:
         """Return the nominal artifact request for this special-input context."""
