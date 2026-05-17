@@ -123,3 +123,33 @@ Advisor:
 - `_execute_with_orchestrator` is smaller because real phase collaborators own
   behavior, not because code was relocated into anonymous helpers.
 
+## Progress: 2026-05-17
+
+Completed safe decomposition slices:
+
+- `openhcs.runtime.zmq_debug_control.DebugControlMessageStrategy` now owns
+  snapshot read, artifact export, and paused-worker command control messages as
+  a registered message-strategy family.
+- `openhcs.runtime.zmq_execution_signature.ZMQExecutionRequestPayload` owns
+  request/debug-replay signatures and pipeline SHA projection.
+- `openhcs.runtime.zmq_progress.ZMQProgressEmitter` owns semantic progress
+  events for compile/init/axis compilation phases.
+
+Verification:
+
+- `tests/unit/test_debug_runtime.py`: `39 passed`.
+- Advisor:
+  - `openhcs/runtime/zmq_debug_control.py`: `0`.
+  - `openhcs/runtime/zmq_execution_signature.py`: `0`.
+  - `openhcs/runtime/zmq_progress.py`: `0`.
+  - `openhcs/runtime/zmq_execution_server.py`: reduced from `10` to `6`.
+
+Remaining:
+
+- Split `_execute_with_orchestrator` through real phase objects.
+- Decide whether base-class hook methods (`_run_execution`, `_handle_status`,
+  `_create_pong_response`, `_kill_worker_processes`) are acceptable facade hooks
+  or need named extension records.
+- Remove attribute-probe sites by introducing typed views over execution
+  records/compiled pipeline definitions where the probes are not base-protocol
+  compatibility.

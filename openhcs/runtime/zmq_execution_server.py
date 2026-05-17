@@ -5,9 +5,7 @@ from __future__ import annotations
 import logging
 import time
 import threading
-import hashlib
 import json
-from pathlib import Path
 from typing import Any
 
 from zmqruntime.execution import ExecutionServer
@@ -21,23 +19,12 @@ from zmqruntime.messages import (
 
 from zmqruntime.transport import coerce_transport_mode
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
-from openhcs.core.progress import ProgressPhase, ProgressStatus, ProgressEvent
+from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
+from openhcs.runtime.zmq_execution_signature import ZMQExecutionRequestPayload
+from openhcs.runtime.zmq_progress import ZMQProgressEmitter
 
 
 logger = logging.getLogger(__name__)
-
-
-def _emit_zmq_progress(enqueue_fn, **kwargs) -> None:
-    """Helper to emit progress to ZMQ queue using new schema.
-
-    All fields are explicit on ProgressEvent - just pass kwargs directly.
-    """
-    import time
-    import os
-
-    # Create event - all fields are explicit, just pass kwargs directly
-    event = ProgressEvent(timestamp=time.time(), pid=os.getpid(), **kwargs)
-    enqueue_fn(event.to_dict())
 
 
 class _ImmediateProgressQueue:
@@ -80,106 +67,13 @@ class ZMQExecutionServer(ExecutionServer):
     def handle_control_message(self, message):
         from openhcs.core.debug import DebugControlMessageType
 
-        if message.get(MessageFields.TYPE) == DebugControlMessageType.READ_SNAPSHOT.value:
-            return self._handle_debug_snapshot_read(message)
-        if message.get(MessageFields.TYPE) == DebugControlMessageType.WORKER_COMMAND.value:
-            return self._handle_debug_worker_command(message)
-        if message.get(MessageFields.TYPE) == DebugControlMessageType.EXPORT_ARTIFACT.value:
-            return self._handle_debug_artifact_export(message)
+        if message.get(MessageFields.TYPE) in {
+            DebugControlMessageType.READ_SNAPSHOT.value,
+            DebugControlMessageType.WORKER_COMMAND.value,
+            DebugControlMessageType.EXPORT_ARTIFACT.value,
+        }:
+            return DebugControlMessageStrategy.for_message(message).handle(message)
         return super().handle_control_message(message)
-
-    def _debug_snapshot_store_for_request(self, request):
-        from openhcs.core.debug import (
-            FileManagerDebugSnapshotStore,
-            LocalDebugSnapshotStore,
-        )
-
-        if request.snapshot_store_backend is None:
-            return LocalDebugSnapshotStore(
-                root_path=request.snapshot_store_ref,
-                debug_session_id=request.debug_session_id,
-            )
-
-        from polystore.base import ensure_storage_registry, storage_registry
-        from polystore.filemanager import FileManager
-
-        ensure_storage_registry()
-        return FileManagerDebugSnapshotStore(
-            filemanager=FileManager(storage_registry),
-            backend=request.snapshot_store_backend,
-            root_path=request.snapshot_store_ref,
-            debug_session_id=request.debug_session_id,
-        )
-
-    def _handle_debug_snapshot_read(self, message):
-        from openhcs.core.debug import (
-            DebugSnapshotReadControlPayload,
-            DebugSnapshotReadResponse,
-        )
-
-        try:
-            request = DebugSnapshotReadControlPayload.from_dict(message).to_request()
-            snapshot = self._debug_snapshot_store_for_request(request).read_snapshot(
-                request.snapshot_id
-            )
-            return DebugSnapshotReadResponse(snapshot=snapshot).to_control_response()
-        except Exception as error:
-            return {
-                MessageFields.STATUS: ResponseType.ERROR.value,
-                MessageFields.ERROR: str(error),
-            }
-
-    def _handle_debug_worker_command(self, message):
-        from openhcs.core.debug import (
-            DebugPausedWorkerRegistry,
-            DebugWorkerCommandControlPayload,
-            DebugWorkerCommandResponse,
-        )
-
-        try:
-            request = DebugWorkerCommandControlPayload.from_dict(message).to_request()
-            status = DebugPausedWorkerRegistry.controller_for(
-                request.debug_session_id
-            ).apply_command(request.command_type)
-            return DebugWorkerCommandResponse(status=status).to_control_response()
-        except Exception as error:
-            return {
-                MessageFields.STATUS: ResponseType.ERROR.value,
-                MessageFields.ERROR: str(error),
-            }
-
-    def _handle_debug_artifact_export(self, message):
-        from openhcs.core.debug import (
-            DebugArtifactExportControlPayload,
-            DebugArtifactExportPlan,
-            DebugArtifactExportResponse,
-        )
-
-        try:
-            request = DebugArtifactExportControlPayload.from_dict(message).to_request()
-            exported_path = DebugArtifactExportPlan(
-                artifact_ref=request.artifact_ref,
-                export_root=Path(request.export_root),
-                filemanager=self._debug_artifact_filemanager(request),
-            ).export()
-            return DebugArtifactExportResponse(
-                exported_ref=str(exported_path)
-            ).to_control_response()
-        except Exception as error:
-            return {
-                MessageFields.STATUS: ResponseType.ERROR.value,
-                MessageFields.ERROR: str(error),
-            }
-
-    @staticmethod
-    def _debug_artifact_filemanager(request):
-        if request.artifact_ref.storage_backend is None:
-            return None
-        from polystore.base import ensure_storage_registry, storage_registry
-        from polystore.filemanager import FileManager
-
-        ensure_storage_registry()
-        return FileManager(storage_registry)
 
     @staticmethod
     def _extract_compiled_axis_ids(compiled_contexts: dict[str, Any]) -> list[str]:
@@ -263,46 +157,6 @@ class ZMQExecutionServer(ExecutionServer):
             self._compile_status_expires_at = None
             return None, None
         return self._compile_status, self._compile_message
-
-    @staticmethod
-    def _build_request_signature(
-        plate_id: str,
-        pipeline_code: str,
-        config_params: dict | None,
-        config_code: str | None,
-        pipeline_config_code: str | None,
-    ) -> str:
-        payload = {
-            MessageFields.PLATE_ID: plate_id,
-            MessageFields.PIPELINE_CODE: pipeline_code,
-            MessageFields.CONFIG_PARAMS: config_params,
-            MessageFields.CONFIG_CODE: config_code,
-            MessageFields.PIPELINE_CONFIG_CODE: pipeline_config_code,
-        }
-        canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"))
-        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
-
-    @classmethod
-    def _build_debug_replay_signature(
-        cls,
-        *,
-        plate_id: str,
-        pipeline_code: str,
-        config_params: dict | None,
-        config_code: str | None,
-        pipeline_config_code: str | None,
-    ) -> str:
-        from openhcs.core.debug import DebugExecutionConfig
-
-        return cls._build_request_signature(
-            plate_id=plate_id,
-            pipeline_code=pipeline_code,
-            config_params=DebugExecutionConfig.compatibility_config_params(
-                config_params
-            ),
-            config_code=config_code,
-            pipeline_config_code=pipeline_config_code,
-        )
 
     def _cleanup_compiled_artifacts(self) -> None:
         now = time.time()
@@ -487,30 +341,27 @@ class ZMQExecutionServer(ExecutionServer):
     def execute_task(self, execution_id: str, request: ExecuteRequest) -> Any:
         return self._execute_pipeline(
             execution_id,
-            request.plate_id,
-            request.pipeline_code,
-            request.config_params,
-            request.config_code,
-            request.pipeline_config_code,
-            request.client_address,
-            request.compile_only,
-            request.compile_artifact_id,
+            ZMQExecutionRequestPayload.from_execute_request(request),
         )
 
     def _execute_pipeline(
         self,
-        execution_id,
-        plate_id,
-        pipeline_code,
-        config_params,
-        config_code,
-        pipeline_config_code,
-        client_address=None,
-        compile_only: bool = False,
-        compile_artifact_id: str | None = None,
+        execution_id: str,
+        request_payload: ZMQExecutionRequestPayload,
     ):
         from openhcs.constants import AllComponents, VariableComponents, GroupBy
         from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+
+        plate_id = request_payload.plate_id
+        pipeline_code = request_payload.pipeline_code
+        config_params = request_payload.config_params
+        config_code = request_payload.config_code
+        pipeline_config_code = request_payload.pipeline_config_code
+        compile_only = request_payload.compile_only
+        compile_artifact_id = request_payload.compile_artifact_id
+        request_signature = request_payload.request_signature
+        debug_replay_signature = request_payload.debug_replay_signature
+        pipeline_sha = request_payload.pipeline_sha
 
         logger.info("[%s] Starting plate %s", execution_id, plate_id)
 
@@ -537,22 +388,6 @@ class ZMQExecutionServer(ExecutionServer):
 
         if compile_only and compile_artifact_id:
             raise ValueError("compile_only and compile_artifact_id cannot both be set")
-
-        request_signature = self._build_request_signature(
-            plate_id=plate_id,
-            pipeline_code=pipeline_code,
-            config_params=config_params,
-            config_code=config_code,
-            pipeline_config_code=pipeline_config_code,
-        )
-        debug_replay_signature = self._build_debug_replay_signature(
-            plate_id=plate_id,
-            pipeline_code=pipeline_code,
-            config_params=config_params,
-            config_code=config_code,
-            pipeline_config_code=pipeline_config_code,
-        )
-        pipeline_sha = hashlib.sha256(pipeline_code.encode("utf-8")).hexdigest()[:12]
 
         namespace = {}
         exec(pipeline_code, namespace)
@@ -746,21 +581,15 @@ class ZMQExecutionServer(ExecutionServer):
         worker_progress_queue = None
         progress_forwarder = None
         compiled_contexts: dict[str, Any] | None = None
+        progress_emitter = ZMQProgressEmitter(
+            self._enqueue_progress,
+            execution_id,
+            plate_id,
+        )
 
         try:
             if compile_artifact_id is None:
-                _emit_zmq_progress(
-                    self._enqueue_progress,
-                    execution_id=execution_id,
-                    plate_id=plate_id,
-                    axis_id="",
-                    step_name="pipeline",
-                    total=len(pipeline_steps),
-                    phase=ProgressPhase.COMPILE,
-                    status=ProgressStatus.STARTED,
-                    completed=0,
-                    percent=0.0,
-                )
+                progress_emitter.compile_started(len(pipeline_steps))
             orchestrator = PipelineOrchestrator(
                 plate_path=Path(plate_path_str),
                 pipeline_config=pipeline_config,
@@ -794,21 +623,10 @@ class ZMQExecutionServer(ExecutionServer):
             compiled_pipeline_definition = None
 
             if compile_artifact_id is None:
-                planned_metadata = {"total_wells": sorted(wells)}
                 step_names = [step.name for step in pipeline_steps]
-                planned_metadata["step_names"] = step_names
-                _emit_zmq_progress(
-                    self._enqueue_progress,
-                    execution_id=execution_id,
-                    plate_id=plate_id,
-                    axis_id="",
-                    step_name="",
-                    phase=ProgressPhase.INIT,
-                    status=ProgressStatus.STARTED,
-                    percent=0.0,
-                    completed=0,
-                    total=1,
-                    **planned_metadata,
+                progress_emitter.planned_init_started(
+                    wells=wells,
+                    step_names=step_names,
                 )
 
             if compile_artifact_id is not None:
@@ -869,18 +687,8 @@ class ZMQExecutionServer(ExecutionServer):
 
                 # Emit filtered metadata for this execution id.
                 step_names = [step.name for step in pipeline_steps]
-                _emit_zmq_progress(
-                    self._enqueue_progress,
-                    execution_id=execution_id,
-                    plate_id=plate_id,
-                    axis_id="",
-                    step_name="",
-                    phase=ProgressPhase.INIT,
-                    status=ProgressStatus.STARTED,
-                    percent=0.0,
-                    completed=0,
-                    total=1,
-                    total_wells=compiled_axis_ids,
+                progress_emitter.artifact_init_started(
+                    compiled_axis_ids=compiled_axis_ids,
                     worker_assignments=worker_assignments,
                     step_names=step_names,
                 )
@@ -952,50 +760,20 @@ class ZMQExecutionServer(ExecutionServer):
                 compiled_axis_ids = self._extract_compiled_axis_ids(compiled_contexts)
 
                 # Emit filtered metadata for this execution id.
-                _emit_zmq_progress(
-                    self._enqueue_progress,
-                    execution_id=execution_id,
-                    plate_id=plate_id,
-                    axis_id="",
-                    step_name="",
-                    phase=ProgressPhase.INIT,
-                    status=ProgressStatus.STARTED,
-                    percent=0.0,
-                    completed=0,
-                    total=1,
-                    total_wells=compiled_axis_ids,
+                progress_emitter.compiled_init_started(
+                    compiled_axis_ids=compiled_axis_ids,
                     worker_assignments=worker_assignments,
                 )
 
-                _emit_zmq_progress(
-                    self._enqueue_progress,
-                    execution_id=execution_id,
-                    plate_id=plate_id,
-                    axis_id="",
-                    step_name="pipeline",
-                    total=len(pipeline_steps),
-                    phase=ProgressPhase.COMPILE,
-                    status=ProgressStatus.SUCCESS,
-                    completed=1,
-                    percent=100.0,
-                    total_wells=compiled_axis_ids,
+                progress_emitter.compile_succeeded(
+                    step_count=len(pipeline_steps),
+                    compiled_axis_ids=compiled_axis_ids,
                     worker_assignments=worker_assignments,
                 )
                 self._flush_progress_only()
 
                 for axis_id in compiled_axis_ids:
-                    _emit_zmq_progress(
-                        self._enqueue_progress,
-                        execution_id=execution_id,
-                        plate_id=plate_id,
-                        axis_id=axis_id,
-                        step_name="compilation",
-                        phase=ProgressPhase.COMPILE,
-                        status=ProgressStatus.SUCCESS,
-                        completed=1,
-                        total=1,
-                        percent=100.0,
-                    )
+                    progress_emitter.axis_compile_succeeded(axis_id)
                 self._flush_progress_only()
 
                 first_context = next(iter(compiled_contexts.values()))

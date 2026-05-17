@@ -1094,7 +1094,7 @@ def test_debug_artifact_export_plan_materializes_vfs_payload(tmp_path):
 
 
 def test_zmq_server_reads_local_debug_snapshot_by_control_request(tmp_path):
-    from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
+    from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
 
     snapshot = DebugRuntimeFixture.debug_event(
         event_type=DebugEventType.AFTER_INVOCATION
@@ -1104,23 +1104,20 @@ def test_zmq_server_reads_local_debug_snapshot_by_control_request(tmp_path):
         debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
     )
     store.write_snapshot(snapshot)
-    server = ZMQExecutionServer.__new__(ZMQExecutionServer)
     request = DebugSnapshotReadRequest(
         debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
         snapshot_id=snapshot.snapshot_id,
         snapshot_store_ref=str(tmp_path),
     )
 
-    response = ZMQExecutionServer._handle_debug_snapshot_read(
-        server,
-        DebugSnapshotReadControlPayload.from_request(request).to_dict(),
-    )
+    message = DebugSnapshotReadControlPayload.from_request(request).to_dict()
+    response = DebugControlMessageStrategy.for_message(message).handle(message)
 
     assert DebugSnapshotReadResponse.from_control_response(response).snapshot == snapshot
 
 
 def test_zmq_server_exports_debug_artifact_by_control_request(tmp_path):
-    from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
+    from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
 
     source_path = tmp_path / "source.csv"
     source_path.write_text("value\n1\n", encoding="utf-8")
@@ -1136,12 +1133,9 @@ def test_zmq_server_exports_debug_artifact_by_control_request(tmp_path):
         artifact_ref=artifact_ref,
         export_root=str(tmp_path / "exports"),
     )
-    server = ZMQExecutionServer.__new__(ZMQExecutionServer)
 
-    response = ZMQExecutionServer._handle_debug_artifact_export(
-        server,
-        DebugArtifactExportControlPayload.from_request(request).to_dict(),
-    )
+    message = DebugArtifactExportControlPayload.from_request(request).to_dict()
+    response = DebugControlMessageStrategy.for_message(message).handle(message)
 
     exported = Path(DebugArtifactExportResponse.from_control_response(response).exported_ref)
     assert exported.read_text(encoding="utf-8") == "value\n1\n"
@@ -1208,18 +1202,15 @@ def test_paused_worker_controller_blocks_and_steps_after_snapshot_boundary():
 
 
 def test_zmq_server_routes_paused_worker_command_by_control_request():
-    from openhcs.runtime.zmq_execution_server import ZMQExecutionServer
+    from openhcs.runtime.zmq_debug_control import DebugControlMessageStrategy
 
-    server = ZMQExecutionServer.__new__(ZMQExecutionServer)
     request = DebugWorkerCommandRequest(
         debug_session_id=DebugRuntimeFixture.DEBUG_SESSION_ID,
         command_type=DebugCommandType.STEP,
     )
 
-    response = ZMQExecutionServer._handle_debug_worker_command(
-        server,
-        DebugWorkerCommandControlPayload.from_request(request).to_dict(),
-    )
+    message = DebugWorkerCommandControlPayload.from_request(request).to_dict()
+    response = DebugControlMessageStrategy.for_message(message).handle(message)
 
     assert DebugWorkerCommandResponse.from_control_response(response).status.debug_session_id == (
         DebugRuntimeFixture.DEBUG_SESSION_ID
