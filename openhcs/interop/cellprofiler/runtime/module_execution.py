@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, fields as dataclass_fields, is_dataclass
 from enum import Enum
 from functools import lru_cache
@@ -413,6 +413,25 @@ class CellProfilerModulePolicyLeafSpec(RegisteredLeafClassSpec):
             _MODULE_NAME_REGISTRY_KEY: self.module_name,
             **dict(self.attributes),
         }
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerModulePolicyMultiBaseLeafSpec(CellProfilerModulePolicyLeafSpec):
+    """Generated CellProfiler policy leaf declaration with mixin bases."""
+
+    base_types: tuple[type[object], ...]
+
+    def declare_in(self, namespace: MutableMapping[str, object]) -> type[object]:
+        declared_type = type(
+            self.class_name,
+            self.base_types,
+            {
+                "__module__": namespace.get("__name__", self.base_type.__module__),
+                **dict(self.class_attributes()),
+            },
+        )
+        namespace[self.class_name] = declared_type
+        return declared_type
 
 
 class CellProfilerSpecialInputPayloadSemantics(str, Enum):
@@ -4568,12 +4587,6 @@ class CellProfilerObjectMeasurementRowPolicy(
         )
 
 
-class DefaultObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
-    """Use runtime object-label IDs as measurement-row identities."""
-
-    registry_key = CellProfilerModulePolicyRegistryKey.DEFAULT.value
-
-
 class DeclaredObjectMeasurementRowPolicy(CellProfilerObjectMeasurementRowPolicy):
     """Generated base for modules with declared measurement-row identity."""
 
@@ -4705,19 +4718,6 @@ class FeatureAnchoredCompactObjectMeasurementRowPolicy(
         )
 
 
-class MeasureObjectSizeShapeObjectMeasurementRowPolicy(
-    FeatureAnchoredCompactObjectMeasurementRowPolicy
-):
-    """Use CP's compact measured-object rows for object size/shape exports."""
-
-    module_name = _MEASURE_OBJECT_SIZE_SHAPE_MODULE
-    measured_object_features = (
-        ObjectShapeMeasurementFeature.AREA,
-        ObjectShapeMeasurementFeature.CENTER_X,
-        ObjectShapeMeasurementFeature.CENTER_Y,
-    )
-
-
 class DenseEmittedObjectMeasurementRowsMixin:
     """Policy mixin for modules that already emit their complete object row domain."""
 
@@ -4732,22 +4732,46 @@ class DenseEmittedObjectMeasurementRowsMixin:
         return rows if isinstance(rows, ColumnarRows) else list(rows)
 
 
-class MeasureObjectIntensityDistributionObjectMeasurementRowPolicy(
-    DenseEmittedObjectMeasurementRowsMixin,
-    CompactMeasuredObjectMeasurementRowPolicy
+for _metadata_row_policy_spec in (
+    GeneratedLeafClassSpec(
+        "DefaultObjectMeasurementRowPolicy",
+        CellProfilerObjectMeasurementRowPolicy,
+        attributes={
+            "registry_key": CellProfilerModulePolicyRegistryKey.DEFAULT.value,
+        },
+    ),
+    CellProfilerModulePolicyLeafSpec(
+        class_name="MeasureObjectSizeShapeObjectMeasurementRowPolicy",
+        base_type=FeatureAnchoredCompactObjectMeasurementRowPolicy,
+        module_name=_MEASURE_OBJECT_SIZE_SHAPE_MODULE,
+        attributes={
+            "measured_object_features": (
+                ObjectShapeMeasurementFeature.AREA,
+                ObjectShapeMeasurementFeature.CENTER_X,
+                ObjectShapeMeasurementFeature.CENTER_Y,
+            ),
+        },
+    ),
+    CellProfilerModulePolicyMultiBaseLeafSpec(
+        class_name="MeasureObjectIntensityDistributionObjectMeasurementRowPolicy",
+        base_type=CompactMeasuredObjectMeasurementRowPolicy,
+        base_types=(
+            DenseEmittedObjectMeasurementRowsMixin,
+            CompactMeasuredObjectMeasurementRowPolicy,
+        ),
+        module_name=_MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE,
+    ),
+    CellProfilerModulePolicyMultiBaseLeafSpec(
+        class_name="MeasureGranularityObjectMeasurementRowPolicy",
+        base_type=CellProfilerObjectMeasurementRowPolicy,
+        base_types=(
+            DenseEmittedObjectMeasurementRowsMixin,
+            CellProfilerObjectMeasurementRowPolicy,
+        ),
+        module_name=_MEASURE_GRANULARITY_MODULE,
+    ),
 ):
-    """Use CP's compact measured-object rows for intensity-distribution exports."""
-
-    module_name = _MEASURE_OBJECT_INTENSITY_DISTRIBUTION_MODULE
-
-
-class MeasureGranularityObjectMeasurementRowPolicy(
-    DenseEmittedObjectMeasurementRowsMixin,
-    CellProfilerObjectMeasurementRowPolicy,
-):
-    """Use emitted object rows directly for dense granularity exports."""
-
-    module_name = _MEASURE_GRANULARITY_MODULE
+    _metadata_row_policy_spec.declare_in(globals())
 
 
 class MeasureTextureObjectMeasurementRowPolicy(
