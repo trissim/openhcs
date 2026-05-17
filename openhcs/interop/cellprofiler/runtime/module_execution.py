@@ -3360,15 +3360,6 @@ class RuntimeInputBindingRequestBase(ABC, metaclass=AutoRegisterMeta):
             external_object_names=self.external_object_names,
         )
 
-    def image_number_for_object(self, spec: ArtifactSpec) -> int:
-        """Return the CellProfiler ImageNumber aligned to this object input."""
-        return RuntimeArtifactKindStrategy.for_kind(
-            spec.kind
-        ).cellprofiler_image_number(
-            self.artifact_input_request(spec)
-        )
-
-
 def _object_label_runtime_payload(objects: ObjectLabelSet) -> Any:
     if objects.representation is ObjectLabelRepresentation.SPARSE_IJV:
         return objects
@@ -3769,7 +3760,9 @@ class CellProfilerObjectMeasurementVectorBinding:
         )
         resolved_image_number = image_number
         if resolved_image_number is None and object_ref_is_spec:
-            resolved_image_number = request.image_number_for_object(object_spec)
+            resolved_image_number = RuntimeArtifactKindStrategy.for_kind(
+                object_spec.kind
+            ).cellprofiler_image_number(request.artifact_input_request(object_spec))
         return cls(
             request=request,
             object_name=object_spec.name,
@@ -10029,7 +10022,9 @@ class ClassifyObjectsMeasurementInputPolicy(CellProfilerSpecialInputPolicy):
         object_spec = object_inputs[0]
         labels = request.labels_for(object_spec)
         measurement_labels = request.label_payload_for(object_spec)
-        image_number = request.image_number_for_object(object_spec)
+        image_number = RuntimeArtifactKindStrategy.for_kind(
+            object_spec.kind
+        ).cellprofiler_image_number(request.artifact_input_request(object_spec))
         if "classification_rules" in request.kwargs:
             rules = request.kwargs["classification_rules"]
             if not isinstance(rules, (tuple, list)):
