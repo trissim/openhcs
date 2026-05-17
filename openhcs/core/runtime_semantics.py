@@ -1942,7 +1942,9 @@ class ObjectFeatureValueTable(
                 feature_name,
                 np.asarray(values),
                 self.python_feature_values(values),
-                self.missing_feature_value(feature_name),
+                ObjectFeatureMissingValueStrategy.for_enum_member(
+                    self.feature_missing_value(feature_name)
+                ).value(),
                 self.feature_value_indexes(feature_name, np.asarray(values)),
             )
             for feature_name, values in self.feature_values.items()
@@ -2052,12 +2054,6 @@ class ObjectFeatureValueTable(
     def complete_row(self, row: dict[str, float | int]) -> None:
         """Add table-specific axis/value fields after feature projection."""
         del row
-
-    def missing_feature_value(self, feature_name: str) -> float:
-        """Return the missing value for an unmeasured object feature."""
-        return ObjectFeatureMissingValueStrategy.for_enum_member(
-            self.feature_missing_value(feature_name)
-        ).value()
 
     def feature_missing_value(self, feature_name: str) -> ObjectFeatureMissingValue:
         """Return the declared missing-value policy for one feature."""
