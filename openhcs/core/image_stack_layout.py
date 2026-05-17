@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
 from typing import Any, Callable, ClassVar, Sequence
 
 import numpy as np
@@ -27,6 +29,91 @@ from openhcs.core.memory import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class ImageStackLayoutSelection:
+    """Typed request for selecting an image-stack layout from registered classes."""
+
+    matches: Callable[[type["ImageStackLayout"]], bool]
+    failure_message: str
+
+    def select(self) -> "ImageStackLayout":
+        for layout_type in ImageStackLayout.__registry__.values():
+            if self.matches(layout_type):
+                return layout_type()
+        raise ValueError(self.failure_message)
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryConversion:
+    """Typed conversion request for moving payloads between memory domains."""
+
+    data: Any
+    source_type: str
+    target_type: str
+    gpu_id: int
+
+    def materialize(self) -> Any:
+        if self.source_type == self.target_type:
+            return self.data
+        return convert_memory(
+            data=self.data,
+            source_type=self.source_type,
+            target_type=self.target_type,
+            gpu_id=self.gpu_id,
+        )
+
+
+class MemoryConversionSource(Enum):
+    """Nominal source-domain variants for memory conversion requests."""
+
+    DETECTED = "detected"
+    NUMPY = "numpy"
+
+    def conversion(
+        self,
+        data: Any,
+        *,
+        target_type: str,
+        gpu_id: int,
+    ) -> MemoryConversion:
+        source_type = (
+            detect_memory_type(data)
+            if self is MemoryConversionSource.DETECTED
+            else MEMORY_TYPE_NUMPY
+        )
+        return MemoryConversion(
+            data=data,
+            source_type=source_type,
+            target_type=target_type,
+            gpu_id=gpu_id,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class ImageStackLayoutDeclaration:
+    """Typed declaration for generated metadata-only stack-layout classes."""
+
+    class_name: str
+    docstring: str
+    layout_key: str
+    slice_predicate: Callable[[Any], bool]
+    stack_predicate: Callable[[Any], bool]
+    stable_slice_shape_error: str | None = None
+
+    def materialize(self) -> type["ImageStackLayout"]:
+        return type(
+            self.class_name,
+            (ImageStackLayout,),
+            {
+                "__doc__": self.docstring,
+                "layout_key": self.layout_key,
+                "slice_predicate": staticmethod(self.slice_predicate),
+                "stack_predicate": staticmethod(self.stack_predicate),
+                "stable_slice_shape_error": self.stable_slice_shape_error,
+            },
+        )
+
+
 class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
     """Nominal family owning stack and unstack behavior for one image layout."""
 
@@ -39,7 +126,7 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def for_slices(cls, slices: Sequence[Any]) -> "ImageStackLayout":
-        return cls._matching_layout(
+        return ImageStackLayoutSelection(
             matches=lambda layout_type: all(
                 layout_type.slice_predicate(slice_data)
                 for slice_data in slices
@@ -51,18 +138,18 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
                 "got shapes "
                 f"{[getattr(slice_data, 'shape', None) for slice_data in slices]!r}."
             ),
-        )
+        ).select()
 
     @classmethod
     def for_stack(cls, array: Any) -> "ImageStackLayout":
-        return cls._matching_layout(
+        return ImageStackLayoutSelection(
             matches=lambda layout_type: layout_type.stack_predicate(array),
             failure_message=(
                 "OpenHCS image stack must be shaped (N, H, W), (N, Z, H, W), "
                 "(N, H, W, C), or (N, Z, H, W, C), "
                 f"got {getattr(array, 'shape', 'unknown')}."
             ),
-        )
+        ).select()
 
     @classmethod
     def stack_slices_or_single_stack(
@@ -76,15 +163,11 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         if len(slices) == 1:
             candidate = slices[0]
             if cls._is_unambiguous_single_stack(candidate):
-                source_type = detect_memory_type(candidate)
-                if source_type == memory_type:
-                    return candidate
-                return convert_memory(
-                    data=candidate,
-                    source_type=source_type,
+                return MemoryConversionSource.DETECTED.conversion(
+                    candidate,
                     target_type=memory_type,
                     gpu_id=gpu_id,
-                )
+                ).materialize()
         return cls.for_slices(slices).stack(
             slices=slices,
             memory_type=memory_type,
@@ -103,15 +186,13 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         """Unstack runtime output while preserving source-slice shape domains."""
         output_shape = tuple(getattr(array, "shape", ()))
         if output_shape and output_shape in set(source_slice_shapes):
-            source_type = detect_memory_type(array)
-            if source_type != memory_type:
-                array = convert_memory(
-                    data=array,
-                    source_type=source_type,
+            return [
+                MemoryConversionSource.DETECTED.conversion(
+                    array,
                     target_type=memory_type,
                     gpu_id=gpu_id,
-                )
-            return [array]
+                ).materialize()
+            ]
         return cls.for_stack(array).unstack(
             array=array,
             memory_type=memory_type,
@@ -139,15 +220,11 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
                 for layout_type in cls.__registry__.values()
             )
         ):
-            source_type = detect_memory_type(result)
-            if source_type == memory_type:
-                return result
-            return convert_memory(
-                data=result,
-                source_type=source_type,
+            return MemoryConversionSource.DETECTED.conversion(
+                result,
                 target_type=memory_type,
                 gpu_id=gpu_id,
-            )
+            ).materialize()
         return cls.for_slices((result,)).stack(
             slices=(result,),
             memory_type=memory_type,
@@ -164,18 +241,6 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
             layout_type.slice_predicate(candidate)
             for layout_type in cls.__registry__.values()
         )
-
-    @classmethod
-    def _matching_layout(
-        cls,
-        *,
-        matches: Callable[[type["ImageStackLayout"]], bool],
-        failure_message: str,
-    ) -> "ImageStackLayout":
-        for layout_type in cls.__registry__.values():
-            if matches(layout_type):
-                return layout_type()
-        raise ValueError(failure_message)
 
     def stack(
         self,
@@ -221,14 +286,11 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
                 f"got {[slice_data.shape for slice_data in numpy_slices]!r}."
             )
         stacked = np.stack(numpy_slices)
-        if memory_type == MEMORY_TYPE_NUMPY:
-            return stacked
-        return convert_memory(
-            data=stacked,
-            source_type=MEMORY_TYPE_NUMPY,
+        return MemoryConversionSource.NUMPY.conversion(
+            stacked,
             target_type=memory_type,
             gpu_id=gpu_id,
-        )
+        ).materialize()
 
     def unstack(
         self,
@@ -238,14 +300,11 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         gpu_id: int,
     ) -> list[Any]:
         """Split an OpenHCS main-flow payload into per-file image slices."""
-        source_type = detect_memory_type(array)
-        if source_type != memory_type:
-            array = convert_memory(
-                data=array,
-                source_type=source_type,
-                target_type=memory_type,
-                gpu_id=gpu_id,
-            )
+        array = MemoryConversionSource.DETECTED.conversion(
+            array,
+            target_type=memory_type,
+            gpu_id=gpu_id,
+        ).materialize()
         return [array[index] for index in range(array.shape[0])]
 
 
@@ -271,46 +330,39 @@ class GrayscaleImageStackLayout(ImageStackLayout):
         )
 
 
-class ColorImageStackLayout(ImageStackLayout):
-    """OpenHCS color stacks shaped (N, H, W, C)."""
-
-    layout_key = "color"
-    slice_predicate = staticmethod(is_color_image_slice)
-    stack_predicate = staticmethod(is_color_image_stack)
-    stable_slice_shape_error = (
-        "OpenHCS color image stacks require stable HWC shape"
-    )
-
-
-class GrayscaleVolumeStackLayout(ImageStackLayout):
-    """OpenHCS grayscale volume stacks shaped (N, Z, H, W)."""
-
-    layout_key = "grayscale_volume"
-    slice_predicate = staticmethod(is_grayscale_volume_slice)
-    stack_predicate = staticmethod(is_grayscale_volume_stack)
-    stable_slice_shape_error = (
-        "OpenHCS grayscale volume stacks require stable ZYX shape"
-    )
+ColorImageStackLayout = ImageStackLayoutDeclaration(
+    class_name="ColorImageStackLayout",
+    docstring="OpenHCS color stacks shaped (N, H, W, C).",
+    layout_key="color",
+    slice_predicate=is_color_image_slice,
+    stack_predicate=is_color_image_stack,
+    stable_slice_shape_error="OpenHCS color image stacks require stable HWC shape",
+).materialize()
 
 
-class ColorVolumeStackLayout(ImageStackLayout):
-    """OpenHCS color volume stacks shaped (N, Z, H, W, C)."""
+GrayscaleVolumeStackLayout = ImageStackLayoutDeclaration(
+    class_name="GrayscaleVolumeStackLayout",
+    docstring="OpenHCS grayscale volume stacks shaped (N, Z, H, W).",
+    layout_key="grayscale_volume",
+    slice_predicate=is_grayscale_volume_slice,
+    stack_predicate=is_grayscale_volume_stack,
+    stable_slice_shape_error="OpenHCS grayscale volume stacks require stable ZYX shape",
+).materialize()
 
-    layout_key = "color_volume"
-    slice_predicate = staticmethod(is_color_volume_slice)
-    stack_predicate = staticmethod(is_color_volume_stack)
-    stable_slice_shape_error = (
-        "OpenHCS color volume stacks require stable ZYXC shape"
-    )
+
+ColorVolumeStackLayout = ImageStackLayoutDeclaration(
+    class_name="ColorVolumeStackLayout",
+    docstring="OpenHCS color volume stacks shaped (N, Z, H, W, C).",
+    layout_key="color_volume",
+    slice_predicate=is_color_volume_slice,
+    stack_predicate=is_color_volume_stack,
+    stable_slice_shape_error="OpenHCS color volume stacks require stable ZYXC shape",
+).materialize()
 
 
 def _as_numpy_slice(slice_data: Any, gpu_id: int) -> np.ndarray:
-    source_type = detect_memory_type(slice_data)
-    if source_type == MEMORY_TYPE_NUMPY:
-        return slice_data
-    return convert_memory(
-        data=slice_data,
-        source_type=source_type,
+    return MemoryConversionSource.DETECTED.conversion(
+        slice_data,
         target_type=MEMORY_TYPE_NUMPY,
         gpu_id=gpu_id,
-    )
+    ).materialize()
