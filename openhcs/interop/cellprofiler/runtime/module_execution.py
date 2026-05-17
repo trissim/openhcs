@@ -759,6 +759,11 @@ class CellProfilerModuleExecutor:
         repr=False,
         compare=False,
     )
+    _primary_image_input_policy: "CellProfilerPrimaryImageInputPolicy" = field(
+        init=False,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.contract, ModuleArtifactContract):
@@ -853,6 +858,13 @@ class CellProfilerModuleExecutor:
             self,
             "_measurement_image_resolver",
             CellProfilerMeasurementImageResolver(self),
+        )
+        object.__setattr__(
+            self,
+            "_primary_image_input_policy",
+            CellProfilerPrimaryImageInputPolicy.for_module(
+                self._canonical_module_name
+            ),
         )
 
     @property
@@ -2039,9 +2051,7 @@ class CellProfilerModuleExecutor:
         func: Callable[..., Any],
     ) -> tuple[ArtifactSpec, ...]:
         """Return policy-declared image inputs that drive this invocation."""
-        return CellProfilerPrimaryImageInputPolicy.for_module(
-            self._canonical_module_name
-        ).primary_image_inputs(
+        return self._primary_image_input_policy.primary_image_inputs(
             self.module_name,
             func,
             self.declared_input_specs,
