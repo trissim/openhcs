@@ -402,18 +402,6 @@ class GroupRuntimePlaneProjection(RuntimePlaneProjection):
 class RuntimePlaneAxisProjector(ABC):
     """Nominal provider for execution-local runtime plane selection."""
 
-    def runtime_plane_index(
-        self,
-        axis: RuntimePlaneAxis,
-        *,
-        source_aliases: tuple[str, ...],
-    ) -> int | None:
-        """Return the active plane index for the requested plane axis."""
-        return RuntimePlaneAxisProjectionStrategy.for_enum_member(axis).plane_index(
-            self,
-            source_aliases=source_aliases,
-        )
-
     @abstractmethod
     def runtime_slice_plane_index(self) -> int | None:
         """Return the execution-local runtime-slice plane index."""
