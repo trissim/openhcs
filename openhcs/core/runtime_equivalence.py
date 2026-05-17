@@ -10,7 +10,7 @@ import sys
 from abc import ABC, abstractmethod
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from dataclasses import dataclass, field, make_dataclass
+from dataclasses import dataclass, field
 from enum import Enum, auto
 from functools import lru_cache
 from pathlib import Path
@@ -251,35 +251,14 @@ _RuntimeMeasurementNameParts = tuple[tuple[str, ...], tuple[str, ...]]
 _RuntimeSourceTokenGroups = tuple[tuple[str, tuple[str, ...]], ...]
 
 
-_RecordField = tuple[str, object]
+@dataclass(frozen=True, slots=True)
+class _RuntimeMeasurementRowSchema:
+    """Schema indexes for one runtime measurement table row shape."""
 
-
-def _frozen_slots_record(
-    class_name: str,
-    fields: tuple[_RecordField, ...],
-) -> type[object]:
-    """Construct local semantic records without repeating dataclass shells."""
-    return make_dataclass(
-        class_name,
-        fields,
-        frozen=True,
-        slots=True,
-        namespace={"__module__": __name__},
-    )
-
-
-_RuntimeMeasurementRowSchema = _frozen_slots_record(
-    "_RuntimeMeasurementRowSchema",
-    (
-        ("feature_indexes", tuple[int, ...]),
-        (
-            "qualifiers_by_index",
-            dict[int, tuple[_RuntimeMeasurementIndexedQualifier, ...]],
-        ),
-        ("long_form_feature_indexes", tuple[int, ...]),
-        ("long_form_value_indexes", tuple[int, ...]),
-    ),
-)
+    feature_indexes: tuple[int, ...]
+    qualifiers_by_index: dict[int, tuple[_RuntimeMeasurementIndexedQualifier, ...]]
+    long_form_feature_indexes: tuple[int, ...]
+    long_form_value_indexes: tuple[int, ...]
 
 
 _RuntimeMeasurementQualifierCacheKey = tuple[
@@ -849,17 +828,16 @@ class RuntimeRowLongFormNumericProjection(
         return _numeric_long_form_measurement_values(fact)
 
 
-_LongFormMeasurementContext = _frozen_slots_record(
-    "_LongFormMeasurementContext",
-    (
-        ("row", Mapping[str, object]),
-        ("subject", RuntimeMeasurementSubjectKey),
-        ("policy", RuntimeEquivalencePolicy),
-        ("source_name", str | None),
-        ("known_source_names", tuple[str, ...]),
-        ("image_number_offset", float),
-    ),
-)
+@dataclass(frozen=True, slots=True)
+class _LongFormMeasurementContext:
+    """Runtime row context for long-form measurement extraction."""
+
+    row: Mapping[str, object]
+    subject: RuntimeMeasurementSubjectKey
+    policy: RuntimeEquivalencePolicy
+    source_name: str | None
+    known_source_names: tuple[str, ...]
+    image_number_offset: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -895,72 +873,67 @@ class _CachedLongFormMeasurementContext:
         )
 
 
-_AggregateInputRecordingContext = _frozen_slots_record(
-    "_AggregateInputRecordingContext",
-    (
-        ("values_by_feature", _AggregateValuesByFeature),
-        ("row_mapping", Mapping[str, object]),
-        ("axis_key", object | None),
-        ("required_keys", _RuntimeRequiredMeasurementKeys),
-        ("key_cache", _AggregateMeanKeyCache),
-        ("measurement_dialect", RuntimeMeasurementDialect),
-    ),
-)
+@dataclass(frozen=True, slots=True)
+class _AggregateInputRecordingContext:
+    """Context for recording row-local aggregate input values."""
+
+    values_by_feature: _AggregateValuesByFeature
+    row_mapping: Mapping[str, object]
+    axis_key: object | None
+    required_keys: _RuntimeRequiredMeasurementKeys
+    key_cache: _AggregateMeanKeyCache
+    measurement_dialect: RuntimeMeasurementDialect
 
 
-_RuntimeMeasurementFactRecordingContext = _frozen_slots_record(
-    "_RuntimeMeasurementFactRecordingContext",
-    (
-        ("values_by_feature", _RuntimeMeasurementFactCounters),
-        ("explicit_measurement_keys", set[RuntimeMeasurementFeatureKey]),
-        ("object_row_domain", RuntimeObjectMeasurementFactRowDomain),
-        ("required_keys", _RuntimeRequiredMeasurementKeys),
-        ("row_priority_cache", _RuntimeMeasurementRowPriorityCache),
-    ),
-)
+@dataclass(frozen=True, slots=True)
+class _RuntimeMeasurementFactRecordingContext:
+    """Context for recording runtime measurement row facts."""
+
+    values_by_feature: _RuntimeMeasurementFactCounters
+    explicit_measurement_keys: set[RuntimeMeasurementFeatureKey]
+    object_row_domain: RuntimeObjectMeasurementFactRowDomain
+    required_keys: _RuntimeRequiredMeasurementKeys
+    row_priority_cache: _RuntimeMeasurementRowPriorityCache
 
 
-_StaticWideRuntimeRowProjectionContext = _frozen_slots_record(
-    "_StaticWideRuntimeRowProjectionContext",
-    (
-        ("header", tuple[str, ...]),
-        ("policy", RuntimeEquivalencePolicy),
-        ("known_source_names", tuple[str, ...]),
-        ("input_keys", _RuntimeRequiredMeasurementKeys),
-        ("feature_column_indexes", tuple[int, ...]),
-        ("aggregate_reference_indexes", frozenset[int]),
-        ("qualifiers_by_index", _StaticWideRuntimeQualifiersByIndex),
-        ("qualifier_render_cache", _RuntimeMeasurementQualifierRenderCache),
-        ("key_cache", _StaticWideRuntimeKeyCache),
-        ("padding_group_cache", _RuntimeMeasurementPaddingGroupCache),
-        ("table_padding_group", str),
-    ),
-)
+@dataclass(frozen=True, slots=True)
+class _StaticWideRuntimeRowProjectionContext:
+    """Context for projecting static-wide runtime measurement rows."""
+
+    header: tuple[str, ...]
+    policy: RuntimeEquivalencePolicy
+    known_source_names: tuple[str, ...]
+    input_keys: _RuntimeRequiredMeasurementKeys
+    feature_column_indexes: tuple[int, ...]
+    aggregate_reference_indexes: frozenset[int]
+    qualifiers_by_index: _StaticWideRuntimeQualifiersByIndex
+    qualifier_render_cache: _RuntimeMeasurementQualifierRenderCache
+    key_cache: _StaticWideRuntimeKeyCache
+    padding_group_cache: _RuntimeMeasurementPaddingGroupCache
+    table_padding_group: str
 
 
-_MeasurementFeatureKeySourceContext = _frozen_slots_record(
-    "_MeasurementFeatureKeySourceContext",
-    (
-        ("field_name", str),
-        ("subject", RuntimeMeasurementSubjectKey),
-        ("policy", RuntimeEquivalencePolicy),
-        ("qualifiers", tuple[str, ...]),
-        ("source_name", str | None),
-        ("known_source_names", tuple[str, ...]),
-    ),
-)
+@dataclass(frozen=True, slots=True)
+class _MeasurementFeatureKeySourceContext:
+    """Source context for deriving a runtime measurement feature key."""
+
+    field_name: str
+    subject: RuntimeMeasurementSubjectKey
+    policy: RuntimeEquivalencePolicy
+    qualifiers: tuple[str, ...]
+    source_name: str | None
+    known_source_names: tuple[str, ...]
 
 
-_RuntimeMeasurementTableProjectionContext = _frozen_slots_record(
-    "_RuntimeMeasurementTableProjectionContext",
-    (
-        ("table", MeasurementTable),
-        ("policy", RuntimeEquivalencePolicy),
-        ("axis_key", object | None),
-        ("known_source_names", tuple[str, ...]),
-        ("required_keys", _RuntimeRequiredMeasurementKeys),
-    ),
-)
+@dataclass(frozen=True, slots=True)
+class _RuntimeMeasurementTableProjectionContext:
+    """Context for projecting one runtime measurement table."""
+
+    table: MeasurementTable
+    policy: RuntimeEquivalencePolicy
+    axis_key: object | None
+    known_source_names: tuple[str, ...]
+    required_keys: _RuntimeRequiredMeasurementKeys
 
 
 @dataclass(frozen=True, slots=True)
