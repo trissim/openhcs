@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -15,10 +18,120 @@ from openhcs.core.runtime_stores import (
     StoredRuntimeValue,
     require_runtime_value_store,
 )
+from openhcs.core.registry_strategies import str_enum_member_with_payload
+from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializerInputLocation:
+    """Resolved path universe for one materializer input source."""
+
+    directory: Path
+    backend: str
+
+
+MaterializerInputLocationResolver = Callable[
+    [FunctionStepExecutionPlan],
+    MaterializerInputLocation,
+]
+
+
+def step_input_materializer_location(
+    plan: FunctionStepExecutionPlan,
+) -> MaterializerInputLocation:
+    """Resolve materializer inputs from the step input universe."""
+    return MaterializerInputLocation(plan.input_dir, plan.read_backend)
+
+
+def step_output_materializer_location(
+    plan: FunctionStepExecutionPlan,
+) -> MaterializerInputLocation:
+    """Resolve materializer inputs from the step output universe."""
+    return MaterializerInputLocation(plan.output_dir, Backend.MEMORY.value)
+
+
+class MaterializerInputKind(str, Enum):
+    """Supported extra input payload shapes for artifact materializers."""
+
+    IMAGE_SLICES = "image_slices"
+
+
+class MaterializerInputSource(str, Enum):
+    """Source universe for extra inputs passed to artifact materializers."""
+
+    def __new__(
+        cls,
+        value: str,
+        location_resolver: MaterializerInputLocationResolver,
+    ):
+        return str_enum_member_with_payload(
+            cls,
+            value,
+            payload_attribute="_location_resolver",
+            payload=location_resolver,
+        )
+
+    STEP_INPUT = ("step_input", step_input_materializer_location)
+    STEP_OUTPUT = ("step_output", step_output_materializer_location)
+    location_resolver = AliasProperty[MaterializerInputLocationResolver](
+        "_location_resolver"
+    )
+
+    def location_for(
+        self,
+        plan: FunctionStepExecutionPlan,
+    ) -> MaterializerInputLocation:
+        """Resolve this source against the compiled step execution plan."""
+        return self.location_resolver(plan)
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializerInputSpec:
+    """Validated descriptor for one materializer-declared input."""
+
+    name: str
+    kind: MaterializerInputKind
+    source: MaterializerInputSource
+    group_by: str | None = None
+
+    @classmethod
+    def from_mapping(
+        cls,
+        name: str,
+        raw: Mapping[str, Any],
+    ) -> "MaterializerInputSpec":
+        """Build a typed materializer input descriptor from legacy options."""
+        kind = coerce_enum(
+            MaterializerInputKind,
+            raw.get("kind"),
+            f"Materialization input {name!r} kind",
+        )
+        source = coerce_enum(
+            MaterializerInputSource,
+            raw.get("source"),
+            f"Materialization input {name!r} source",
+        )
+        group_by = raw.get("group_by")
+        return cls(
+            name=str(name),
+            kind=kind,
+            source=source,
+            group_by=None if group_by is None else str(group_by),
+        )
+
+    def require_image_slices(self) -> None:
+        """Fail loudly when a materializer asks for an unsupported input kind."""
+        if self.kind is not MaterializerInputKind.IMAGE_SLICES:
+            supported = ", ".join(repr(kind.value) for kind in MaterializerInputKind)
+            raise ValueError(
+                f"Unsupported materialization input kind for {self.name!r}: "
+                f"{self.kind.value!r}. Supported kinds: {supported}."
+            )
 
 
 def _build_analysis_filename(
@@ -76,31 +189,14 @@ def _resolve_materializer_inputs(
                 f"Materialization input '{input_name}' must be a dict, got {type(input_desc)}"
             )
 
-        kind = input_desc.get("kind")
-        if kind != "image_slices":
-            raise ValueError(
-                f"Unsupported materialization input kind for '{input_name}': {kind}. "
-                "Supported kinds: 'image_slices'."
-            )
+        input_spec = MaterializerInputSpec.from_mapping(input_name, input_desc)
+        input_spec.require_image_slices()
+        location = input_spec.source.location_for(plan)
 
-        source = input_desc.get("source")
-        if source == "step_input":
-            source_dir = plan.input_dir
-            source_backend = plan.read_backend
-        elif source == "step_output":
-            source_dir = plan.output_dir
-            source_backend = Backend.MEMORY.value
-        else:
-            raise ValueError(
-                f"Unsupported materialization input source for '{input_name}': {source}. "
-                "Supported sources: 'step_input', 'step_output'."
-            )
-
-        paths = plan.get_paths_for_axis(source_dir, source_backend)
+        paths = plan.get_paths_for_axis(location.directory, location.backend)
         if dict_key is not None:
             paths = _filter_group_materializer_paths(
-                input_name=input_name,
-                input_desc=input_desc,
+                input_spec=input_spec,
                 paths=paths,
                 dict_key=dict_key,
                 plan=plan,
@@ -110,36 +206,36 @@ def _resolve_materializer_inputs(
         if not paths:
             raise ValueError(
                 f"Materialization input '{input_name}' resolved to 0 paths "
-                f"(source={source}, dir={source_dir}, backend={source_backend}, group={dict_key})."
+                f"(source={input_spec.source.value}, dir={location.directory}, "
+                f"backend={location.backend}, group={dict_key})."
             )
 
-        resolved[input_name] = filemanager.load_batch(paths, source_backend)
+        resolved[input_name] = filemanager.load_batch(paths, location.backend)
 
     return resolved
 
 
 def _filter_group_materializer_paths(
     *,
-    input_name: str,
-    input_desc: Mapping[str, Any],
+    input_spec: MaterializerInputSpec,
     paths: list[str],
     dict_key: str,
     plan: FunctionStepExecutionPlan,
     context: Any,
 ) -> list[str]:
     """Filter materializer input paths to the current dict/group invocation."""
-    group_by_key = input_desc.get("group_by")
+    group_by_key = input_spec.group_by
     if group_by_key is None:
         group_by_key = plan.group_by_value
 
     if group_by_key is None:
         raise ValueError(
-            f"Cannot resolve materialization input '{input_name}' for group '{dict_key}': "
+            f"Cannot resolve materialization input '{input_spec.name}' for group '{dict_key}': "
             "no group_by specified in the input spec and the step has no group_by."
         )
     if context is None:
         raise ValueError(
-            f"Cannot resolve materialization input '{input_name}' for group '{dict_key}': "
+            f"Cannot resolve materialization input '{input_spec.name}' for group '{dict_key}': "
             "context is required for filename parsing."
         )
 
