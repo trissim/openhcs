@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, ClassVar, TypeVar, final
+from typing import Any, ClassVar, TypeAlias, TypeVar, final
 
 from metaclass_registry import AutoRegisterMeta
 
@@ -137,6 +137,9 @@ from openhcs.interop.cellprofiler.setting_names import (
     setting_names,
     setting_values,
 )
+
+CellProfilerSettingNames: TypeAlias = tuple[str | SettingNameFamily, ...]
+
 from openhcs.interop.cellprofiler.smooth_settings import SMOOTH_SETTINGS
 from openhcs.interop.cellprofiler.straighten_worms_settings import (
     straighten_worms_bound_kwargs,
@@ -285,7 +288,7 @@ class ModuleUnmappedSettingIgnore(
     __key_extractor__ = staticmethod(canonical_module_name_registry_key)
     registry_key: ClassVar[str | None] = None
 
-    ignored_settings: ClassVar[tuple[str | SettingNameFamily, ...]] = ()
+    ignored_settings: ClassVar[CellProfilerSettingNames] = ()
 
     @classmethod
     def ignored_setting_names_for(cls, module_name: str) -> frozenset[str]:
@@ -307,13 +310,13 @@ class ModuleUnmappedSettingIgnore(
     def ignored_settings_for(
         cls,
         module: ModuleBlock,
-    ) -> tuple[str | SettingNameFamily, ...]:
+    ) -> CellProfilerSettingNames:
         return cls.ignored_settings
 
     @classmethod
     def _normalized_setting_names(
         cls,
-        settings: tuple[str | SettingNameFamily, ...],
+        settings: CellProfilerSettingNames,
     ) -> frozenset[str]:
         return frozenset(
             normalize_cellprofiler_setting_name(concrete_name)
@@ -327,13 +330,13 @@ class ConditionalModuleUnmappedSettingIgnore(ModuleUnmappedSettingIgnore):
 
     controlling_setting: ClassVar[str | SettingNameFamily]
     inactive_when_values: ClassVar[tuple[str, ...]]
-    inactive_settings: ClassVar[tuple[str | SettingNameFamily, ...]]
+    inactive_settings: ClassVar[CellProfilerSettingNames]
 
     @classmethod
     def ignored_settings_for(
         cls,
         module: ModuleBlock,
-    ) -> tuple[str | SettingNameFamily, ...]:
+    ) -> CellProfilerSettingNames:
         value = cls.controlling_setting_value(module)
         if value is not None and cls.setting_value_is_inactive(value):
             return (*cls.ignored_settings, *cls.inactive_settings)
@@ -377,10 +380,10 @@ class ModuleUnmappedSettingIgnoreDeclaration:
     class_name: str
     base: type[ModuleUnmappedSettingIgnore]
     module_name: str
-    ignored_settings: tuple[str | SettingNameFamily, ...] = ()
+    ignored_settings: CellProfilerSettingNames = ()
     controlling_setting: str | SettingNameFamily | None = None
     inactive_when_values: tuple[str, ...] = ()
-    inactive_settings: tuple[str | SettingNameFamily, ...] = ()
+    inactive_settings: CellProfilerSettingNames = ()
     doc: str = ""
 
     def materialize(self) -> type[ModuleUnmappedSettingIgnore]:
@@ -777,58 +780,119 @@ class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         include_advanced_setting: bool,
     ) -> None:
         """Bind CellProfiler threshold rows into absorbed threshold kwargs."""
-        if include_advanced_setting:
+        ThresholdSettingsBindingRequest(
+            module=module,
+            binder=binder,
+            kwargs=kwargs,
+            unmapped_kwargs=unmapped_kwargs,
+            include_advanced_setting=include_advanced_setting,
+        ).bind()
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdSettingsBindingRequest:
+    """Mutable binding context for shared CellProfiler threshold settings."""
+
+    module: ModuleBlock
+    binder: SettingsBinder
+    kwargs: dict[str, Any]
+    unmapped_kwargs: dict[str, Any]
+    include_advanced_setting: bool
+
+    @classmethod
+    def from_bound_kwargs(
+        cls,
+        *,
+        module: ModuleBlock,
+        binder: SettingsBinder,
+        kwargs: dict[str, Any],
+        unmapped_kwargs: dict[str, Any],
+        include_advanced_setting: bool,
+    ) -> "ThresholdSettingsBindingRequest":
+        return cls(
+            module=module,
+            binder=binder,
+            kwargs=kwargs,
+            unmapped_kwargs=unmapped_kwargs,
+            include_advanced_setting=include_advanced_setting,
+        )
+
+    def bind(self) -> None:
+        if self.include_advanced_setting:
             value = LastRepeatedSettingValuePolicy().value(
-                module,
+                self.module,
                 "Use advanced settings?",
             )
             if value is not None:
-                kwargs["use_advanced_settings"] = binder.parse_value(
+                self.kwargs["use_advanced_settings"] = self.binder.parse_value(
                     "Use advanced settings?",
                     value,
                 )
-            unmapped_kwargs.pop(
+            self.unmapped_kwargs.pop(
                 normalize_cellprofiler_setting_name("Use advanced settings?"),
                 None,
             )
 
         for setting_name, parameter_name in _CELLPROFILER_THRESHOLD_SETTINGS.items():
             value = RepeatedSettingValuePolicy.for_setting(setting_name).value(
-                module,
+                self.module,
                 setting_name,
             )
             if value is not None:
-                kwargs[parameter_name] = _parse_cellprofiler_threshold_setting(
-                    binder,
+                self.kwargs[parameter_name] = _parse_cellprofiler_threshold_setting(
+                    self.binder,
                     setting_name,
                     value,
                 )
-            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+            self.unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(setting_name),
+                None,
+            )
 
-        _upgrade_legacy_cellprofiler_threshold_kwargs(module, kwargs)
+        _upgrade_legacy_cellprofiler_threshold_kwargs(self.module, self.kwargs)
 
         bounds = LastRepeatedSettingValuePolicy().value(
-            module,
+            self.module,
             "Lower and upper bounds on threshold",
         )
         if bounds is not None:
-            parsed_bounds = binder.parse_value(
+            parsed_bounds = self.binder.parse_value(
                 "Lower and upper bounds on threshold",
                 bounds,
             )
             if not isinstance(parsed_bounds, tuple) or len(parsed_bounds) != 2:
                 raise ValueError(
-                    f"{module.name} threshold bounds must contain two values, "
+                    f"{self.module.name} threshold bounds must contain two values, "
                     f"got {bounds!r}."
                 )
-            kwargs["threshold_min"], kwargs["threshold_max"] = parsed_bounds
-        unmapped_kwargs.pop(
+            self.kwargs["threshold_min"], self.kwargs["threshold_max"] = parsed_bounds
+        self.unmapped_kwargs.pop(
             normalize_cellprofiler_setting_name("Lower and upper bounds on threshold"),
             None,
         )
 
         for setting_name in _IGNORED_CELLPROFILER_THRESHOLD_SETTINGS:
-            unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+            self.unmapped_kwargs.pop(
+                normalize_cellprofiler_setting_name(setting_name),
+                None,
+            )
+
+
+def _bind_cellprofiler_threshold_settings(
+    module: ModuleBlock,
+    binder: SettingsBinder,
+    kwargs: dict[str, Any],
+    unmapped_kwargs: dict[str, Any],
+    *,
+    include_advanced_setting: bool,
+) -> None:
+    ThresholdSettingsBindingRequest.from_bound_kwargs(
+        module=module,
+        binder=binder,
+        kwargs=kwargs,
+        unmapped_kwargs=unmapped_kwargs,
+        include_advanced_setting=include_advanced_setting,
+    ).bind()
 
 
 _CELLPROFILER_THRESHOLD_SETTINGS: Mapping[str, str] = {
@@ -1184,11 +1248,11 @@ class IdentifyPrimaryObjectsModuleSettingsBindingStrategy(
                     f"got {diameter_range!r}."
                 )
             kwargs["min_diameter"], kwargs["max_diameter"] = diameter_range
-        self.bind_cellprofiler_threshold_settings(
-            module=module,
-            binder=binder,
-            kwargs=kwargs,
-            unmapped_kwargs=unmapped_kwargs,
+        _bind_cellprofiler_threshold_settings(
+            module,
+            binder,
+            kwargs,
+            unmapped_kwargs,
             include_advanced_setting=True,
         )
 
@@ -1218,11 +1282,11 @@ class ThresholdModuleSettingsBindingStrategy(GenericModuleSettingsBindingStrateg
         bound = super()._bind(module, binder=binder, param_mapping=param_mapping)
         kwargs = dict(bound.kwargs)
         unmapped_kwargs = dict(bound.unmapped_kwargs)
-        self.bind_cellprofiler_threshold_settings(
-            module=module,
-            binder=binder,
-            kwargs=kwargs,
-            unmapped_kwargs=unmapped_kwargs,
+        _bind_cellprofiler_threshold_settings(
+            module,
+            binder,
+            kwargs,
+            unmapped_kwargs,
             include_advanced_setting=False,
         )
         for source_name, target_name in type(self).parameter_aliases.items():
@@ -1500,11 +1564,11 @@ class IdentifySecondaryObjectsModuleSettingsBindingStrategy(
                 kwargs[parameter_name] = binder.parse_value(setting_name, value)
             unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
 
-        self.bind_cellprofiler_threshold_settings(
-            module=module,
-            binder=binder,
-            kwargs=kwargs,
-            unmapped_kwargs=unmapped_kwargs,
+        _bind_cellprofiler_threshold_settings(
+            module,
+            binder,
+            kwargs,
+            unmapped_kwargs,
             include_advanced_setting=False,
         )
 
