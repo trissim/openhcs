@@ -94,7 +94,7 @@ Migration strategy:
 2. Delete one legacy path at a time after parity benchmarks and generated-pipeline tests pass. Done for the trivial `.cppipe` generation facade and generated function-registration facade; benchmark conversion now calls `CPPipePipelineGenerationRequest` directly.
 3. Keep sidecar schema versioning fail-loud. Done, with contract/spec/materialization sidecar codecs split under the versioned sidecar facade.
 4. Re-run official30 parity after each deletion batch. Still required before deleting deeper CP runtime compatibility paths.
-5. Remaining Sequence 3 work is the broad `PipelineGenerator` stage split and any deeper CP runtime compatibility deletion. Do not mix that with path-planner decomposition.
+5. Current 2026-05-16 advisor check: `openhcs/interop/cellprofiler/pipeline_generator.py` is clean when scanned with `openhcs/core/pipeline/path_planner.py`. Treat the broad `PipelineGenerator` split as complete for the current analyzer baseline; only deeper CP runtime compatibility deletion remains.
 
 ## Sequence 4: Tighten Artifact/Invocation Planning Boundaries
 
@@ -124,7 +124,7 @@ Migration strategy:
 2. Remove direct callable-contract artifact extraction from path-planner internals. Current path planning consumes `extract_artifact_declarations(...)` through the invocation declaration provider; callable-contract projection remains the default provider.
 3. Keep backwards-compatible decorators as metadata producers, not planner logic. Preserved.
 4. Done in this pass: artifact spec merging moved into `ArtifactSpecAccumulator`, group-key de-duplication moved onto `ArtifactGraph`, compiled invocations now extend normalized invocation items, function-pattern group lookup/kwarg merge are nominalized, and `PathPlanner` construction uses `PathPlanningContext`.
-5. Remaining Sequence 4 work is the broad `PathPlanner` staged subsystem split. The touched artifact/function-pattern/path-planner scan now reports only that broad class decomposition.
+5. Current 2026-05-16 advisor check: `openhcs/core/pipeline/path_planner.py` is clean when scanned with `openhcs/interop/cellprofiler/pipeline_generator.py`. Treat the broad `PathPlanner` staged subsystem split as complete for the current analyzer baseline.
 
 ## Sequence 5: Complete Debug UX Integration
 
@@ -176,6 +176,6 @@ The current checkpoint includes:
 - Source-binding inline editor and preview model.
 - Debug snapshot store, ZMQ read/export controls, paused-worker command path, warm artifact replay validation.
 - Debug/source-binding implementation files cleaned to advisor zero-findings for the targeted scan.
-- Current remaining advisor findings are broad staged-orchestration splits: `PipelineGenerator`, `PathPlanner`, and older large GUI widgets.
+- Current remaining advisor findings are concentrated in older large GUI widgets and the CellProfiler runtime registry/semantic boundary scan. `PipelineGenerator` and `PathPlanner` are clean for the current targeted advisor check.
 
 Do not start broad GUI class decomposition in the same commit as benchmark/runtime parity changes. Keep each sequence independently revertible.

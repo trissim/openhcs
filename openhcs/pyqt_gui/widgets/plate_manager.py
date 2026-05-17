@@ -12,7 +12,7 @@ import traceback
 from dataclasses import fields
 from enum import Enum
 from types import MappingProxyType
-from typing import List, Dict, Optional, Any, Callable, Tuple
+from typing import TYPE_CHECKING, List, Dict, Optional, Any, Callable, Tuple
 from pathlib import Path
 
 from PyQt6.QtWidgets import QApplication
@@ -92,6 +92,9 @@ from openhcs.core.debug import (
 )
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.widgets.pipeline_editor import PipelineEditorWidget
 
 # Root ObjectState scope - tracks all plates in the application
 # NOTE: Cannot use "" as scope_id - that's already used by GlobalPipelineConfig in app.py
@@ -234,7 +237,7 @@ class PlateManagerWidget(AbstractManagerWidget):
         """
         # Plate-specific state (BEFORE super().__init__)
         self.global_config = service_adapter.get_global_config()
-        self.pipeline_editor = None  # Will be set by main window
+        self.pipeline_editor: "PipelineEditorWidget | None" = None
 
         # Business logic state (extracted from Textual version)
         # NOTE: self.plates is now a @property that derives from Root ObjectState
@@ -1435,7 +1438,7 @@ class PlateManagerWidget(AbstractManagerWidget):
     def _pre_code_execution(self) -> None:
         """Open pipeline editor window before processing orchestrator code."""
         main_window = self._find_main_window()
-        if main_window and hasattr(main_window, "show_pipeline_editor"):
+        if main_window is not None:
             main_window.show_pipeline_editor()
 
     def _apply_executed_code(self, namespace: dict) -> bool:
@@ -1534,18 +1537,16 @@ class PlateManagerWidget(AbstractManagerWidget):
 
     def _apply_pipeline_data_from_code(self, new_pipeline_data: dict) -> None:
         """Apply pipeline data for ALL affected plates with proper state invalidation."""
-        if not self.pipeline_editor or not hasattr(
-            self.pipeline_editor, "_update_pipeline_steps"
-        ):
+        if self.pipeline_editor is None:
             logger.warning("No pipeline editor available to update pipeline data")
             self.pipeline_data_changed.emit()
             return
 
-        current_plate = getattr(self.pipeline_editor, "current_plate", None)
+        current_plate = self.pipeline_editor.current_plate
 
         for plate_path, new_steps in new_pipeline_data.items():
             # Update pipeline data via ObjectState (not dict assignment - plate_pipelines is read-only)
-            self.pipeline_editor._update_pipeline_steps(plate_path, new_steps)
+            self.pipeline_editor.update_pipeline_for_plate(plate_path, new_steps)
             logger.debug(
                 f"Updated pipeline for {plate_path} with {len(new_steps)} steps"
             )
@@ -1766,7 +1767,7 @@ class PlateManagerWidget(AbstractManagerWidget):
         )
         return pipeline_steps
 
-    def set_pipeline_editor(self, pipeline_editor):
+    def set_pipeline_editor(self, pipeline_editor: "PipelineEditorWidget") -> None:
         """
         Set the pipeline editor reference.
 

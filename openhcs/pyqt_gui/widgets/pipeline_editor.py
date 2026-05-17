@@ -13,7 +13,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields, is_dataclass
 from enum import Enum
 from types import MappingProxyType
-from typing import List, Dict, Optional, Callable, Tuple, Any, Set, ClassVar
+from typing import TYPE_CHECKING, List, Dict, Optional, Callable, Tuple, Any, Set, ClassVar
 from pathlib import Path
 
 from metaclass_registry import AutoRegisterMeta
@@ -100,6 +100,9 @@ from pyqt_reactive.widgets.shared.abstract_manager_widget import (
 from openhcs.utils.performance_monitor import timer
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
 
 @dataclass(frozen=True, slots=True)
@@ -539,11 +542,11 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self.current_plate: str = ""
         self.selected_step: str = ""
         # NOTE: plate_pipelines now derived from Pipeline ObjectState (phase 3)
-        # Use _get_steps_from_pipeline_state() and _update_pipeline_steps()
+        # Use _get_steps_from_pipeline_state() and update_pipeline_for_plate()
 
         # Reference to plate manager (set externally)
         # Note: orchestrator is looked up dynamically via _get_current_orchestrator()
-        self.plate_manager = None
+        self.plate_manager: "PlateManagerWidget | None" = None
 
         # Clipboard for copy-paste operations (in-memory only)
         self._clipboard_steps: List[FunctionStep] = []
@@ -848,7 +851,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         return steps
 
-    def _update_pipeline_steps(
+    def update_pipeline_for_plate(
         self, plate_path: str, steps: List[FunctionStep]
     ) -> None:
         """Update Pipeline ObjectState with new step list.
@@ -988,12 +991,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
         else:
             tooltip_lines.append("Group By: None")
 
-        # Input source (access from processing_config)
-        input_source = (
-            getattr(step.processing_config, "input_source", None)
-            if hasattr(step, "processing_config")
-            else None
-        )
+        # Input source (access from FunctionStep processing_config)
+        input_source = step.processing_config.input_source
         if input_source:
             source_name = getattr(input_source, "name", str(input_source))
             tooltip_lines.append(f"Input Source: {source_name}")
@@ -1079,7 +1078,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
                 # Update Pipeline ObjectState with new step list
                 if self.current_plate:
-                    self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+                    self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
 
             self.update_item_list()
             self._suppress_pipeline_state_sync = True
@@ -1115,9 +1114,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         # Connect orchestrator config changes to step editor for live placeholder updates
         # This ensures the step editor's placeholders update when pipeline config is saved
-        if self.plate_manager and hasattr(
-            self.plate_manager, "orchestrator_config_changed"
-        ):
+        if self.plate_manager is not None:
             self.plate_manager.orchestrator_config_changed.connect(
                 editor.on_orchestrator_config_changed
             )
@@ -1230,12 +1227,12 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         new_pipeline_steps = namespace["pipeline_steps"]
         self.pipeline_steps = new_pipeline_steps
-        # Don't register here; _update_pipeline_steps handles atomic registration
+        # Don't register here; update_pipeline_for_plate handles atomic registration
         self._normalize_step_scope_tokens(register=False)
 
         # Update Pipeline ObjectState with new step list
         if self.current_plate:
-            self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+            self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
             logger.debug(
                 f"Updated Pipeline ObjectState ({len(self.pipeline_steps)} steps) for plate: {self.current_plate}"
             )
@@ -1277,12 +1274,12 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
             if steps is not None:
                 self.pipeline_steps = steps
-                # Don't register here; _update_pipeline_steps handles atomic registration
+                # Don't register here; update_pipeline_for_plate handles atomic registration
                 self._normalize_step_scope_tokens(register=False)
 
                 # Update Pipeline ObjectState with loaded steps
                 if self.current_plate:
-                    self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+                    self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
                     logger.debug(
                         f"Updated Pipeline ObjectState ({len(self.pipeline_steps)} steps) for plate: {self.current_plate}"
                     )
@@ -1321,7 +1318,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self._normalize_step_scope_tokens(register=False)
 
         if self.current_plate:
-            self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+            self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
             logger.debug(
                 "Updated Pipeline ObjectState (%d steps) from .cppipe: %s",
                 len(self.pipeline_steps),
@@ -1364,7 +1361,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             plate_path: Path of the plate
             pipeline: Pipeline steps to save
         """
-        self._update_pipeline_steps(plate_path, pipeline)
+        self.update_pipeline_for_plate(plate_path, pipeline)
         logger.debug(f"Updated Pipeline ObjectState for plate: {plate_path}")
 
     def get_pipeline_for_plate(self, plate_path: str) -> List[FunctionStep]:
@@ -1721,7 +1718,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
             # Sync to Pipeline ObjectState
             if self.current_plate:
-                self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+                self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
 
         if self.selected_step in [getattr(step, "name", "") for step in items]:
             self.selected_step = ""
@@ -1775,9 +1772,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         editor.set_original_step_for_change_detection()
 
         # Connect orchestrator config changes to step editor for live placeholder updates
-        if self.plate_manager and hasattr(
-            self.plate_manager, "orchestrator_config_changed"
-        ):
+        if self.plate_manager is not None:
             self.plate_manager.orchestrator_config_changed.connect(
                 editor.on_orchestrator_config_changed
             )
@@ -1824,7 +1819,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
 
         # Sync to Pipeline ObjectState
         if self.current_plate:
-            self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+            self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
 
         self.pipeline_changed.emit(self.pipeline_steps)
         # Broadcast to global event bus so open step editors update their colors
@@ -1915,7 +1910,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 self.pipeline_steps.insert(insert_position + i, step)
 
             # Update Pipeline ObjectState
-            self._update_pipeline_steps(self.current_plate, self.pipeline_steps)
+            self.update_pipeline_for_plate(self.current_plate, self.pipeline_steps)
 
         self.update_item_list()
         self.pipeline_changed.emit(self.pipeline_steps)
