@@ -400,6 +400,23 @@ class CellProfilerModulePolicyMeta(AutoRegisterMeta):
         return policy_type()
 
 
+class CellProfilerModulePolicyLookupMixin:
+    """Shared module-name lookup for explicit CellProfiler policy registries."""
+
+    fallback_registry_key: ClassVar[str | None]
+
+    @classmethod
+    @lru_cache(maxsize=None)
+    def for_module(cls, module_name: str) -> Any:
+        """Return the policy registered for a module, or the root's fallback."""
+        policy_type = cls.__registry__.get(canonical_module_name(module_name))
+        if policy_type is None and cls.fallback_registry_key is not None:
+            policy_type = cls.__registry__.get(cls.fallback_registry_key)
+        if policy_type is None:
+            return None
+        return policy_type()
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerModulePolicyLeafSpec(RegisteredLeafClassSpec):
     """Generated leaf declaration for module-name keyed CellProfiler policies."""
@@ -3921,11 +3938,22 @@ class CellProfilerObjectMeasurementVectorBatchBinding:
 
 
 class CellProfilerObjectInputPolicy(
+    CellProfilerModulePolicyLookupMixin,
     ABC,
-    metaclass=CellProfilerModulePolicyMeta,
+    metaclass=AutoRegisterMeta,
 ):
     """Nominal binding policy for CellProfiler object-label inputs."""
 
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+    __key_extractor__ = staticmethod(
+        CELLPROFILER_MODULE_POLICY_REGISTRY_DEFAULTS.registry_key_for_class
+    )
+    registry_key: ClassVar[str | None] = None
+    module_name: ClassVar[str | None] = None
+    fallback_registry_key: ClassVar[str | None] = (
+        CellProfilerModulePolicyRegistryKey.DEFAULT.value
+    )
     binds_without_declared_inputs: ClassVar[bool] = False
     supported_non_object_input_kinds: ClassVar[frozenset[ArtifactKind]] = frozenset()
 
@@ -3938,6 +3966,7 @@ class CellProfilerObjectInputPolicy(
 
 
 class CellProfilerPrimaryImageInputPolicy(
+    CellProfilerModulePolicyLookupMixin,
     ABC,
     metaclass=AutoRegisterMeta,
 ):
@@ -3953,17 +3982,6 @@ class CellProfilerPrimaryImageInputPolicy(
     fallback_registry_key: ClassVar[str | None] = (
         CellProfilerModulePolicyRegistryKey.DEFAULT.value
     )
-
-    @classmethod
-    @lru_cache(maxsize=None)
-    def for_module(cls, module_name: str) -> Any:
-        """Return the policy registered for a module, or the root's fallback."""
-        policy_type = cls.__registry__.get(canonical_module_name(module_name))
-        if policy_type is None and cls.fallback_registry_key is not None:
-            policy_type = cls.__registry__.get(cls.fallback_registry_key)
-        if policy_type is None:
-            return None
-        return policy_type()
 
     @abstractmethod
     def primary_image_inputs(
