@@ -1127,6 +1127,17 @@ class RuntimeAxisRecordPlaneIdentityResolver:
             RuntimeRecordPlaneIdentityAuthority.FILL_MISSING_ROW_IDENTITY,
         )
 
+    def plane_identity_for_runtime_record(
+        self,
+        record: object,
+    ) -> RuntimeRecordPlaneIdentity | None:
+        """Resolve plane identity directly from a runtime artifact record."""
+        return self.plane_identity_for_record(
+            kind=record.key.kind,
+            name=record.key.name,
+            scope=record.key.scope,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RuntimeScopedObjectRelationship:
@@ -2285,10 +2296,8 @@ class RuntimeMeasurementObservationProjector:
                 if aggregate_table_key in self._seen_aggregate_measurement_tables:
                     return
                 self._seen_aggregate_measurement_tables.add(aggregate_table_key)
-        plane_identity = plane_identity_resolver.plane_identity_for_record(
-            kind=record.key.kind,
-            name=record.key.name,
-            scope=record.key.scope,
+        plane_identity = plane_identity_resolver.plane_identity_for_runtime_record(
+            record
         )
         self.measurement_tables_by_axis.setdefault(axis_key, []).append(
             RuntimeScopedMeasurementTable(
@@ -2325,10 +2334,8 @@ class RuntimeMeasurementObservationProjector:
         record: object,
         plane_identity_resolver: RuntimeAxisRecordPlaneIdentityResolver,
     ) -> None:
-        plane_identity = plane_identity_resolver.plane_identity_for_record(
-            kind=record.key.kind,
-            name=record.key.name,
-            scope=record.key.scope,
+        plane_identity = plane_identity_resolver.plane_identity_for_runtime_record(
+            record
         )
         self.relationship_records_by_axis.setdefault(axis_key, []).append(
             RuntimeScopedObjectRelationship(
