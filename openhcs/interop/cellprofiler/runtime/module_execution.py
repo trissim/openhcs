@@ -1239,22 +1239,22 @@ class CellProfilerModuleExecutor:
                     raise TypeError(
                         "Columnar measurement ownership annotation must preserve "
                         f"ColumnarRows, got {type(owned_rows).__name__}."
-                    )
+                    ).apply()
                 projected_rows, _projected_row_mappings = (
-                    CellProfilerMeasurementMaterializer.project_rows(
+                    CellProfilerGlobalImageNumberProjection(
                         CellProfilerMeasurementProjectionRequest(
                             source=projection_source,
                             rows=owned_rows,
                             object_name=object_spec.name,
                             need_row_mappings=False,
                         )
-                    )
+                    ).apply()
                 )
                 if not isinstance(projected_rows, ColumnarRows):
                     raise TypeError(
                         "Columnar measurement axis projection must preserve "
                         f"ColumnarRows, got {type(projected_rows).__name__}."
-                    )
+                    ).apply()
                 columnar_rows.append(projected_rows)
                 annotate_seconds += time.perf_counter() - annotate_started_at
                 return
@@ -1269,31 +1269,31 @@ class CellProfilerModuleExecutor:
             annotated_rows = owned_rows.annotate_rows(measurement_rows)
             if isinstance(annotated_rows, ColumnarRows):
                 projected_rows, _projected_row_mappings = (
-                    CellProfilerMeasurementMaterializer.project_rows(
+                    CellProfilerGlobalImageNumberProjection(
                         CellProfilerMeasurementProjectionRequest(
                             source=projection_source,
                             rows=annotated_rows,
                             object_name=None,
                             need_row_mappings=False,
                         )
-                    )
+                    ).apply()
                 )
                 if not isinstance(projected_rows, ColumnarRows):
                     raise TypeError(
                         "Columnar measurement axis projection must preserve "
                         f"ColumnarRows, got {type(projected_rows).__name__}."
-                    )
+                    ).apply()
                 columnar_rows.append(projected_rows)
             else:
                 projected_rows, _projected_row_mappings = (
-                    CellProfilerMeasurementMaterializer.project_rows(
+                    CellProfilerGlobalImageNumberProjection(
                         CellProfilerMeasurementProjectionRequest(
                             source=projection_source,
                             rows=annotated_rows,
                             object_name=None,
                             need_row_mappings=False,
                         )
-                    )
+                    ).apply()
                 )
                 combined_rows.extend(projected_rows)
             annotate_seconds += time.perf_counter() - annotate_started_at
@@ -1790,14 +1790,14 @@ class CellProfilerModuleExecutor:
                 source_image_payload=measurement_record.source_image_payload,
             )
             projected_rows, _projected_row_mappings = (
-                CellProfilerMeasurementMaterializer.project_rows(
+                CellProfilerGlobalImageNumberProjection(
                     CellProfilerMeasurementProjectionRequest(
                         source=projection_source,
                         rows=measurement_record.rows,
                         object_name=measurement_record.object_name,
                         need_row_mappings=False,
                     )
-                )
+                ).apply()
             )
             combined_rows.extend(
                 MeasurementRowOwnership(
@@ -8353,12 +8353,6 @@ class CellProfilerMeasurementMaterializer:
     """Materialize projected CellProfiler measurement rows into the adapter."""
 
     @staticmethod
-    def project_rows(
-        request: CellProfilerMeasurementProjectionRequest,
-    ) -> ProjectedMeasurementRowsResult:
-        return CellProfilerGlobalImageNumberProjection(request).apply()
-
-    @staticmethod
     def record(request: CellProfilerMeasurementMaterializationRequest) -> None:
         projection_request = request.projection_request
         kwargs: dict[str, Any] = {
@@ -8370,9 +8364,7 @@ class CellProfilerMeasurementMaterializer:
         projected_rows: Sequence[Any] | ColumnarRows
         projected_row_mappings: ProjectedMeasurementRows
         projected_rows, projected_row_mappings = (
-            CellProfilerMeasurementMaterializer.project_rows(
-                projection_request,
-            )
+            CellProfilerGlobalImageNumberProjection(projection_request).apply()
         )
         _log_module_profile(
             "record_measurements_project_rows",
