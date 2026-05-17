@@ -5,10 +5,13 @@ invocations. They cover current side-channel I/O and provide the extension point
 objects, measurements, relationships, and other richer runtime state.
 """
 
+from abc import ABC
 from dataclasses import dataclass, replace
 from enum import Enum
 from collections.abc import Iterable
 from typing import Any, ClassVar, Mapping, Self, cast
+
+from metaclass_registry import AutoRegisterMeta
 
 
 class ArtifactPayloadShape(str, Enum):
@@ -32,19 +35,19 @@ class ArtifactKind(str, Enum):
         obj = str.__new__(cls, value)
         obj._value_ = value
         obj._payload_shape = payload_shape
-        obj._uses_label_representation_payload_shape = (
+        obj.uses_label_representation_payload_shape = (
             bool((options or {}).get("uses_label_representation_payload_shape"))
         )
-        obj._participates_in_measurement_source_names = bool(
+        obj.participates_in_measurement_source_names = bool(
             (options or {}).get("participates_in_measurement_source_names")
         )
-        obj._participates_in_main_flow_output = bool(
+        obj.participates_in_main_flow_output = bool(
             (options or {}).get("participates_in_main_flow_output")
         )
-        obj._participates_in_axis_plane_identity = bool(
+        obj.participates_in_axis_plane_identity = bool(
             (options or {}).get("participates_in_axis_plane_identity")
         )
-        obj._payload_description = (options or {}).get(
+        obj.payload_description = (options or {}).get(
             "payload_description",
             f"{payload_shape} {value} payload",
         )
@@ -93,26 +96,6 @@ class ArtifactKind(str, Enum):
     @property
     def payload_shape(self) -> "ArtifactPayloadShape":
         return ArtifactPayloadShape(self._payload_shape)
-
-    @property
-    def uses_label_representation_payload_shape(self) -> bool:
-        return self._uses_label_representation_payload_shape
-
-    @property
-    def participates_in_measurement_source_names(self) -> bool:
-        return self._participates_in_measurement_source_names
-
-    @property
-    def participates_in_main_flow_output(self) -> bool:
-        return self._participates_in_main_flow_output
-
-    @property
-    def participates_in_axis_plane_identity(self) -> bool:
-        return self._participates_in_axis_plane_identity
-
-    @property
-    def payload_description(self) -> str:
-        return self._payload_description
 
 
 class ArtifactSidecarRole(str, Enum):
@@ -237,8 +220,13 @@ class ArtifactKey:
 
 
 @dataclass(frozen=True)
-class ArtifactPlan:
+class ArtifactPlan(ABC, metaclass=AutoRegisterMeta):
     """Compiled storage plan shared by produced and consumed artifacts."""
+
+    __registry_key__ = "plan_role"
+    __skip_if_no_key__ = True
+
+    plan_role: ClassVar[str | None] = None
 
     name: str
     path: str
@@ -247,6 +235,11 @@ class ArtifactPlan:
     paths_by_group: Mapping[str | None, str] | None = None
 
     _missing_group_uses_default_path: ClassVar[bool] = False
+
+    @classmethod
+    def registered_plan_types(cls) -> tuple[type["ArtifactPlan"], ...]:
+        """Return registered concrete artifact plan classes."""
+        return tuple(cls.__registry__.values())
 
     @property
     def single_group_key(self) -> str | None:
@@ -295,6 +288,7 @@ class ArtifactPlan:
 class ArtifactOutputPlan(ArtifactPlan):
     """Compiled storage plan for one produced artifact."""
 
+    plan_role: ClassVar[str] = "output"
     _missing_group_uses_default_path: ClassVar[bool] = True
 
     materialization: Any = None
@@ -333,6 +327,8 @@ class ArtifactOutputPlan(ArtifactPlan):
 @dataclass(frozen=True)
 class ArtifactInputPlan(ArtifactPlan):
     """Compiled storage plan for one consumed artifact."""
+
+    plan_role: ClassVar[str] = "input"
 
     source_step_id: int | str | None = None
     source_step_scope_id: str | None = None
