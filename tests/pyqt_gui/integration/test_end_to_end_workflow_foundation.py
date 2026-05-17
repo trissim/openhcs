@@ -518,7 +518,7 @@ def _launch_application(context: WorkflowContext) -> WorkflowContext:
     main_window.closeEvent = lambda event: event.accept()
 
     # Use app.show_main_window() to properly schedule deferred initialization
-    # This schedules _deferred_initialization via QTimer.singleShot(100, ...)
+    # This schedules deferred_initialization via QTimer.singleShot(100, ...)
     app.show_main_window()
     _wait_for_gui(TIMING.WINDOW_DELAY)
 
@@ -531,7 +531,7 @@ def _launch_application(context: WorkflowContext) -> WorkflowContext:
 def _access_plate_manager(context: WorkflowContext) -> WorkflowContext:
     """Access default plate manager window (already open by default)."""
     # Wait for plate manager to be created by deferred initialization
-    # The QTimer.singleShot(100, ...) in app.py schedules _deferred_initialization
+    # The QTimer.singleShot(100, ...) in app.py schedules deferred_initialization
     # We need to wait for it to complete
     max_wait = 5.0  # Maximum 5 seconds to wait
     elapsed = 0.0

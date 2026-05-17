@@ -185,7 +185,7 @@ class OpenHCSPyQtApp(QApplication):
         # This includes log viewer and default windows (pipeline editor)
         from PyQt6.QtCore import QTimer
 
-        QTimer.singleShot(100, self.main_window._deferred_initialization)
+        QTimer.singleShot(100, self.main_window.deferred_initialization)
 
     def on_config_changed(self, new_config: GlobalPipelineConfig):
         """
@@ -260,7 +260,7 @@ class OpenHCSPyQtApp(QApplication):
             self.processEvents()
 
             # Clean up main window
-            if hasattr(self, "main_window") and self.main_window:
+            if self.main_window is not None:
                 # Force close if not already closed
                 if not self.main_window.isHidden():
                     self.main_window.close()
