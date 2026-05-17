@@ -7,6 +7,7 @@ from enum import Enum
 
 import numpy as np
 
+from openhcs.core.public_api import declared_public_names
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -164,11 +165,4 @@ def flag_image_intensity(
     )
 
 
-__all__ = [
-    "CombinationChoice",
-    "FlagResult",
-    "MeasurementSource",
-    "flag_image",
-    "flag_image_intensity",
-    "flag_image_result",
-]
+__all__ = declared_public_names(globals())
