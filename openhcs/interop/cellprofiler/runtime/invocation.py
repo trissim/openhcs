@@ -19,7 +19,10 @@ import numpy as np
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.equivalence.keys import RuntimeMeasurementSourcePair
 from openhcs.core.registry_strategies import GeneratedLeafClassSpec
-from openhcs.core.runtime_semantics import MeasurementImageReferenceDomain
+from openhcs.core.runtime_semantics import (
+    CommonRuntimeValue,
+    MeasurementImageReferenceDomain,
+)
 from openhcs.core.runtime_invocation import (
     RuntimeImageExecutionContext,
     RuntimeInvocationOptions,
@@ -381,12 +384,9 @@ class CellProfilerMeasurementImage(CellProfilerImageExecutionContext):
         measurement_images: tuple["CellProfilerMeasurementImage", ...],
     ) -> str | None:
         """Return table-level source identity only when all images share one source."""
-        unique_names = tuple(
-            dict.fromkeys(image.source_image_name for image in measurement_images)
-        )
-        if len(unique_names) == 1:
-            return unique_names[0]
-        return None
+        return CommonRuntimeValue.from_values(
+            image.source_image_name for image in measurement_images
+        ).single
 
     def source_image_pairs(self) -> tuple[CellProfilerSourceImagePair, ...]:
         """Return ordered pairwise source invocations for composed image payloads."""

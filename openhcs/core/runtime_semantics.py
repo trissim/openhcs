@@ -70,6 +70,35 @@ class SourceSpatialPayloadDomain:
     source_shape_yx: tuple[int, int] | None
 
 
+@dataclass(frozen=True, slots=True)
+class CommonRuntimeValue:
+    """Projection of a value family that is only valid when all values agree."""
+
+    values: tuple[Any, ...]
+
+    @classmethod
+    def from_values(
+        cls,
+        values: Iterable[Any],
+        *,
+        ignore_none: bool = False,
+    ) -> "CommonRuntimeValue":
+        unique_values: list[Any] = []
+        for value in values:
+            if ignore_none and value is None:
+                continue
+            if not any(value == existing for existing in unique_values):
+                unique_values.append(value)
+        return cls(tuple(unique_values))
+
+    @property
+    def single(self) -> Any | None:
+        """Return the shared value, or None when values disagree or are absent."""
+        if len(self.values) == 1:
+            return self.values[0]
+        return None
+
+
 class SourceSpatialDomainAdapter(
     NominalTypeKeyedStrategyMixin,
     ABC,
@@ -136,10 +165,9 @@ class SourceSpatialDomainAdapter(
         adapters: tuple["SourceSpatialDomainAdapter", ...],
     ) -> SourceSpatialPayloadDomain | None:
         """Return the shared native payload domain, if every adapter agrees."""
-        domains = tuple(dict.fromkeys(adapter.payload_domain for adapter in adapters))
-        if len(domains) == 1:
-            return domains[0]
-        return None
+        return CommonRuntimeValue.from_values(
+            adapter.payload_domain for adapter in adapters
+        ).single
 
     @classmethod
     def common_source_shape_yx(
@@ -147,16 +175,10 @@ class SourceSpatialDomainAdapter(
         adapters: tuple["SourceSpatialDomainAdapter", ...],
     ) -> tuple[int, int] | None:
         """Return the shared source XY shape, if every declared source agrees."""
-        source_shapes = tuple(
-            dict.fromkeys(
-                adapter.domain.source_shape_yx
-                for adapter in adapters
-                if adapter.domain.source_shape_yx is not None
-            )
-        )
-        if len(source_shapes) == 1:
-            return source_shapes[0]
-        return None
+        return CommonRuntimeValue.from_values(
+            (adapter.domain.source_shape_yx for adapter in adapters),
+            ignore_none=True,
+        ).single
 
     @classmethod
     def requires_source_domain_alignment(
