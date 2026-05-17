@@ -421,8 +421,7 @@ class RuntimePlaneAxisProjectionStrategy(
 ):
     """Polymorphic projection policy for runtime plane axes."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "axis"
     axis: ClassVar[RuntimePlaneAxis]
     strategy_label: ClassVar[str | None] = None
@@ -745,8 +744,7 @@ class ObjectLabelDomainMetadataStrategy(
 
     value_type: ClassVar[type[object] | tuple[type[object], ...] | None] = None
     value_type_label: ClassVar[str | None] = None
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def for_value(cls, value: object) -> "ObjectLabelDomainMetadataStrategy":
@@ -926,8 +924,7 @@ class ObjectLabelIdDomainStrategy(
 
     value_type: ClassVar[type[object] | None] = None
     value_type_label: ClassVar[str | None] = None
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def for_value(cls, labels: Any) -> "ObjectLabelIdDomainStrategy":
@@ -984,8 +981,7 @@ class ObjectLabelPlaneDomainStrategy(
 ):
     """Projection strategy from object-label domain metadata to measurement planes."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "scope"
     scope: ClassVar[ObjectLabelDomainScope]
     strategy_label: ClassVar[str | None] = None
@@ -1228,8 +1224,7 @@ class ObjectLocationCoordinateProjectionStrategy(
 ):
     """Project dense-label coordinates for one nominal object-location feature."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "coordinate_feature"
 
     coordinate_feature: ClassVar[ObjectCoreMeasurementFeature]
@@ -1466,8 +1461,7 @@ class ObjectIntensityZernikeFeatureNameStrategy(
 ):
     """Render intensity Zernike feature families with nominal dispatch."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "feature"
 
     feature: ClassVar[ObjectZernikeDescriptorFeature]
@@ -1756,8 +1750,7 @@ class ObjectFeatureArrayDomainStrategy(
 ):
     """Project feature arrays according to their declared object domain."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "domain"
 
     domain: ClassVar[ObjectFeatureArrayDomain]
@@ -1866,8 +1859,7 @@ class ObjectFeatureMissingValueStrategy(
 ):
     """Emit declared missing values for unmeasured object-feature rows."""
 
-    __registry_key__ = "strategy_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.STRATEGY_LABEL)
     __enum_member_attr__ = "missing_value"
 
     missing_value: ClassVar[ObjectFeatureMissingValue]
@@ -3911,8 +3903,7 @@ class DenseObjectLabelConsecutiveRelabelingStrategy(
 
     value_type: ClassVar[type[object] | None] = None
     value_type_label: ClassVar[str | None] = None
-    __registry_key__ = "value_type_label"
-    __skip_if_no_key__ = True
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
 
     @classmethod
     def for_labels(

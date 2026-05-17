@@ -257,9 +257,10 @@ class MostDerivedContextStrategyMixin(Generic[_ContextT], ABC):
 class RegisteredLeafClassSpec(ABC, metaclass=AutoRegisterMeta):
     """Nominal declaration for generated AutoRegisterMeta leaf classes."""
 
-    __registry_family__ = RegistryFamily(RegistryKeyAttribute.REGISTRY_KEY)
+    __registry_family__ = RegistryFamily("declaration_key")
     __key_extractor__ = staticmethod(extract_key_from_class_name)
 
+    declaration_key: ClassVar[str | None] = None
     class_name: str
     base_type: type[object]
 
