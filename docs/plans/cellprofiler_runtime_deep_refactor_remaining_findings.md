@@ -484,6 +484,84 @@ Stop condition:
 - Stop and diagnose if any serialized config/pickle compatibility test fails.
 - Do not add compatibility helper shims unless they are explicitly temporary and queued for deletion in the same sequence.
 
+Status:
+
+- First implementation slice completed after this plan was written:
+  - `SourceAssignmentBase` moved to `openhcs/core/source_bindings.py`.
+  - `NamedSourceBinding`, `ImageAssignment`, and `SourceArtifactAssignment` now share that authority.
+  - `SourceAssignmentBase` is an `AutoRegisterMeta` family keyed by `assignment_kind`.
+  - `CompiledSourceBindingPlan` now has a real default empty state.
+  - Focused source-binding/CP generated-pipeline tests and full `tests/unit` passed before commits.
+
+Remaining work:
+
+- Decide whether the remaining `SourceRole` metadata-only family in `pipeline_image_schema.py` should become generated leaf declarations or stay as explicit registered leaves.
+- Consolidate repeated validation loops only if the extracted validator owns real typed semantics; do not add private list-check helpers.
+
+## Sequence 9: Split Runtime Equivalence Fact Extraction
+
+Primary file:
+
+- `openhcs/core/runtime_equivalence.py`
+
+Advisor signal:
+
+- Multiple `bare_function_method_family` findings:
+  - table snapshot fact extraction around table/identity/static-wide measurements
+  - measurement feature stability predicates
+  - object measurement fact extraction by context
+  - runtime-row cached schema/fact projection
+- `latent_nominal_function_family` around cell/numeric measurement fact helpers.
+
+Problem:
+
+`runtime_equivalence.py` has accumulated several parallel function families that project facts from tables, rows, and measurement feature metadata. The advisor is not pointing to a cosmetic issue: these helpers encode several independent semantic domains in one large module:
+
+- table snapshot classification
+- measurement feature stability
+- object/cell/identifier/count/location fact extraction
+- runtime row schema caching
+- long-form vs wide-form measurement fact projection
+
+The current shape makes it hard to reason about parity failures because feature-domain semantics are distributed across similarly named private functions instead of owned by nominal projectors.
+
+Target shape:
+
+- `RuntimeTableSnapshotFactExtractor`
+  - Owns table-level measurement/identity/static-wide fact extraction from immutable table snapshots.
+- `MeasurementFeatureStabilityPolicy`
+  - Owns object count, shape descriptor, and role-specific stability checks.
+- `RuntimeMeasurementFactExtractor`
+  - Owns object/cell/count/location/identifier measurement fact extraction from a typed context.
+- `RuntimeMeasurementRowFactProjector`
+  - Owns cached row schema, row-to-fact projection, long-form fact projection, and numeric-value projection.
+- Keep `runtime_equivalence.py` as the public orchestration module only after these collaborators exist; do not split public API first.
+
+Migration strategy:
+
+1. Add dataclass request/context records for the current function parameter bundles without moving behavior.
+2. Extract table snapshot fact extraction first; it is the smallest of the top findings and should have focused tests in `tests/unit/test_runtime_equivalence.py` or equivalent.
+3. Extract row schema/fact projection second, preserving cache keys and `lru_cache` behavior.
+4. Extract feature stability predicates third, because this can affect parity classification and needs focused fixtures.
+5. Extract object/cell measurement fact families last, after row projection and stability semantics are centralized.
+6. After each slice, run advisor on `runtime_equivalence.py` and new collaborators. Do not chase count if the remaining finding is queued to a later slice.
+
+Verification gate:
+
+- Existing runtime-equivalence tests.
+- Measurement/table parity tests that cover CP outputs.
+- Full `tests/unit`.
+- If a slice changes parity classification rather than just moving code, rerun the affected official30 cached cases before continuing.
+
+Risk:
+
+High. Runtime equivalence is parity-critical. Each slice must be small, committed, and revertible. Do not combine this with CellProfiler executor splitting or benchmark graph work.
+
+Stop condition:
+
+- Stop on the first semantic test failure and inspect before stacking further extraction.
+- If cache identity changes, add a regression test for the old key semantics before proceeding.
+
 ## Commit and Benchmark Policy
 
 Each risky sequence must be independently revertible:
