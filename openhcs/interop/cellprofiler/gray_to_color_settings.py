@@ -137,16 +137,6 @@ class FixedSettingGrayToColorInputNameResolver(GrayToColorInputNameResolver):
         )
 
 
-class GrayToColorRgbInputNameResolver(FixedSettingGrayToColorInputNameResolver):
-    scheme_literal = GrayToColorScheme.RGB.value
-    image_settings = GRAY_TO_COLOR_RGB_IMAGE_SETTINGS
-
-
-class GrayToColorCmykInputNameResolver(FixedSettingGrayToColorInputNameResolver):
-    scheme_literal = GrayToColorScheme.CMYK.value
-    image_settings = GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS
-
-
 class RepeatedImageNameGrayToColorInputNameResolver(GrayToColorInputNameResolver):
     """Base resolver for Stack/Composite repeated channel settings."""
 
@@ -157,16 +147,61 @@ class RepeatedImageNameGrayToColorInputNameResolver(GrayToColorInputNameResolver
         )
 
 
-class GrayToColorStackInputNameResolver(
-    RepeatedImageNameGrayToColorInputNameResolver
-):
-    scheme_literal = GrayToColorScheme.STACK.value
+@dataclass(frozen=True, slots=True)
+class GrayToColorInputNameResolverDeclaration:
+    """Typed declaration for one GrayToColor input-name resolver class."""
+
+    class_name: str
+    scheme: GrayToColorScheme
+    base: type[GrayToColorInputNameResolver]
+    image_settings: tuple[str, ...] = ()
+
+    def materialize(self) -> type[GrayToColorInputNameResolver]:
+        return type(
+            self.class_name,
+            (self.base,),
+            {
+                "scheme_literal": self.scheme.value,
+                "image_settings": self.image_settings,
+                "__module__": __name__,
+            },
+        )
 
 
-class GrayToColorCompositeInputNameResolver(
-    RepeatedImageNameGrayToColorInputNameResolver
-):
-    scheme_literal = GrayToColorScheme.COMPOSITE.value
+GRAY_TO_COLOR_INPUT_NAME_RESOLVER_DECLARATIONS: tuple[
+    GrayToColorInputNameResolverDeclaration,
+    ...,
+] = (
+    GrayToColorInputNameResolverDeclaration(
+        "GrayToColorRgbInputNameResolver",
+        GrayToColorScheme.RGB,
+        FixedSettingGrayToColorInputNameResolver,
+        GRAY_TO_COLOR_RGB_IMAGE_SETTINGS,
+    ),
+    GrayToColorInputNameResolverDeclaration(
+        "GrayToColorCmykInputNameResolver",
+        GrayToColorScheme.CMYK,
+        FixedSettingGrayToColorInputNameResolver,
+        GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
+    ),
+    GrayToColorInputNameResolverDeclaration(
+        "GrayToColorStackInputNameResolver",
+        GrayToColorScheme.STACK,
+        RepeatedImageNameGrayToColorInputNameResolver,
+    ),
+    GrayToColorInputNameResolverDeclaration(
+        "GrayToColorCompositeInputNameResolver",
+        GrayToColorScheme.COMPOSITE,
+        RepeatedImageNameGrayToColorInputNameResolver,
+    ),
+)
+
+globals().update(
+    {
+        declaration.class_name: declaration.materialize()
+        for declaration in GRAY_TO_COLOR_INPUT_NAME_RESOLVER_DECLARATIONS
+    }
+)
 
 
 def gray_to_color_stack_channels(
