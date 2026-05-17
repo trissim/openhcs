@@ -27,8 +27,8 @@ from openhcs.core.runtime_semantics import (
     MeasurementTableRowLayout,
     MeasurementScope,
     ObjectLabelMeasurementValues,
+    ObjectLabelIdDomainStrategy,
     dense_object_label_id_domain,
-    dense_object_label_present_ids,
     measurement_row_mapping,
     measurement_table_row_layout,
     measurement_table_row_layout_from_fields,
@@ -1091,7 +1091,7 @@ class IndexedObjectMeasurementLabelPlaneBinding(ObjectMeasurementLabelPlaneBindi
     @property
     def object_domain(self) -> tuple[int, ...]:
         """Return object IDs materially present in this indexed label plane."""
-        return dense_object_label_present_ids(self.labels)
+        return ObjectLabelIdDomainStrategy.for_value(self.labels).present_ids(self.labels)
 
 
 class ObjectMeasurementLabelPlaneBindingPolicy(

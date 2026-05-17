@@ -61,7 +61,7 @@ from openhcs.core.runtime_semantics import (
     PairMeasurementFeature,
     dense_object_label_id_domain,
     dense_object_label_identity_domains,
-    dense_object_label_max_present_id,
+    ObjectLabelIdDomainStrategy,
     dense_object_label_plane_id_domains,
     object_location_coordinate_arrays,
 )
@@ -6792,7 +6792,9 @@ class RuntimeObjectLabelInstanceCatalog:
             )
             counts[subject] = max(
                 counts.get(subject, 0),
-                dense_object_label_max_present_id(object_labels.labels),
+                ObjectLabelIdDomainStrategy.for_value(
+                    object_labels.labels
+                ).max_present_id(object_labels.labels),
             )
             named_plane_domains.append(
                 (

@@ -3677,9 +3677,13 @@ class DenseObjectLabelPairAligner:
             )
 
         if first.ndim == 3 and second.ndim == 2 and first.shape[1:] == second.shape:
-            first = project_dense_object_label_stack(first)
+            first = DenseObjectLabelStack.from_labels(
+                first
+            ).project_xy_plane_without_relabeling()
         if second.ndim == 3 and first.ndim == 2 and second.shape[1:] == first.shape:
-            second = project_dense_object_label_stack(second)
+            second = DenseObjectLabelStack.from_labels(
+                second
+            ).project_xy_plane_without_relabeling()
         if first.shape != second.shape:
             raise ValueError(
                 "Dense object-label payloads must share a common geometry after "
@@ -3752,7 +3756,9 @@ class DenseObjectLabelMaskAligner:
             return labels, mask
 
         if labels.ndim == 3 and mask.ndim == 2 and labels.shape[1:] == mask.shape:
-            labels = project_dense_object_label_stack(labels)
+            labels = DenseObjectLabelStack.from_labels(
+                labels
+            ).project_xy_plane_without_relabeling()
         if mask.ndim == 3 and labels.ndim == 2 and mask.shape[1:] == labels.shape:
             mask = self._project_mask_stack(mask)
         if labels.shape != mask.shape:
@@ -4009,18 +4015,6 @@ class RawDenseObjectLabelConsecutiveRelabelingStrategy(
         ).relabel_numpy_array(label_array, dtype=dtype)
 
 
-def relabel_dense_object_labels_consecutive(
-    labels: Any,
-    *,
-    dtype: Any | None = None,
-) -> Any:
-    """Return dense object labels remapped to consecutive positive IDs."""
-    return DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(labels).relabel(
-        labels,
-        dtype=dtype,
-    )
-
-
 def dense_object_label_id_domain(
     labels: Any,
     *,
@@ -4059,11 +4053,6 @@ def dense_object_label_id_domain(
     return ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
 
 
-def dense_object_label_present_ids(labels: Any) -> tuple[int, ...]:
-    """Return positive object-label IDs that are materially present."""
-    return ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
-
-
 def dense_object_label_extent_id_domain(labels: Any) -> tuple[int, ...]:
     """Return the dense positive ID extent materially represented by labels.
 
@@ -4074,11 +4063,6 @@ def dense_object_label_extent_id_domain(labels: Any) -> tuple[int, ...]:
     """
     max_present_id = ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
     return tuple(range(1, max_present_id + 1))
-
-
-def dense_object_label_max_present_id(labels: Any) -> int:
-    """Return the largest positive object-label ID materially present."""
-    return ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
 
 
 class ObjectLabelDomainDeclaration(ABC):
@@ -4117,7 +4101,11 @@ class PresentObjectLabelIdsDomainDeclaration(ObjectLabelDomainDeclaration):
 
     def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
         del source
-        return ObjectLabelDomain(declared_object_ids=dense_object_label_present_ids(labels))
+        return ObjectLabelDomain(
+            declared_object_ids=(
+                ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
+            )
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -4127,7 +4115,9 @@ class DenseObjectLabelExtentDomainDeclaration(ObjectLabelDomainDeclaration):
     def declared_domain(self, source: Any, labels: Any) -> ObjectLabelDomain:
         del source
         return ObjectLabelDomain(
-            declared_object_count=dense_object_label_max_present_id(labels)
+            declared_object_count=(
+                ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
+            )
         )
 
 
@@ -4205,11 +4195,6 @@ def dense_object_label_identity_domains(
         ),
         declared_object_id_domains=payload_domain.declared_object_id_domains,
     )
-
-
-def project_dense_object_label_stack(labels: Any) -> Any:
-    """Project a dense label stack to one XY plane without relabeling."""
-    return DenseObjectLabelStack.from_labels(labels).project_xy_plane_without_relabeling()
 
 
 def dense_array_in_source_spatial_domain(

@@ -23,12 +23,12 @@ from openhcs.core.runtime_artifact_queries import (
 )
 from openhcs.core.runtime_semantics import (
     DenseObjectLabelExtentDomainDeclaration,
+    DenseObjectLabelStack,
     ObjectShapeMeasurementFeature,
+    ObjectLabelIdDomainStrategy,
     ObjectLabelMeasurementValues,
     ParentChildRelationshipPayload,
     aligned_dense_object_label_arrays,
-    dense_object_label_present_ids,
-    project_dense_object_label_stack,
 )
 from openhcs.interop.cellprofiler.measurement_dialect import (
     CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT,
@@ -104,9 +104,10 @@ class FilterObjectsLabelPlane:
 
     @property
     def projected(self) -> np.ndarray:
-        return project_dense_object_label_stack(
-            object_label_dense_array(self.labels, dtype=np.int32)
-        )
+        labels = object_label_dense_array(self.labels, dtype=np.int32)
+        return DenseObjectLabelStack.from_labels(
+            labels
+        ).project_xy_plane_without_relabeling()
 
     def aligned_to(self, reference_labels: np.ndarray) -> np.ndarray:
         _aligned_reference, aligned_labels = aligned_dense_object_label_arrays(
@@ -1229,7 +1230,7 @@ def filter_objects(
             *filter_objects_outline_images(relabeled_objects, outline_object_indices),
         )
 
-    object_ids = dense_object_label_present_ids(labels)
+    object_ids = ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
     selection_measurement_values = (
         None
         if measurement_values is None
@@ -1396,7 +1397,7 @@ def filter_border_objects(
         )
         return image, stats, labels
 
-    object_ids = dense_object_label_present_ids(labels)
+    object_ids = ObjectLabelIdDomainStrategy.for_value(labels).present_ids(labels)
     indexes_to_keep = BorderFilterSelectionStrategy.discard_border_objects(labels)
 
     label_mapping = np.zeros(max_label + 1, dtype=np.int32)

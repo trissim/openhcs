@@ -17,17 +17,16 @@ from openhcs.core.runtime_semantics import (
     RuntimePlaneProjection,
     SourceSpatialDomainAdapter,
     StackRuntimePlaneProjection,
+    DenseObjectLabelConsecutiveRelabelingStrategy,
+    ObjectLabelIdDomainStrategy,
     aligned_dense_object_label_arrays,
     aligned_dense_object_label_stack_alignment,
     aligned_dense_object_label_stacks,
     dense_object_label_extent_id_domain,
     dense_object_label_id_domain,
     dense_object_label_identity_domains,
-    dense_object_label_max_present_id,
     dense_object_label_plane_id_domains,
-    dense_object_label_present_ids,
     object_label_parent_child_payload,
-    relabel_dense_object_labels_consecutive,
 )
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
@@ -431,8 +430,8 @@ def test_object_label_id_domain_uses_sparse_ijv_labels_without_densifying() -> N
         )
     )
 
-    assert dense_object_label_present_ids(rows) == (2, 4)
-    assert dense_object_label_max_present_id(rows) == 4
+    assert ObjectLabelIdDomainStrategy.for_value(rows).present_ids(rows) == (2, 4)
+    assert ObjectLabelIdDomainStrategy.for_value(rows).max_present_id(rows) == 4
     assert dense_object_label_id_domain(rows) == (2, 4)
 
 
@@ -450,8 +449,11 @@ def test_object_label_id_domain_delegates_through_sparse_payload_wrappers() -> N
         representation=ObjectLabelRepresentation.SPARSE_IJV,
     )
 
-    assert dense_object_label_present_ids(payload) == (1, 3)
-    assert dense_object_label_present_ids(label_set) == (1, 3)
+    assert ObjectLabelIdDomainStrategy.for_value(payload).present_ids(payload) == (1, 3)
+    assert ObjectLabelIdDomainStrategy.for_value(label_set).present_ids(label_set) == (
+        1,
+        3,
+    )
 
 
 def test_dense_object_label_plane_id_domains_repeat_plane_scoped_stack_declaration() -> None:
@@ -490,7 +492,7 @@ def test_dense_object_label_plane_id_domains_preserve_single_plane_declaration()
     assert dense_object_label_identity_domains(labels) == ((1, 2, 3, 4),)
 
 
-def test_relabel_dense_object_labels_consecutive_uses_single_semantic_remap() -> None:
+def test_dense_object_label_relabeling_strategy_uses_single_semantic_remap() -> None:
     labels = np.array(
         [
             [0, 1000, 7],
@@ -499,7 +501,9 @@ def test_relabel_dense_object_labels_consecutive_uses_single_semantic_remap() ->
         dtype=np.int32,
     )
 
-    relabeled = relabel_dense_object_labels_consecutive(labels, dtype=np.int32)
+    relabeled = DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(
+        labels
+    ).relabel(labels, dtype=np.int32)
 
     np.testing.assert_array_equal(
         relabeled,

@@ -31,17 +31,17 @@ from openhcs.core.image_shapes import (
     trailing_spatial_target_shape,
 )
 from openhcs.core.runtime_semantics import (
+    DenseObjectLabelConsecutiveRelabelingStrategy,
+    DenseObjectLabelStack,
     ExplicitObjectLabelDomainDeclaration,
     ObjectLabelDomain,
     ObjectLabelDomainScope,
+    ObjectLabelIdDomainStrategy,
     ParentChildRelationshipPayload,
     aligned_dense_object_label_mask_stack_alignment,
     aligned_dense_object_labels_and_mask,
     dense_object_label_plane_id_domains,
-    dense_object_label_max_present_id,
     object_label_lineage_payload,
-    project_dense_object_label_stack,
-    relabel_dense_object_labels_consecutive,
 )
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
@@ -3897,7 +3897,9 @@ class ExpandShrinkOperationStrategy(
     def output_domain(self, labels: np.ndarray) -> ObjectLabelDomain:
         """Return CP's semantic object domain for transformed labels."""
         return ObjectLabelDomain(
-            declared_object_count=dense_object_label_max_present_id(labels),
+            declared_object_count=(
+                ObjectLabelIdDomainStrategy.for_value(labels).max_present_id(labels)
+            ),
             scope=ObjectLabelDomainScope.PLANE,
         )
 
@@ -4633,7 +4635,9 @@ def mask_objects(
             )
 
     try:
-        label_image = project_dense_object_label_stack(label_array).astype(
+        label_image = DenseObjectLabelStack.from_labels(
+            label_array
+        ).project_xy_plane_without_relabeling().astype(
             np.int32,
             copy=False,
         )
@@ -4985,7 +4989,9 @@ class DistanceSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
                 request.intensity_method,
             )
 
-        return relabel_dense_object_labels_consecutive(output_labels)
+        return DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(
+            output_labels
+        ).relabel(output_labels)
 
 
 class ParentSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
@@ -5016,7 +5022,9 @@ class ParentSplitOrMergeMergeMethodStrategy(SplitOrMergeMergeMethodStrategy):
                 ),
             )
 
-        return relabel_dense_object_labels_consecutive(output_labels)
+        return DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(
+            output_labels
+        ).relabel(output_labels)
 
 
 class SplitOrMergeGuideImageFilter:

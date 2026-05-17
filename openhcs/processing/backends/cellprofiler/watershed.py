@@ -20,7 +20,7 @@ from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
-from openhcs.core.runtime_semantics import relabel_dense_object_labels_consecutive
+from openhcs.core.runtime_semantics import DenseObjectLabelConsecutiveRelabelingStrategy
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
@@ -906,7 +906,10 @@ class LibraryWatershedRuntimeStrategy(WatershedRuntimeStrategy):
         if parameters.exclude_border:
             labels = clear_border(labels)
 
-        return relabel_dense_object_labels_consecutive(labels, dtype=np.int32)
+        return DenseObjectLabelConsecutiveRelabelingStrategy.for_labels(labels).relabel(
+            labels,
+            dtype=np.int32,
+        )
 
 
 class LegacyWatershedBackendStrategy(
