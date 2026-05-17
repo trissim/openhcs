@@ -35,6 +35,7 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
     layout_key: ClassVar[str | None] = None
     slice_predicate: ClassVar[Callable[[Any], bool]]
     stack_predicate: ClassVar[Callable[[Any], bool]]
+    stable_slice_shape_error: ClassVar[str | None] = None
 
     @classmethod
     def for_slices(cls, slices: Sequence[Any]) -> "ImageStackLayout":
@@ -78,7 +79,12 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
                 source_type = detect_memory_type(candidate)
                 if source_type == memory_type:
                     return candidate
-                return _convert_memory(candidate, source_type, memory_type, gpu_id)
+                return convert_memory(
+                    data=candidate,
+                    source_type=source_type,
+                    target_type=memory_type,
+                    gpu_id=gpu_id,
+                )
         return cls.for_slices(slices).stack(
             slices=slices,
             memory_type=memory_type,
@@ -99,7 +105,12 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         if output_shape and output_shape in set(source_slice_shapes):
             source_type = detect_memory_type(array)
             if source_type != memory_type:
-                array = _convert_memory(array, source_type, memory_type, gpu_id)
+                array = convert_memory(
+                    data=array,
+                    source_type=source_type,
+                    target_type=memory_type,
+                    gpu_id=gpu_id,
+                )
             return [array]
         return cls.for_stack(array).unstack(
             array=array,
@@ -131,7 +142,12 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
             source_type = detect_memory_type(result)
             if source_type == memory_type:
                 return result
-            return _convert_memory(result, source_type, memory_type, gpu_id)
+            return convert_memory(
+                data=result,
+                source_type=source_type,
+                target_type=memory_type,
+                gpu_id=gpu_id,
+            )
         return cls.for_slices((result,)).stack(
             slices=(result,),
             memory_type=memory_type,
@@ -161,7 +177,6 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
                 return layout_type()
         raise ValueError(failure_message)
 
-    @abstractmethod
     def stack(
         self,
         *,
@@ -170,8 +185,51 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         gpu_id: int,
     ) -> Any:
         """Stack per-file image slices into an OpenHCS main-flow payload."""
+        if self.stable_slice_shape_error is None:
+            return stack_slices(
+                slices=list(slices),
+                memory_type=memory_type,
+                gpu_id=gpu_id,
+            )
+        return self.stack_stable_numpy_slices(
+            slices=slices,
+            memory_type=memory_type,
+            gpu_id=gpu_id,
+        )
 
-    @abstractmethod
+    def stack_stable_numpy_slices(
+        self,
+        *,
+        slices: Sequence[Any],
+        memory_type: str,
+        gpu_id: int,
+    ) -> Any:
+        """Stack slices that must all share the same native numpy shape."""
+        numpy_slices = [
+            _as_numpy_slice(slice_data, gpu_id)
+            for slice_data in slices
+        ]
+        slice_shapes = {tuple(slice_data.shape) for slice_data in numpy_slices}
+        if len(slice_shapes) != 1:
+            if self.stable_slice_shape_error is None:
+                raise ValueError(
+                    "OpenHCS image stacks require stable slice shapes; "
+                    f"got {[slice_data.shape for slice_data in numpy_slices]!r}."
+                )
+            raise ValueError(
+                f"{self.stable_slice_shape_error}; "
+                f"got {[slice_data.shape for slice_data in numpy_slices]!r}."
+            )
+        stacked = np.stack(numpy_slices)
+        if memory_type == MEMORY_TYPE_NUMPY:
+            return stacked
+        return convert_memory(
+            data=stacked,
+            source_type=MEMORY_TYPE_NUMPY,
+            target_type=memory_type,
+            gpu_id=gpu_id,
+        )
+
     def unstack(
         self,
         *,
@@ -180,6 +238,15 @@ class ImageStackLayout(ABC, metaclass=AutoRegisterMeta):
         gpu_id: int,
     ) -> list[Any]:
         """Split an OpenHCS main-flow payload into per-file image slices."""
+        source_type = detect_memory_type(array)
+        if source_type != memory_type:
+            array = convert_memory(
+                data=array,
+                source_type=source_type,
+                target_type=memory_type,
+                gpu_id=gpu_id,
+            )
+        return [array[index] for index in range(array.shape[0])]
 
 
 class GrayscaleImageStackLayout(ImageStackLayout):
@@ -188,19 +255,6 @@ class GrayscaleImageStackLayout(ImageStackLayout):
     layout_key = "grayscale"
     slice_predicate = staticmethod(is_grayscale_image_slice)
     stack_predicate = staticmethod(is_grayscale_image_stack)
-
-    def stack(
-        self,
-        *,
-        slices: Sequence[Any],
-        memory_type: str,
-        gpu_id: int,
-    ) -> Any:
-        return stack_slices(
-            slices=list(slices),
-            memory_type=memory_type,
-            gpu_id=gpu_id,
-        )
 
     def unstack(
         self,
@@ -223,40 +277,9 @@ class ColorImageStackLayout(ImageStackLayout):
     layout_key = "color"
     slice_predicate = staticmethod(is_color_image_slice)
     stack_predicate = staticmethod(is_color_image_stack)
-
-    def stack(
-        self,
-        *,
-        slices: Sequence[Any],
-        memory_type: str,
-        gpu_id: int,
-    ) -> Any:
-        numpy_slices = [
-            _as_numpy_slice(slice_data, gpu_id)
-            for slice_data in slices
-        ]
-        channel_counts = {int(slice_data.shape[-1]) for slice_data in numpy_slices}
-        if len(channel_counts) != 1:
-            raise ValueError(
-                "OpenHCS color image stacks require a stable channel count; "
-                f"got {sorted(channel_counts)!r}."
-            )
-        stacked = np.stack(numpy_slices)
-        if memory_type == MEMORY_TYPE_NUMPY:
-            return stacked
-        return _convert_memory(stacked, MEMORY_TYPE_NUMPY, memory_type, gpu_id)
-
-    def unstack(
-        self,
-        *,
-        array: Any,
-        memory_type: str,
-        gpu_id: int,
-    ) -> list[Any]:
-        source_type = detect_memory_type(array)
-        if source_type != memory_type:
-            array = _convert_memory(array, source_type, memory_type, gpu_id)
-        return [array[index] for index in range(array.shape[0])]
+    stable_slice_shape_error = (
+        "OpenHCS color image stacks require stable HWC shape"
+    )
 
 
 class GrayscaleVolumeStackLayout(ImageStackLayout):
@@ -265,40 +288,9 @@ class GrayscaleVolumeStackLayout(ImageStackLayout):
     layout_key = "grayscale_volume"
     slice_predicate = staticmethod(is_grayscale_volume_slice)
     stack_predicate = staticmethod(is_grayscale_volume_stack)
-
-    def stack(
-        self,
-        *,
-        slices: Sequence[Any],
-        memory_type: str,
-        gpu_id: int,
-    ) -> Any:
-        numpy_slices = [
-            _as_numpy_slice(slice_data, gpu_id)
-            for slice_data in slices
-        ]
-        volume_shapes = {tuple(slice_data.shape) for slice_data in numpy_slices}
-        if len(volume_shapes) != 1:
-            raise ValueError(
-                "OpenHCS grayscale volume stacks require stable ZYX shape; "
-                f"got {[slice_data.shape for slice_data in numpy_slices]!r}."
-            )
-        stacked = np.stack(numpy_slices)
-        if memory_type == MEMORY_TYPE_NUMPY:
-            return stacked
-        return _convert_memory(stacked, MEMORY_TYPE_NUMPY, memory_type, gpu_id)
-
-    def unstack(
-        self,
-        *,
-        array: Any,
-        memory_type: str,
-        gpu_id: int,
-    ) -> list[Any]:
-        source_type = detect_memory_type(array)
-        if source_type != memory_type:
-            array = _convert_memory(array, source_type, memory_type, gpu_id)
-        return [array[index] for index in range(array.shape[0])]
+    stable_slice_shape_error = (
+        "OpenHCS grayscale volume stacks require stable ZYX shape"
+    )
 
 
 class ColorVolumeStackLayout(ImageStackLayout):
@@ -307,58 +299,18 @@ class ColorVolumeStackLayout(ImageStackLayout):
     layout_key = "color_volume"
     slice_predicate = staticmethod(is_color_volume_slice)
     stack_predicate = staticmethod(is_color_volume_stack)
-
-    def stack(
-        self,
-        *,
-        slices: Sequence[Any],
-        memory_type: str,
-        gpu_id: int,
-    ) -> Any:
-        numpy_slices = [
-            _as_numpy_slice(slice_data, gpu_id)
-            for slice_data in slices
-        ]
-        volume_shapes = {tuple(slice_data.shape) for slice_data in numpy_slices}
-        if len(volume_shapes) != 1:
-            raise ValueError(
-                "OpenHCS color volume stacks require stable ZYXC shape; "
-                f"got {[slice_data.shape for slice_data in numpy_slices]!r}."
-            )
-        stacked = np.stack(numpy_slices)
-        if memory_type == MEMORY_TYPE_NUMPY:
-            return stacked
-        return _convert_memory(stacked, MEMORY_TYPE_NUMPY, memory_type, gpu_id)
-
-    def unstack(
-        self,
-        *,
-        array: Any,
-        memory_type: str,
-        gpu_id: int,
-    ) -> list[Any]:
-        source_type = detect_memory_type(array)
-        if source_type != memory_type:
-            array = _convert_memory(array, source_type, memory_type, gpu_id)
-        return [array[index] for index in range(array.shape[0])]
+    stable_slice_shape_error = (
+        "OpenHCS color volume stacks require stable ZYXC shape"
+    )
 
 
 def _as_numpy_slice(slice_data: Any, gpu_id: int) -> np.ndarray:
     source_type = detect_memory_type(slice_data)
     if source_type == MEMORY_TYPE_NUMPY:
         return slice_data
-    return _convert_memory(slice_data, source_type, MEMORY_TYPE_NUMPY, gpu_id)
-
-
-def _convert_memory(
-    data: Any,
-    source_type: str,
-    target_type: str,
-    gpu_id: int,
-) -> Any:
     return convert_memory(
-        data=data,
+        data=slice_data,
         source_type=source_type,
-        target_type=target_type,
+        target_type=MEMORY_TYPE_NUMPY,
         gpu_id=gpu_id,
     )
