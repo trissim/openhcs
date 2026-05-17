@@ -24,6 +24,10 @@ from polystore.streaming.receivers.napari import (
     normalize_component_layout,
     build_layer_key,
 )
+from openhcs.runtime.viewer_protocol import (
+    ChannelColormapPolicy,
+    NAPARI_HEARTBEAT,
+)
 from zmqruntime.streaming import StreamingVisualizerServer, VisualizerProcessManager
 from zmqruntime.transport import (
     coerce_transport_mode,
@@ -944,10 +948,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         if "channel" in component_modes and component_modes["channel"] == "slice":
             first_item = layer_items[0]
             channel_value = first_item["components"].get("channel")
-            if channel_value == 1:
-                colormap = "green"
-            elif channel_value == 2:
-                colormap = "red"
+            colormap = ChannelColormapPolicy().colormap(channel_value)
 
         # Build axis labels for stacked dimensions
         # Format: (component1_name, component2_name, ..., 'y', 'x')
@@ -1227,23 +1228,7 @@ class NapariViewerServer(StreamingVisualizerServer):
 
     def _create_pong_response(self) -> Dict[str, Any]:
         """Override to add Napari-specific fields and memory usage."""
-        response = super()._create_pong_response()
-        response["viewer"] = "napari"
-        response["openhcs"] = True
-        response["server"] = "NapariViewer"
-
-        # Add memory usage
-        try:
-            import psutil
-            import os
-
-            process = psutil.Process(os.getpid())
-            response["memory_mb"] = process.memory_info().rss / 1024 / 1024
-            response["cpu_percent"] = process.cpu_percent(interval=0)
-        except Exception:
-            pass
-
-        return response
+        return NAPARI_HEARTBEAT.apply_to(super()._create_pong_response())
 
     def handle_control_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """

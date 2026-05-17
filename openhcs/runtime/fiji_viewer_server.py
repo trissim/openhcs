@@ -16,6 +16,11 @@ from polystore.streaming.receivers.core import (
     group_items_by_component_modes,
 )
 from openhcs.core.config import TransportMode as OpenHCSTransportMode
+from openhcs.runtime.viewer_protocol import (
+    FIJI_HEARTBEAT,
+    FijiPayloadKind,
+    ViewerProtocolStatus,
+)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.transport import coerce_transport_mode
 from zmqruntime.streaming import StreamingVisualizerServer
@@ -219,23 +224,7 @@ class FijiViewerServer(StreamingVisualizerServer):
 
     def _create_pong_response(self) -> Dict[str, Any]:
         """Override to add Fiji-specific fields and memory usage."""
-        response = super()._create_pong_response()
-        response["viewer"] = "fiji"
-        response["openhcs"] = True
-        response["server"] = "FijiViewerServer"
-
-        # Add memory usage
-        try:
-            import psutil
-            import os
-
-            process = psutil.Process(os.getpid())
-            response["memory_mb"] = process.memory_info().rss / 1024 / 1024
-            response["cpu_percent"] = process.cpu_percent(interval=0)
-        except Exception:
-            pass
-
-        return response
+        return FIJI_HEARTBEAT.apply_to(super()._create_pong_response())
 
     def handle_control_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -256,7 +245,7 @@ class FijiViewerServer(StreamingVisualizerServer):
             self._shutdown_requested = True
             return {
                 "type": "shutdown_ack",
-                "status": "success",
+                "status": ViewerProtocolStatus.SUCCESS.value,
                 "message": "Fiji viewer shutting down",
             }
 
@@ -276,7 +265,7 @@ class FijiViewerServer(StreamingVisualizerServer):
 
             return {
                 "type": "clear_state_ack",
-                "status": "success",
+                "status": ViewerProtocolStatus.SUCCESS.value,
                 "message": "Dimension values cleared",
             }
 
@@ -430,7 +419,10 @@ class FijiViewerServer(StreamingVisualizerServer):
                 )
 
                 if not items:
-                    return {"status": "success", "message": "Empty batch"}
+                    return {
+                        "status": ViewerProtocolStatus.SUCCESS.value,
+                        "message": "Empty batch",
+                    }
 
                 # CRITICAL: Copy data from shared memory IMMEDIATELY
                 # This must happen before we send ack, so worker doesn't close shared memory
@@ -452,7 +444,7 @@ class FijiViewerServer(StreamingVisualizerServer):
                 )
 
             return {
-                "status": "success",
+                "status": ViewerProtocolStatus.SUCCESS.value,
                 "message": "Data copied, queued for processing",
             }
 
@@ -673,17 +665,13 @@ class FijiViewerServer(StreamingVisualizerServer):
         items_by_type = {}
         for item in items:
             data_type_str = item.get("data_type")
-
-            # Convert string to StreamingDataType enum
-            if data_type_str == "image":
-                data_type = StreamingDataType.IMAGE
-            elif data_type_str == "rois":
-                data_type = StreamingDataType.ROIS
-            else:
+            payload_kind = FijiPayloadKind.from_payload(data_type_str)
+            if payload_kind is None:
                 logger.warning(
                     f"🔬 FIJI SERVER: Unknown data type string: {data_type_str}"
                 )
                 continue
+            data_type = payload_kind.streaming_data_type
 
             if data_type not in items_by_type:
                 items_by_type[data_type] = []
