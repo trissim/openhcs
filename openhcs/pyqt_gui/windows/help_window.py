@@ -89,6 +89,7 @@ Version: PyQt6 GUI 1.0.0
 
         # Business logic state
         self.content = content or self.HELP_TEXT
+        self.content_text: QTextEdit | None = None
         
         # Setup UI
         self.setup_ui()
@@ -320,8 +321,9 @@ Version: PyQt6 GUI 1.0.0
             content: New help content
         """
         self.content = content
-        if hasattr(self, 'content_text'):
-            self.content_text.setHtml(self.format_help_content(content))
+        if self.content_text is None:
+            raise RuntimeError("Help content widget has not been initialized")
+        self.content_text.setHtml(self.format_help_content(content))
     
     def show_section(self, section_name: str):
         """
