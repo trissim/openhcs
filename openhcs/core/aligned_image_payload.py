@@ -297,7 +297,7 @@ class ArraySingletonStackImageDomainStrategy(SingletonStackImageDomainStrategy):
     def project_value(self, value: Any) -> Any:
         if not isinstance(value, np.ndarray):
             raise TypeError("Array singleton-stack projector requires ndarray.")
-        if _is_singleton_image_stack_array(value):
+        if ImageArrayShapeSemantics(value).is_singleton_image_stack:
             return value[0]
         return value
 
@@ -598,6 +598,79 @@ class PassThroughAlignedKwargResolutionStrategy(AlignedImageStackKwargResolution
     ) -> Any:
         del resolver
         return value
+
+
+@dataclass(frozen=True, slots=True)
+class ImageArrayShapeSemantics:
+    """Nominal owner for OpenHCS/CellProfiler image-array shape conventions."""
+
+    value: Any
+
+    @property
+    def ndim(self) -> int | None:
+        return getattr(self.value, "ndim", None)
+
+    @property
+    def shape(self) -> tuple[int, ...] | None:
+        shape = getattr(self.value, "shape", None)
+        if shape is None:
+            return None
+        return tuple(int(axis) for axis in shape)
+
+    @property
+    def is_pairwise_slice_grid(self) -> bool:
+        shape = self.shape
+        return (
+            self.ndim == 4
+            and shape is not None
+            and not is_color_image_stack(self.value)
+            and shape[0] == shape[1]
+        )
+
+    @property
+    def is_singleton_image_stack(self) -> bool:
+        shape = self.shape
+        return (
+            self.ndim is not None
+            and self.ndim > 0
+            and shape is not None
+            and shape[0] == 1
+            and (
+                is_grayscale_image_stack(self.value)
+                or is_color_image_stack(self.value)
+                or is_grayscale_volume_stack(self.value)
+                or is_color_volume_stack(self.value)
+            )
+        )
+
+    def collapse_pairwise_slice_grid(self) -> Any:
+        """Collapse a square pairwise slice grid to its per-cycle diagonal stack."""
+        array = np.asarray(self.value)
+        if not type(self)(array).is_pairwise_slice_grid:
+            raise ValueError(
+                "Pairwise slice grid must be shaped (N, N, H, W); "
+                f"got {self.shape!r}."
+            )
+        return np.stack(
+            tuple(array[index, index] for index in range(array.shape[0])),
+            axis=0,
+        )
+
+    def collapse_singleton_grayscale_plane_stack(self) -> Any:
+        shape = self.shape
+        if (
+            self.ndim == 3
+            and shape is not None
+            and shape[0] == 1
+            and not is_color_image_slice(self.value)
+        ):
+            return self.value[0]
+        return self.value
+
+    def shares_pairwise_slice_grid_axes_with(self, other: Any) -> bool:
+        shape = self.shape
+        other_shape = ImageArrayShapeSemantics(other).shape
+        return shape is not None and other_shape is not None and shape[:2] == other_shape[:2]
 
 
 @dataclass(frozen=True, slots=True)
@@ -999,10 +1072,16 @@ def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
     )
     mask = image_payload_mask(payload)
     metadata = image_payload_metadata(payload)
-    if is_pairwise_slice_grid(data):
-        data = collapse_pairwise_slice_grid(data)
-        if mask is not None and _shares_pairwise_slice_grid_axes(mask, payload):
-            mask = collapse_pairwise_slice_grid(mask)
+    data_semantics = ImageArrayShapeSemantics(data)
+    if data_semantics.is_pairwise_slice_grid:
+        data = data_semantics.collapse_pairwise_slice_grid()
+        if (
+            mask is not None
+            and ImageArrayShapeSemantics(mask).shares_pairwise_slice_grid_axes_with(
+                image_payload_data(payload)
+            )
+        ):
+            mask = ImageArrayShapeSemantics(mask).collapse_pairwise_slice_grid()
         payload = image_payload_with_context(data=data, mask=mask, metadata=metadata)
     if hasattr(data, "ndim") and data.ndim == 2:
         return (payload,)
@@ -1032,36 +1111,6 @@ def _is_single_source_volume_payload(data: Any, metadata: Any) -> bool:
         is_grayscale_volume_slice(data)
         and metadata.source_path is not None
         and not metadata.channel_source_paths
-    )
-
-
-def is_pairwise_slice_grid(value: Any) -> bool:
-    """Return True for square same-stack pair grids shaped ``(N, N, H, W)``."""
-    return (
-        hasattr(value, "ndim")
-        and hasattr(value, "shape")
-        and value.ndim == 4
-        and not is_color_image_stack(value)
-        and value.shape[0] == value.shape[1]
-    )
-
-
-def collapse_pairwise_slice_grid(value: Any) -> Any:
-    """Collapse a square pairwise slice grid to its per-cycle diagonal stack."""
-    array = np.asarray(value)
-    if not is_pairwise_slice_grid(array):
-        raise ValueError(
-            "Pairwise slice grid must be shaped (N, N, H, W); "
-            f"got {getattr(value, 'shape', None)!r}."
-        )
-    return np.stack(tuple(array[index, index] for index in range(array.shape[0])), axis=0)
-
-
-def _shares_pairwise_slice_grid_axes(mask: Any, payload: Any) -> bool:
-    return (
-        hasattr(mask, "shape")
-        and getattr(mask, "shape", None)[:2]
-        == getattr(image_payload_data(payload), "shape", ())[:2]
     )
 
 
@@ -1133,35 +1182,10 @@ def _normalize_bundle_image_payload(payload: Any) -> Any:
     data = image_payload_data(payload)
     mask = image_payload_mask(payload)
     metadata = image_payload_metadata(payload)
-    data = _collapse_singleton_grayscale_plane_stack(data)
+    data = ImageArrayShapeSemantics(data).collapse_singleton_grayscale_plane_stack()
     if mask is not None:
-        mask = _collapse_singleton_grayscale_plane_stack(mask)
+        mask = ImageArrayShapeSemantics(mask).collapse_singleton_grayscale_plane_stack()
     return image_payload_with_context(data=data, mask=mask, metadata=metadata)
-
-
-def _collapse_singleton_grayscale_plane_stack(value: Any) -> Any:
-    if (
-        hasattr(value, "ndim")
-        and hasattr(value, "shape")
-        and value.ndim == 3
-        and value.shape[0] == 1
-        and not is_color_image_slice(value)
-    ):
-        return value[0]
-    return value
-
-
-def _is_singleton_image_stack_array(value: np.ndarray) -> bool:
-    return (
-        value.ndim > 0
-        and value.shape[0] == 1
-        and (
-            is_grayscale_image_stack(value)
-            or is_color_image_stack(value)
-            or is_grayscale_volume_stack(value)
-            or is_color_volume_stack(value)
-        )
-    )
 
 
 def payload_slice_count(payload: Any) -> int:

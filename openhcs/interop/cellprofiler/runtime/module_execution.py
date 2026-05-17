@@ -23,12 +23,11 @@ from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
+    ImageArrayShapeSemantics,
     ImagePayloadExecutionMode,
     ImagePayloadSliceProjector,
     aligned_image_stack_kwargs,
-    collapse_pairwise_slice_grid,
     compose_aligned_image_payload,
-    is_pairwise_slice_grid,
     payload_slice_count,
     project_singleton_stack_image_domain,
 )
@@ -10835,19 +10834,21 @@ def _unstack_cellprofiler_image_slices(image: Any, memory_type: str) -> tuple[An
     image_data = image_payload_data(image)
     image_mask = image_payload_mask(image)
     image_metadata = image_payload_metadata(image)
+    image_data_semantics = ImageArrayShapeSemantics(image_data)
+    if image_data_semantics.is_pairwise_slice_grid:
+        image_data = image_data_semantics.collapse_pairwise_slice_grid()
+        if (
+            image_mask is not None
+            and isinstance(image_mask, np.ndarray)
+            and ImageArrayShapeSemantics(image_mask).shares_pairwise_slice_grid_axes_with(
+                image_data_semantics.value
+            )
+        ):
+            image_mask = ImageArrayShapeSemantics(image_mask).collapse_pairwise_slice_grid()
     slice_projector = ImagePayloadSliceProjector(
         mask=image_mask,
         metadata=image_metadata,
     )
-    if is_pairwise_slice_grid(image_data):
-        pairwise_shape = image_data.shape
-        image_data = collapse_pairwise_slice_grid(image_data)
-        if (
-            image_mask is not None
-            and isinstance(image_mask, np.ndarray)
-            and image_mask.shape[:2] == pairwise_shape[:2]
-        ):
-            image_mask = collapse_pairwise_slice_grid(image_mask)
     if is_color_image_slice(image_data):
         return (image,)
     if is_color_image_stack(image_data):
