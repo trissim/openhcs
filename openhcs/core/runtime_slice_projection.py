@@ -31,8 +31,8 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelSet,
     ObjectRelationship,
+    SingletonObjectLabelStackCollapseStrategy,
     SparseIJVLabelRows,
-    collapse_singleton_object_label_stack,
     image_payload_data,
     image_payload_mask,
     image_payload_metadata,
@@ -1101,4 +1101,4 @@ class DefaultRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrategy):
 
 def collapse_singleton_runtime_slice_value(value: Any) -> Any:
     """Collapse singleton object-label stack wrappers at runtime boundaries."""
-    return collapse_singleton_object_label_stack(value)
+    return SingletonObjectLabelStackCollapseStrategy.for_labels(value).collapse(value)

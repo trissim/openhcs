@@ -6,6 +6,7 @@ from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
     FieldSpec,
+    DerivedImagePayloadContext,
     DenseObjectLabelSliceStack,
     ImagePayloadChannelProjection,
     ImagePayloadMetadata,
@@ -34,7 +35,6 @@ from openhcs.core.runtime_values import (
     SparseIJVLabelRows,
     SpatialGrid,
     SingletonObjectLabelStackCollapseStrategy,
-    collapse_singleton_object_label_stack,
     compose_image_payload_metadata,
     image_payload_data,
     image_payload_metadata,
@@ -42,13 +42,10 @@ from openhcs.core.runtime_values import (
     normalize_image_payload_intensity,
     normalize_artifact_value,
     object_label_dense_array,
-    object_label_dense_data,
     object_label_payload_from_source_image,
     object_label_payload_with_dense_labels,
-    object_label_payload_with_measurement_labels,
     object_label_set_from_source_image,
     object_label_set_with_replacement_labels,
-    with_derived_image_payload_data,
 )
 from openhcs.core.runtime_semantics import (
     ExplicitObjectLabelDomainDeclaration,
@@ -111,9 +108,9 @@ def test_object_label_dense_data_uses_nominal_payload_registry() -> None:
     label_set = ObjectLabelSet(name="Cells", labels=labels)
 
     assert issubclass(ObjectLabelDenseDataStrategy, RuntimePayloadDataStrategy)
-    assert object_label_dense_data(payload) is labels
-    assert object_label_dense_data(label_set) is labels
-    assert object_label_dense_data(labels) is labels
+    assert ObjectLabelDenseDataStrategy.for_payload(payload).data(payload) is labels
+    assert ObjectLabelDenseDataStrategy.for_payload(label_set).data(label_set) is labels
+    assert ObjectLabelDenseDataStrategy.for_payload(labels).data(labels) is labels
     assert object_label_dense_array(payload, dtype=np.int32).dtype == np.int32
 
 
@@ -454,7 +451,10 @@ def test_object_label_payload_with_measurement_labels_preserves_domain_and_varia
     )
     selected = labels[0]
 
-    rebuilt = object_label_payload_with_measurement_labels(payload, selected)
+    rebuilt = ObjectLabelMeasurementPayloadStrategy.for_source(payload).with_labels(
+        payload,
+        selected,
+    )
 
     assert isinstance(
         ObjectLabelMeasurementPayloadStrategy.for_source(payload),
@@ -505,8 +505,12 @@ def test_singleton_object_label_stack_collapse_uses_nominal_registry() -> None:
         source_spatial_shape_yx=(5, 6),
     )
 
-    collapsed_array = collapse_singleton_object_label_stack(labels)
-    collapsed_payload = collapse_singleton_object_label_stack(payload)
+    collapsed_array = SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
+        labels
+    )
+    collapsed_payload = SingletonObjectLabelStackCollapseStrategy.for_labels(
+        payload
+    ).collapse(payload)
 
     assert isinstance(
         SingletonObjectLabelStackCollapseStrategy.for_labels(labels),
@@ -814,7 +818,7 @@ def test_derived_image_payload_context_projects_bundle_mask_to_single_output() -
     mask[1, :, 0, 0] = False
     source = MaskedImagePayload(data=np.stack((image, image)), mask=mask)
 
-    result = with_derived_image_payload_data(source, image)
+    result = DerivedImagePayloadContext(source, image).payload()
 
     assert isinstance(result, MaskedImagePayload)
     np.testing.assert_array_equal(result.mask, np.all(mask, axis=0))

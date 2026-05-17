@@ -139,18 +139,19 @@ from openhcs.core.runtime_semantics import (
 from openhcs.core.runtime_stores import require_runtime_value_store
 from openhcs.core.runtime_values import (
     ColumnarRows,
+    DerivedImagePayloadContext,
     MeasurementTable,
     ObjectLabelDenseDataStrategy,
+    ObjectLabelMeasurementPayloadStrategy,
     DenseObjectLabelSliceStack,
     ObjectLabelPayload,
     ObjectLabelPure2DSliceAggregator,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
     ObjectRelationship,
+    SingletonObjectLabelStackCollapseStrategy,
     SparseIJVLabelRows,
-    collapse_singleton_object_label_stack,
     object_label_dense_array,
-    object_label_payload_with_measurement_labels,
 )
 from openhcs.core.runtime_values import (
     ImageMetadataPayload,
@@ -163,7 +164,6 @@ from openhcs.core.runtime_values import (
     image_payload_with_context,
     project_image_mask_to_data_domain,
     normalize_image_payload_intensity,
-    with_derived_image_payload_data,
 )
 from openhcs.core.registry_strategies import (
     EnumKeyedStrategyMixin,
@@ -1357,9 +1357,13 @@ class CellProfilerModuleExecutor:
                 measurement_labels,
                 label_payload=raw_label_payload,
             )
-            completion_label_payload = object_label_payload_with_measurement_labels(
-                raw_label_payload,
-                measurement_labels,
+            completion_label_payload = (
+                ObjectLabelMeasurementPayloadStrategy.for_source(
+                    raw_label_payload
+                ).with_labels(
+                    raw_label_payload,
+                    measurement_labels,
+                )
             )
             executable_labels = (
                 CellProfilerObjectMeasurementLabelArgumentPolicy.for_enum_member(
@@ -3198,21 +3202,23 @@ class ObjectLabelsArtifactKindStrategy(RuntimeArtifactKindStrategy):
                     f"External object input '{request.spec.name}' requires a "
                     "current image payload for source-binding resolution."
                 )
-            return collapse_singleton_object_label_stack(
-                _object_label_runtime_payload(
-                    request.adapter.resolve_source_objects(
-                        request.spec.name,
-                        request.current_image,
-                    )
-                )
-            )
-        return collapse_singleton_object_label_stack(
-            _object_label_runtime_payload(
-                request.adapter.get_objects(
+            payload = _object_label_runtime_payload(
+                request.adapter.resolve_source_objects(
                     request.spec.name,
-                    current_image=request.current_image,
+                    request.current_image,
                 )
             )
+            return SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
+                payload
+            )
+        payload = _object_label_runtime_payload(
+            request.adapter.get_objects(
+                request.spec.name,
+                current_image=request.current_image,
+            )
+        )
+        return SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
+            payload
         )
 
     def source_image_name(
@@ -3357,7 +3363,10 @@ class RuntimeInputBindingRequestBase(ABC, metaclass=AutoRegisterMeta):
         )
 
     def labels_for(self, spec: ArtifactSpec) -> Any:
-        return collapse_singleton_object_label_stack(self.label_payload_for(spec))
+        payload = self.label_payload_for(spec)
+        return SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
+            payload
+        )
 
     def label_payload_for(self, spec: ArtifactSpec) -> Any:
         if spec.name in self.external_object_names:
@@ -5091,7 +5100,12 @@ class CombineObjectsInputPolicy(CellProfilerObjectInputPolicy):
         )
         if not slice_counts:
             return tuple(
-                np.asarray(collapse_singleton_object_label_stack(payload), dtype=np.int32)
+                np.asarray(
+                    SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
+                        payload
+                    ),
+                    dtype=np.int32,
+                )
                 for payload in label_payloads
             )
         slice_count_set = set(slice_counts)
@@ -5649,7 +5663,7 @@ class ObjectLabelValueMeasurementLabelExecutionModeStrategy(
             return ImagePayloadExecutionMode.NATURAL
         return MeasurementLabelExecutionModeStrategy.resolve(
             func,
-            ObjectLabelDenseDataStrategy.dense_data(labels),
+            ObjectLabelDenseDataStrategy.for_payload(labels).data(labels),
             default,
         )
 
@@ -6985,10 +6999,10 @@ class NumpyCellProfilerImageOutputStrategy(CellProfilerImageOutputContextStrateg
     def runtime_image_value(self, value: Any, source_image_payload: Any) -> Any:
         if not isinstance(value, np.ndarray):
             raise TypeError("Numpy image output strategy requires numpy.ndarray.")
-        return with_derived_image_payload_data(
+        return DerivedImagePayloadContext(
             source_image_payload,
             SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(value),
-        )
+        ).payload()
 
 
 class CellProfilerOutputRecorder(ABC, metaclass=AutoRegisterMeta):
@@ -8817,11 +8831,6 @@ def _image_scope_measurement_payload(image: Any) -> Any:
     return SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(image)
 
 
-def _measurement_labels(labels: Any) -> Any:
-    """Normalize singleton stack labels for absorbed 2D measurement functions."""
-    return collapse_singleton_object_label_stack(labels)
-
-
 class MeasurementLabelSourceAlignmentStrategy(
     NominalTypeKeyedStrategyMixin,
     ABC,
@@ -8877,7 +8886,9 @@ class DefaultMeasurementLabelSourceAlignmentStrategy(
 
     @staticmethod
     def source_aligned_labels(image: Any, labels: Any) -> Any:
-        labels = _measurement_labels(labels)
+        labels = SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
+            labels
+        )
         image_domain_adapter = _measurement_image_source_spatial_adapter(image)
         if image_domain_adapter is not None:
             labels = image_domain_adapter.extract_source_array(labels)
@@ -8914,7 +8925,9 @@ class AlignedStackMeasurementLabelSourceAlignmentStrategy(
                 slice_count=len(image.slices),
             )
         ):
-            return _measurement_labels(labels)
+            return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(
+                labels
+            )
         return self.source_aligned_labels(image, labels)
 
 
@@ -8990,7 +9003,9 @@ class LabelPayloadFinalProjection:
             payload = payload.runtime_payload()
         if isinstance(payload, ObjectLabelPayload):
             payload = payload.labels
-        return collapse_singleton_object_label_stack(payload)
+        return SingletonObjectLabelStackCollapseStrategy.for_labels(payload).collapse(
+            payload
+        )
 
 
 LABEL_PAYLOAD_FINAL = LabelPayloadFinalProjection()
@@ -9002,7 +9017,8 @@ def _label_payload_small_removed(payload: Any) -> Any | None:
         return None
     if payload.small_removed_labels is None:
         return None
-    return collapse_singleton_object_label_stack(payload.small_removed_labels)
+    labels = payload.small_removed_labels
+    return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(labels)
 
 
 class CellProfilerObjectInputCountAuthority:

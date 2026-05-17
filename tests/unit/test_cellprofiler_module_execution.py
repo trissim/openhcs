@@ -67,7 +67,6 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerMeasurementProjectionRequest,
     CellProfilerMeasurementImageResolver,
     _measurement_image_for_labels,
-    _measurement_labels,
     _measurement_labels_for_measurement_image,
     measurement_table_rows,
     OBJECT_ONLY_REFERENCE_IMAGE,
@@ -169,6 +168,7 @@ from openhcs.core.runtime_values import (
     ObjectLabelPayload,
     ObjectLabelSet,
     ObjectRelationship,
+    SingletonObjectLabelStackCollapseStrategy,
     SparseIJVLabelRows,
     SpatialGrid,
     image_payload_data,
@@ -5705,7 +5705,9 @@ def test_measurement_image_for_labels_keeps_source_domain_shape_mismatch() -> No
 def test_measurement_labels_collapse_singleton_label_stack() -> None:
     labels = np.ones((1, 4, 5), dtype=np.int32)
 
-    measurement_labels = _measurement_labels(labels)
+    measurement_labels = SingletonObjectLabelStackCollapseStrategy.for_labels(
+        labels
+    ).collapse(labels)
 
     assert measurement_labels.shape == (4, 5)
     np.testing.assert_array_equal(measurement_labels, labels[0])

@@ -591,21 +591,6 @@ def with_image_payload_data(
     )
 
 
-def with_derived_image_payload_data(
-    payload: Any,
-    data: Any,
-) -> Any:
-    """Attach source image context valid for a derived image output.
-
-    Raw CellProfiler image outputs should remain nominal image payloads so the
-    runtime can preserve dtype/intensity metadata. Spatial-domain metadata is
-    only valid when the derived pixels still occupy the same XY extent as the
-    source payload; shape-changing transforms need an explicit crop/resize
-    adapter to carry a new spatial domain.
-    """
-    return DerivedImagePayloadContext(payload, data).payload()
-
-
 def image_payload_slice_context(
     payload: Any,
     data: Any,
@@ -790,11 +775,11 @@ def image_payload_metadata_from_source(
     filemanager: Any | None = None,
 ) -> ImagePayloadMetadata:
     """Return generic source metadata for an image loaded through OpenHCS I/O."""
-    resolved_source_path = resolve_image_payload_source_path(
+    resolved_source_path = ImagePayloadSourcePathResolver(
         source_path=source_path,
         read_backend=read_backend,
         filemanager=filemanager,
-    )
+    ).resolve()
     source_metadata = image_file_source_metadata(resolved_source_path)
     source_dtype = source_metadata.source_dtype
     resolved_path_text = (
@@ -810,20 +795,6 @@ def image_payload_metadata_from_source(
         source_dtype=str(source_dtype),
         source_path=resolved_path_text,
     )
-
-
-def resolve_image_payload_source_path(
-    *,
-    source_path: str,
-    read_backend: str | None = None,
-    filemanager: Any | None = None,
-) -> Path | None:
-    """Resolve a backend-specific image path to a physical file when possible."""
-    return ImagePayloadSourcePathResolver(
-        source_path=source_path,
-        read_backend=read_backend,
-        filemanager=filemanager,
-    ).resolve()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1985,14 +1956,9 @@ class ObjectLabelDenseDataStrategy(
         return strategy if strategy is not None else RawObjectLabelDenseDataStrategy()
 
     @classmethod
-    def dense_data(cls, payload: object) -> object:
-        """Return dense label data through the registered object-label contract."""
-        return cls.for_payload(payload).data(payload)
-
-    @classmethod
     def spatial_rank(cls, payload: object) -> int | None:
         """Return object-label dense spatial rank when the payload can materialize it."""
-        dense_data = cls.dense_data(payload)
+        dense_data = cls.for_payload(payload).data(payload)
         if isinstance(dense_data, np.ndarray):
             return int(dense_data.ndim)
         try:
@@ -2075,11 +2041,6 @@ class ObjectLabelSetIdDomainStrategy(ObjectLabelIdDomainStrategy):
         return ObjectLabelIdDomainStrategy.for_value(labels.labels).present_ids(labels.labels)
 
 
-def object_label_dense_data(payload: object) -> object:
-    """Return dense label data through the registered object-label strategy family."""
-    return ObjectLabelDenseDataStrategy.dense_data(payload)
-
-
 def object_label_dense_array(
     payload: object,
     *,
@@ -2087,7 +2048,7 @@ def object_label_dense_array(
     copy: bool | None = None,
 ) -> np.ndarray:
     """Materialize object-label dense data as a NumPy array via nominal extraction."""
-    dense_data = object_label_dense_data(payload)
+    dense_data = ObjectLabelDenseDataStrategy.for_payload(payload).data(payload)
     if copy is None:
         return np.asarray(dense_data, dtype=dtype)
     return np.array(dense_data, dtype=dtype, copy=copy)
@@ -3078,17 +3039,6 @@ class RawObjectLabelMeasurementPayloadStrategy(ObjectLabelMeasurementPayloadStra
         return labels
 
 
-def object_label_payload_with_measurement_labels(
-    source: object,
-    labels: object,
-) -> object:
-    """Return object-label metadata over labels selected for measurement."""
-    return ObjectLabelMeasurementPayloadStrategy.for_source(source).with_labels(
-        source,
-        labels,
-    )
-
-
 class SingletonObjectLabelStackCollapseStrategy(
     NominalTypeKeyedStrategyMixin,
     ABC,
@@ -3179,11 +3129,6 @@ class RawSingletonObjectLabelStackCollapseStrategy(
 
     def collapse(self, labels: object) -> object:
         return labels
-
-
-def collapse_singleton_object_label_stack(labels: object) -> object:
-    """Normalize singleton object-label stacks to one label plane."""
-    return SingletonObjectLabelStackCollapseStrategy.for_labels(labels).collapse(labels)
 
 
 @dataclass(frozen=True, slots=True)

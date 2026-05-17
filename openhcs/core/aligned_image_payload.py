@@ -33,6 +33,8 @@ from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     ImageMetadataPayload,
     MaskedImagePayload,
+    ObjectLabelDenseDataStrategy,
+    ObjectLabelMeasurementPayloadStrategy,
     ObjectLabelPayload,
     ObjectLabelRuntimeSliceStackContract,
     ObjectLabelSet,
@@ -41,8 +43,6 @@ from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
     project_image_mask_to_data_domain,
-    object_label_dense_data,
-    object_label_payload_with_measurement_labels,
     image_payload_with_context,
 )
 
@@ -489,8 +489,8 @@ class ObjectLabelAlignedKwargResolutionStrategy(
             value,
             slice_count=resolver.slice_count,
         ):
-            labels = np.asarray(object_label_dense_data(value))
-            return object_label_payload_with_measurement_labels(
+            labels = np.asarray(ObjectLabelDenseDataStrategy.for_payload(value).data(value))
+            return ObjectLabelMeasurementPayloadStrategy.for_source(value).with_labels(
                 value,
                 labels[resolver.slice_index],
             )
@@ -972,7 +972,7 @@ def compose_aligned_image_payload(
 def payload_slices_for_alignment(payload: Any) -> tuple[Any, ...]:
     """Return payload slices used for multi-source alignment."""
     data = (
-        object_label_dense_data(payload)
+        ObjectLabelDenseDataStrategy.for_payload(payload).data(payload)
         if isinstance(payload, (ObjectLabelPayload, ObjectLabelSet))
         else image_payload_data(payload)
     )
