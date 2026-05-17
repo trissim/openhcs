@@ -136,6 +136,12 @@ _OBJECT_FEATURE_VALUE_PROCESS_CACHE: WeakKeyDictionary[
     dict[RuntimeObjectFeatureMeasurementQuery, Any],
 ] = WeakKeyDictionary()
 
+MeasurementTableSelection = tuple[MeasurementTable, ...] | None
+SpatialGridGroupValues = tuple[
+    SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid],
+    ...,
+]
+
 
 @dataclass(frozen=True, slots=True)
 class ObjectMeasurementTableCacheKey:
@@ -219,7 +225,7 @@ class ObjectMeasurementTableIndex:
         """Return all object subjects declared by a measurement table."""
         return MeasurementTableObjectFeatureSemantics.from_table(table).object_names
 
-    def for_object(self, object_name: str) -> tuple[MeasurementTable, ...] | None:
+    def for_object(self, object_name: str) -> MeasurementTableSelection:
         """Return indexed tables for one object, or ``None`` when unknown."""
         if not self.complete:
             return None
@@ -233,7 +239,7 @@ class ObjectMeasurementTableIndex:
         dialect: RuntimeMeasurementLookupDialectLike = (
             CELLPROFILER_MEASUREMENT_LOOKUP_DIALECT
         ),
-    ) -> tuple[MeasurementTable, ...] | None:
+    ) -> MeasurementTableSelection:
         """Return indexed object tables that may carry one feature."""
         query_object_name = resolve_runtime_measurement_lookup_dialect(
             dialect
@@ -2698,7 +2704,7 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
 
     def resolve_image(self, request: SourceBindingResolutionRequest) -> Any:
         if not request.binding.requires_selector_resolution:
-            return _natural_step_input_payload(request.current_image)
+            return self.natural_step_input_payload(request.current_image)
         step_input_files = request.adapter.source_binding_context.step_input_files
         if not step_input_files:
             raise NotImplementedError(
@@ -2736,6 +2742,17 @@ class StepInputSourceBindingResolver(SourceBindingResolver):
         return _select_step_input_stack(
             request=request,
             selected_paths=tuple(candidate.path for candidate in selected_files),
+        )
+
+    @staticmethod
+    def natural_step_input_payload(current_image: Any) -> Any:
+        if not isinstance(current_image, (RuntimeArrayPayload, np.ndarray)):
+            return current_image
+        if current_image.ndim == 2:
+            return current_image
+        return RestackLikePayloadAuthority.restack(
+            _unstack_payload(current_image),
+            current_image,
         )
 
 
@@ -3036,10 +3053,6 @@ def _is_global_grouped_input_request(
 class SpatialGridValueAuthority:
     """Normalize, compare, and collapse grouped spatial-grid runtime values."""
 
-    @classmethod
-    def payload(cls, name: str, value: Any) -> Mapping[str, Any]:
-        return cls.native_value(name, value).as_mapping()
-
     @staticmethod
     def native_value(name: str, value: Any) -> SpatialGrid:
         if isinstance(value, SpatialGrid):
@@ -3071,7 +3084,7 @@ class SpatialGridValueAuthority:
     def single_spatial_grid(
         cls,
         name: str,
-        grids: tuple[SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid], ...],
+        grids: SpatialGridGroupValues,
     ) -> SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid]:
         if not grids:
             raise RuntimeError(f"Missing spatial grid artifact {name!r}.")
@@ -3089,7 +3102,7 @@ class SpatialGridValueAuthority:
     def single_slice_aligned_spatial_grid(
         cls,
         name: str,
-        grids: tuple[SpatialGrid | RuntimeSliceAlignedValues[SpatialGrid], ...],
+        grids: SpatialGridGroupValues,
     ) -> RuntimeSliceAlignedValues[SpatialGrid]:
         slice_count = max(
             grid.slice_count if isinstance(grid, RuntimeSliceAlignedValues) else 1
@@ -3509,12 +3522,16 @@ class ContextSourceMetadataAuthority:
         source_path: str,
         request: PipelineStartSourceLoadRequest,
     ) -> Any:
+        source_metadata = SourceRuntimePathLookup(
+            source_path,
+            request.adapter.source_binding_context.step_input_dir,
+        ).first_value(
+            request.adapter.source_binding_context.source_metadata_by_path,
+            include_native_path_fallback=True,
+        )
         return apply_source_image_loading_semantics(
             payload,
-            source_metadata=cls._source_metadata(
-                source_path,
-                request.adapter.source_binding_context,
-            ),
+            source_metadata=source_metadata,
             source_path=source_path,
             read_backend=request.backend,
             filemanager=_require_processing_context(request.adapter).filemanager,
@@ -3526,7 +3543,14 @@ class ContextSourceMetadataAuthority:
         paths: tuple[str, ...],
         context: SourceBindingRuntimeContext,
     ) -> bool:
-        return any(cls._source_metadata(path, context) is not None for path in paths)
+        return any(
+            SourceRuntimePathLookup(path, context.step_input_dir).first_value(
+                context.source_metadata_by_path,
+                include_native_path_fallback=True,
+            )
+            is not None
+            for path in paths
+        )
 
     @classmethod
     def merge_into(
@@ -3536,22 +3560,15 @@ class ContextSourceMetadataAuthority:
         context: SourceBindingRuntimeContext,
     ) -> None:
         for path in dict.fromkeys(paths):
-            context_metadata = cls._source_metadata(path, context)
+            context_metadata = SourceRuntimePathLookup(
+                path,
+                context.step_input_dir,
+            ).first_value(
+                context.source_metadata_by_path,
+                include_native_path_fallback=True,
+            )
             if context_metadata is not None:
                 merge_source_metadata(metadata, context_metadata, path=path)
-
-    @staticmethod
-    def _source_metadata(
-        file_path: str,
-        context: SourceBindingRuntimeContext,
-    ) -> Mapping[str, str] | None:
-        return SourceRuntimePathLookup(
-            file_path,
-            context.step_input_dir,
-        ).first_value(
-            context.source_metadata_by_path,
-            include_native_path_fallback=True,
-        )
 
 
 def _merge_candidate_path_metadata(
@@ -4063,7 +4080,7 @@ def _select_step_input_stack(
             "stack indexes after filename matching."
         )
     if len(current_step_input_files) == 1:
-        return _natural_step_input_payload(current_image)
+            return StepInputSourceBindingResolver.natural_step_input_payload(current_image)
     slices = _unstack_payload(current_image)
     selected_slices = [slices[index] for index in selected_indexes]
     return RestackLikePayloadAuthority.restack(selected_slices, current_image)
@@ -4091,17 +4108,6 @@ def _load_step_input_stack(
             f"Step-input source resolution loaded no payloads from {list(full_paths)}."
         )
     return RestackLikePayloadAuthority.restack(list(loaded), request.current_image)
-
-
-def _natural_step_input_payload(current_image: Any) -> Any:
-    if not isinstance(current_image, (RuntimeArrayPayload, np.ndarray)):
-        return current_image
-    if current_image.ndim == 2:
-        return current_image
-    return RestackLikePayloadAuthority.restack(
-        _unstack_payload(current_image),
-        current_image,
-    )
 
 
 def _load_pipeline_start_stack(
