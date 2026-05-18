@@ -240,3 +240,31 @@ Advisor status:
 - Remaining viewer work is viewer state membership, Napari/Fiji server role
   quotients, dynamic/private entry witnesses, process signature records, and
   shared viewer platform strategy ladders.
+
+### Checkpoint 7
+
+Implemented:
+
+- `VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME` for system-name to platform
+  projection.
+- `ViewerQtPlatformEnvironmentPolicy` and `VIEWER_QT_ENVIRONMENT_POLICIES`
+  for per-platform Qt environment mutation.
+- Unit coverage for Linux, Linux with preexisting `QT_QPA_PLATFORM`, Darwin,
+  and Windows policy rows.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py -q
+# 4 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/viewer_protocol.py
+# shared viewer platform strategy ladder findings cleared
+```
+
+Advisor status:
+
+- Cleared `ViewerProcessPlatform.current` enum/string ladder.
+- Cleared `ViewerQtEnvironmentPolicy.apply_to` enum ladder.
+- Remaining viewer-protocol-local finding is broader lifecycle membership in
+  `ManagedViewerLifecycleMixin`.

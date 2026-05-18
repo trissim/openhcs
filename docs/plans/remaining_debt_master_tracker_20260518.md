@@ -262,3 +262,23 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 # cleared repeated ping_control_port projection finding
 # cleared ping constructor-variant findings after introducing mode policy rows
 ```
+
+Checkpoint 7:
+
+- Replaced viewer process platform detection branches with
+  `VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME`.
+- Replaced per-platform Qt environment branches with
+  `ViewerQtPlatformEnvironmentPolicy` rows in
+  `VIEWER_QT_ENVIRONMENT_POLICIES`.
+- Added unit coverage for Linux, Darwin, Windows, and preconfigured Linux Qt
+  environment behavior.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py -q
+# 4 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/viewer_protocol.py
+# shared viewer platform strategy ladder findings cleared
+```

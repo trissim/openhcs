@@ -4,8 +4,10 @@ import sys
 import pytest
 
 from openhcs.runtime.viewer_protocol import (
+    ViewerProcessPlatform,
     ViewerControlPingMode,
     ViewerControlPingRequest,
+    ViewerQtEnvironmentPolicy,
     ViewerProcessHandle,
 )
 
@@ -84,3 +86,22 @@ def test_viewer_control_ping_request_owns_quick_and_ready_projection(monkeypatch
             },
         ),
     ]
+
+
+def test_viewer_qt_environment_policy_applies_platform_rows():
+    linux_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.LINUX).apply_to({})
+    assert linux_env == {"QT_QPA_PLATFORM": "xcb", "QT_X11_NO_MITSHM": "1"}
+
+    linux_existing = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.LINUX).apply_to(
+        {"QT_QPA_PLATFORM": "offscreen"}
+    )
+    assert linux_existing == {
+        "QT_QPA_PLATFORM": "offscreen",
+        "QT_X11_NO_MITSHM": "1",
+    }
+
+    darwin_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.DARWIN).apply_to({})
+    assert darwin_env == {"QT_QPA_PLATFORM": "cocoa"}
+
+    windows_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.WINDOWS).apply_to({})
+    assert windows_env == {}

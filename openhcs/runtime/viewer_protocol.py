@@ -50,12 +50,10 @@ class ViewerProcessPlatform(Enum):
     def current(cls) -> "ViewerProcessPlatform":
         if sys.platform == cls.WINDOWS.value:
             return cls.WINDOWS
-        system_name = platform.system()
-        if system_name == cls.DARWIN.value:
-            return cls.DARWIN
-        if system_name == cls.LINUX.value:
-            return cls.LINUX
-        return cls.OTHER
+        return VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME.get(
+            platform.system(),
+            cls.OTHER,
+        )
 
 
 class NapariLayerKind(Enum):
@@ -116,6 +114,12 @@ NAPARI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.NAPARI, "NapariViewer")
 FIJI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.FIJI, "FijiViewerServer")
 
 
+VIEWER_PROCESS_PLATFORM_BY_SYSTEM_NAME: Mapping[str, ViewerProcessPlatform] = {
+    ViewerProcessPlatform.DARWIN.value: ViewerProcessPlatform.DARWIN,
+    ViewerProcessPlatform.LINUX.value: ViewerProcessPlatform.LINUX,
+}
+
+
 @dataclass(frozen=True, slots=True)
 class NapariViewerServerRequest:
     """Shared request fields for constructing a Napari viewer server process."""
@@ -128,6 +132,36 @@ class NapariViewerServerRequest:
 
 
 @dataclass(frozen=True, slots=True)
+class ViewerQtPlatformEnvironmentPolicy:
+    """Environment mutations for one viewer platform."""
+
+    qpa_platform: QtPlatformName | None = None
+    always_set: Mapping[str, str] = field(default_factory=dict)
+
+    def apply_to(self, env: dict[str, str]) -> dict[str, str]:
+        if self.qpa_platform is not None and "QT_QPA_PLATFORM" not in env:
+            env["QT_QPA_PLATFORM"] = self.qpa_platform.value
+        env.update(self.always_set)
+        return env
+
+
+VIEWER_QT_ENVIRONMENT_POLICIES: Mapping[
+    ViewerProcessPlatform,
+    ViewerQtPlatformEnvironmentPolicy,
+] = {
+    ViewerProcessPlatform.WINDOWS: ViewerQtPlatformEnvironmentPolicy(),
+    ViewerProcessPlatform.DARWIN: ViewerQtPlatformEnvironmentPolicy(
+        qpa_platform=QtPlatformName.COCOA,
+    ),
+    ViewerProcessPlatform.LINUX: ViewerQtPlatformEnvironmentPolicy(
+        qpa_platform=QtPlatformName.XCB,
+        always_set={"QT_X11_NO_MITSHM": "1"},
+    ),
+    ViewerProcessPlatform.OTHER: ViewerQtPlatformEnvironmentPolicy(),
+}
+
+
+@dataclass(frozen=True, slots=True)
 class ViewerQtEnvironmentPolicy:
     """Apply viewer-safe Qt environment defaults for the current platform."""
 
@@ -136,15 +170,7 @@ class ViewerQtEnvironmentPolicy:
     )
 
     def apply_to(self, env: dict[str, str]) -> dict[str, str]:
-        if "QT_QPA_PLATFORM" not in env:
-            if self.platform is ViewerProcessPlatform.DARWIN:
-                env["QT_QPA_PLATFORM"] = QtPlatformName.COCOA.value
-            elif self.platform is ViewerProcessPlatform.LINUX:
-                env["QT_QPA_PLATFORM"] = QtPlatformName.XCB.value
-                env["QT_X11_NO_MITSHM"] = "1"
-        elif self.platform is ViewerProcessPlatform.LINUX:
-            env["QT_X11_NO_MITSHM"] = "1"
-        return env
+        return VIEWER_QT_ENVIRONMENT_POLICIES[self.platform].apply_to(env)
 
 
 @dataclass(frozen=True, slots=True)
