@@ -400,3 +400,35 @@ Advisor status:
 - Cleared the remaining Napari batch-processor store finding.
 - Remaining Napari findings are the larger process-entry/public-signature
   migration and server facade role quotient.
+
+### Checkpoint 13
+
+Implemented:
+
+- `NapariDetachedProcessRequest` and `NapariViewerProcessEntrypoint` now own
+  detached Napari launch code generation, log-file routing, and conversion to
+  `DetachedViewerProcessRequest`.
+- `napari_viewer_server.py` exposes a public process entrypoint and constructs
+  `NapariViewerServer` from `NapariViewerServerRequest`.
+- `napari_stream_visualizer.py` no longer carries its own private Napari
+  process-entry implementation or ad hoc launch script.
+- Unit coverage verifies generated process code imports the public entrypoint
+  and carries the intended log/cwd/transport values.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 17 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/viewer_protocol.py
+# private process-entry, embedded launch payload, and repeated signature findings cleared
+```
+
+Advisor status:
+
+- Remaining viewer findings are now lifecycle membership semantics and the
+  duplicated Napari server role quotient.

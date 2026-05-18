@@ -7,6 +7,7 @@ import os
 import platform
 import subprocess
 import sys
+import textwrap
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -147,6 +148,104 @@ class NapariViewerServerRequest:
             log_file_path=log_file_path,
             transport_mode=transport_mode,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class NapariViewerProcessEntrypoint:
+    """Generate the explicit Python entrypoint for a detached Napari process."""
+
+    request: NapariViewerServerRequest
+    python_path_root: Path
+    entry_module: str = "openhcs.runtime.napari_viewer_server"
+    entry_function: str = "run_napari_viewer_process_from_legacy_signature"
+
+    def python_code(self) -> str:
+        transport_name = self.request.transport_mode.name
+        return textwrap.dedent(
+            f"""
+            import os
+            import sys
+
+            if hasattr(os, "setsid"):
+                try:
+                    os.setsid()
+                except OSError:
+                    pass
+
+            sys.path.insert(0, {str(self.python_path_root)!r})
+
+            try:
+                from {self.entry_module} import {self.entry_function}
+                from openhcs.core.config import TransportMode
+
+                transport_mode = TransportMode.{transport_name}
+                {self.entry_function}(
+                    {self.request.port!r},
+                    {self.request.viewer_title!r},
+                    {self.request.replace_layers!r},
+                    {self.request.log_file_path!r},
+                    transport_mode,
+                )
+            except Exception as error:
+                import logging
+                import traceback
+
+                logger = logging.getLogger("openhcs.runtime.napari_detached")
+                logger.error("Detached napari error: %s", error)
+                logger.error(traceback.format_exc())
+                sys.exit(1)
+            """
+        ).strip()
+
+
+@dataclass(frozen=True, slots=True)
+class NapariDetachedProcessRequest:
+    """Authoritative detached launch request for a Napari viewer process."""
+
+    server_request: NapariViewerServerRequest
+    log_file: Path
+    cwd: Path = field(default_factory=Path.cwd)
+
+    @classmethod
+    def from_legacy_signature(
+        cls,
+        port: int,
+        viewer_title: str,
+        replace_layers: bool = False,
+        transport_mode: object | None = None,
+        *,
+        cwd: Path | None = None,
+        log_dir: Path | None = None,
+    ) -> "NapariDetachedProcessRequest":
+        launch_cwd = Path.cwd() if cwd is None else cwd
+        launch_log_dir = (
+            Path.home() / ".local" / "share" / "openhcs" / "logs"
+            if log_dir is None
+            else log_dir
+        )
+        log_file = launch_log_dir / f"napari_detached_port_{port}.log"
+        server_request = NapariViewerServerRequest.from_legacy_signature(
+            port,
+            viewer_title,
+            replace_layers,
+            str(log_file),
+            transport_mode,
+        )
+        return cls(server_request=server_request, log_file=log_file, cwd=launch_cwd)
+
+    def to_process_request(self) -> "DetachedViewerProcessRequest":
+        entrypoint = NapariViewerProcessEntrypoint(
+            request=self.server_request,
+            python_path_root=self.cwd,
+        )
+        return DetachedViewerProcessRequest(
+            python_code=entrypoint.python_code(),
+            log_file=self.log_file,
+            cwd=self.cwd,
+        )
+
+    def launch(self) -> subprocess.Popen:
+        return self.to_process_request().launch()
 
 
 @dataclass(frozen=True, slots=True)

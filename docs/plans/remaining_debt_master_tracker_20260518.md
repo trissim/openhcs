@@ -371,3 +371,27 @@ git diff --check
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py
 # batch processor registry finding cleared
 ```
+
+Checkpoint 13:
+
+- Added `NapariDetachedProcessRequest` and `NapariViewerProcessEntrypoint` as
+  the single detached Napari launch-code authority.
+- Routed Napari process spawning and launch-command preview through the typed
+  request.
+- Removed the duplicate private process-entry implementation from
+  `napari_stream_visualizer.py`.
+- Made `napari_viewer_server.py` construct the server from
+  `NapariViewerServerRequest`.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 17 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/viewer_protocol.py
+# private process-entry, embedded launch payload, and repeated signature findings cleared
+```

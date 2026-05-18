@@ -4,10 +4,12 @@ import sys
 import pytest
 
 from openhcs.runtime.viewer_protocol import (
+    NapariDetachedProcessRequest,
+    NapariViewerProcessEntrypoint,
+    NapariViewerServerRequest,
     ViewerProcessPlatform,
     ViewerControlPingMode,
     ViewerControlPingRequest,
-    NapariViewerServerRequest,
     ViewerQtEnvironmentPolicy,
     ViewerProcessHandle,
 )
@@ -124,3 +126,49 @@ def test_napari_viewer_server_request_owns_legacy_signature_projection():
         log_file_path="/tmp/viewer.log",
         transport_mode="ipc",
     )
+
+
+def test_napari_viewer_process_entrypoint_generates_public_process_call(tmp_path):
+    class FakeTransportMode:
+        name = "IPC"
+
+    request = NapariViewerServerRequest.from_legacy_signature(
+        1234,
+        "Viewer",
+        True,
+        "/tmp/viewer.log",
+        FakeTransportMode(),
+    )
+
+    python_code = NapariViewerProcessEntrypoint(
+        request=request,
+        python_path_root=tmp_path,
+    ).python_code()
+
+    assert "run_napari_viewer_process_from_legacy_signature" in python_code
+    assert "openhcs.runtime.napari_viewer_server" in python_code
+    assert " import _napari_viewer_process" not in python_code
+    assert str(tmp_path) in python_code
+    assert "TransportMode.IPC" in python_code
+
+
+def test_napari_detached_process_request_owns_log_and_python_command(tmp_path):
+    class FakeTransportMode:
+        name = "TCP"
+
+    launch = NapariDetachedProcessRequest.from_legacy_signature(
+        4321,
+        "Detached",
+        False,
+        FakeTransportMode(),
+        cwd=tmp_path,
+        log_dir=tmp_path / "logs",
+    )
+
+    process_request = launch.to_process_request()
+
+    assert launch.log_file == tmp_path / "logs" / "napari_detached_port_4321.log"
+    assert launch.server_request.log_file_path == str(launch.log_file)
+    assert process_request.log_file == launch.log_file
+    assert process_request.cwd == tmp_path
+    assert "TransportMode.TCP" in process_request.python_code

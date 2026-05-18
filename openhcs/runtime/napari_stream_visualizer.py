@@ -20,7 +20,6 @@ import threading
 import time
 import zmq
 import numpy as np
-from pathlib import Path
 from typing import Any, Dict, Optional
 from qtpy.QtCore import QTimer
 
@@ -33,9 +32,9 @@ from openhcs.core.config import (
 from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
     ComponentDimensionLabelPolicy,
-    DetachedViewerProcessRequest,
     ManagedViewerLifecycleMixin,
     NAPARI_HEARTBEAT,
+    NapariDetachedProcessRequest,
     NapariViewerServerRequest,
     ViewerControlPingMode,
     ViewerControlPingRequest,
@@ -1226,125 +1225,6 @@ class NapariViewerServer(StreamingVisualizerServer):
             # Don't re-raise - continue processing other messages instead of crashing
 
 
-def _napari_viewer_process(
-    port: int,
-    viewer_title: str,
-    replace_layers: bool = False,
-    log_file_path: str = None,
-    transport_mode: OpenHCSTransportMode = OpenHCSTransportMode.IPC,
-):
-    """
-    Napari viewer process entry point. Runs in a separate process.
-    Listens for ZeroMQ messages with image data to display.
-
-    Args:
-        port: ZMQ port to listen on
-        viewer_title: Title for the napari viewer window
-        replace_layers: If True, replace existing layers; if False, add new layers with unique names
-        log_file_path: Path to log file (for client discovery via ping/pong)
-        transport_mode: ZMQ transport mode (IPC or TCP)
-    """
-    try:
-        import zmq
-        import napari
-
-        request = NapariViewerServerRequest.from_legacy_signature(
-            port,
-            viewer_title,
-            replace_layers,
-            log_file_path,
-            transport_mode,
-        )
-
-        # Create ZMQ server instance (inherits from ZMQServer ABC)
-        server = NapariViewerServer(
-            request.port,
-            request.viewer_title,
-            request.replace_layers,
-            request.log_file_path,
-            request.transport_mode,
-        )
-
-        # Start the server (binds sockets)
-        server.start()
-
-        # Create napari viewer in this process (main thread)
-        viewer = napari.Viewer(title=viewer_title, show=True)
-        server.viewer = viewer
-
-        # Initialize layers dictionary with existing layers (for reconnection scenarios)
-        for layer in viewer.layers:
-            server.layer_state.set_layer(layer.name, layer)
-
-        # Enable text overlay for dimension labels
-        viewer.text_overlay.visible = True
-        viewer.text_overlay.color = "white"
-        viewer.text_overlay.font_size = 14
-
-        logger.info(
-            f"🔬 NAPARI PROCESS: Viewer started on data port {port}, control port {server.control_port}"
-        )
-
-        # Add cleanup handler for when viewer is closed
-        def cleanup_and_exit():
-            logger.info("🔬 NAPARI PROCESS: Viewer closed, cleaning up and exiting...")
-            try:
-                server.stop()
-            except:
-                pass
-            sys.exit(0)
-
-        # Connect the viewer close event to cleanup
-        viewer.window.qt_viewer.destroyed.connect(cleanup_and_exit)
-
-        # Use proper Qt event loop integration
-        import sys
-        from qtpy import QtWidgets, QtCore
-
-        ViewerQtEnvironmentPolicy().apply_to(os.environ)
-
-        # Get the Qt application
-        app = QtWidgets.QApplication.instance()
-        if app is None:
-            app = QtWidgets.QApplication(sys.argv)
-
-        # Ensure the application DOES quit when the napari window closes
-        app.setQuitOnLastWindowClosed(True)
-
-        # Set up a QTimer for message processing
-        timer = QtCore.QTimer()
-
-        def process_messages():
-            # Process control messages (ping/pong handled by ABC)
-            server.process_messages()
-
-            # Process data messages (images) if ready
-            # REP socket requires recv->send alternation, so process one at a time
-            if server._ready:
-                try:
-                    message = server.data_socket.recv(zmq.NOBLOCK)
-                    server.process_image_message(message)
-                except zmq.Again:
-                    # No message available
-                    pass
-
-        # Connect timer to message processing
-        timer.timeout.connect(process_messages)
-        timer.start(50)  # Process messages every 50ms
-
-        logger.info("🔬 NAPARI PROCESS: Starting Qt event loop")
-
-        # Run the Qt event loop - this keeps napari responsive
-        app.exec_()
-
-    except Exception as e:
-        logger.error(f"🔬 NAPARI PROCESS: Fatal error: {e}")
-    finally:
-        logger.info("🔬 NAPARI PROCESS: Shutting down")
-        if "server" in locals():
-            server.stop()
-
-
 def _spawn_detached_napari_process(
     port: int,
     viewer_title: str,
@@ -1363,58 +1243,19 @@ def _spawn_detached_napari_process(
         replace_layers: If True, replace existing layers; if False, add new layers
         transport_mode: ZMQ transport mode (IPC or TCP)
     """
-    # Use a simpler approach: spawn python directly with the napari viewer module
-    # This avoids temporary file issues and import problems
-
-    # Create the command to run the napari viewer directly
-    current_dir = os.getcwd()
-    python_code = f"""
-import sys
-import os
-
-# Detach from parent process group (Unix only)
-if hasattr(os, "setsid"):
     try:
-        os.setsid()
-    except OSError:
-        pass
-
-# Add current working directory to Python path
-sys.path.insert(0, {repr(current_dir)})
-
-try:
-    from openhcs.runtime.napari_stream_visualizer import _napari_viewer_process
-    from openhcs.core.config import TransportMode
-    transport_mode = TransportMode.{transport_mode.name}
-    _napari_viewer_process({port}, {repr(viewer_title)}, {replace_layers}, {repr(current_dir + "/.napari_log_path_placeholder")}, transport_mode)
-except Exception as e:
-    import logging
-    logger = logging.getLogger("openhcs.runtime.napari_detached")
-    logger.error(f"Detached napari error: {{e}}")
-    import traceback
-    logger.error(traceback.format_exc())
-    sys.exit(1)
-"""
-
-    try:
-        # Create log file for detached process
-        log_dir = os.path.expanduser("~/.local/share/openhcs/logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"napari_detached_port_{port}.log")
-
-        # Replace placeholder with actual log file path in python code
-        python_code = python_code.replace(
-            repr(current_dir + "/.napari_log_path_placeholder"), repr(log_file)
+        launch_request = NapariDetachedProcessRequest.from_legacy_signature(
+            port,
+            viewer_title,
+            replace_layers,
+            transport_mode,
         )
-
-        process = DetachedViewerProcessRequest(
-            python_code=python_code,
-            log_file=Path(log_file),
-            cwd=Path.cwd(),
-        ).launch()
+        process = launch_request.launch()
 
         logger.info(
-            f"🔬 VISUALIZER: Detached napari process started (PID: {process.pid}), logging to {log_file}"
+            "🔬 VISUALIZER: Detached napari process started (PID: %s), logging to %s",
+            process.pid,
+            launch_request.log_file,
         )
         return process
 
@@ -1801,23 +1642,15 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
         )
 
     def get_launch_command(self) -> list[str]:
-        import os
         import sys
 
-        current_dir = os.getcwd()
-        log_dir = os.path.expanduser("~/.local/share/openhcs/logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"napari_detached_port_{self.port}.log")
-
-        python_code = f"""
-import sys
-import os
-sys.path.insert(0, {repr(current_dir)})
-from openhcs.runtime.napari_stream_visualizer import _napari_viewer_process
-from openhcs.core.config import TransportMode
-transport_mode = TransportMode.{self.transport_mode.name}
-_napari_viewer_process({self.port}, {repr(self.viewer_title)}, {self.replace_layers}, {repr(log_file)}, transport_mode)
-"""
+        launch_request = NapariDetachedProcessRequest.from_legacy_signature(
+            self.port,
+            self.viewer_title,
+            self.replace_layers,
+            self.transport_mode,
+        )
+        python_code = launch_request.to_process_request().python_code
 
         return [sys.executable, "-c", python_code]
 

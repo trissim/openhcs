@@ -29,6 +29,7 @@ from polystore.streaming.receivers.napari import (
 from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
     ComponentDimensionLabelPolicy,
+    NapariDetachedProcessRequest,
     NAPARI_HEARTBEAT,
     NapariViewerServerRequest,
     ViewerQtEnvironmentPolicy,
@@ -511,31 +512,15 @@ class NapariViewerServer(StreamingVisualizerServer):
     _server_type = "napari"  # Registration key for AutoRegisterMeta
 
     def __init__(
-        self,
-        port: int,
-        viewer_title: str,
-        replace_layers: bool = False,
-        log_file_path: str = None,
-        transport_mode: OpenHCSTransportMode = OpenHCSTransportMode.IPC,
+        self, request: NapariViewerServerRequest
     ):
         """
         Initialize Napari viewer server.
 
         Args:
-            port: Data port for receiving images (control port will be port + 1000)
-            viewer_title: Title for the napari viewer window
-            replace_layers: If True, replace existing layers; if False, add new layers
-            log_file_path: Path to log file (for client discovery)
-            transport_mode: ZMQ transport mode (IPC or TCP)
+            request: Typed Napari server construction request.
         """
         import zmq
-        request = NapariViewerServerRequest.from_legacy_signature(
-            port,
-            viewer_title,
-            replace_layers,
-            log_file_path,
-            transport_mode,
-        )
 
         # Initialize with REP socket for receiving images (synchronous request/reply)
         # REP socket forces workers to wait for acknowledgment before closing shared memory
@@ -583,16 +568,6 @@ class NapariViewerServer(StreamingVisualizerServer):
     def _setup_ack_socket(self):
         """Setup PUSH socket for sending acknowledgments."""
         super()._setup_ack_socket()
-
-    def _get_or_create_batch_processor(
-        self, layer_key: str, batch_size: Optional[int] = None
-    ):
-        """Get or create a batch processor for the given layer key."""
-        return self.batch_processors.get_or_create(
-            layer_key=layer_key,
-            napari_server=self,
-            batch_size=batch_size,
-        )
 
     def _update_global_component_values(self, stack_components, layer_items):
         """
@@ -730,7 +705,10 @@ class NapariViewerServer(StreamingVisualizerServer):
 
         # Use batch processor for efficient accumulation and display
         # This avoids recreating layers from scratch on every update
-        batch_processor = self._get_or_create_batch_processor(layer_key)
+        batch_processor = self.batch_processors.get_or_create(
+            layer_key=layer_key,
+            napari_server=self,
+        )
         batch_processor.add_items(
             layer_key=layer_key,
             items=layer_items,
@@ -1211,7 +1189,7 @@ class NapariViewerServer(StreamingVisualizerServer):
             # Don't re-raise - continue processing other messages instead of crashing
 
 
-def _napari_viewer_process(
+def run_napari_viewer_process_from_legacy_signature(
     port: int,
     viewer_title: str,
     replace_layers: bool = False,
@@ -1242,13 +1220,7 @@ def _napari_viewer_process(
         )
 
         # Create ZMQ server instance (inherits from ZMQServer ABC)
-        server = NapariViewerServer(
-            request.port,
-            request.viewer_title,
-            request.replace_layers,
-            request.log_file_path,
-            request.transport_mode,
-        )
+        server = NapariViewerServer(request)
 
         # Start the server (binds sockets)
         server.start()
@@ -1348,83 +1320,19 @@ def _spawn_detached_napari_process(
         replace_layers: If True, replace existing layers; if False, add new layers
         transport_mode: ZMQ transport mode (IPC or TCP)
     """
-    # Use a simpler approach: spawn python directly with the napari viewer module
-    # This avoids temporary file issues and import problems
-
-    # Create the command to run the napari viewer directly
-    current_dir = os.getcwd()
-    python_code = f"""
-import sys
-import os
-
-# Detach from parent process group (Unix only)
-if hasattr(os, "setsid"):
     try:
-        os.setsid()
-    except OSError:
-        pass
-
-# Add current working directory to Python path
-sys.path.insert(0, {repr(current_dir)})
-
-try:
-    from openhcs.runtime.napari_stream_visualizer import _napari_viewer_process
-    from openhcs.core.config import TransportMode
-    transport_mode = TransportMode.{transport_mode.name}
-    _napari_viewer_process({port}, {repr(viewer_title)}, {replace_layers}, {repr(current_dir + "/.napari_log_path_placeholder")}, transport_mode)
-except Exception as e:
-    import logging
-    logger = logging.getLogger("openhcs.runtime.napari_detached")
-    logger.error(f"Detached napari error: {{e}}")
-    import traceback
-    logger.error(traceback.format_exc())
-    sys.exit(1)
-"""
-
-    try:
-        # Create log file for detached process
-        log_dir = os.path.expanduser("~/.local/share/openhcs/logs")
-        os.makedirs(log_dir, exist_ok=True)
-        log_file = os.path.join(log_dir, f"napari_detached_port_{port}.log")
-
-        # Replace placeholder with actual log file path in python code
-        python_code = python_code.replace(
-            repr(current_dir + "/.napari_log_path_placeholder"), repr(log_file)
+        launch_request = NapariDetachedProcessRequest.from_legacy_signature(
+            port,
+            viewer_title,
+            replace_layers,
+            transport_mode,
         )
-
-        # Use subprocess.Popen with detachment flags
-        if sys.platform == "win32":
-            # Windows: Use CREATE_NEW_PROCESS_GROUP to detach but preserve display environment
-            env = os.environ.copy()  # Preserve environment variables
-            with open(log_file, "w") as log_f:
-                process = subprocess.Popen(
-                    [sys.executable, "-c", python_code],
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP
-                    | subprocess.DETACHED_PROCESS,
-                    env=env,
-                    cwd=os.getcwd(),
-                    stdout=log_f,
-                    stderr=subprocess.STDOUT,
-                )
-        else:
-            # Unix: Use start_new_session to detach but preserve display environment
-            env = os.environ.copy()  # Preserve DISPLAY and other environment variables
-
-            ViewerQtEnvironmentPolicy().apply_to(env)
-
-            # Redirect stdout/stderr to log file for debugging
-            log_f = open(log_file, "w")
-            process = subprocess.Popen(
-                [sys.executable, "-c", python_code],
-                env=env,
-                cwd=os.getcwd(),
-                stdout=log_f,
-                stderr=subprocess.STDOUT,
-                start_new_session=True,  # CRITICAL: Detach from parent process group
-            )
+        process = launch_request.launch()
 
         logger.info(
-            f"🔬 VISUALIZER: Detached napari process started (PID: {process.pid}), logging to {log_file}"
+            "🔬 VISUALIZER: Detached napari process started (PID: %s), logging to %s",
+            process.pid,
+            launch_request.log_file,
         )
         return process
 
