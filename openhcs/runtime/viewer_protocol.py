@@ -114,6 +114,17 @@ FIJI_HEARTBEAT = ViewerHeartbeatDescriptor(ViewerType.FIJI, "FijiViewerServer")
 
 
 @dataclass(frozen=True, slots=True)
+class NapariViewerServerRequest:
+    """Shared request fields for constructing a Napari viewer server process."""
+
+    port: int
+    viewer_title: str
+    replace_layers: bool
+    log_file_path: str | None
+    transport_mode: object
+
+
+@dataclass(frozen=True, slots=True)
 class ViewerQtEnvironmentPolicy:
     """Apply viewer-safe Qt environment defaults for the current platform."""
 

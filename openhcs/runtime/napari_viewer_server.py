@@ -29,8 +29,11 @@ from polystore.streaming.receivers.napari import (
 from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
     NAPARI_HEARTBEAT,
+    NapariViewerServerRequest,
+    ViewerQtEnvironmentPolicy,
 )
 from openhcs.runtime.napari_streaming_handlers import (
+    NapariLayerUpdateAuthority,
     build_napari_streaming_data_type_handlers,
 )
 from zmqruntime.streaming import StreamingVisualizerServer, VisualizerProcessManager
@@ -57,6 +60,7 @@ if napari is None:
 
 
 logger = logging.getLogger(__name__)
+_NAPARI_LAYER_UPDATES = NapariLayerUpdateAuthority()
 
 # ZMQ connection delay (ms)
 ZMQ_CONNECTION_DELAY_MS = 100  # Brief delay for ZMQ connection to establish
@@ -321,107 +325,42 @@ def _build_nd_image_array(layer_items, stack_components, component_values=None):
     return stacked_array
 
 
-def _create_or_update_layer(
-    viewer, layers, layer_name, layer_type, data, **layer_kwargs
-):
-    """
-    Create or update a Napari layer of any type.
-
-    All layers are handled identically: if layer exists, remove and recreate.
-    This ensures consistent behavior across all layer types.
-
-    Args:
-        viewer: Napari viewer
-        layers: Dict of existing layers
-        layer_name: Name for the layer
-        layer_type: Type of layer ('image', 'shapes', 'points', etc.)
-        data: Data for the layer (format depends on layer_type)
-        **layer_kwargs: Additional kwargs to pass to viewer.add_<layer_type>()
-
-    Returns:
-        The created layer
-    """
-    # Check if layer exists
-    existing_layer = None
-    for layer in viewer.layers:
-        if layer.name == layer_name:
-            existing_layer = layer
-            break
-
-    # Remove existing layer if present
-    if existing_layer is not None:
-        viewer.layers.remove(existing_layer)
-        layers.pop(layer_name, None)
-        logger.info(
-            f"🔬 NAPARI PROCESS: Removed existing {layer_type} layer {layer_name} for recreation"
-        )
-
-    # Get the add_* method for this layer type and create new layer
-    add_method = getattr(viewer, f"add_{layer_type}")
-    new_layer = add_method(data, name=layer_name, **layer_kwargs)
-    layers[layer_name] = new_layer
-
-    # Log with appropriate count/info
-    if layer_type == "shapes":
-        count = len(data) if hasattr(data, "__len__") else 0
-        logger.info(
-            f"🔬 NAPARI PROCESS: Created {layer_type} layer {layer_name} with {count} shapes"
-        )
-    elif layer_type == "points":
-        count = len(data) if hasattr(data, "__len__") else 0
-        logger.info(
-            f"🔬 NAPARI PROCESS: Created {layer_type} layer {layer_name} with {count} points"
-        )
-    else:
-        logger.info(f"🔬 NAPARI PROCESS: Created {layer_type} layer {layer_name}")
-
-    return new_layer
-
-
-# Convenience wrappers that call the unified function
 def _create_or_update_image_layer(
     viewer, layers, layer_name, image_data, colormap, axis_labels=None
 ):
     """Create or update a Napari image layer."""
-    layer = _create_or_update_layer(
-        viewer, layers, layer_name, "image", image_data, colormap=colormap or "gray"
+    return _NAPARI_LAYER_UPDATES.create_or_update_image(
+        viewer,
+        layers,
+        layer_name,
+        image_data,
+        colormap,
+        axis_labels,
     )
-    # Set axis labels on viewer.dims (add_image axis_labels parameter doesn't work)
-    if axis_labels is not None:
-        viewer.dims.axis_labels = axis_labels
-        logger.info(f"🔬 NAPARI PROCESS: Set viewer.dims.axis_labels={axis_labels}")
-    return layer
 
 
 def _create_or_update_shapes_layer(
     viewer, layers, layer_name, shapes_data, shape_types, properties
 ):
     """Create or update a Napari shapes layer."""
-    return _create_or_update_layer(
+    return _NAPARI_LAYER_UPDATES.create_or_update_shapes(
         viewer,
         layers,
         layer_name,
-        "shapes",
         shapes_data,
-        shape_type=shape_types,
-        properties=properties,
-        edge_color="red",
-        face_color="transparent",
-        edge_width=2,
+        shape_types,
+        properties,
     )
 
 
 def _create_or_update_points_layer(viewer, layers, layer_name, points_data, properties):
     """Create or update a Napari points layer."""
-    return _create_or_update_layer(
+    return _NAPARI_LAYER_UPDATES.create_or_update_points(
         viewer,
         layers,
         layer_name,
-        "points",
         points_data,
-        properties=properties,
-        face_color="green",
-        size=3,
+        properties,
     )
 
 
@@ -616,21 +555,28 @@ class NapariViewerServer(StreamingVisualizerServer):
             transport_mode: ZMQ transport mode (IPC or TCP)
         """
         import zmq
+        request = NapariViewerServerRequest(
+            port=port,
+            viewer_title=viewer_title,
+            replace_layers=replace_layers,
+            log_file_path=log_file_path,
+            transport_mode=transport_mode,
+        )
 
         # Initialize with REP socket for receiving images (synchronous request/reply)
         # REP socket forces workers to wait for acknowledgment before closing shared memory
         super().__init__(
-            port,
+            request.port,
             viewer_type="napari",
             host="*",
-            log_file_path=log_file_path,
+            log_file_path=request.log_file_path,
             data_socket_type=zmq.REP,
-            transport_mode=coerce_transport_mode(transport_mode),
+            transport_mode=coerce_transport_mode(request.transport_mode),
             config=OPENHCS_ZMQ_CONFIG,
         )
 
-        self.viewer_title = viewer_title
-        self.replace_layers = replace_layers
+        self.viewer_title = request.viewer_title
+        self.replace_layers = request.replace_layers
         self.viewer = None
         self.layers = {}
         self.component_groups = {}
@@ -1471,9 +1417,21 @@ def _napari_viewer_process(
         import zmq
         import napari
 
+        request = NapariViewerServerRequest(
+            port=port,
+            viewer_title=viewer_title,
+            replace_layers=replace_layers,
+            log_file_path=log_file_path,
+            transport_mode=transport_mode,
+        )
+
         # Create ZMQ server instance (inherits from ZMQServer ABC)
         server = NapariViewerServer(
-            port, viewer_title, replace_layers, log_file_path, transport_mode
+            request.port,
+            request.viewer_title,
+            request.replace_layers,
+            request.log_file_path,
+            request.transport_mode,
         )
 
         # Start the server (binds sockets)
@@ -1516,20 +1474,7 @@ def _napari_viewer_process(
         import sys
         from qtpy import QtWidgets, QtCore
 
-        # Ensure Qt platform is properly set for detached processes
-        import os
-        import platform
-
-        if "QT_QPA_PLATFORM" not in os.environ:
-            if platform.system() == "Darwin":  # macOS
-                os.environ["QT_QPA_PLATFORM"] = "cocoa"
-            elif platform.system() == "Linux":
-                os.environ["QT_QPA_PLATFORM"] = "xcb"
-                os.environ["QT_X11_NO_MITSHM"] = "1"
-            # Windows doesn't need QT_QPA_PLATFORM set
-        elif platform.system() == "Linux":
-            # Disable shared memory for X11 (helps with display issues in detached processes)
-            os.environ["QT_X11_NO_MITSHM"] = "1"
+        ViewerQtEnvironmentPolicy().apply_to(os.environ)
 
         # Get the Qt application
         app = QtWidgets.QApplication.instance()
@@ -1653,21 +1598,7 @@ except Exception as e:
             # Unix: Use start_new_session to detach but preserve display environment
             env = os.environ.copy()  # Preserve DISPLAY and other environment variables
 
-            # Ensure Qt platform is set for GUI display
-            import platform
-
-            if "QT_QPA_PLATFORM" not in env:
-                if platform.system() == "Darwin":  # macOS
-                    env["QT_QPA_PLATFORM"] = "cocoa"
-                elif platform.system() == "Linux":
-                    env["QT_QPA_PLATFORM"] = "xcb"
-                    env["QT_X11_NO_MITSHM"] = "1"
-                # Windows doesn't need QT_QPA_PLATFORM set
-            elif platform.system() == "Linux":
-                # Ensure Qt can find the display
-                env["QT_X11_NO_MITSHM"] = (
-                    "1"  # Disable shared memory for X11 (helps with some display issues)
-                )
+            ViewerQtEnvironmentPolicy().apply_to(env)
 
             # Redirect stdout/stderr to log file for debugging
             log_f = open(log_file, "w")

@@ -37,7 +37,7 @@ Result:
 | Order | Status | Campaign | Plan File | Primary Gate |
 | --- | --- | --- | --- | --- |
 | 9 | Complete | Orchestrator stage split continuation | `orchestrator_stage_split_continuation_20260518.md` | focused orchestrator/debug tests + advisor on orchestrator |
-| 10 | Pending | Runtime viewer and streaming protocol cleanup | `runtime_viewer_protocol_cleanup_20260518.md` | mocked Napari/Fiji imports + runtime viewer tests |
+| 10 | In Progress | Runtime viewer and streaming protocol cleanup | `runtime_viewer_protocol_cleanup_20260518.md` | mocked Napari/Fiji imports + runtime viewer tests |
 | 11 | Pending | Active PyQt residual decomposition | `active_pyqt_residual_decomposition_20260518.md` | Qt offscreen smoke + PyQt focused tests |
 | 12 | Pending | Backend dimensional dispatch authority | `backend_dimensional_dispatch_authority_20260518.md` | focused backend tests + advisor on selected backend files |
 | 13 | Pending | CellProfiler backend authority cleanup | `cellprofiler_backend_authority_cleanup_20260518.md` | CP compatibility/generated pipeline tests |
@@ -104,4 +104,53 @@ Verification:
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/core/orchestrator/orchestrator.py
 # execute_compiled_plate oversized orchestration hub finding cleared
 # remaining findings: pre-existing attribute-probe family and pipeline_config alias note
+```
+
+### Campaign 10 - Runtime Viewer And Streaming Protocol Cleanup
+
+Checkpoint 1:
+
+- Added `NapariLayerUpdateAuthority` and `NapariLayerUpdateRequest` to make
+  Napari image/shapes/points create-or-replace behavior one shared authority.
+- Routed both `napari_stream_visualizer.py` and `napari_viewer_server.py`
+  through the shared layer authority.
+- Deleted dead `NapariStreamVisualizer._prepare_data_for_display` residue after
+  verifying it had no repository-visible call sites.
+- Reused `ViewerQtEnvironmentPolicy` in Napari process setup and detached
+  process launch instead of repeating platform string ladders.
+- Added `NapariViewerServerRequest` as the shared process/server request record;
+  public constructor/process signatures are still preserved for compatibility,
+  so the advisor still reports the threaded signature family until the public
+  API can move to the request object directly.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 5 passed
+
+.venv/bin/python - <<'PY'
+import sys
+from types import ModuleType
+class _DummyViewer: pass
+napari = ModuleType('napari'); napari.Viewer = _DummyViewer
+sys.modules.setdefault('napari', napari)
+qtpy = ModuleType('qtpy'); qtcore = ModuleType('qtpy.QtCore'); qtwidgets = ModuleType('qtpy.QtWidgets')
+class _DummyQTimer:
+    @staticmethod
+    def singleShot(*args, **kwargs): return None
+qtcore.QTimer = _DummyQTimer
+sys.modules.setdefault('qtpy', qtpy)
+sys.modules.setdefault('qtpy.QtCore', qtcore)
+sys.modules.setdefault('qtpy.QtWidgets', qtwidgets)
+import openhcs.runtime.napari_stream_visualizer
+import openhcs.runtime.napari_viewer_server
+import openhcs.runtime.fiji_stream_visualizer
+import openhcs.runtime.fiji_viewer_server
+PY
+# viewer imports ok
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/fiji_viewer_server.py
+# cleared duplicated Napari layer-helper owner findings, platform dispatch findings,
+# and dead _prepare_data_for_display finding
 ```

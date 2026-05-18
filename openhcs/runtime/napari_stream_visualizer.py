@@ -35,9 +35,11 @@ from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
     DetachedViewerProcessRequest,
     NAPARI_HEARTBEAT,
+    NapariViewerServerRequest,
     ViewerQtEnvironmentPolicy,
 )
 from openhcs.runtime.napari_streaming_handlers import (
+    NapariLayerUpdateAuthority,
     build_napari_streaming_data_type_handlers,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
@@ -62,6 +64,7 @@ if napari is None:
 
 
 logger = logging.getLogger(__name__)
+_NAPARI_LAYER_UPDATES = NapariLayerUpdateAuthority()
 
 # ZMQ connection delay (ms)
 ZMQ_CONNECTION_DELAY_MS = 100  # Brief delay for ZMQ connection to establish
@@ -323,107 +326,42 @@ def _build_nd_image_array(layer_items, stack_components, component_values=None):
     return stacked_array
 
 
-def _create_or_update_layer(
-    viewer, layers, layer_name, layer_type, data, **layer_kwargs
-):
-    """
-    Create or update a Napari layer of any type.
-
-    All layers are handled identically: if layer exists, remove and recreate.
-    This ensures consistent behavior across all layer types.
-
-    Args:
-        viewer: Napari viewer
-        layers: Dict of existing layers
-        layer_name: Name for the layer
-        layer_type: Type of layer ('image', 'shapes', 'points', etc.)
-        data: Data for the layer (format depends on layer_type)
-        **layer_kwargs: Additional kwargs to pass to viewer.add_<layer_type>()
-
-    Returns:
-        The created layer
-    """
-    # Check if layer exists
-    existing_layer = None
-    for layer in viewer.layers:
-        if layer.name == layer_name:
-            existing_layer = layer
-            break
-
-    # Remove existing layer if present
-    if existing_layer is not None:
-        viewer.layers.remove(existing_layer)
-        layers.pop(layer_name, None)
-        logger.info(
-            f"🔬 NAPARI PROCESS: Removed existing {layer_type} layer {layer_name} for recreation"
-        )
-
-    # Get the add_* method for this layer type and create new layer
-    add_method = getattr(viewer, f"add_{layer_type}")
-    new_layer = add_method(data, name=layer_name, **layer_kwargs)
-    layers[layer_name] = new_layer
-
-    # Log with appropriate count/info
-    if layer_type == "shapes":
-        count = len(data) if hasattr(data, "__len__") else 0
-        logger.info(
-            f"🔬 NAPARI PROCESS: Created {layer_type} layer {layer_name} with {count} shapes"
-        )
-    elif layer_type == "points":
-        count = len(data) if hasattr(data, "__len__") else 0
-        logger.info(
-            f"🔬 NAPARI PROCESS: Created {layer_type} layer {layer_name} with {count} points"
-        )
-    else:
-        logger.info(f"🔬 NAPARI PROCESS: Created {layer_type} layer {layer_name}")
-
-    return new_layer
-
-
-# Convenience wrappers that call the unified function
 def _create_or_update_image_layer(
     viewer, layers, layer_name, image_data, colormap, axis_labels=None
 ):
     """Create or update a Napari image layer."""
-    layer = _create_or_update_layer(
-        viewer, layers, layer_name, "image", image_data, colormap=colormap or "gray"
+    return _NAPARI_LAYER_UPDATES.create_or_update_image(
+        viewer,
+        layers,
+        layer_name,
+        image_data,
+        colormap,
+        axis_labels,
     )
-    # Set axis labels on viewer.dims (add_image axis_labels parameter doesn't work)
-    if axis_labels is not None:
-        viewer.dims.axis_labels = axis_labels
-        logger.info(f"🔬 NAPARI PROCESS: Set viewer.dims.axis_labels={axis_labels}")
-    return layer
 
 
 def _create_or_update_shapes_layer(
     viewer, layers, layer_name, shapes_data, shape_types, properties
 ):
     """Create or update a Napari shapes layer."""
-    return _create_or_update_layer(
+    return _NAPARI_LAYER_UPDATES.create_or_update_shapes(
         viewer,
         layers,
         layer_name,
-        "shapes",
         shapes_data,
-        shape_type=shape_types,
-        properties=properties,
-        edge_color="red",
-        face_color="transparent",
-        edge_width=2,
+        shape_types,
+        properties,
     )
 
 
 def _create_or_update_points_layer(viewer, layers, layer_name, points_data, properties):
     """Create or update a Napari points layer."""
-    return _create_or_update_layer(
+    return _NAPARI_LAYER_UPDATES.create_or_update_points(
         viewer,
         layers,
         layer_name,
-        "points",
         points_data,
-        properties=properties,
-        face_color="green",
-        size=3,
+        properties,
     )
 
 
@@ -622,20 +560,27 @@ class NapariViewerServer(StreamingVisualizerServer):
             transport_mode: ZMQ transport mode (IPC or TCP)
         """
         import zmq
+        request = NapariViewerServerRequest(
+            port=port,
+            viewer_title=viewer_title,
+            replace_layers=replace_layers,
+            log_file_path=log_file_path,
+            transport_mode=transport_mode,
+        )
 
         # Initialize with SUB socket for receiving images
         super().__init__(
-            port,
+            request.port,
             viewer_type="napari",
             host="*",
-            log_file_path=log_file_path,
+            log_file_path=request.log_file_path,
             data_socket_type=zmq.REP,
-            transport_mode=coerce_transport_mode(transport_mode),
+            transport_mode=coerce_transport_mode(request.transport_mode),
             config=OPENHCS_ZMQ_CONFIG,
         )
 
-        self.viewer_title = viewer_title
-        self.replace_layers = replace_layers
+        self.viewer_title = request.viewer_title
+        self.replace_layers = request.replace_layers
         self.viewer = None
         self.layers = {}
         self.component_groups = {}
@@ -1482,9 +1427,21 @@ def _napari_viewer_process(
         import zmq
         import napari
 
+        request = NapariViewerServerRequest(
+            port=port,
+            viewer_title=viewer_title,
+            replace_layers=replace_layers,
+            log_file_path=log_file_path,
+            transport_mode=transport_mode,
+        )
+
         # Create ZMQ server instance (inherits from ZMQServer ABC)
         server = NapariViewerServer(
-            port, viewer_title, replace_layers, log_file_path, transport_mode
+            request.port,
+            request.viewer_title,
+            request.replace_layers,
+            request.log_file_path,
+            request.transport_mode,
         )
 
         # Start the server (binds sockets)
@@ -1527,20 +1484,7 @@ def _napari_viewer_process(
         import sys
         from qtpy import QtWidgets, QtCore
 
-        # Ensure Qt platform is properly set for detached processes
-        import os
-        import platform
-
-        if "QT_QPA_PLATFORM" not in os.environ:
-            if platform.system() == "Darwin":  # macOS
-                os.environ["QT_QPA_PLATFORM"] = "cocoa"
-            elif platform.system() == "Linux":
-                os.environ["QT_QPA_PLATFORM"] = "xcb"
-                os.environ["QT_X11_NO_MITSHM"] = "1"
-            # Windows doesn't need QT_QPA_PLATFORM set
-        elif platform.system() == "Linux":
-            # Disable shared memory for X11 (helps with display issues in detached processes)
-            os.environ["QT_X11_NO_MITSHM"] = "1"
+        ViewerQtEnvironmentPolicy().apply_to(os.environ)
 
         # Get the Qt application
         app = QtWidgets.QApplication.instance()
@@ -2125,126 +2069,6 @@ class NapariStreamVisualizer(VisualizerProcessManager):
             f"visualize_path() is disabled. Use streaming backend for component-aware display. "
             f"Path: {path}, step_id: {step_id}, axis_id: {axis_id}"
         )
-
-    def _prepare_data_for_display(
-        self, data: Any, step_id_for_log: str, display_config=None
-    ) -> Optional[np.ndarray]:
-        """Converts loaded data to a displayable NumPy array (slice or stack based on config)."""
-        cpu_tensor: Optional[np.ndarray] = None
-        try:
-            # GPU to CPU conversion logic
-            if hasattr(data, "is_cuda") and data.is_cuda:  # PyTorch
-                cpu_tensor = data.cpu().numpy()
-            elif (
-                hasattr(data, "device") and "cuda" in str(data.device).lower()
-            ):  # Check for device attribute
-                if hasattr(data, "get"):  # CuPy
-                    cpu_tensor = data.get()
-                elif hasattr(
-                    data, "numpy"
-                ):  # JAX on GPU might have .numpy() after host transfer
-                    cpu_tensor = np.asarray(
-                        data
-                    )  # JAX arrays might need explicit conversion
-                else:  # Fallback for other GPU array types if possible
-                    logger.warning(
-                        f"Unknown GPU array type for step '{step_id_for_log}'. Attempting .numpy()."
-                    )
-                    if hasattr(data, "numpy"):
-                        cpu_tensor = data.numpy()
-                    else:
-                        logger.error(
-                            f"Cannot convert GPU tensor of type {type(data)} for step '{step_id_for_log}'."
-                        )
-                        return None
-            elif isinstance(data, np.ndarray):
-                cpu_tensor = data
-            else:
-                # Attempt to convert to numpy array if it's some other array-like structure
-                try:
-                    cpu_tensor = np.asarray(data)
-                    logger.debug(
-                        f"Converted data of type {type(data)} to numpy array for step '{step_id_for_log}'."
-                    )
-                except Exception as e_conv:
-                    logger.warning(
-                        f"Unsupported data type for step '{step_id_for_log}': {type(data)}. Error: {e_conv}"
-                    )
-                    return None
-
-            if cpu_tensor is None:  # Should not happen if logic above is correct
-                return None
-
-            # Determine display mode based on configuration
-            # Default behavior: show as stack unless config specifies otherwise
-            should_slice = False
-
-            if display_config:
-                # Check if any component mode is set to SLICE
-                from openhcs.core.config import NapariDimensionMode
-                from openhcs.constants import AllComponents
-
-                # Check individual component mode fields for all dimensions
-                for component in AllComponents:
-                    field_name = f"{component.value}_mode"
-                    if hasattr(display_config, field_name):
-                        mode = getattr(display_config, field_name)
-                        if mode == NapariDimensionMode.SLICE:
-                            should_slice = True
-                            break
-            else:
-                # Default: slice for backward compatibility
-                should_slice = True
-
-            # Slicing/stacking logic
-            display_data: Optional[np.ndarray] = None
-
-            if should_slice:
-                # Original slicing behavior
-                if cpu_tensor.ndim == 3:  # ZYX
-                    display_data = cpu_tensor[cpu_tensor.shape[0] // 2, :, :]
-                elif cpu_tensor.ndim == 2:  # YX
-                    display_data = cpu_tensor
-                elif cpu_tensor.ndim > 3:  # e.g. CZYX or TZYX
-                    logger.debug(
-                        f"Tensor for step '{step_id_for_log}' has ndim > 3 ({cpu_tensor.ndim}). Taking a slice."
-                    )
-                    slicer = [0] * (cpu_tensor.ndim - 2)  # Slice first channels/times
-                    slicer[-1] = cpu_tensor.shape[-3] // 2  # Middle Z
-                    try:
-                        display_data = cpu_tensor[tuple(slicer)]
-                    except IndexError:  # Handle cases where slicing might fail (e.g. very small dimensions)
-                        logger.error(
-                            f"Slicing failed for tensor with shape {cpu_tensor.shape} for step '{step_id_for_log}'.",
-                            exc_info=True,
-                        )
-                        display_data = None
-                else:
-                    logger.warning(
-                        f"Tensor for step '{step_id_for_log}' has unsupported ndim for slicing: {cpu_tensor.ndim}."
-                    )
-                    return None
-            else:
-                # Stack mode: send the full data to napari (napari can handle 3D+ data)
-                if cpu_tensor.ndim >= 2:
-                    display_data = cpu_tensor
-                    logger.debug(
-                        f"Sending {cpu_tensor.ndim}D stack to napari for step '{step_id_for_log}' (shape: {cpu_tensor.shape})"
-                    )
-                else:
-                    logger.warning(
-                        f"Tensor for step '{step_id_for_log}' has unsupported ndim for stacking: {cpu_tensor.ndim}."
-                    )
-                    return None
-
-            return display_data.copy() if display_data is not None else None
-
-        except Exception as e:
-            logger.error(
-                f"Error preparing data from step '{step_id_for_log}' for display: {e}",
-                exc_info=True,
-            )
-            return None
 
     def get_launch_command(self) -> list[str]:
         import os

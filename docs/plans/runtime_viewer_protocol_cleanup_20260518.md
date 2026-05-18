@@ -71,3 +71,39 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor \
 - Napari/Fiji route differences are explicit backend variants.
 - Optional GUI/runtime imports remain lazy and smoke-testable.
 
+## Execution Log
+
+### Checkpoint 1
+
+Implemented:
+
+- `NapariLayerUpdateAuthority`
+- `NapariLayerUpdateRequest`
+- `NapariViewerServerRequest`
+- shared use of `ViewerQtEnvironmentPolicy`
+
+Changed behavior boundaries:
+
+- Napari image/shapes/points layer replacement mechanics now have one shared
+  owner in `napari_streaming_handlers.py`.
+- `napari_stream_visualizer.py` and `napari_viewer_server.py` keep their public
+  helper wrappers but no longer duplicate the layer replacement mechanics.
+- Dead `NapariStreamVisualizer._prepare_data_for_display` was deleted after
+  repository-wide call-site verification.
+- Repeated Qt platform setup now uses `ViewerQtEnvironmentPolicy`.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 5 passed
+```
+
+Advisor status:
+
+- Cleared duplicated Napari create/update layer helper findings.
+- Cleared dead `_prepare_data_for_display` finding.
+- Cleared Napari platform dispatch findings.
+- Remaining: component/shape dispatch, Napari viewer-server role quotient,
+  Fiji dimension-listener hub, Fiji dimension context record, and public
+  Napari/Fiji process signature-family cleanup.
