@@ -54,7 +54,7 @@ OpenHCS checkpoint before these campaign plans:
 | 4 | Complete | Backend parameter request records | `backend_parameter_request_records_refactor_20260518.md` | Ashlar CPU/GPU focused tests + advisor on pos-gen modules |
 | 5 | Complete | Preset pipeline spec authority | `preset_pipeline_spec_authority_refactor_20260518.md` | materialization equivalence tests + advisor on presets |
 | 6 | Complete | PyQt GUI decomposition | `pyqt_gui_decomposition_refactor_20260518.md` | controller tests/import smoke + advisor on `PlateViewWidget` |
-| 7 | Pending | Orchestration hubs | `full_repo_orchestration_hubs_refactor_20260518.md` | orchestrator characterization tests + focused advisor |
+| 7 | Complete | Orchestration hubs | `full_repo_orchestration_hubs_refactor_20260518.md` | orchestrator characterization tests + focused advisor |
 | 8 | Pending | Full-repo triage policy and known-noise ledger | `full_repo_advisor_triage_policy_20260518.md`, `advisor_known_noise.md` | full advisor scan reviewed and ledger updated |
 
 ## Explicit Exclusions
@@ -242,3 +242,33 @@ Before completion:
   remaining focused findings are broader widget/service decomposition items.
 - Full unit verification: `1522 passed, 10 warnings`.
 - Full advisor scan: 1,138 findings, 61.458s.
+
+### 2026-05-18 - Orchestration Hubs Started
+
+- Moved campaign 7 to `In Progress`.
+- Focused advisor on `PipelineOrchestrator.execute_compiled_plate` confirmed
+  the method remains the largest runtime hub.
+- First slice: extract request validation/defaults, visualizer bootstrap, and
+  worker-lane execution identity rather than line-range helper chunks.
+
+### 2026-05-18 - Orchestration Hubs Completed
+
+- Added `CompiledPlateExecutionRequest` and
+  `ValidatedCompiledPlateExecution` records.
+- Added `CompiledPlateExecutionValidator` for initialized-state, pipeline,
+  compiled-context, progress invariant, execution identity, and worker-count
+  defaults.
+- Added `ExecutionVisualizerBootstrap` for streaming viewer discovery, launch
+  progress, readiness polling, timeout reporting, and viewer-state cleanup.
+- Added `WorkerLaneExecutionIdentity`, `WorkerLaneExecutionPlan`, and
+  `WorkerLaneExecutor` so inline, fork-inherited, and submitted workers share a
+  nominal lane execution boundary.
+- Added `PIPELINE_PROGRESS_STEP_NAME` and descriptor aliases for direct
+  orchestrator state/cache projections.
+- Focused verification passed: orchestrator/debug/CP compatibility tests
+  `62 passed`.
+- Focused advisor: worker-lane parameter-family and reused-private-helper
+  findings removed; `execute_compiled_plate` remains a large hub and is tracked
+  as residual staged-split debt.
+- Full unit verification: `1522 passed, 10 warnings`.
+- Full advisor scan: 1,133 findings, 66.622s.

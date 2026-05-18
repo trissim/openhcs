@@ -67,6 +67,7 @@ from openhcs.microscopes.microscope_base import MicroscopeHandler
 from openhcs.processing.backends.analysis.consolidate_analysis_results import (
     consolidate_results_directories,
 )
+from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 
 # Import generic component system - required for orchestrator functionality
@@ -89,6 +90,7 @@ except ImportError:
 
 
 logger = logging.getLogger(__name__)
+PIPELINE_PROGRESS_STEP_NAME = "pipeline"
 
 
 class ForkInheritedWorkerExecutionState:
@@ -128,26 +130,263 @@ class ForkInheritedWorkerExecutionState:
 
 
 @dataclass(frozen=True, slots=True)
+class WorkerLaneExecutionIdentity:
+    """Shared execution identity for worker-lane records."""
+
+    execution_id: str
+    plate_id: str
+    debug_execution_policy: DebugExecutionPolicy
+
+
+@dataclass(frozen=True, slots=True)
 class WorkerLaneExecutionContext:
     """Shared execution identity for one deterministic worker lane."""
 
+    identity: WorkerLaneExecutionIdentity
     visualizer: Optional["NapariVisualizerType"]
-    execution_id: str
-    plate_id: str
     worker_slot: str
     owned_wells: tuple[str, ...]
-    debug_execution_policy: DebugExecutionPolicy
 
     def install_debug_sink(self, processing_context: object) -> None:
-        self.debug_execution_policy.install_context_sink(
+        self.identity.debug_execution_policy.install_context_sink(
             DebugSinkInstallRequest(
                 context=processing_context,
-                execution_id=self.execution_id,
-                plate_id=self.plate_id,
+                execution_id=self.identity.execution_id,
+                plate_id=self.identity.plate_id,
                 worker_slot=self.worker_slot,
                 owned_wells=self.owned_wells,
             )
         )
+
+
+@dataclass(frozen=True, slots=True)
+class WorkerLaneExecutionPlan:
+    """Shared execution plan for deterministic worker-lane runners."""
+
+    identity: WorkerLaneExecutionIdentity
+    lane_axis_contexts: Dict[str, List[Any]]
+    worker_assignments: Dict[str, List[str]]
+    runtime_observation_mode: RuntimeObservationMode
+
+    def lane_context(self, worker_slot: str) -> WorkerLaneExecutionContext:
+        return WorkerLaneExecutionContext(
+            identity=self.identity,
+            visualizer=None,
+            worker_slot=worker_slot,
+            owned_wells=tuple(self.worker_assignments[worker_slot]),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CompiledPlateExecutionRequest:
+    """Public execute-compiled-plate call normalized into one request record."""
+
+    pipeline_definition: List[AbstractStep]
+    compiled_contexts: Dict[str, ProcessingContext]
+    max_workers: Optional[int]
+    visualizer: Optional[NapariVisualizerType]
+    log_file_base: Optional[str]
+    progress_queue: Any
+    progress_context: dict[str, Any] | None
+    worker_assignments: Optional[Dict[str, List[str]]]
+    execution_bundle: Optional[CompiledExecutionBundle]
+    runtime_observation_mode: RuntimeObservationMode
+    debug_execution_policy: DebugExecutionPolicy
+
+
+@dataclass(frozen=True, slots=True)
+class ValidatedCompiledPlateExecution:
+    """Validated execution inputs plus defaults derived from orchestrator state."""
+
+    pipeline_definition: List[AbstractStep]
+    compiled_contexts: Dict[str, ProcessingContext]
+    actual_max_workers: int
+    execution_id: str
+    plate_id: str
+    progress_queue: Any
+    progress_context: dict[str, Any]
+
+
+class CompiledPlateExecutionValidator:
+    """Validate execute-compiled-plate invariants before worker setup."""
+
+    def __init__(self, orchestrator: "PipelineOrchestrator") -> None:
+        self._orchestrator = orchestrator
+
+    def validate(
+        self,
+        request: CompiledPlateExecutionRequest,
+    ) -> ValidatedCompiledPlateExecution | None:
+        pipeline_definition = self._resolved_pipeline(request.pipeline_definition)
+
+        if not self._orchestrator.is_initialized():
+            raise RuntimeError("Orchestrator must be initialized before executing.")
+        if not pipeline_definition:
+            raise ValueError(
+                "A valid (stateless) pipeline definition must be provided."
+            )
+        if not request.compiled_contexts:
+            logger.warning("No compiled contexts provided for execution.")
+            return None
+        if request.progress_queue is None:
+            raise ValueError(
+                "progress_queue is required for execute_compiled_plate invariant path"
+            )
+        if request.progress_context is None:
+            raise ValueError(
+                "progress_context is required for execute_compiled_plate invariant path"
+            )
+
+        return ValidatedCompiledPlateExecution(
+            pipeline_definition=pipeline_definition,
+            compiled_contexts=request.compiled_contexts,
+            actual_max_workers=self._actual_max_workers(request.max_workers),
+            execution_id=request.progress_context["execution_id"],
+            plate_id=request.progress_context["plate_id"],
+            progress_queue=request.progress_queue,
+            progress_context=request.progress_context,
+        )
+
+    def _resolved_pipeline(
+        self,
+        pipeline_definition: List[AbstractStep],
+    ) -> List[AbstractStep]:
+        resolved_pipeline = self._orchestrator.__dict__.get(
+            "_resolved_pipeline_definition"
+        )
+        return resolved_pipeline if resolved_pipeline is not None else pipeline_definition
+
+    def _actual_max_workers(self, max_workers: Optional[int]) -> int:
+        actual_max_workers = (
+            max_workers or self._orchestrator.get_effective_config().num_workers
+        )
+        return max(actual_max_workers, 1)
+
+
+class ExecutionVisualizerBootstrap:
+    """Create and readiness-check streaming visualizers for one execution."""
+
+    def __init__(
+        self,
+        orchestrator: "PipelineOrchestrator",
+        *,
+        progress_queue: Any,
+        execution_id: str,
+        plate_id: str,
+    ) -> None:
+        self._orchestrator = orchestrator
+        self._progress_queue = progress_queue
+        self._execution_id = execution_id
+        self._plate_id = plate_id
+
+    def bootstrap(
+        self,
+        compiled_contexts: Dict[str, ProcessingContext],
+        visualizer: Optional[NapariVisualizerType],
+    ) -> tuple[Optional[NapariVisualizerType], list[NapariVisualizerType]]:
+        if visualizer is not None:
+            return visualizer, []
+
+        visualizers = self._create_required_visualizers(compiled_contexts)
+        if visualizers:
+            self._wait_until_ready(visualizers)
+            self._clear_viewer_state(visualizers)
+        return (visualizers[0] if visualizers else None), visualizers
+
+    def _create_required_visualizers(
+        self,
+        compiled_contexts: Dict[str, ProcessingContext],
+    ) -> list[NapariVisualizerType]:
+        from openhcs.core.config import StreamingConfig
+
+        unique_configs = {}
+        for ctx in compiled_contexts.values():
+            for visualizer_info in ctx.required_visualizers:
+                config = visualizer_info["config"]
+                key = (
+                    (config.viewer_type, config.port)
+                    if isinstance(config, StreamingConfig)
+                    else (config.backend.name,)
+                )
+                if key not in unique_configs:
+                    unique_configs[key] = (config, ctx.visualizer_config)
+
+        visualizers = []
+        for key, (config, vis_config) in unique_configs.items():
+            self._emit_launching_viewer(key, config)
+            visualizers.append(
+                self._orchestrator.get_or_create_visualizer(config, vis_config)
+            )
+        return visualizers
+
+    def _emit_launching_viewer(self, key: tuple[Any, ...], config: Any) -> None:
+        viewer_name = key[0] if key else type(config).__name__
+        viewer_port = key[1] if len(key) > 1 else None
+        port_info = f" on port {viewer_port}" if viewer_port else ""
+        self._progress_queue.put(
+            create_event(
+                execution_id=self._execution_id,
+                plate_id=self._plate_id,
+                axis_id="",
+                step_name="",
+                phase=ProgressPhase.INIT,
+                status=ProgressStatus.STARTED,
+                percent=0.0,
+                message=f"Launching {viewer_name} viewer{port_info}",
+            ).to_dict()
+        )
+
+    def _wait_until_ready(self, visualizers: list[NapariVisualizerType]) -> None:
+        import time
+
+        max_wait = 30.0
+        start_time = time.time()
+
+        while time.time() - start_time < max_wait:
+            if self._orchestrator._cancelled:
+                raise RuntimeError("Execution cancelled by user")
+
+            if all(v.is_running for v in visualizers):
+                self._progress_queue.put(
+                    create_event(
+                        execution_id=self._execution_id,
+                        plate_id=self._plate_id,
+                        axis_id="",
+                        step_name="",
+                        phase=ProgressPhase.INIT,
+                        status=ProgressStatus.RUNNING,
+                        percent=0.0,
+                        message="All streaming viewers ready",
+                    ).to_dict()
+                )
+                return
+            time.sleep(0.2)
+
+        not_ready = [v.port for v in visualizers if not v.is_running]
+        logger.warning(
+            f"🔬 ORCHESTRATOR: Timeout waiting for streaming viewers. Not ready: {not_ready}"
+        )
+        self._progress_queue.put(
+            create_event(
+                execution_id=self._execution_id,
+                plate_id=self._plate_id,
+                axis_id="",
+                step_name="",
+                phase=ProgressPhase.INIT,
+                status=ProgressStatus.RUNNING,
+                percent=0.0,
+                message=f"Timeout waiting for streaming viewers. Not ready: {not_ready}",
+            ).to_dict()
+        )
+
+    def _clear_viewer_state(self, visualizers: list[NapariVisualizerType]) -> None:
+        for vis in visualizers:
+            if hasattr(vis, "clear_viewer_state"):
+                success = vis.clear_viewer_state()
+                if not success:
+                    logger.warning(
+                        f"🔬 ORCHESTRATOR: Failed to clear state for viewer on port {vis.port}"
+                    )
 
 
 def _execute_fork_inherited_worker_lane_process(
@@ -160,8 +399,8 @@ def _execute_fork_inherited_worker_lane_process(
     profiling_policy = CProfileWorkerProfilingPolicy.from_environment()
     try:
         with profiling_policy.profile(
-            execution_id=lane_context.execution_id,
-            plate_id=lane_context.plate_id,
+            execution_id=lane_context.identity.execution_id,
+            plate_id=lane_context.identity.plate_id,
             worker_slot=lane_context.worker_slot,
             owned_wells=list(lane_context.owned_wells),
         ):
@@ -191,29 +430,16 @@ class ForkInheritedWorkerLaneRunner:
 
     def run(
         self,
-        lane_axis_contexts: Dict[str, List[tuple[str, List[str]]]],
-        *,
-        execution_id: str,
-        plate_id: str,
-        worker_assignments: Dict[str, List[str]],
-        runtime_observation_mode: RuntimeObservationMode,
-        debug_execution_policy: DebugExecutionPolicy,
+        execution_plan: WorkerLaneExecutionPlan,
     ) -> Dict[str, ExecutionResult]:
         processes: list[tuple[str, List[str], Any, Any]] = []
         execution_results: Dict[str, ExecutionResult] = {}
 
-        for worker_slot, lane_contexts in lane_axis_contexts.items():
+        for worker_slot, lane_contexts in execution_plan.lane_axis_contexts.items():
             if not lane_contexts:
                 continue
-            owned_wells = list(worker_assignments[worker_slot])
-            worker_lane_context = WorkerLaneExecutionContext(
-                visualizer=None,
-                execution_id=execution_id,
-                plate_id=plate_id,
-                worker_slot=worker_slot,
-                owned_wells=tuple(owned_wells),
-                debug_execution_policy=debug_execution_policy,
-            )
+            owned_wells = list(execution_plan.worker_assignments[worker_slot])
+            worker_lane_context = execution_plan.lane_context(worker_slot)
             result_reader, result_writer = self._multiprocessing_context.Pipe(
                 duplex=False
             )
@@ -223,7 +449,7 @@ class ForkInheritedWorkerLaneRunner:
                     result_writer,
                     lane_contexts,
                     worker_lane_context,
-                    runtime_observation_mode,
+                    execution_plan.runtime_observation_mode,
                 ),
             )
             process.start()
@@ -262,7 +488,7 @@ class ForkInheritedWorkerLaneRunner:
 
             lane_results = payload
             execution_results.update(lane_results)
-            if runtime_observation_mode.collects_records:
+            if execution_plan.runtime_observation_mode.collects_records:
                 for result in lane_results.values():
                     result.runtime_observation.merge_into(
                         ForkInheritedWorkerExecutionState.require_current().runtime_contexts
@@ -277,17 +503,11 @@ class InlineWorkerLaneRunner:
     def run(
         self,
         pipeline_definition: List[AbstractStep],
-        lane_axis_contexts: Dict[str, List[tuple[str, List[tuple]]]],
-        *,
-        execution_id: str,
-        plate_id: str,
-        worker_assignments: Dict[str, List[str]],
-        runtime_observation_mode: RuntimeObservationMode,
-        debug_execution_policy: DebugExecutionPolicy,
+        execution_plan: WorkerLaneExecutionPlan,
     ) -> Dict[str, ExecutionResult]:
         active_lanes = [
             (worker_slot, lane_contexts)
-            for worker_slot, lane_contexts in lane_axis_contexts.items()
+            for worker_slot, lane_contexts in execution_plan.lane_axis_contexts.items()
             if lane_contexts
         ]
         if len(active_lanes) != 1:
@@ -297,20 +517,12 @@ class InlineWorkerLaneRunner:
             )
 
         worker_slot, lane_contexts = active_lanes[0]
-        worker_lane_context = WorkerLaneExecutionContext(
-            visualizer=None,
-            execution_id=execution_id,
-            plate_id=plate_id,
-            worker_slot=worker_slot,
-            owned_wells=tuple(worker_assignments[worker_slot]),
-            debug_execution_policy=debug_execution_policy,
-        )
-        return _execute_worker_lane_static(
-            pipeline_definition,
-            lane_contexts,
-            worker_lane_context,
-            runtime_observation_mode,
-        )
+        return WorkerLaneExecutor(
+            pipeline_definition=pipeline_definition,
+            lane_axis_contexts=lane_contexts,
+            lane_context=execution_plan.lane_context(worker_slot),
+            runtime_observation_mode=execution_plan.runtime_observation_mode,
+        ).execute()
 
 
 def _merge_nested_dataclass(pipeline_value, global_value):
@@ -452,10 +664,10 @@ def _execute_axis_with_sequential_combinations(
     total_steps = len(pipeline_definition)
 
     emit(
-        execution_id=lane_context.execution_id,
-        plate_id=lane_context.plate_id,
+        execution_id=lane_context.identity.execution_id,
+        plate_id=lane_context.identity.plate_id,
         axis_id=axis_id,
-        step_name="pipeline",
+        step_name=PIPELINE_PROGRESS_STEP_NAME,
         phase=ProgressPhase.AXIS_STARTED,
         status=ProgressStatus.STARTED,
         completed=0,
@@ -507,10 +719,10 @@ def _execute_axis_with_sequential_combinations(
                 f"🔄 WORKER: Combination {context_key} failed for axis {axis_id}"
             )
             emit(
-                execution_id=lane_context.execution_id,
-                plate_id=lane_context.plate_id,
+                execution_id=lane_context.identity.execution_id,
+                plate_id=lane_context.identity.plate_id,
                 axis_id=axis_id,
-                step_name="pipeline",
+                step_name=PIPELINE_PROGRESS_STEP_NAME,
                 phase=ProgressPhase.AXIS_ERROR,
                 status=ProgressStatus.ERROR,
                 completed=0,
@@ -527,10 +739,10 @@ def _execute_axis_with_sequential_combinations(
             )
 
     emit(
-        execution_id=lane_context.execution_id,
-        plate_id=lane_context.plate_id,
+        execution_id=lane_context.identity.execution_id,
+        plate_id=lane_context.identity.plate_id,
         axis_id=axis_id,
-        step_name="pipeline",
+        step_name=PIPELINE_PROGRESS_STEP_NAME,
         phase=ProgressPhase.AXIS_COMPLETED,
         status=ProgressStatus.SUCCESS,
         completed=total_steps,
@@ -584,8 +796,8 @@ def _execute_single_axis_static(
 
     # Set execution tracking fields on context (these are allowed even when frozen)
     # These fields are set at execution time, not compilation time
-    object.__setattr__(frozen_context, "execution_id", lane_context.execution_id)
-    object.__setattr__(frozen_context, "plate_id", lane_context.plate_id)
+    object.__setattr__(frozen_context, "execution_id", lane_context.identity.execution_id)
+    object.__setattr__(frozen_context, "plate_id", lane_context.identity.plate_id)
     object.__setattr__(frozen_context, "worker_slot", lane_context.worker_slot)
     object.__setattr__(frozen_context, "owned_wells", list(lane_context.owned_wells))
     lane_context.install_debug_sink(frozen_context)
@@ -594,9 +806,9 @@ def _execute_single_axis_static(
     for step_index, step in enumerate(pipeline_definition):
         step_plan = frozen_context.step_plans[step_index]
         step_name = step_plan.step_name
-        if not lane_context.debug_execution_policy.should_execute_step(step_index):
-            if lane_context.debug_execution_policy.should_reuse_step_outputs(step_index):
-                lane_context.debug_execution_policy.prepare_reused_step_outputs(
+        if not lane_context.identity.debug_execution_policy.should_execute_step(step_index):
+            if lane_context.identity.debug_execution_policy.should_reuse_step_outputs(step_index):
+                lane_context.identity.debug_execution_policy.prepare_reused_step_outputs(
                     step_index=step_index,
                     step_name=step_name,
                     step_scope_id=step_plan.step_scope_id,
@@ -604,8 +816,8 @@ def _execute_single_axis_static(
                     artifact_outputs=step_plan.artifact_outputs,
                 )
                 emit(
-                    execution_id=lane_context.execution_id,
-                    plate_id=lane_context.plate_id,
+                    execution_id=lane_context.identity.execution_id,
+                    plate_id=lane_context.identity.plate_id,
                     axis_id=axis_id,
                     step_name=step_name,
                     phase=ProgressPhase.STEP_COMPLETED,
@@ -620,8 +832,8 @@ def _execute_single_axis_static(
             continue
 
         emit(
-            execution_id=lane_context.execution_id,
-            plate_id=lane_context.plate_id,
+            execution_id=lane_context.identity.execution_id,
+            plate_id=lane_context.identity.plate_id,
             axis_id=axis_id,
             step_name=step_name,
             phase=ProgressPhase.STEP_STARTED,
@@ -637,8 +849,8 @@ def _execute_single_axis_static(
         step.process(frozen_context, step_index)
 
         emit(
-            execution_id=lane_context.execution_id,
-            plate_id=lane_context.plate_id,
+            execution_id=lane_context.identity.execution_id,
+            plate_id=lane_context.identity.plate_id,
             axis_id=axis_id,
             step_name=step_name,
             phase=ProgressPhase.STEP_COMPLETED,
@@ -649,7 +861,7 @@ def _execute_single_axis_static(
             worker_slot=lane_context.worker_slot,
             owned_wells=list(lane_context.owned_wells),
         )
-        if lane_context.debug_execution_policy.step_stop_strategy().should_stop_after_step(
+        if lane_context.identity.debug_execution_policy.step_stop_strategy().should_stop_after_step(
             step_index=step_index,
             step_name=step_name,
         ):
@@ -697,6 +909,24 @@ def _execute_worker_lane_static(
     return lane_results
 
 
+@dataclass(frozen=True, slots=True)
+class WorkerLaneExecutor:
+    """Nominal owner for deterministic worker-lane execution."""
+
+    pipeline_definition: List[AbstractStep]
+    lane_axis_contexts: List[tuple[str, List[tuple]]]
+    lane_context: WorkerLaneExecutionContext
+    runtime_observation_mode: RuntimeObservationMode
+
+    def execute(self) -> Dict[str, ExecutionResult]:
+        return _execute_worker_lane_static(
+            pipeline_definition=self.pipeline_definition,
+            lane_axis_contexts=self.lane_axis_contexts,
+            lane_context=self.lane_context,
+            runtime_observation_mode=self.runtime_observation_mode,
+        )
+
+
 def _execute_fork_inherited_worker_lane_static(
     lane_axis_context_keys: List[tuple[str, List[str]]],
     lane_context: WorkerLaneExecutionContext,
@@ -704,14 +934,14 @@ def _execute_fork_inherited_worker_lane_static(
 ) -> Dict[str, ExecutionResult]:
     """Execute a worker lane using fork-inherited compiled contexts."""
     execution_bundle = ForkInheritedWorkerExecutionState.require_current()
-    return _execute_worker_lane_static(
+    return WorkerLaneExecutor(
         pipeline_definition=list(execution_bundle.pipeline_definition),
         lane_axis_contexts=ForkInheritedWorkerExecutionState.resolve_lane_contexts(
             lane_axis_context_keys
         ),
         lane_context=lane_context,
         runtime_observation_mode=runtime_observation_mode,
-    )
+    ).execute()
 
 
 def _configure_worker_logging(log_file_base: str):
@@ -848,6 +1078,10 @@ class PipelineOrchestrator:
     plate_path: Optional[Path] = None
     _plate_path_frozen: bool = False
     _metadata_cache_service: Optional["MetadataCache"] = None
+    state: AliasProperty[OrchestratorState] = AliasProperty("_state")
+    metadata_cache: AliasProperty[MetadataCache] = AliasProperty(
+        "_metadata_cache_service"
+    )
 
     def __init__(
         self,
@@ -1008,11 +1242,6 @@ class PipelineOrchestrator:
             logger.error(error_msg)
             raise AttributeError(error_msg)
         super().__setattr__(name, value)
-
-    @property
-    def state(self) -> OrchestratorState:
-        """Get the current orchestrator state."""
-        return self._state
 
     def get_or_create_visualizer(self, config, vis_config=None):
         """
@@ -1361,133 +1590,36 @@ class PipelineOrchestrator:
             A dictionary mapping well IDs to their execution status (success/error and details).
         """
 
-        # CRITICAL FIX: Use resolved pipeline definition from compilation if available
-        # For subprocess runner, use the parameter directly since it receives pre-compiled contexts
-        resolved_pipeline = self.__dict__.get("_resolved_pipeline_definition")
-        if resolved_pipeline is not None:
-            pipeline_definition = resolved_pipeline
-
-        if not self.is_initialized():
-            raise RuntimeError("Orchestrator must be initialized before executing.")
-        if not pipeline_definition:
-            raise ValueError(
-                "A valid (stateless) pipeline definition must be provided."
-            )
-        if not compiled_contexts:
-            logger.warning("No compiled contexts provided for execution.")
+        request = CompiledPlateExecutionRequest(
+            pipeline_definition=pipeline_definition,
+            compiled_contexts=compiled_contexts,
+            max_workers=max_workers,
+            visualizer=visualizer,
+            log_file_base=log_file_base,
+            progress_queue=progress_queue,
+            progress_context=progress_context,
+            worker_assignments=worker_assignments,
+            execution_bundle=execution_bundle,
+            runtime_observation_mode=runtime_observation_mode,
+            debug_execution_policy=debug_execution_policy,
+        )
+        validated = CompiledPlateExecutionValidator(self).validate(request)
+        if validated is None:
             return {}
-        if progress_queue is None:
-            raise ValueError(
-                "progress_queue is required for execute_compiled_plate invariant path"
-            )
-        if progress_context is None:
-            raise ValueError(
-                "progress_context is required for execute_compiled_plate invariant path"
-            )
-        execution_id = progress_context["execution_id"]
-        plate_id = progress_context["plate_id"]
 
-        # Access num_workers from effective config (merged pipeline + global config)
-        actual_max_workers = max_workers or self.get_effective_config().num_workers
-        if actual_max_workers <= 0:  # Ensure positive number of workers
-            actual_max_workers = 1
-
-        # 🔬 AUTOMATIC VISUALIZER CREATION: Create visualizers if compiler detected streaming
-        visualizers = []
-        if visualizer is None:
-            from openhcs.core.config import StreamingConfig
-
-            # Collect unique configs (deduplicate by viewer_type + port)
-            unique_configs = {}
-            for ctx in compiled_contexts.values():
-                for visualizer_info in ctx.required_visualizers:
-                    config = visualizer_info["config"]
-                    key = (
-                        (config.viewer_type, config.port)
-                        if isinstance(config, StreamingConfig)
-                        else (config.backend.name,)
-                    )
-                    if key not in unique_configs:
-                        unique_configs[key] = (config, ctx.visualizer_config)
-
-            # Create visualizers — emit progress for each launch
-            for key, (config, vis_config) in unique_configs.items():
-                viewer_name = key[0] if key else type(config).__name__
-                viewer_port = key[1] if len(key) > 1 else None
-                port_info = f" on port {viewer_port}" if viewer_port else ""
-                progress_queue.put(
-                    create_event(
-                        execution_id=execution_id,
-                        plate_id=plate_id,
-                        axis_id="",
-                        step_name="",
-                        phase=ProgressPhase.INIT,
-                        status=ProgressStatus.STARTED,
-                        percent=0.0,
-                        message=f"Launching {viewer_name} viewer{port_info}",
-                    ).to_dict()
-                )
-                visualizers.append(self.get_or_create_visualizer(config, vis_config))
-
-            # Wait for all streaming viewers to be ready before starting pipeline
-            # This ensures viewers are available to receive images
-            if visualizers:
-                import time
-
-                max_wait = 30.0  # Maximum wait time in seconds
-                start_time = time.time()
-
-                while time.time() - start_time < max_wait:
-                    # Check if execution was cancelled
-                    if self._cancelled:
-                        raise RuntimeError("Execution cancelled by user")
-
-                    all_ready = all(v.is_running for v in visualizers)
-                    if all_ready:
-                        progress_queue.put(
-                            create_event(
-                                execution_id=execution_id,
-                                plate_id=plate_id,
-                                axis_id="",
-                                step_name="",
-                                phase=ProgressPhase.INIT,
-                                status=ProgressStatus.RUNNING,
-                                percent=0.0,
-                                message="All streaming viewers ready",
-                            ).to_dict()
-                        )
-                        break
-                    time.sleep(0.2)  # Check every 200ms
-                else:
-                    # Timeout - log which viewers aren't ready (use generic port attribute)
-                    not_ready = [v.port for v in visualizers if not v.is_running]
-                    logger.warning(
-                        f"🔬 ORCHESTRATOR: Timeout waiting for streaming viewers. Not ready: {not_ready}"
-                    )
-                    progress_queue.put(
-                        create_event(
-                            execution_id=execution_id,
-                            plate_id=plate_id,
-                            axis_id="",
-                            step_name="",
-                            phase=ProgressPhase.INIT,
-                            status=ProgressStatus.RUNNING,
-                            percent=0.0,
-                            message=f"Timeout waiting for streaming viewers. Not ready: {not_ready}",
-                        ).to_dict()
-                    )
-
-                # Clear viewer state for new pipeline run to prevent accumulation
-                for vis in visualizers:
-                    if hasattr(vis, "clear_viewer_state"):
-                        success = vis.clear_viewer_state()
-                        if not success:
-                            logger.warning(
-                                f"🔬 ORCHESTRATOR: Failed to clear state for viewer on port {vis.port}"
-                            )
-
-            # For backwards compatibility, set visualizer to the first one
-            visualizer = visualizers[0] if visualizers else None
+        pipeline_definition = validated.pipeline_definition
+        compiled_contexts = validated.compiled_contexts
+        actual_max_workers = validated.actual_max_workers
+        execution_id = validated.execution_id
+        plate_id = validated.plate_id
+        progress_queue = validated.progress_queue
+        progress_context = validated.progress_context
+        visualizer, visualizers = ExecutionVisualizerBootstrap(
+            self,
+            progress_queue=progress_queue,
+            execution_id=execution_id,
+            plate_id=plate_id,
+        ).bootstrap(compiled_contexts, visualizer)
 
         set_progress_queue(progress_queue)
         try:
@@ -1672,26 +1804,27 @@ class PipelineOrchestrator:
                             # FAIL-FAST: Re-raise task submission errors immediately
                             raise
 
+                    worker_lane_execution_plan = WorkerLaneExecutionPlan(
+                        identity=WorkerLaneExecutionIdentity(
+                            execution_id=execution_id,
+                            plate_id=plate_id,
+                            debug_execution_policy=debug_execution_policy,
+                        ),
+                        lane_axis_contexts=lane_axis_contexts,
+                        worker_assignments=worker_assignments,
+                        runtime_observation_mode=runtime_observation_mode,
+                    )
+
                     if fork_inherited_execution:
                         execution_results.update(
                             ForkInheritedWorkerLaneRunner(multiprocessing_context).run(
-                                lane_axis_contexts,
-                                execution_id=execution_id,
-                                plate_id=plate_id,
-                                worker_assignments=worker_assignments,
-                                runtime_observation_mode=runtime_observation_mode,
-                                debug_execution_policy=debug_execution_policy,
+                                worker_lane_execution_plan
                             )
                         )
                     elif inline_worker_lane_execution:
                         lane_results = InlineWorkerLaneRunner().run(
                             pipeline_definition,
-                            lane_axis_contexts,
-                            execution_id=execution_id,
-                            plate_id=plate_id,
-                            worker_assignments=worker_assignments,
-                            runtime_observation_mode=runtime_observation_mode,
-                            debug_execution_policy=debug_execution_policy,
+                            worker_lane_execution_plan,
                         )
                         execution_results.update(lane_results)
                         if runtime_observation_mode.collects_records:
@@ -1705,21 +1838,24 @@ class PipelineOrchestrator:
                                 continue
                             owned_wells = list(worker_assignments[worker_slot])
                             worker_lane_context = WorkerLaneExecutionContext(
+                                identity=WorkerLaneExecutionIdentity(
+                                    execution_id=execution_id,
+                                    plate_id=plate_id,
+                                    debug_execution_policy=debug_execution_policy,
+                                ),
                                 visualizer=None,
-                                execution_id=execution_id,
-                                plate_id=plate_id,
                                 worker_slot=worker_slot,
                                 owned_wells=tuple(owned_wells),
-                                debug_execution_policy=debug_execution_policy,
                             )
 
                             try:
                                 future = executor.submit(
-                                    _execute_worker_lane_static,
-                                    pipeline_definition,
-                                    lane_contexts,
-                                    worker_lane_context,
-                                    runtime_observation_mode,
+                                    WorkerLaneExecutor(
+                                        pipeline_definition=pipeline_definition,
+                                        lane_axis_contexts=lane_contexts,
+                                        lane_context=worker_lane_context,
+                                        runtime_observation_mode=runtime_observation_mode,
+                                    ).execute
                                 )
                                 future_to_worker_slot[future] = (worker_slot, owned_wells)
                             except Exception as submit_error:
@@ -1757,7 +1893,7 @@ class PipelineOrchestrator:
                                     execution_id=execution_id,
                                     plate_id=plate_id,
                                     axis_id=failing_axis_id,
-                                    step_name="pipeline",
+                                    step_name=PIPELINE_PROGRESS_STEP_NAME,
                                     phase=ProgressPhase.AXIS_ERROR,
                                     status=ProgressStatus.ERROR,
                                     completed=0,
@@ -2095,11 +2231,6 @@ class PipelineOrchestrator:
                     del self._component_keys_cache[component]
                     logger.debug(f"Cleared cache for {component.value}")
             logger.info(f"Cleared cache for {len(components)} component types")
-
-    @property
-    def metadata_cache(self) -> MetadataCache:
-        """Access to metadata cache service."""
-        return self._metadata_cache_service
 
     # Global config management removed - handled by UI layer
 

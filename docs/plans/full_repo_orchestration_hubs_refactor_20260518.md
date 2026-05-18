@@ -176,3 +176,48 @@ python -m nominal_refactor_advisor openhcs/core/orchestrator openhcs/runtime > /
   typed boundaries.
 - Existing runtime tests pass.
 - No new fake helpers that simply mirror method chunks by line range.
+
+## Implementation Record
+
+Implemented staged split on 2026-05-18:
+
+- `CompiledPlateExecutionRequest` normalizes the public
+  `execute_compiled_plate(...)` parameters.
+- `CompiledPlateExecutionValidator` owns initialized-state validation, pipeline
+  validation, empty-context return, progress invariant checks, execution
+  identity extraction, and worker-count normalization.
+- `ExecutionVisualizerBootstrap` owns streaming visualizer discovery, progress
+  launch messages, readiness polling, timeout reporting, and viewer-state
+  cleanup.
+- `WorkerLaneExecutionIdentity`, `WorkerLaneExecutionPlan`, and
+  `WorkerLaneExecutor` centralize worker-lane identity and deterministic lane
+  execution across inline, fork-inherited, and executor-submitted paths.
+- `PIPELINE_PROGRESS_STEP_NAME` centralizes the repeated pipeline progress key.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest \
+  tests/unit/test_orchestrator*.py \
+  tests/unit/test_debug*.py \
+  tests/unit/test_runner_cellprofiler_compatibility.py -q
+git diff --check
+.venv/bin/python -m pytest tests/unit -q
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs
+```
+
+Results:
+
+- Focused tests: `62 passed`.
+- Full unit suite: `1522 passed, 10 warnings`.
+- Full advisor scan: 1,133 findings, 66.622s.
+
+Residual debt:
+
+- `execute_compiled_plate` is still a large hub. Remaining meaningful stages are
+  worker-assignment planning, executor construction/submission, result
+  aggregation, cleanup/consolidation, and final state projection.
+- `pipeline_config` remains a property with a side-effecting setter, so it is
+  not a direct descriptor-alias replacement.
+- Attribute-probe findings in the module remain broader protocol cleanup, not
+  part of this first staged split.
