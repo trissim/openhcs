@@ -7,7 +7,6 @@ Follows same architecture as NapariStreamVisualizer.
 """
 
 import logging
-import multiprocessing
 import pickle
 import subprocess
 import threading
@@ -23,7 +22,11 @@ from openhcs.core.config import (
     TransportMode as OpenHCSTransportMode,
     FijiStreamingConfig,
 )
-from openhcs.runtime.viewer_protocol import DetachedViewerProcessRequest
+from openhcs.runtime.viewer_protocol import (
+    DetachedViewerProcessRequest,
+    ManagedViewerLifecycleMixin,
+    ViewerProcessHandle,
+)
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.config import TransportMode as ZMQTransportMode
 from zmqruntime.streaming import VisualizerProcessManager
@@ -38,7 +41,7 @@ from zmqruntime.transport import (
 logger = logging.getLogger(__name__)
 
 # Global process management for Fiji viewer
-_global_fiji_process: Optional[multiprocessing.Process] = None
+_global_fiji_process: Optional[subprocess.Popen] = None
 _global_fiji_lock = threading.Lock()
 
 
@@ -47,15 +50,17 @@ def _cleanup_global_fiji_viewer() -> None:
     global _global_fiji_process
 
     with _global_fiji_lock:
-        if _global_fiji_process and _global_fiji_process.is_alive():
+        if (
+            _global_fiji_process
+            and ViewerProcessHandle.from_process(_global_fiji_process).is_alive()
+        ):
             logger.info("🔬 FIJI VISUALIZER: Terminating Fiji viewer for test cleanup")
-            _global_fiji_process.terminate()
-            _global_fiji_process.join(timeout=3)
-
-            if _global_fiji_process.is_alive():
+            killed = ViewerProcessHandle.from_process(_global_fiji_process).terminate(
+                timeout=3,
+                kill_timeout=1,
+            )
+            if killed:
                 logger.warning("🔬 FIJI VISUALIZER: Force killing Fiji viewer process")
-                _global_fiji_process.kill()
-                _global_fiji_process.join(timeout=1)
 
             _global_fiji_process = None
 
@@ -146,12 +151,14 @@ except Exception as e:
         raise
 
 
-class FijiStreamVisualizer(VisualizerProcessManager):
+class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager):
     """
     Manages Fiji viewer instance for real-time visualization via ZMQ.
 
     Follows same architecture as NapariStreamVisualizer.
     """
+
+    viewer_process_label = "Fiji"
 
     def __init__(
         self,
@@ -178,58 +185,11 @@ class FijiStreamVisualizer(VisualizerProcessManager):
         self.transport_mode = (
             coerce_transport_mode(transport_mode) or ZMQTransportMode.IPC
         )  # ZMQ transport mode (IPC or TCP)
-        self.process: Optional[multiprocessing.Process] = None
+        self.process: Optional[subprocess.Popen] = None
+        self.process_handle: Optional[ViewerProcessHandle] = None
         self._is_running = False
         self._connected_to_existing = False
         self._lock = threading.Lock()
-
-    @property
-    def is_running(self) -> bool:
-        """
-        Check if the Fiji viewer is actually running.
-
-        This property checks the actual process state, not just a cached flag.
-        Returns True only if the process exists and is alive.
-        """
-        if not self._is_running:
-            return False
-
-        # If we connected to an existing viewer, verify it's still responsive
-        if self._connected_to_existing:
-            # Quick ping check to verify viewer is still alive
-            if not self._quick_ping_check():
-                logger.debug(
-                    f"🔬 FIJI VISUALIZER: Connected viewer on port {self.port} is no longer responsive"
-                )
-                self._is_running = False
-                self._connected_to_existing = False
-                return False
-            return True
-
-        if self.process is None:
-            self._is_running = False
-            return False
-
-        # Check if process is actually alive
-        try:
-            if hasattr(self.process, "is_alive"):
-                # multiprocessing.Process
-                alive = self.process.is_alive()
-            else:
-                # subprocess.Popen
-                alive = self.process.poll() is None
-
-            if not alive:
-                logger.debug(
-                    f"🔬 FIJI VISUALIZER: Fiji process on port {self.port} is no longer alive"
-                )
-                self._is_running = False
-
-            return alive
-        except Exception as e:
-            logger.warning(f"🔬 FIJI VISUALIZER: Error checking process status: {e}")
-            self._is_running = False
-            return False
 
     def _quick_ping_check(self) -> bool:
         """Quick ping check to verify viewer is responsive (for connected viewers)."""
@@ -305,6 +265,7 @@ class FijiStreamVisualizer(VisualizerProcessManager):
             self.process = _spawn_detached_fiji_process(
                 self.port, self.viewer_title, self.display_config, self.transport_mode
             )
+            self.process_handle = ViewerProcessHandle.from_process(self.process)
 
             # Only track non-persistent viewers in global variable for test cleanup
             if not self.persistent:
@@ -319,7 +280,7 @@ class FijiStreamVisualizer(VisualizerProcessManager):
                     if self._wait_for_server_ready(timeout=10.0):
                         self._is_running = True
                         logger.info(
-                            f"🔬 FIJI VISUALIZER: Fiji viewer server ready (PID: {self.process.pid if hasattr(self.process, 'pid') else 'unknown'})"
+                            f"🔬 FIJI VISUALIZER: Fiji viewer server ready (PID: {self.process_handle.pid_label if self.process_handle else 'unknown'})"
                         )
                     else:
                         logger.error(
@@ -333,7 +294,7 @@ class FijiStreamVisualizer(VisualizerProcessManager):
                 if self._wait_for_server_ready(timeout=10.0):
                     self._is_running = True
                     logger.info(
-                        f"🔬 FIJI VISUALIZER: Fiji viewer server ready (PID: {self.process.pid if hasattr(self.process, 'pid') else 'unknown'})"
+                        f"🔬 FIJI VISUALIZER: Fiji viewer server ready (PID: {self.process_handle.pid_label if self.process_handle else 'unknown'})"
                     )
                 else:
                     logger.error(
@@ -463,29 +424,9 @@ class FijiStreamVisualizer(VisualizerProcessManager):
                 logger.info("🔬 FIJI VISUALIZER: Stopping non-persistent Fiji viewer")
 
                 if self.process:
-                    # Handle both subprocess and multiprocessing process types
-                    if hasattr(self.process, "is_alive"):
-                        # multiprocessing.Process
-                        if self.process.is_alive():
-                            self.process.terminate()
-                            self.process.join(timeout=5)
-                            if self.process.is_alive():
-                                logger.warning(
-                                    "🔬 FIJI VISUALIZER: Force killing Fiji viewer"
-                                )
-                                self.process.kill()
-                                self.process.join(timeout=2)
-                    else:
-                        # subprocess.Popen
-                        if self.process.poll() is None:
-                            self.process.terminate()
-                            try:
-                                self.process.wait(timeout=5)
-                            except subprocess.TimeoutExpired:
-                                logger.warning(
-                                    "🔬 FIJI VISUALIZER: Force killing Fiji viewer"
-                                )
-                                self.process.kill()
+                    killed = ViewerProcessHandle.from_process(self.process).terminate()
+                    if killed:
+                        logger.warning("🔬 FIJI VISUALIZER: Force killing Fiji viewer")
 
                 # Clear global reference
                 with _global_fiji_lock:
@@ -509,7 +450,11 @@ class FijiStreamVisualizer(VisualizerProcessManager):
 
     def is_viewer_running(self) -> bool:
         """Check if Fiji viewer process is running."""
-        return self.is_running and self.process is not None and self.process.is_alive()
+        return (
+            self.is_running
+            and self.process is not None
+            and ViewerProcessHandle.from_process(self.process).is_alive()
+        )
 
     def get_launch_command(self) -> list[str]:
         import os

@@ -183,3 +183,32 @@ Advisor status:
   request-builder projection records, Napari/Fiji server role quotients, Fiji
   dimension context records, process signature records, and shared viewer
   platform strategy ladders.
+
+### Checkpoint 5
+
+Implemented:
+
+- `ViewerProcessHandle` as the single subprocess/multiprocessing liveness and
+  termination adapter.
+- `ManagedViewerLifecycleMixin` as the shared `is_running` algorithm for
+  Napari and Fiji stream visualizers.
+- Napari/Fiji cleanup, liveness, stop, PID logging, and viewer-running checks
+  now route through the nominal process handle instead of structural probes.
+- Unit coverage for real subprocess lifecycle wrapping and rejection of
+  structural process lookalikes.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py tests/unit/test_viewer_protocol.py -q
+# 10 passed
+```
+
+Advisor status:
+
+- Cleared repeated `is_running` method skeleton.
+- Cleared direct `hasattr(self.process, ...)` process-type probes.
+- Remaining lifecycle findings are broader class-marker/membership signals
+  around viewer state, plus request-builder records, Napari/Fiji server role
+  quotients, Fiji dimension context records, process signature records, and
+  shared viewer platform strategy ladders.

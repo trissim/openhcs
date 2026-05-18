@@ -6,9 +6,11 @@ import os
 import platform
 import subprocess
 import sys
+import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
+from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import Any, Mapping
 
@@ -181,6 +183,96 @@ class DetachedViewerProcessRequest:
             stderr=subprocess.STDOUT,
             start_new_session=True,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerProcessHandle:
+    """Nominal adapter over multiprocessing and subprocess viewer handles."""
+
+    process: BaseProcess | subprocess.Popen
+
+    @classmethod
+    def from_process(cls, process: object) -> "ViewerProcessHandle":
+        if isinstance(process, (BaseProcess, subprocess.Popen)):
+            return cls(process)
+        raise TypeError(f"Unsupported viewer process handle: {type(process)!r}")
+
+    @property
+    def pid(self) -> int | None:
+        return self.process.pid
+
+    @property
+    def pid_label(self) -> str:
+        return str(self.pid) if self.pid is not None else "unknown"
+
+    def is_alive(self) -> bool:
+        if isinstance(self.process, BaseProcess):
+            return self.process.is_alive()
+        return self.process.poll() is None
+
+    def terminate(self, *, timeout: float = 5.0, kill_timeout: float = 2.0) -> bool:
+        if not self.is_alive():
+            return False
+        self.process.terminate()
+        if isinstance(self.process, BaseProcess):
+            self.process.join(timeout=timeout)
+            if self.process.is_alive():
+                self.process.kill()
+                self.process.join(timeout=kill_timeout)
+                return True
+            return False
+        try:
+            self.process.wait(timeout=timeout)
+            return False
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            return True
+
+
+class ManagedViewerLifecycleMixin:
+    """Shared liveness property for viewer process managers."""
+
+    viewer_process_label = "viewer"
+
+    @property
+    def is_running(self) -> bool:
+        if not self._is_running:
+            return False
+
+        if self._connected_to_existing:
+            if not self._quick_ping_check():
+                logging.getLogger(self.__class__.__module__).debug(
+                    "%s viewer on port %s is no longer responsive",
+                    self.viewer_process_label,
+                    self.port,
+                )
+                self._is_running = False
+                self._connected_to_existing = False
+                return False
+            return True
+
+        if self.process is None:
+            self._is_running = False
+            return False
+
+        try:
+            alive = ViewerProcessHandle.from_process(self.process).is_alive()
+            if not alive:
+                logging.getLogger(self.__class__.__module__).debug(
+                    "%s process on port %s is no longer alive",
+                    self.viewer_process_label,
+                    self.port,
+                )
+                self._is_running = False
+            return alive
+        except Exception as error:
+            logging.getLogger(self.__class__.__module__).warning(
+                "Error checking %s process status: %s",
+                self.viewer_process_label,
+                error,
+            )
+            self._is_running = False
+            return False
 
 
 @dataclass(frozen=True, slots=True)

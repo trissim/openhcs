@@ -12,7 +12,6 @@ Doctrinal Clauses:
 """
 
 import logging
-import multiprocessing
 import os
 import pickle
 import subprocess
@@ -35,9 +34,11 @@ from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
     ComponentDimensionLabelPolicy,
     DetachedViewerProcessRequest,
+    ManagedViewerLifecycleMixin,
     NAPARI_HEARTBEAT,
     NapariViewerServerRequest,
     ViewerQtEnvironmentPolicy,
+    ViewerProcessHandle,
 )
 from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerUpdateAuthority,
@@ -74,7 +75,7 @@ _NAPARI_SHAPE_RASTERIZER = NapariShapeLabelRasterizer()
 ZMQ_CONNECTION_DELAY_MS = 100  # Brief delay for ZMQ connection to establish
 
 # Global process management for napari viewer
-_global_viewer_process: Optional[multiprocessing.Process] = None
+_global_viewer_process: Optional[subprocess.Popen] = None
 _global_viewer_port: Optional[int] = None
 _global_process_lock = threading.Lock()
 
@@ -92,15 +93,17 @@ def _cleanup_global_viewer() -> None:
     global _global_viewer_process
 
     with _global_process_lock:
-        if _global_viewer_process and _global_viewer_process.is_alive():
+        if (
+            _global_viewer_process
+            and ViewerProcessHandle.from_process(_global_viewer_process).is_alive()
+        ):
             logger.info("🔬 VISUALIZER: Terminating napari viewer for test cleanup")
-            _global_viewer_process.terminate()
-            _global_viewer_process.join(timeout=3)
-
-            if _global_viewer_process.is_alive():
+            killed = ViewerProcessHandle.from_process(_global_viewer_process).terminate(
+                timeout=3,
+                kill_timeout=1,
+            )
+            if killed:
                 logger.warning("🔬 VISUALIZER: Force killing napari viewer process")
-                _global_viewer_process.kill()
-                _global_viewer_process.join(timeout=1)
 
             _global_viewer_process = None
 
@@ -1422,12 +1425,14 @@ except Exception as e:
         raise e
 
 
-class NapariStreamVisualizer(VisualizerProcessManager):
+class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager):
     """
     Manages a Napari viewer instance for real-time visualization of tensors
     streamed from the OpenHCS pipeline. Runs napari in a separate process
     for Qt compatibility and true persistence across pipeline runs.
     """
+
+    viewer_process_label = "Napari"
 
     def __init__(
         self,
@@ -1460,7 +1465,8 @@ class NapariStreamVisualizer(VisualizerProcessManager):
         self.transport_mode = (
             coerce_transport_mode(transport_mode) or ZMQTransportMode.IPC
         )  # ZMQ transport mode (IPC or TCP)
-        self.process: Optional[multiprocessing.Process] = None
+        self.process: Optional[subprocess.Popen] = None
+        self.process_handle: Optional[ViewerProcessHandle] = None
         self.zmq_context: Optional[zmq.Context] = None
         self.zmq_socket: Optional[zmq.Socket] = None
         self._is_running = False  # Internal flag, use is_running property instead
@@ -1471,54 +1477,6 @@ class NapariStreamVisualizer(VisualizerProcessManager):
 
         # Clause 368: Visualization must be observer-only.
         # This class will only read data and display it.
-
-    @property
-    def is_running(self) -> bool:
-        """
-        Check if the napari viewer is actually running.
-
-        This property checks the actual process state, not just a cached flag.
-        Returns True only if the process exists and is alive.
-        """
-        if not self._is_running:
-            return False
-
-        # If we connected to an existing viewer, verify it's still responsive
-        if self._connected_to_existing:
-            # Quick ping check to verify viewer is still alive
-            if not self._quick_ping_check():
-                logger.debug(
-                    f"🔬 VISUALIZER: Connected viewer on port {self.port} is no longer responsive"
-                )
-                self._is_running = False
-                self._connected_to_existing = False
-                return False
-            return True
-
-        if self.process is None:
-            self._is_running = False
-            return False
-
-        # Check if process is actually alive
-        try:
-            if hasattr(self.process, "is_alive"):
-                # multiprocessing.Process
-                alive = self.process.is_alive()
-            else:
-                # subprocess.Popen
-                alive = self.process.poll() is None
-
-            if not alive:
-                logger.debug(
-                    f"🔬 VISUALIZER: Napari process on port {self.port} is no longer alive"
-                )
-                self._is_running = False
-
-            return alive
-        except Exception as e:
-            logger.warning(f"🔬 VISUALIZER: Error checking process status: {e}")
-            self._is_running = False
-            return False
 
     def _quick_ping_check(self) -> bool:
         """Quick ping check to verify viewer is responsive (for connected viewers)."""
@@ -1662,17 +1620,13 @@ class NapariStreamVisualizer(VisualizerProcessManager):
             self._setup_zmq_client()
 
             # Check if process is running (different methods for subprocess vs multiprocessing)
-            if hasattr(self.process, "is_alive"):
-                # multiprocessing.Process
-                process_alive = self.process.is_alive()
-            else:
-                # subprocess.Popen
-                process_alive = self.process.poll() is None
+            self.process_handle = ViewerProcessHandle.from_process(self.process)
+            process_alive = self.process_handle.is_alive()
 
             if process_alive:
                 self._is_running = True
                 logger.info(
-                    f"🔬 VISUALIZER: Napari viewer process started successfully (PID: {self.process.pid})"
+                    f"🔬 VISUALIZER: Napari viewer process started successfully (PID: {self.process_handle.pid_label})"
                 )
             else:
                 logger.error("🔬 VISUALIZER: Failed to start napari viewer process")
@@ -1835,28 +1789,11 @@ class NapariStreamVisualizer(VisualizerProcessManager):
                 logger.info("🔬 VISUALIZER: Stopping non-persistent napari viewer")
                 self._cleanup_zmq()
                 if self.process:
-                    # Handle both subprocess and multiprocessing process types
-                    if hasattr(self.process, "is_alive"):
-                        # multiprocessing.Process
-                        if self.process.is_alive():
-                            self.process.terminate()
-                            self.process.join(timeout=5)
-                            if self.process.is_alive():
-                                logger.warning(
-                                    "🔬 VISUALIZER: Force killing napari viewer process"
-                                )
-                                self.process.kill()
-                    else:
-                        # subprocess.Popen
-                        if self.process.poll() is None:  # Still running
-                            self.process.terminate()
-                            try:
-                                self.process.wait(timeout=5)
-                            except subprocess.TimeoutExpired:
-                                logger.warning(
-                                    "🔬 VISUALIZER: Force killing napari viewer process"
-                                )
-                                self.process.kill()
+                    killed = ViewerProcessHandle.from_process(self.process).terminate()
+                    if killed:
+                        logger.warning(
+                            "🔬 VISUALIZER: Force killing napari viewer process"
+                        )
                 self._is_running = False
             else:
                 logger.info("🔬 VISUALIZER: Keeping persistent napari viewer alive")

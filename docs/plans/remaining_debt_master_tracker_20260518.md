@@ -215,3 +215,28 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 # cleared Napari _shapes_to_labels forwarding shells
 # cleared inline layer-kind subset logging policy
 ```
+
+Checkpoint 5:
+
+- Added `ViewerProcessHandle` to centralize viewer process liveness,
+  termination, forced-kill escalation, and PID formatting.
+- Added `ManagedViewerLifecycleMixin` so Napari and Fiji stream visualizers
+  share the same `is_running` algorithm.
+- Removed structural `hasattr(self.process, ...)` process-type probes from
+  Napari/Fiji liveness and stop paths.
+- Added unit coverage for subprocess wrapping and fail-loud rejection of
+  structural process lookalikes.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py tests/unit/test_viewer_protocol.py -q
+# 10 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/viewer_protocol.py
+# cleared repeated is_running method skeleton
+# cleared direct process hasattr probes
+# remaining: broader viewer state membership, ping request projection,
+# Napari server role quotient, dynamic/private entry witnesses, and
+# shared viewer platform strategy ladders
+```
