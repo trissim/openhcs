@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from enum import Enum
 from functools import lru_cache
 import math
 import time
-from typing import ClassVar
+from typing import Callable, ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -150,6 +150,7 @@ class RobustBackgroundCenterStrategy(
 
     averaging_method: ClassVar[CellProfilerAveragingMethod | None] = None
     averaging_method_label: ClassVar[str | None] = None
+    center_helper: ClassVar[Callable[[np.ndarray], float] | None] = None
 
     @classmethod
     def for_averaging_method(
@@ -162,30 +163,79 @@ class RobustBackgroundCenterStrategy(
         )
         return cls.for_enum_member(resolved)
 
-    @abstractmethod
     def center(self, values: np.ndarray) -> float:
         """Return the robust-background center for trimmed values."""
+        if self.center_helper is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} must declare center_helper"
+            )
+        return float(self.center_helper(values))
+
+
+class BinnedModeCenterHelper:
+    """Callable center helper backed by the active threshold primitive provider."""
+
+    def __call__(self, values: np.ndarray) -> float:
+        return float(threshold_primitives().binned_mode(values))
+
+
+@dataclass(frozen=True)
+class CellProfilerThresholdProfiler:
+    """Bound profiler for the CellProfiler threshold execution timeline."""
+
+    sink: Callable[..., None]
+    function_name: str = "cellprofiler_threshold"
+
+    def record(self, phase_name: str, phase_started_at: float, **metadata: object) -> None:
+        self.sink(
+            phase_name,
+            time.perf_counter() - phase_started_at,
+            function=self.function_name,
+            **metadata,
+        )
+
+    def record_method(
+        self,
+        phase_name: str,
+        phase_started_at: float,
+        threshold_method: CellProfilerThresholdMethod,
+    ) -> None:
+        self.record(phase_name, phase_started_at, method=threshold_method.value)
+
+    def record_global_raw(
+        self,
+        phase_started_at: float,
+        threshold_method: CellProfilerThresholdMethod,
+        selection_image: np.ndarray,
+    ) -> None:
+        self.record(
+            "threshold_global_raw",
+            phase_started_at,
+            method=threshold_method.value,
+            pixels=np.asarray(selection_image).size,
+        )
+
+    def record_apply(self, phase_started_at: float, smoothing: float) -> None:
+        self.record(
+            "threshold_apply",
+            phase_started_at,
+            smoothing=float(smoothing),
+        )
 
 
 class MeanRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
     averaging_method = CellProfilerAveragingMethod.MEAN
-
-    def center(self, values: np.ndarray) -> float:
-        return float(np.mean(values))
+    center_helper = staticmethod(np.mean)
 
 
 class MedianRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
     averaging_method = CellProfilerAveragingMethod.MEDIAN
-
-    def center(self, values: np.ndarray) -> float:
-        return float(np.median(values))
+    center_helper = staticmethod(np.median)
 
 
 class ModeRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
     averaging_method = CellProfilerAveragingMethod.MODE
-
-    def center(self, values: np.ndarray) -> float:
-        return float(threshold_primitives().binned_mode(values))
+    center_helper = BinnedModeCenterHelper()
 
 
 class RobustBackgroundSpreadStrategy(
@@ -256,13 +306,7 @@ class RobustBackgroundThresholdSettings:
     number_of_deviations: float
 
     def as_kwargs(self) -> dict[str, object]:
-        return {
-            "lower_outlier_fraction": self.lower_outlier_fraction,
-            "upper_outlier_fraction": self.upper_outlier_fraction,
-            "averaging_method": self.averaging_method,
-            "variance_method": self.variance_method,
-            "number_of_deviations": self.number_of_deviations,
-        }
+        return {field.name: getattr(self, field.name) for field in fields(self)}
 
 
 def normalize_cellprofiler_image(image: np.ndarray) -> np.ndarray:
@@ -1759,7 +1803,11 @@ def cellprofiler_threshold(
         if apply_threshold_function is None
         else apply_threshold_function
     )
-    log_profile = (lambda *args, **kwargs: None) if log_profile_function is None else log_profile_function
+    profiler = CellProfilerThresholdProfiler(
+        (lambda *args, **kwargs: None)
+        if log_profile_function is None
+        else log_profile_function
+    )
 
     total_started_at = time.perf_counter()
     phase_started_at = time.perf_counter()
@@ -1773,11 +1821,7 @@ def cellprofiler_threshold(
     )
     averaging_method = coerce_cellprofiler_enum(CellProfilerAveragingMethod, averaging_method)
     variance_method = coerce_cellprofiler_enum(CellProfilerVarianceMethod, variance_method)
-    log_profile(
-        "threshold_coerce_settings",
-        time.perf_counter() - phase_started_at,
-        function="cellprofiler_threshold",
-    )
+    profiler.record("threshold_coerce_settings", phase_started_at)
 
     if not use_advanced_settings:
         threshold_scope = CellProfilerThresholdScope.GLOBAL
@@ -1805,11 +1849,10 @@ def cellprofiler_threshold(
             variance_method=variance_method,
             number_of_deviations=number_of_deviations,
         )
-        log_profile(
+        profiler.record_method(
             "threshold_method_kwargs",
-            time.perf_counter() - phase_started_at,
-            function="cellprofiler_threshold",
-            method=effective_method.value,
+            phase_started_at,
+            effective_method,
         )
         if threshold_scope is CellProfilerThresholdScope.ADAPTIVE:
             phase_started_at = time.perf_counter()
@@ -1826,11 +1869,10 @@ def cellprofiler_threshold(
                 global_threshold_function=global_threshold,
                 **method_kwargs,
             )
-            log_profile(
+            profiler.record_method(
                 "threshold_adaptive_final",
-                time.perf_counter() - phase_started_at,
-                function="cellprofiler_threshold",
-                method=effective_method.value,
+                phase_started_at,
+                effective_method,
             )
             phase_started_at = time.perf_counter()
             original_threshold = float(
@@ -1856,11 +1898,10 @@ def cellprofiler_threshold(
                     )
                 )
             )
-            log_profile(
+            profiler.record_method(
                 "threshold_adaptive_original",
-                time.perf_counter() - phase_started_at,
-                function="cellprofiler_threshold",
-                method=effective_method.value,
+                phase_started_at,
+                effective_method,
             )
         else:
             selection_image, selection_kwargs = effective_method.global_threshold_selection(
@@ -1881,12 +1922,10 @@ def cellprofiler_threshold(
                 **method_kwargs,
                 **selection_kwargs,
             )
-            log_profile(
-                "threshold_global_raw",
-                time.perf_counter() - phase_started_at,
-                function="cellprofiler_threshold",
-                method=effective_method.value,
-                pixels=np.asarray(selection_image).size,
+            profiler.record_global_raw(
+                phase_started_at,
+                effective_method,
+                selection_image,
             )
             phase_started_at = time.perf_counter()
             final_threshold = clip_threshold(
@@ -1899,11 +1938,10 @@ def cellprofiler_threshold(
                 if not use_advanced_settings
                 else clip_threshold(raw_threshold, 0, 1)
             )
-            log_profile(
+            profiler.record_method(
                 "threshold_clip",
-                time.perf_counter() - phase_started_at,
-                function="cellprofiler_threshold",
-                method=effective_method.value,
+                phase_started_at,
+                effective_method,
             )
 
     application_smoothing = threshold_smoothing_scale if smooth_threshold_application else 0.0
@@ -1914,12 +1952,7 @@ def cellprofiler_threshold(
         mask=threshold_mask,
         smoothing=application_smoothing,
     )
-    log_profile(
-        "threshold_apply",
-        time.perf_counter() - phase_started_at,
-        function="cellprofiler_threshold",
-        smoothing=float(application_smoothing),
-    )
+    profiler.record_apply(phase_started_at, application_smoothing)
     phase_started_at = time.perf_counter()
     if threshold_mask is not None:
         binary = np.asarray(binary, dtype=bool) & threshold_mask
@@ -1928,16 +1961,8 @@ def cellprofiler_threshold(
         float(np.mean(np.atleast_1d(final_threshold))),
         float(original_threshold),
     )
-    log_profile(
-        "threshold_finalize",
-        time.perf_counter() - phase_started_at,
-        function="cellprofiler_threshold",
-    )
-    log_profile(
-        "threshold_total",
-        time.perf_counter() - total_started_at,
-        function="cellprofiler_threshold",
-    )
+    profiler.record("threshold_finalize", phase_started_at)
+    profiler.record("threshold_total", total_started_at)
     return result
 
 

@@ -810,3 +810,41 @@ git diff --check
 Remaining:
 
 - Split deconvolution blur-mode behavior into nominal strategy families.
+
+## Campaign 13 - CellProfiler Backend Authority Cleanup
+
+Checkpoint 1:
+
+- Refactored robust-background center strategies in
+  `openhcs/processing/backends/cellprofiler/thresholding.py` so repeated center
+  mechanics live on `RobustBackgroundCenterStrategy` while explicit nominal
+  subclasses remain registered/debuggable authorities.
+- Added `CellProfilerThresholdProfiler` as the bound threshold timeline logging
+  authority, replacing repeated manual `log_profile` calls in
+  `cellprofiler_threshold`.
+- Derived robust-background threshold kwargs from the dataclass field authority
+  instead of hand-maintaining a semantic dict bag.
+- Replaced the transient binned-mode forwarding helper with a callable center
+  helper that owns provider-backed primitive lookup.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 402 passed, 5 warnings
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/thresholding.py
+# Cleared robust center helper wrappers, threshold profiler call-family finding,
+# binned-mode forwarding wrapper, and robust-background semantic dict bag.
+```
+
+Remaining:
+
+- Public/export `__all__` derivation belongs to Campaign 14.
+- `backend_key` registry-key repetition needs a package/advisor-level
+  AutoRegister key-boilerplate fix; replacing the literal with a local constant
+  currently hides the stable key axis from the advisor.
+- Keep explicit robust-background center subclasses unless the registry stops
+  consuming nominal class identity.
+- Continue CP backend authority cleanup in `intensity_distribution.py`,
+  `watershed.py`, and adjacent CellProfiler backend files.
