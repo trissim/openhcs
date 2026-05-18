@@ -522,3 +522,25 @@ Advisor status:
 
 - Remaining canonical server finding is the layer-update/control/message role
   quotient.
+
+### Checkpoint 17
+
+Implemented:
+
+- Removed the no-op `NapariViewerServer.handle_data_message(...)` method.
+- This reduced the canonical server facade below the advisor's staged
+  orchestration threshold without adding wrapper classes.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 19 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py
+# No refactoring findings.
+```
+
+Advisor status:
+
+- Focused `napari_viewer_server.py` scan is clean.

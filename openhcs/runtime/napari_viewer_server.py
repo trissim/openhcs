@@ -924,11 +924,6 @@ class NapariViewerServer(StreamingVisualizerServer):
         # Unknown message type
         return {"status": "ok"}
 
-    def handle_data_message(self, message: Dict[str, Any]):
-        """Handle incoming image data - called by process_messages()."""
-        # This will be called from the Qt timer
-        pass
-
     def display_image(self, image_data: np.ndarray, metadata: dict) -> None:
         """Display a single image payload (best-effort helper)."""
         image_info = {

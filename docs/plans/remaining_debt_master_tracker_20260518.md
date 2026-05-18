@@ -458,3 +458,18 @@ git diff --check
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py
 # setup role and dead detached-spawn findings cleared; server quotient reduced to update/control/message roles
 ```
+
+Checkpoint 17:
+
+- Removed the no-op `NapariViewerServer.handle_data_message(...)` method.
+- Focused `napari_viewer_server.py` advisor scan is clean.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 19 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py
+# No refactoring findings.
+```
