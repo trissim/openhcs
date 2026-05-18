@@ -8,6 +8,7 @@ Handles FunctionStep parameter editing with nested dataclass support.
 import logging
 import dataclasses
 import os
+from enum import Enum
 from typing import Any, Optional, Union, get_args, get_origin
 from pathlib import Path
 
@@ -52,6 +53,45 @@ from pycodify import Assignment, generate_python_source
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 
 logger = logging.getLogger(__name__)
+
+
+class TreeItemType(str, Enum):
+    """Hierarchy tree item types handled by the step parameter editor."""
+    DATACLASS = "dataclass"
+    INHERITANCE_LINK = "inheritance_link"
+
+
+@dataclasses.dataclass(frozen=True)
+class StepSettingsDialogRequest:
+    """Cached file-dialog request for loading or saving step settings."""
+    title: str
+    mode: str
+    cache_key: PathCacheKey = PathCacheKey.STEP_SETTINGS
+    file_filter: str = "Step Files (*.step);;All Files (*)"
+
+
+def _activate_dataclass_tree_item(
+    editor: "StepParameterEditorWidget", data: dict
+) -> None:
+    field_path = data.get("field_path") or data.get("field_name")
+    if field_path:
+        editor._scroll_to_section(field_path)
+
+
+def _activate_inheritance_link_tree_item(
+    editor: "StepParameterEditorWidget", data: dict
+) -> None:
+    target_class = data.get("target_class")
+    if target_class:
+        field_name = editor._find_field_for_class(target_class)
+        if field_name:
+            editor._scroll_to_section(field_name)
+
+
+TREE_ITEM_ACTIVATION_HANDLERS = {
+    TreeItemType.DATACLASS: _activate_dataclass_tree_item,
+    TreeItemType.INHERITANCE_LINK: _activate_inheritance_link_tree_item,
+}
 
 
 class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
@@ -369,17 +409,9 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         if not data or data.get("ui_hidden"):
             return
 
-        item_type = data.get("type")
-        if item_type == "dataclass":
-            field_path = data.get("field_path") or data.get("field_name")
-            if field_path:
-                self._scroll_to_section(field_path)
-        elif item_type == "inheritance_link":
-            target_class = data.get("target_class")
-            if target_class:
-                field_name = self._find_field_for_class(target_class)
-                if field_name:
-                    self._scroll_to_section(field_name)
+        handler = TREE_ITEM_ACTIVATION_HANDLERS.get(TreeItemType(data.get("type")))
+        if handler is not None:
+            handler(self, data)
 
     def _find_field_for_class(self, target_class) -> Optional[str]:
         """Locate the parameter field that edits the given dataclass."""
@@ -554,15 +586,11 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
 
     def load_step_settings(self):
         """Load step settings from .step file (mirrors Textual TUI)."""
-        if not self.service_adapter:
-            logger.warning("No service adapter available for file dialog")
-            return
-
-        file_path = self.service_adapter.show_cached_file_dialog(
-            cache_key=PathCacheKey.STEP_SETTINGS,
-            title="Load Step Settings (.step)",
-            file_filter="Step Files (*.step);;All Files (*)",
-            mode="open",
+        file_path = self._show_step_settings_dialog(
+            StepSettingsDialogRequest(
+                title="Load Step Settings (.step)",
+                mode="open",
+            )
         )
 
         if file_path:
@@ -570,19 +598,29 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
 
     def save_step_settings(self):
         """Save step settings to .step file (mirrors Textual TUI)."""
-        if not self.service_adapter:
-            logger.warning("No service adapter available for file dialog")
-            return
-
-        file_path = self.service_adapter.show_cached_file_dialog(
-            cache_key=PathCacheKey.STEP_SETTINGS,
-            title="Save Step Settings (.step)",
-            file_filter="Step Files (*.step);;All Files (*)",
-            mode="save",
+        file_path = self._show_step_settings_dialog(
+            StepSettingsDialogRequest(
+                title="Save Step Settings (.step)",
+                mode="save",
+            )
         )
 
         if file_path:
             self._save_step_settings_to_file(file_path)
+
+    def _show_step_settings_dialog(
+        self, request: StepSettingsDialogRequest
+    ) -> Optional[Path]:
+        if not self.service_adapter:
+            logger.warning("No service adapter available for file dialog")
+            return None
+
+        return self.service_adapter.show_cached_file_dialog(
+            cache_key=request.cache_key,
+            title=request.title,
+            file_filter=request.file_filter,
+            mode=request.mode,
+        )
 
     def _load_step_settings_from_file(self, file_path: Path):
         """Load step settings from file."""

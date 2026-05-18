@@ -58,6 +58,16 @@ Checkpoint 3:
 - Removed the unreferenced `_get_current_plate_from_pipeline_editor` method,
   which was stale Textual-era structural probing residue.
 
+Checkpoint 4:
+
+- `StepParameterEditorWidget` hierarchy tree item handling now uses typed
+  `TreeItemType` plus a handler table instead of raw string dispatch.
+- Load/save step-settings file dialogs now route through
+  `StepSettingsDialogRequest`, removing duplicated cached-dialog keyword
+  mappings.
+- Focused advisor output is reduced to the larger class decomposition and
+  existing attribute-probe/template-method families.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:
