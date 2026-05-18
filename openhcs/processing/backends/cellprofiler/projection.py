@@ -90,45 +90,56 @@ class ProjectionStrategy(
         """Return the projected image."""
 
 
-class AverageProjectionStrategy(ProjectionStrategy):
+class Float32ProjectionStrategy(ProjectionStrategy):
+    """Template for projection algorithms that materialize float32 output."""
+
+    def apply(self, request: ProjectionRequest) -> np.ndarray:
+        return self.project(request).astype(np.float32)
+
+    @abstractmethod
+    def project(self, request: ProjectionRequest) -> np.ndarray:
+        """Return the projection before final CellProfiler float32 materialization."""
+
+
+class AverageProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.AVERAGE
 
-    def apply(self, request: ProjectionRequest) -> np.ndarray:
-        return np.mean(request.stack, axis=0).astype(np.float32)
+    def project(self, request: ProjectionRequest) -> np.ndarray:
+        return np.mean(request.stack, axis=0)
 
 
-class MaximumProjectionStrategy(ProjectionStrategy):
+class MaximumProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.MAXIMUM
 
-    def apply(self, request: ProjectionRequest) -> np.ndarray:
-        return np.max(request.stack, axis=0).astype(np.float32)
+    def project(self, request: ProjectionRequest) -> np.ndarray:
+        return np.max(request.stack, axis=0)
 
 
-class MinimumProjectionStrategy(ProjectionStrategy):
+class MinimumProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.MINIMUM
 
-    def apply(self, request: ProjectionRequest) -> np.ndarray:
-        return np.min(request.stack, axis=0).astype(np.float32)
+    def project(self, request: ProjectionRequest) -> np.ndarray:
+        return np.min(request.stack, axis=0)
 
 
-class SumProjectionStrategy(ProjectionStrategy):
+class SumProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.SUM
 
-    def apply(self, request: ProjectionRequest) -> np.ndarray:
-        return np.sum(request.stack, axis=0).astype(np.float32)
+    def project(self, request: ProjectionRequest) -> np.ndarray:
+        return np.sum(request.stack, axis=0)
 
 
-class VarianceProjectionStrategy(ProjectionStrategy):
+class VarianceProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.VARIANCE
 
-    def apply(self, request: ProjectionRequest) -> np.ndarray:
-        return np.var(request.stack.astype(np.float64), axis=0).astype(np.float32)
+    def project(self, request: ProjectionRequest) -> np.ndarray:
+        return np.var(request.stack.astype(np.float64), axis=0)
 
 
-class PowerProjectionStrategy(ProjectionStrategy):
+class PowerProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.POWER
 
-    def apply(self, request: ProjectionRequest) -> np.ndarray:
+    def project(self, request: ProjectionRequest) -> np.ndarray:
         stack = request.stack.astype(np.float64)
         depth, height, width = stack.shape
         summed = np.sum(stack, axis=0)
@@ -139,13 +150,13 @@ class PowerProjectionStrategy(ProjectionStrategy):
             power_image += multiplier * stack[index]
             power_mask += multiplier
         power_image -= summed * power_mask / depth
-        return (power_image * np.conj(power_image)).real.astype(np.float32)
+        return (power_image * np.conj(power_image)).real
 
 
-class BrightfieldProjectionStrategy(ProjectionStrategy):
+class BrightfieldProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.BRIGHTFIELD
 
-    def apply(self, request: ProjectionRequest) -> np.ndarray:
+    def project(self, request: ProjectionRequest) -> np.ndarray:
         stack = request.stack.astype(np.float64)
         norm0 = np.mean(stack[0])
         bright_max = stack[0].copy()
@@ -158,14 +169,14 @@ class BrightfieldProjectionStrategy(ProjectionStrategy):
             bright_min[min_mask] = normalized[min_mask]
             bright_max[max_mask] = normalized[max_mask]
             bright_min[max_mask] = bright_max[max_mask]
-        return (bright_max - bright_min).astype(np.float32)
+        return bright_max - bright_min
 
 
-class MaskProjectionStrategy(ProjectionStrategy):
+class MaskProjectionStrategy(Float32ProjectionStrategy):
     projection_type = ProjectionType.MASK
 
-    def apply(self, request: ProjectionRequest) -> np.ndarray:
-        return np.all(request.stack > 0, axis=0).astype(np.float32)
+    def project(self, request: ProjectionRequest) -> np.ndarray:
+        return np.all(request.stack > 0, axis=0)
 
 
 @numpy
