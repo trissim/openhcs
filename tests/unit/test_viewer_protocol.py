@@ -7,9 +7,11 @@ from openhcs.runtime.viewer_protocol import (
     NapariDetachedProcessRequest,
     NapariViewerProcessEntrypoint,
     NapariViewerServerRequest,
+    ManagedViewerLifecycleMixin,
     ViewerProcessPlatform,
     ViewerControlPingMode,
     ViewerControlPingRequest,
+    ViewerLifecycleState,
     ViewerQtEnvironmentPolicy,
     ViewerProcessHandle,
 )
@@ -172,3 +174,27 @@ def test_napari_detached_process_request_owns_log_and_python_command(tmp_path):
     assert process_request.log_file == launch.log_file
     assert process_request.cwd == tmp_path
     assert "TransportMode.TCP" in process_request.python_code
+
+
+def test_managed_viewer_lifecycle_uses_nominal_state_for_external_viewer():
+    class ExternalViewer(ManagedViewerLifecycleMixin):
+        viewer_process_label = "External"
+
+        def __init__(self):
+            self.lifecycle_state = ViewerLifecycleState.stopped()
+            self.port = 42
+            self.process = None
+            self.connected = True
+
+        def check_connected_viewer(self) -> bool:
+            return self.connected
+
+    viewer = ExternalViewer()
+    assert not viewer.is_running
+
+    viewer.lifecycle_state.mark_connected_external()
+    assert viewer.is_running
+
+    viewer.connected = False
+    assert not viewer.is_running
+    assert not viewer.lifecycle_state.is_active

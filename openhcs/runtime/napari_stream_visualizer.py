@@ -39,6 +39,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerControlPingMode,
     ViewerControlPingRequest,
     ViewerQtEnvironmentPolicy,
+    ViewerLifecycleState,
     ViewerProcessHandle,
     ViewerProtocolStatus,
 )
@@ -110,6 +111,9 @@ def _cleanup_global_viewer() -> None:
                 logger.warning("🔬 VISUALIZER: Force killing napari viewer process")
 
             _global_viewer_process = None
+
+
+register_cleanup_callback(_cleanup_global_viewer)
 
 
 def _build_nd_shapes(layer_items, stack_components):
@@ -1308,10 +1312,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
         self.process_handle: Optional[ViewerProcessHandle] = None
         self.zmq_context: Optional[zmq.Context] = None
         self.zmq_socket: Optional[zmq.Socket] = None
-        self._is_running = False  # Internal flag, use is_running property instead
-        self._connected_to_existing = (
-            False  # True if connected to viewer we didn't create
-        )
+        self.lifecycle_state = ViewerLifecycleState.stopped()
         self._lock = threading.Lock()
 
         # Clause 368: Visualization must be observer-only.
@@ -1388,10 +1389,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
                     logger.info(
                         f"🔬 VISUALIZER: Successfully connected to existing viewer on port {self.port}"
                     )
-                    self._is_running = True
-                    self._connected_to_existing = (
-                        True  # Mark that we connected to existing viewer
-                    )
+                    self.lifecycle_state.mark_connected_external()
                     return
                 else:
                     # Existing viewer is unresponsive - kill it and start fresh
@@ -1409,7 +1407,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
 
                     time.sleep(0.5)
 
-            if self._is_running:
+            if self.lifecycle_state.is_active:
                 logger.warning("Napari viewer is already running.")
                 return
 
@@ -1444,7 +1442,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
             process_alive = self.process_handle.is_alive()
 
             if process_alive:
-                self._is_running = True
+                self.lifecycle_state.mark_owned_process()
                 logger.info(
                     f"🔬 VISUALIZER: Napari viewer process started successfully (PID: {self.process_handle.pid_label})"
                 )
@@ -1612,7 +1610,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
                         logger.warning(
                             "🔬 VISUALIZER: Force killing napari viewer process"
                         )
-                self._is_running = False
+                self.lifecycle_state.mark_stopped()
             else:
                 logger.info("🔬 VISUALIZER: Keeping persistent napari viewer alive")
                 # Just cleanup our ZMQ connection, leave process running

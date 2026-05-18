@@ -432,3 +432,36 @@ Advisor status:
 
 - Remaining viewer findings are now lifecycle membership semantics and the
   duplicated Napari server role quotient.
+
+### Checkpoint 14
+
+Implemented:
+
+- `ViewerLifecycleState` and `ViewerLifecycleMode` now own viewer lifecycle
+  membership instead of paired `_is_running` / `_connected_to_existing`
+  booleans.
+- Napari and Fiji stream visualizers mark lifecycle transitions through the
+  nominal state object.
+- `ManagedViewerLifecycleMixin.is_running` evaluates the nominal state and
+  resets it on stale external viewers, dead owned processes, or process-status
+  errors.
+- `napari_stream_visualizer.py` now explicitly registers its global cleanup
+  callback.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 18 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/viewer_protocol.py openhcs/runtime/napari_viewer_server.py
+# lifecycle membership and unreferenced cleanup callback findings cleared
+```
+
+Advisor status:
+
+- Remaining focused viewer finding is the duplicated Napari server role
+  quotient in `napari_stream_visualizer.py` and `napari_viewer_server.py`.

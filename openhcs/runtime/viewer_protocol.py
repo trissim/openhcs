@@ -379,6 +379,42 @@ class ViewerControlPingMode(Enum):
     EXISTING_VIEWER = "existing_viewer"
 
 
+class ViewerLifecycleMode(Enum):
+    """Runtime ownership state for a managed viewer."""
+
+    STOPPED = "stopped"
+    CONNECTED_EXTERNAL = "connected_external"
+    OWNED_PROCESS = "owned_process"
+
+
+@dataclass(slots=True)
+class ViewerLifecycleState:
+    """Nominal lifecycle state for viewer process managers."""
+
+    mode: ViewerLifecycleMode = ViewerLifecycleMode.STOPPED
+
+    @classmethod
+    def stopped(cls) -> "ViewerLifecycleState":
+        return cls()
+
+    @property
+    def is_active(self) -> bool:
+        return self.mode is not ViewerLifecycleMode.STOPPED
+
+    @property
+    def is_connected_external(self) -> bool:
+        return self.mode is ViewerLifecycleMode.CONNECTED_EXTERNAL
+
+    def mark_connected_external(self) -> None:
+        self.mode = ViewerLifecycleMode.CONNECTED_EXTERNAL
+
+    def mark_owned_process(self) -> None:
+        self.mode = ViewerLifecycleMode.OWNED_PROCESS
+
+    def mark_stopped(self) -> None:
+        self.mode = ViewerLifecycleMode.STOPPED
+
+
 @dataclass(frozen=True, slots=True)
 class ViewerControlPingPolicy:
     """Timeout/readiness coordinates for one control ping mode."""
@@ -455,23 +491,23 @@ class ManagedViewerLifecycleMixin(ABC):
 
     @property
     def is_running(self) -> bool:
-        if not self._is_running:
+        lifecycle_state = self.lifecycle_state
+        if not lifecycle_state.is_active:
             return False
 
-        if self._connected_to_existing:
+        if lifecycle_state.is_connected_external:
             if not self.check_connected_viewer():
                 logging.getLogger(self.__class__.__module__).debug(
                     "%s viewer on port %s is no longer responsive",
                     self.viewer_process_label,
                     self.port,
                 )
-                self._is_running = False
-                self._connected_to_existing = False
+                lifecycle_state.mark_stopped()
                 return False
             return True
 
         if self.process is None:
-            self._is_running = False
+            lifecycle_state.mark_stopped()
             return False
 
         try:
@@ -482,7 +518,7 @@ class ManagedViewerLifecycleMixin(ABC):
                     self.viewer_process_label,
                     self.port,
                 )
-                self._is_running = False
+                lifecycle_state.mark_stopped()
             return alive
         except Exception as error:
             logging.getLogger(self.__class__.__module__).warning(
@@ -490,7 +526,7 @@ class ManagedViewerLifecycleMixin(ABC):
                 self.viewer_process_label,
                 error,
             )
-            self._is_running = False
+            lifecycle_state.mark_stopped()
             return False
 
 

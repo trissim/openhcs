@@ -27,6 +27,7 @@ from openhcs.runtime.viewer_protocol import (
     ManagedViewerLifecycleMixin,
     ViewerControlPingMode,
     ViewerControlPingRequest,
+    ViewerLifecycleState,
     ViewerProcessHandle,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
@@ -188,8 +189,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
         )  # ZMQ transport mode (IPC or TCP)
         self.process: Optional[subprocess.Popen] = None
         self.process_handle: Optional[ViewerProcessHandle] = None
-        self._is_running = False
-        self._connected_to_existing = False
+        self.lifecycle_state = ViewerLifecycleState.stopped()
         self._lock = threading.Lock()
 
     def check_connected_viewer(self) -> bool:
@@ -233,8 +233,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
                     logger.info(
                         f"🔬 FIJI VISUALIZER: Successfully connected to existing viewer on port {self.port}"
                     )
-                    self._is_running = True
-                    self._connected_to_existing = True
+                    self.lifecycle_state.mark_connected_external()
                     return
                 else:
                     # Existing viewer is unresponsive - kill it and start fresh
@@ -247,7 +246,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
                     ZMQServer.kill_processes_on_port(self.port + 1000)
                     time.sleep(0.5)
 
-            if self._is_running:
+            if self.lifecycle_state.is_active:
                 logger.warning("Fiji viewer is already running.")
                 return
 
@@ -277,7 +276,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
                 # For async mode, wait in background thread
                 def wait_and_set_ready():
                     if self._wait_for_server_ready(timeout=10.0):
-                        self._is_running = True
+                        self.lifecycle_state.mark_owned_process()
                         logger.info(
                             f"🔬 FIJI VISUALIZER: Fiji viewer server ready (PID: {self.process_handle.pid_label if self.process_handle else 'unknown'})"
                         )
@@ -291,7 +290,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
             else:
                 # For sync mode, wait immediately
                 if self._wait_for_server_ready(timeout=10.0):
-                    self._is_running = True
+                    self.lifecycle_state.mark_owned_process()
                     logger.info(
                         f"🔬 FIJI VISUALIZER: Fiji viewer server ready (PID: {self.process_handle.pid_label if self.process_handle else 'unknown'})"
                     )
@@ -430,10 +429,10 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
                     if _global_fiji_process == self.process:
                         _global_fiji_process = None
 
-                self._is_running = False
+                self.lifecycle_state.mark_stopped()
             else:
                 logger.info("🔬 FIJI VISUALIZER: Keeping persistent Fiji viewer alive")
-                # DON'T set _is_running = False for persistent viewers!
+                # DON'T mark stopped for persistent viewers.
                 # The process is still alive and should be reusable
 
     def _cleanup_zmq(self) -> None:

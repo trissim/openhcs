@@ -395,3 +395,24 @@ git diff --check
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/viewer_protocol.py
 # private process-entry, embedded launch payload, and repeated signature findings cleared
 ```
+
+Checkpoint 14:
+
+- Added `ViewerLifecycleState` / `ViewerLifecycleMode`.
+- Replaced Napari and Fiji `_is_running` / `_connected_to_existing` flag pairs
+  with nominal lifecycle transitions.
+- Updated `ManagedViewerLifecycleMixin` to evaluate and reset lifecycle state.
+- Registered the Napari stream visualizer global cleanup callback explicitly.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 18 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/viewer_protocol.py openhcs/runtime/napari_viewer_server.py
+# lifecycle membership and unreferenced cleanup callback findings cleared
+```
