@@ -268,3 +268,29 @@ Advisor status:
 - Cleared `ViewerQtEnvironmentPolicy.apply_to` enum ladder.
 - Remaining viewer-protocol-local finding is broader lifecycle membership in
   `ManagedViewerLifecycleMixin`.
+
+### Checkpoint 8
+
+Implemented:
+
+- `NapariViewerServerRequest.from_legacy_signature(...)` as the sole field-map
+  authority for the current public Napari server/process signatures.
+- Routed both Napari runtime modules through the request builder.
+- Unit coverage for legacy-signature projection.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py -q
+# 5 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/viewer_protocol.py
+# repeated NapariViewerServerRequest constructor field mapping cleared
+```
+
+Advisor status:
+
+- Cleared repeated request-constructor field mapping.
+- Remaining request-related finding is the larger public legacy signature
+  family itself; that should be handled with an explicit API/process-entry
+  migration rather than more wrapper forwarding.

@@ -130,6 +130,23 @@ class NapariViewerServerRequest:
     log_file_path: str | None
     transport_mode: object
 
+    @classmethod
+    def from_legacy_signature(
+        cls,
+        port: int,
+        viewer_title: str,
+        replace_layers: bool = False,
+        log_file_path: str | None = None,
+        transport_mode: object | None = None,
+    ) -> "NapariViewerServerRequest":
+        return cls(
+            port=port,
+            viewer_title=viewer_title,
+            replace_layers=replace_layers,
+            log_file_path=log_file_path,
+            transport_mode=transport_mode,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class ViewerQtPlatformEnvironmentPolicy:

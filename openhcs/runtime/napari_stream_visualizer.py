@@ -533,12 +533,12 @@ class NapariViewerServer(StreamingVisualizerServer):
             transport_mode: ZMQ transport mode (IPC or TCP)
         """
         import zmq
-        request = NapariViewerServerRequest(
-            port=port,
-            viewer_title=viewer_title,
-            replace_layers=replace_layers,
-            log_file_path=log_file_path,
-            transport_mode=transport_mode,
+        request = NapariViewerServerRequest.from_legacy_signature(
+            port,
+            viewer_title,
+            replace_layers,
+            log_file_path,
+            transport_mode,
         )
 
         # Initialize with SUB socket for receiving images
@@ -1247,12 +1247,12 @@ def _napari_viewer_process(
         import zmq
         import napari
 
-        request = NapariViewerServerRequest(
-            port=port,
-            viewer_title=viewer_title,
-            replace_layers=replace_layers,
-            log_file_path=log_file_path,
-            transport_mode=transport_mode,
+        request = NapariViewerServerRequest.from_legacy_signature(
+            port,
+            viewer_title,
+            replace_layers,
+            log_file_path,
+            transport_mode,
         )
 
         # Create ZMQ server instance (inherits from ZMQServer ABC)

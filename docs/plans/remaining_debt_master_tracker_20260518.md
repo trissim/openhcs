@@ -282,3 +282,22 @@ Verification:
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/viewer_protocol.py
 # shared viewer platform strategy ladder findings cleared
 ```
+
+Checkpoint 8:
+
+- Added `NapariViewerServerRequest.from_legacy_signature(...)` as the single
+  projection authority for the current public Napari server/process signature.
+- Routed both Napari runtime modules through that request builder and removed
+  repeated request-constructor keyword maps.
+- Added unit coverage for the legacy-signature request projection.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py -q
+# 5 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/viewer_protocol.py
+# repeated NapariViewerServerRequest constructor field mapping cleared
+# remaining request finding is the larger public legacy signature family
+```

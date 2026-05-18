@@ -7,6 +7,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerProcessPlatform,
     ViewerControlPingMode,
     ViewerControlPingRequest,
+    NapariViewerServerRequest,
     ViewerQtEnvironmentPolicy,
     ViewerProcessHandle,
 )
@@ -105,3 +106,21 @@ def test_viewer_qt_environment_policy_applies_platform_rows():
 
     windows_env = ViewerQtEnvironmentPolicy(ViewerProcessPlatform.WINDOWS).apply_to({})
     assert windows_env == {}
+
+
+def test_napari_viewer_server_request_owns_legacy_signature_projection():
+    request = NapariViewerServerRequest.from_legacy_signature(
+        1234,
+        "Viewer",
+        True,
+        "/tmp/viewer.log",
+        "ipc",
+    )
+
+    assert request == NapariViewerServerRequest(
+        port=1234,
+        viewer_title="Viewer",
+        replace_layers=True,
+        log_file_path="/tmp/viewer.log",
+        transport_mode="ipc",
+    )
