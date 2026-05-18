@@ -1,6 +1,6 @@
 # Full Repo Advisor Campaign Index - 2026-05-18
 
-## Source Scan
+## First-Wave Source Scan
 
 The campaign set below is derived from the first successful full-package advisor
 scan after advisor performance fixes:
@@ -19,7 +19,7 @@ The scan emitted 1,140 findings. Many are cleanup-grade readability, blank-line,
 string-dispatch, or helper-noise findings. This index filters for campaign-grade
 architecture work where the finding points to a stable OpenHCS boundary.
 
-## Campaign Files
+## First-Wave Campaign Files
 
 1. `full_repo_orchestration_hubs_refactor_20260518.md`
    - Main target: `PipelineOrchestrator.execute_compiled_plate`
@@ -78,6 +78,69 @@ architecture work where the finding points to a stable OpenHCS boundary.
 
 This order starts with low-blast-radius typed abstractions and ends with the
 highest-risk orchestrator and GUI decomposition work.
+
+## Second-Wave Remaining Debt Plans
+
+The remaining-debt plan set is derived from the current full-repo scan:
+
+```bash
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs
+```
+
+Raw output:
+
+- `/tmp/advisor_openhcs_remaining_20260518.txt`
+
+Current result:
+
+- 1,133 findings
+
+Plan files:
+
+1. `remaining_debt_master_tracker_20260518.md`
+   - Queue for campaigns 9-15.
+   - Explicitly excludes deprecated Textual TUI refactors.
+
+2. `orchestrator_stage_split_continuation_20260518.md`
+   - Continues the `execute_compiled_plate` staged split.
+   - Targets worker-assignment planning, executor construction/submission,
+     result aggregation, cleanup/consolidation, and state projection.
+
+3. `runtime_viewer_protocol_cleanup_20260518.md`
+   - Targets Napari/Fiji viewer protocol cleanup from full-scan findings:
+     string dispatch, marker membership, bidirectional registries, and large
+     listener/update methods.
+
+4. `active_pyqt_residual_decomposition_20260518.md`
+   - Targets active PyQt only: `image_browser.py`, `plate_view_widget.py`,
+     `progress_tree_builder.py`, `dual_editor_window.py`,
+     `step_parameter_editor.py`, `llm_pipeline_service.py`, and
+     `event_recorder.py`.
+
+5. `backend_dimensional_dispatch_authority_20260518.md`
+   - Targets numeric dimensional dispatch in active analysis/enhance backends.
+
+6. `cellprofiler_backend_authority_cleanup_20260518.md`
+   - Targets high-density CellProfiler backend authority debt in thresholding,
+     morphology, watershed, intensity distribution, grid, zernike,
+     illumination, colocalization, secondary, granularity, tracking, and
+     alignment.
+
+7. `public_api_export_surface_authority_20260518.md`
+   - Targets manual public API/export surfaces and registry/export drift.
+
+8. `active_non_tui_cleanup_batch_20260518.md`
+   - Batches behavior-preserving cleanup-grade findings in active non-TUI files.
+
+## Second-Wave Execution Order
+
+1. Orchestrator stage split continuation
+2. Runtime viewer and streaming protocol cleanup
+3. Active PyQt residual decomposition
+4. Backend dimensional dispatch authority
+5. CellProfiler backend authority cleanup
+6. Public API and export surface authority
+7. Active non-TUI cleanup batch
 
 ## Global Verification Gates
 

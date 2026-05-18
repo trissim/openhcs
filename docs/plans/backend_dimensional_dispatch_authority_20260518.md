@@ -1,0 +1,67 @@
+# Backend Dimensional Dispatch Authority - 2026-05-18
+
+## Full-Scan Evidence
+
+The full scan reports closed-family numeric dispatch in active backend files:
+
+- `openhcs/processing/backends/analysis/dxf_mask_pipeline.py`
+- `openhcs/processing/backends/analysis/self_supervised_segmentation_3d.py`
+- `openhcs/processing/backends/enhance/focus_torch.py`
+- `openhcs/processing/backends/enhance/jax_nlm_processor.py`
+- `openhcs/processing/backends/enhance/self_supervised_2d_deconvolution.py`
+- `openhcs/processing/backends/enhance/self_supervised_3d_deconvolution.py`
+
+The repeated axis is array/image dimensionality: `ndim`, original shape length,
+and related 2D/3D/4D/5D cases.
+
+## Current Problem
+
+Dimensional behavior is encoded as local literal branches. That makes it hard to
+know which dimensional cases are supported, which are errors, and which reshape
+rules are shared across backends.
+
+## Target Shape
+
+Add reusable dimensional dispatch authorities:
+
+- `ImageDimensionality`
+- `DimensionalCase`
+- `DimensionalDispatchTable`
+- `ArrayShapeProjection`
+- backend-specific `DimensionalOperation` records where behavior differs.
+
+Use typed tables for metadata-only cases and nominal strategy classes only when
+the case owns significant behavior.
+
+## Phases
+
+1. Characterize each target backend with shape-focused tests.
+2. Introduce a small shared dimensionality module under processing/backend
+   utilities.
+3. Replace low-risk local ndim ladders with typed dispatch tables.
+4. Extract reusable reshape/project/restore rules from self-supervised
+   deconvolution and segmentation backends.
+5. Keep numerical outputs unchanged; compare shapes, dtype, and representative
+   values.
+
+## Verification Gates
+
+Focused tests should include existing tests plus new shape characterization:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_*deconvolution* tests/unit/test_*segmentation* tests/unit/test_cellprofiler_library_loading.py -q
+timeout 120 .venv/bin/python -m nominal_refactor_advisor \
+  openhcs/processing/backends/analysis/dxf_mask_pipeline.py \
+  openhcs/processing/backends/analysis/self_supervised_segmentation_3d.py \
+  openhcs/processing/backends/enhance/focus_torch.py \
+  openhcs/processing/backends/enhance/jax_nlm_processor.py \
+  openhcs/processing/backends/enhance/self_supervised_2d_deconvolution.py \
+  openhcs/processing/backends/enhance/self_supervised_3d_deconvolution.py
+```
+
+## Completion Criteria
+
+- Supported dimensional cases are explicit data or strategy records.
+- Local numeric dispatch ladders are removed from target backends.
+- Shape behavior and numerical semantics are preserved.
+
