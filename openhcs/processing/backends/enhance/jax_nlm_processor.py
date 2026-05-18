@@ -19,6 +19,7 @@ Doctrinal Clauses:
 from __future__ import annotations
 
 import logging
+from enum import Enum
 from typing import Optional
 
 from openhcs.utils.import_utils import optional_import
@@ -31,6 +32,46 @@ lax = jax.lax if jax else None
 tree_util = jax.tree_util if jax else None
 
 logger = logging.getLogger(__name__)
+
+
+class JaxNlmInputDimensionality(Enum):
+    """Closed dimensionality family supported by the JAX NLM wrapper."""
+
+    IMAGE_2D = 2
+    VOLUME_3D = 3
+
+    @classmethod
+    def from_ndim(cls, ndim: int) -> "JaxNlmInputDimensionality":
+        try:
+            return cls(ndim)
+        except ValueError as exc:
+            raise ValueError(f"Unexpected input dimensions: {ndim}D") from exc
+
+    def estimation_slice(self, image_normalized: "jnp.ndarray") -> "jnp.ndarray":
+        if self is JaxNlmInputDimensionality.VOLUME_3D:
+            return image_normalized[0]
+        return image_normalized
+
+    def denoise(
+        self,
+        image_normalized: "jnp.ndarray",
+        search_window_radius: int,
+        filter_radius: int,
+        h: float,
+        sigma: float,
+    ) -> "jnp.ndarray":
+        if self is JaxNlmInputDimensionality.IMAGE_2D:
+            return _nlm_core(
+                image_normalized,
+                search_window_radius,
+                filter_radius,
+                h,
+                sigma,
+            )
+        raise NotImplementedError(
+            "3D non-local means processing is not yet implemented for JAX backend. "
+            "Use slice_by_slice=True for 2D slice-by-slice processing."
+        )
 
 
 def _validate_jax_array(image: "jnp.ndarray") -> None:
@@ -244,6 +285,7 @@ def non_local_means_denoise_jax(
 
     # Store original dtype for reference
     original_dtype = image.dtype
+    input_dimensionality = JaxNlmInputDimensionality.from_ndim(image.ndim)
 
     # Convert to float32 for processing and normalize to [0, 1] range
     image_float = image.astype(jnp.float32)
@@ -261,11 +303,7 @@ def non_local_means_denoise_jax(
         # Simple noise estimation using Laplacian
         laplacian_kernel = jnp.array([[0, -1, 0], [-1, 4, -1], [0, -1, 0]], dtype=jnp.float32)
 
-        # Apply to appropriate slice for estimation
-        if image.ndim == 3:
-            estimation_slice = image_normalized[0]  # Use first slice for 3D
-        else:
-            estimation_slice = image_normalized     # Use the 2D image directly
+        estimation_slice = input_dimensionality.estimation_slice(image_normalized)
 
         padded = jnp.pad(estimation_slice, 1, mode='reflect')
         laplacian = jnp.zeros_like(estimation_slice)
@@ -279,19 +317,13 @@ def non_local_means_denoise_jax(
     if h is None:
         h = 0.75 * sigma  # Standard relationship
 
-    # Handle different input dimensions
-    if image.ndim == 2:
-        # 2D input: Process directly (called by decorator on individual slices)
-        result = _nlm_core(image_normalized, search_window_radius, filter_radius, h, sigma)
-    elif image.ndim == 3:
-        # 3D input: If we get here with 3D input, it means slice_by_slice=False
-        # because when slice_by_slice=True, the decorator handles slicing
-        raise NotImplementedError(
-            "3D non-local means processing is not yet implemented for JAX backend. "
-            "Use slice_by_slice=True for 2D slice-by-slice processing."
-        )
-    else:
-        raise ValueError(f"Unexpected input dimensions: {image.ndim}D")
+    result = input_dimensionality.denoise(
+        image_normalized,
+        search_window_radius,
+        filter_radius,
+        h,
+        sigma,
+    )
 
     # Always rescale output to [0, 1] range to prevent uint16 clipping
     result = _rescale_to_unit_range(result)

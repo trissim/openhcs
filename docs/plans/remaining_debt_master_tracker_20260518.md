@@ -811,6 +811,30 @@ Remaining:
 
 - Split deconvolution blur-mode behavior into nominal strategy families.
 
+Checkpoint 5:
+
+- Added `JaxNlmInputDimensionality` to
+  `openhcs/processing/backends/enhance/jax_nlm_processor.py`.
+- Replaced direct `image.ndim` numeric dispatch in JAX non-local means with the
+  closed dimensionality family for estimation-slice selection and denoise
+  routing.
+
+Verification:
+
+```bash
+.venv/bin/python -m py_compile openhcs/processing/backends/enhance/jax_nlm_processor.py
+# clean
+
+.venv/bin/python - <<'PY'
+import openhcs.processing.backends.enhance.jax_nlm_processor as m
+print(m.JaxNlmInputDimensionality.IMAGE_2D.value)
+PY
+# 2
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/enhance/jax_nlm_processor.py
+# No refactoring findings.
+```
+
 ## Campaign 13 - CellProfiler Backend Authority Cleanup
 
 Checkpoint 1:
