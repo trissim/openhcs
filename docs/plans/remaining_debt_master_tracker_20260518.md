@@ -835,6 +835,29 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/back
 # No refactoring findings.
 ```
 
+Checkpoint 6:
+
+- Added `PyclesperantoMaskDimensionality` to
+  `openhcs/processing/backends/processors/pyclesperanto_processor.py`.
+- Replaced `len(mask.shape)` numeric dispatch in `apply_mask` with the closed
+  mask-dimensionality family.
+
+Verification:
+
+```bash
+.venv/bin/python -m py_compile openhcs/processing/backends/processors/pyclesperanto_processor.py
+# clean
+
+.venv/bin/python - <<'PY'
+import openhcs.processing.backends.processors.pyclesperanto_processor as m
+print(m.PyclesperantoMaskDimensionality.MASK_2D.value)
+PY
+# 2
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/processors/pyclesperanto_processor.py
+# Original len(mask.shape) numeric dispatch finding cleared.
+```
+
 ## Campaign 13 - CellProfiler Backend Authority Cleanup
 
 Checkpoint 1:

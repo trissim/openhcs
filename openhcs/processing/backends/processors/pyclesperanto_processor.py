@@ -8,6 +8,7 @@ with OpenHCS patterns.
 
 import logging
 import os
+from enum import Enum
 from typing import List, Optional
 
 # Import OpenHCS decorator
@@ -15,6 +16,41 @@ from openhcs.core.memory import pyclesperanto as pyclesperanto_func
 
 # Set up logging
 logger = logging.getLogger(__name__)
+
+
+class PyclesperantoMaskDimensionality(Enum):
+    """Closed mask-dimensionality family for GPU mask application."""
+
+    MASK_2D = 2
+    MASK_3D = 3
+
+    @classmethod
+    def from_mask(cls, mask: "cle.Array") -> "PyclesperantoMaskDimensionality":
+        try:
+            return cls(len(mask.shape))
+        except ValueError as exc:
+            raise TypeError(
+                f"mask must be a 2D or 3D pyclesperanto Array, got shape {mask.shape}"
+            ) from exc
+
+    def apply(self, image: "cle.Array", mask: "cle.Array") -> "cle.Array":
+        if self is PyclesperantoMaskDimensionality.MASK_2D:
+            if mask.shape != image.shape[1:]:
+                raise ValueError(
+                    f"2D mask shape {mask.shape} doesn't match image slice shape "
+                    f"{image.shape[1:]}"
+                )
+
+            result = cle.create_like(image)
+            for z in range(image.shape[0]):
+                result[z] = cle.multiply_images(image[z], mask)
+            return result
+
+        if mask.shape != image.shape:
+            raise ValueError(
+                f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
+            )
+        return cle.multiply_images(image, mask)
 
 # Check if we're in subprocess runner mode and should skip GPU imports
 if os.getenv('OPENHCS_SUBPROCESS_NO_GPU') == '1':
@@ -405,39 +441,7 @@ def apply_mask(image: "cle.Array", mask: "cle.Array") -> "cle.Array":
     if len(image.shape) != 3:
         raise ValueError(f"Expected 3D image array, got {len(image.shape)}D array")
 
-    # Handle 2D mask (apply to each Z-slice)
-    if len(mask.shape) == 2:
-        if mask.shape != image.shape[1:]:
-            raise ValueError(
-                f"2D mask shape {mask.shape} doesn't match image slice shape {image.shape[1:]}"
-            )
-
-        # Create result array on GPU
-        result = cle.create_like(image)
-
-        for z in range(image.shape[0]):
-            # Work directly with slice views
-            gpu_slice = image[z]  # Direct slice access
-            # Apply mask (both stay on GPU)
-            gpu_masked = cle.multiply_images(gpu_slice, mask)
-            # Assign result directly
-            result[z] = gpu_masked
-
-        return result
-
-    # Handle 3D mask
-    elif len(mask.shape) == 3:
-        if mask.shape != image.shape:
-            raise ValueError(
-                f"3D mask shape {mask.shape} doesn't match image shape {image.shape}"
-            )
-
-        # Apply mask directly (both stay on GPU)
-        return cle.multiply_images(image, mask)
-
-    # If we get here, the mask is neither 2D nor 3D
-    else:
-        raise TypeError(f"mask must be a 2D or 3D pyclesperanto Array, got shape {mask.shape}")
+    return PyclesperantoMaskDimensionality.from_mask(mask).apply(image, mask)
 
 @pyclesperanto_func
 def create_composite(
@@ -724,4 +728,3 @@ def create_weight_mask(shape: tuple, margin_ratio: float = 0.1) -> "cle.Array":
 
     height, width = shape
     return create_linear_weight_mask(height, width, margin_ratio)
-
