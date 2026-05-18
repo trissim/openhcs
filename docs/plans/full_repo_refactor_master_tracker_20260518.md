@@ -53,7 +53,7 @@ OpenHCS checkpoint before these campaign plans:
 | 3 | Complete | Validation registry family | `validation_registry_family_refactor_20260518.md` | validator tests + advisor on `validation/ast_validator.py` |
 | 4 | Complete | Backend parameter request records | `backend_parameter_request_records_refactor_20260518.md` | Ashlar CPU/GPU focused tests + advisor on pos-gen modules |
 | 5 | Complete | Preset pipeline spec authority | `preset_pipeline_spec_authority_refactor_20260518.md` | materialization equivalence tests + advisor on presets |
-| 6 | Pending | PyQt GUI decomposition | `pyqt_gui_decomposition_refactor_20260518.md` | controller tests/import smoke + advisor on `PlateViewWidget` |
+| 6 | Complete | PyQt GUI decomposition | `pyqt_gui_decomposition_refactor_20260518.md` | controller tests/import smoke + advisor on `PlateViewWidget` |
 | 7 | Pending | Orchestration hubs | `full_repo_orchestration_hubs_refactor_20260518.md` | orchestrator characterization tests + focused advisor |
 | 8 | Pending | Full-repo triage policy and known-noise ledger | `full_repo_advisor_triage_policy_20260518.md`, `advisor_known_noise.md` | full advisor scan reviewed and ledger updated |
 
@@ -216,3 +216,29 @@ Before completion:
 - Focused advisor: no findings for the new MFD spec authority and wrappers.
 - Full unit verification: `1522 passed, 10 warnings`.
 - Full advisor scan: 1,142 findings, 60.135s.
+
+### 2026-05-18 - PyQt GUI Decomposition Started
+
+- Moved campaign 6 to `In Progress`.
+- Focused advisor on `PlateViewWidget` confirmed the primary target:
+  `eventFilter` concentrated drag selection, rectangle selection, event
+  routing, signal publication, and mouse-grab lifecycle.
+- First slice: extract event routing and selection interaction lifecycle while
+  preserving the public widget facade.
+
+### 2026-05-18 - PyQt GUI Decomposition Completed
+
+- Added typed event target/mode/state records for plate-view selection
+  interaction.
+- Extracted `PlateSelectionEventController` so `PlateViewWidget.eventFilter`
+  delegates through one routing boundary instead of owning all event phases.
+- Collapsed row/column selection into a shared axis-selection helper.
+- Replaced string/numeric UI state dispatch with explicit enum/table-backed
+  declarations for subdirectory display mode and well-button style.
+- Removed the unreferenced drag-selection private method during controller
+  extraction.
+- Focused smoke passed under `QT_QPA_PLATFORM=offscreen`.
+- Focused advisor: original `eventFilter` orchestration-hub finding removed;
+  remaining focused findings are broader widget/service decomposition items.
+- Full unit verification: `1522 passed, 10 warnings`.
+- Full advisor scan: 1,138 findings, 61.458s.

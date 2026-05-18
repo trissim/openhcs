@@ -114,3 +114,51 @@ python -m nominal_refactor_advisor \
 - Selection semantics are testable outside a monolithic eventFilter.
 - Deprecated TUI findings are ignored or handled only by deletion/deprecation
   cleanup, not refactoring investment.
+
+## Implementation Record
+
+Implemented on 2026-05-18:
+
+- `PlateSelectionEventTarget`, `PlateSubdirectoryMode`, and `WellButtonState`
+  name the UI axes that were previously literal button/grid/string/count
+  dispatch.
+- `PlateSelectionEventRoute` and `PlateSelectionEventController` own mouse
+  event routing and drag/rectangle selection lifecycle.
+- `PlateViewWidget.eventFilter` now delegates to the controller and falls back
+  to Qt default handling only when the controller does not handle an event.
+- Row and column toggles now share `_toggle_axis_selection(...)`.
+- Well-button styling is table-backed through `WellButtonStyleColors`.
+
+Verification:
+
+```bash
+git diff --check
+QT_QPA_PLATFORM=offscreen .venv/bin/python - <<'PY'
+from PyQt6.QtWidgets import QApplication
+from openhcs.pyqt_gui.widgets.shared.plate_view_widget import PlateViewWidget
+app = QApplication.instance() or QApplication([])
+widget = PlateViewWidget()
+widget.set_subdirectories([])
+widget.set_subdirectories(["out"])
+widget.set_subdirectories(["a", "b"])
+widget.set_available_wells({"A01", "A02"}, coord_to_well={(1, 1): "A01", (1, 2): "A02"})
+widget.select_wells({"A01"})
+widget._toggle_row_selection(1)
+widget._toggle_column_selection(1)
+PY
+.venv/bin/python -m pytest tests/unit -q
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs
+```
+
+Results:
+
+- Smoke passed.
+- Unit suite: `1522 passed, 10 warnings`.
+- Full advisor scan: 1,138 findings, 61.458s.
+
+Residual PyQt debt:
+
+- `PlateViewWidget` still wants broader role decomposition into subdirectory,
+  grid-building, selection-state, and filter-sync services.
+- `PlateSelectionEventController` can be split further if future GUI tests cover
+  lower-level event phases directly.
