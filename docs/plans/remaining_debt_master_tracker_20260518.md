@@ -37,11 +37,11 @@ Result:
 | Order | Status | Campaign | Plan File | Primary Gate |
 | --- | --- | --- | --- | --- |
 | 9 | Complete | Orchestrator stage split continuation | `orchestrator_stage_split_continuation_20260518.md` | focused orchestrator/debug tests + advisor on orchestrator |
-| 10 | In Progress | Runtime viewer and streaming protocol cleanup | `runtime_viewer_protocol_cleanup_20260518.md` | mocked Napari/Fiji imports + runtime viewer tests |
-| 11 | Pending | Active PyQt residual decomposition | `active_pyqt_residual_decomposition_20260518.md` | Qt offscreen smoke + PyQt focused tests |
-| 12 | Pending | Backend dimensional dispatch authority | `backend_dimensional_dispatch_authority_20260518.md` | focused backend tests + advisor on selected backend files |
-| 13 | Pending | CellProfiler backend authority cleanup | `cellprofiler_backend_authority_cleanup_20260518.md` | CP compatibility/generated pipeline tests |
-| 14 | Pending | Public API and export surface authority | `public_api_export_surface_authority_20260518.md` | import-surface tests + public API smoke |
+| 10 | Complete | Runtime viewer and streaming protocol cleanup | `runtime_viewer_protocol_cleanup_20260518.md` | mocked Napari/Fiji imports + runtime viewer tests |
+| 11 | Active Focus | Active PyQt residual decomposition | `active_pyqt_residual_decomposition_20260518.md` | Qt offscreen smoke + PyQt focused tests |
+| 12 | On Hold | Backend dimensional dispatch authority | `backend_dimensional_dispatch_authority_20260518.md` | focused backend tests + advisor on selected backend files |
+| 13 | Active Focus | CellProfiler backend authority cleanup | `cellprofiler_backend_authority_cleanup_20260518.md` | CP compatibility/generated pipeline tests |
+| 14 | Active Focus | Public API and export surface authority | `public_api_export_surface_authority_20260518.md` | import-surface tests + public API smoke |
 | 15 | Pending | Active non-TUI cleanup batch | `active_non_tui_cleanup_batch_20260518.md` | targeted tests + full unit suite |
 
 ## Execution Rules
@@ -72,6 +72,18 @@ High-volume active, non-TUI areas from the full scan:
 - Public/export surfaces and protocol probing: `__init__.py` modules,
   `unified_registry.py`, `func_registry.py`, `callable_contract.py`,
   `runtime_artifact_queries.py`.
+
+## Current Focus Override - 2026-05-18
+
+Backend dimensional dispatch is paused after checkpoint 4. The active focus
+queue is now:
+
+1. `active_pyqt_residual_decomposition_20260518.md`
+2. `cellprofiler_backend_authority_cleanup_20260518.md`
+3. `public_api_export_surface_authority_20260518.md`
+
+These three plans should be worked before resuming
+`backend_dimensional_dispatch_authority_20260518.md`.
 
 ## Execution Log
 
@@ -476,7 +488,16 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 
 ## Campaign 11 - Backend Dimensional Dispatch Authority
 
-Status: In Progress
+Status: On Hold
+
+Hold reason:
+
+- User requested this campaign be paused after checkpoint 4.
+- Remaining known item is the deconvolution blur-mode strategy family split.
+- Resume only after the active focus queue completes:
+  `active_pyqt_residual_decomposition_20260518.md`,
+  `cellprofiler_backend_authority_cleanup_20260518.md`, and
+  `public_api_export_surface_authority_20260518.md`.
 
 Checkpoint 1:
 
