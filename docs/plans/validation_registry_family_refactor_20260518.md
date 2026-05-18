@@ -136,3 +136,18 @@ python -m nominal_refactor_advisor openhcs/validation/ast_validator.py
 - Violation records are typed/frozen.
 - The semantic inheritance family finding is removed or replaced by a smaller
   accepted finding with a clear reason.
+
+## Completion Evidence
+
+- Implemented `ValidationKind`, frozen/slotted `ValidationViolation`, and
+  registered `ASTValidator` concrete leaves keyed by validation kind.
+- Added `run_ast_validators(...)` as the execution authority; `validate_file`
+  now delegates to it instead of maintaining a manual concrete validator list.
+- Preserved compatibility aliases (`PATH_TYPE`, `BACKEND_PARAM`,
+  `VFS_BOUNDARY`, `MEMORY_TYPE`) and string-valued violation output.
+- Added focused tests for registry order, subset execution, frozen violation
+  records, syntax-error behavior, and `validate_file` delegation.
+- Focused advisor result for `openhcs/validation/ast_validator.py`: no
+  findings.
+- Full unit verification: `1513 passed, 10 warnings`.
+- Full advisor scan after the campaign: 1,147 findings, 59.472s.

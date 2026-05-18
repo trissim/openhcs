@@ -6,15 +6,36 @@ backend parameter validation, and architectural constraints at compile time.
 """
 
 import ast
+from dataclasses import dataclass
+from enum import Enum
 import functools
 import os
-from typing import List, Optional
+from typing import ClassVar, Iterable, List, Optional
 
-# Constants for validation types
-PATH_TYPE = "path_type"
-BACKEND_PARAM = "backend_param"
-MEMORY_TYPE = "memory_type"
-VFS_BOUNDARY = "vfs_boundary"
+from metaclass_registry import AutoRegisterMeta
+
+
+class ValidationKind(str, Enum):
+    """Nominal validator family keys used for AST validation."""
+
+    PATH_TYPE = "path_type"
+    BACKEND_PARAM = "backend_param"
+    MEMORY_TYPE = "memory_type"
+    VFS_BOUNDARY = "vfs_boundary"
+
+
+# Compatibility aliases for existing string comparisons and CLI output.
+PATH_TYPE = ValidationKind.PATH_TYPE.value
+BACKEND_PARAM = ValidationKind.BACKEND_PARAM.value
+MEMORY_TYPE = ValidationKind.MEMORY_TYPE.value
+VFS_BOUNDARY = ValidationKind.VFS_BOUNDARY.value
+
+DEFAULT_VALIDATION_KINDS: tuple[ValidationKind, ...] = (
+    ValidationKind.PATH_TYPE,
+    ValidationKind.BACKEND_PARAM,
+    ValidationKind.VFS_BOUNDARY,
+    ValidationKind.MEMORY_TYPE,
+)
 
 # Error messages
 ERROR_INVALID_PATH_TYPE = (
@@ -35,36 +56,52 @@ ERROR_MEMORY_TYPE = (
     "Memory type violation: {0}"
 )
 
+@dataclass(frozen=True, slots=True)
 class ValidationViolation:
     """Represents a validation violation found during AST analysis."""
-    
-    def __init__(self, 
-                 file_path: str, 
-                 line_number: int, 
-                 violation_type: str, 
-                 message: str, 
-                 node: Optional[ast.AST] = None):
-        self.file_path = file_path
-        self.line_number = line_number
-        self.violation_type = violation_type
-        self.message = message
-        self.node = node
-    
+
+    file_path: str
+    line_number: int
+    violation_type: str | ValidationKind
+    message: str
+    node: Optional[ast.AST] = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.violation_type, ValidationKind):
+            object.__setattr__(self, "violation_type", self.violation_type.value)
+
     def __str__(self) -> str:
         return f"{self.file_path}:{self.line_number} - {self.violation_type}: {self.message}"
 
 
-class ASTValidator(ast.NodeVisitor):
+class ASTValidator(ast.NodeVisitor, metaclass=AutoRegisterMeta):
     """Base AST validator for static code analysis."""
-    
+
+    __registry_key__ = "validation_kind"
+    __skip_if_no_key__ = True
+
+    __registry__: ClassVar[dict[ValidationKind, type["ASTValidator"]]] = {}
+    validation_kind: ClassVar[ValidationKind | None] = None
+
     def __init__(self, file_path: str):
         self.file_path = file_path
         self.violations: List[ValidationViolation] = []
         self.current_function: Optional[ast.FunctionDef] = None
-    
+
+    @classmethod
+    def validators_for(
+        cls,
+        kinds: Iterable[ValidationKind | str] | None = None,
+    ) -> tuple[type["ASTValidator"], ...]:
+        """Return validator classes in stable execution order."""
+        selected_kinds = DEFAULT_VALIDATION_KINDS if kinds is None else tuple(
+            ValidationKind(kind) for kind in kinds
+        )
+        return tuple(cls.__registry__[kind] for kind in selected_kinds)
+
     def add_violation(self, 
                       node: ast.AST, 
-                      violation_type: str, 
+                      violation_type: ValidationKind | str,
                       message: str) -> None:
         """Add a validation violation."""
         self.violations.append(
@@ -87,6 +124,8 @@ class ASTValidator(ast.NodeVisitor):
 
 class PathTypeValidator(ASTValidator):
     """Validates that path parameters are correctly typed as str or Path."""
+
+    validation_kind = ValidationKind.PATH_TYPE
     
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Check function parameters for path type annotations."""
@@ -136,6 +175,8 @@ class PathTypeValidator(ASTValidator):
 
 class BackendParameterValidator(ASTValidator):
     """Validates that backend parameters are correctly passed and typed."""
+
+    validation_kind = ValidationKind.BACKEND_PARAM
     
     def visit_Call(self, node: ast.Call) -> None:
         """Check function calls for backend parameter usage."""
@@ -178,6 +219,8 @@ class BackendParameterValidator(ASTValidator):
 
 class VFSBoundaryValidator(ASTValidator):
     """Validates VFS boundary enforcement rules."""
+
+    validation_kind = ValidationKind.VFS_BOUNDARY
     
     def __init__(self, file_path: str):
         super().__init__(file_path)
@@ -240,6 +283,8 @@ class VFSBoundaryValidator(ASTValidator):
 
 class MemoryTypeValidator(ASTValidator):
     """Validates memory type declarations and usage."""
+
+    validation_kind = ValidationKind.MEMORY_TYPE
     
     def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
         """Check function decorators for memory type declarations."""
@@ -313,9 +358,26 @@ def validate_backend_parameter(func):
     return wrapper
 
 
+def run_ast_validators(
+    tree: ast.AST,
+    file_path: str,
+    kinds: Iterable[ValidationKind | str] | None = None,
+) -> tuple[ValidationViolation, ...]:
+    """Run the registered AST validator family for a parsed source tree."""
+    violations: list[ValidationViolation] = []
+    for validator_cls in ASTValidator.validators_for(kinds):
+        validator = validator_cls(file_path)
+        validator.visit(tree)
+        violations.extend(validator.violations)
+    return tuple(violations)
+
+
 # Main validation function
 
-def validate_file(file_path: str) -> List[ValidationViolation]:
+def validate_file(
+    file_path: str,
+    kinds: Iterable[ValidationKind | str] | None = None,
+) -> List[ValidationViolation]:
     """
     Validate a Python file using AST-based analysis.
     
@@ -339,18 +401,4 @@ def validate_file(file_path: str) -> List[ValidationViolation]:
             node=None
         )]
     
-    violations = []
-    
-    # Run all validators
-    validators = [
-        PathTypeValidator(file_path),
-        BackendParameterValidator(file_path),
-        VFSBoundaryValidator(file_path),
-        MemoryTypeValidator(file_path)
-    ]
-    
-    for validator in validators:
-        validator.visit(tree)
-        violations.extend(validator.violations)
-    
-    return violations
+    return list(run_ast_validators(tree, file_path, kinds))

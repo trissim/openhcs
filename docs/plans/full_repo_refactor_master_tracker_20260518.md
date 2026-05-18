@@ -50,7 +50,7 @@ OpenHCS checkpoint before these campaign plans:
 | 0 | Complete | Callable request binding and CP threshold context cleanup | `callable_request_binding_refactor_20260518.md`, `cellprofiler_binding_context_cleanup_20260518.md` | `pytest tests/unit -q` passed; commit `62c46ec4` pushed |
 | 1 | Complete | Runtime artifact query axis | `runtime_artifact_query_axis_refactor_20260518.md` | focused runtime artifact query tests + advisor on `runtime_artifact_queries.py` |
 | 2 | Complete | Napari streaming handler axis | `napari_streaming_handler_axis_refactor_20260518.md` | import smoke for both Napari modules + focused advisor |
-| 3 | Pending | Validation registry family | `validation_registry_family_refactor_20260518.md` | validator tests + advisor on `validation/ast_validator.py` |
+| 3 | Complete | Validation registry family | `validation_registry_family_refactor_20260518.md` | validator tests + advisor on `validation/ast_validator.py` |
 | 4 | Pending | Backend parameter request records | `backend_parameter_request_records_refactor_20260518.md` | Ashlar CPU/GPU focused tests + advisor on pos-gen modules |
 | 5 | Pending | Preset pipeline spec authority | `preset_pipeline_spec_authority_refactor_20260518.md` | materialization equivalence tests + advisor on presets |
 | 6 | Pending | PyQt GUI decomposition | `pyqt_gui_decomposition_refactor_20260518.md` | controller tests/import smoke + advisor on `PlateViewWidget` |
@@ -146,3 +146,25 @@ Before completion:
   findings are broader layer update helper ownership.
 - Full unit verification: `1508 passed, 10 warnings`.
 - Full advisor scan: 1,148 findings, 59.677s.
+
+### 2026-05-18 - Validation Registry Family Started
+
+- Moved campaign 3 to `In Progress`.
+- Verified the only in-repo execution authority is `validate_file`; external
+  callers consume `ValidationViolation` and `validate_file`.
+- First slice: freeze violation records, add typed validation kinds, and derive
+  `validate_file` execution from the registered validator family while
+  preserving string compatibility aliases.
+
+### 2026-05-18 - Validation Registry Family Completed
+
+- Added `ValidationKind`, frozen/slotted `ValidationViolation`, and
+  `ASTValidator` registry membership keyed by validation kind.
+- Added `run_ast_validators(...)` as the single execution authority and rewired
+  `validate_file` to use it.
+- Preserved public string aliases and string-valued violation output for CLI and
+  caller compatibility.
+- Focused verification: `tests/unit/test_ast_validator_registry.py` passed.
+- Focused advisor: no findings for `openhcs/validation/ast_validator.py`.
+- Full unit verification: `1513 passed, 10 warnings`.
+- Full advisor scan: 1,147 findings, 59.472s.
