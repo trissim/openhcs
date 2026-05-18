@@ -372,3 +372,31 @@ Advisor status:
 - Remaining Napari viewer-state finding is the separate batch-processor store
   in `napari_viewer_server.py`, plus larger server role quotient and process
   entry migration work.
+
+### Checkpoint 12
+
+Implemented:
+
+- `NapariBatchProcessorStore` owns lazy batch processor creation by layer key.
+- `napari_viewer_server.py` no longer carries its own `_batch_processors`
+  registry and lock.
+- Unit coverage verifies one processor is created per layer and reused.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 10 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py
+# batch processor registry finding cleared
+```
+
+Advisor status:
+
+- Cleared the remaining Napari batch-processor store finding.
+- Remaining Napari findings are the larger process-entry/public-signature
+  migration and server facade role quotient.

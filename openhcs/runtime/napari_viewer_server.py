@@ -35,6 +35,7 @@ from openhcs.runtime.viewer_protocol import (
     ViewerProtocolStatus,
 )
 from openhcs.runtime.napari_streaming_handlers import (
+    NapariBatchProcessorStore,
     NapariLayerUpdateAuthority,
     NapariLayerStateStore,
     NapariShapeLabelRasterizer,
@@ -573,8 +574,9 @@ class NapariViewerServer(StreamingVisualizerServer):
 
         # Batch processors for efficient accumulation and display
         # Uses batch_size from config if available (defaults to None = wait for all)
-        self._batch_processors = {}  # layer_key -> NapariBatchProcessor
-        self._batch_processor_lock = threading.Lock()
+        self.batch_processors = NapariBatchProcessorStore(
+            debounce_delay_ms=self.update_delay_ms,
+        )
 
         # Ack socket handled by StreamingVisualizerServer
 
@@ -586,24 +588,11 @@ class NapariViewerServer(StreamingVisualizerServer):
         self, layer_key: str, batch_size: Optional[int] = None
     ):
         """Get or create a batch processor for the given layer key."""
-        with self._batch_processor_lock:
-            if layer_key not in self._batch_processors:
-                # Import here to avoid circular imports
-                from polystore.streaming.receivers.napari import NapariBatchProcessor
-
-                processor = NapariBatchProcessor(
-                    napari_server=self,
-                    batch_size=batch_size,
-                    debounce_delay_ms=self.update_delay_ms,
-                    max_debounce_wait_ms=5000,  # 5 second max wait
-                )
-                self._batch_processors[layer_key] = processor
-                logger.info(
-                    f"NapariViewerServer: Created batch processor for layer '{layer_key}' "
-                    f"with batch_size={batch_size}"
-                )
-
-            return self._batch_processors[layer_key]
+        return self.batch_processors.get_or_create(
+            layer_key=layer_key,
+            napari_server=self,
+            batch_size=batch_size,
+        )
 
     def _update_global_component_values(self, stack_components, layer_items):
         """

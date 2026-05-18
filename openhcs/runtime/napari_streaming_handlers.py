@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import logging
+import threading
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 import numpy as np
@@ -276,6 +277,40 @@ class NapariLayerStateStore:
 
     def set_layer(self, layer_key: str, layer: object) -> None:
         self.layers[layer_key] = layer
+
+
+@dataclass(slots=True)
+class NapariBatchProcessorStore:
+    """Own lazy NapariBatchProcessor instances by layer key."""
+
+    debounce_delay_ms: int
+    max_debounce_wait_ms: int = 5000
+    processors: dict[str, object] = field(default_factory=dict)
+    lock: threading.Lock = field(default_factory=threading.Lock)
+
+    def get_or_create(
+        self,
+        *,
+        layer_key: str,
+        napari_server: object,
+        batch_size: int | None = None,
+    ) -> object:
+        with self.lock:
+            if layer_key not in self.processors:
+                from polystore.streaming.receivers.napari import NapariBatchProcessor
+
+                self.processors[layer_key] = NapariBatchProcessor(
+                    napari_server=napari_server,
+                    batch_size=batch_size,
+                    debounce_delay_ms=self.debounce_delay_ms,
+                    max_debounce_wait_ms=self.max_debounce_wait_ms,
+                )
+                logger.info(
+                    "NapariViewerServer: Created batch processor for layer '%s' with batch_size=%s",
+                    layer_key,
+                    batch_size,
+                )
+            return self.processors[layer_key]
 
 
 class NapariShapeKind(Enum):

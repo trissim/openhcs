@@ -7,6 +7,7 @@ from polystore.streaming_constants import StreamingDataType
 
 from openhcs.runtime.viewer_protocol import ComponentDimensionLabelPolicy
 from openhcs.runtime.napari_streaming_handlers import (
+    NapariBatchProcessorStore,
     NapariLayerUpdateAuthority,
     NapariLayerStateStore,
     NapariShapeLabelRasterizer,
@@ -192,6 +193,34 @@ def test_napari_layer_state_store_keeps_layer_labels_and_timers_together():
     assert timer.stopped
     assert store.pop_pending_update("nuclei") is timer
     assert store.labels_for("missing") == {}
+
+
+def test_napari_batch_processor_store_creates_one_processor_per_layer(monkeypatch):
+    import polystore.streaming.receivers.napari as napari_receivers
+
+    created = []
+
+    class FakeBatchProcessor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+            created.append(self)
+
+    monkeypatch.setattr(napari_receivers, "NapariBatchProcessor", FakeBatchProcessor)
+
+    store = NapariBatchProcessorStore(debounce_delay_ms=123, max_debounce_wait_ms=456)
+    server = object()
+
+    first = store.get_or_create(layer_key="nuclei", napari_server=server, batch_size=7)
+    second = store.get_or_create(layer_key="nuclei", napari_server=server, batch_size=9)
+
+    assert first is second
+    assert len(created) == 1
+    assert first.kwargs == {
+        "napari_server": server,
+        "batch_size": 7,
+        "debounce_delay_ms": 123,
+        "max_debounce_wait_ms": 456,
+    }
 
 
 def test_component_dimension_label_policy_owns_channel_well_and_generic_labels():

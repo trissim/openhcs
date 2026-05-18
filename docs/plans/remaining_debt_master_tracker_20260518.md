@@ -351,3 +351,23 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 # main Napari layers/dimension_labels/pending_updates registry findings cleared
 # remaining Napari state finding is the batch-processor store in napari_viewer_server.py
 ```
+
+Checkpoint 12:
+
+- Added `NapariBatchProcessorStore` for lazy per-layer batch processor
+  ownership.
+- Removed Napari viewer server's local `_batch_processors` registry and lock.
+- Added unit coverage for one-processor-per-layer reuse.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 10 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py
+# batch processor registry finding cleared
+```
