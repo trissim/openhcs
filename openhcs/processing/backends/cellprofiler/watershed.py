@@ -53,6 +53,30 @@ def log_watershed_profile(label: str, seconds: float, **fields: object) -> None:
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
+@dataclass(frozen=True)
+class WatershedProfiler:
+    """Bound profiler for CellProfiler watershed execution phases."""
+
+    def record(self, label: str, started_at: float, **fields: object) -> None:
+        log_watershed_profile(
+            label,
+            time.perf_counter() - started_at,
+            **fields,
+        )
+
+    def record_factor(self, label: str, started_at: float, factor: int, **fields: object) -> None:
+        self.record(label, started_at, factor=factor, **fields)
+
+    def record_method(
+        self,
+        label: str,
+        started_at: float,
+        method: WatershedMethod,
+        **fields: object,
+    ) -> None:
+        self.record(label, started_at, method=method.value, **fields)
+
+
 class WatershedMethod(str, Enum):
     """CellProfiler watershed surface source."""
 
@@ -534,6 +558,7 @@ class CellProfiler4DistanceInitialWatershedStrategy(
         import skimage.filters
         import skimage.transform
 
+        profiler = WatershedProfiler()
         total_started_at = time.perf_counter()
         input_shape = image.shape
         factor = parameters.downsample
@@ -542,9 +567,9 @@ class CellProfiler4DistanceInitialWatershedStrategy(
             phase_started_at = time.perf_counter()
             factors = (1, factor, factor) if image.ndim > 2 else (factor, factor)
             x_data = skimage.transform.downscale_local_mean(x_data, factors)
-            log_watershed_profile(
+            profiler.record_factor(
                 "watershed_cp4_distance_downsample",
-                time.perf_counter() - phase_started_at,
+                phase_started_at,
                 factor=factor,
                 ndim=image.ndim,
             )
@@ -552,24 +577,24 @@ class CellProfiler4DistanceInitialWatershedStrategy(
         phase_started_at = time.perf_counter()
         threshold = skimage.filters.threshold_otsu(x_data)
         x_data = x_data > threshold
-        log_watershed_profile(
+        profiler.record_factor(
             "watershed_cp4_distance_threshold",
-            time.perf_counter() - phase_started_at,
+            phase_started_at,
             factor=factor,
         )
         phase_started_at = time.perf_counter()
         distance = scipy.ndimage.distance_transform_edt(x_data)
-        log_watershed_profile(
+        profiler.record_factor(
             "watershed_cp4_distance_edt",
-            time.perf_counter() - phase_started_at,
+            phase_started_at,
             factor=factor,
         )
         phase_started_at = time.perf_counter()
         distance = mahotas.stretch(distance)
         surface = distance.max() - distance
-        log_watershed_profile(
+        profiler.record_factor(
             "watershed_cp4_distance_surface",
-            time.perf_counter() - phase_started_at,
+            phase_started_at,
             factor=factor,
         )
         phase_started_at = time.perf_counter()
@@ -584,17 +609,17 @@ class CellProfiler4DistanceInitialWatershedStrategy(
                 seed_connectivity,
             )
         )
-        log_watershed_profile(
+        profiler.record_factor(
             "watershed_cp4_distance_markers",
-            time.perf_counter() - phase_started_at,
+            phase_started_at,
             factor=factor,
             seeds=marker_count,
         )
         phase_started_at = time.perf_counter()
         y_data = mahotas.cwatershed(surface, seed_markers) * x_data
-        log_watershed_profile(
+        profiler.record_factor(
             "watershed_cp4_distance_cwatershed",
-            time.perf_counter() - phase_started_at,
+            phase_started_at,
             factor=factor,
         )
 
@@ -609,14 +634,14 @@ class CellProfiler4DistanceInitialWatershedStrategy(
             )
             y_data = np.rint(y_data).astype(np.uint16)
             x_data = image > threshold
-            log_watershed_profile(
+            profiler.record_factor(
                 "watershed_cp4_distance_upsample",
-                time.perf_counter() - phase_started_at,
+                phase_started_at,
                 factor=factor,
             )
-        log_watershed_profile(
+        profiler.record_factor(
             "watershed_cp4_distance_initial_total",
-            time.perf_counter() - total_started_at,
+            total_started_at,
             factor=factor,
         )
         return y_data, x_data
@@ -680,6 +705,7 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
         import skimage.morphology
         import skimage.segmentation
 
+        profiler = WatershedProfiler()
         phase_started_at = time.perf_counter()
         y_data, x_data = CellProfiler4InitialWatershedStrategy.for_enum_member(
             parameters.method
@@ -689,10 +715,10 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
             mask,
             parameters,
         )
-        log_watershed_profile(
+        profiler.record_method(
             "watershed_cp4_initial",
-            time.perf_counter() - phase_started_at,
-            method=parameters.method.value,
+            phase_started_at,
+            parameters.method,
         )
 
         if parameters.use_advanced_settings:
@@ -705,10 +731,10 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
 
             phase_started_at = time.perf_counter()
             peak_image = scipy.ndimage.distance_transform_edt(y_data > 0)
-            log_watershed_profile(
+            profiler.record_method(
                 "watershed_cp4_peak_distance",
-                time.perf_counter() - phase_started_at,
-                method=parameters.method.value,
+                phase_started_at,
+                parameters.method,
             )
             if parameters.declump_method is WatershedDeclumpMethod.SHAPE:
                 watershed_image = -peak_image
@@ -721,10 +747,10 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
                 watershed_image,
                 sigma=parameters.gaussian_sigma,
             )
-            log_watershed_profile(
+            profiler.record_method(
                 "watershed_cp4_gaussian",
-                time.perf_counter() - phase_started_at,
-                method=parameters.method.value,
+                phase_started_at,
+                parameters.method,
             )
             phase_started_at = time.perf_counter()
             seed_coords = skimage.feature.peak_local_max(
@@ -738,10 +764,10 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
                     else np.inf
                 ),
             )
-            log_watershed_profile(
+            profiler.record_method(
                 "watershed_cp4_peak_local_max",
-                time.perf_counter() - phase_started_at,
-                method=parameters.method.value,
+                phase_started_at,
+                parameters.method,
                 seeds=len(seed_coords),
             )
             phase_started_at = time.perf_counter()
@@ -760,10 +786,10 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
             seeds = scipy.ndimage.label(seeds)[0]
             advanced_markers = np.zeros_like(seeds, dtype=seeds_dtype)
             advanced_markers[seeds > 0] = -seeds[seeds > 0]
-            log_watershed_profile(
+            profiler.record_method(
                 "watershed_cp4_markers",
-                time.perf_counter() - phase_started_at,
-                method=parameters.method.value,
+                phase_started_at,
+                parameters.method,
                 objects=number_objects,
             )
             phase_started_at = time.perf_counter()
@@ -773,28 +799,28 @@ class CellProfiler4WatershedRuntimeStrategy(WatershedRuntimeStrategy):
                 mask=x_data != 0,
                 connectivity=parameters.connectivity,
             )
-            log_watershed_profile(
+            profiler.record_method(
                 "watershed_cp4_segmentation",
-                time.perf_counter() - phase_started_at,
-                method=parameters.method.value,
+                phase_started_at,
+                parameters.method,
             )
             phase_started_at = time.perf_counter()
             y_data = watershed_boundaries.copy()
             zeros = np.where(y_data == 0)
             y_data += np.abs(np.min(y_data)) + 1
             y_data[zeros] = 0
-            log_watershed_profile(
+            profiler.record_method(
                 "watershed_cp4_relabel_prepare",
-                time.perf_counter() - phase_started_at,
-                method=parameters.method.value,
+                phase_started_at,
+                parameters.method,
             )
 
         phase_started_at = time.perf_counter()
         labels = skimage.measure.label(y_data).astype(np.int32, copy=False)
-        log_watershed_profile(
+        profiler.record_method(
             "watershed_cp4_final_label",
-            time.perf_counter() - phase_started_at,
-            method=parameters.method.value,
+            phase_started_at,
+            parameters.method,
         )
         return labels
 
@@ -1220,45 +1246,94 @@ def _cellprofiler_legacy_watershed_numpy(
     connectivity: int | np.ndarray = 1,
     prefer_fast: bool = True,
 ) -> np.ndarray:
-    from skimage.morphology._util import (
-        _offsets_to_raveled_neighbors,
-        _validate_connectivity,
+    return _cellprofiler_legacy_watershed_request(
+        LegacyWatershedRequest.from_inputs(
+            image,
+            markers=markers,
+            mask=mask,
+            connectivity=connectivity,
+            prefer_fast=prefer_fast,
+        )
     )
-    from skimage.util import crop
 
-    image_array = np.asarray(image, dtype=np.float64)
-    mask_array = np.asarray(mask, dtype=bool)
-    marker_array = np.asarray(markers) * mask_array
-    if marker_array.shape != image_array.shape:
-        raise ValueError("markers must have the same shape as image")
-    if mask_array.shape != image_array.shape:
-        raise ValueError("mask must have the same shape as image")
-    if _is_planewise_watershed(
-        image_array,
-        connectivity,
-    ):
-        return _cellprofiler_legacy_watershed_planewise(
-            image_array,
+
+@dataclass(frozen=True, slots=True)
+class LegacyWatershedRequest:
+    """Validated legacy watershed inputs shared across whole-volume and plane paths."""
+
+    image: np.ndarray
+    markers: np.ndarray
+    mask: np.ndarray
+    connectivity: int | np.ndarray
+    prefer_fast: bool
+
+    @classmethod
+    def from_inputs(
+        cls,
+        image: np.ndarray,
+        *,
+        markers: np.ndarray,
+        mask: np.ndarray,
+        connectivity: int | np.ndarray,
+        prefer_fast: bool,
+    ) -> "LegacyWatershedRequest":
+        image_array = np.asarray(image, dtype=np.float64)
+        mask_array = np.asarray(mask, dtype=bool)
+        marker_array = np.asarray(markers) * mask_array
+        if marker_array.shape != image_array.shape:
+            raise ValueError("markers must have the same shape as image")
+        if mask_array.shape != image_array.shape:
+            raise ValueError("mask must have the same shape as image")
+        return cls(
+            image=image_array,
             markers=marker_array,
             mask=mask_array,
             connectivity=connectivity,
             prefer_fast=prefer_fast,
         )
 
+    def plane(self, plane_index: int) -> "LegacyWatershedRequest":
+        image_planes = self.image.reshape((-1, *self.image.shape[-2:]))
+        marker_planes = self.markers.reshape((-1, *self.markers.shape[-2:]))
+        mask_planes = self.mask.reshape((-1, *self.mask.shape[-2:]))
+        return type(self)(
+            image=image_planes[plane_index],
+            markers=marker_planes[plane_index],
+            mask=mask_planes[plane_index],
+            connectivity=self.connectivity,
+            prefer_fast=self.prefer_fast,
+        )
+
+
+def _cellprofiler_legacy_watershed_request(
+    request: LegacyWatershedRequest,
+) -> np.ndarray:
+    from skimage.morphology._util import (
+        _offsets_to_raveled_neighbors,
+        _validate_connectivity,
+    )
+    from skimage.util import crop
+
+    if _is_planewise_watershed(
+        request.image,
+        request.connectivity,
+    ):
+        return _cellprofiler_legacy_watershed_planewise(request)
+
     connectivity_array, offset = _validate_connectivity(
-        image_array.ndim,
-        connectivity,
+        request.image.ndim,
+        request.connectivity,
         None,
     )
     pad_width = [(int(width), int(width)) for width in offset]
-    padded_image = np.pad(image_array, pad_width, mode="constant")
+    padded_image = np.pad(request.image, pad_width, mode="constant")
     padded_mask = np.pad(
-        mask_array.astype(np.bool_, copy=False),
+        request.mask.astype(np.bool_, copy=False),
         pad_width,
         mode="constant",
     ).ravel()
     output = np.pad(
-        marker_array.astype(np.int32, copy=False),
+        request.markers.astype(np.int32, copy=False),
         pad_width,
         mode="constant",
     )
@@ -1271,7 +1346,7 @@ def _cellprofiler_legacy_watershed_numpy(
     ).astype(np.int64, copy=False)
     marker_locations = np.flatnonzero(output_flat).astype(np.int64, copy=False)
 
-    if prefer_fast:
+    if request.prefer_fast:
         _legacy_watershed_raveled_numba(
             image_flat,
             padded_mask,
@@ -1388,25 +1463,13 @@ def _is_planewise_watershed(
 
 
 def _cellprofiler_legacy_watershed_planewise(
-    image: np.ndarray,
-    *,
-    markers: np.ndarray,
-    mask: np.ndarray,
-    connectivity: int | np.ndarray,
-    prefer_fast: bool,
+    request: LegacyWatershedRequest,
 ) -> np.ndarray:
-    output = np.empty(markers.shape, dtype=np.int32)
-    image_planes = image.reshape((-1, *image.shape[-2:]))
-    marker_planes = markers.reshape((-1, *markers.shape[-2:]))
-    mask_planes = mask.reshape((-1, *mask.shape[-2:]))
+    output = np.empty(request.markers.shape, dtype=np.int32)
     output_planes = output.reshape((-1, *output.shape[-2:]))
-    for plane_index in range(image_planes.shape[0]):
-        output_planes[plane_index] = _cellprofiler_legacy_watershed_numpy(
-            image_planes[plane_index],
-            markers=marker_planes[plane_index],
-            mask=mask_planes[plane_index],
-            connectivity=connectivity,
-            prefer_fast=prefer_fast,
+    for plane_index in range(output_planes.shape[0]):
+        output_planes[plane_index] = _cellprofiler_legacy_watershed_request(
+            request.plane(plane_index)
         )
     return output
 

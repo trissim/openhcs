@@ -908,3 +908,31 @@ Remaining:
 - Decide whether to add a new public request-style radial API and deprecate the
   long-form compatibility wrappers, or leave the remaining wrapper finding as
   compatibility debt.
+
+Checkpoint 4:
+
+- Added `WatershedProfiler` and routed CellProfiler 4 watershed runtime phase
+  logging through bound profiler methods.
+- Added `LegacyWatershedRequest` for validated legacy watershed inputs and
+  collapsed whole-volume/plane-wise helper parameter threading into one nominal
+  request authority.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 402 passed, 5 warnings
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/watershed.py
+# Cleared CellProfiler4WatershedRuntimeStrategy profile call-family finding and
+# legacy watershed helper parameter-family finding.
+```
+
+Remaining:
+
+- Public/export `__all__` derivation belongs to Campaign 14.
+- Distance-initial watershed profile calls still need a deeper phase-spec
+  extraction if we want to remove the remaining profile call-family finding
+  without obscuring the real algorithm.
+- Heap push/pop parameter threading remains in private Numba-compatible heap
+  helpers.
