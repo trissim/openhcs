@@ -23,6 +23,7 @@ import numpy as np
 from typing import Any, Dict, Optional
 from qtpy.QtCore import QTimer
 
+from polystore.backend_registry import register_cleanup_callback
 from polystore.filemanager import FileManager
 from openhcs.utils.import_utils import optional_import
 from openhcs.core.config import (
