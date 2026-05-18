@@ -112,3 +112,26 @@ git diff --check
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/analysis/self_supervised_segmentation_3d.py
 # No refactoring findings.
 ```
+
+### Checkpoint 3 - Focus Torch
+
+Implemented:
+
+- Added `LaplacianImageProjection` for 2D/3D/4D conv2d layout projection and
+  result restoration.
+- Added `FocusStackProjection` for the `[Z, H, W]` CUDA stack contract.
+- Added `FocusSharpnessMethod` plus `FOCUS_SHARPNESS_METHODS` to replace the
+  `method` string ladder.
+
+Verification:
+
+```bash
+.venv/bin/python -m py_compile openhcs/processing/backends/enhance/focus_torch.py
+# clean
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/enhance/focus_torch.py
+# No refactoring findings.
+```

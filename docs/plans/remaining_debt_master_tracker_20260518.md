@@ -519,3 +519,24 @@ git diff --check
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/analysis/self_supervised_segmentation_3d.py
 # No refactoring findings.
 ```
+
+Checkpoint 3:
+
+- Added `LaplacianImageProjection`, `FocusStackProjection`, and
+  `FocusSharpnessMethod` in
+  `openhcs/processing/backends/enhance/focus_torch.py`.
+- Replaced dimensional branches and sharpness-method string dispatch with typed
+  projection/dispatch authorities.
+
+Verification:
+
+```bash
+.venv/bin/python -m py_compile openhcs/processing/backends/enhance/focus_torch.py
+# clean
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/enhance/focus_torch.py
+# No refactoring findings.
+```
