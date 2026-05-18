@@ -112,3 +112,33 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs
   boundaries.
 - No behavior-changing progress payload or runtime observation regressions.
 
+## Completion Evidence
+
+Status: complete.
+
+Implemented boundaries:
+
+- `CompiledContextLanePlanner`
+- `WorkerAssignmentPlan`
+- `WorkerExecutorFactory`
+- `WorkerExecutorResources`
+- `PooledWorkerLaneRunner`
+- `ExecutorShutdownPlan`
+- `GpuCleanupPlan`
+- `AnalysisConsolidationPlan`
+- `ExecutionStateProjector`
+- `ExecutionVisualizerCleanup`
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_orchestrator*.py tests/unit/test_debug*.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 76 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/core/orchestrator/orchestrator.py
+# execute_compiled_plate oversized orchestration hub finding cleared
+```
+
+Residual findings in `openhcs/core/orchestrator/orchestrator.py` are outside
+this campaign: the pre-existing attribute-probe family and the
+`pipeline_config` alias note.

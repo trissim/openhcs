@@ -36,7 +36,7 @@ Result:
 
 | Order | Status | Campaign | Plan File | Primary Gate |
 | --- | --- | --- | --- | --- |
-| 9 | Pending | Orchestrator stage split continuation | `orchestrator_stage_split_continuation_20260518.md` | focused orchestrator/debug tests + advisor on orchestrator |
+| 9 | Complete | Orchestrator stage split continuation | `orchestrator_stage_split_continuation_20260518.md` | focused orchestrator/debug tests + advisor on orchestrator |
 | 10 | Pending | Runtime viewer and streaming protocol cleanup | `runtime_viewer_protocol_cleanup_20260518.md` | mocked Napari/Fiji imports + runtime viewer tests |
 | 11 | Pending | Active PyQt residual decomposition | `active_pyqt_residual_decomposition_20260518.md` | Qt offscreen smoke + PyQt focused tests |
 | 12 | Pending | Backend dimensional dispatch authority | `backend_dimensional_dispatch_authority_20260518.md` | focused backend tests + advisor on selected backend files |
@@ -73,3 +73,35 @@ High-volume active, non-TUI areas from the full scan:
   `unified_registry.py`, `func_registry.py`, `callable_contract.py`,
   `runtime_artifact_queries.py`.
 
+## Execution Log
+
+### Campaign 9 - Orchestrator Stage Split Continuation
+
+Checkpoint:
+
+- Extracted `CompiledContextLanePlanner` and `WorkerAssignmentPlan` for
+  context grouping, worker assignment validation, and lane payload projection.
+- Extracted `WorkerExecutorFactory` and `WorkerExecutorResources` for
+  inline/thread/process/fork execution-mode selection and process-pool
+  initializer wiring.
+- Extracted `PooledWorkerLaneRunner` for executor submission, result
+  collection, runtime observation merge, progress error emission, and
+  fail-fast behavior.
+- Extracted `ExecutorShutdownPlan`, `GpuCleanupPlan`,
+  `AnalysisConsolidationPlan`, `ExecutionStateProjector`, and
+  `ExecutionVisualizerCleanup` for finalization responsibilities.
+- Added `tests/unit/test_orchestrator_lane_planning.py` characterization
+  coverage for lane planning, executor construction, pooled lane collection,
+  cleanup, consolidation skip behavior, state projection, and visualizer
+  cleanup.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_orchestrator*.py tests/unit/test_debug*.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 76 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/core/orchestrator/orchestrator.py
+# execute_compiled_plate oversized orchestration hub finding cleared
+# remaining findings: pre-existing attribute-probe family and pipeline_config alias note
+```
