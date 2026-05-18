@@ -48,6 +48,16 @@ Checkpoint 2:
   hardcoded enum subset, and status predicates call the core progress semantics
   directly.
 
+Checkpoint 3:
+
+- `DualEditorWindow` now declares `header_label`,
+  `_default_size_applied`, and `_save_button_base_style` during initialization
+  instead of probing those attributes reflectively.
+- Window-title and save-button updates now use direct fail-loud attributes for
+  the declared UI contract.
+- Removed the unreferenced `_get_current_plate_from_pipeline_editor` method,
+  which was stale Textual-era structural probing residue.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:

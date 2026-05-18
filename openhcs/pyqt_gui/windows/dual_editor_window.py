@@ -138,6 +138,7 @@ class DualEditorWindow(BaseFormDialog):
 
         # UI components
         self.tab_widget: Optional[QTabWidget] = None
+        self.header_label: Optional[QLabel] = None
         self.parameter_editors: Dict[
             str, QWidget
         ] = {}  # Map tab titles to editor widgets
@@ -150,6 +151,8 @@ class DualEditorWindow(BaseFormDialog):
 
         self._flash_overlay = None  # Window flash overlay for visual feedback
         self._flash_overlay_cleaned = False  # Track if overlay was cleaned up
+        self._default_size_applied = False
+        self._save_button_base_style = ""
         self._step_buttons_widget: Optional[QWidget] = (
             None  # Button widget from step editor
         )
@@ -173,7 +176,7 @@ class DualEditorWindow(BaseFormDialog):
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
-        if not getattr(self, "_default_size_applied", False):
+        if not self._default_size_applied:
             self.resize(550, 600)
             self._default_size_applied = True
         self._log_window_size("shown")
@@ -430,7 +433,7 @@ class DualEditorWindow(BaseFormDialog):
         Reads step name from ObjectState for live updates when user edits the name field.
         """
         # Get step name from ObjectState if available, otherwise fall back to editing_step
-        step_editor = getattr(self, "step_editor", None)
+        step_editor = self.step_editor
         if step_editor and step_editor.state:
             # Read name from ObjectState (updates live as user types)
             current_values = step_editor.state.get_current_values()
@@ -458,7 +461,7 @@ class DualEditorWindow(BaseFormDialog):
 
         title = f"* {base_title}" if is_dirty else base_title
         self.setWindowTitle(title)
-        if getattr(self, "header_label", None):
+        if self.header_label is not None:
             self.header_label.setText(title)
             # Apply underline for signature diff (independent of dirty)
             font = self.header_label.font()
@@ -474,7 +477,7 @@ class DualEditorWindow(BaseFormDialog):
             f"🔘 Updating save button text: is_new={self.is_new}, has_changes={has_changes} → '{new_text}'"
         )
         self.save_button.setText(new_text)
-        if getattr(self, "_save_button_base_style", ""):
+        if self._save_button_base_style:
             self.save_button.setStyleSheet(self._save_button_base_style)
 
     def apply_scope_accent_styling(self) -> None:
@@ -951,52 +954,6 @@ class DualEditorWindow(BaseFormDialog):
 
         except Exception as e:
             logger.error(f"Error finding main window: {e}")
-            return None
-
-    def _get_current_plate_from_pipeline_editor(self):
-        """Get current plate from pipeline editor (mirrors Textual TUI pattern)."""
-        try:
-            # Navigate up to find pipeline editor widget
-            current = self.parent()
-            while current:
-                # Check if this is a pipeline editor widget
-                try:
-                    current.current_plate
-                    current.pipeline_steps
-                    current_plate = current.current_plate
-                    if current_plate:
-                        logger.debug(
-                            f"Found current plate from pipeline editor: {current_plate}"
-                        )
-                        return current_plate
-                except AttributeError:
-                    logger.debug(
-                        f"Widget doesn't have current_plate/pipeline_steps attributes"
-                    )
-
-                # Check children for pipeline editor widget
-                for child in current.findChildren(QWidget):
-                    try:
-                        child.current_plate
-                        child.pipeline_steps
-                        current_plate = child.current_plate
-                        if current_plate:
-                            logger.debug(
-                                f"Found current plate from pipeline editor child: {current_plate}"
-                            )
-                            return current_plate
-                    except AttributeError:
-                        logger.debug(
-                            f"Child widget doesn't have current_plate/pipeline_steps attributes"
-                        )
-
-                current = current.parent()
-
-            logger.warning("Could not find current plate from pipeline editor")
-            return None
-
-        except Exception as e:
-            logger.error(f"Error getting current plate from pipeline editor: {e}")
             return None
 
     # Old function pane methods removed - now using dedicated FunctionListEditorWidget

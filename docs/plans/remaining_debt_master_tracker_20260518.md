@@ -537,14 +537,34 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widget
 # reduced to the remaining class method-role quotient / subsystem extraction finding.
 ```
 
+Checkpoint 3:
+
+- Declared `DualEditorWindow` UI contract attributes during initialization
+  instead of recovering them through `getattr` at use sites.
+- Removed stale `_get_current_plate_from_pipeline_editor` structural probing
+  residue after repository-visible call-site verification.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui -q
+# 91 passed
+
+.venv/bin/python -m py_compile openhcs/pyqt_gui/windows/dual_editor_window.py
+# clean
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/windows/dual_editor_window.py
+# reflective self-attribute contract findings and dangling private method cleared;
+# remaining finding is the broader attribute-probe/template-method bucket.
+```
+
 Remaining:
 
 - Split `image_browser.py` plate-view/detach/filter sync into controllers.
 - Split `plate_view_widget.py` grid model, subdirectory model, and filter sync.
 - Split `progress_tree_builder.py` into composed projection/build/status
   subsystems if the remaining class quotient should be eliminated.
-- Audit `dual_editor_window.py` and `step_parameter_editor.py` for extractable
-  state models.
+- Audit `step_parameter_editor.py` for extractable state models.
 
 ## Campaign 12 - Backend Dimensional Dispatch Authority
 
