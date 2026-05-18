@@ -1686,16 +1686,41 @@ class MeasurementTableAxisProjection:
         )
 
 
+@dataclass(frozen=True, slots=True)
+class MeasurementTableAxisQuery:
+    """Reusable query for projecting measurement tables by one row axis."""
+
+    axis: MeasurementRowAxisField
+    value: int
+
+    @classmethod
+    def slice(cls, slice_index: int) -> "MeasurementTableAxisQuery":
+        """Return a query for one runtime slice index."""
+        return cls(MeasurementRowAxisField.SLICE_INDEX, int(slice_index))
+
+    @classmethod
+    def image_number(cls, image_number: int) -> "MeasurementTableAxisQuery":
+        """Return a query for one CellProfiler ImageNumber row domain."""
+        return cls(MeasurementRowAxisField.IMAGE_NUMBER, int(image_number))
+
+    def table(self, table: MeasurementTable) -> MeasurementTable:
+        """Return one measurement table narrowed to this row-axis value."""
+        return MeasurementTableAxisProjection(table, self.axis, self.value).apply()
+
+    def tables(
+        self,
+        measurement_tables: tuple[MeasurementTable, ...],
+    ) -> tuple[MeasurementTable, ...]:
+        """Return measurement tables narrowed to this row-axis value."""
+        return tuple(self.table(table) for table in measurement_tables)
+
+
 def measurement_table_for_slice(
     table: MeasurementTable,
     slice_index: int,
 ) -> MeasurementTable:
     """Return a measurement table narrowed to one slice when rows declare slices."""
-    return MeasurementTableAxisProjection(
-        table,
-        MeasurementRowAxisField.SLICE_INDEX,
-        int(slice_index),
-    ).apply()
+    return MeasurementTableAxisQuery.slice(slice_index).table(table)
 
 
 def measurement_table_slice_indices(table: MeasurementTable) -> set[int]:
@@ -1725,10 +1750,7 @@ def measurement_tables_for_slice(
     slice_index: int,
 ) -> tuple[MeasurementTable, ...]:
     """Return measurement tables narrowed to one slice where row axes permit it."""
-    return tuple(
-        measurement_table_for_slice(table, slice_index)
-        for table in measurement_tables
-    )
+    return MeasurementTableAxisQuery.slice(slice_index).tables(measurement_tables)
 
 
 def measurement_table_for_image_number(
@@ -1736,11 +1758,7 @@ def measurement_table_for_image_number(
     image_number: int,
 ) -> MeasurementTable:
     """Return a measurement table narrowed to one CellProfiler ImageNumber."""
-    return MeasurementTableAxisProjection(
-        table,
-        MeasurementRowAxisField.IMAGE_NUMBER,
-        int(image_number),
-    ).apply()
+    return MeasurementTableAxisQuery.image_number(image_number).table(table)
 
 
 def measurement_tables_for_image_number(
@@ -1748,9 +1766,8 @@ def measurement_tables_for_image_number(
     image_number: int,
 ) -> tuple[MeasurementTable, ...]:
     """Return measurement tables narrowed to one CellProfiler ImageNumber."""
-    return tuple(
-        measurement_table_for_image_number(table, image_number)
-        for table in measurement_tables
+    return MeasurementTableAxisQuery.image_number(image_number).tables(
+        measurement_tables,
     )
 
 
@@ -2058,6 +2075,9 @@ class DataclassMeasurementColumnarRows(ColumnarRows):
         repr=False,
         compare=False,
     )
+    columns: ClassVar[AliasProperty[Mapping[str, Sequence[object]]]] = (
+        AliasProperty("_columns")
+    )
 
     def __post_init__(self) -> None:
         if not self.rows:
@@ -2083,10 +2103,6 @@ class DataclassMeasurementColumnarRows(ColumnarRows):
                 for field_spec in dataclass_fields(row_type)
             },
         )
-
-    @property
-    def columns(self) -> Mapping[str, Sequence[object]]:
-        return self._columns
 
     def __len__(self) -> int:
         return len(self.rows)

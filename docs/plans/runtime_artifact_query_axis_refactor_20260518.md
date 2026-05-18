@@ -108,3 +108,24 @@ python -m nominal_refactor_advisor openhcs/core/runtime_artifact_queries.py
 - The mirrored axis API finding is removed or reduced to compatibility wrappers.
 - The authoritative axis projection behavior lives in one typed query object.
 - Existing helper names remain available.
+
+## Execution Note
+
+Implemented `MeasurementTableAxisQuery` in
+`openhcs/core/runtime_artifact_queries.py`:
+
+- `MeasurementTableAxisQuery.slice(...)` owns runtime slice-axis projection;
+- `MeasurementTableAxisQuery.image_number(...)` owns CellProfiler image-number
+  projection;
+- `table(...)` and `tables(...)` centralize single-table and tuple projection;
+- existing public helper names now delegate to the query object.
+
+Added tests in `tests/unit/test_runtime_artifact_queries.py` for direct query
+projection, tuple projection, and wrapper delegation. Also replaced
+`DataclassMeasurementColumnarRows.columns` with `AliasProperty`, removing the
+same-file direct property alias advisor finding.
+
+The advisor still reports the suffix-axis family because the four public
+compatibility wrapper names remain. This is accepted for this campaign because
+the implementation authority is centralized and existing public imports are
+preserved.

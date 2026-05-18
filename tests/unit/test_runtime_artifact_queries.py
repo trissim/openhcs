@@ -7,11 +7,16 @@ import pytest
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_artifact_queries import (
     RuntimeArtifactQueryContext,
+    MeasurementTableAxisQuery,
     MeasurementTableObjectFeatureSemantics,
     MeasurementTableObjectFeatureSemanticsCache,
     annotate_measurement_row_object,
     matching_measurement_field,
     measurement_feature_candidates,
+    measurement_table_for_image_number,
+    measurement_table_for_slice,
+    measurement_tables_for_image_number,
+    measurement_tables_for_slice,
     ordered_measurement_feature_candidates,
     measurement_row_mapping,
     measurement_values_for_feature,
@@ -20,6 +25,7 @@ from openhcs.core.runtime_artifact_queries import (
 )
 from openhcs.core.runtime_semantics import (
     FieldSpec,
+    MeasurementRowAxisField,
     MeasurementRowMappingCache,
     RelationshipSemantics,
 )
@@ -173,6 +179,69 @@ def test_matching_measurement_field_prefers_specific_feature_suffix() -> None:
     )
 
     assert field == "FormFactor"
+
+
+def test_measurement_table_axis_query_projects_sequence_rows() -> None:
+    table = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=(
+            {"slice_index": 0, "object_label": 1, "area": 10.0},
+            {"slice_index": 1, "object_label": 1, "area": 20.0},
+        ),
+        object_name="Objects",
+    )
+
+    query = MeasurementTableAxisQuery.slice(1)
+    projected = query.table(table)
+
+    assert query.axis is MeasurementRowAxisField.SLICE_INDEX
+    assert query.value == 1
+    assert tuple(projected.rows) == (
+        {"slice_index": 1, "object_label": 1, "area": 20.0},
+    )
+
+
+def test_measurement_table_axis_query_projects_table_sequences() -> None:
+    first = MeasurementTable(
+        name="FirstMeasurements",
+        rows=(
+            {"image_number": 1, "area": 10.0},
+            {"image_number": 2, "area": 20.0},
+        ),
+    )
+    second = MeasurementTable(
+        name="SecondMeasurements",
+        rows=({"area": 99.0},),
+    )
+
+    projected = MeasurementTableAxisQuery.image_number(2).tables((first, second))
+
+    assert tuple(projected[0].rows) == ({"image_number": 2, "area": 20.0},)
+    assert projected[1] is second
+
+
+def test_axis_specific_measurement_table_wrappers_delegate_to_query() -> None:
+    table = MeasurementTable(
+        name="ObjectMeasurements",
+        rows=(
+            {"slice_index": 0, "image_number": 1, "area": 10.0},
+            {"slice_index": 1, "image_number": 2, "area": 20.0},
+        ),
+        object_name="Objects",
+    )
+
+    assert measurement_table_for_slice(table, 1) == (
+        MeasurementTableAxisQuery.slice(1).table(table)
+    )
+    assert measurement_table_for_image_number(table, 2) == (
+        MeasurementTableAxisQuery.image_number(2).table(table)
+    )
+    assert measurement_tables_for_slice((table,), 1) == (
+        MeasurementTableAxisQuery.slice(1).tables((table,))
+    )
+    assert measurement_tables_for_image_number((table,), 2) == (
+        MeasurementTableAxisQuery.image_number(2).tables((table,))
+    )
 
 
 def test_runtime_relationship_query_reconstructs_typed_relationship() -> None:

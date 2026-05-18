@@ -48,7 +48,7 @@ OpenHCS checkpoint before these campaign plans:
 | Order | Status | Campaign | Plan File | Primary Gate |
 | --- | --- | --- | --- | --- |
 | 0 | Complete | Callable request binding and CP threshold context cleanup | `callable_request_binding_refactor_20260518.md`, `cellprofiler_binding_context_cleanup_20260518.md` | `pytest tests/unit -q` passed; commit `62c46ec4` pushed |
-| 1 | Pending | Runtime artifact query axis | `runtime_artifact_query_axis_refactor_20260518.md` | focused runtime artifact query tests + advisor on `runtime_artifact_queries.py` |
+| 1 | Complete | Runtime artifact query axis | `runtime_artifact_query_axis_refactor_20260518.md` | focused runtime artifact query tests + advisor on `runtime_artifact_queries.py` |
 | 2 | Pending | Napari streaming handler axis | `napari_streaming_handler_axis_refactor_20260518.md` | import smoke for both Napari modules + focused advisor |
 | 3 | Pending | Validation registry family | `validation_registry_family_refactor_20260518.md` | validator tests + advisor on `validation/ast_validator.py` |
 | 4 | Pending | Backend parameter request records | `backend_parameter_request_records_refactor_20260518.md` | Ashlar CPU/GPU focused tests + advisor on pos-gen modules |
@@ -100,3 +100,25 @@ Before completion:
 - Next action after committing this tracker set: start campaign 1,
   `Runtime artifact query axis`.
 
+### 2026-05-18 - Runtime Artifact Query Axis Started
+
+- Moved campaign 1 to `In Progress`.
+- First slice: characterize slice/image-number axis projection wrappers, then
+  introduce the typed `MeasurementTableAxisQuery` compatibility abstraction.
+
+### 2026-05-18 - Runtime Artifact Query Axis Completed
+
+- Added `MeasurementTableAxisQuery` as the authoritative row-axis projection
+  request for slice and CellProfiler image-number filtering.
+- Rewrote the four public compatibility wrappers to delegate to the query
+  object, preserving existing import names.
+- Added characterization tests for query projection, tuple projection, and
+  wrapper delegation.
+- Replaced `DataclassMeasurementColumnarRows.columns` with `AliasProperty`,
+  removing a same-file descriptor-algebra finding.
+- Focused verification: `37 passed`.
+- Full unit verification: `1505 passed, 10 warnings`.
+- Focused advisor result: property-alias finding removed; suffix-axis finding
+  remains only because the public compatibility wrapper names still exist.
+- Full advisor scan: 1,149 findings, 68.590s. Count includes deprecated Textual
+  TUI and cleanup-grade findings tracked outside this campaign.
