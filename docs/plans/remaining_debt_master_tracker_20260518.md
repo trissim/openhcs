@@ -516,12 +516,33 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widget
 # viewer membership, and metadata/file registries.
 ```
 
+Checkpoint 2:
+
+- Replaced raw progress tree node-type strings with `ProgressNodeType`.
+- Centralized aggregation policy IDs and progress-node construction.
+- Replaced execution-mode enum subset checks with `ProgressChannel.role`.
+- Removed local progress status predicate wrappers in favor of core progress
+  semantic predicates.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui/test_progress_tree_aggregation.py tests/unit/pyqt_gui/test_execution_server_summary.py -q
+# 16 passed
+
+.venv/bin/python -m py_compile openhcs/pyqt_gui/widgets/shared/server_browser/progress_tree_builder.py
+# clean
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widgets/shared/server_browser/progress_tree_builder.py
+# reduced to the remaining class method-role quotient / subsystem extraction finding.
+```
+
 Remaining:
 
 - Split `image_browser.py` plate-view/detach/filter sync into controllers.
 - Split `plate_view_widget.py` grid model, subdirectory model, and filter sync.
-- Convert `progress_tree_builder.py` marker checks into typed progress-node
-  projection records.
+- Split `progress_tree_builder.py` into composed projection/build/status
+  subsystems if the remaining class quotient should be eliminated.
 - Audit `dual_editor_window.py` and `step_parameter_editor.py` for extractable
   state models.
 

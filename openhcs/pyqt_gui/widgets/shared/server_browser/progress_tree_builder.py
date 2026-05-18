@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Callable, Dict, List, Optional
 
 from pyqt_reactive.strategies import (
@@ -19,6 +20,20 @@ from openhcs.core.progress import (
     is_failure_event,
     is_success_terminal_event,
 )
+from openhcs.core.progress.types import ProgressChannelRole
+
+
+MEAN_AGGREGATION_POLICY_ID = "mean"
+EXPLICIT_AGGREGATION_POLICY_ID = "explicit"
+
+
+class ProgressNodeType(str, Enum):
+    """Node kinds rendered in the progress tree."""
+    PLATE = "plate"
+    WORKER = "worker"
+    WELL = "well"
+    STEP = "step"
+    COMPILATION = "compilation"
 
 
 @dataclass
@@ -37,23 +52,84 @@ class ProgressNode:
 
 
 _NODE_AGGREGATION_POLICY_BY_TYPE: Dict[str, str] = {
-    "plate": "mean",
-    "worker": "mean",
-    "well": "explicit",
-    "step": "explicit",
-    "compilation": "explicit",
+    ProgressNodeType.PLATE.value: MEAN_AGGREGATION_POLICY_ID,
+    ProgressNodeType.WORKER.value: MEAN_AGGREGATION_POLICY_ID,
+    ProgressNodeType.WELL.value: EXPLICIT_AGGREGATION_POLICY_ID,
+    ProgressNodeType.STEP.value: EXPLICIT_AGGREGATION_POLICY_ID,
+    ProgressNodeType.COMPILATION.value: EXPLICIT_AGGREGATION_POLICY_ID,
 }
 
 _TREE_AGGREGATION_REGISTRY = TreeAggregationPolicyRegistry(
     policies={
-        "mean": MeanTreeAggregationPolicy(),
-        "explicit": ExplicitPercentTreeAggregationPolicy(),
+        MEAN_AGGREGATION_POLICY_ID: MeanTreeAggregationPolicy(),
+        EXPLICIT_AGGREGATION_POLICY_ID: ExplicitPercentTreeAggregationPolicy(),
     }
 )
 
 
 class ProgressTreeBuilder:
     """Transforms ProgressEvent snapshots into hierarchical progress nodes."""
+
+    @staticmethod
+    def _make_progress_node(
+        *,
+        node_id: str,
+        node_type: ProgressNodeType,
+        label: str,
+        status: str,
+        info: str,
+        execution_id: str | None = None,
+        percent: float = 0.0,
+        children: Optional[List[ProgressNode]] = None,
+    ) -> ProgressNode:
+        return ProgressNode(
+            node_id=node_id,
+            node_type=node_type.value,
+            label=label,
+            status=status,
+            info=info,
+            execution_id=execution_id,
+            percent=percent,
+            aggregation_policy_id=_NODE_AGGREGATION_POLICY_BY_TYPE[node_type.value],
+            children=children or [],
+        )
+
+    def _make_step_node(
+        self,
+        *,
+        axis_id: str,
+        step_idx: int,
+        step_name: str,
+        status: str,
+        info: str,
+        percent: float,
+    ) -> ProgressNode:
+        return self._make_progress_node(
+            node_id=f"{axis_id}_step_{step_idx}",
+            node_type=ProgressNodeType.STEP,
+            label=f"🔧 {step_idx + 1} - {step_name}",
+            status=status,
+            info=info,
+            percent=percent,
+        )
+
+    def _make_well_progress_node(
+        self,
+        *,
+        axis_id: str,
+        status: str,
+        percent: float,
+        children: List[ProgressNode],
+    ) -> ProgressNode:
+        return self._make_progress_node(
+            node_id=axis_id,
+            node_type=ProgressNodeType.WELL,
+            label=f"[{axis_id}]",
+            status=status,
+            info="",
+            percent=percent,
+            children=children,
+        )
 
     def build_progress_tree(
         self,
@@ -101,9 +177,9 @@ class ProgressTreeBuilder:
                     known_wells=known_wells,
                 )
 
-            plate_node = ProgressNode(
+            plate_node = self._make_progress_node(
                 node_id=plate_id,
-                node_type="plate",
+                node_type=ProgressNodeType.PLATE,
                 label=f"📋 {plate_name}",
                 status="⚙️ Executing" if is_executing else "⏳ Compiling",
                 info="",
@@ -212,9 +288,9 @@ class ProgressTreeBuilder:
             else:
                 worker_status = f"⚙️ {active_count} active"
             worker_nodes.append(
-                ProgressNode(
+                self._make_progress_node(
                     node_id=worker_slot,
-                    node_type="worker",
+                    node_type=ProgressNodeType.WORKER,
                     label=f"Worker {worker_slot}",
                     status=worker_status,
                     info="",
@@ -250,10 +326,10 @@ class ProgressTreeBuilder:
             if compile_event is None:
                 status = "⏳ Compiling"
                 percent = 0.0
-            elif self._is_failure_event(compile_event):
+            elif is_failure_event(compile_event):
                 status = "❌ Failed"
                 percent = compile_event.percent
-            elif self._is_success_terminal_event(compile_event):
+            elif is_success_terminal_event(compile_event):
                 status = "✅ Compiled"
                 percent = compile_event.percent
             else:
@@ -261,14 +337,13 @@ class ProgressTreeBuilder:
                 percent = compile_event.percent
 
             compilation_nodes.append(
-                ProgressNode(
+                self._make_progress_node(
                     node_id=axis_id,
-                    node_type="compilation",
+                    node_type=ProgressNodeType.COMPILATION,
                     label=f"[{axis_id}]",
                     status=status,
                     info="",
                     percent=percent,
-                    aggregation_policy_id="explicit",
                 )
             )
         return compilation_nodes
@@ -298,10 +373,10 @@ class ProgressTreeBuilder:
         if pipeline_event is None:
             status = "⏳ Queued"
             percent = 0.0
-        elif ProgressTreeBuilder._is_failure_event(pipeline_event):
+        elif is_failure_event(pipeline_event):
             status = "❌ Failed"
             percent = pipeline_event.percent
-        elif ProgressTreeBuilder._is_success_terminal_event(pipeline_event):
+        elif is_success_terminal_event(pipeline_event):
             status = "✅ Complete"
             percent = pipeline_event.percent
         else:
@@ -317,7 +392,7 @@ class ProgressTreeBuilder:
             if current_step_idx < total_steps:
                 if step_event is not None:
                     step_name = step_event.step_name
-                    if ProgressTreeBuilder._is_failure_event(step_event):
+                    if is_failure_event(step_event):
                         step_status = "❌ Failed"
                         step_percent = step_event.percent
                     else:
@@ -333,28 +408,26 @@ class ProgressTreeBuilder:
                     step_percent = 0.0
 
                 children.append(
-                    ProgressNode(
-                        node_id=f"{axis_id}_step_{current_step_idx}",
-                        node_type="step",
-                        label=f"🔧 {current_step_idx + 1} - {step_name}",
+                    self._make_step_node(
+                        axis_id=axis_id,
+                        step_idx=current_step_idx,
+                        step_name=step_name,
                         status=step_status,
                         info=f"{step_percent:.1f}%",
                         percent=step_percent,
-                        aggregation_policy_id="explicit",
                     )
                 )
 
             for step_idx in range(current_step_idx):
                 step_name = step_names.get(step_idx, f"Step {step_idx + 1}")
                 children.append(
-                    ProgressNode(
-                        node_id=f"{axis_id}_step_{step_idx}",
-                        node_type="step",
-                        label=f"🔧 {step_idx + 1} - {step_name}",
+                    self._make_step_node(
+                        axis_id=axis_id,
+                        step_idx=step_idx,
+                        step_name=step_name,
                         status="✅ Complete",
                         info="100.0%",
                         percent=100.0,
-                        aggregation_policy_id="explicit",
                     )
                 )
 
@@ -362,25 +435,20 @@ class ProgressTreeBuilder:
             for step_idx in range(current_step_idx + 1, total_steps):
                 step_name = step_names.get(step_idx, f"Step {step_idx + 1}")
                 children.append(
-                    ProgressNode(
-                        node_id=f"{axis_id}_step_{step_idx}",
-                        node_type="step",
-                        label=f"🔧 {step_idx + 1} - {step_name}",
+                    self._make_step_node(
+                        axis_id=axis_id,
+                        step_idx=step_idx,
+                        step_name=step_name,
                         status="⏳ Pending",
                         info="0.0%",
                         percent=0.0,
-                        aggregation_policy_id="explicit",
                     )
                 )
 
-        return ProgressNode(
-            node_id=axis_id,
-            node_type="well",
-            label=f"[{axis_id}]",
+        return self._make_well_progress_node(
+            axis_id=axis_id,
             status=status,
-            info="",
             percent=percent,
-            aggregation_policy_id="explicit",
             children=children,
         )
 
@@ -404,20 +472,17 @@ class ProgressTreeBuilder:
         return node.percent
 
     def _apply_node_percent_text(self, node: ProgressNode) -> None:
-        if node.node_type in {"plate", "worker", "well", "compilation"}:
+        if node.node_type in {
+            ProgressNodeType.PLATE.value,
+            ProgressNodeType.WORKER.value,
+            ProgressNodeType.WELL.value,
+            ProgressNodeType.COMPILATION.value,
+        }:
             node.info = f"{node.percent:.1f}%"
-        elif node.node_type == "step" and not node.info:
+        elif node.node_type == ProgressNodeType.STEP.value and not node.info:
             node.info = f"{node.percent:.1f}%"
         for child in node.children:
             self._apply_node_percent_text(child)
-
-    @staticmethod
-    def _is_failure_event(event: ProgressEvent) -> bool:
-        return is_failure_event(event)
-
-    @staticmethod
-    def _is_success_terminal_event(event: ProgressEvent) -> bool:
-        return is_success_terminal_event(event)
 
     @staticmethod
     def _is_execution_mode(
@@ -434,8 +499,7 @@ class ProgressTreeBuilder:
             phase_channel(event.phase) == ProgressChannel.COMPILE for event in events
         )
         has_axis_execution_events = any(
-            phase_channel(event.phase)
-            in {ProgressChannel.PIPELINE, ProgressChannel.STEP}
+            phase_channel(event.phase).role is ProgressChannelRole.EXECUTION
             and bool(event.axis_id)
             for event in events
         )

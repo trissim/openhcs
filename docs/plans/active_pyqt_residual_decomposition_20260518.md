@@ -38,6 +38,16 @@ Checkpoint 1:
   `orchestrator` through properties, removing stale derived state from
   `set_orchestrator`.
 
+Checkpoint 2:
+
+- `ProgressTreeBuilder` now uses typed `ProgressNodeType` and shared
+  aggregation policy IDs instead of repeated node-type and policy strings.
+- Progress-node creation is centralized through builder methods, with
+  specialized step/well node constructors for the repeated well-detail rows.
+- Execution-mode detection now uses `ProgressChannel.role` rather than a local
+  hardcoded enum subset, and status predicates call the core progress semantics
+  directly.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:
