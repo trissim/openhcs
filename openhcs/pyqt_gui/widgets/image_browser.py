@@ -115,15 +115,27 @@ RESULT_FILE_ACTIONS = {
 }
 
 
-def _get_viewer_display_name(field_name: str) -> str:
-    """Get display name for a streaming config field.
+@dataclass(frozen=True)
+class StreamingViewerField:
+    """Display metadata for one registered streaming viewer field."""
 
-    Converts snake_case field name (e.g., napari_streaming_config) to
-    display name (e.g., Napari).
-    """
-    # Remove '_streaming_config' suffix and convert to title case
-    viewer_name = field_name.replace("_streaming_config", "")
-    return viewer_name.replace("_", " ").title()
+    field_name: str
+
+    @property
+    def display_name(self) -> str:
+        viewer_name = self.field_name.replace("_streaming_config", "")
+        return viewer_name.replace("_", " ").title()
+
+
+STREAMING_VIEWER_FIELDS = tuple(
+    StreamingViewerField(field_name)
+    for field_name in _streaming_config_field_names()
+)
+
+
+def streaming_viewer_fields() -> tuple[StreamingViewerField, ...]:
+    """Registered streaming-viewer fields with display metadata."""
+    return STREAMING_VIEWER_FIELDS
 
 
 def _create_image_browser_config():
@@ -145,6 +157,164 @@ def _create_image_browser_config():
         setattr(config, field_name, instance)
 
     return config
+
+
+class ImageBrowserViewerControls:
+    """Own viewer button construction and enabled-state projection."""
+
+    def __init__(
+        self,
+        state: ObjectState,
+        style_gen: StyleSheetGenerator,
+        view_requested: Callable[[str], None],
+    ):
+        self.state = state
+        self.style_gen = style_gen
+        self.view_requested = view_requested
+        self.buttons: Dict[str, QPushButton] = {}
+
+    def create_header_buttons(self) -> list[QPushButton]:
+        buttons = []
+        for field in streaming_viewer_fields():
+            button = QPushButton(f"View in {field.display_name}")
+            button.clicked.connect(
+                lambda checked, fn=field.field_name: self.view_requested(fn)
+            )
+            button.setStyleSheet(self.style_gen.generate_button_style())
+            button.setEnabled(False)
+            self.buttons[field.field_name] = button
+            buttons.append(button)
+        return buttons
+
+    def is_enabled(self, viewer_type: str) -> bool:
+        enabled_path = f"{viewer_type}.enabled"
+        return self.state.get_resolved_value(enabled_path) is True
+
+    def enabled_viewers(self) -> list[str]:
+        return [
+            field.field_name
+            for field in streaming_viewer_fields()
+            if self.is_enabled(field.field_name)
+        ]
+
+    def update_button_state(self, viewer_type: str, has_selection: bool) -> None:
+        button = self.buttons.get(viewer_type)
+        if button is None:
+            logger.warning("viewer_type %s not in view buttons", viewer_type)
+            return
+        button.setEnabled(has_selection and self.is_enabled(viewer_type))
+
+    def update_all_button_states(self, selected_keys: list) -> None:
+        has_selection = len(selected_keys) > 0
+        for viewer_type in self.buttons:
+            self.update_button_state(viewer_type, has_selection)
+
+
+class ImageBrowserMetadataDisplayResolver:
+    """Resolve and cache display values for metadata table/filter cells."""
+
+    COMPONENT_KEY_MAP = {
+        "channel": "CHANNEL",
+        "site": "SITE",
+        "z_index": "Z_INDEX",
+        "timepoint": "TIMEPOINT",
+        "well": "WELL",
+    }
+
+    def __init__(self, orchestrator_getter: Callable[[], object | None]):
+        self.orchestrator_getter = orchestrator_getter
+        self._cache: dict[tuple[str, str], str] = {}
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+    def display_value(self, metadata_key: str, raw_value: Any) -> str:
+        if raw_value is None:
+            return "N/A"
+
+        value_str = str(raw_value)
+        cache_key = (metadata_key, value_str)
+        cached_value = self._cache.get(cache_key)
+        if cached_value is not None:
+            return cached_value
+
+        display_value = self._resolve_display_value(metadata_key, value_str)
+        self._cache[cache_key] = display_value
+        return display_value
+
+    def _resolve_display_value(self, metadata_key: str, value_str: str) -> str:
+        orchestrator = self.orchestrator_getter()
+        if orchestrator is None:
+            return value_str
+
+        try:
+            from openhcs.constants import AllComponents
+
+            component_name = self.COMPONENT_KEY_MAP.get(metadata_key)
+            component = getattr(AllComponents, component_name) if component_name else None
+            if component is None:
+                return value_str
+
+            metadata_name = (
+                orchestrator._metadata_cache_service.get_component_metadata(
+                    component,
+                    value_str,
+                )
+            )
+            if metadata_name and metadata_name != "None":
+                return f"{value_str} | {metadata_name}"
+            logger.debug("No metadata name found for %s %s", metadata_key, value_str)
+            return value_str
+        except Exception as exc:
+            logger.warning(
+                "Could not get metadata for %s %s: %s",
+                metadata_key,
+                value_str,
+                exc,
+                exc_info=True,
+            )
+            return value_str
+
+
+class ImageBrowserResultCatalog:
+    """Own result-file metadata and full-path lookup as one catalog."""
+
+    def __init__(self):
+        self.metadata_by_key: dict[str, dict] = {}
+        self.path_by_key: dict[str, Path] = {}
+
+    def clear(self) -> None:
+        self.metadata_by_key.clear()
+        self.path_by_key.clear()
+
+    def add(self, key: str, metadata: dict, full_path: Path) -> None:
+        self.metadata_by_key[key] = metadata
+        self.path_by_key[key] = full_path
+
+    def __len__(self) -> int:
+        return len(self.metadata_by_key)
+
+    def is_result(self, key: str) -> bool:
+        return key in self.path_by_key
+
+    def path_for(self, key: str) -> Path:
+        return self.path_by_key[key]
+
+
+class ImageBrowserImageCatalog:
+    """Own loaded image metadata before image/result merge."""
+
+    def __init__(self):
+        self.metadata_by_key: dict[str, dict] = {}
+
+    def clear(self) -> None:
+        self.metadata_by_key.clear()
+
+    def add(self, key: str, metadata: dict) -> None:
+        self.metadata_by_key[key] = metadata
+
+    def __len__(self) -> int:
+        return len(self.metadata_by_key)
 
 
 class ImageBrowserWidget(QWidget):
@@ -199,18 +369,24 @@ class ImageBrowserWidget(QWidget):
         # to avoid heavy initialization during widget construction.
         self.tabbed_form = None
 
+        self.viewer_controls = ImageBrowserViewerControls(
+            self.state,
+            self.style_gen,
+            self._view_selected_in_viewer,
+        )
         # View buttons - dictionary keyed by viewer_type for dynamic handling
-        self.view_buttons: Dict[str, QPushButton] = {}
+        self.view_buttons: Dict[str, QPushButton] = self.viewer_controls.buttons
 
         # File data tracking (images + results)
         self.all_files = {}  # filename -> metadata dict (merged images + results)
-        self.all_images = {}  # filename -> metadata dict (images only, temporary for merging)
-        self.all_results = {}  # filename -> file info dict (results only, temporary for merging)
-        self.result_full_paths = {}  # filename -> Path (full path for results, for opening files)
+        self.image_catalog = ImageBrowserImageCatalog()
+        self.result_catalog = ImageBrowserResultCatalog()
         self.filtered_files = {}  # filename -> metadata dict (after search/filter)
         self.selected_wells = set()  # Selected wells for filtering
         self.metadata_keys = []  # Column names from parser metadata (union of all keys)
-        self._metadata_display_cache = {}  # (metadata_key, value_str) -> display value
+        self.metadata_display_resolver = ImageBrowserMetadataDisplayResolver(
+            lambda: self.orchestrator
+        )
 
         # Plate view widget (will be created in init_ui)
         self.plate_view_widget = None
@@ -431,23 +607,12 @@ class ImageBrowserWidget(QWidget):
 
         # Top panel: Tabbed streaming config forms
         # Create view buttons for each streaming config (will be added to tab bar row)
-        header_widgets = []
-        for field_name in _streaming_config_field_names():
-            display_name = _get_viewer_display_name(field_name)
-            btn = QPushButton(f"View in {display_name}")
-            btn.clicked.connect(
-                lambda checked, fn=field_name: self._view_selected_in_viewer(fn)
-            )
-            btn.setStyleSheet(self.style_gen.generate_button_style())
-            btn.setEnabled(False)
-            self.view_buttons[field_name] = btn
-            header_widgets.append(btn)
+        header_widgets = self.viewer_controls.create_header_buttons()
 
         # Create a tab for each streaming config type
         tabs = []
-        for field_name in _streaming_config_field_names():
-            display_name = _get_viewer_display_name(field_name)
-            tabs.append(TabConfig(name=display_name, field_ids=[field_name]))
+        for field in streaming_viewer_fields():
+            tabs.append(TabConfig(name=field.display_name, field_ids=[field.field_name]))
 
         tabbed_config = TabbedFormConfig(
             tabs=tabs,
@@ -472,32 +637,6 @@ class ImageBrowserWidget(QWidget):
         layout.addWidget(splitter, 1)  # stretch factor = 1
 
         return container
-
-    def _is_viewer_enabled(self, viewer_type: str) -> bool:
-        """Check if a viewer is enabled by querying its 'enabled' field from ObjectState.
-
-        Args:
-            viewer_type: The streaming config field name (e.g., 'napari_streaming_config')
-
-        Returns:
-            True if the viewer's streaming config has enabled=True, False otherwise.
-        """
-        # viewer_type is already the field name (e.g., 'napari_streaming_config')
-        enabled_path = f"{viewer_type}.enabled"
-        # Get the resolved value (respects inheritance from parent_state)
-        return self.state.get_resolved_value(enabled_path) is True
-
-    def _get_enabled_viewers(self) -> list:
-        """Get list of all enabled viewer types.
-
-        Returns:
-            List of viewer type strings (e.g., ['napari', 'fiji']) where enabled=True.
-        """
-        return [
-            viewer_type
-            for viewer_type in _streaming_config_field_names()
-            if self._is_viewer_enabled(viewer_type)
-        ]
 
     def _create_instance_manager_panel(self):
         """Create the viewer instance manager panel using ZMQServerManagerWidget."""
@@ -634,91 +773,10 @@ class ImageBrowserWidget(QWidget):
             for metadata_key in self.metadata_keys:
                 raw_value = metadata.get(metadata_key)
                 if raw_value is not None:
-                    display_value = self._get_metadata_display_value(
+                    display_value = self.metadata_display_resolver.display_value(
                         metadata_key, raw_value
                     )
                     metadata[f"_display_{metadata_key}"] = display_value
-
-    def _get_metadata_display_value(self, metadata_key: str, raw_value: Any) -> str:
-        """
-        Get display value for metadata, using pre-computed values from metadata dict.
-
-        For components like channel, this returns "1 | W1" format (raw key | metadata name)
-        to preserve both the number and the metadata name. This handles cases where
-        different subdirectories might have the same channel number mapped to different names.
-
-        First checks for pre-computed "_display_{key}" in metadata (fast path during filtering),
-        otherwise computes and caches the value.
-
-        Args:
-            metadata_key: Metadata key (e.g., "channel", "site", "well")
-            raw_value: Raw value from parser (e.g., 1, 2, "A01")
-
-        Returns:
-            Display value in format "raw_key | metadata_name" if metadata available,
-            otherwise just "raw_key"
-        """
-        if raw_value is None:
-            return "N/A"
-
-        # Convert to string for lookup
-        value_str = str(raw_value)
-
-        # First check cache from pre-computed values (fast path during filtering)
-        cache_key = (metadata_key, value_str)
-        cached_value = self._metadata_display_cache.get(cache_key)
-        if cached_value is not None:
-            return cached_value
-
-        # Compute and cache value
-        display_value = self._get_metadata_display_value_impl(
-            metadata_key, value_str, cache_key
-        )
-        return display_value
-
-    def _get_metadata_display_value_impl(
-        self, metadata_key: str, value_str: str, cache_key: tuple
-    ) -> str:
-        """Implementation of metadata display value computation."""
-        # Try to get metadata display name from cache
-        if self.orchestrator:
-            try:
-                # Map metadata_key to AllComponents enum
-                from openhcs.constants import AllComponents
-
-                component_map = {
-                    "channel": AllComponents.CHANNEL,
-                    "site": AllComponents.SITE,
-                    "z_index": AllComponents.Z_INDEX,
-                    "timepoint": AllComponents.TIMEPOINT,
-                    "well": AllComponents.WELL,
-                }
-
-                component = component_map.get(metadata_key)
-                if component:
-                    metadata_name = self.orchestrator._metadata_cache_service.get_component_metadata(
-                        component, value_str
-                    )
-                    if metadata_name and metadata_name != "None":
-                        # Format like TUI: "Channel 1 | HOECHST 33342"
-                        # But for table cells, just show "1 | W1" (more compact)
-                        display_value = f"{value_str} | {metadata_name}"
-                        self._metadata_display_cache[cache_key] = display_value
-                        return display_value
-                    logger.debug(
-                        f"No metadata name found for {metadata_key} {value_str}"
-                    )
-            except Exception as e:
-                logger.warning(
-                    f"Could not get metadata for {metadata_key} {value_str}: {e}",
-                    exc_info=True,
-                )
-                self._metadata_display_cache[cache_key] = value_str
-                return value_str
-
-        # Fallback to raw value only
-        self._metadata_display_cache[cache_key] = value_str
-        return value_str
 
     def _build_column_filters(self):
         """Build column filter widgets from loaded file metadata."""
@@ -735,7 +793,7 @@ class ImageBrowserWidget(QWidget):
                 value = metadata.get(metadata_key)
                 if value is not None:
                     # Use metadata display value instead of raw value
-                    display_value = self._get_metadata_display_value(
+                    display_value = self.metadata_display_resolver.display_value(
                         metadata_key, value
                     )
                     unique_values.add(display_value)
@@ -814,7 +872,7 @@ class ImageBrowserWidget(QWidget):
             return
 
         try:
-            self._metadata_display_cache.clear()
+            self.metadata_display_resolver.clear()
             logger.info("IMAGE BROWSER: Starting load_images()")
             # Get metadata handler from orchestrator
             handler = self.orchestrator.microscope_handler
@@ -839,8 +897,7 @@ class ImageBrowserWidget(QWidget):
                 self.load_results()
                 return
 
-            # Build all_images dictionary
-            self.all_images = {}
+            self.image_catalog.clear()
             for filename in image_files:
                 parsed = handler.parser.parse_filename(filename)
 
@@ -860,23 +917,26 @@ class ImageBrowserWidget(QWidget):
                 metadata = {"filename": filename, "type": "Image", "size": size_str}
                 if parsed:
                     metadata.update(parsed)
-                self.all_images[filename] = metadata
+                self.image_catalog.add(filename, metadata)
 
             logger.info(
-                f"IMAGE BROWSER: Built all_images dict with {len(self.all_images)} entries"
+                f"IMAGE BROWSER: Built image catalog with {len(self.image_catalog)} entries"
             )
 
         except Exception as e:
             logger.error(f"Failed to load images: {e}", exc_info=True)
             QMessageBox.warning(self, "Error", f"Failed to load images: {e}")
             self.info_label.setText("Error loading images")
-            self.all_images = {}
+            self.image_catalog.clear()
 
         # Load results and merge with images
         self.load_results()
 
         # Merge images and results into unified all_files dictionary
-        self.all_files = {**self.all_images, **self.all_results}
+        self.all_files = {
+            **self.image_catalog.metadata_by_key,
+            **self.result_catalog.metadata_by_key,
+        }
 
         # Determine metadata keys from all files (union of all keys)
         all_keys = set()
@@ -927,8 +987,8 @@ class ImageBrowserWidget(QWidget):
 
         # Update info label
         total_files = len(self.all_files)
-        num_images = len(self.all_images)
-        num_results = len(self.all_results)
+        num_images = len(self.image_catalog)
+        num_results = len(self.result_catalog)
         self.info_label.setText(
             f"{total_files} files loaded ({num_images} images, {num_results} results)"
         )
@@ -938,8 +998,8 @@ class ImageBrowserWidget(QWidget):
             self._update_plate_view()
 
     def load_results(self):
-        """Load result files (ROI JSON, CSV) from the results directory and populate self.all_results."""
-        self.all_results = {}
+        """Load result files (ROI JSON, CSV) from the results directory."""
+        self.result_catalog.clear()
 
         if not self.orchestrator:
             logger.warning("IMAGE BROWSER RESULTS: No orchestrator available")
@@ -960,7 +1020,7 @@ class ImageBrowserWidget(QWidget):
                 logger.warning(
                     f"IMAGE BROWSER RESULTS: Metadata file not found: {metadata_path}"
                 )
-                self.all_results = {}
+                self.result_catalog.clear()
                 return
 
             with open(metadata_path) as f:
@@ -1064,11 +1124,10 @@ class ImageBrowserWidget(QWidget):
                                 )
 
                             # Store file info and full path separately
-                            self.all_results[str(rel_path)] = file_info
-                            self.result_full_paths[str(rel_path)] = file_path
+                            self.result_catalog.add(str(rel_path), file_info, file_path)
 
             logger.info(
-                f"IMAGE BROWSER RESULTS: Scanned {file_count} total files, matched {len(self.all_results)} result files"
+                f"IMAGE BROWSER RESULTS: Scanned {file_count} total files, matched {len(self.result_catalog)} result files"
             )
 
         except Exception as e:
@@ -1089,7 +1148,7 @@ class ImageBrowserWidget(QWidget):
         """
         try:
             # Check which viewers are enabled by querying ObjectState
-            enabled_viewers = self._get_enabled_viewers()
+            enabled_viewers = self.viewer_controls.enabled_viewers()
 
             if not enabled_viewers:
                 QMessageBox.information(
@@ -1342,35 +1401,15 @@ class ImageBrowserWidget(QWidget):
             logger.debug(f"  Checking if {normalized_param} == {enabled_path}")
             if normalized_param == enabled_path:
                 logger.info(f"  ✅ Match! Updating button state for {viewer_type}")
-                # Update the corresponding view button state
-                self._update_view_button_state(viewer_type)
+                self.viewer_controls.update_button_state(
+                    viewer_type,
+                    len(self.image_table_browser.get_selected_keys()) > 0,
+                )
                 break
-
-    def _update_view_button_state(self, viewer_type: str):
-        """Update a single view button's enabled state based on selection and config.
-
-        Args:
-            viewer_type: The viewer type key (e.g., 'napari_streaming_config')
-        """
-        if viewer_type not in self.view_buttons:
-            logger.warning(f"  ⚠️ viewer_type {viewer_type} not in view_buttons")
-            return
-
-        has_selection = len(self.image_table_browser.get_selected_keys()) > 0
-        is_enabled = self._is_viewer_enabled(viewer_type)
-        logger.info(
-            f"  🔘 Updating button for {viewer_type}: has_selection={has_selection}, is_enabled={is_enabled}, final={has_selection and is_enabled}"
-        )
-        self.view_buttons[viewer_type].setEnabled(has_selection and is_enabled)
 
     def _on_files_selected(self, keys: list):
         """Handle selection change from ImageTableBrowser."""
-        has_selection = len(keys) > 0
-        # Enable buttons based on selection AND enabled state from ObjectState
-        for viewer_type in _streaming_config_field_names():
-            view_btn = self.view_buttons[viewer_type]
-            is_enabled = self._is_viewer_enabled(viewer_type)
-            view_btn.setEnabled(has_selection and is_enabled)
+        self.viewer_controls.update_all_button_states(keys)
 
     # Backward compatibility alias
     def on_selection_changed(self):
@@ -1383,9 +1422,9 @@ class ImageBrowserWidget(QWidget):
         file_info = self.all_files[key]
 
         # Check if this is a result file (ROI, CSV, JSON) or an image
-        # Result files are stored in result_full_paths, images are not
+        # Result files are stored in result_catalog, images are not
         filename = file_info["filename"]
-        if filename in self.result_full_paths:
+        if self.result_catalog.is_result(filename):
             # This is a result file (ROI, CSV, JSON)
             self._handle_result_double_click(file_info)
         else:
@@ -1403,7 +1442,7 @@ class ImageBrowserWidget(QWidget):
     def _handle_image_double_click(self):
         """Handle double-click on an image - stream to enabled viewer(s)."""
         # Find all enabled viewers by querying ObjectState
-        enabled_viewers = self._get_enabled_viewers()
+        enabled_viewers = self.viewer_controls.enabled_viewers()
 
         # Stream to whichever viewer(s) are enabled
         if enabled_viewers:
@@ -1420,9 +1459,7 @@ class ImageBrowserWidget(QWidget):
     def _handle_result_double_click(self, file_info: dict):
         """Handle double-click on a result file - stream ROIs or display CSV."""
         filename = file_info["filename"]
-        # Result files are populated in load_results() which stores both
-        # all_results[filename] and result_full_paths[filename] together - must exist
-        file_path = self.result_full_paths[filename]
+        file_path = self.result_catalog.path_for(filename)
         result_file_type = ResultFileType(file_info["type"])
         RESULT_FILE_ACTIONS[result_file_type].run(self, file_path)
 

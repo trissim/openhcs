@@ -632,9 +632,37 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widget
 # cleared PlateSelectionEventController method-role quotient.
 ```
 
+Checkpoint 7:
+
+- Added `StreamingViewerField` and `ImageBrowserViewerControls` so viewer
+  button construction, display names, enabled-state lookup, and selection-driven
+  enablement are owned by one control authority.
+- Added `ImageBrowserMetadataDisplayResolver`, `ImageBrowserImageCatalog`, and
+  `ImageBrowserResultCatalog` so metadata display caching and image/result file
+  catalogs are no longer raw mirrored dictionaries on `ImageBrowserWidget`.
+- Removed the dead `_is_viewer_enabled` wrapper and reused private
+  `_get_viewer_display_name` helper.
+- Focused advisor on `image_browser.py` now reports only the broad
+  `ImageBrowserWidget` facade quotient; viewer membership and bidirectional
+  registry findings are cleared.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui -q
+# 95 passed
+
+.venv/bin/python -m py_compile openhcs/pyqt_gui/widgets/image_browser.py
+# clean
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widgets/image_browser.py
+# only ImageBrowserWidget class method-role quotient remains.
+```
+
 Remaining:
 
-- Split `image_browser.py` plate-view/detach/filter sync into controllers.
+- Split `image_browser.py` plate-view/detach/filter/streaming roles into
+  controllers if the remaining facade quotient should be eliminated.
 - Split `plate_view_widget.py` selection mutation/filter-sync/status updates
   into smaller subsystems.
 - Split `progress_tree_builder.py` into composed projection/build/status
