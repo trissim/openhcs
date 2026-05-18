@@ -49,7 +49,7 @@ OpenHCS checkpoint before these campaign plans:
 | --- | --- | --- | --- | --- |
 | 0 | Complete | Callable request binding and CP threshold context cleanup | `callable_request_binding_refactor_20260518.md`, `cellprofiler_binding_context_cleanup_20260518.md` | `pytest tests/unit -q` passed; commit `62c46ec4` pushed |
 | 1 | Complete | Runtime artifact query axis | `runtime_artifact_query_axis_refactor_20260518.md` | focused runtime artifact query tests + advisor on `runtime_artifact_queries.py` |
-| 2 | Pending | Napari streaming handler axis | `napari_streaming_handler_axis_refactor_20260518.md` | import smoke for both Napari modules + focused advisor |
+| 2 | Complete | Napari streaming handler axis | `napari_streaming_handler_axis_refactor_20260518.md` | import smoke for both Napari modules + focused advisor |
 | 3 | Pending | Validation registry family | `validation_registry_family_refactor_20260518.md` | validator tests + advisor on `validation/ast_validator.py` |
 | 4 | Pending | Backend parameter request records | `backend_parameter_request_records_refactor_20260518.md` | Ashlar CPU/GPU focused tests + advisor on pos-gen modules |
 | 5 | Pending | Preset pipeline spec authority | `preset_pipeline_spec_authority_refactor_20260518.md` | materialization equivalence tests + advisor on presets |
@@ -122,3 +122,27 @@ Before completion:
   remains only because the public compatibility wrapper names still exist.
 - Full advisor scan: 1,149 findings, 68.590s. Count includes deprecated Textual
   TUI and cleanup-grade findings tracked outside this campaign.
+
+### 2026-05-18 - Napari Streaming Handler Axis Started
+
+- Moved campaign 2 to `In Progress`.
+- First slice: extract the duplicated `StreamingDataType` handler table into a
+  shared runtime handler record while preserving module-local helper functions
+  and optional Napari import behavior.
+
+### 2026-05-18 - Napari Streaming Handler Axis Completed
+
+- Added `openhcs/runtime/napari_streaming_handlers.py` with
+  `NapariStreamingDataTypeHandler` and the canonical handler-table builder.
+- Replaced duplicated `_DATA_TYPE_HANDLERS` literals in
+  `napari_stream_visualizer.py` and `napari_viewer_server.py`.
+- Fixed pre-existing `napari_viewer_server.py` import omissions discovered by
+  mocked Napari import smoke (`register_cleanup_callback` and
+  `OpenHCSTransportMode`).
+- Focused verification: `tests/unit/test_napari_streaming_handlers.py` passed.
+- Mocked import smoke: both Napari modules import with fake `napari` and expose
+  image/points/shapes handler keys.
+- Focused advisor: parallel enum-keyed table finding removed; remaining Napari
+  findings are broader layer update helper ownership.
+- Full unit verification: `1508 passed, 10 warnings`.
+- Full advisor scan: 1,148 findings, 59.677s.

@@ -103,3 +103,23 @@ python -m nominal_refactor_advisor \
 - `_DATA_TYPE_HANDLERS` is not independently maintained in both runtime modules.
 - `StreamingDataType` dispatch has one authoritative typed surface.
 - The full-repo parallel enum-keyed table finding is removed.
+
+## Execution Note
+
+Implemented `openhcs/runtime/napari_streaming_handlers.py`:
+
+- `NapariStreamingDataTypeHandler` stores the data type, data builder, and layer
+  creator for one streaming data type.
+- `build_napari_streaming_data_type_handlers(...)` is the shared authority for
+  the image/shapes/points table.
+- `napari_streaming_data_type_handler(...)` provides fail-loud lookup for future
+  call sites.
+
+Updated both Napari runtime modules to build `_DATA_TYPE_HANDLERS` from this
+authority while keeping module-local helper functions in place. This removes the
+parallel enum-keyed table finding without merging the two viewer modules.
+
+The campaign also fixed two import omissions in `napari_viewer_server.py` found
+by mocked import smoke: `register_cleanup_callback` and `OpenHCSTransportMode`.
+Real Napari is not installed in this environment, so smoke verification used a
+fake `napari` module to validate import-time OpenHCS wiring and handler keys.

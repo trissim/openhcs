@@ -18,6 +18,8 @@ import numpy as np
 from typing import Any, Dict, Optional
 from qtpy.QtCore import QTimer
 
+from openhcs.core.config import TransportMode as OpenHCSTransportMode
+from polystore.backend_registry import register_cleanup_callback
 from zmqruntime.config import TransportMode, ZMQConfig
 from polystore.streaming_constants import StreamingDataType
 from polystore.streaming.receivers.napari import (
@@ -27,6 +29,9 @@ from polystore.streaming.receivers.napari import (
 from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
     NAPARI_HEARTBEAT,
+)
+from openhcs.runtime.napari_streaming_handlers import (
+    build_napari_streaming_data_type_handlers,
 )
 from zmqruntime.streaming import StreamingVisualizerServer, VisualizerProcessManager
 from zmqruntime.transport import (
@@ -423,20 +428,14 @@ def _create_or_update_points_layer(viewer, layers, layer_name, points_data, prop
 # Populate registry now that helper functions are defined
 from polystore.streaming_constants import StreamingDataType
 
-_DATA_TYPE_HANDLERS = {
-    StreamingDataType.IMAGE: {
-        "build_nd_data": _build_nd_image_array,
-        "create_layer": _create_or_update_image_layer,
-    },
-    StreamingDataType.SHAPES: {
-        "build_nd_data": _build_nd_shapes,
-        "create_layer": _create_or_update_shapes_layer,
-    },
-    StreamingDataType.POINTS: {
-        "build_nd_data": _build_nd_points,
-        "create_layer": _create_or_update_points_layer,
-    },
-}
+_DATA_TYPE_HANDLERS = build_napari_streaming_data_type_handlers(
+    build_image_data=_build_nd_image_array,
+    create_image_layer=_create_or_update_image_layer,
+    build_shapes_data=_build_nd_shapes,
+    create_shapes_layer=_create_or_update_shapes_layer,
+    build_points_data=_build_nd_points,
+    create_points_layer=_create_or_update_points_layer,
+)
 
 
 def _handle_component_aware_display(
