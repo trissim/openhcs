@@ -879,3 +879,32 @@ Remaining:
   nominal request/context record.
 - Replace `measure_object_intensity_distribution` profile call repetition with
   a bound profiler object.
+
+Checkpoint 3:
+
+- Added `RadialDistributionMeasureRequest` and routed backend-specific radial
+  measurement implementations through `_measure_request`, preserving the public
+  `measure(...)` signature while giving backend implementations one nominal
+  request authority.
+- Added `IntensityDistributionProfiler` and routed
+  `measure_object_intensity_distribution` phase logging through the bound
+  profiler instead of repeated `_log_profile` call records.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_measureobjectintensitydistribution.py tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 408 passed, 10 warnings
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/intensity_distribution.py
+# Cleared measure_object_intensity_distribution profile call-family finding.
+# Remaining radial parameter-family finding is now primarily public wrapper
+# compatibility plus the Numba kernel boundary.
+```
+
+Remaining:
+
+- Public/export `__all__` derivation belongs to Campaign 14.
+- Decide whether to add a new public request-style radial API and deprecate the
+  long-form compatibility wrappers, or leave the remaining wrapper finding as
+  compatibility debt.

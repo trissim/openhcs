@@ -73,6 +73,24 @@ def _log_profile(label: str, seconds: float, **fields: object) -> None:
     logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
+@dataclass(frozen=True)
+class IntensityDistributionProfiler:
+    """Bound profiler for object intensity-distribution measurement phases."""
+
+    function_name: str
+
+    def record(self, label: str, started_at: float, **fields: object) -> None:
+        _log_profile(
+            label,
+            time.perf_counter() - started_at,
+            function=self.function_name,
+            **fields,
+        )
+
+    def record_rows(self, label: str, started_at: float, row_count: int) -> None:
+        self.record(label, started_at, rows=row_count)
+
+
 @dataclass(frozen=True, slots=True)
 class RadialDistributionArrays:
     """Dense per-object radial intensity-distribution arrays."""
@@ -199,6 +217,31 @@ class IntensityDistributionPlaneInputs:
         return image_array, label_array
 
 
+@dataclass(frozen=True, slots=True)
+class RadialDistributionMeasureRequest:
+    """Complete per-plane radial-distribution measurement request."""
+
+    image: np.ndarray
+    labels: np.ndarray
+    d_to_edge: np.ndarray
+    d_from_center: np.ndarray
+    center_labels: np.ndarray
+    centers_i: np.ndarray
+    centers_j: np.ndarray
+    bin_count: int
+    wants_scaled: bool
+    maximum_radius: int
+
+    @property
+    def object_count(self) -> int:
+        labels_array = np.asarray(self.labels)
+        return int(labels_array.max()) if labels_array.size else 0
+
+    @property
+    def n_bins(self) -> int:
+        return int(self.bin_count) if self.wants_scaled else int(self.bin_count) + 1
+
+
 class RadialDistributionBackendStrategy(
     CellProfilerBackendStrategyMixin,
     ABC,
@@ -216,7 +259,6 @@ class RadialDistributionBackendStrategy(
             backend_provider=self.center_propagation_backend_provider,
         )
 
-    @abstractmethod
     def measure(
         self,
         image: np.ndarray,
@@ -232,6 +274,27 @@ class RadialDistributionBackendStrategy(
         maximum_radius: int,
     ) -> RadialDistributionArrays:
         """Return radial-distribution arrays for one image plane."""
+        return self._measure_request(
+            RadialDistributionMeasureRequest(
+                image=image,
+                labels=labels,
+                d_to_edge=d_to_edge,
+                d_from_center=d_from_center,
+                center_labels=center_labels,
+                centers_i=centers_i,
+                centers_j=centers_j,
+                bin_count=bin_count,
+                wants_scaled=wants_scaled,
+                maximum_radius=maximum_radius,
+            )
+        )
+
+    @abstractmethod
+    def _measure_request(
+        self,
+        request: RadialDistributionMeasureRequest,
+    ) -> RadialDistributionArrays:
+        """Return radial-distribution arrays for a normalized request."""
 
     def measure_from_centers(
         self,
@@ -433,27 +496,17 @@ class NativeNumpyRadialDistributionBackendStrategy(
     backend_provider = CellProfilerBackendProvider.NATIVE
     is_default_backend = False
 
-    def measure(
+    def _measure_request(
         self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        d_to_edge: np.ndarray,
-        d_from_center: np.ndarray,
-        center_labels: np.ndarray,
-        centers_i: np.ndarray,
-        centers_j: np.ndarray,
-        *,
-        bin_count: int,
-        wants_scaled: bool,
-        maximum_radius: int,
+        request: RadialDistributionMeasureRequest,
     ) -> RadialDistributionArrays:
-        image_array = np.asarray(image, dtype=np.float64)
-        labels_array = np.asarray(labels, dtype=np.int32)
-        d_to_edge_array = np.asarray(d_to_edge, dtype=np.float64)
-        d_from_center_array = np.asarray(d_from_center, dtype=np.float64)
-        center_labels_array = np.asarray(center_labels, dtype=np.int32)
-        centers_i_array = np.asarray(centers_i, dtype=np.float64)
-        centers_j_array = np.asarray(centers_j, dtype=np.float64)
+        image_array = np.asarray(request.image, dtype=np.float64)
+        labels_array = np.asarray(request.labels, dtype=np.int32)
+        d_to_edge_array = np.asarray(request.d_to_edge, dtype=np.float64)
+        d_from_center_array = np.asarray(request.d_from_center, dtype=np.float64)
+        center_labels_array = np.asarray(request.center_labels, dtype=np.int32)
+        centers_i_array = np.asarray(request.centers_i, dtype=np.float64)
+        centers_j_array = np.asarray(request.centers_j, dtype=np.float64)
 
         if image_array.ndim != 2 or labels_array.ndim != 2:
             raise NotImplementedError(
@@ -466,51 +519,51 @@ class NativeNumpyRadialDistributionBackendStrategy(
                 "Radial distribution labels must match the image shape; got "
                 f"labels {labels_array.shape!r} for image {image_array.shape!r}."
             )
-        if bin_count <= 0:
-            raise ValueError(f"bin_count must be positive, got {bin_count!r}.")
+        if request.bin_count <= 0:
+            raise ValueError(f"bin_count must be positive, got {request.bin_count!r}.")
 
-        object_count = int(labels_array.max()) if labels_array.size else 0
-        n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
+        object_count = request.object_count
+        n_bins = request.n_bins
         if object_count <= 0:
             return RadialDistributionArrays.empty(
-                bin_count=bin_count,
-                wants_scaled=wants_scaled,
+                bin_count=request.bin_count,
+                wants_scaled=request.wants_scaled,
             )
 
         good_mask = center_labels_array > 0
         normalized_distance = np.zeros(labels_array.shape, dtype=float)
-        if wants_scaled:
+        if request.wants_scaled:
             total_distance = d_from_center_array + d_to_edge_array
             normalized_distance[good_mask] = d_from_center_array[good_mask] / (
                 total_distance[good_mask] + 0.001
             )
         else:
             normalized_distance[good_mask] = (
-                d_from_center_array[good_mask] / maximum_radius
+                d_from_center_array[good_mask] / request.maximum_radius
             )
 
         good_labels = labels_array[good_mask]
-        bin_indexes = (normalized_distance * int(bin_count)).astype(int)
-        bin_indexes[bin_indexes > int(bin_count)] = int(bin_count)
+        bin_indexes = (normalized_distance * int(request.bin_count)).astype(int)
+        bin_indexes[bin_indexes > int(request.bin_count)] = int(request.bin_count)
         labels_and_bins = (good_labels - 1, bin_indexes[good_mask])
 
         histogram = scipy.sparse.coo_matrix(
             (image_array[good_mask], labels_and_bins),
-            (object_count, int(bin_count) + 1),
+            (object_count, int(request.bin_count) + 1),
         ).toarray()
         sum_by_object = np.sum(histogram, 1)
         fraction_at_distance = histogram / np.dstack(
-            [sum_by_object] * (int(bin_count) + 1)
+            [sum_by_object] * (int(request.bin_count) + 1)
         )[0]
 
         ngood_pixels = int(np.sum(good_mask))
         number_at_distance = scipy.sparse.coo_matrix(
             (np.ones(ngood_pixels), labels_and_bins),
-            (object_count, int(bin_count) + 1),
+            (object_count, int(request.bin_count) + 1),
         ).toarray()
         sum_by_object = np.sum(number_at_distance, 1)
         fraction_at_bin = number_at_distance / np.dstack(
-            [sum_by_object] * (int(bin_count) + 1)
+            [sum_by_object] * (int(request.bin_count) + 1)
         )[0]
         mean_pixel_fraction = fraction_at_distance / (
             fraction_at_bin + np.finfo(float).eps
@@ -592,27 +645,23 @@ class NumbaNumpyRadialDistributionBackendStrategy(
             maximum_radius=100,
         )
 
-    def measure(
+    def _measure_request(
         self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        d_to_edge: np.ndarray,
-        d_from_center: np.ndarray,
-        center_labels: np.ndarray,
-        centers_i: np.ndarray,
-        centers_j: np.ndarray,
-        *,
-        bin_count: int,
-        wants_scaled: bool,
-        maximum_radius: int,
+        request: RadialDistributionMeasureRequest,
     ) -> RadialDistributionArrays:
-        image_array = np.ascontiguousarray(image, dtype=np.float64)
-        labels_array = np.ascontiguousarray(labels, dtype=np.int32)
-        d_to_edge_array = np.ascontiguousarray(d_to_edge, dtype=np.float64)
-        d_from_center_array = np.ascontiguousarray(d_from_center, dtype=np.float64)
-        center_labels_array = np.ascontiguousarray(center_labels, dtype=np.int32)
-        centers_i_array = np.ascontiguousarray(centers_i, dtype=np.float64)
-        centers_j_array = np.ascontiguousarray(centers_j, dtype=np.float64)
+        image_array = np.ascontiguousarray(request.image, dtype=np.float64)
+        labels_array = np.ascontiguousarray(request.labels, dtype=np.int32)
+        d_to_edge_array = np.ascontiguousarray(request.d_to_edge, dtype=np.float64)
+        d_from_center_array = np.ascontiguousarray(
+            request.d_from_center,
+            dtype=np.float64,
+        )
+        center_labels_array = np.ascontiguousarray(
+            request.center_labels,
+            dtype=np.int32,
+        )
+        centers_i_array = np.ascontiguousarray(request.centers_i, dtype=np.float64)
+        centers_j_array = np.ascontiguousarray(request.centers_j, dtype=np.float64)
 
         if image_array.ndim != 2 or labels_array.ndim != 2:
             raise NotImplementedError(
@@ -625,15 +674,15 @@ class NumbaNumpyRadialDistributionBackendStrategy(
                 "Radial distribution labels must match the image shape; got "
                 f"labels {labels_array.shape!r} for image {image_array.shape!r}."
             )
-        if bin_count <= 0:
-            raise ValueError(f"bin_count must be positive, got {bin_count!r}.")
+        if request.bin_count <= 0:
+            raise ValueError(f"bin_count must be positive, got {request.bin_count!r}.")
 
-        object_count = int(labels_array.max()) if labels_array.size else 0
-        n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
+        object_count = request.object_count
+        n_bins = request.n_bins
         if object_count <= 0:
             return RadialDistributionArrays.empty(
-                bin_count=bin_count,
-                wants_scaled=wants_scaled,
+                bin_count=request.bin_count,
+                wants_scaled=request.wants_scaled,
             )
 
         (
@@ -649,9 +698,9 @@ class NumbaNumpyRadialDistributionBackendStrategy(
             center_labels_array,
             centers_i_array,
             centers_j_array,
-            int(bin_count),
-            bool(wants_scaled),
-            int(maximum_radius),
+            int(request.bin_count),
+            bool(request.wants_scaled),
+            int(request.maximum_radius),
             object_count,
         )
         return RadialDistributionArrays.from_components(
@@ -839,6 +888,9 @@ def measure_object_intensity_distribution(
 ) -> tuple[np.ndarray, list[Any]]:
     """Measure CellProfiler-compatible object intensity distribution rows."""
     total_started_at = time.perf_counter()
+    profiler = IntensityDistributionProfiler(
+        function_name="measure_object_intensity_distribution"
+    )
     del center_choice
     img_2d, labels_2d = IntensityDistributionPlaneInputs(image, labels).arrays()
 
@@ -858,10 +910,9 @@ def measure_object_intensity_distribution(
         wants_scaled=wants_scaled,
         maximum_radius=maximum_radius,
     )
-    _log_profile(
+    profiler.record(
         "idist_radial_backend",
-        time.perf_counter() - phase_started_at,
-        function="measure_object_intensity_distribution",
+        phase_started_at,
         nobjects=len(object_ids),
         bins=radial_arrays.n_bins,
     )
@@ -871,11 +922,10 @@ def measure_object_intensity_distribution(
         object_ids=object_ids,
         bin_count=bin_count,
     ).rows()
-    _log_profile(
+    profiler.record_rows(
         "idist_radial_rows",
-        time.perf_counter() - phase_started_at,
-        function="measure_object_intensity_distribution",
-        rows=len(measurements),
+        phase_started_at,
+        len(measurements),
     )
 
     if wants_zernikes != ZernikeMode.NONE:
@@ -889,18 +939,16 @@ def measure_object_intensity_distribution(
                 backend_provider=zernike_backend_provider,
             ).rows()
         )
-        _log_profile(
+        profiler.record_rows(
             "idist_zernike_rows",
-            time.perf_counter() - phase_started_at,
-            function="measure_object_intensity_distribution",
-            rows=len(measurements),
+            phase_started_at,
+            len(measurements),
         )
 
-    _log_profile(
+    profiler.record_rows(
         "idist_total",
-        time.perf_counter() - total_started_at,
-        function="measure_object_intensity_distribution",
-        rows=len(measurements),
+        total_started_at,
+        len(measurements),
     )
     return image, measurements
 
