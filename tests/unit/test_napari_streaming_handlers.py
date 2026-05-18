@@ -4,6 +4,7 @@ import pytest
 
 from polystore.streaming_constants import StreamingDataType
 
+from openhcs.runtime.viewer_protocol import ComponentDimensionLabelPolicy
 from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerUpdateAuthority,
     NapariStreamingDataTypeHandler,
@@ -162,3 +163,23 @@ def test_napari_layer_update_authority_declares_shapes_and_points_kwargs():
         "face_color": "green",
         "size": 3,
     }
+
+
+def test_component_dimension_label_policy_owns_channel_well_and_generic_labels():
+    policy = ComponentDimensionLabelPolicy()
+
+    assert policy.labels_for(
+        component="channel",
+        values=[1, 2],
+        metadata={"1": "DAPI", "2": "None"},
+    ) == ["Ch1: DAPI", "Ch 2"]
+    assert policy.labels_for(
+        component="well",
+        values=["A01"],
+        metadata={"A01": "A01"},
+    ) == ["A01"]
+    assert policy.labels_for(
+        component="site",
+        values=[3],
+        metadata={"3": "Field"},
+    ) == ["Site 3: Field"]

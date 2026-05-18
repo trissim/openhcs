@@ -6,6 +6,7 @@ import os
 import platform
 import subprocess
 import sys
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -196,3 +197,59 @@ class ChannelColormapPolicy:
         except (TypeError, ValueError):
             return None
         return self.colors_by_channel.get(channel_number)
+
+
+@dataclass(frozen=True, slots=True)
+class ComponentDimensionLabelPolicy:
+    """Build human-readable dimension labels for viewer component axes."""
+
+    abbreviations: Mapping[str, str] = field(
+        default_factory=lambda: {
+            "channel": "Ch",
+            "z_index": "Z",
+            "timepoint": "T",
+            "site": "Site",
+            "well": "Well",
+        }
+    )
+    metadata_formatters: Mapping[str, Callable[[object, object], str]] = field(
+        default_factory=lambda: {
+            "channel": lambda value, name: f"Ch{value}: {name}",
+            "well": lambda _value, name: str(name),
+        }
+    )
+
+    def labels_for(
+        self,
+        *,
+        component: str,
+        values: Iterable[object],
+        metadata: Mapping[str, object],
+    ) -> list[str]:
+        return [
+            self.label_for(component=component, value=value, metadata=metadata)
+            for value in values
+        ]
+
+    def label_for(
+        self,
+        *,
+        component: str,
+        value: object,
+        metadata: Mapping[str, object],
+    ) -> str:
+        metadata_name = metadata.get(str(value))
+        if metadata_name and str(metadata_name).lower() != "none":
+            return self._metadata_label(component, value, metadata_name)
+        return f"{self.abbreviations.get(component, component)} {value}"
+
+    def _metadata_label(
+        self,
+        component: str,
+        value: object,
+        metadata_name: object,
+    ) -> str:
+        formatter = self.metadata_formatters.get(component)
+        if formatter is not None:
+            return formatter(value, metadata_name)
+        return f"{component.title()} {value}: {metadata_name}"

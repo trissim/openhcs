@@ -28,6 +28,7 @@ from polystore.streaming.receivers.napari import (
 )
 from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
+    ComponentDimensionLabelPolicy,
     NAPARI_HEARTBEAT,
     NapariViewerServerRequest,
     ViewerQtEnvironmentPolicy,
@@ -61,6 +62,7 @@ if napari is None:
 
 logger = logging.getLogger(__name__)
 _NAPARI_LAYER_UPDATES = NapariLayerUpdateAuthority()
+_COMPONENT_DIMENSION_LABELS = ComponentDimensionLabelPolicy()
 
 # ZMQ connection delay (ms)
 ZMQ_CONNECTION_DELAY_MS = 100  # Brief delay for ZMQ connection to establish
@@ -880,45 +882,15 @@ class NapariViewerServer(StreamingVisualizerServer):
         # Use global component values to ensure consistency across all layers
         dimension_labels = {}
 
-        # Component abbreviation mapping
-        COMPONENT_ABBREV = {
-            "channel": "Ch",
-            "z_index": "Z",
-            "timepoint": "T",
-            "site": "Site",
-            "well": "Well",
-        }
-
         for comp in stack_components:
             # Use global component values instead of just this layer's values
             values = global_component_values[comp]
-
-            # Try to get human-readable labels from metadata if available
-            labels = []
-
-            # Check if we have metadata for this component type
             comp_metadata = self.component_metadata.get(comp, {})
-
-            for v in values:
-                # First try to get name from metadata (e.g., channel name)
-                metadata_name = comp_metadata.get(str(v))
-
-                if metadata_name and str(metadata_name).lower() != "none":
-                    # Use metadata name with index for clarity
-                    if comp == "channel":
-                        labels.append(f"Ch{v}: {metadata_name}")
-                    elif comp == "well":
-                        labels.append(
-                            f"{metadata_name}"
-                        )  # Well names are already good (e.g., "A01")
-                    else:
-                        labels.append(f"{comp.title()} {v}: {metadata_name}")
-                else:
-                    # No metadata - use abbreviated component name + index
-                    abbrev = COMPONENT_ABBREV.get(comp, comp)
-                    labels.append(f"{abbrev} {v}")
-
-            dimension_labels[comp] = labels
+            dimension_labels[comp] = _COMPONENT_DIMENSION_LABELS.labels_for(
+                component=comp,
+                values=values,
+                metadata=comp_metadata,
+            )
 
         # Store dimension labels for this layer
         self.dimension_labels[layer_key] = dimension_labels

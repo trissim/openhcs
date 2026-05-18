@@ -130,3 +130,27 @@ Advisor status:
 - Remaining high-value work is now the larger decompositions: component/shape
   dispatch, Napari server role quotient, Fiji dimension-listener hub, Fiji
   dimension context record, and public process signature-family cleanup.
+
+### Checkpoint 3
+
+Implemented:
+
+- `ComponentDimensionLabelPolicy` in `viewer_protocol.py`.
+- Shared Napari dimension-label construction in both Napari runtime modules.
+- Unit coverage for channel, well, generic metadata, and metadata-ignored
+  fallback label behavior.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 6 passed
+```
+
+Advisor status:
+
+- Cleared the Napari component-label string dispatch findings.
+- Remaining viewer protocol findings are shape rasterization dispatch, stream
+  visualizer lifecycle/membership boundaries, Napari/Fiji server role
+  quotients, Fiji dimension context records, process signature records, and
+  platform strategy ladders in the shared viewer protocol.

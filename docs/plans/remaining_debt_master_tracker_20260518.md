@@ -171,3 +171,25 @@ Verification:
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/fiji_viewer_server.py
 # cleared Napari data-type strategy ladder and unreferenced component parser findings
 ```
+
+Checkpoint 3:
+
+- Added `ComponentDimensionLabelPolicy` as the shared authority for
+  human-readable Napari stacked-axis labels.
+- Routed both Napari runtime modules through the shared policy instead of
+  repeating channel/well/generic label branches.
+- Added unit coverage for channel metadata labels, well labels, generic
+  metadata labels, abbreviation fallback, and ignored `"None"` metadata.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 6 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/fiji_viewer_server.py openhcs/runtime/viewer_protocol.py
+# cleared Napari component-label string dispatch findings
+# remaining: shape rasterization dispatch, viewer lifecycle/membership,
+# Napari/Fiji server role quotients, Fiji dimension context records,
+# process signature records, and shared viewer platform strategy ladders
+```
