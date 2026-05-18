@@ -135,3 +135,30 @@ git diff --check
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/enhance/focus_torch.py
 # No refactoring findings.
 ```
+
+### Checkpoint 4 - Deconvolution Input Projections
+
+Implemented:
+
+- Added `Deconvolution2DImageProjection` for 2D deconvolution input layout and
+  output restoration.
+- Added `Deconvolution3DVolumeProjection` for 3D deconvolution input layout and
+  output restoration.
+- Added `DeconvolutionBlurMode` enums and removed raw string checks from blur
+  setup/apply sites.
+- Removed dead `_blur_gaussian_conv_torch` from the 3D deconvolution backend.
+
+Verification:
+
+```bash
+.venv/bin/python -m py_compile openhcs/processing/backends/enhance/self_supervised_2d_deconvolution.py openhcs/processing/backends/enhance/self_supervised_3d_deconvolution.py
+# clean
+
+git diff --check
+# clean
+```
+
+Remaining:
+
+- Advisor now asks for the blur-mode enum branches to become nominal strategy
+  families in both 2D and 3D deconvolution.
