@@ -21,6 +21,8 @@ import pandas as pd
 import sys
 from typing import Optional
 
+from openhcs.formats.experimental_layout_rows import ExperimentalLayoutRowRole
+
 
 
 
@@ -64,24 +66,14 @@ def get_features(raw_df,scope=None):
         sys.exit()
 
 def is_N_row(row_name):
-    row_name = str(row_name).lower()
-    is_N = False
-    if row_name == "n" or row_name=="ns":
-        is_N = True
-    if row_name == "replicate" or row_name=="replicates":
-        is_N = True
-    return is_N
+    return ExperimentalLayoutRowRole(row_name).is_replicate_count
 
 
 def is_well_all_replicates_row(row_name):
-    row_name = str(row_name).lower()
-    return row_name == "well" or row_name == "wells"
+    return ExperimentalLayoutRowRole(row_name).is_well_all_replicates
 
 def is_well_specific_replicate_row(row_name):
-    row_name = str(row_name).lower()
-    if 'well' in row_name:
-        return row_name[-1].isdigit()
-    else: return False
+    return ExperimentalLayoutRowRole(row_name).is_well_specific_replicate
 
 def read_plate_layout(config_path):
     xls = pd.ExcelFile(config_path)

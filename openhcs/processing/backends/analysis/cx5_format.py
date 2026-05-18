@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import sys
 
+from openhcs.formats.experimental_layout_rows import ExperimentalLayoutRowRole
+
 
 
 
@@ -27,26 +29,6 @@ def get_features(raw_df,scope=None):
     else:
         print("microscope "+str(scope)+" not known. Exiting")
         sys.exit()
-
-def is_N_row(row_name):
-    row_name = row_name.lower()
-    is_N = False
-    if row_name == "n" or row_name=="ns":
-        is_N = True
-    if row_name == "replicate" or row_name=="replicates":
-        is_N = True
-    return is_N
-
-
-def is_well_all_replicates_row(row_name):
-    row_name = row_name.lower()
-    return row_name == "well" or row_name == "wells"
-
-def is_well_specific_replicate_row(row_name):
-    row_name = row_name.lower()
-    if 'well' in row_name:
-        return row_name[-1].isdigit()
-    else: return False
 
 def read_plate_layout(config_path):
     xls = pd.ExcelFile(config_path)
@@ -74,13 +56,16 @@ def read_plate_layout(config_path):
         string1 = string1.replace(' ','')
         string2 = string2.replace('_','')
         string2 = string2.replace(' ','')
-        if not string1[-1] == 's': string1 +='s'
-        if not string2[-1] == 's': string2 +='s'
+        if string1[-1] != 's':
+            string1 += 's'
+        if string2[-1] != 's':
+            string2 += 's'
         return string1 == string2
 
     for i,row in df.iterrows():
         #check max number of replicates
-        if is_N_row(row.name):
+        row_role = ExperimentalLayoutRowRole(row.name)
+        if row_role.is_replicate_count:
             N = int(row.iloc[0])
             for i in range(N):
                 layout["N"+str(i+1)]={}
@@ -142,11 +127,12 @@ def read_plate_layout(config_path):
             doses=row.dropna().tolist()
 
         #if well is same for all Ns
-        if is_well_all_replicates_row(row.name):
+        row_role = ExperimentalLayoutRowRole(row.name)
+        if row_role.is_well_all_replicates:
             wells=row.dropna().tolist()
             specific_N = None
         # or not
-        if is_well_specific_replicate_row(row.name):
+        if row_role.is_well_specific_replicate:
             specific_N = int(row.name[-1])
             wells=row.dropna().tolist()
 
