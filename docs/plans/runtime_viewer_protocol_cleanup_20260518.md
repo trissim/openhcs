@@ -107,3 +107,26 @@ Advisor status:
 - Remaining: component/shape dispatch, Napari viewer-server role quotient,
   Fiji dimension-listener hub, Fiji dimension context record, and public
   Napari/Fiji process signature-family cleanup.
+
+### Checkpoint 2
+
+Implemented:
+
+- Napari `StreamingDataType` route table for layer update execution.
+- Deletion of dead `_parse_component_info_from_path` helpers from both Napari
+  runtime modules.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 5 passed
+```
+
+Advisor status:
+
+- Cleared Napari data-type strategy ladder.
+- Cleared unreferenced private component parser findings.
+- Remaining high-value work is now the larger decompositions: component/shape
+  dispatch, Napari server role quotient, Fiji dimension-listener hub, Fiji
+  dimension context record, and public process signature-family cleanup.

@@ -100,41 +100,6 @@ def _cleanup_global_viewer() -> None:
 register_cleanup_callback(_cleanup_global_viewer)
 
 
-def _parse_component_info_from_path(path_str: str):
-    """
-    Fallback component parsing from path (used when component metadata unavailable).
-
-    Args:
-        path_str: Path string like 'step_name/A01/s1_c2_z3.tif'
-
-    Returns:
-        Dict with basic component info extracted from filename
-    """
-    try:
-        import os
-        import re
-
-        filename = os.path.basename(path_str)
-
-        # Basic regex for common patterns
-        pattern = r"(?:s(\d+))?(?:_c(\d+))?(?:_z(\d+))?"
-        match = re.search(pattern, filename)
-
-        components = {}
-        if match:
-            site, channel, z_index = match.groups()
-            if site:
-                components["site"] = site
-            if channel:
-                components["channel"] = channel
-            if z_index:
-                components["z_index"] = z_index
-
-        return components
-    except Exception:
-        return {}
-
-
 def _build_nd_shapes(layer_items, stack_components):
     """
     Build nD shapes by prepending stack component indices to 2D shape coordinates.
@@ -594,6 +559,11 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.layer_update_lock = threading.Lock()  # Prevent concurrent updates
         self.pending_updates = {}  # layer_key -> QTimer (debounce)
         self.update_delay_ms = 1000  # Wait 200ms for more items before rebuilding
+        self.layer_update_routes = {
+            StreamingDataType.IMAGE: self._update_image_layer,
+            StreamingDataType.SHAPES: self._update_shapes_layer,
+            StreamingDataType.POINTS: self._update_points_layer,
+        }
 
         # Batch processors for efficient accumulation and display
         # Uses batch_size from config if available (defaults to None = wait for all)

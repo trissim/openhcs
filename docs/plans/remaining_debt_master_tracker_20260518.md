@@ -154,3 +154,20 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 # cleared duplicated Napari layer-helper owner findings, platform dispatch findings,
 # and dead _prepare_data_for_display finding
 ```
+
+Checkpoint 2:
+
+- Replaced the Napari `_execute_layer_update` enum ladder with a typed
+  `StreamingDataType` route table on `NapariViewerServer`.
+- Deleted unreferenced `_parse_component_info_from_path` helpers from both
+  Napari runtime modules after repository-wide call-site verification.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 5 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/fiji_viewer_server.py
+# cleared Napari data-type strategy ladder and unreferenced component parser findings
+```

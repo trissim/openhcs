@@ -101,41 +101,6 @@ def _cleanup_global_viewer() -> None:
             _global_viewer_process = None
 
 
-def _parse_component_info_from_path(path_str: str):
-    """
-    Fallback component parsing from path (used when component metadata unavailable).
-
-    Args:
-        path_str: Path string like 'step_name/A01/s1_c2_z3.tif'
-
-    Returns:
-        Dict with basic component info extracted from filename
-    """
-    try:
-        import os
-        import re
-
-        filename = os.path.basename(path_str)
-
-        # Basic regex for common patterns
-        pattern = r"(?:s(\d+))?(?:_c(\d+))?(?:_z(\d+))?"
-        match = re.search(pattern, filename)
-
-        components = {}
-        if match:
-            site, channel, z_index = match.groups()
-            if site:
-                components["site"] = site
-            if channel:
-                components["channel"] = channel
-            if z_index:
-                components["z_index"] = z_index
-
-        return components
-    except Exception:
-        return {}
-
-
 def _build_nd_shapes(layer_items, stack_components):
     """
     Build nD shapes by prepending stack component indices to 2D shape coordinates.
@@ -598,6 +563,11 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.layer_update_lock = threading.Lock()  # Prevent concurrent updates
         self.pending_updates = {}  # layer_key -> QTimer (debounce)
         self.update_delay_ms = 1000  # Wait 200ms for more items before rebuilding
+        self.layer_update_routes = {
+            StreamingDataType.IMAGE: self._update_image_layer,
+            StreamingDataType.SHAPES: self._update_shapes_layer,
+            StreamingDataType.POINTS: self._update_points_layer,
+        }
 
         # Ack socket handled by StreamingVisualizerServer
 
@@ -759,24 +729,14 @@ class NapariViewerServer(StreamingVisualizerServer):
                 f"🔬 NAPARI PROCESS: Using stack components: {stack_components}"
             )
 
-            # Build and update the layer based on data type
             try:
-                if data_type == StreamingDataType.IMAGE:
-                    self._update_image_layer(
-                        layer_key, layer_items, stack_components, component_modes
-                    )
-                elif data_type == StreamingDataType.SHAPES:
-                    self._update_shapes_layer(
-                        layer_key, layer_items, stack_components, component_modes
-                    )
-                elif data_type == StreamingDataType.POINTS:
-                    self._update_points_layer(
-                        layer_key, layer_items, stack_components, component_modes
-                    )
-                else:
+                route = self.layer_update_routes.get(data_type)
+                if route is None:
                     logger.warning(
                         f"🔬 NAPARI PROCESS: Unknown data type {data_type} for {layer_key}"
                     )
+                    return
+                route(layer_key, layer_items, stack_components, component_modes)
             except Exception as e:
                 logger.error(
                     f"🔬 NAPARI PROCESS: Failed to update layer {layer_key}: {e}",
