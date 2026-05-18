@@ -55,7 +55,7 @@ OpenHCS checkpoint before these campaign plans:
 | 5 | Complete | Preset pipeline spec authority | `preset_pipeline_spec_authority_refactor_20260518.md` | materialization equivalence tests + advisor on presets |
 | 6 | Complete | PyQt GUI decomposition | `pyqt_gui_decomposition_refactor_20260518.md` | controller tests/import smoke + advisor on `PlateViewWidget` |
 | 7 | Complete | Orchestration hubs | `full_repo_orchestration_hubs_refactor_20260518.md` | orchestrator characterization tests + focused advisor |
-| 8 | Pending | Full-repo triage policy and known-noise ledger | `full_repo_advisor_triage_policy_20260518.md`, `advisor_known_noise.md` | full advisor scan reviewed and ledger updated |
+| 8 | Complete | Full-repo triage policy and known-noise ledger | `full_repo_advisor_triage_policy_20260518.md`, `advisor_known_noise.md` | full advisor scan reviewed and ledger updated |
 
 ## Explicit Exclusions
 
@@ -272,3 +272,13 @@ Before completion:
   as residual staged-split debt.
 - Full unit verification: `1522 passed, 10 warnings`.
 - Full advisor scan: 1,133 findings, 66.622s.
+
+### 2026-05-18 - Full-Repo Triage Policy Completed
+
+- Moved campaign 8 to `Complete`.
+- Updated full-repo triage baseline to the current checkpoint:
+  `1,133 findings, 66.622s`.
+- Recorded completed campaign-grade findings and the remaining major campaign
+  targets.
+- Added known-noise entries for deprecated Textual TUI readability/layout
+  findings and the side-effecting `pipeline_config` property alias.

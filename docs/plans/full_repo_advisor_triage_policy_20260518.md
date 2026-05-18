@@ -17,9 +17,9 @@ python -m nominal_refactor_advisor openhcs
 
 Current successful scan:
 
-- 1,140 findings
-- 60 unique finding titles
-- 61.032s total
+- 1,133 findings
+- 66.622s total
+- Last checkpoint commit: `fe8086aa Split compiled plate execution phases`
 
 Top high-volume categories:
 
@@ -46,12 +46,23 @@ Treat a finding as campaign-grade when it meets at least two criteria:
 Examples from the current scan:
 
 - `PipelineOrchestrator.execute_compiled_plate`
+- remaining backend dimensional dispatch families;
+- remaining active PyQt role decomposition;
+- runtime protocol/attribute-probe cleanup;
+- source-assignment/model cleanup from earlier CP/debug work;
+- residual `execute_compiled_plate` stages: worker-assignment planning,
+  executor construction/submission, result aggregation, cleanup/consolidation,
+  and final state projection.
+
+Completed campaign-grade findings in this tracker set:
+
 - runtime artifact query axis duplication;
 - Napari streaming handler table duplication;
 - AST validator family;
-- preset pipeline spec duplication;
-- Ashlar parameter record duplication;
-- `PlateViewWidget.eventFilter`
+- Ashlar parameter records;
+- MFD preset pipeline spec authority;
+- `PlateViewWidget.eventFilter`;
+- first staged split of `PipelineOrchestrator.execute_compiled_plate`.
 
 ## Cleanup-Grade Findings
 
@@ -62,6 +73,8 @@ Treat as cleanup-grade when the change is local and mechanically verifiable:
 - one-off string dispatch in terminal/UI compatibility code;
 - small unreferenced private helpers;
 - trivial forwarding wrappers where the public API is not involved.
+- deprecated Textual TUI readability/layout findings while the TUI remains
+  deprecated.
 
 Cleanup-grade work should be batched separately and should not interrupt a
 campaign unless it blocks tests or readability in touched files.
