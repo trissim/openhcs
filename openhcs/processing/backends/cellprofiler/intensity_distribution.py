@@ -24,6 +24,7 @@ from openhcs.core.pipeline.function_contracts import (
     special_inputs,
     special_outputs,
 )
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_semantics import (
     ObjectIntensityDistributionMeasurementRows,
@@ -723,15 +724,15 @@ def radial_distribution_backend(
     )
 
 
-__all__ = [
-    "NativeNumpyRadialDistributionBackendStrategy",
-    "NumbaNumpyRadialDistributionBackendStrategy",
-    "RadialDistributionArrays",
-    "RadialDistributionBackendStrategy",
-    "RadialLabelGeometry",
-    "RadialLabelGeometryCacheKey",
-    "radial_distribution_backend",
-]
+__all__ = public_names_from_objects(
+    NativeNumpyRadialDistributionBackendStrategy,
+    NumbaNumpyRadialDistributionBackendStrategy,
+    RadialDistributionArrays,
+    RadialDistributionBackendStrategy,
+    RadialLabelGeometry,
+    RadialLabelGeometryCacheKey,
+    radial_distribution_backend,
+)
 
 
 @njit(cache=True)

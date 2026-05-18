@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from inspect import isclass, isfunction
 from types import ModuleType
+from typing import Any
 
 
 def declared_public_names(
@@ -46,6 +47,11 @@ def exported_public_names(
         if name not in excluded
         if not isinstance(value, ModuleType)
     )
+
+
+def public_names_from_objects(*objects: Any, extra_names: Iterable[str] = ()) -> tuple[str, ...]:
+    """Return public names from exported object identities plus explicit aliases."""
+    return tuple(item.__name__ for item in objects) + tuple(extra_names)
 
 
 def is_declared_public_name(

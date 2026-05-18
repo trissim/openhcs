@@ -936,3 +936,41 @@ Remaining:
   without obscuring the real algorithm.
 - Heap push/pop parameter threading remains in private Numba-compatible heap
   helpers.
+
+## Campaign 14 - Public API And Export Surface Authority
+
+Checkpoint 1:
+
+- Added `public_names_from_objects` to `openhcs.core.public_api` for narrow
+  compatibility export surfaces that should derive from object identities rather
+  than broad module declarations.
+- Replaced manual `__all__` string lists in
+  `openhcs/processing/backends/cellprofiler/intensity_distribution.py` and
+  `openhcs/processing/backends/cellprofiler/watershed.py` with
+  `public_names_from_objects(...)`.
+- Verified the derived tuples match the intended compatibility export names.
+
+Verification:
+
+```bash
+.venv/bin/python - <<'PY'
+from openhcs.processing.backends.cellprofiler.intensity_distribution import __all__ as i
+from openhcs.processing.backends.cellprofiler.watershed import __all__ as w
+print(i)
+print(w)
+PY
+# tuples matched the previous explicit names
+
+.venv/bin/python -m pytest tests/unit/test_measureobjectintensitydistribution.py tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 408 passed, 10 warnings
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/intensity_distribution.py openhcs/processing/backends/cellprofiler/watershed.py openhcs/core/public_api.py
+# Manual __all__ findings cleared for intensity_distribution.py and watershed.py.
+```
+
+Remaining:
+
+- Apply the same explicit export schema to additional active CP backend modules
+  and non-CP public packages.
+- Thresholding requires alias-aware export handling before its manual
+  compatibility aliases can safely move to the helper.

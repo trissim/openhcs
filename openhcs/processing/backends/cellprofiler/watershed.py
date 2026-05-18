@@ -19,6 +19,7 @@ from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
 from openhcs.core.callable_contract import runtime_image_execution_mode
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import DenseObjectLabelConsecutiveRelabelingStrategy
 from openhcs.core.runtime_values import object_label_dense_array
@@ -1817,14 +1818,14 @@ def _legacy_watershed_raveled_numba(
             )
 
 
-__all__ = [
-    "CellProfiler4DistanceMarkerBackendStrategy",
-    "LegacyWatershedBackendStrategy",
-    "MahotasCellProfiler4DistanceMarkerBackendStrategy",
-    "NumbaCellProfiler4DistanceMarkerBackendStrategy",
-    "NumbaNumpyLegacyWatershedBackendStrategy",
-    "NumpyLegacyWatershedBackendStrategy",
-    "WatershedStats",
-    "cellprofiler_legacy_watershed",
-    "watershed",
-]
+__all__ = public_names_from_objects(
+    CellProfiler4DistanceMarkerBackendStrategy,
+    LegacyWatershedBackendStrategy,
+    MahotasCellProfiler4DistanceMarkerBackendStrategy,
+    NumbaCellProfiler4DistanceMarkerBackendStrategy,
+    NumbaNumpyLegacyWatershedBackendStrategy,
+    NumpyLegacyWatershedBackendStrategy,
+    WatershedStats,
+    cellprofiler_legacy_watershed,
+    watershed,
+)
