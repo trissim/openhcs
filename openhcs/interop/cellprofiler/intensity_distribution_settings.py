@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from enum import Enum
 
+from openhcs.core.registry_strategies import enum_member_with_payload
+
 from .settings_binder import coerce_cellprofiler_enum
 
 
@@ -15,10 +17,12 @@ class IntensityDistributionCenterChoice(Enum):
         absorbed_value: str,
         *cellprofiler_literals: str,
     ) -> "IntensityDistributionCenterChoice":
-        obj = object.__new__(cls)
-        obj._value_ = absorbed_value
-        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
-        return obj
+        return enum_member_with_payload(
+            cls,
+            absorbed_value,
+            payload_attribute="cellprofiler_literals",
+            payload=(absorbed_value, *cellprofiler_literals),
+        )
 
     SELF = ("self", "These objects")
     CENTERS_OF_OTHER = (
@@ -39,10 +43,12 @@ class IntensityDistributionZernikeMode(Enum):
         absorbed_value: str,
         *cellprofiler_literals: str,
     ) -> "IntensityDistributionZernikeMode":
-        obj = object.__new__(cls)
-        obj._value_ = absorbed_value
-        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
-        return obj
+        return enum_member_with_payload(
+            cls,
+            absorbed_value,
+            payload_attribute="cellprofiler_literals",
+            payload=(absorbed_value, *cellprofiler_literals),
+        )
 
     NONE = ("none",)
     MAGNITUDES = ("magnitudes", "Magnitudes only")

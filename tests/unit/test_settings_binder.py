@@ -10,7 +10,7 @@ from openhcs.interop.cellprofiler.settings_binder import (
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock, ModuleSetting
 from openhcs.interop.cellprofiler.module_settings_binding import ModuleUnmappedSettingIgnore
-from openhcs.interop.cellprofiler.module_settings_binding import ModuleSettingsBindingStrategy
+from openhcs.interop.cellprofiler.module_settings_binding import _ModuleSettingsBindingStrategy
 from openhcs.interop.cellprofiler.module_settings_binding import UnmappedModuleSettingsError
 from openhcs.interop.cellprofiler.resize_objects_settings import RESIZE_OBJECTS_SETTINGS
 from openhcs.interop.cellprofiler.setting_names import setting_names
@@ -112,7 +112,7 @@ def test_watershed_settings_bind_nominal_method_enums():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("Watershed").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("Watershed").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -140,7 +140,7 @@ def test_watershed_settings_bind_seed_dilation_structuring_element():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("Watershed").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("Watershed").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -162,7 +162,7 @@ def test_combine_objects_binds_overlap_policy_nominally():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("CombineObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("CombineObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -186,7 +186,7 @@ def test_watershed_runtime_family_follows_module_revision():
         metadata={"variable_revision_number": "4"},
     )
 
-    strategy = ModuleSettingsBindingStrategy.for_module("Watershed")
+    strategy = _ModuleSettingsBindingStrategy.for_module("Watershed")
 
     assert strategy.bind(
         legacy_module,
@@ -211,7 +211,7 @@ def test_erode_objects_binds_preservation_settings():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("ErodeObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("ErodeObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -232,7 +232,7 @@ def test_dilate_objects_binds_structuring_element_to_object_dilation_kwargs():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("DilateObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("DilateObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -278,7 +278,7 @@ def test_gray_to_color_rescale_default_follows_cellprofiler_revision_upgrade():
         metadata={"variable_revision_number": "3"},
     )
 
-    strategy = ModuleSettingsBindingStrategy.for_module("GrayToColor")
+    strategy = _ModuleSettingsBindingStrategy.for_module("GrayToColor")
 
     assert strategy.bind(
         v3_module,
@@ -316,7 +316,7 @@ def test_identify_primary_objects_binds_threshold_semantics():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "IdentifyPrimaryObjects"
     ).bind(
         module,
@@ -363,7 +363,7 @@ def test_threshold_module_binds_shared_threshold_semantics():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("Threshold").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("Threshold").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -415,7 +415,7 @@ def test_identify_secondary_objects_binds_global_threshold_method_semantics():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "IdentifySecondaryObjects"
     ).bind(
         module,
@@ -466,7 +466,7 @@ def test_identify_secondary_objects_binds_adaptive_threshold_method_semantics():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "IdentifySecondaryObjects"
     ).bind(
         module,
@@ -510,7 +510,7 @@ def test_legacy_three_class_otsu_synthesizes_log_transform_upgrade():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "IdentifySecondaryObjects"
     ).bind(
         module,
@@ -549,7 +549,7 @@ def test_legacy_duplicate_threshold_method_keeps_ordered_active_method():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "IdentifyPrimaryObjects"
     ).bind(
         module,
@@ -579,7 +579,7 @@ def test_legacy_threshold_method_names_are_upgraded_to_current_spellings():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "IdentifyPrimaryObjects"
     ).bind(
         module,
@@ -611,7 +611,7 @@ def test_enhance_or_suppress_features_settings_bind_to_runtime_kwargs():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "EnhanceOrSuppressFeatures"
     ).bind(
         module,
@@ -646,7 +646,7 @@ def test_smooth_settings_bind_to_runtime_kwargs():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("Smooth").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("Smooth").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -681,7 +681,7 @@ def test_enhance_edges_settings_bind_to_runtime_kwargs():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("EnhanceEdges").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("EnhanceEdges").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -722,7 +722,7 @@ def test_color_to_gray_split_kwargs_use_enabled_rgb_channels():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("ColorToGray").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("ColorToGray").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -750,7 +750,7 @@ def test_robust_background_threshold_binds_fractional_deviations():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "IdentifyPrimaryObjects"
     ).bind(
         module,
@@ -773,7 +773,7 @@ def test_mask_objects_binds_masking_policy_semantics():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MaskObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MaskObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -806,7 +806,7 @@ def test_measure_texture_binds_repeated_texture_scales():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MeasureTexture").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MeasureTexture").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -827,7 +827,7 @@ def test_measure_texture_ignores_legacy_gabor_ui_settings():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MeasureTexture").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MeasureTexture").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -858,7 +858,7 @@ def test_measure_granularity_binds_shared_spectrum_settings():
         setting_records=setting_records,
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MeasureGranularity").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MeasureGranularity").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -889,7 +889,7 @@ def test_measure_image_quality_ignores_inactive_all_images_selector():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MeasureImageQuality").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MeasureImageQuality").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -913,7 +913,7 @@ def test_measure_image_quality_rejects_active_unmapped_image_selector():
     )
 
     with pytest.raises(UnmappedModuleSettingsError) as exc:
-        ModuleSettingsBindingStrategy.for_module("MeasureImageQuality").bind(
+        _ModuleSettingsBindingStrategy.for_module("MeasureImageQuality").bind(
             module,
             binder=SettingsBinder(),
             param_mapping={},
@@ -936,7 +936,7 @@ def test_relate_objects_binds_distance_setting():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("RelateObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("RelateObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -958,7 +958,7 @@ def test_correct_illumination_binds_legacy_object_size_alias():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "CorrectIlluminationCalculate"
     ).bind(
         module,
@@ -984,7 +984,7 @@ def test_identify_primary_objects_consumes_legacy_input_output_aliases():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("IdentifyPrimaryObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("IdentifyPrimaryObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1005,7 +1005,7 @@ def test_measure_image_intensity_ignores_blank_legacy_object_selector():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MeasureImageIntensity").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MeasureImageIntensity").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1029,7 +1029,7 @@ def test_measure_colocalization_binds_legacy_rank_weighted_typo():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "MeasureColocalization"
     ).bind(
         module,
@@ -1058,7 +1058,7 @@ def test_measure_colocalization_ignores_inactive_legacy_object_selector():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "MeasureColocalization"
     ).bind(
         module,
@@ -1082,7 +1082,7 @@ def test_measure_colocalization_preserves_active_legacy_object_selector_semantic
     )
 
     ignored = ModuleUnmappedSettingIgnore.ignored_setting_names_for_module(module)
-    bound = ModuleSettingsBindingStrategy.for_module("MeasureColocalization").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MeasureColocalization").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1103,7 +1103,7 @@ def test_measure_object_size_shape_binds_zernike_toggle():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MeasureObjectSizeShape").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MeasureObjectSizeShape").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1130,7 +1130,7 @@ def test_measure_object_intensity_distribution_binds_scalar_settings():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "MeasureObjectIntensityDistribution"
     ).bind(
         module,
@@ -1180,7 +1180,7 @@ def test_measure_object_neighbors_binds_distance_semantics():
         setting_records=setting_records,
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "MeasureObjectNeighbors"
     ).bind(
         module,
@@ -1226,7 +1226,7 @@ def test_image_math_binds_operation_semantics():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("ImageMath").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("ImageMath").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1259,7 +1259,7 @@ def test_expand_or_shrink_objects_binds_operation_semantics():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("ExpandOrShrinkObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("ExpandOrShrinkObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1292,7 +1292,7 @@ def test_measure_colocalization_binds_metric_and_costes_semantics():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module(
+    bound = _ModuleSettingsBindingStrategy.for_module(
         "MeasureColocalization"
     ).bind(
         module,
@@ -1327,7 +1327,7 @@ def test_tile_binds_within_cycles_to_row_montage_geometry():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("Tile").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("Tile").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1355,7 +1355,7 @@ def test_tile_rejects_unsupported_assembly_method():
     )
 
     with pytest.raises(NotImplementedError, match="Across cycles"):
-        ModuleSettingsBindingStrategy.for_module("Tile").bind(
+        _ModuleSettingsBindingStrategy.for_module("Tile").bind(
             module,
             binder=SettingsBinder(),
             param_mapping={},
@@ -1373,7 +1373,7 @@ def test_track_objects_binds_tracking_identity_settings():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("TrackObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("TrackObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1397,7 +1397,7 @@ def test_resize_binds_factor_and_interpolation_settings():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("Resize").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("Resize").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1434,7 +1434,7 @@ def test_resize_objects_binds_volumetric_factor_settings():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("ResizeObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("ResizeObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1458,7 +1458,7 @@ def test_median_filter_binds_window_size():
         settings={"Window": "5"},
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MedianFilter").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MedianFilter").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1474,7 +1474,7 @@ def test_gaussian_filter_binds_sigma():
         settings={"Sigma": "1"},
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("GaussianFilter").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("GaussianFilter").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1503,7 +1503,7 @@ def test_rescale_intensity_binds_source_range_and_nominal_modes():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("RescaleIntensity").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("RescaleIntensity").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1536,7 +1536,7 @@ def test_mask_image_binds_mask_source_and_inversion():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MaskImage").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MaskImage").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1563,7 +1563,7 @@ def test_mask_objects_ignores_inactive_outline_output_name():
         ],
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MaskObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MaskObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1584,7 +1584,7 @@ def test_overlay_objects_binds_opacity_and_ignores_contract_routing():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("OverlayObjects").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("OverlayObjects").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1604,7 +1604,7 @@ def test_measure_object_intensity_declares_contract_routing_settings():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("MeasureObjectIntensity").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("MeasureObjectIntensity").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1622,7 +1622,7 @@ def test_module_settings_binding_rejects_unmapped_settings():
     )
 
     with pytest.raises(UnmappedModuleSettingsError) as exc:
-        ModuleSettingsBindingStrategy.for_module("Generic").bind(
+        _ModuleSettingsBindingStrategy.for_module("Generic").bind(
             module,
             binder=SettingsBinder(),
             param_mapping={},
@@ -1638,7 +1638,7 @@ def test_module_settings_binding_allows_derived_dead_output_setting_ignore():
         settings={"Name the output image": "DeadOutput"},
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("Generic").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("Generic").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1655,7 +1655,7 @@ def test_remove_holes_binds_hole_diameter():
         settings={"Size of holes to fill": "20.0"},
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("RemoveHoles").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("RemoveHoles").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},
@@ -1675,7 +1675,7 @@ def test_reduce_noise_binds_non_local_means_parameters():
         },
     )
 
-    bound = ModuleSettingsBindingStrategy.for_module("ReduceNoise").bind(
+    bound = _ModuleSettingsBindingStrategy.for_module("ReduceNoise").bind(
         module,
         binder=SettingsBinder(),
         param_mapping={},

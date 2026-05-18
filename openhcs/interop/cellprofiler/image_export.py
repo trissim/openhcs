@@ -19,6 +19,7 @@ from metaclass_registry import AutoRegisterMeta
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.processing.materialization import csv_materializer
 
 
@@ -98,7 +99,11 @@ class SaveImagesRequest:
         )
 
 
-class BitDepthConversionStrategy(ABC, metaclass=AutoRegisterMeta):
+class BitDepthConversionStrategy(
+    EnumKeyedStrategyMixin[BitDepth],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal image conversion policy for one SaveImages bit depth."""
 
     __registry_key__ = "bit_depth_label"
@@ -106,13 +111,12 @@ class BitDepthConversionStrategy(ABC, metaclass=AutoRegisterMeta):
 
     bit_depth: ClassVar[BitDepth | None] = None
     bit_depth_label: ClassVar[str | None] = None
+    __enum_member_attr__ = "bit_depth"
+    __enum_label_attr__ = "bit_depth_label"
 
     @classmethod
     def for_bit_depth(cls, bit_depth: BitDepth) -> "BitDepthConversionStrategy":
-        strategy_type = cls.__registry__.get(bit_depth.value)
-        if strategy_type is None:
-            raise ValueError(f"Unsupported SaveImages bit depth: {bit_depth.value!r}")
-        return strategy_type()
+        return cls.for_enum_member(bit_depth)
 
     @abstractmethod
     def convert(self, image: np.ndarray) -> np.ndarray:

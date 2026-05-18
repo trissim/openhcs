@@ -99,7 +99,7 @@ def gray_to_color_rescale_default(module: ModuleBlock) -> str:
     return GrayToColorModuleRevision(module).rescale_default
 
 
-class GrayToColorInputNameResolver(ABC, metaclass=AutoRegisterMeta):
+class _GrayToColorInputNameResolver(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for GrayToColor image-input discovery by scheme."""
 
     __registry_key__ = "scheme_literal"
@@ -107,7 +107,7 @@ class GrayToColorInputNameResolver(ABC, metaclass=AutoRegisterMeta):
     scheme_literal: ClassVar[str | None] = None
 
     @classmethod
-    def for_module(cls, module: ModuleBlock) -> "GrayToColorInputNameResolver":
+    def for_module(cls, module: ModuleBlock) -> "_GrayToColorInputNameResolver":
         scheme = gray_to_color_scheme(module)
         resolver_type = cls.__registry__.get(scheme.value)
         if resolver_type is None:
@@ -119,7 +119,7 @@ class GrayToColorInputNameResolver(ABC, metaclass=AutoRegisterMeta):
         """Return ordered nonblank source image names for one GrayToColor module."""
 
 
-class FixedSettingGrayToColorInputNameResolver(GrayToColorInputNameResolver):
+class FixedSettingGrayToColorInputNameResolver(_GrayToColorInputNameResolver):
     """Scheme resolver backed by a fixed ordered setting family."""
 
     image_settings: ClassVar[tuple[str, ...]] = ()
@@ -137,7 +137,7 @@ class FixedSettingGrayToColorInputNameResolver(GrayToColorInputNameResolver):
         )
 
 
-class RepeatedImageNameGrayToColorInputNameResolver(GrayToColorInputNameResolver):
+class RepeatedImageNameGrayToColorInputNameResolver(_GrayToColorInputNameResolver):
     """Base resolver for Stack/Composite repeated channel settings."""
 
     def input_names(self, module: ModuleBlock) -> tuple[str, ...]:
@@ -153,10 +153,10 @@ class GrayToColorInputNameResolverDeclaration:
 
     class_name: str
     scheme: GrayToColorScheme
-    base: type[GrayToColorInputNameResolver]
+    base: type[_GrayToColorInputNameResolver]
     image_settings: tuple[str, ...] = ()
 
-    def materialize(self) -> type[GrayToColorInputNameResolver]:
+    def materialize(self) -> type[_GrayToColorInputNameResolver]:
         return type(
             self.class_name,
             (self.base,),

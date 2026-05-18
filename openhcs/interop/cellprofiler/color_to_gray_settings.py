@@ -10,6 +10,8 @@ from typing import ClassVar
 
 from metaclass_registry import AutoRegisterMeta
 
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+
 from .cellprofiler_literals import cellprofiler_enum_from_literal
 from .parser import ModuleBlock
 from .setting_names import (
@@ -243,22 +245,25 @@ def color_to_gray_bound_kwargs(
     return color_to_gray_plan(module, binder).kwargs
 
 
-class ColorToGrayImageTypeSettingsStrategy(ABC, metaclass=AutoRegisterMeta):
+class ColorToGrayImageTypeSettingsStrategy(
+    EnumKeyedStrategyMixin[ColorToGrayImageType],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Nominal ColorToGray setting semantics for one input image type."""
 
     __registry_key__ = "image_type_literal"
     __skip_if_no_key__ = True
     image_type_literal: ClassVar[str | None] = None
+    __enum_member_attr__ = "image_type"
+    __enum_label_attr__ = "image_type_literal"
 
     @classmethod
     def for_image_type(
         cls,
         image_type: ColorToGrayImageType,
     ) -> "ColorToGrayImageTypeSettingsStrategy":
-        strategy_type = cls.__registry__.get(image_type.value)
-        if strategy_type is None:
-            raise ValueError(f"Unsupported ColorToGray image type: {image_type.value!r}")
-        return strategy_type()
+        return cls.for_enum_member(image_type)
 
     @abstractmethod
     def split_output_names(

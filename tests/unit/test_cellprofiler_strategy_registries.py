@@ -35,6 +35,10 @@ from openhcs.processing.backends.cellprofiler.image_math import (
 from openhcs.interop.cellprofiler.expand_or_shrink_settings import (
     ExpandShrinkOperationModeBinding,
 )
+from openhcs.interop.cellprofiler.grid_settings import (
+    FunctionNameVariantResolver,
+)
+from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.module_runtime_semantics import ModuleRuntimeSemanticsBinding
 from openhcs.interop.cellprofiler.module_semantics import (
     CellProfilerModuleSemanticTraits,
@@ -108,6 +112,7 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
         CellProfilerModuleSemanticTraits,
         MeasurementLabelExecutionModeStrategy,
         CellProfilerObjectMeasurementLabelArgumentPolicy,
+        FunctionNameVariantResolver,
     )
 
     for registry_class in registry_classes:
@@ -116,6 +121,54 @@ def test_cellprofiler_strategy_registry_keys_are_json_safe():
             isinstance(key, JSON_SAFE_REGISTRY_KEY_TYPES)
             for key in registry_class.__registry__
         ), registry_class.__name__
+
+
+def test_grid_function_name_variants_are_registered_by_module_name() -> None:
+    assert FunctionNameVariantResolver.__registry__ == {
+        "DefineGrid": type(
+            FunctionNameVariantResolver.for_module_name("DefineGrid")
+        ),
+        "IdentifyObjectsInGrid": type(
+            FunctionNameVariantResolver.for_module_name("IdentifyObjectsInGrid")
+        ),
+    }
+
+
+def test_grid_function_name_variants_resolve_expected_functions() -> None:
+    define_grid = ModuleBlock(
+        name="DefineGrid",
+        module_num=1,
+        settings={"Select the method to define the grid": "Automatic"},
+    )
+    identify_without_guides = ModuleBlock(
+        name="IdentifyObjectsInGrid",
+        module_num=2,
+        settings={"Select the guiding objects": "None"},
+    )
+    identify_with_guides = ModuleBlock(
+        name="IdentifyObjectsInGrid",
+        module_num=3,
+        settings={"Select the guiding objects": "Nuclei"},
+    )
+
+    assert (
+        FunctionNameVariantResolver.for_module_name("DefineGrid").function_name(
+            define_grid
+        )
+        == "define_grid_automatic"
+    )
+    assert (
+        FunctionNameVariantResolver.for_module_name(
+            "IdentifyObjectsInGrid"
+        ).function_name(identify_without_guides)
+        == "identify_objects_in_grid"
+    )
+    assert (
+        FunctionNameVariantResolver.for_module_name(
+            "IdentifyObjectsInGrid"
+        ).function_name(identify_with_guides)
+        == "identify_objects_in_grid_with_guides"
+    )
 
 
 def test_measurement_label_execution_mode_follows_object_label_domain():

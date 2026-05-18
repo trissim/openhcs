@@ -97,7 +97,7 @@ from openhcs.interop.cellprofiler.filter_objects_settings import (
     filter_objects_plan,
 )
 from openhcs.interop.cellprofiler.gray_to_color_settings import (
-    GrayToColorInputNameResolver,
+    _GrayToColorInputNameResolver,
 )
 from openhcs.interop.cellprofiler.overlay_outlines_settings import (
     OverlayOutlineSourceKind,
@@ -2239,7 +2239,7 @@ class GrayToColorContractBuilder(ModuleContractBuilder):
     ) -> ModuleArtifactContracts:
         images = [
             builder.require(name, CellProfilerSymbolKind.IMAGE, module)
-            for name in GrayToColorInputNameResolver.for_module(module).input_names(
+            for name in _GrayToColorInputNameResolver.for_module(module).input_names(
                 module
             )
         ]

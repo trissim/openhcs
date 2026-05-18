@@ -50,11 +50,11 @@ from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enu
 
 from openhcs.interop.cellprofiler.artifact_semantics import artifact_setting_symbols
 from openhcs.interop.cellprofiler.module_function_resolution import (
-    ModuleFunctionResolutionStrategy,
+    _ModuleFunctionResolutionStrategy,
 )
 from openhcs.interop.cellprofiler.module_settings_binding import (
     ModuleSettingCoverageRecord,
-    ModuleSettingsBindingStrategy,
+    _ModuleSettingsBindingStrategy,
 )
 from openhcs.interop.cellprofiler.settings_binder import (
     SettingsBinder,
@@ -673,7 +673,7 @@ class PipelineGeneratorCodeEmitter:
                 module=module,
                 artifact_contract=artifact_contract,
             )
-            bound_settings = ModuleSettingsBindingStrategy.for_module(
+            bound_settings = _ModuleSettingsBindingStrategy.for_module(
                 module.name
             ).bind(
                 module,
@@ -934,7 +934,7 @@ class PipelineGeneratorBuildStage:
         function_names_by_module: dict[int, str] = {}
         for module in executable_modules:
             meta = self.generator.registry.module_metadata(module.name)
-            resolved_function = ModuleFunctionResolutionStrategy.for_module(
+            resolved_function = _ModuleFunctionResolutionStrategy.for_module(
                 module.name
             ).resolve(
                 module,

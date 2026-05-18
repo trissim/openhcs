@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from openhcs.core.registry_strategies import enum_member_with_payload
+
 from .measurement_lookup import count_feature_object_name
 from .parser import ModuleBlock
 from .setting_names import (
@@ -34,10 +36,12 @@ class CalculateMathRoundingMethod(Enum):
         absorbed_value: str,
         *cellprofiler_literals: str,
     ) -> "CalculateMathRoundingMethod":
-        obj = object.__new__(cls)
-        obj._value_ = absorbed_value
-        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
-        return obj
+        return enum_member_with_payload(
+            cls,
+            absorbed_value,
+            payload_attribute="cellprofiler_literals",
+            payload=(absorbed_value, *cellprofiler_literals),
+        )
 
     NOT_ROUNDED = ("not_rounded", "Not rounded")
     DECIMAL_PLACES = (

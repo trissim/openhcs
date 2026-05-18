@@ -12,8 +12,7 @@ from openhcs.interop.cellprofiler.classify_objects_settings import (
     ClassifyObjectsVariant,
 )
 from openhcs.interop.cellprofiler.grid_settings import (
-    DefineGridVariant,
-    IdentifyObjectsInGridVariant,
+    FunctionNameVariantResolver,
 )
 from openhcs.interop.cellprofiler.measurement_scope import (
     CellProfilerMeasurementTargetScope as MeasurementTargetScope,
@@ -46,7 +45,7 @@ class ResolvedModuleFunction:
     function_name: str
 
 
-class ModuleFunctionResolutionStrategy(ABC, metaclass=AutoRegisterMeta):
+class _ModuleFunctionResolutionStrategy(ABC, metaclass=AutoRegisterMeta):
     """Nominal family for resolving raw absorbed-function variants."""
 
     __registry_key__ = "module_name"
@@ -54,7 +53,7 @@ class ModuleFunctionResolutionStrategy(ABC, metaclass=AutoRegisterMeta):
     module_name: ClassVar[str | None] = None
 
     @classmethod
-    def for_module(cls, module_name: str) -> "ModuleFunctionResolutionStrategy":
+    def for_module(cls, module_name: str) -> "_ModuleFunctionResolutionStrategy":
         strategy_type = cls.__registry__.get(
             canonical_module_name(module_name),
             DefaultModuleFunctionResolutionStrategy,
@@ -71,7 +70,7 @@ class ModuleFunctionResolutionStrategy(ABC, metaclass=AutoRegisterMeta):
         """Resolve the raw absorbed function for one parsed module."""
 
 
-class DefaultModuleFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+class DefaultModuleFunctionResolutionStrategy(_ModuleFunctionResolutionStrategy):
     """Use the registry-declared function unchanged."""
 
     def resolve(
@@ -84,7 +83,7 @@ class DefaultModuleFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
         return ResolvedModuleFunction(function_name=default_function_name)
 
 
-class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+class ScopedMeasurementFunctionResolutionStrategy(_ModuleFunctionResolutionStrategy):
     """Resolve image-vs-object absorbed variants from a CellProfiler scope setting."""
 
     scope_setting_name: ClassVar[SettingNameFamily | None] = None
@@ -122,7 +121,7 @@ class ScopedMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrate
         )
 
 
-class ObjectInputMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+class ObjectInputMeasurementFunctionResolutionStrategy(_ModuleFunctionResolutionStrategy):
     """Resolve object-measurement variants when object inputs are declared."""
 
     object_setting_name: ClassVar[SettingNameFamily] = OBJECT_MEASUREMENT_SETTING
@@ -144,7 +143,7 @@ class ObjectInputMeasurementFunctionResolutionStrategy(ModuleFunctionResolutionS
         )
 
 
-class ClassifyObjectsFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+class ClassifyObjectsFunctionResolutionStrategy(_ModuleFunctionResolutionStrategy):
     """Resolve absorbed ClassifyObjects variants from typed module settings."""
 
     module_name = "ClassifyObjectsSingleMeasurement"
@@ -161,7 +160,7 @@ class ClassifyObjectsFunctionResolutionStrategy(ModuleFunctionResolutionStrategy
         )
 
 
-class DefineGridFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+class DefineGridFunctionResolutionStrategy(_ModuleFunctionResolutionStrategy):
     """Resolve absorbed DefineGrid variants from typed module settings."""
 
     module_name = "DefineGridManual"
@@ -174,12 +173,14 @@ class DefineGridFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
     ) -> ResolvedModuleFunction:
         del default_function_name
         return ResolvedModuleFunction(
-            function_name=DefineGridVariant.from_module(module).function_name
+            function_name=FunctionNameVariantResolver.for_module_name(
+                "DefineGrid"
+            ).function_name(module)
         )
 
 
 class IdentifyObjectsInGridFunctionResolutionStrategy(
-    ModuleFunctionResolutionStrategy
+    _ModuleFunctionResolutionStrategy
 ):
     """Resolve grid-object identification with or without guiding labels."""
 
@@ -193,11 +194,13 @@ class IdentifyObjectsInGridFunctionResolutionStrategy(
     ) -> ResolvedModuleFunction:
         del default_function_name
         return ResolvedModuleFunction(
-            function_name=IdentifyObjectsInGridVariant.from_module(module).function_name
+            function_name=FunctionNameVariantResolver.for_module_name(
+                "IdentifyObjectsInGrid"
+            ).function_name(module)
         )
 
 
-class VolumetricSettingFunctionResolutionStrategy(ModuleFunctionResolutionStrategy):
+class VolumetricSettingFunctionResolutionStrategy(_ModuleFunctionResolutionStrategy):
     """Resolve modules with a distinct absorbed function for volumetric settings."""
 
     volumetric_function_name: ClassVar[str | None] = None
@@ -234,14 +237,14 @@ class ModuleFunctionResolutionDeclaration:
 
     class_name: str
     module_name: str
-    base: type[ModuleFunctionResolutionStrategy]
+    base: type[_ModuleFunctionResolutionStrategy]
     object_function_name: str | None = None
     scope_setting_name: SettingNameFamily | None = None
     default_scope_value: str | None = None
     volumetric_function_name: str | None = None
     volumetric_settings: tuple[SettingNameFamily, ...] = ()
 
-    def materialize(self) -> type[ModuleFunctionResolutionStrategy]:
+    def materialize(self) -> type[_ModuleFunctionResolutionStrategy]:
         namespace = {
             "module_name": self.module_name,
             "__module__": __name__,

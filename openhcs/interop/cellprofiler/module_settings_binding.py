@@ -250,7 +250,7 @@ class UnmappedModuleSettingsError(ValueError):
         )
         super().__init__(
             "Enabled CellProfiler modules have unmapped settings. "
-            "Add a ModuleSettingsBindingStrategy hook or an explicit typed ignore: "
+            "Add a module settings binding hook or an explicit typed ignore: "
             f"{rendered}"
         )
 
@@ -611,7 +611,7 @@ class LastRepeatedSettingValuePolicy(RepeatedSettingValuePolicy):
         return values[-1]
 
 
-class ModuleSettingsBindingStrategy(
+class _ModuleSettingsBindingStrategy(
     CanonicalModuleNameRegistrationMixin,
     ABC,
     metaclass=AutoRegisterMeta,
@@ -624,7 +624,7 @@ class ModuleSettingsBindingStrategy(
     registry_key: ClassVar[str | None] = None
 
     @classmethod
-    def for_module(cls, module_name: str) -> "ModuleSettingsBindingStrategy":
+    def for_module(cls, module_name: str) -> "_ModuleSettingsBindingStrategy":
         strategy_type = cls.__registry__.get(
             canonical_module_name(module_name),
             GenericModuleSettingsBindingStrategy,
@@ -755,7 +755,7 @@ class ModuleSettingsBindingStrategy(
         return tuple(records)
 
 
-class GenericModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class GenericModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Default docstring-mapped module-setting binder."""
 
     include_cellprofiler_threshold_advanced_setting: ClassVar[bool] = False
@@ -2169,7 +2169,7 @@ class WatershedModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindingStr
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
 
-class GrayToColorModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class GrayToColorModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Scheme-aware binder for GrayToColor's closed family of input layouts."""
 
     module_name = "GrayToColor"
@@ -2191,7 +2191,7 @@ class GrayToColorModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         )
 
 
-class UnmixColorsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class UnmixColorsModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind UnmixColors repeated output rows into one multi-output call."""
 
     module_name = "UnmixColors"
@@ -2207,7 +2207,7 @@ class UnmixColorsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(unmix_colors_bound_kwargs(module))
 
 
-class ColorToGrayModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class ColorToGrayModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind ColorToGray's mode-dependent channel plan."""
 
     module_name = "ColorToGray"
@@ -2224,7 +2224,7 @@ class ColorToGrayModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
 
 class MeasureImageAreaOccupiedModuleSettingsBindingStrategy(
-    ModuleSettingsBindingStrategy
+    _ModuleSettingsBindingStrategy
 ):
     """Bind ordered area-occupied rows into one generic multi-row call."""
 
@@ -2241,7 +2241,7 @@ class MeasureImageAreaOccupiedModuleSettingsBindingStrategy(
         return BoundModuleSettings(area_occupied_bound_kwargs(module))
 
 
-class AlignModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class AlignModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind legacy Align settings into the absorbed registration function."""
 
     module_name = "Align"
@@ -2257,7 +2257,7 @@ class AlignModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(align_bound_kwargs(module))
 
 
-class OverlayOutlinesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class OverlayOutlinesModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind ordered OverlayOutlines rows into one generic overlay call."""
 
     module_name = "OverlayOutlines"
@@ -2308,7 +2308,7 @@ class OverlayObjectsModuleSettingsBindingStrategy(GenericModuleSettingsBindingSt
         return BoundModuleSettings(kwargs, unmapped_kwargs)
 
 
-class TileModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class TileModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind legacy Tile assembly modes into explicit montage geometry."""
 
     module_name = "Tile"
@@ -2344,7 +2344,7 @@ class TileModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         )
 
 
-class TrackObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class TrackObjectsModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind TrackObjects settings that define tracking identity and feature names."""
 
     module_name = "TrackObjects"
@@ -2392,7 +2392,7 @@ class TrackObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         )
 
 
-class ImageMathModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class ImageMathModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind ImageMath operation and arithmetic modifiers."""
 
     module_name = "ImageMath"
@@ -2408,7 +2408,7 @@ class ImageMathModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(image_math_bound_kwargs(module, binder))
 
 
-class ResizeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class ResizeModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind Resize's factor/size/interpolation settings."""
 
     module_name = "Resize"
@@ -2424,7 +2424,7 @@ class ResizeModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(resize_bound_kwargs(module, binder))
 
 
-class ResizeObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class ResizeObjectsModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind ResizeObjects' factor/size settings."""
 
     module_name = "ResizeObjects"
@@ -2440,7 +2440,7 @@ class ResizeObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(resize_objects_bound_kwargs(module, binder))
 
 
-class MedianFilterModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class MedianFilterModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind MedianFilter's spatial window setting."""
 
     module_name = "Medianfilter"
@@ -2463,7 +2463,7 @@ class MedianFilterModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         )
 
 
-class RemoveHolesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class RemoveHolesModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind RemoveHoles' diameter setting."""
 
     module_name = "RemoveHoles"
@@ -2491,7 +2491,7 @@ class RemoveHolesModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
 
 class MeasureObjectNeighborsModuleSettingsBindingStrategy(
-    ModuleSettingsBindingStrategy
+    _ModuleSettingsBindingStrategy
 ):
     """Bind retained neighbor-image settings alongside topology measurements."""
 
@@ -2568,7 +2568,7 @@ class MeasureObjectNeighborsModuleSettingsBindingStrategy(
         return BoundModuleSettings(kwargs, unmapped)
 
 
-class FilterObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class FilterObjectsModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind FilterObjects rows into one generic multi-output object filter."""
 
     module_name = "FilterObjects"
@@ -2641,7 +2641,7 @@ class RelateObjectsModuleSettingsBindingStrategy(DeclarativeModuleSettingsBindin
         )
 
 
-class DisplayDataOnImageModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class DisplayDataOnImageModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind DisplayDataOnImage measurement-selection settings."""
 
     module_name = "DisplayDataOnImage"
@@ -2657,7 +2657,7 @@ class DisplayDataOnImageModuleSettingsBindingStrategy(ModuleSettingsBindingStrat
         return BoundModuleSettings(display_data_on_image_bound_kwargs(module))
 
 
-class CalculateMathModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class CalculateMathModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind CalculateMath operand and arithmetic settings."""
 
     module_name = "CalculateMath"
@@ -2673,7 +2673,7 @@ class CalculateMathModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(calculate_math_bound_kwargs(module, binder))
 
 
-class ClassifyObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class ClassifyObjectsModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind ClassifyObjects settings into absorbed classification kwargs."""
 
     module_name = "ClassifyObjectsSingleMeasurement"
@@ -2689,7 +2689,7 @@ class ClassifyObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy
         return BoundModuleSettings(classify_objects_bound_kwargs(module, binder))
 
 
-class CropModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class CropModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind Crop's coordinate/mask mode settings into absorbed Crop kwargs."""
 
     module_name = "Crop"
@@ -2712,10 +2712,10 @@ class DeclarativeModuleSettingsBindingStrategyDeclaration:
     class_name: str
     module_name: str
     setting_bindings: tuple[SettingToKeywordBinding, ...]
-    base: type[ModuleSettingsBindingStrategy] = DeclarativeModuleSettingsBindingStrategy
+    base: type[_ModuleSettingsBindingStrategy] = DeclarativeModuleSettingsBindingStrategy
     doc: str = ""
 
-    def materialize(self) -> type[ModuleSettingsBindingStrategy]:
+    def materialize(self) -> type[_ModuleSettingsBindingStrategy]:
         return type(
             self.class_name,
             (self.base,),
@@ -2875,7 +2875,7 @@ def _bind_repeated_bool_setting(
         kwargs[parameter_name] = tuple(parse_cellprofiler_bool(value) for value in values)
 
 
-class ExpandOrShrinkObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class ExpandOrShrinkObjectsModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind ExpandOrShrinkObjects operation settings into morphology kwargs."""
 
     module_name = "ExpandOrShrinkObjects"
@@ -2891,7 +2891,7 @@ class ExpandOrShrinkObjectsModuleSettingsBindingStrategy(ModuleSettingsBindingSt
         return BoundModuleSettings(expand_or_shrink_bound_kwargs(module, binder))
 
 
-class StructuringElementModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class StructuringElementModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind shared morphology structuring-element settings."""
 
     def _bind(
@@ -3014,7 +3014,7 @@ class DilateObjectsModuleSettingsBindingStrategy(StructuringElementModuleSetting
         )
 
 
-class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class DefineGridModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind DefineGrid settings into absorbed grid-definition kwargs."""
 
     module_name = "DefineGridManual"
@@ -3034,7 +3034,7 @@ class DefineGridModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
 
 
 class IdentifyObjectsInGridModuleSettingsBindingStrategy(
-    ModuleSettingsBindingStrategy
+    _ModuleSettingsBindingStrategy
 ):
     """Bind IdentifyObjectsInGrid settings into absorbed grid-object kwargs."""
 
@@ -3053,7 +3053,7 @@ class IdentifyObjectsInGridModuleSettingsBindingStrategy(
         )
 
 
-class UntangleWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class UntangleWormsModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind UntangleWorms output-mode settings into typed runtime kwargs."""
 
     module_name = "UntangleWorms"
@@ -3069,7 +3069,7 @@ class UntangleWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
         return BoundModuleSettings(untangle_worms_bound_kwargs(module))
 
 
-class StraightenWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy):
+class StraightenWormsModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
     """Bind StraightenWorms geometry and measurement settings."""
 
     module_name = "StraightenWorms"
@@ -3085,22 +3085,25 @@ class StraightenWormsModuleSettingsBindingStrategy(ModuleSettingsBindingStrategy
         return BoundModuleSettings(straighten_worms_bound_kwargs(module))
 
 
-class GrayToColorSchemeBindingStrategy(ABC, metaclass=AutoRegisterMeta):
+class GrayToColorSchemeBindingStrategy(
+    EnumKeyedStrategyMixin[GrayToColorScheme],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
     """Closed nominal family for GrayToColor scheme-specific kwarg lowering."""
 
     __registry_key__ = "scheme_literal"
     __skip_if_no_key__ = True
     scheme_literal: ClassVar[str | None] = None
+    __enum_member_attr__ = "scheme"
+    __enum_label_attr__ = "scheme_literal"
 
     @classmethod
     def for_scheme(
         cls,
         scheme: GrayToColorScheme,
     ) -> "GrayToColorSchemeBindingStrategy":
-        strategy_type = cls.__registry__.get(scheme.value)
-        if strategy_type is None:
-            raise ValueError(f"Unsupported GrayToColor scheme: {scheme.value!r}")
-        return strategy_type()
+        return cls.for_enum_member(scheme)
 
     @abstractmethod
     def bind(

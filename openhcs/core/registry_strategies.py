@@ -281,6 +281,20 @@ class RegisteredLeafClassSpec(ABC, metaclass=AutoRegisterMeta):
         return declared_type
 
 
+def enum_member_with_payload(
+    enum_type: type[object],
+    value: object,
+    *,
+    payload_attribute: str,
+    payload: object,
+) -> object:
+    """Construct an enum member while attaching one payload attribute."""
+    member = object.__new__(enum_type)
+    member._value_ = value
+    setattr(member, payload_attribute, payload)
+    return member
+
+
 def str_enum_member_with_payload(
     enum_type: type[str],
     value: str,

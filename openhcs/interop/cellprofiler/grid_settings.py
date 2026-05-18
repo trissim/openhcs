@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, ClassVar
 
-from openhcs.core.registry_strategies import RegisteredEnumMeta
+from metaclass_registry import AutoRegisterMeta
+
 from openhcs.interop.cellprofiler.runtime import (
     CellProfilerGridCycleScope,
     CellProfilerInvocationOptions,
@@ -17,17 +19,7 @@ from .setting_names import is_blank_symbol_name, optional_setting_value
 from .settings_binder import SettingsBinder
 
 
-class FunctionNameVariant(str, Enum, metaclass=RegisteredEnumMeta):
-    """Enum variant whose value is the absorbed function name."""
-
-    __registry_key__ = "__name__"
-
-    @property
-    def function_name(self) -> str:
-        return str(self.value)
-
-
-class DefineGridVariant(FunctionNameVariant):
+class DefineGridVariant(str, Enum):
     """Absorbed DefineGrid function variants."""
 
     MANUAL = "define_grid_manual"
@@ -47,7 +39,7 @@ class DefineGridVariant(FunctionNameVariant):
         raise ValueError(f"Unsupported DefineGrid method: {value!r}.")
 
 
-class IdentifyObjectsInGridVariant(FunctionNameVariant):
+class IdentifyObjectsInGridVariant(str, Enum):
     """Absorbed IdentifyObjectsInGrid function variants."""
 
     GRID_ONLY = "identify_objects_in_grid"
@@ -63,6 +55,43 @@ class IdentifyObjectsInGridVariant(FunctionNameVariant):
         if is_blank_symbol_name(guiding_objects):
             return cls.GRID_ONLY
         return cls.WITH_GUIDES
+
+
+class FunctionNameVariantResolver(ABC, metaclass=AutoRegisterMeta):
+    """Registered module-name authority for grid function variant selection."""
+
+    __registry_key__ = "module_name"
+    __skip_if_no_key__ = True
+    module_name: ClassVar[str | None] = None
+
+    @classmethod
+    def for_module_name(cls, module_name: str) -> "FunctionNameVariantResolver":
+        resolver_type = cls.__registry__.get(module_name)
+        if resolver_type is None:
+            raise ValueError(f"Unsupported grid module name: {module_name!r}.")
+        return resolver_type()
+
+    @abstractmethod
+    def function_name(self, module: ModuleBlock) -> str:
+        """Return the absorbed function name selected by one module."""
+
+
+class DefineGridFunctionNameVariantResolver(FunctionNameVariantResolver):
+    """Resolve DefineGrid function variants from typed module settings."""
+
+    module_name = "DefineGrid"
+
+    def function_name(self, module: ModuleBlock) -> str:
+        return DefineGridVariant.from_module(module).value
+
+
+class IdentifyObjectsInGridFunctionNameVariantResolver(FunctionNameVariantResolver):
+    """Resolve IdentifyObjectsInGrid function variants from typed module settings."""
+
+    module_name = "IdentifyObjectsInGrid"
+
+    def function_name(self, module: ModuleBlock) -> str:
+        return IdentifyObjectsInGridVariant.from_module(module).value
 
 
 def define_grid_bound_kwargs(

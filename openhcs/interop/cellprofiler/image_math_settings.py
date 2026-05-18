@@ -9,7 +9,10 @@ from typing import Any
 
 from metaclass_registry import AutoRegisterMeta
 
-from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
+from openhcs.core.registry_strategies import (
+    EnumKeyedStrategyMixin,
+    enum_member_with_payload,
+)
 
 from .parser import ModuleBlock
 from .setting_names import optional_setting_value
@@ -31,10 +34,12 @@ class ImageMathOperation(Enum):
         absorbed_value: str,
         *cellprofiler_literals: str,
     ) -> "ImageMathOperation":
-        obj = object.__new__(cls)
-        obj._value_ = absorbed_value
-        obj.cellprofiler_literals = (absorbed_value, *cellprofiler_literals)
-        return obj
+        return enum_member_with_payload(
+            cls,
+            absorbed_value,
+            payload_attribute="cellprofiler_literals",
+            payload=(absorbed_value, *cellprofiler_literals),
+        )
 
     ADD = ("add",)
     SUBTRACT = ("subtract",)
