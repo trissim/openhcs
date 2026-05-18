@@ -160,6 +160,35 @@ class MaskChoice(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class PlaneStats:
+    """Base summary row for operations reported per runtime plane."""
+
+    slice_index: int
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectRemovalStats(PlaneStats):
+    """Shared object-removal count summary."""
+
+    objects_removed: int
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectCountTransitionStats(PlaneStats):
+    """Shared input/output object-count transition summary."""
+
+    input_object_count: int
+    output_object_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ObjectRemovalTransitionStats(ObjectCountTransitionStats):
+    """Object-count transition that also reports removed object count."""
+
+    objects_removed: int
+
+
+@dataclass(frozen=True, slots=True)
 class ResizeObjectsStats:
     slice_index: int
     original_height: int
@@ -170,11 +199,8 @@ class ResizeObjectsStats:
 
 
 @dataclass(frozen=True, slots=True)
-class ErosionStats:
-    slice_index: int
-    input_object_count: int
-    output_object_count: int
-    objects_removed: int
+class ErosionStats(ObjectRemovalTransitionStats):
+    pass
 
 
 @dataclass(frozen=True, slots=True)
@@ -4394,13 +4420,11 @@ expand_or_shrink_objects.__openhcs_prepare__ = prepare_expand_or_shrink_objects
 
 
 @dataclass(frozen=True, slots=True)
-class MaskObjectsStats:
+class MaskObjectsStats(ObjectRemovalStats):
     """MaskObjects count summary for one runtime plane."""
 
-    slice_index: int
     original_object_count: int
     remaining_object_count: int
-    objects_removed: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -4891,13 +4915,10 @@ class SplitOrMergeIntensityMethod(Enum):
     CLOSEST_POINT = "closest_point"
 
 
-@dataclass
-class SplitOrMergeStats:
+@dataclass(frozen=True, slots=True)
+class SplitOrMergeStats(ObjectCountTransitionStats):
     """CellProfiler SplitOrMergeObjects summary row."""
 
-    slice_index: int
-    input_object_count: int
-    output_object_count: int
     operation: str
 
 
