@@ -113,33 +113,35 @@ class GridSpotReference:
 
 
 @dataclass(frozen=True, slots=True)
-class SpatialGridManualDefinition:
-    """Manual two-spot CellProfiler DefineGrid geometry policy."""
+class SpatialGridDefinitionBase:
+    """Shared CellProfiler DefineGrid coordinate policy."""
 
     rows: int
     columns: int
-    first_spot: GridSpotReference
-    second_spot: GridSpotReference
     origin: SpatialGridOrigin
     ordering: SpatialGridOrdering
     image_shape_yx: tuple[int, int]
 
+    def canonical_row_index(self, row: int) -> int:
+        if self.origin.reverses_rows:
+            return self.rows - row
+        return row - 1
+
+    def canonical_column_index(self, column: int) -> int:
+        if self.origin.reverses_columns:
+            return self.columns - column
+        return column - 1
+
     def canonical_row_col(self, row: int, column: int) -> tuple[int, int]:
-        if self.origin in (
-            SpatialGridOrigin.BOTTOM_LEFT,
-            SpatialGridOrigin.BOTTOM_RIGHT,
-        ):
-            canonical_row = self.rows - row
-        else:
-            canonical_row = row - 1
-        if self.origin in (
-            SpatialGridOrigin.TOP_RIGHT,
-            SpatialGridOrigin.BOTTOM_RIGHT,
-        ):
-            canonical_column = self.columns - column
-        else:
-            canonical_column = column - 1
-        return canonical_row, canonical_column
+        return self.canonical_row_index(row), self.canonical_column_index(column)
+
+
+@dataclass(frozen=True, slots=True)
+class SpatialGridManualDefinition(SpatialGridDefinitionBase):
+    """Manual two-spot CellProfiler DefineGrid geometry policy."""
+
+    first_spot: GridSpotReference
+    second_spot: GridSpotReference
 
     def spatial_grid(self) -> SpatialGrid:
         first_row, first_column = self.canonical_row_col(
@@ -178,15 +180,10 @@ class SpatialGridManualDefinition:
 
 
 @dataclass(frozen=True, slots=True)
-class SpatialGridAutomaticDefinition:
+class SpatialGridAutomaticDefinition(SpatialGridDefinitionBase):
     """Automatic CellProfiler DefineGrid geometry policy from object extrema."""
 
-    rows: int
-    columns: int
     labels: np.ndarray
-    origin: SpatialGridOrigin
-    ordering: SpatialGridOrdering
-    image_shape_yx: tuple[int, int]
 
     def spatial_grid(self) -> SpatialGrid:
         object_count, first_y, first_x, second_y, second_x = label_centroid_extremes(
@@ -197,14 +194,12 @@ class SpatialGridAutomaticDefinition:
 
         first_row, second_row = (
             (self.rows, 1)
-            if self.origin
-            in (SpatialGridOrigin.BOTTOM_LEFT, SpatialGridOrigin.BOTTOM_RIGHT)
+            if self.origin.reverses_rows
             else (1, self.rows)
         )
         first_column, second_column = (
             (self.columns, 1)
-            if self.origin
-            in (SpatialGridOrigin.TOP_RIGHT, SpatialGridOrigin.BOTTOM_RIGHT)
+            if self.origin.reverses_columns
             else (1, self.columns)
         )
         manual_definition = SpatialGridManualDefinition(
