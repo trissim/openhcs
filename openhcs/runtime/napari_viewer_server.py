@@ -9,7 +9,6 @@ import logging
 import multiprocessing
 import os
 import pickle
-import subprocess
 import sys
 import threading
 import time
@@ -29,7 +28,6 @@ from polystore.streaming.receivers.napari import (
 from openhcs.runtime.viewer_protocol import (
     ChannelColormapPolicy,
     ComponentDimensionLabelPolicy,
-    NapariDetachedProcessRequest,
     NAPARI_HEARTBEAT,
     NapariViewerServerRequest,
     ViewerQtEnvironmentPolicy,
@@ -37,6 +35,7 @@ from openhcs.runtime.viewer_protocol import (
 )
 from openhcs.runtime.napari_streaming_handlers import (
     NapariBatchProcessorStore,
+    NapariComponentValueTracker,
     NapariLayerUpdateAuthority,
     NapariLayerStateStore,
     NapariShapeLabelRasterizer,
@@ -541,10 +540,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.component_groups = {}
         self.component_metadata = {}  # Store component metadata from microscope handler: {component: {id: name}}
 
-        # Global component value tracker for shared dimension mapping
-        # Maps tuple of stack_components -> {component: set of values}
-        # All layers with the same stack_components share the same global mapping
-        self.global_component_values = {}
+        self.component_values = NapariComponentValueTracker()
 
         # Debouncing + locking for layer updates to prevent race conditions
         import threading
@@ -564,90 +560,6 @@ class NapariViewerServer(StreamingVisualizerServer):
         )
 
         # Ack socket handled by StreamingVisualizerServer
-
-    def _setup_ack_socket(self):
-        """Setup PUSH socket for sending acknowledgments."""
-        super()._setup_ack_socket()
-
-    def _update_global_component_values(self, stack_components, layer_items):
-        """
-        Update the global component value tracker with values from new items.
-
-        All layers sharing the same stack_components will use the same global mapping,
-        ensuring consistent component-to-index mapping across image and ROI layers.
-
-        Args:
-            stack_components: Tuple/list of component names (e.g., ['channel', 'well'])
-            layer_items: List of items with 'components' dict
-        """
-        # Use tuple as dict key (lists aren't hashable)
-        components_key = tuple(stack_components)
-
-        # Initialize if needed
-        if components_key not in self.global_component_values:
-            self.global_component_values[components_key] = {
-                comp: set() for comp in stack_components
-            }
-
-        # Add values from these items
-        global_values = self.global_component_values[components_key]
-        for item in layer_items:
-            for comp in stack_components:
-                value = item["components"].get(comp, 0)
-                global_values[comp].add(value)
-
-        logger.info(
-            f"🔬 NAPARI PROCESS: Updated global component values for {stack_components}"
-        )
-        for comp, values in global_values.items():
-            sorted_values = sorted(values)
-            logger.info(f"🔬 NAPARI PROCESS:   {comp}: {sorted_values}")
-
-    def _get_global_component_values(self, stack_components):
-        """
-        Get the global component values for a given set of stack components.
-
-        For indexed components (channel, z_index, timepoint), expands to include
-        all values from 1 to max. For example, if only channel 2 is seen, returns [1, 2].
-        This ensures proper stack dimensions even when some indices aren't present.
-
-        Returns a dict of {component: sorted list of values} for all components
-        that have been seen across all layers sharing these stack components.
-        """
-        components_key = tuple(stack_components)
-
-        if components_key not in self.global_component_values:
-            return {comp: [] for comp in stack_components}
-
-        # Convert sets to sorted lists and expand indexed components
-        global_values = self.global_component_values[components_key]
-        result = {}
-
-        # Components that should be expanded from 1 to max (1-indexed)
-        INDEXED_COMPONENTS = {"channel", "z_index", "timepoint"}
-
-        for comp, values in global_values.items():
-            sorted_values = sorted(values)
-
-            if comp in INDEXED_COMPONENTS and sorted_values:
-                # Expand to include all indices from 1 to max
-                # E.g., if we have [2, 4], expand to [1, 2, 3, 4]
-                max_value = max(sorted_values)
-                if max_value > 1:
-                    # Create range from 1 to max_value (inclusive)
-                    expanded_values = list(range(1, max_value + 1))
-                    result[comp] = expanded_values
-                    logger.info(
-                        f"🔬 NAPARI PROCESS: Expanded {comp} from {sorted_values} to {expanded_values}"
-                    )
-                else:
-                    # Max is 1, no expansion needed
-                    result[comp] = sorted_values
-            else:
-                # Non-indexed component (well, site, etc.) - use actual values
-                result[comp] = sorted_values
-
-        return result
 
     def _schedule_layer_update(
         self, layer_key, data_type, component_modes, component_order
@@ -781,10 +693,10 @@ class NapariViewerServer(StreamingVisualizerServer):
         """Update an image layer with the current items."""
 
         # Update global component tracker with values from these items
-        self._update_global_component_values(stack_components, layer_items)
+        self.component_values.update(stack_components, layer_items)
 
         # Get global component values (union of all layers with same stack_components)
-        global_component_values = self._get_global_component_values(stack_components)
+        global_component_values = self.component_values.values_for(stack_components)
 
         # Check if images have different shapes and pad if needed
         shapes = [item["data"].shape for item in layer_items]
@@ -882,10 +794,10 @@ class NapariViewerServer(StreamingVisualizerServer):
         )
 
         # Update global component tracker with values from these items
-        self._update_global_component_values(stack_components, layer_items)
+        self.component_values.update(stack_components, layer_items)
 
         # Get global component values (union of all layers with same stack_components)
-        global_component_values = self._get_global_component_values(stack_components)
+        global_component_values = self.component_values.values_for(stack_components)
 
         # Convert shapes to label masks (much faster than individual shapes)
         # This happens synchronously but is fast because we're just creating arrays
@@ -936,10 +848,10 @@ class NapariViewerServer(StreamingVisualizerServer):
         )
 
         # Update global component tracker with ALL items (images + points) to stay in sync
-        self._update_global_component_values(stack_components, layer_items)
+        self.component_values.update(stack_components, layer_items)
 
         # Get global component values (union of all layers with same stack_components)
-        global_component_values = self._get_global_component_values(stack_components)
+        global_component_values = self.component_values.values_for(stack_components)
 
         # Build nD points data using ONLY the points items BUT with global component values
         points_data, properties = _build_nd_points(
@@ -1300,42 +1212,3 @@ def run_napari_viewer_process_from_legacy_signature(
         logger.info("🔬 NAPARI PROCESS: Shutting down")
         if "server" in locals():
             server.stop()
-
-
-def _spawn_detached_napari_process(
-    port: int,
-    viewer_title: str,
-    replace_layers: bool = False,
-    transport_mode: OpenHCSTransportMode = OpenHCSTransportMode.IPC,
-) -> subprocess.Popen:
-    """
-    Spawn a completely detached napari viewer process that survives parent termination.
-
-    This creates a subprocess that runs independently and won't be terminated when
-    the parent process exits, enabling true persistence across pipeline runs.
-
-    Args:
-        port: ZMQ port to listen on
-        viewer_title: Title for the napari viewer window
-        replace_layers: If True, replace existing layers; if False, add new layers
-        transport_mode: ZMQ transport mode (IPC or TCP)
-    """
-    try:
-        launch_request = NapariDetachedProcessRequest.from_legacy_signature(
-            port,
-            viewer_title,
-            replace_layers,
-            transport_mode,
-        )
-        process = launch_request.launch()
-
-        logger.info(
-            "🔬 VISUALIZER: Detached napari process started (PID: %s), logging to %s",
-            process.pid,
-            launch_request.log_file,
-        )
-        return process
-
-    except Exception as e:
-        logger.error(f"🔬 VISUALIZER: Failed to spawn detached napari process: {e}")
-        raise e

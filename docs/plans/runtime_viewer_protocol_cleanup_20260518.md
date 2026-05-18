@@ -493,3 +493,32 @@ Advisor status:
 
 - Remaining focused viewer finding is the canonical `NapariViewerServer` role
   quotient in `napari_viewer_server.py`.
+
+### Checkpoint 16
+
+Implemented:
+
+- `NapariComponentValueTracker` owns global component value accumulation and
+  indexed-axis expansion.
+- `NapariViewerServer` now delegates component value tracking to the tracker.
+- Removed the no-op `_setup_ack_socket` override and dead server-side detached
+  spawn helper.
+- Unit coverage verifies indexed-axis expansion and missing-axis defaults.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 19 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py
+# setup role and dead detached-spawn findings cleared; server quotient reduced to update/control/message roles
+```
+
+Advisor status:
+
+- Remaining canonical server finding is the layer-update/control/message role
+  quotient.

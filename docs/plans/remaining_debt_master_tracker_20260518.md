@@ -437,3 +437,24 @@ git diff --check
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py
 # stream-visualizer server role quotient cleared
 ```
+
+Checkpoint 16:
+
+- Added `NapariComponentValueTracker` for global component value accumulation
+  and indexed-axis expansion.
+- Routed `NapariViewerServer` through the tracker.
+- Removed the no-op server `_setup_ack_socket` override and dead server-side
+  detached spawn helper.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 19 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py
+# setup role and dead detached-spawn findings cleared; server quotient reduced to update/control/message roles
+```

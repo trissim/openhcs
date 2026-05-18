@@ -313,6 +313,50 @@ class NapariBatchProcessorStore:
             return self.processors[layer_key]
 
 
+@dataclass(slots=True)
+class NapariComponentValueTracker:
+    """Track global component values shared by layers with the same stack axes."""
+
+    values_by_components: dict[tuple[str, ...], dict[str, set[object]]] = field(
+        default_factory=dict
+    )
+
+    def update(self, stack_components, layer_items) -> None:
+        components_key = tuple(stack_components)
+        if components_key not in self.values_by_components:
+            self.values_by_components[components_key] = {
+                comp: set() for comp in stack_components
+            }
+
+        global_values = self.values_by_components[components_key]
+        for item in layer_items:
+            for comp in stack_components:
+                value = item["components"].get(comp, 0)
+                global_values[comp].add(value)
+
+    def values_for(self, stack_components) -> dict[str, list[object]]:
+        components_key = tuple(stack_components)
+        if components_key not in self.values_by_components:
+            return {comp: [] for comp in stack_components}
+
+        return {
+            comp: self._expanded_values(comp, values)
+            for comp, values in self.values_by_components[components_key].items()
+        }
+
+    @staticmethod
+    def _expanded_values(component: str, values: set[object]) -> list[object]:
+        sorted_values = sorted(values)
+        indexed_components = {"channel", "z_index", "timepoint"}
+        if component not in indexed_components or not sorted_values:
+            return sorted_values
+
+        max_value = max(sorted_values)
+        if max_value > 1:
+            return list(range(1, max_value + 1))
+        return sorted_values
+
+
 class NapariShapeKind(Enum):
     """Shape kinds accepted by the Napari ROI label rasterizer."""
 

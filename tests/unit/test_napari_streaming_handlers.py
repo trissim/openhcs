@@ -8,6 +8,7 @@ from polystore.streaming_constants import StreamingDataType
 from openhcs.runtime.viewer_protocol import ComponentDimensionLabelPolicy
 from openhcs.runtime.napari_streaming_handlers import (
     NapariBatchProcessorStore,
+    NapariComponentValueTracker,
     NapariLayerUpdateAuthority,
     NapariLayerStateStore,
     NapariShapeLabelRasterizer,
@@ -221,6 +222,24 @@ def test_napari_batch_processor_store_creates_one_processor_per_layer(monkeypatc
         "debounce_delay_ms": 123,
         "max_debounce_wait_ms": 456,
     }
+
+
+def test_napari_component_value_tracker_expands_indexed_axes():
+    tracker = NapariComponentValueTracker()
+
+    tracker.update(
+        ["channel", "well"],
+        [
+            {"components": {"channel": 2, "well": "A01"}},
+            {"components": {"channel": 4, "well": "B02"}},
+        ],
+    )
+
+    assert tracker.values_for(["channel", "well"]) == {
+        "channel": [1, 2, 3, 4],
+        "well": ["A01", "B02"],
+    }
+    assert tracker.values_for(["site"]) == {"site": []}
 
 
 def test_component_dimension_label_policy_owns_channel_well_and_generic_labels():
