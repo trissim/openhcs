@@ -240,3 +240,25 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 # Napari server role quotient, dynamic/private entry witnesses, and
 # shared viewer platform strategy ladders
 ```
+
+Checkpoint 6:
+
+- Added `ViewerControlPingMode`, `ViewerControlPingPolicy`, and
+  `ViewerControlPingRequest` for quick and ready-required viewer control-port
+  pings.
+- Replaced repeated Napari/Fiji `ping_control_port(...)` projection bundles
+  with the typed request object.
+- Removed Napari's local quick-ping socket implementation in favor of the same
+  control transport helper used by Fiji.
+- Added unit coverage for the quick vs existing-viewer ping policy projection.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py tests/unit/test_viewer_protocol.py -q
+# 11 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/viewer_protocol.py
+# cleared repeated ping_control_port projection finding
+# cleared ping constructor-variant findings after introducing mode policy rows
+```

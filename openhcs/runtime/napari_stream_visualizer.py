@@ -37,6 +37,8 @@ from openhcs.runtime.viewer_protocol import (
     ManagedViewerLifecycleMixin,
     NAPARI_HEARTBEAT,
     NapariViewerServerRequest,
+    ViewerControlPingMode,
+    ViewerControlPingRequest,
     ViewerQtEnvironmentPolicy,
     ViewerProcessHandle,
 )
@@ -53,7 +55,6 @@ from zmqruntime.transport import (
     get_control_url,
     get_zmq_transport_url,
     is_port_in_use,
-    ping_control_port,
     wait_for_server_ready,
 )
 
@@ -1480,31 +1481,12 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
 
     def _quick_ping_check(self) -> bool:
         """Quick ping check to verify viewer is responsive (for connected viewers)."""
-        import zmq
-        import pickle
-        from openhcs.constants.constants import CONTROL_PORT_OFFSET
-
-        try:
-            control_port = self.port + CONTROL_PORT_OFFSET
-            control_url = get_zmq_transport_url(
-                control_port,
-                host="localhost",
-                mode=self.transport_mode,
-                config=OPENHCS_ZMQ_CONFIG,
-            )
-
-            ctx = zmq.Context()
-            sock = ctx.socket(zmq.REQ)
-            sock.setsockopt(zmq.LINGER, 0)
-            sock.setsockopt(zmq.RCVTIMEO, 200)  # 200ms timeout for quick check
-            sock.connect(control_url)
-            sock.send(pickle.dumps({"type": "ping"}))
-            response = pickle.loads(sock.recv())
-            sock.close()
-            ctx.term()
-            return response.get("type") == "pong"
-        except:
-            return False
+        return ViewerControlPingRequest.from_mode(
+            mode=ViewerControlPingMode.QUICK,
+            port=self.port,
+            transport_mode=self.transport_mode,
+            config=OPENHCS_ZMQ_CONFIG,
+        ).check()
 
     def wait_for_ready(self, timeout: float = 10.0) -> bool:
         """
@@ -1638,14 +1620,12 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
         Returns True only if we can successfully handshake with the viewer.
         """
         try:
-            if ping_control_port(
-                port,
-                self.transport_mode,
-                host="localhost",
+            if ViewerControlPingRequest.from_mode(
+                mode=ViewerControlPingMode.EXISTING_VIEWER,
+                port=port,
+                transport_mode=self.transport_mode,
                 config=OPENHCS_ZMQ_CONFIG,
-                timeout_ms=500,
-                require_ready=True,
-            ):
+            ).check():
                 self._setup_zmq_client()
                 return True
             return False

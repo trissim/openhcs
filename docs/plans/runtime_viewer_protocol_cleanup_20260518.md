@@ -212,3 +212,31 @@ Advisor status:
   around viewer state, plus request-builder records, Napari/Fiji server role
   quotients, Fiji dimension context records, process signature records, and
   shared viewer platform strategy ladders.
+
+### Checkpoint 6
+
+Implemented:
+
+- `ViewerControlPingMode`, `ViewerControlPingPolicy`, and
+  `ViewerControlPingRequest` for viewer control-port ping/readiness checks.
+- Replaced repeated `ping_control_port(...)` argument bundles in Napari/Fiji
+  stream visualizers.
+- Replaced Napari's manual quick-ping ZMQ implementation with the same typed
+  request path used by Fiji.
+- Unit coverage for quick vs existing-viewer ping projection.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py tests/unit/test_viewer_protocol.py -q
+# 11 passed
+```
+
+Advisor status:
+
+- Cleared repeated `ping_control_port` projection findings.
+- Cleared the intermediate constructor-variant findings by making quick vs
+  existing-viewer ping behavior a typed policy table.
+- Remaining viewer work is viewer state membership, Napari/Fiji server role
+  quotients, dynamic/private entry witnesses, process signature records, and
+  shared viewer platform strategy ladders.

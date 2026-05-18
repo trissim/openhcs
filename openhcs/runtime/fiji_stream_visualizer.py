@@ -25,6 +25,8 @@ from openhcs.core.config import (
 from openhcs.runtime.viewer_protocol import (
     DetachedViewerProcessRequest,
     ManagedViewerLifecycleMixin,
+    ViewerControlPingMode,
+    ViewerControlPingRequest,
     ViewerProcessHandle,
 )
 from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
@@ -34,7 +36,6 @@ from zmqruntime.transport import (
     coerce_transport_mode,
     get_control_url,
     is_port_in_use,
-    ping_control_port,
     wait_for_server_ready,
 )
 
@@ -193,14 +194,12 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
 
     def _quick_ping_check(self) -> bool:
         """Quick ping check to verify viewer is responsive (for connected viewers)."""
-        return ping_control_port(
-            self.port,
-            self.transport_mode,
-            host="localhost",
+        return ViewerControlPingRequest.from_mode(
+            mode=ViewerControlPingMode.QUICK,
+            port=self.port,
+            transport_mode=self.transport_mode,
             config=OPENHCS_ZMQ_CONFIG,
-            timeout_ms=200,
-            require_ready=False,
-        )
+        ).check()
 
     def wait_for_ready(self, timeout: float = 10.0) -> bool:
         """
@@ -303,14 +302,12 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
 
     def _try_connect_to_existing_viewer(self) -> bool:
         """Try to connect to an existing Fiji viewer and verify it's responsive."""
-        return ping_control_port(
-            self.port,
-            self.transport_mode,
-            host="localhost",
+        return ViewerControlPingRequest.from_mode(
+            mode=ViewerControlPingMode.EXISTING_VIEWER,
+            port=self.port,
+            transport_mode=self.transport_mode,
             config=OPENHCS_ZMQ_CONFIG,
-            timeout_ms=500,
-            require_ready=True,
-        )
+        ).check()
 
     def _wait_for_server_ready(self, timeout: float = 10.0) -> bool:
         """Wait for Fiji server to be ready via ping/pong."""

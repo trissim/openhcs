@@ -3,7 +3,11 @@ import sys
 
 import pytest
 
-from openhcs.runtime.viewer_protocol import ViewerProcessHandle
+from openhcs.runtime.viewer_protocol import (
+    ViewerControlPingMode,
+    ViewerControlPingRequest,
+    ViewerProcessHandle,
+)
 
 
 def test_viewer_process_handle_wraps_subprocess_lifecycle():
@@ -33,3 +37,50 @@ def test_viewer_process_handle_rejects_structural_process_lookalikes():
 
     with pytest.raises(TypeError, match="Unsupported viewer process handle"):
         ViewerProcessHandle.from_process(ProcessLike())
+
+
+def test_viewer_control_ping_request_owns_quick_and_ready_projection(monkeypatch):
+    calls = []
+
+    def fake_ping_control_port(*args, **kwargs):
+        calls.append((args, kwargs))
+        return True
+
+    monkeypatch.setattr(
+        "zmqruntime.transport.ping_control_port",
+        fake_ping_control_port,
+    )
+
+    assert ViewerControlPingRequest.from_mode(
+        mode=ViewerControlPingMode.QUICK,
+        port=55,
+        transport_mode="ipc",
+        config="config",
+    ).check()
+    assert ViewerControlPingRequest.from_mode(
+        mode=ViewerControlPingMode.EXISTING_VIEWER,
+        port=56,
+        transport_mode="tcp",
+        config="config",
+    ).check()
+
+    assert calls == [
+        (
+            (55, "ipc"),
+            {
+                "host": "localhost",
+                "config": "config",
+                "timeout_ms": 200,
+                "require_ready": False,
+            },
+        ),
+        (
+            (56, "tcp"),
+            {
+                "host": "localhost",
+                "config": "config",
+                "timeout_ms": 500,
+                "require_ready": True,
+            },
+        ),
+    ]

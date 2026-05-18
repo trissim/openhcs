@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import platform
 import subprocess
 import sys
-import logging
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -227,6 +227,78 @@ class ViewerProcessHandle:
         except subprocess.TimeoutExpired:
             self.process.kill()
             return True
+
+
+class ViewerControlPingMode(Enum):
+    """Viewer control-port ping policy modes."""
+
+    QUICK = "quick"
+    EXISTING_VIEWER = "existing_viewer"
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerControlPingPolicy:
+    """Timeout/readiness coordinates for one control ping mode."""
+
+    timeout_ms: int
+    require_ready: bool
+
+
+VIEWER_CONTROL_PING_POLICIES: Mapping[
+    ViewerControlPingMode,
+    ViewerControlPingPolicy,
+] = {
+    ViewerControlPingMode.QUICK: ViewerControlPingPolicy(
+        timeout_ms=200,
+        require_ready=False,
+    ),
+    ViewerControlPingMode.EXISTING_VIEWER: ViewerControlPingPolicy(
+        timeout_ms=500,
+        require_ready=True,
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ViewerControlPingRequest:
+    """Typed control-port ping request for viewer readiness checks."""
+
+    port: int
+    transport_mode: object
+    config: object
+    host: str = "localhost"
+    timeout_ms: int = 500
+    require_ready: bool = True
+
+    @classmethod
+    def from_mode(
+        cls,
+        *,
+        mode: ViewerControlPingMode,
+        port: int,
+        transport_mode: object,
+        config: object,
+    ) -> "ViewerControlPingRequest":
+        policy = VIEWER_CONTROL_PING_POLICIES[mode]
+        return cls(
+            port=port,
+            transport_mode=transport_mode,
+            config=config,
+            timeout_ms=policy.timeout_ms,
+            require_ready=policy.require_ready,
+        )
+
+    def check(self) -> bool:
+        from zmqruntime.transport import ping_control_port
+
+        return ping_control_port(
+            self.port,
+            self.transport_mode,
+            host=self.host,
+            config=self.config,
+            timeout_ms=self.timeout_ms,
+            require_ready=self.require_ready,
+        )
 
 
 class ManagedViewerLifecycleMixin:
