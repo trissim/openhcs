@@ -8,6 +8,7 @@ from polystore.streaming_constants import StreamingDataType
 from openhcs.runtime.viewer_protocol import ComponentDimensionLabelPolicy
 from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerUpdateAuthority,
+    NapariLayerStateStore,
     NapariShapeLabelRasterizer,
     NapariStreamingDataTypeHandler,
     build_napari_streaming_data_type_handlers,
@@ -165,6 +166,32 @@ def test_napari_layer_update_authority_declares_shapes_and_points_kwargs():
         "face_color": "green",
         "size": 3,
     }
+
+
+class _FakeTimer:
+    def __init__(self):
+        self.stopped = False
+
+    def stop(self):
+        self.stopped = True
+
+
+def test_napari_layer_state_store_keeps_layer_labels_and_timers_together():
+    store = NapariLayerStateStore.empty()
+    timer = _FakeTimer()
+    layer = object()
+
+    store.set_layer("nuclei", layer)
+    store.set_labels("nuclei", {"channel": ["Ch 1"]})
+    store.set_pending_update("nuclei", timer)
+
+    assert store.has_layer("nuclei")
+    assert store.layer("nuclei") is layer
+    assert store.labels_for("nuclei") == {"channel": ["Ch 1"]}
+    assert store.cancel_pending_update("nuclei")
+    assert timer.stopped
+    assert store.pop_pending_update("nuclei") is timer
+    assert store.labels_for("missing") == {}
 
 
 def test_component_dimension_label_policy_owns_channel_well_and_generic_labels():

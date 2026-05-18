@@ -333,3 +333,21 @@ Verification:
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/viewer_protocol.py
 # dangling private _quick_ping_check finding cleared
 ```
+
+Checkpoint 11:
+
+- Added `NapariLayerStateStore` for layer objects, dimension-label maps, and
+  pending debounce timers.
+- Routed both Napari runtime modules through the state store.
+- Added unit coverage for layer/label/timer state behavior.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 9 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py
+# main Napari layers/dimension_labels/pending_updates registry findings cleared
+# remaining Napari state finding is the batch-processor store in napari_viewer_server.py
+```

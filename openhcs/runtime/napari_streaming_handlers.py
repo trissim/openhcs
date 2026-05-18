@@ -237,6 +237,47 @@ class NapariLayerUpdateAuthority:
         self._log_policies[request.layer_kind].log_created(request)
 
 
+@dataclass(slots=True)
+class NapariLayerStateStore:
+    """Own per-layer Napari runtime state that must stay keyed together."""
+
+    layers: dict[str, object]
+    dimension_labels: dict[str, object]
+    pending_updates: dict[str, object]
+
+    @classmethod
+    def empty(cls) -> "NapariLayerStateStore":
+        return cls(layers={}, dimension_labels={}, pending_updates={})
+
+    def labels_for(self, layer_key: str) -> object:
+        return self.dimension_labels.get(layer_key, {})
+
+    def set_labels(self, layer_key: str, labels: object) -> None:
+        self.dimension_labels[layer_key] = labels
+
+    def cancel_pending_update(self, layer_key: str) -> bool:
+        timer = self.pending_updates.get(layer_key)
+        if timer is None:
+            return False
+        timer.stop()
+        return True
+
+    def set_pending_update(self, layer_key: str, timer: object) -> None:
+        self.pending_updates[layer_key] = timer
+
+    def pop_pending_update(self, layer_key: str) -> object | None:
+        return self.pending_updates.pop(layer_key, None)
+
+    def has_layer(self, layer_key: str) -> bool:
+        return layer_key in self.layers
+
+    def layer(self, layer_key: str) -> object:
+        return self.layers[layer_key]
+
+    def set_layer(self, layer_key: str, layer: object) -> None:
+        self.layers[layer_key] = layer
+
+
 class NapariShapeKind(Enum):
     """Shape kinds accepted by the Napari ROI label rasterizer."""
 

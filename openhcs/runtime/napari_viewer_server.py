@@ -36,6 +36,7 @@ from openhcs.runtime.viewer_protocol import (
 )
 from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerUpdateAuthority,
+    NapariLayerStateStore,
     NapariShapeLabelRasterizer,
     build_napari_streaming_data_type_handlers,
 )
@@ -550,9 +551,8 @@ class NapariViewerServer(StreamingVisualizerServer):
         self.viewer_title = request.viewer_title
         self.replace_layers = request.replace_layers
         self.viewer = None
-        self.layers = {}
+        self.layer_state = NapariLayerStateStore.empty()
         self.component_groups = {}
-        self.dimension_labels = {}  # Store dimension label mappings: layer_key -> {component: [labels]}
         self.component_metadata = {}  # Store component metadata from microscope handler: {component: {id: name}}
 
         # Global component value tracker for shared dimension mapping
@@ -564,7 +564,6 @@ class NapariViewerServer(StreamingVisualizerServer):
         import threading
 
         self.layer_update_lock = threading.Lock()  # Prevent concurrent updates
-        self.pending_updates = {}  # layer_key -> QTimer (debounce)
         self.update_delay_ms = 1000  # Wait 200ms for more items before rebuilding
         self.layer_update_routes = {
             StreamingDataType.IMAGE: self._update_image_layer,
@@ -696,8 +695,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         This prevents race conditions when multiple items arrive rapidly.
         """
         # Cancel existing timer if any
-        if layer_key in self.pending_updates:
-            self.pending_updates[layer_key].stop()
+        if self.layer_state.cancel_pending_update(layer_key):
             logger.debug(f"🔬 NAPARI PROCESS: Cancelled pending update for {layer_key}")
 
         # Create new timer
@@ -709,7 +707,7 @@ class NapariViewerServer(StreamingVisualizerServer):
             )
         )
         timer.start(self.update_delay_ms)
-        self.pending_updates[layer_key] = timer
+        self.layer_state.set_pending_update(layer_key, timer)
         logger.debug(
             f"🔬 NAPARI PROCESS: Scheduled update for {layer_key} in {self.update_delay_ms}ms"
         )
@@ -723,7 +721,7 @@ class NapariViewerServer(StreamingVisualizerServer):
         Uses batch processor for efficient accumulation and display.
         """
         # Remove timer
-        self.pending_updates.pop(layer_key, None)
+        self.layer_state.pop_pending_update(layer_key)
 
         # Get current items for this layer
         layer_items = self.component_groups.get(layer_key, [])
@@ -766,7 +764,7 @@ class NapariViewerServer(StreamingVisualizerServer):
             return
 
         # Get dimension label mappings for this layer
-        layer_labels = self.dimension_labels.get(layer_key, {})
+        layer_labels = self.layer_state.labels_for(layer_key)
         if not layer_labels:
             return
 
@@ -898,11 +896,11 @@ class NapariViewerServer(StreamingVisualizerServer):
             )
 
         # Store dimension labels for this layer
-        self.dimension_labels[layer_key] = dimension_labels
+        self.layer_state.set_labels(layer_key, dimension_labels)
 
         # Create or update the layer
         _create_or_update_image_layer(
-            self.viewer, self.layers, layer_key, stacked_data, colormap, axis_labels
+            self.viewer, self.layer_state.layers, layer_key, stacked_data, colormap, axis_labels
         )
 
         # Set up dimension label handler (connects dimension changes to text overlay)
@@ -931,9 +929,9 @@ class NapariViewerServer(StreamingVisualizerServer):
         )
 
         # Remove existing layer if it exists
-        if layer_key in self.layers:
+        if self.layer_state.has_layer(layer_key):
             try:
-                self.viewer.layers.remove(self.layers[layer_key])
+                self.viewer.layers.remove(self.layer_state.layer(layer_key))
                 logger.info(
                     f"🔬 NAPARI PROCESS: Removed existing labels layer {layer_key} for recreation"
                 )
@@ -944,7 +942,7 @@ class NapariViewerServer(StreamingVisualizerServer):
 
         # Create new labels layer
         new_layer = self.viewer.add_labels(labels_data, name=layer_key)
-        self.layers[layer_key] = new_layer
+        self.layer_state.set_layer(layer_key, new_layer)
         logger.info(
             f"🔬 NAPARI PROCESS: Created labels layer {layer_key} with shape {labels_data.shape}"
         )
@@ -983,7 +981,7 @@ class NapariViewerServer(StreamingVisualizerServer):
 
         # Create or update the points layer
         _create_or_update_points_layer(
-            self.viewer, self.layers, layer_key, points_data, properties
+            self.viewer, self.layer_state.layers, layer_key, points_data, properties
         )
 
         logger.info(
@@ -1198,7 +1196,7 @@ class NapariViewerServer(StreamingVisualizerServer):
             # Component-aware layer management (handles both images and shapes)
             _handle_component_aware_display(
                 self.viewer,
-                self.layers,
+                self.layer_state.layers,
                 self.component_groups,
                 data,
                 path,
@@ -1272,11 +1270,7 @@ def _napari_viewer_process(
 
         # Initialize layers dictionary with existing layers (for reconnection scenarios)
         for layer in viewer.layers:
-            server.layers[layer.name] = layer
-
-        # Set up dimension label tracking for well names
-        # This will be populated as metadata arrives and used to update text overlay
-        server.dimension_labels = {}  # layer_key -> {component: [label1, label2, ...]}
+            server.layer_state.set_layer(layer.name, layer)
 
         # Enable text overlay for dimension labels
         viewer.text_overlay.visible = True

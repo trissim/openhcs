@@ -345,3 +345,30 @@ Advisor status:
 - Cleared private lifecycle hook residue.
 - Remaining lifecycle findings are the broader viewer state-membership model,
   not an unwitnessed hook.
+
+### Checkpoint 11
+
+Implemented:
+
+- `NapariLayerStateStore` owns layer objects, dimension-label maps, and
+  debounced pending-update timers as one per-layer state authority.
+- Both Napari runtime modules route layer/dimension/timer operations through
+  the state store.
+- Unit coverage for layer, label, and pending-timer state operations.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 9 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py
+# main Napari layers/dimension_labels/pending_updates registry findings cleared
+```
+
+Advisor status:
+
+- Cleared the main Napari per-layer state dictionary ownership findings.
+- Remaining Napari viewer-state finding is the separate batch-processor store
+  in `napari_viewer_server.py`, plus larger server role quotient and process
+  entry migration work.
