@@ -465,3 +465,31 @@ Advisor status:
 
 - Remaining focused viewer finding is the duplicated Napari server role
   quotient in `napari_stream_visualizer.py` and `napari_viewer_server.py`.
+
+### Checkpoint 15
+
+Implemented:
+
+- Removed the duplicate `NapariViewerServer` implementation from
+  `napari_stream_visualizer.py`.
+- `napari_stream_visualizer.py` now re-exports the canonical server from
+  `napari_viewer_server.py` while retaining only client/process-manager
+  responsibilities.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py tests/unit/test_napari_streaming_handlers.py -q
+# 18 passed
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py
+# stream-visualizer server role quotient cleared
+```
+
+Advisor status:
+
+- Remaining focused viewer finding is the canonical `NapariViewerServer` role
+  quotient in `napari_viewer_server.py`.
