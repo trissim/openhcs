@@ -1571,11 +1571,14 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             raise NotImplementedError(
                 "Numba morphology backend currently supports 2-D grayscale closing."
             )
-        footprint_offsets = _footprint_offsets(footprint_array)
+        footprint_offsets = FootprintOffsetTable.from_footprint(
+            footprint_array,
+            dimension_policy=FOOTPRINT_OFFSET_2D_POLICY,
+        )
         return _grayscale_morphology_2d_numba(
             np.ascontiguousarray(image_array),
-            footprint_offsets[:, 0],
-            footprint_offsets[:, 1],
+            footprint_offsets.y_offsets,
+            footprint_offsets.x_offsets,
             True,
         )
 
@@ -1590,11 +1593,14 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
             raise NotImplementedError(
                 "Numba morphology backend currently supports 2-D grayscale opening."
             )
-        footprint_offsets = _footprint_offsets(footprint_array)
+        footprint_offsets = FootprintOffsetTable.from_footprint(
+            footprint_array,
+            dimension_policy=FOOTPRINT_OFFSET_2D_POLICY,
+        )
         return _grayscale_morphology_2d_numba(
             np.ascontiguousarray(image_array),
-            footprint_offsets[:, 0],
-            footprint_offsets[:, 1],
+            footprint_offsets.y_offsets,
+            footprint_offsets.x_offsets,
             False,
         )
 
@@ -1649,7 +1655,10 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
         footprint_array = np.asarray(footprint, dtype=bool)
         if labels_array.ndim not in (2, 3) or footprint_array.ndim != labels_array.ndim:
             return super().erode_labeled_objects(labels_array, footprint_array)
-        offsets = _footprint_offsets_nd(footprint_array)
+        offsets = FootprintOffsetTable.from_footprint(
+            footprint_array,
+            dimension_policy=FOOTPRINT_OFFSET_2D_OR_3D_POLICY,
+        ).offsets
         return _erode_labeled_objects_numba(
             np.ascontiguousarray(labels_array),
             offsets,
@@ -1663,12 +1672,15 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     ) -> np.ndarray:
         image_array = np.ascontiguousarray(image, dtype=np.float64)
         labels_array = np.ascontiguousarray(labels, dtype=np.int64)
-        footprint_offsets = _footprint_offsets(footprint)
+        footprint_offsets = FootprintOffsetTable.from_footprint(
+            footprint,
+            dimension_policy=FOOTPRINT_OFFSET_2D_POLICY,
+        )
         return _local_maxima_by_label_numba(
             image_array,
             labels_array,
-            footprint_offsets[:, 0],
-            footprint_offsets[:, 1],
+            footprint_offsets.y_offsets,
+            footprint_offsets.x_offsets,
         )
 
     def smooth_image_for_declumping(
@@ -2726,30 +2738,54 @@ def _scipy_relabel_sequential(labels: np.ndarray) -> tuple[np.ndarray, int]:
     return output, int(positive.size)
 
 
-def _footprint_offsets(footprint: np.ndarray) -> np.ndarray:
-    footprint_array = np.asarray(footprint, dtype=bool)
-    if footprint_array.ndim != 2:
-        raise NotImplementedError(
-            "CellProfiler-compatible morphology currently supports 2-D footprints."
-        )
-    center_y = footprint_array.shape[0] // 2
-    center_x = footprint_array.shape[1] // 2
-    coords = np.argwhere(footprint_array)
-    return np.ascontiguousarray(
-        np.column_stack((coords[:, 0] - center_y, coords[:, 1] - center_x)),
-        dtype=np.int64,
-    )
+@dataclass(frozen=True, slots=True)
+class FootprintOffsetDimensionPolicy:
+    """Allowed footprint dimensionality and failure message for offset tables."""
+
+    supported_dimensions: tuple[int, ...]
+    message: str
+
+    def validate(self, footprint: np.ndarray) -> None:
+        if footprint.ndim not in self.supported_dimensions:
+            raise NotImplementedError(self.message)
 
 
-def _footprint_offsets_nd(footprint: np.ndarray) -> np.ndarray:
-    footprint_array = np.asarray(footprint, dtype=bool)
-    if footprint_array.ndim not in (2, 3):
-        raise NotImplementedError(
-            "CellProfiler-compatible morphology currently supports 2-D and 3-D footprints."
-        )
-    center = np.asarray(footprint_array.shape, dtype=np.int64) // 2
-    coords = np.argwhere(footprint_array).astype(np.int64)
-    return np.ascontiguousarray(coords - center)
+FOOTPRINT_OFFSET_2D_POLICY = FootprintOffsetDimensionPolicy(
+    supported_dimensions=(2,),
+    message="CellProfiler-compatible morphology currently supports 2-D footprints.",
+)
+FOOTPRINT_OFFSET_2D_OR_3D_POLICY = FootprintOffsetDimensionPolicy(
+    supported_dimensions=(2, 3),
+    message="CellProfiler-compatible morphology currently supports 2-D and 3-D footprints.",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class FootprintOffsetTable:
+    """Contiguous centered offsets for Numba morphology kernels."""
+
+    offsets: np.ndarray
+
+    @classmethod
+    def from_footprint(
+        cls,
+        footprint: np.ndarray,
+        *,
+        dimension_policy: FootprintOffsetDimensionPolicy,
+    ) -> "FootprintOffsetTable":
+        footprint_array = np.asarray(footprint, dtype=bool)
+        dimension_policy.validate(footprint_array)
+        center = np.asarray(footprint_array.shape, dtype=np.int64) // 2
+        coords = np.argwhere(footprint_array).astype(np.int64)
+        return cls(np.ascontiguousarray(coords - center))
+
+    @property
+    def y_offsets(self) -> np.ndarray:
+        return self.offsets[:, 0]
+
+    @property
+    def x_offsets(self) -> np.ndarray:
+        return self.offsets[:, 1]
 
 
 def _border_component_ids(component_labels: np.ndarray) -> set[int]:
