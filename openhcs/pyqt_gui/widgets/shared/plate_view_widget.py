@@ -313,6 +313,76 @@ class SquareButton(QPushButton):
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
 
+class PlateSelectionInteractionLifecycle:
+    """Own begin/update/finish transitions for plate selection gestures."""
+
+    def __init__(self, view: "PlateViewWidget"):
+        self.view = view
+        self.lifecycle = PlateSelectionInteractionLifecycle(view)
+
+    def is_left_rectangle_drag(self, event) -> bool:
+        return (
+            self.view.is_rect_selecting
+            and event.buttons() & Qt.MouseButton.LeftButton
+        )
+
+    def begin_rectangle_selection(self, start_pos) -> None:
+        self.view.is_rect_selecting = True
+        self.view.rect_start_pos = start_pos
+        self.view.rect_current_pos = start_pos
+        self.view.pre_drag_selection = self.view.selected_wells.copy()
+        self.view.grid_widget.grabMouse()
+        self.show_rectangle(QRect(start_pos, start_pos).normalized())
+
+    def begin_well_drag(self, well_id: str) -> None:
+        self.view.is_dragging = True
+        self.view.drag_start_well = well_id
+        self.view.drag_current_well = well_id
+        self.view.drag_affected_wells = set()
+        self.view.drag_moved = False
+        self.view.drag_selection_mode = (
+            "deselect" if well_id in self.view.selected_wells else "select"
+        )
+        self.view._toggle_well_selection(
+            well_id, self.view.drag_selection_mode == "select"
+        )
+        self.view.drag_affected_wells.add(well_id)
+        self.view._publish_selection_change()
+
+    def update_rectangle(self, current_pos) -> None:
+        self.view.rect_current_pos = current_pos
+        rect = QRect(self.view.rect_start_pos, current_pos).normalized()
+        self.show_rectangle(rect)
+        self.view._update_rectangle_selection(rect)
+
+    def show_rectangle(self, rect: QRect) -> None:
+        self.view.selection_rect_widget.setGeometry(rect)
+        self.view.selection_rect_widget.raise_()
+        self.view.selection_rect_widget.show()
+
+    def finish_interaction(self) -> None:
+        self.view.grid_widget.releaseMouse()
+        if self.view.is_dragging:
+            self.finish_well_drag()
+        if self.view.is_rect_selecting:
+            self.finish_rectangle_selection()
+
+    def finish_well_drag(self) -> None:
+        self.view.is_dragging = False
+        self.view.drag_start_well = None
+        self.view.drag_current_well = None
+        self.view.drag_selection_mode = None
+        self.view.drag_affected_wells.clear()
+        self.view.drag_moved = False
+
+    def finish_rectangle_selection(self) -> None:
+        self.view.grid_widget.releaseMouse()
+        self.view.is_rect_selecting = False
+        self.view.rect_start_pos = None
+        self.view.rect_current_pos = None
+        self.view.selection_rect_widget.hide()
+
+
 class AspectRatioContainer(QWidget):
     """Container that maintains aspect ratio for its child widget.
 
@@ -450,19 +520,23 @@ class PlateSelectionEventController:
             return None
 
         well_id = button.property("well_id")
-        self._begin_rectangle_selection(button.mapTo(self.view.grid_widget, event.pos()))
+        self.lifecycle.begin_rectangle_selection(
+            button.mapTo(self.view.grid_widget, event.pos())
+        )
 
         if well_id and well_id in self.view.wells_with_images:
-            self._begin_well_drag(well_id)
+            self.lifecycle.begin_well_drag(well_id)
 
         event.accept()
         return True
 
     def _handle_button_move(self, button: QPushButton, event) -> bool | None:
-        if not self._is_left_rectangle_drag(event):
+        if not self.lifecycle.is_left_rectangle_drag(event):
             return None
 
-        self._update_rectangle(button.mapTo(self.view.grid_widget, event.pos()))
+        self.lifecycle.update_rectangle(
+            button.mapTo(self.view.grid_widget, event.pos())
+        )
         if self.view.is_dragging:
             self.view.drag_moved = True
 
@@ -475,7 +549,7 @@ class PlateSelectionEventController:
         if not (self.view.is_rect_selecting or self.view.is_dragging):
             return None
 
-        self._finish_interaction()
+        self.lifecycle.finish_interaction()
         event.accept()
         return True
 
@@ -485,15 +559,15 @@ class PlateSelectionEventController:
         if isinstance(self.view.grid_widget.childAt(event.pos()), QPushButton):
             return None
 
-        self._begin_rectangle_selection(event.pos())
+        self.lifecycle.begin_rectangle_selection(event.pos())
         event.accept()
         return True
 
     def _handle_grid_move(self, event) -> bool | None:
-        if not self._is_left_rectangle_drag(event):
+        if not self.lifecycle.is_left_rectangle_drag(event):
             return None
 
-        self._update_rectangle(event.pos())
+        self.lifecycle.update_rectangle(event.pos())
         event.accept()
         return True
 
@@ -504,71 +578,9 @@ class PlateSelectionEventController:
         ):
             return None
 
-        self._finish_rectangle_selection()
+        self.lifecycle.finish_rectangle_selection()
         event.accept()
         return True
-
-    def _is_left_rectangle_drag(self, event) -> bool:
-        return (
-            self.view.is_rect_selecting
-            and event.buttons() & Qt.MouseButton.LeftButton
-        )
-
-    def _begin_rectangle_selection(self, start_pos) -> None:
-        self.view.is_rect_selecting = True
-        self.view.rect_start_pos = start_pos
-        self.view.rect_current_pos = start_pos
-        self.view.pre_drag_selection = self.view.selected_wells.copy()
-        self.view.grid_widget.grabMouse()
-        self._show_rectangle(QRect(start_pos, start_pos).normalized())
-
-    def _begin_well_drag(self, well_id: str) -> None:
-        self.view.is_dragging = True
-        self.view.drag_start_well = well_id
-        self.view.drag_current_well = well_id
-        self.view.drag_affected_wells = set()
-        self.view.drag_moved = False
-        self.view.drag_selection_mode = (
-            "deselect" if well_id in self.view.selected_wells else "select"
-        )
-        self.view._toggle_well_selection(
-            well_id, self.view.drag_selection_mode == "select"
-        )
-        self.view.drag_affected_wells.add(well_id)
-        self.view._publish_selection_change()
-
-    def _update_rectangle(self, current_pos) -> None:
-        self.view.rect_current_pos = current_pos
-        rect = QRect(self.view.rect_start_pos, current_pos).normalized()
-        self._show_rectangle(rect)
-        self.view._update_rectangle_selection(rect)
-
-    def _show_rectangle(self, rect: QRect) -> None:
-        self.view.selection_rect_widget.setGeometry(rect)
-        self.view.selection_rect_widget.raise_()
-        self.view.selection_rect_widget.show()
-
-    def _finish_interaction(self) -> None:
-        self.view.grid_widget.releaseMouse()
-        if self.view.is_dragging:
-            self._finish_well_drag()
-        if self.view.is_rect_selecting:
-            self._finish_rectangle_selection()
-
-    def _finish_well_drag(self) -> None:
-        self.view.is_dragging = False
-        self.view.drag_start_well = None
-        self.view.drag_current_well = None
-        self.view.drag_selection_mode = None
-        self.view.drag_affected_wells.clear()
-        self.view.drag_moved = False
-
-    def _finish_rectangle_selection(self) -> None:
-        self.view.grid_widget.releaseMouse()
-        self.view.is_rect_selecting = False
-        self.view.rect_start_pos = None
-        self.view.rect_current_pos = None
-        self.view.selection_rect_widget.hide()
 
 
 class PlateViewWidget(QWidget):

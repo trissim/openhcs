@@ -609,11 +609,34 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widget
 # the well-filter transport wrapper finding.
 ```
 
+Checkpoint 6:
+
+- Added `PlateSelectionInteractionLifecycle` to own begin/update/finish
+  transitions for button drag and rectangle selection.
+- Reduced `PlateSelectionEventController` to event target routing and Qt event
+  acceptance while the lifecycle object owns gesture state transitions.
+- Focused advisor on `plate_view_widget.py` now reports only the broader
+  `PlateViewWidget` facade quotient; the separate
+  `PlateSelectionEventController` quotient is cleared.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui -q
+# 95 passed
+
+.venv/bin/python -m py_compile openhcs/pyqt_gui/widgets/shared/plate_view_widget.py
+# clean
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widgets/shared/plate_view_widget.py
+# cleared PlateSelectionEventController method-role quotient.
+```
+
 Remaining:
 
 - Split `image_browser.py` plate-view/detach/filter sync into controllers.
-- Split `plate_view_widget.py` selection-event handling and filter sync into
-  smaller subsystems.
+- Split `plate_view_widget.py` selection mutation/filter-sync/status updates
+  into smaller subsystems.
 - Split `progress_tree_builder.py` into composed projection/build/status
   subsystems if the remaining class quotient should be eliminated.
 - Extract larger production PyQt subsystem boundaries for `image_browser.py`,
