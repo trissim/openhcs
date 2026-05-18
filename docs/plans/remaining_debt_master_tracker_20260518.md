@@ -848,3 +848,34 @@ Remaining:
   consuming nominal class identity.
 - Continue CP backend authority cleanup in `intensity_distribution.py`,
   `watershed.py`, and adjacent CellProfiler backend files.
+
+Checkpoint 2:
+
+- Added `RadialDistributionArrays.empty` and
+  `RadialDistributionArrays.from_components` as the array construction
+  authority for intensity-distribution results.
+- Moved repeated `measure_from_centers` and `measure_self_centered`
+  orchestration from native/Numba radial-distribution subclasses into
+  `RadialDistributionBackendStrategy`, leaving subclasses responsible for the
+  backend-specific `measure` implementation.
+- Removed repeated empty-result constructors and backend-specific self-centered
+  skeletons from `openhcs/processing/backends/cellprofiler/intensity_distribution.py`.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 402 passed, 5 warnings
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/intensity_distribution.py
+# Cleared repeated self-centered algorithm skeleton and repeated
+# RadialDistributionArrays constructor findings.
+```
+
+Remaining:
+
+- Public/export `__all__` derivation belongs to Campaign 14.
+- Collapse the remaining radial-distribution threaded parameter family into a
+  nominal request/context record.
+- Replace `measure_object_intensity_distribution` profile call repetition with
+  a bound profiler object.

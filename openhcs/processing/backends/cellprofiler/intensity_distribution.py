@@ -83,6 +83,35 @@ class RadialDistributionArrays:
     object_has_pixels: np.ndarray
     n_bins: int
 
+    @classmethod
+    def empty(cls, *, bin_count: int, wants_scaled: bool) -> "RadialDistributionArrays":
+        n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
+        return cls(
+            fraction_at_distance=np.zeros((0, int(bin_count) + 1), dtype=float),
+            mean_pixel_fraction=np.zeros((0, int(bin_count) + 1), dtype=float),
+            radial_cv_by_bin=np.zeros((n_bins, 0), dtype=float),
+            object_has_pixels=np.zeros(0, dtype=bool),
+            n_bins=n_bins,
+        )
+
+    @classmethod
+    def from_components(
+        cls,
+        *,
+        fraction_at_distance: np.ndarray,
+        mean_pixel_fraction: np.ndarray,
+        radial_cv_by_bin: np.ndarray,
+        object_has_pixels: np.ndarray,
+        n_bins: int,
+    ) -> "RadialDistributionArrays":
+        return cls(
+            fraction_at_distance=fraction_at_distance,
+            mean_pixel_fraction=mean_pixel_fraction,
+            radial_cv_by_bin=radial_cv_by_bin,
+            object_has_pixels=object_has_pixels,
+            n_bins=n_bins,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class RadialCenterDistanceFields:
@@ -204,7 +233,6 @@ class RadialDistributionBackendStrategy(
     ) -> RadialDistributionArrays:
         """Return radial-distribution arrays for one image plane."""
 
-    @abstractmethod
     def measure_from_centers(
         self,
         image: np.ndarray,
@@ -218,8 +246,34 @@ class RadialDistributionBackendStrategy(
         maximum_radius: int,
     ) -> RadialDistributionArrays:
         """Return radial-distribution arrays while computing center distances."""
+        labels_array = np.asarray(labels, dtype=np.int32)
+        d_to_edge_array = np.asarray(d_to_edge, dtype=np.float64)
+        object_count = int(labels_array.max()) if labels_array.size else 0
+        if object_count <= 0:
+            return RadialDistributionArrays.empty(
+                bin_count=bin_count,
+                wants_scaled=wants_scaled,
+            )
 
-    @abstractmethod
+        center_fields = self.center_distance_fields(
+            labels_array,
+            centers_i,
+            centers_j,
+        )
+
+        return self.measure(
+            image,
+            labels_array,
+            d_to_edge_array,
+            center_fields.d_from_center,
+            center_fields.center_labels,
+            center_fields.centers_i,
+            center_fields.centers_j,
+            bin_count=bin_count,
+            wants_scaled=wants_scaled,
+            maximum_radius=maximum_radius,
+        )
+
     def measure_self_centered(
         self,
         image: np.ndarray,
@@ -230,6 +284,26 @@ class RadialDistributionBackendStrategy(
         maximum_radius: int,
     ) -> RadialDistributionArrays:
         """Return radial-distribution arrays using each object's own center."""
+        labels_array = np.asarray(labels, dtype=np.int32)
+        object_count = int(labels_array.max()) if labels_array.size else 0
+        if object_count <= 0:
+            return RadialDistributionArrays.empty(
+                bin_count=bin_count,
+                wants_scaled=wants_scaled,
+            )
+        geometry = self.label_geometry(labels_array)
+        return self.measure(
+            image,
+            labels_array,
+            geometry.d_to_edge,
+            geometry.center_fields.d_from_center,
+            geometry.center_fields.center_labels,
+            geometry.center_fields.centers_i,
+            geometry.center_fields.centers_j,
+            bin_count=bin_count,
+            wants_scaled=wants_scaled,
+            maximum_radius=maximum_radius,
+        )
 
     def center_distance_fields(
         self,
@@ -398,12 +472,9 @@ class NativeNumpyRadialDistributionBackendStrategy(
         object_count = int(labels_array.max()) if labels_array.size else 0
         n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
         if object_count <= 0:
-            return RadialDistributionArrays(
-                fraction_at_distance=np.zeros((0, int(bin_count) + 1), dtype=float),
-                mean_pixel_fraction=np.zeros((0, int(bin_count) + 1), dtype=float),
-                radial_cv_by_bin=np.zeros((n_bins, 0), dtype=float),
-                object_has_pixels=np.zeros(0, dtype=bool),
-                n_bins=n_bins,
+            return RadialDistributionArrays.empty(
+                bin_count=bin_count,
+                wants_scaled=wants_scaled,
             )
 
         good_mask = center_labels_array > 0
@@ -481,90 +552,12 @@ class NativeNumpyRadialDistributionBackendStrategy(
             radial_cv[np.sum(~mask, 1) == 0] = 0
             radial_cv_by_bin[bin_index] = np.asarray(radial_cv.filled(0), dtype=float)
 
-        return RadialDistributionArrays(
+        return RadialDistributionArrays.from_components(
             fraction_at_distance=fraction_at_distance,
             mean_pixel_fraction=mean_pixel_fraction,
             radial_cv_by_bin=radial_cv_by_bin,
             object_has_pixels=object_has_pixels,
             n_bins=n_bins,
-        )
-
-    def measure_from_centers(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        d_to_edge: np.ndarray,
-        centers_i: np.ndarray,
-        centers_j: np.ndarray,
-        *,
-        bin_count: int,
-        wants_scaled: bool,
-        maximum_radius: int,
-    ) -> RadialDistributionArrays:
-        labels_array = np.asarray(labels, dtype=np.int32)
-        d_to_edge_array = np.asarray(d_to_edge, dtype=np.float64)
-        object_count = int(labels_array.max()) if labels_array.size else 0
-        if object_count <= 0:
-            n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
-            return RadialDistributionArrays(
-                fraction_at_distance=np.zeros((0, int(bin_count) + 1), dtype=float),
-                mean_pixel_fraction=np.zeros((0, int(bin_count) + 1), dtype=float),
-                radial_cv_by_bin=np.zeros((n_bins, 0), dtype=float),
-                object_has_pixels=np.zeros(0, dtype=bool),
-                n_bins=n_bins,
-            )
-
-        center_fields = self.center_distance_fields(
-            labels_array,
-            centers_i,
-            centers_j,
-        )
-
-        return self.measure(
-            image,
-            labels_array,
-            d_to_edge_array,
-            center_fields.d_from_center,
-            center_fields.center_labels,
-            center_fields.centers_i,
-            center_fields.centers_j,
-            bin_count=bin_count,
-            wants_scaled=wants_scaled,
-            maximum_radius=maximum_radius,
-        )
-
-    def measure_self_centered(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        *,
-        bin_count: int,
-        wants_scaled: bool,
-        maximum_radius: int,
-    ) -> RadialDistributionArrays:
-        labels_array = np.asarray(labels, dtype=np.int32)
-        object_count = int(labels_array.max()) if labels_array.size else 0
-        if object_count <= 0:
-            n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
-            return RadialDistributionArrays(
-                fraction_at_distance=np.zeros((0, int(bin_count) + 1), dtype=float),
-                mean_pixel_fraction=np.zeros((0, int(bin_count) + 1), dtype=float),
-                radial_cv_by_bin=np.zeros((n_bins, 0), dtype=float),
-                object_has_pixels=np.zeros(0, dtype=bool),
-                n_bins=n_bins,
-            )
-        geometry = self.label_geometry(labels_array)
-        return self.measure(
-            image,
-            labels_array,
-            geometry.d_to_edge,
-            geometry.center_fields.d_from_center,
-            geometry.center_fields.center_labels,
-            geometry.center_fields.centers_i,
-            geometry.center_fields.centers_j,
-            bin_count=bin_count,
-            wants_scaled=wants_scaled,
-            maximum_radius=maximum_radius,
         )
 
 
@@ -638,12 +631,9 @@ class NumbaNumpyRadialDistributionBackendStrategy(
         object_count = int(labels_array.max()) if labels_array.size else 0
         n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
         if object_count <= 0:
-            return RadialDistributionArrays(
-                fraction_at_distance=np.zeros((0, int(bin_count) + 1), dtype=float),
-                mean_pixel_fraction=np.zeros((0, int(bin_count) + 1), dtype=float),
-                radial_cv_by_bin=np.zeros((n_bins, 0), dtype=float),
-                object_has_pixels=np.zeros(0, dtype=bool),
-                n_bins=n_bins,
+            return RadialDistributionArrays.empty(
+                bin_count=bin_count,
+                wants_scaled=wants_scaled,
             )
 
         (
@@ -664,120 +654,12 @@ class NumbaNumpyRadialDistributionBackendStrategy(
             int(maximum_radius),
             object_count,
         )
-        return RadialDistributionArrays(
+        return RadialDistributionArrays.from_components(
             fraction_at_distance=fraction_at_distance,
             mean_pixel_fraction=mean_pixel_fraction,
             radial_cv_by_bin=radial_cv_by_bin,
             object_has_pixels=object_has_pixels,
             n_bins=n_bins,
-        )
-
-    def measure_from_centers(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        d_to_edge: np.ndarray,
-        centers_i: np.ndarray,
-        centers_j: np.ndarray,
-        *,
-        bin_count: int,
-        wants_scaled: bool,
-        maximum_radius: int,
-    ) -> RadialDistributionArrays:
-        image_array = np.ascontiguousarray(image, dtype=np.float64)
-        labels_array = np.ascontiguousarray(labels, dtype=np.int32)
-        d_to_edge_array = np.ascontiguousarray(d_to_edge, dtype=np.float64)
-        centers_i_array = np.ascontiguousarray(centers_i, dtype=np.float64)
-        centers_j_array = np.ascontiguousarray(centers_j, dtype=np.float64)
-
-        if image_array.ndim != 2 or labels_array.ndim != 2:
-            raise NotImplementedError(
-                "CellProfiler radial intensity distribution currently supports "
-                f"2-D NumPy planes, got image {image_array.shape!r} and labels "
-                f"{labels_array.shape!r}."
-            )
-        if labels_array.shape != image_array.shape:
-            raise ValueError(
-                "Radial distribution labels must match the image shape; got "
-                f"labels {labels_array.shape!r} for image {image_array.shape!r}."
-            )
-        if bin_count <= 0:
-            raise ValueError(f"bin_count must be positive, got {bin_count!r}.")
-
-        object_count = int(labels_array.max()) if labels_array.size else 0
-        n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
-        if object_count <= 0:
-            return RadialDistributionArrays(
-                fraction_at_distance=np.zeros((0, int(bin_count) + 1), dtype=float),
-                mean_pixel_fraction=np.zeros((0, int(bin_count) + 1), dtype=float),
-                radial_cv_by_bin=np.zeros((n_bins, 0), dtype=float),
-                object_has_pixels=np.zeros(0, dtype=bool),
-                n_bins=n_bins,
-            )
-
-        center_fields = self.center_distance_fields(
-            labels_array,
-            centers_i_array,
-            centers_j_array,
-        )
-        (
-            fraction_at_distance,
-            mean_pixel_fraction,
-            radial_cv_by_bin,
-            object_has_pixels,
-        ) = _measure_radial_distribution_numba(
-            image_array,
-            labels_array,
-            d_to_edge_array,
-            np.ascontiguousarray(center_fields.d_from_center, dtype=np.float64),
-            np.ascontiguousarray(center_fields.center_labels, dtype=np.int32),
-            np.ascontiguousarray(center_fields.centers_i, dtype=np.float64),
-            np.ascontiguousarray(center_fields.centers_j, dtype=np.float64),
-            int(bin_count),
-            bool(wants_scaled),
-            int(maximum_radius),
-            object_count,
-        )
-        return RadialDistributionArrays(
-            fraction_at_distance=fraction_at_distance,
-            mean_pixel_fraction=mean_pixel_fraction,
-            radial_cv_by_bin=radial_cv_by_bin,
-            object_has_pixels=object_has_pixels,
-            n_bins=n_bins,
-        )
-
-    def measure_self_centered(
-        self,
-        image: np.ndarray,
-        labels: np.ndarray,
-        *,
-        bin_count: int,
-        wants_scaled: bool,
-        maximum_radius: int,
-    ) -> RadialDistributionArrays:
-        labels_array = np.asarray(labels, dtype=np.int32)
-        object_count = int(labels_array.max()) if labels_array.size else 0
-        if object_count <= 0:
-            n_bins = int(bin_count) if wants_scaled else int(bin_count) + 1
-            return RadialDistributionArrays(
-                fraction_at_distance=np.zeros((0, int(bin_count) + 1), dtype=float),
-                mean_pixel_fraction=np.zeros((0, int(bin_count) + 1), dtype=float),
-                radial_cv_by_bin=np.zeros((n_bins, 0), dtype=float),
-                object_has_pixels=np.zeros(0, dtype=bool),
-                n_bins=n_bins,
-            )
-        geometry = self.label_geometry(labels_array)
-        return self.measure(
-            image,
-            labels_array,
-            geometry.d_to_edge,
-            geometry.center_fields.d_from_center,
-            geometry.center_fields.center_labels,
-            geometry.center_fields.centers_i,
-            geometry.center_fields.centers_j,
-            bin_count=bin_count,
-            wants_scaled=wants_scaled,
-            maximum_radius=maximum_radius,
         )
 
 
