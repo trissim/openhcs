@@ -5,29 +5,34 @@ import numpy as np
 import pandas as pd
 import sys
 
-from openhcs.formats.experimental_layout_rows import ExperimentalLayoutRowRole
+from openhcs.formats.experimental_layout_rows import (
+    ExperimentalAnalysisFeatureReaders,
+    ExperimentalAnalysisScope,
+    ExperimentalLayoutRowRole,
+)
 
 
 
 
 def read_results(results_path,scope=None):
     xls = pd.ExcelFile(results_path)
-    if scope == "EDDU_CX5":
-        raw_df = pd.read_excel(xls, 'Rawdata')
-    elif scope == "EDDU_metaxpress":
-        raw_df = pd.read_excel(xls, xls.sheet_names[0])
-    else:
-        print("microscope "+str(scope)+" not known. Exiting")
+    try:
+        return ExperimentalAnalysisScope.coerce(scope).read_results(xls)
+    except ValueError as exc:
+        print(str(exc) + ". Exiting")
         sys.exit()
-    return raw_df
 
 def get_features(raw_df,scope=None):
-    if scope == "EDDU_CX5":
-        return get_features_EDDU_CX5(raw_df)
-    if scope == "EDDU_metaxpress":
-        return get_features_EDDU_metaxpress(raw_df)
-    else:
-        print("microscope "+str(scope)+" not known. Exiting")
+    try:
+        return ExperimentalAnalysisScope.coerce(scope).features(
+            raw_df,
+            ExperimentalAnalysisFeatureReaders(
+                cx5=get_features_EDDU_CX5,
+                metaxpress=get_features_EDDU_metaxpress,
+            ),
+        )
+    except ValueError as exc:
+        print(str(exc) + ". Exiting")
         sys.exit()
 
 def read_plate_layout(config_path):

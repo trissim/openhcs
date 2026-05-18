@@ -21,7 +21,12 @@ import pandas as pd
 import sys
 from typing import Optional
 
-from openhcs.formats.experimental_layout_rows import ExperimentalLayoutRowRole
+from openhcs.formats.experimental_layout_rows import (
+    ExperimentalAnalysisFeatureReaders,
+    ExperimentalAnalysisPlateHandlers,
+    ExperimentalAnalysisScope,
+    ExperimentalLayoutRowRole,
+)
 
 
 
@@ -47,22 +52,24 @@ def read_results(results_path: str, scope: Optional[str] = None) -> pd.DataFrame
     else:
         # Handle Excel files
         xls = pd.ExcelFile(results_path)
-        if scope == "EDDU_CX5":
-            raw_df = pd.read_excel(xls, 'Rawdata')
-        elif scope == "EDDU_metaxpress":
-            raw_df = pd.read_excel(xls, xls.sheet_names[0])
-        else:
-            print("microscope "+str(scope)+" not known. Exiting")
+        try:
+            return ExperimentalAnalysisScope.coerce(scope).read_results(xls)
+        except ValueError as exc:
+            print(str(exc) + ". Exiting")
             sys.exit()
     return raw_df
 
 def get_features(raw_df,scope=None):
-    if scope == "EDDU_CX5":
-        return get_features_EDDU_CX5(raw_df)
-    if scope == "EDDU_metaxpress":
-        return get_features_EDDU_metaxpress(raw_df)
-    else:
-        print("microscope "+str(scope)+" not known. Exiting")
+    try:
+        return ExperimentalAnalysisScope.coerce(scope).features(
+            raw_df,
+            ExperimentalAnalysisFeatureReaders(
+                cx5=get_features_EDDU_CX5,
+                metaxpress=get_features_EDDU_metaxpress,
+            ),
+        )
+    except ValueError as exc:
+        print(str(exc) + ". Exiting")
         sys.exit()
 
 def is_N_row(row_name):
@@ -360,12 +367,18 @@ def add_well_to_well_dict(wells,well_dict, raw_df):
     return well_dict
 
 def create_plates_dict(raw_df,scope=None):
-    if scope == "EDDU_CX5":
-        return create_plates_dict_EDDU_CX5(raw_df)
-    if scope == "EDDU_metaxpress":
-        return create_plates_dict_EDDU_metaxpress(raw_df)
-    else:
-        print("microscope "+str(scope)+" not known. Exiting")
+    try:
+        return ExperimentalAnalysisScope.coerce(scope).create_plates_dict(
+            raw_df,
+            ExperimentalAnalysisPlateHandlers(
+                cx5_builder=create_plates_dict_EDDU_CX5,
+                metaxpress_builder=create_plates_dict_EDDU_metaxpress,
+                cx5_filler=fill_plates_dict_EDDU_CX5,
+                metaxpress_filler=fill_plates_dict_EDDU_metaxpress,
+            ),
+        )
+    except ValueError as exc:
+        print(str(exc) + ". Exiting")
         sys.exit()
 
 def create_plates_dict_EDDU_metaxpress(raw_df):
@@ -418,12 +431,20 @@ def well_to_num(well,dim):
 
 def fill_plates_dict(raw_df,plates_dict,scope=None):
     features = get_features(raw_df,scope=scope)
-    if scope == "EDDU_CX5":
-        return fill_plates_dict_EDDU_CX5(raw_df,plates_dict,features)
-    if scope == "EDDU_metaxpress":
-        return fill_plates_dict_EDDU_metaxpress(raw_df,plates_dict,features)
-    else:
-        print("microscope "+str(scope)+" not known. Exiting")
+    try:
+        return ExperimentalAnalysisScope.coerce(scope).fill_plates_dict(
+            raw_df,
+            plates_dict,
+            features,
+            ExperimentalAnalysisPlateHandlers(
+                cx5_builder=create_plates_dict_EDDU_CX5,
+                metaxpress_builder=create_plates_dict_EDDU_metaxpress,
+                cx5_filler=fill_plates_dict_EDDU_CX5,
+                metaxpress_filler=fill_plates_dict_EDDU_metaxpress,
+            ),
+        )
+    except ValueError as exc:
+        print(str(exc) + ". Exiting")
         sys.exit()
 
 def fill_plates_dict_EDDU_CX5(raw_df,plates_dict,features):
