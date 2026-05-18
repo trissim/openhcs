@@ -659,14 +659,35 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widget
 # only ImageBrowserWidget class method-role quotient remains.
 ```
 
+Checkpoint 8:
+
+- Added `ProgressTreeStatusProjector` for percent aggregation and parent status
+  projection.
+- Added `ProgressNodeFactory` for model-node construction and
+  `ProgressTreeNodeConverter` for PyQt-reactive `TreeNode` conversion.
+- Routed execution-server tree syncing through the converter authority instead
+  of static forwarding wrappers on `ProgressTreeBuilder`.
+- Focused advisor on `progress_tree_builder.py` reports no findings.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui/test_progress_tree_aggregation.py tests/unit/pyqt_gui/test_execution_server_summary.py -q
+# 16 passed
+
+.venv/bin/python -m py_compile openhcs/pyqt_gui/widgets/shared/server_browser/progress_tree_builder.py openhcs/pyqt_gui/widgets/shared/server_browser/progress_projection.py
+# clean
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widgets/shared/server_browser/progress_tree_builder.py
+# No refactoring findings.
+```
+
 Remaining:
 
 - Split `image_browser.py` plate-view/detach/filter/streaming roles into
   controllers if the remaining facade quotient should be eliminated.
 - Split `plate_view_widget.py` selection mutation/filter-sync/status updates
   into smaller subsystems.
-- Split `progress_tree_builder.py` into composed projection/build/status
-  subsystems if the remaining class quotient should be eliminated.
 - Extract larger production PyQt subsystem boundaries for `image_browser.py`,
   `plate_view_widget.py`, `progress_tree_builder.py`, and
   `step_parameter_editor.py` in a later deeper GUI campaign.

@@ -67,11 +67,75 @@ _TREE_AGGREGATION_REGISTRY = TreeAggregationPolicyRegistry(
 )
 
 
-class ProgressTreeBuilder:
-    """Transforms ProgressEvent snapshots into hierarchical progress nodes."""
+class ProgressTreeStatusProjector:
+    """Own percent aggregation and parent status projection."""
 
-    @staticmethod
-    def _make_progress_node(
+    def finalize_plate_node(self, node: ProgressNode, *, is_executing: bool) -> None:
+        self.aggregate_percent_recursive(node)
+        if is_executing:
+            if self.has_failed_descendant(node):
+                node.status = "❌ Failed"
+            elif node.percent >= 100.0:
+                node.status = "✅ Complete"
+            elif self.all_leaves_queued(node):
+                node.status = "⏳ Queued"
+            else:
+                node.status = "⚙️ Executing"
+        else:
+            if self.has_failed_descendant(node):
+                node.status = "❌ Compile Failed"
+            else:
+                node.status = "✅ Compiled" if node.percent >= 100.0 else "⏳ Compiling"
+        self.apply_node_percent_text(node)
+
+    def aggregate_percent_recursive(self, node: ProgressNode) -> float:
+        if not node.children:
+            return node.percent
+        child_values = [
+            self.aggregate_percent_recursive(child) for child in node.children
+        ]
+        expected_policy = _NODE_AGGREGATION_POLICY_BY_TYPE.get(node.node_type)
+        if expected_policy is None:
+            raise ValueError(f"No aggregation policy for node_type '{node.node_type}'")
+        if node.aggregation_policy_id != expected_policy:
+            raise ValueError(
+                f"Aggregation policy mismatch for node_type '{node.node_type}': "
+                f"expected '{expected_policy}', got '{node.aggregation_policy_id}'"
+            )
+        node.percent = _TREE_AGGREGATION_REGISTRY.aggregate(
+            node.aggregation_policy_id, node.percent, child_values
+        )
+        return node.percent
+
+    def apply_node_percent_text(self, node: ProgressNode) -> None:
+        if node.node_type in {
+            ProgressNodeType.PLATE.value,
+            ProgressNodeType.WORKER.value,
+            ProgressNodeType.WELL.value,
+            ProgressNodeType.COMPILATION.value,
+        }:
+            node.info = f"{node.percent:.1f}%"
+        elif node.node_type == ProgressNodeType.STEP.value and not node.info:
+            node.info = f"{node.percent:.1f}%"
+        for child in node.children:
+            self.apply_node_percent_text(child)
+
+    def all_leaves_queued(self, node: ProgressNode) -> bool:
+        if not node.children:
+            return node.status == "⏳ Queued"
+        return all(self.all_leaves_queued(child) for child in node.children)
+
+    def has_failed_descendant(self, node: ProgressNode) -> bool:
+        if node.status.startswith("❌"):
+            return True
+        return any(self.has_failed_descendant(child) for child in node.children)
+
+
+class ProgressNodeFactory:
+    """Own construction of progress tree model nodes."""
+
+    def make_progress_node(
+        self,
         *,
         node_id: str,
         node_type: ProgressNodeType,
@@ -94,7 +158,7 @@ class ProgressTreeBuilder:
             children=children or [],
         )
 
-    def _make_step_node(
+    def make_step_node(
         self,
         *,
         axis_id: str,
@@ -104,7 +168,7 @@ class ProgressTreeBuilder:
         info: str,
         percent: float,
     ) -> ProgressNode:
-        return self._make_progress_node(
+        return self.make_progress_node(
             node_id=f"{axis_id}_step_{step_idx}",
             node_type=ProgressNodeType.STEP,
             label=f"🔧 {step_idx + 1} - {step_name}",
@@ -113,7 +177,7 @@ class ProgressTreeBuilder:
             percent=percent,
         )
 
-    def _make_well_progress_node(
+    def make_well_progress_node(
         self,
         *,
         axis_id: str,
@@ -121,7 +185,7 @@ class ProgressTreeBuilder:
         percent: float,
         children: List[ProgressNode],
     ) -> ProgressNode:
-        return self._make_progress_node(
+        return self.make_progress_node(
             node_id=axis_id,
             node_type=ProgressNodeType.WELL,
             label=f"[{axis_id}]",
@@ -130,6 +194,37 @@ class ProgressTreeBuilder:
             percent=percent,
             children=children,
         )
+
+
+class ProgressTreeNodeConverter:
+    """Convert pure progress nodes to PyQt-reactive TreeNode records."""
+
+    def to_tree_node(self, node: ProgressNode) -> TreeNode:
+        return TreeNode(
+            node_id=node.node_id,
+            node_type=node.node_type,
+            label=node.label,
+            status=node.status,
+            info=node.info,
+            children=[self.to_tree_node(child) for child in node.children],
+        )
+
+    def to_tree_nodes(self, nodes: List[ProgressNode]) -> List[TreeNode]:
+        return [self.to_tree_node(node) for node in nodes]
+
+
+class ProgressTreeBuilder:
+    """Transforms ProgressEvent snapshots into hierarchical progress nodes."""
+
+    def __init__(
+        self,
+        status_projector: ProgressTreeStatusProjector | None = None,
+        node_factory: ProgressNodeFactory | None = None,
+        node_converter: ProgressTreeNodeConverter | None = None,
+    ):
+        self.status_projector = status_projector or ProgressTreeStatusProjector()
+        self.node_factory = node_factory or ProgressNodeFactory()
+        self.node_converter = node_converter or ProgressTreeNodeConverter()
 
     def build_progress_tree(
         self,
@@ -177,7 +272,7 @@ class ProgressTreeBuilder:
                     known_wells=known_wells,
                 )
 
-            plate_node = self._make_progress_node(
+            plate_node = self.node_factory.make_progress_node(
                 node_id=plate_id,
                 node_type=ProgressNodeType.PLATE,
                 label=f"📋 {plate_name}",
@@ -186,24 +281,10 @@ class ProgressTreeBuilder:
                 execution_id=exec_id,
                 children=children,
             )
-            self._aggregate_percent_recursive(plate_node)
-            if is_executing:
-                if self._has_failed_descendant(plate_node):
-                    plate_node.status = "❌ Failed"
-                elif plate_node.percent >= 100.0:
-                    plate_node.status = "✅ Complete"
-                elif self._all_leaves_queued(plate_node):
-                    plate_node.status = "⏳ Queued"
-                else:
-                    plate_node.status = "⚙️ Executing"
-            else:
-                if self._has_failed_descendant(plate_node):
-                    plate_node.status = "❌ Compile Failed"
-                else:
-                    plate_node.status = (
-                        "✅ Compiled" if plate_node.percent >= 100.0 else "⏳ Compiling"
-                    )
-            self._apply_node_percent_text(plate_node)
+            self.status_projector.finalize_plate_node(
+                plate_node,
+                is_executing=is_executing,
+            )
             existing = nodes_by_plate.get(plate_id)
             if existing is None or latest_timestamp > existing[0]:
                 nodes_by_plate[plate_id] = (latest_timestamp, plate_node)
@@ -288,7 +369,7 @@ class ProgressTreeBuilder:
             else:
                 worker_status = f"⚙️ {active_count} active"
             worker_nodes.append(
-                self._make_progress_node(
+                self.node_factory.make_progress_node(
                     node_id=worker_slot,
                     node_type=ProgressNodeType.WORKER,
                     label=f"Worker {worker_slot}",
@@ -337,7 +418,7 @@ class ProgressTreeBuilder:
                 percent = compile_event.percent
 
             compilation_nodes.append(
-                self._make_progress_node(
+                self.node_factory.make_progress_node(
                     node_id=axis_id,
                     node_type=ProgressNodeType.COMPILATION,
                     label=f"[{axis_id}]",
@@ -408,7 +489,7 @@ class ProgressTreeBuilder:
                     step_percent = 0.0
 
                 children.append(
-                    self._make_step_node(
+                    self.node_factory.make_step_node(
                         axis_id=axis_id,
                         step_idx=current_step_idx,
                         step_name=step_name,
@@ -421,7 +502,7 @@ class ProgressTreeBuilder:
             for step_idx in range(current_step_idx):
                 step_name = step_names.get(step_idx, f"Step {step_idx + 1}")
                 children.append(
-                    self._make_step_node(
+                    self.node_factory.make_step_node(
                         axis_id=axis_id,
                         step_idx=step_idx,
                         step_name=step_name,
@@ -435,7 +516,7 @@ class ProgressTreeBuilder:
             for step_idx in range(current_step_idx + 1, total_steps):
                 step_name = step_names.get(step_idx, f"Step {step_idx + 1}")
                 children.append(
-                    self._make_step_node(
+                    self.node_factory.make_step_node(
                         axis_id=axis_id,
                         step_idx=step_idx,
                         step_name=step_name,
@@ -445,44 +526,12 @@ class ProgressTreeBuilder:
                     )
                 )
 
-        return self._make_well_progress_node(
+        return self.node_factory.make_well_progress_node(
             axis_id=axis_id,
             status=status,
             percent=percent,
             children=children,
         )
-
-    def _aggregate_percent_recursive(self, node: ProgressNode) -> float:
-        if not node.children:
-            return node.percent
-        child_values = [
-            self._aggregate_percent_recursive(child) for child in node.children
-        ]
-        expected_policy = _NODE_AGGREGATION_POLICY_BY_TYPE.get(node.node_type)
-        if expected_policy is None:
-            raise ValueError(f"No aggregation policy for node_type '{node.node_type}'")
-        if node.aggregation_policy_id != expected_policy:
-            raise ValueError(
-                f"Aggregation policy mismatch for node_type '{node.node_type}': "
-                f"expected '{expected_policy}', got '{node.aggregation_policy_id}'"
-            )
-        node.percent = _TREE_AGGREGATION_REGISTRY.aggregate(
-            node.aggregation_policy_id, node.percent, child_values
-        )
-        return node.percent
-
-    def _apply_node_percent_text(self, node: ProgressNode) -> None:
-        if node.node_type in {
-            ProgressNodeType.PLATE.value,
-            ProgressNodeType.WORKER.value,
-            ProgressNodeType.WELL.value,
-            ProgressNodeType.COMPILATION.value,
-        }:
-            node.info = f"{node.percent:.1f}%"
-        elif node.node_type == ProgressNodeType.STEP.value and not node.info:
-            node.info = f"{node.percent:.1f}%"
-        for child in node.children:
-            self._apply_node_percent_text(child)
 
     @staticmethod
     def _is_execution_mode(
@@ -510,46 +559,3 @@ class ProgressTreeBuilder:
         if topology_key in worker_assignments:
             return True
         return has_axis_execution_events
-
-    @staticmethod
-    def _all_leaves_queued(node: ProgressNode) -> bool:
-        """Return True only when *every* leaf descendant has '⏳ Queued' status."""
-        if not node.children:
-            return node.status == "⏳ Queued"
-        return all(
-            ProgressTreeBuilder._all_leaves_queued(child) for child in node.children
-        )
-
-    @staticmethod
-    def _has_status_descendant(node: ProgressNode, status: str) -> bool:
-        if node.status == status:
-            return True
-        return any(
-            ProgressTreeBuilder._has_status_descendant(child, status)
-            for child in node.children
-        )
-
-    @staticmethod
-    def _has_failed_descendant(node: ProgressNode) -> bool:
-        if node.status.startswith("❌"):
-            return True
-        return any(
-            ProgressTreeBuilder._has_failed_descendant(child) for child in node.children
-        )
-
-    @staticmethod
-    def to_tree_node(node: ProgressNode) -> TreeNode:
-        return TreeNode(
-            node_id=node.node_id,
-            node_type=node.node_type,
-            label=node.label,
-            status=node.status,
-            info=node.info,
-            children=[
-                ProgressTreeBuilder.to_tree_node(child) for child in node.children
-            ],
-        )
-
-    @staticmethod
-    def to_tree_nodes(nodes: List[ProgressNode]) -> List[TreeNode]:
-        return [ProgressTreeBuilder.to_tree_node(node) for node in nodes]

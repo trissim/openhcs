@@ -199,7 +199,7 @@ class ExecutionServerProgressRenderer:
             server_item.setText(2, summary.info_text)
             self._tree_sync_adapter.sync_children(
                 server_item,
-                self._tree_builder.to_tree_nodes(nodes),
+                self._tree_builder.node_converter.to_tree_nodes(nodes),
             )
         except Exception as error:
             logger.exception("Error updating execution server item: %s", error)
