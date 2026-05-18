@@ -473,3 +473,28 @@ Verification:
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_viewer_server.py
 # No refactoring findings.
 ```
+
+## Campaign 11 - Backend Dimensional Dispatch Authority
+
+Status: In Progress
+
+Checkpoint 1:
+
+- Added `DXFMaskStackProjection` in
+  `openhcs/processing/backends/analysis/dxf_mask_pipeline.py`.
+- Replaced local 3D/4D `image_stack.ndim` dispatch with the typed projection.
+- Fixed the pre-existing unreachable registration/masking body caused by
+  indentation under the invalid-dimension `else`.
+
+Verification:
+
+```bash
+.venv/bin/python -m py_compile openhcs/processing/backends/analysis/dxf_mask_pipeline.py
+# clean
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/analysis/dxf_mask_pipeline.py
+# No refactoring findings.
+```

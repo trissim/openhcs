@@ -65,3 +65,27 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor \
 - Local numeric dispatch ladders are removed from target backends.
 - Shape behavior and numerical semantics are preserved.
 
+## Progress
+
+### Checkpoint 1 - DXF Mask Pipeline
+
+Implemented:
+
+- Added `DXFMaskStackProjection` as the typed 3D/4D stack projection authority.
+- Replaced the local `image_stack.ndim` ladder with the projection.
+- Fixed the pre-existing unreachable registration body: valid 3D/4D inputs no
+  longer fall through after the dimension branch.
+- Expanded compressed inline guards and normalization logic.
+
+Verification:
+
+```bash
+.venv/bin/python -m py_compile openhcs/processing/backends/analysis/dxf_mask_pipeline.py
+# clean
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/analysis/dxf_mask_pipeline.py
+# No refactoring findings.
+```
