@@ -126,3 +126,43 @@ python -m nominal_refactor_advisor openhcs/processing/presets/pipelines
 - Variant differences are declared as overlays.
 - Existing import path compatibility remains intact.
 - Cross-module preset spec-axis findings are removed or reduced to wrappers.
+
+## Implementation Notes
+
+Implemented in `openhcs/processing/presets/mfd_specs.py`.
+
+- `MfdPresetKey` names the import-compatible preset variants.
+- `MfdPresetDefinition` records variant deltas: crop/analyze channel-4 behavior
+  and CPU/GPU stitch backend choice.
+- `PresetStepBinding`, `PresetStepSpec`, and `PresetStepTemplate` centralize
+  step naming, source binding, variable components, and fresh `FunctionStep`
+  materialization.
+- `MfdPresetMaterializer` owns the family split between crop/analyze and stitch
+  presets through `AutoRegisterMeta`; the four preset files are now wrappers
+  that expose `pipeline_steps = build_mfd_preset(...)`.
+
+## Verification Record
+
+Focused gates passed on 2026-05-18:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_mfd_preset_specs.py -q
+timeout 120 .venv/bin/python -m nominal_refactor_advisor \
+  openhcs/processing/presets/mfd_specs.py \
+  openhcs/processing/presets/pipelines/10x_mfd_crop_analyze.py \
+  openhcs/processing/presets/pipelines/10x_mfd_crop_analyze_dapi-fitc-cy5.py \
+  openhcs/processing/presets/pipelines/10x_mfd_stitch_ashlar_cpu.py \
+  openhcs/processing/presets/pipelines/10x_mfd_stitch_gpu.py
+```
+
+Results:
+
+- `4 passed`
+- `No refactoring findings`
+
+Broader checkpoint:
+
+- `git diff --check` passed.
+- `.venv/bin/python -m pytest tests/unit -q`: `1522 passed, 10 warnings`.
+- `timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs`:
+  1,142 findings, 60.135s.

@@ -52,7 +52,7 @@ OpenHCS checkpoint before these campaign plans:
 | 2 | Complete | Napari streaming handler axis | `napari_streaming_handler_axis_refactor_20260518.md` | import smoke for both Napari modules + focused advisor |
 | 3 | Complete | Validation registry family | `validation_registry_family_refactor_20260518.md` | validator tests + advisor on `validation/ast_validator.py` |
 | 4 | Complete | Backend parameter request records | `backend_parameter_request_records_refactor_20260518.md` | Ashlar CPU/GPU focused tests + advisor on pos-gen modules |
-| 5 | Pending | Preset pipeline spec authority | `preset_pipeline_spec_authority_refactor_20260518.md` | materialization equivalence tests + advisor on presets |
+| 5 | Complete | Preset pipeline spec authority | `preset_pipeline_spec_authority_refactor_20260518.md` | materialization equivalence tests + advisor on presets |
 | 6 | Pending | PyQt GUI decomposition | `pyqt_gui_decomposition_refactor_20260518.md` | controller tests/import smoke + advisor on `PlateViewWidget` |
 | 7 | Pending | Orchestration hubs | `full_repo_orchestration_hubs_refactor_20260518.md` | orchestrator characterization tests + focused advisor |
 | 8 | Pending | Full-repo triage policy and known-noise ledger | `full_repo_advisor_triage_policy_20260518.md`, `advisor_known_noise.md` | full advisor scan reviewed and ledger updated |
@@ -193,3 +193,26 @@ Before completion:
   aligner ABC extraction plus blank-line/layout cleanup.
 - Full unit verification: `1518 passed, 10 warnings`.
 - Full advisor scan: 1,145 findings, 60.637s.
+
+### 2026-05-18 - Preset Pipeline Spec Authority Started
+
+- Moved campaign 5 to `In Progress`.
+- Focused advisor on the MFD preset pipeline wrappers reported duplicated
+  cross-module step families and literal `FunctionStep` declarations.
+- First slice: replace MFD preset files with compatibility wrappers backed by a
+  typed preset-spec authority while preserving file-level `pipeline_steps`.
+
+### 2026-05-18 - Preset Pipeline Spec Authority Completed
+
+- Added `openhcs/processing/presets/mfd_specs.py` as the typed materialization
+  authority for MFD crop/analyze and stitch presets.
+- Replaced the four MFD preset pipeline files with thin compatibility wrappers
+  that expose the same `pipeline_steps` variable from typed preset keys.
+- Represented shared step binding metadata and stitch-family repetition as
+  explicit spec/template records instead of copied `FunctionStep` literals.
+- Added focused wrapper/materialization characterization tests, including the
+  hyphenated DAPI/FITC/CY5 preset filename.
+- Focused verification passed: `tests/unit/test_mfd_preset_specs.py` passed.
+- Focused advisor: no findings for the new MFD spec authority and wrappers.
+- Full unit verification: `1522 passed, 10 warnings`.
+- Full advisor scan: 1,142 findings, 60.135s.
