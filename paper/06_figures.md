@@ -2,83 +2,76 @@
 
 **Target:** 8 main figures for a Nature Methods-style platform manuscript.
 
-Editable drafts are in `paper/figures/diagrams/*.dot`; rendered SVG/PNG drafts are in `paper/figures/rendered/`. Rebuild all diagrams and the contact sheet with `python paper/figures/render_diagrams.py`.
+The revised figure story follows the manuscript's accessibility rule: show the practical workflow problem first, then show how OpenHCS keeps the analysis as one workflow record. Compiler/runtime terms should appear only after the reader understands the user-facing value.
 
-## Figure 1. Fragmented Tool Stack To Semantic Workflow
+Editable diagram drafts are in `paper/figures/diagrams/*.dot`; rendered SVG/PNG drafts are in `paper/figures/rendered/`. Rebuild all diagrams and the contact sheet with `python paper/figures/render_diagrams.py`.
 
-**Source:** `paper/figures/diagrams/fig01_field_integration_gap.dot`
-**Rendered:** `paper/figures/rendered/fig01_field_integration_gap.svg`
+## Figure 1. Fragmented Bioimage Tools To One Workflow Record
 
-Field tools solve separate parts of HCS: CellProfiler, Fiji/ImageJ, napari, OMERO/OME-Zarr, GPU libraries, and workflow systems. OpenHCS replaces manual handoffs with source schemas, typed state, memory contracts, runtime artifacts, and storage/viewer backends.
+Bioimage workflows often span CellProfiler, Fiji/ImageJ, napari, OMERO, Zarr-backed storage, Python notebooks, exported files, and batch execution. The figure should show the same analysis split across tools, then show OpenHCS keeping images, metadata, parameters, intermediate results, viewer outputs, generated Python, and workers attached to one workflow record.
 
-**Main message:** OpenHCS replaces manual file handoffs with typed HCS contracts.
+**Main message:** Users can keep the tools they already use without splitting the workflow into disconnected records.
 
-## Figure 2. Compiler And Runtime Architecture
+## Figure 2. Checks Before Execution
 
-**Source:** `paper/figures/diagrams/fig02_compiler_runtime_architecture.dot`
-**Rendered:** `paper/figures/rendered/fig02_compiler_runtime_architecture.svg`
+Show that OpenHCS resolves sources, parameters, functions, intermediate results, output destinations, and worker execution before a run starts. Use user-facing failure examples: wrong channel, stale mask, copied threshold, incompatible backend, output table from an old run, and ambiguous worker/viewer state.
 
-Source schema, typed state, function registry, and CellProfiler dialect inputs enter the OpenHCS compiler. The compiler produces FunctionSteps, runtime artifacts, storage plans, memory conversion, workers, viewer streams, and benchmark outputs.
+**Main message:** OpenHCS catches workflow mistakes before long runs instead of treating them as hidden script behavior.
 
-**Main message:** OpenHCS is a compile-then-execute semantic runtime, not a script wrapper.
+## Figure 3. Drop-In Python And Backend-Specific Functions
 
-## Figure 3. CellProfiler Import Path
+Show an ordinary Python function entering the workflow through signature-derived parameters and declared memory/backend requirements. Include NumPy/Numba, CuPy/CuCIM, JAX, PyTorch, TensorFlow, and pyclesperanto as possible backend paths when intentionally chosen.
 
-**Source:** `paper/figures/diagrams/fig03_cellprofiler_import_path.dot`
-**Rendered:** `paper/figures/rendered/fig03_cellprofiler_import_path.svg`
+**Main message:** OpenHCS is not a fixed module catalog; ordinary Python and backend-specific algorithms become workflow steps.
 
-The `.cppipe` file is parsed into module blocks and settings. Infrastructure modules become source schema and binding; processing modules become FunctionSteps; output modules become materialization plans; runtime artifacts are compared against native CellProfiler outputs.
+## Figure 4. Step-Level Viewer Output And Managed Sources Stay Attached
 
-**Main message:** CellProfiler import is a compiler dialect that produces normal OpenHCS workflows.
+Show two distinct but connected paths. For imported CellProfiler workflows, image-loading semantics come from the `.cppipe` pipeline. For native or managed workflows, explicit source bindings connect local files, OMERO, and Zarr-backed stores. Separately, napari and Fiji are enabled on individual steps; OpenHCS launches or reuses the viewer on the configured port and streams that step's images during execution.
 
-## Figure 4. Benchmark Validation Structure
+**Main message:** Imported workflows do not need extra manual source binding when loading is already encoded, and viewer output is a simple step-level configuration rather than a separate workflow.
 
-**Source:** `paper/figures/diagrams/fig04_benchmark_validation_structure.dot`
-**Rendered:** `paper/figures/rendered/fig04_benchmark_validation_structure.svg`
+## Figure 5. CellProfiler Import As A Preservation Test
 
-The benchmark manifest feeds native CellProfiler and OpenHCS runs. Native CellProfiler defines reference outputs. OpenHCS imports and runs the same `.cppipe` files. Semantic parity, phase timing, throughput, RAM, and category summaries remain separate report layers.
+Show `.cppipe` parsing into image sources, source mappings, CellProfiler-compatible workflow steps, named outputs, and parity comparison against native CellProfiler outputs.
 
-**Main message:** The benchmark separates correctness, execution speed, cold-run overhead, and throughput.
+**Main message:** CellProfiler compatibility is the strict validation case proving trusted legacy workflows can enter OpenHCS without losing meaning.
 
-## Figure 5. Throughput Amortization
+## Figure 6. Benchmark Validation Structure
 
-**Source:** `paper/figures/diagrams/fig05_throughput_amortization.dot`
-**Rendered:** `paper/figures/rendered/fig05_throughput_amortization.svg`
+Show the benchmark manifest feeding native CellProfiler and OpenHCS runs. Separate output parity, execution timing, total wall time, throughput, RAM, and category summaries.
 
-Fixed worker costs are divided by samples per worker; execution and output costs remain per-sample. RAM determines feasible worker count. The capacity curve reports samples per hour, RAM per worker, and speedup versus native CellProfiler.
+**Main message:** Correctness, execution speed, cold-run overhead, and HCS throughput are reported separately.
 
-**Main message:** One-sample timing is conservative; many-well HCS amortizes fixed costs.
+## Figure 7. Single-Thread Speed And Many-Sample Throughput
 
-## Figure 6. Backend Extensibility
+Panel A should show the constrained one-sample, one-thread/core, CPU-only speedup distribution with the at-least-4x minimum target. Panel B should show persistent-worker throughput, samples per hour, worker count, sample count, and RAM.
 
-**Source:** `paper/figures/diagrams/fig06_backend_extensibility.dot`
-**Rendered:** `paper/figures/rendered/fig06_backend_extensibility.svg`
+**Main message:** The 4x minimum single-thread result is the quantitative floor; persistent workers extend the same workflow to HCS-scale throughput.
 
-Workflow semantics remain stable while function memory contracts and ArrayBridge route compatible functions to NumPy/Numba, CuPy/CuCIM, pyclesperanto, JAX, PyTorch, or TensorFlow variants. Backend variants remain subject to the same parity policy.
+## Figure 8. GUI, Python, And Provenance Share One State
 
-**Main message:** GPU acceleration is an architectural extension selected by contracts.
+Show GUI editing, generated Python, inherited/default/local parameter values, dirty state, re-import, and runtime execution as views over the same workflow state.
 
-## Figure 7. Typed State And Bidirectional Editing
+**Main message:** OpenHCS makes workflows teachable and reviewable: visual edits, code, and execution refer to the same analysis.
 
-**Source:** `paper/figures/diagrams/fig07_typed_state_bidirectional_editing.dot`
-**Rendered:** `paper/figures/rendered/fig07_typed_state_bidirectional_editing.svg`
+## Supplementary Tables
 
-GUI editing, generated Python, and LLM-assisted construction all target ObjectState. ObjectState resolves inherited/defaulted/local values into compiled runtime contexts and exposes provenance back to GUI and code.
+## Supplementary Table 1. Benchmark Corpus
 
-**Main message:** GUI, code, runtime, and assistant workflows converge on one typed state model.
+Each row should list one `.cppipe` workflow, source category, source URL or citation, dataset source, assay family, semantic pressure, output pressure, CellProfiler modules used, native CellProfiler runtime, OpenHCS execution runtime, total OpenHCS runtime, speedup, parity status, and notes.
 
-## Figure 8. Benchmark Corpus Categories
+## Supplementary Table 2. CellProfiler Module Coverage
 
-**Source:** `paper/figures/diagrams/fig08_benchmark_corpus_categories.dot`
-**Rendered:** `paper/figures/rendered/fig08_benchmark_corpus_categories.svg`
+Each row should list one CellProfiler module class, import status, parity-test status, accelerated path if relevant, backend used, unsupported settings or features, and notes.
 
-Benchmark workflows are grouped by declared manifest fields: source category, assay family, semantic pressure, and output pressure. Figure grouping comes from manifest semantics rather than filename heuristics.
+## Supplementary Table 3. Worker/RAM Scaling
 
-**Main message:** Category-level claims are backed by declared benchmark metadata.
+Each row should list a throughput condition, pipeline group, sample count, worker count, core count, peak RAM, RAM per worker, total wall time, samples per hour, speedup versus native CellProfiler, and speedup versus OpenHCS single-worker execution.
 
 ## Next Iteration
 
-- Replace broad labels with final terminology from the manuscript after the benchmark corpus settles.
-- Add figure-panel letters if these diagrams become multi-panel composites.
-- Re-render SVGs after any DOT edit.
-- Convert final SVGs to publication layout in Illustrator/Inkscape only after the argument structure is stable.
+- Update DOT diagram names or labels to match this revised figure order.
+- Keep technical labels secondary to the user-facing story.
+- Add panel letters once diagrams become multi-panel composites.
+- Re-render SVGs after DOT edits.
+- Convert final SVGs to publication layout only after benchmark numbers and figure order are stable.
