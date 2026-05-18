@@ -26,6 +26,8 @@ from zmqruntime.transport import coerce_transport_mode
 from zmqruntime.streaming import StreamingVisualizerServer
 
 logger = logging.getLogger(__name__)
+_ACK_ERROR = ViewerProtocolStatus.ERROR.value
+_ACK_SUCCESS = ViewerProtocolStatus.SUCCESS.value
 
 
 # Registry mapping data types to handler methods
@@ -330,7 +332,7 @@ class FijiViewerServer(StreamingVisualizerServer):
                     # Send error ack for this image
                     image_id = item.get("image_id")
                     if image_id:
-                        self._send_ack(image_id, status="error", error=str(e))
+                        self._send_ack(image_id, status=_ACK_ERROR, error=str(e))
                     continue
 
             copied_items.append(copied_item)
@@ -2080,7 +2082,7 @@ class FijiViewerServer(StreamingVisualizerServer):
         # Send acknowledgments
         for img_data in all_images:
             if image_id := img_data.get("image_id"):
-                self._send_ack(image_id, status="success")
+                self._send_ack(image_id, status=_ACK_SUCCESS)
 
     def request_shutdown(self):
         """Request graceful shutdown."""
@@ -2218,7 +2220,7 @@ def _handle_rois_for_window(
         rois_encoded = roi_item.get("rois", [])
         if not rois_encoded:
             if image_id := roi_item.get("image_id"):
-                self._send_ack(image_id, status="success")
+                self._send_ack(image_id, status=_ACK_SUCCESS)
             continue
 
         meta = roi_item.get("metadata", {})
@@ -2274,7 +2276,7 @@ def _handle_rois_for_window(
             total_rois_added += 1
 
         if image_id := roi_item.get("image_id"):
-            self._send_ack(image_id, status="success")
+            self._send_ack(image_id, status=_ACK_SUCCESS)
 
     if not rm.isVisible():
         rm.setVisible(True)

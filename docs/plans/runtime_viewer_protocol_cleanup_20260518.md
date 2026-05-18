@@ -294,3 +294,29 @@ Advisor status:
 - Remaining request-related finding is the larger public legacy signature
   family itself; that should be handled with an explicit API/process-entry
   migration rather than more wrapper forwarding.
+
+### Checkpoint 9
+
+Implemented:
+
+- Routed Napari and Fiji `_send_ack(...)` status values through
+  `ViewerProtocolStatus`.
+- Added module-local `_ACK_SUCCESS` and `_ACK_ERROR` constants where repeated
+  acknowledgments are emitted.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py -q
+# 5 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/fiji_viewer_server.py
+# repeated viewer status literal findings cleared
+```
+
+Advisor status:
+
+- Cleared repeated `error` status literals in both Napari runtime modules.
+- Cleared repeated `success` status literals in Fiji viewer handling.
+- Follow-up: `NapariStreamVisualizer._quick_ping_check` should be made a
+  nominal lifecycle hook because the mixin calls it dynamically.

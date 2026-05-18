@@ -301,3 +301,18 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 # repeated NapariViewerServerRequest constructor field mapping cleared
 # remaining request finding is the larger public legacy signature family
 ```
+
+Checkpoint 9:
+
+- Replaced repeated Napari/Fiji `_send_ack(...)` status string literals with
+  `ViewerProtocolStatus`-derived module constants.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py -q
+# 5 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/fiji_viewer_server.py
+# repeated viewer status literal findings cleared
+```

@@ -32,6 +32,7 @@ from openhcs.runtime.viewer_protocol import (
     NAPARI_HEARTBEAT,
     NapariViewerServerRequest,
     ViewerQtEnvironmentPolicy,
+    ViewerProtocolStatus,
 )
 from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerUpdateAuthority,
@@ -65,6 +66,8 @@ logger = logging.getLogger(__name__)
 _NAPARI_LAYER_UPDATES = NapariLayerUpdateAuthority()
 _COMPONENT_DIMENSION_LABELS = ComponentDimensionLabelPolicy()
 _NAPARI_SHAPE_RASTERIZER = NapariShapeLabelRasterizer()
+_ACK_ERROR = ViewerProtocolStatus.ERROR.value
+_ACK_SUCCESS = ViewerProtocolStatus.SUCCESS.value
 
 # ZMQ connection delay (ms)
 ZMQ_CONNECTION_DELAY_MS = 100  # Brief delay for ZMQ connection to establish
@@ -1162,7 +1165,7 @@ class NapariViewerServer(StreamingVisualizerServer):
                         if image_id:
                             self._send_ack(
                                 image_id,
-                                status="error",
+                                status=_ACK_ERROR,
                                 error=f"Shared memory {shm_name} not found",
                             )
                         return
@@ -1173,7 +1176,7 @@ class NapariViewerServer(StreamingVisualizerServer):
                         if image_id:
                             self._send_ack(
                                 image_id,
-                                status="error",
+                                status=_ACK_ERROR,
                                 error=f"Failed to open shared memory: {e}",
                             )
                         raise
@@ -1183,7 +1186,7 @@ class NapariViewerServer(StreamingVisualizerServer):
                     logger.warning("🔬 NAPARI PROCESS: No image data in message")
                     if image_id:
                         self._send_ack(
-                            image_id, status="error", error="No image data in message"
+                            image_id, status=_ACK_ERROR, error="No image data in message"
                         )
                     return
 
@@ -1209,7 +1212,7 @@ class NapariViewerServer(StreamingVisualizerServer):
 
             # Send acknowledgment that data was successfully displayed
             if image_id:
-                self._send_ack(image_id, status="success")
+                self._send_ack(image_id, status=_ACK_SUCCESS)
 
         except Exception as e:
             logger.error(
@@ -1217,7 +1220,7 @@ class NapariViewerServer(StreamingVisualizerServer):
                 exc_info=True,
             )
             if image_id:
-                self._send_ack(image_id, status="error", error=str(e))
+                self._send_ack(image_id, status=_ACK_ERROR, error=str(e))
             # Don't re-raise - continue processing other messages instead of crashing
 
 
