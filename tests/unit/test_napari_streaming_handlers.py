@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from polystore.streaming_constants import StreamingDataType
@@ -7,6 +8,7 @@ from polystore.streaming_constants import StreamingDataType
 from openhcs.runtime.viewer_protocol import ComponentDimensionLabelPolicy
 from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerUpdateAuthority,
+    NapariShapeLabelRasterizer,
     NapariStreamingDataTypeHandler,
     build_napari_streaming_data_type_handlers,
     napari_streaming_data_type_handler,
@@ -183,3 +185,61 @@ def test_component_dimension_label_policy_owns_channel_well_and_generic_labels()
         values=[3],
         metadata={"3": "Field"},
     ) == ["Site 3: Field"]
+
+
+def test_napari_shape_label_rasterizer_projects_polygon_and_path_by_component():
+    rasterizer = NapariShapeLabelRasterizer()
+
+    labels = rasterizer.rasterize(
+        layer_items=[
+            {
+                "components": {"channel": 1},
+                "data": [
+                    {
+                        "type": "polygon",
+                        "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                    }
+                ],
+            },
+            {
+                "components": {"channel": 2},
+                "data": [
+                    {
+                        "type": "path",
+                        "coordinates": [[0, 1], [1, 1], [2, 1]],
+                    }
+                ],
+            },
+        ],
+        stack_components=["channel"],
+        component_values={"channel": [1, 2]},
+    )
+
+    assert labels.shape == (2, 3, 3)
+    assert np.count_nonzero(labels[0] == 1) > 0
+    assert labels[1, 0, 1] == 2
+    assert labels[1, 1, 1] == 2
+    assert labels[1, 2, 1] == 2
+
+
+def test_napari_shape_label_rasterizer_keeps_points_as_extent_only():
+    rasterizer = NapariShapeLabelRasterizer()
+
+    labels = rasterizer.rasterize(
+        layer_items=[
+            {
+                "components": {"channel": 1},
+                "data": [
+                    {
+                        "type": "points",
+                        "coordinates": [[4, 5]],
+                    }
+                ],
+            }
+        ],
+        stack_components=["channel"],
+        component_values={"channel": [1]},
+    )
+
+    assert labels.shape == (1, 5, 6)
+    assert np.count_nonzero(labels) == 0

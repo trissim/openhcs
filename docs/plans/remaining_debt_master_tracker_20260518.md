@@ -193,3 +193,25 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 # Napari/Fiji server role quotients, Fiji dimension context records,
 # process signature records, and shared viewer platform strategy ladders
 ```
+
+Checkpoint 4:
+
+- Added `NapariShapeLabelRasterizer` plus `NapariShapeKind` and
+  `NapariShapePaintContext` to own dense ROI-label projection.
+- Replaced duplicated Napari `_shapes_to_labels` implementations with direct
+  shared-rasterizer calls and deleted the forwarding wrappers.
+- Added `NapariLayerLogPolicy` so counted layer logging is declared as a typed
+  layer-kind policy instead of an inline enum subset.
+- Added unit coverage for polygon/path rasterization and point extent behavior.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 8 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/napari_streaming_handlers.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/fiji_viewer_server.py openhcs/runtime/viewer_protocol.py
+# cleared Napari shape-kind string dispatch
+# cleared Napari _shapes_to_labels forwarding shells
+# cleared inline layer-kind subset logging policy
+```

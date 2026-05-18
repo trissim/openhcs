@@ -154,3 +154,32 @@ Advisor status:
   visualizer lifecycle/membership boundaries, Napari/Fiji server role
   quotients, Fiji dimension context records, process signature records, and
   platform strategy ladders in the shared viewer protocol.
+
+### Checkpoint 4
+
+Implemented:
+
+- `NapariShapeKind`, `NapariShapePaintContext`, and
+  `NapariShapeLabelRasterizer` as the shared dense-label conversion authority.
+- Direct rasterizer calls from both Napari runtime modules, deleting the
+  forwarding `_shapes_to_labels` wrappers.
+- `NapariLayerLogPolicy` for counted vs uncounted layer creation logging.
+- Unit coverage for polygon/path raster projection and legacy point extent
+  behavior.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_napari_streaming_handlers.py -q
+# 8 passed
+```
+
+Advisor status:
+
+- Cleared Napari shape-kind string dispatch.
+- Cleared Napari `_shapes_to_labels` identity-forwarding shells.
+- Cleared inline layer-kind subset logging policy.
+- Remaining viewer work is now lifecycle/membership boundaries,
+  request-builder projection records, Napari/Fiji server role quotients, Fiji
+  dimension context records, process signature records, and shared viewer
+  platform strategy ladders.

@@ -5,6 +5,9 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from enum import Enum
+
+import numpy as np
 
 from polystore.streaming_constants import StreamingDataType
 
@@ -86,8 +89,49 @@ class NapariLayerUpdateRequest:
     layer_kwargs: Mapping[str, object]
 
 
+@dataclass(frozen=True, slots=True)
+class NapariLayerLogPolicy:
+    """Creation-log policy for one Napari layer kind."""
+
+    layer_kind: NapariLayerKind
+    count_data: bool
+
+    def log_created(self, request: NapariLayerUpdateRequest) -> None:
+        if self.count_data:
+            count = len(request.data) if hasattr(request.data, "__len__") else 0
+            logger.info(
+                "🔬 NAPARI PROCESS: Created %s layer %s with %d %s",
+                request.layer_kind.value,
+                request.layer_name,
+                count,
+                request.layer_kind.value,
+            )
+            return
+        logger.info(
+            "🔬 NAPARI PROCESS: Created %s layer %s",
+            request.layer_kind.value,
+            request.layer_name,
+        )
+
+
+def napari_layer_log_policies() -> dict[NapariLayerKind, NapariLayerLogPolicy]:
+    """Build exhaustive creation-log policies for Napari layer kinds."""
+    policies = {
+        NapariLayerKind.IMAGE: NapariLayerLogPolicy(NapariLayerKind.IMAGE, False),
+        NapariLayerKind.SHAPES: NapariLayerLogPolicy(NapariLayerKind.SHAPES, True),
+        NapariLayerKind.POINTS: NapariLayerLogPolicy(NapariLayerKind.POINTS, True),
+    }
+    if set(policies) != set(NapariLayerKind):
+        missing = set(NapariLayerKind) - set(policies)
+        raise ValueError(f"Missing Napari layer log policies for {missing!r}.")
+    return policies
+
+
 class NapariLayerUpdateAuthority:
     """Owns create-or-replace mechanics for Napari streaming layers."""
+
+    def __init__(self) -> None:
+        self._log_policies = napari_layer_log_policies()
 
     def create_or_update(self, request: NapariLayerUpdateRequest) -> object:
         existing_layer = self._existing_layer(request.viewer, request.layer_name)
@@ -190,18 +234,164 @@ class NapariLayerUpdateAuthority:
         return None
 
     def _log_created_layer(self, request: NapariLayerUpdateRequest) -> None:
-        if request.layer_kind in {NapariLayerKind.SHAPES, NapariLayerKind.POINTS}:
-            count = len(request.data) if hasattr(request.data, "__len__") else 0
-            logger.info(
-                "🔬 NAPARI PROCESS: Created %s layer %s with %d %s",
-                request.layer_kind.value,
-                request.layer_name,
-                count,
-                request.layer_kind.value,
+        self._log_policies[request.layer_kind].log_created(request)
+
+
+class NapariShapeKind(Enum):
+    """Shape kinds accepted by the Napari ROI label rasterizer."""
+
+    POLYGON = "polygon"
+    PATH = "path"
+    POINTS = "points"
+
+
+@dataclass(frozen=True, slots=True)
+class NapariShapePaintContext:
+    """Mutable label-array position passed to shape painters."""
+
+    labels_array: np.ndarray
+    indices: tuple[int, ...]
+    label_id: int
+
+
+class NapariShapeLabelRasterizer:
+    """Convert streamed Napari shape payloads into dense label arrays."""
+
+    default_image_shape: tuple[int, int] = (512, 512)
+
+    def __init__(self) -> None:
+        self._paint_routes: Mapping[
+            NapariShapeKind,
+            Callable[[Mapping[str, object], NapariShapePaintContext], int],
+        ] = {
+            NapariShapeKind.POLYGON: self._paint_polygon,
+            NapariShapeKind.PATH: self._paint_path,
+            NapariShapeKind.POINTS: self._skip_points,
+        }
+
+    def rasterize(
+        self,
+        *,
+        layer_items: list[Mapping[str, object]],
+        stack_components: list[str],
+        component_values: Mapping[str, list[object]],
+    ) -> np.ndarray:
+        logger.info("🔬 NAPARI PROCESS: Building ROI stack with global component values")
+        for component, values in component_values.items():
+            logger.info("🔬 NAPARI PROCESS:   %s: %s", component, values)
+
+        first_shapes = layer_items[0]["data"]
+        if not first_shapes:
+            logger.warning(
+                "🔬 NAPARI PROCESS: No shapes data, creating default 512x512 array"
             )
-            return
+            return np.zeros((1, 1, *self.default_image_shape), dtype=np.uint16)
+
+        image_shape = self._image_shape(first_shapes)
+        nd_shape = [
+            *(len(component_values[component]) for component in stack_components),
+            *image_shape,
+        ]
+        labels_array = np.zeros(nd_shape, dtype=np.uint16)
+
+        label_id = 1
+        for item in layer_items:
+            indices = self._component_indices(item, stack_components, component_values)
+            for shape_dict in item["data"]:
+                shape_kind = NapariShapeKind(str(shape_dict["type"]))
+                label_id = self._paint_routes[shape_kind](
+                    shape_dict,
+                    NapariShapePaintContext(labels_array, indices, label_id),
+                )
+
         logger.info(
-            "🔬 NAPARI PROCESS: Created %s layer %s",
-            request.layer_kind.value,
-            request.layer_name,
+            "🔬 NAPARI PROCESS: Created labels array with shape %s and %d labels",
+            labels_array.shape,
+            label_id - 1,
         )
+        return labels_array
+
+    def _image_shape(self, shapes: list[Mapping[str, object]]) -> tuple[int, int]:
+        max_y, max_x = 0, 0
+        for shape_dict in shapes:
+            shape_kind = NapariShapeKind(str(shape_dict["type"]))
+            bounds = self._coordinate_bounds(shape_dict, shape_kind)
+            max_y = max(max_y, bounds[0])
+            max_x = max(max_x, bounds[1])
+
+        if max_y == 0 or max_x == 0:
+            logger.warning(
+                "🔬 NAPARI PROCESS: Invalid shape dimensions (y=%s, x=%s), using default 512x512",
+                max_y,
+                max_x,
+            )
+            return (max(max_y, self.default_image_shape[0]), max(max_x, self.default_image_shape[1]))
+        return (max_y, max_x)
+
+    def _coordinate_bounds(
+        self,
+        shape_dict: Mapping[str, object],
+        shape_kind: NapariShapeKind,
+    ) -> tuple[int, int]:
+        coords = np.array(shape_dict["coordinates"])
+        if len(coords) == 0:
+            return (0, 0)
+        return (int(np.max(coords[:, 0])) + 1, int(np.max(coords[:, 1])) + 1)
+
+    def _component_indices(
+        self,
+        item: Mapping[str, object],
+        stack_components: list[str],
+        component_values: Mapping[str, list[object]],
+    ) -> tuple[int, ...]:
+        components = item["components"]
+        return tuple(
+            component_values[component].index(components.get(component, 0))
+            for component in stack_components
+        )
+
+    def _paint_polygon(
+        self,
+        shape_dict: Mapping[str, object],
+        context: NapariShapePaintContext,
+    ) -> int:
+        from skimage import draw
+
+        coords = np.array(shape_dict["coordinates"])
+        rr, cc = draw.polygon(
+            coords[:, 0],
+            coords[:, 1],
+            shape=context.labels_array.shape[-2:],
+        )
+        full_indices = context.indices + (rr, cc)
+        context.labels_array[full_indices] = context.label_id
+        return context.label_id + 1
+
+    def _paint_path(
+        self,
+        shape_dict: Mapping[str, object],
+        context: NapariShapePaintContext,
+    ) -> int:
+        coords = np.array(shape_dict["coordinates"])
+        if len(coords) < 1:
+            return context.label_id
+
+        rr = coords[:, 0].astype(int)
+        cc = coords[:, 1].astype(int)
+        valid = (
+            (rr >= 0)
+            & (rr < context.labels_array.shape[-2])
+            & (cc >= 0)
+            & (cc < context.labels_array.shape[-1])
+        )
+        rr, cc = rr[valid], cc[valid]
+        full_indices = context.indices + (rr, cc)
+        context.labels_array[full_indices] = context.label_id
+        return context.label_id + 1
+
+    def _skip_points(
+        self,
+        shape_dict: Mapping[str, object],
+        context: NapariShapePaintContext,
+    ) -> int:
+        return context.label_id

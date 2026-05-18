@@ -35,6 +35,7 @@ from openhcs.runtime.viewer_protocol import (
 )
 from openhcs.runtime.napari_streaming_handlers import (
     NapariLayerUpdateAuthority,
+    NapariShapeLabelRasterizer,
     build_napari_streaming_data_type_handlers,
 )
 from zmqruntime.streaming import StreamingVisualizerServer, VisualizerProcessManager
@@ -63,6 +64,7 @@ if napari is None:
 logger = logging.getLogger(__name__)
 _NAPARI_LAYER_UPDATES = NapariLayerUpdateAuthority()
 _COMPONENT_DIMENSION_LABELS = ComponentDimensionLabelPolicy()
+_NAPARI_SHAPE_RASTERIZER = NapariShapeLabelRasterizer()
 
 # ZMQ connection delay (ms)
 ZMQ_CONNECTION_DELAY_MS = 100  # Brief delay for ZMQ connection to establish
@@ -919,8 +921,10 @@ class NapariViewerServer(StreamingVisualizerServer):
 
         # Convert shapes to label masks (much faster than individual shapes)
         # This happens synchronously but is fast because we're just creating arrays
-        labels_data = self._shapes_to_labels(
-            layer_items, stack_components, global_component_values
+        labels_data = _NAPARI_SHAPE_RASTERIZER.rasterize(
+            layer_items=layer_items,
+            stack_components=stack_components,
+            component_values=global_component_values,
         )
 
         # Remove existing layer if it exists
@@ -982,126 +986,6 @@ class NapariViewerServer(StreamingVisualizerServer):
         logger.info(
             f"🔬 NAPARI PROCESS: Created points layer {layer_key} with {len(points_data)} points"
         )
-
-    def _shapes_to_labels(self, layer_items, stack_components, component_values):
-        """Convert shapes data to label masks.
-
-        Args:
-            layer_items: List of shape items to convert
-            stack_components: List of component names for stack dimensions
-            component_values: Dict of {component: [sorted values]} from global tracker
-        """
-        from skimage import draw
-
-        # Use global component values passed in
-        # This ensures ROIs and images share the same component-to-index mapping
-        logger.info(
-            f"🔬 NAPARI PROCESS: Building ROI stack with global component values"
-        )
-        for comp, values in component_values.items():
-            logger.info(f"🔬 NAPARI PROCESS:   {comp}: {values}")
-
-        # Determine output shape
-        # Get image shape from first item's shapes data
-        first_shapes = layer_items[0]["data"]
-        if not first_shapes:
-            # No shapes, return empty array with reasonable default size
-            logger.warning(
-                "🔬 NAPARI PROCESS: No shapes data, creating default 512x512 array"
-            )
-            return np.zeros((1, 1, 512, 512), dtype=np.uint16)
-
-        # Estimate image size from shape coordinates
-        max_y, max_x = 0, 0
-        for shape_dict in first_shapes:
-            if shape_dict["type"] == "polygon":
-                coords = np.array(shape_dict["coordinates"])
-                max_y = max(max_y, int(np.max(coords[:, 0])) + 1)
-                max_x = max(max_x, int(np.max(coords[:, 1])) + 1)
-            elif shape_dict["type"] == "path":
-                # Handle path (polyline) type - get bounding box
-                coords = np.array(shape_dict["coordinates"])
-                if len(coords) > 0:
-                    max_y = max(max_y, int(np.max(coords[:, 0])) + 1)
-                    max_x = max(max_x, int(np.max(coords[:, 1])) + 1)
-            elif shape_dict["type"] == "points":
-                # Handle points type - get bounding box
-                coords = np.array(shape_dict["coordinates"])
-                if len(coords) > 0:
-                    max_y = max(max_y, int(np.max(coords[:, 0])) + 1)
-                    max_x = max(max_x, int(np.max(coords[:, 1])) + 1)
-
-        # Ensure minimum valid dimensions (avoid 0x0 shapes)
-        if max_y == 0 or max_x == 0:
-            logger.warning(
-                f"🔬 NAPARI PROCESS: Invalid shape dimensions (y={max_y}, x={max_x}), using default 512x512"
-            )
-            max_y = max(max_y, 512)
-            max_x = max(max_x, 512)
-
-        # Build nD shape
-        nd_shape = []
-        for comp in stack_components:
-            nd_shape.append(len(component_values[comp]))
-        nd_shape.extend([max_y, max_x])
-
-        # Create empty label array
-        labels_array = np.zeros(nd_shape, dtype=np.uint16)
-
-        # Fill in labels for each item
-        label_id = 1
-        for item in layer_items:
-            # Get indices for this item
-            indices = []
-            for comp in stack_components:
-                comp_value = item["components"].get(comp, 0)
-                idx = component_values[comp].index(comp_value)
-                indices.append(idx)
-
-            # Get shapes data
-            shapes_data = item["data"]
-
-            # Draw each shape into the label mask
-            for shape_dict in shapes_data:
-                if shape_dict["type"] == "polygon":
-                    coords = np.array(shape_dict["coordinates"])
-                    rr, cc = draw.polygon(
-                        coords[:, 0], coords[:, 1], shape=labels_array.shape[-2:]
-                    )
-
-                    # Set label at the correct nD position
-                    full_indices = tuple(indices) + (rr, cc)
-                    labels_array[full_indices] = label_id
-                    label_id += 1
-
-                elif shape_dict["type"] == "path":
-                    # Draw polyline (skeleton branches)
-                    # Skeleton paths from skan already contain every pixel in the branch,
-                    # so we just set the label at each coordinate directly (no line drawing needed)
-                    coords = np.array(shape_dict["coordinates"])
-                    if len(coords) >= 1:
-                        # Extract row and column indices
-                        rr = coords[:, 0].astype(int)
-                        cc = coords[:, 1].astype(int)
-
-                        # Clip to image bounds
-                        valid = (
-                            (rr >= 0)
-                            & (rr < labels_array.shape[-2])
-                            & (cc >= 0)
-                            & (cc < labels_array.shape[-1])
-                        )
-                        rr, cc = rr[valid], cc[valid]
-
-                        # Set label at the correct nD position
-                        full_indices = tuple(indices) + (rr, cc)
-                        labels_array[full_indices] = label_id
-                        label_id += 1
-
-        logger.info(
-            f"🔬 NAPARI PROCESS: Created labels array with shape {labels_array.shape} and {label_id - 1} labels"
-        )
-        return labels_array
 
     def _send_ack(self, image_id: str, status: str = "success", error: str = None):
         """Send acknowledgment that an image was processed.
