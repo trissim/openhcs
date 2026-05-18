@@ -18,6 +18,7 @@ import scipy.interpolate
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
@@ -4201,31 +4202,31 @@ def _reflect_index_numba(index: int, size: int) -> int:
     return index
 
 
-__all__ = [
-    "CentrosomeNumpyThresholdPrimitiveBackendStrategy",
-    "NumbaLogTransformConversion",
-    "NumbaNumpyThresholdPrimitiveBackendStrategy",
-    "NumbaNumpyThresholdDiagnosticsBackendStrategy",
-    "NumbaNumpyThresholdSmoothingBackendStrategy",
-    "NumpyThresholdDiagnosticsBackendStrategy",
+__all__ = public_names_from_objects(
+    CentrosomeNumpyThresholdPrimitiveBackendStrategy,
+    NumbaLogTransformConversion,
+    NumbaNumpyThresholdPrimitiveBackendStrategy,
+    NumbaNumpyThresholdDiagnosticsBackendStrategy,
+    NumbaNumpyThresholdSmoothingBackendStrategy,
+    NumpyThresholdDiagnosticsBackendStrategy,
     "Assignment",
     "AveragingMethod",
-    "CellProfilerAveragingMethod",
-    "CellProfilerOtsuMethod",
-    "CellProfilerThresholdAssignment",
-    "CellProfilerThresholdDiagnostics",
-    "CellProfilerThresholdMethod",
-    "CellProfilerThresholdScope",
-    "CellProfilerVarianceMethod",
-    "ThresholdDiagnosticsBackendStrategy",
+    CellProfilerAveragingMethod,
+    CellProfilerOtsuMethod,
+    CellProfilerThresholdAssignment,
+    CellProfilerThresholdDiagnostics,
+    CellProfilerThresholdMethod,
+    CellProfilerThresholdScope,
+    CellProfilerVarianceMethod,
+    ThresholdDiagnosticsBackendStrategy,
     "ThresholdMethod",
-    "ThresholdPrimitiveBackendStrategy",
-    "ThresholdResult",
+    ThresholdPrimitiveBackendStrategy,
+    ThresholdResult,
     "ThresholdScope",
-    "ThresholdSmoothingBackendStrategy",
+    ThresholdSmoothingBackendStrategy,
     "VarianceMethod",
-    "cellprofiler_threshold",
-    "cellprofiler_threshold_diagnostics",
-    "threshold",
-    "threshold_primitives",
-]
+    cellprofiler_threshold,
+    cellprofiler_threshold_diagnostics,
+    threshold,
+    threshold_primitives,
+)

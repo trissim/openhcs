@@ -974,3 +974,27 @@ Remaining:
   and non-CP public packages.
 - Thresholding requires alias-aware export handling before its manual
   compatibility aliases can safely move to the helper.
+
+Checkpoint 2:
+
+- Extended `public_names_from_objects` to accept explicit alias names while
+  still deriving object exports from object identity.
+- Replaced the manual thresholding `__all__` list with
+  `public_names_from_objects(...)`, preserving the exact previous export tuple
+  including compatibility aliases.
+
+Verification:
+
+```bash
+.venv/bin/python - <<'PY'
+from openhcs.processing.backends.cellprofiler.thresholding import __all__
+print(tuple(__all__))
+PY
+# tuple matched the previous thresholding export order and names
+
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 402 passed, 5 warnings
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/thresholding.py openhcs/core/public_api.py
+# Manual __all__ finding cleared for thresholding.py.
+```
