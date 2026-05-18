@@ -2205,18 +2205,6 @@ def _paint_line_hull(
                 output[y, x] = threshold
 
 
-def _rank_median_footprint_offsets(
-    footprint: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    center_y = footprint.shape[0] // 2
-    center_x = footprint.shape[1] // 2
-    y, x = np.nonzero(footprint)
-    return (
-        (y - center_y).astype(np.int64, copy=False),
-        (x - center_x).astype(np.int64, copy=False),
-    )
-
-
 def _rank_median_disk_rows(
     footprint: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -2235,20 +2223,6 @@ def _rank_median_disk_rows(
         np.asarray(rows, dtype=np.int64),
         np.asarray(radii, dtype=np.int64),
     )
-
-
-def _rank_median_native_reference(
-    scaled: np.ndarray,
-    footprint: np.ndarray,
-) -> np.ndarray:
-    import skimage.filters
-
-    result = skimage.filters.median(
-        scaled,
-        footprint,
-        behavior="rank",
-    )
-    return result.astype(np.float32) / 65535.0
 
 
 @njit(cache=True)
