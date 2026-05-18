@@ -142,3 +142,22 @@ python -m nominal_refactor_advisor \
 - Public processing signatures remain compatible or are explicitly migrated.
 - CPU/GPU defaults are shared where semantically identical.
 - Advisor repeated-parameter findings for Ashlar are removed.
+
+## Completion Evidence
+
+- Added shared `AshlarAlignmentConfig` and `AshlarPositionRequest` records in
+  `processing/backends/pos_gen/ashlar_config.py`.
+- Rewired CPU and GPU aligner constructors to accept `alignment_config` instead
+  of the full threaded parameter bundle.
+- Preserved public `ashlar_compute_tile_positions_cpu(...)` and
+  `ashlar_compute_tile_positions_gpu(...)` signatures for GUI/preset/generated
+  pipeline compatibility.
+- Added focused request-projection tests with mocked aligners, including a
+  CuPy-compatible fake for GPU request projection in non-CUDA test
+  environments.
+- Focused verification passed: `39 passed`.
+- Focused advisor no longer reports the repeated threaded parameter family for
+  CPU or GPU Ashlar request flow. Remaining focused findings are the separate
+  CPU/GPU aligner ABC extraction and formatting cleanup.
+- Full unit verification: `1518 passed, 10 warnings`.
+- Full advisor scan after the campaign: 1,145 findings, 60.637s.

@@ -51,7 +51,7 @@ OpenHCS checkpoint before these campaign plans:
 | 1 | Complete | Runtime artifact query axis | `runtime_artifact_query_axis_refactor_20260518.md` | focused runtime artifact query tests + advisor on `runtime_artifact_queries.py` |
 | 2 | Complete | Napari streaming handler axis | `napari_streaming_handler_axis_refactor_20260518.md` | import smoke for both Napari modules + focused advisor |
 | 3 | Complete | Validation registry family | `validation_registry_family_refactor_20260518.md` | validator tests + advisor on `validation/ast_validator.py` |
-| 4 | Pending | Backend parameter request records | `backend_parameter_request_records_refactor_20260518.md` | Ashlar CPU/GPU focused tests + advisor on pos-gen modules |
+| 4 | Complete | Backend parameter request records | `backend_parameter_request_records_refactor_20260518.md` | Ashlar CPU/GPU focused tests + advisor on pos-gen modules |
 | 5 | Pending | Preset pipeline spec authority | `preset_pipeline_spec_authority_refactor_20260518.md` | materialization equivalence tests + advisor on presets |
 | 6 | Pending | PyQt GUI decomposition | `pyqt_gui_decomposition_refactor_20260518.md` | controller tests/import smoke + advisor on `PlateViewWidget` |
 | 7 | Pending | Orchestration hubs | `full_repo_orchestration_hubs_refactor_20260518.md` | orchestrator characterization tests + focused advisor |
@@ -168,3 +168,28 @@ Before completion:
 - Focused advisor: no findings for `openhcs/validation/ast_validator.py`.
 - Full unit verification: `1513 passed, 10 warnings`.
 - Full advisor scan: 1,147 findings, 59.472s.
+
+### 2026-05-18 - Backend Parameter Request Records Started
+
+- Moved campaign 4 to `In Progress`.
+- Focused advisor on Ashlar CPU/GPU modules reports repeated parameter bundles
+  between public tile-position functions and internal aligner constructors.
+- First slice: introduce a shared Ashlar alignment/request record and collapse
+  CPU/GPU aligner constructors behind it while preserving public processing
+  function signatures used by presets and GUI surfaces.
+
+### 2026-05-18 - Backend Parameter Request Records Completed
+
+- Added shared `AshlarAlignmentConfig` and `AshlarPositionRequest` records.
+- Rewired CPU/GPU Ashlar aligner constructors to consume the shared alignment
+  config instead of re-threading the full public parameter family.
+- Kept public Ashlar processing signatures stable for presets, GUI discovery,
+  and generated pipeline compatibility.
+- Added focused request-projection tests for CPU and GPU paths with mocked
+  aligners.
+- Focused verification passed: `39 passed`.
+- Focused advisor: repeated threaded parameter findings for CPU/GPU Ashlar
+  request flow removed; remaining focused findings are the larger CPU/GPU
+  aligner ABC extraction plus blank-line/layout cleanup.
+- Full unit verification: `1518 passed, 10 warnings`.
+- Full advisor scan: 1,145 findings, 60.637s.
