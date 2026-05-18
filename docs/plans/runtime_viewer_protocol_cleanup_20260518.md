@@ -320,3 +320,28 @@ Advisor status:
 - Cleared repeated `success` status literals in Fiji viewer handling.
 - Follow-up: `NapariStreamVisualizer._quick_ping_check` should be made a
   nominal lifecycle hook because the mixin calls it dynamically.
+
+### Checkpoint 10
+
+Implemented:
+
+- `ManagedViewerLifecycleMixin` is now an ABC with an explicit
+  `check_connected_viewer()` hook.
+- Napari/Fiji stream visualizers implement the public lifecycle hook instead
+  of relying on an unwitnessed private `_quick_ping_check` method.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py -q
+# 5 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/viewer_protocol.py
+# dangling private _quick_ping_check finding cleared
+```
+
+Advisor status:
+
+- Cleared private lifecycle hook residue.
+- Remaining lifecycle findings are the broader viewer state-membership model,
+  not an unwitnessed hook.

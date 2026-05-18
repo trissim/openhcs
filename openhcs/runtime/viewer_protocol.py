@@ -7,6 +7,7 @@ import os
 import platform
 import subprocess
 import sys
+from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from enum import Enum
@@ -344,10 +345,14 @@ class ViewerControlPingRequest:
         )
 
 
-class ManagedViewerLifecycleMixin:
+class ManagedViewerLifecycleMixin(ABC):
     """Shared liveness property for viewer process managers."""
 
     viewer_process_label = "viewer"
+
+    @abstractmethod
+    def check_connected_viewer(self) -> bool:
+        """Return whether an externally-owned viewer is still responsive."""
 
     @property
     def is_running(self) -> bool:
@@ -355,7 +360,7 @@ class ManagedViewerLifecycleMixin:
             return False
 
         if self._connected_to_existing:
-            if not self._quick_ping_check():
+            if not self.check_connected_viewer():
                 logging.getLogger(self.__class__.__module__).debug(
                     "%s viewer on port %s is no longer responsive",
                     self.viewer_process_label,

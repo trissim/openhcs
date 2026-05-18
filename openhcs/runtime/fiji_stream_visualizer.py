@@ -192,7 +192,7 @@ class FijiStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManager
         self._connected_to_existing = False
         self._lock = threading.Lock()
 
-    def _quick_ping_check(self) -> bool:
+    def check_connected_viewer(self) -> bool:
         """Quick ping check to verify viewer is responsive (for connected viewers)."""
         return ViewerControlPingRequest.from_mode(
             mode=ViewerControlPingMode.QUICK,

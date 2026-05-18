@@ -316,3 +316,20 @@ Verification:
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/napari_viewer_server.py openhcs/runtime/fiji_viewer_server.py
 # repeated viewer status literal findings cleared
 ```
+
+Checkpoint 10:
+
+- Made `ManagedViewerLifecycleMixin` an ABC with explicit
+  `check_connected_viewer()` lifecycle hook.
+- Replaced private Napari/Fiji `_quick_ping_check` implementations with the
+  nominal hook required by the mixin.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_viewer_protocol.py -q
+# 5 passed
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_stream_visualizer.py openhcs/runtime/fiji_stream_visualizer.py openhcs/runtime/viewer_protocol.py
+# dangling private _quick_ping_check finding cleared
+```

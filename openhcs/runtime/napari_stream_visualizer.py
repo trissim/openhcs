@@ -1482,7 +1482,7 @@ class NapariStreamVisualizer(ManagedViewerLifecycleMixin, VisualizerProcessManag
         # Clause 368: Visualization must be observer-only.
         # This class will only read data and display it.
 
-    def _quick_ping_check(self) -> bool:
+    def check_connected_viewer(self) -> bool:
         """Quick ping check to verify viewer is responsive (for connected viewers)."""
         return ViewerControlPingRequest.from_mode(
             mode=ViewerControlPingMode.QUICK,
