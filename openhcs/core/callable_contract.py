@@ -9,11 +9,12 @@ from __future__ import annotations
 import importlib
 import inspect
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
-from functools import lru_cache
+from collections.abc import Callable
+from dataclasses import MISSING, dataclass, fields, is_dataclass
+from functools import lru_cache, wraps
 from threading import Lock
 from types import MappingProxyType
-from typing import Any, ClassVar, Mapping
+from typing import Any, ClassVar, Mapping, get_type_hints
 
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 from openhcs.core.aligned_image_payload import ImagePayloadExecutionMode
@@ -37,6 +38,7 @@ DECLARED_PROCESSING_CONTRACT_ATTR = "__openhcs_declared_processing_contract__"
 RAW_PROCESSING_FUNCTION_ATTR = "__openhcs_raw_processing_function__"
 PROCESSING_PREPARE_ATTR = "__openhcs_prepare__"
 RUNTIME_IMAGE_EXECUTION_MODE_ATTR = "__openhcs_runtime_image_execution_mode__"
+CALLABLE_REQUEST_BINDING_ATTR = "__openhcs_callable_request_binding__"
 _PREPARED_CALLABLE_KEYS: set[tuple[str, str, int]] = set()
 _PREPARED_CALLABLE_LOCK = Lock()
 
@@ -68,6 +70,7 @@ class CallableContract(ArtifactPlanKeySelector):
     raw_processing_function: Any | None = None
     runtime_image_execution_mode: ImagePayloadExecutionMode | None = None
     runtime_batch_executors: Mapping[Any, Any] | None = None
+    request_binding: "CallableRequestBinding | None" = None
 
     def __post_init__(self) -> None:
         if self.runtime_batch_executors is not None and not isinstance(
@@ -105,6 +108,7 @@ class CallableContract(ArtifactPlanKeySelector):
                     if self.runtime_batch_executors is not None
                     else None
                 ),
+                self.request_binding,
             ),
         )
 
@@ -148,6 +152,9 @@ class CallableContract(ArtifactPlanKeySelector):
                 func=func,
                 raw_processing_function=raw_processing_function,
             ).executors(),
+            request_binding=metadata.optional_request_binding(
+                CALLABLE_REQUEST_BINDING_ATTR,
+            ),
         )
 
     artifact_input_names: ClassVar[AliasProperty[tuple[str, ...]]] = (
@@ -186,6 +193,178 @@ class CallableContract(ArtifactPlanKeySelector):
         if self.runtime_batch_executors is None:
             return None
         return self.runtime_batch_executors.get(domain)
+
+
+@dataclass(frozen=True, slots=True)
+class CallableRequestBinding:
+    """Typed declaration for public kwargs projected into a request record."""
+
+    request_type: type[object]
+    request_parameter: str
+    public_fields: tuple[str, ...]
+    public_defaults: tuple[tuple[str, Any], ...] = ()
+    public_annotations: tuple[tuple[str, Any], ...] = ()
+
+    @property
+    def public_defaults_dict(self) -> dict[str, Any]:
+        """Return request-field defaults as a runtime mapping."""
+        return dict(self.public_defaults)
+
+    @property
+    def public_annotations_dict(self) -> dict[str, Any]:
+        """Return request-field annotations as a runtime mapping."""
+        return dict(self.public_annotations)
+
+    @classmethod
+    def from_dataclass(
+        cls,
+        request_type: type[object],
+        *,
+        request_parameter: str,
+        public_fields: tuple[str, ...],
+        public_defaults: Mapping[str, Any],
+    ) -> "CallableRequestBinding":
+        """Build a binding declaration from a request dataclass."""
+        _validate_request_public_fields(request_type, public_fields)
+        return cls(
+            request_type=request_type,
+            request_parameter=request_parameter,
+            public_fields=public_fields,
+            public_defaults=tuple(public_defaults.items()),
+            public_annotations=tuple(get_type_hints(request_type).items()),
+        )
+
+    def request_from_bound_arguments(
+        self,
+        bound_arguments: Mapping[str, Any],
+    ) -> object:
+        """Build the request object from public bound call arguments."""
+        defaults = self.public_defaults_dict
+        request_kwargs: dict[str, Any] = {}
+        missing: list[str] = []
+        for field_name in self.public_fields:
+            if field_name in bound_arguments:
+                request_kwargs[field_name] = bound_arguments[field_name]
+            elif field_name in defaults:
+                request_kwargs[field_name] = defaults[field_name]
+            else:
+                missing.append(field_name)
+        if missing:
+            raise TypeError(
+                f"{self.request_type.__name__} request is missing public "
+                f"field(s): {', '.join(missing)}."
+            )
+        return self.request_type(**request_kwargs)
+
+    def implementation_kwargs(
+        self,
+        bound_arguments: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Return kwargs for the implementation callable."""
+        request_fields = set(self.public_fields)
+        local_kwargs = {
+            name: value
+            for name, value in bound_arguments.items()
+            if name not in request_fields
+        }
+        local_kwargs[self.request_parameter] = self.request_from_bound_arguments(
+            bound_arguments,
+        )
+        return local_kwargs
+
+
+@dataclass(frozen=True, slots=True)
+class RequestParameterName:
+    """Validated implementation parameter name for callable request binding."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.value, str) or not self.value:
+            raise ValueError("request_parameter must be a non-empty string.")
+
+
+@dataclass(frozen=True, slots=True)
+class RequestPublicFieldSelection:
+    """Validated public request field selection."""
+
+    request_type: type[object]
+    field_names: tuple[str, ...] | None = None
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        if self.field_names is None:
+            return tuple(field.name for field in fields(self.request_type))
+        return tuple(self.field_names)
+
+
+def callable_request(
+    request_type: type[object],
+    *,
+    request_parameter: str = "request",
+    public_fields: tuple[str, ...] | None = None,
+    public_defaults: Mapping[str, Any] | object | None = None,
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+    """Expose request-record fields as the public callable signature."""
+    if not is_dataclass(request_type):
+        raise TypeError(
+            "callable_request request_type must be a dataclass type, "
+            f"got {request_type!r}."
+        )
+    binding = CallableRequestBinding.from_dataclass(
+        request_type=request_type,
+        request_parameter=RequestParameterName(request_parameter).value,
+        public_fields=RequestPublicFieldSelection(
+            request_type=request_type,
+            field_names=public_fields,
+        ).names,
+        public_defaults=_public_defaults_mapping(public_defaults),
+    )
+
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+        implementation_signature = inspect.signature(func)
+        if request_parameter not in implementation_signature.parameters:
+            raise ValueError(
+                f"{func.__name__} must declare request parameter "
+                f"{request_parameter!r}."
+            )
+        public_signature = _request_public_signature(
+            func,
+            binding,
+            implementation_signature,
+        )
+
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            bound = public_signature.bind(*args, **kwargs)
+            bound.apply_defaults()
+            return func(**binding.implementation_kwargs(bound.arguments))
+
+        setattr(wrapper, CALLABLE_REQUEST_BINDING_ATTR, binding)
+        setattr(wrapper, "__signature__", public_signature)
+        return wrapper
+
+    return decorator
+
+
+def _public_defaults_mapping(
+    public_defaults: Mapping[str, Any] | object | None,
+) -> Mapping[str, Any]:
+    """Return request public defaults as a mapping."""
+    if public_defaults is None:
+        return {}
+    if isinstance(public_defaults, Mapping):
+        return public_defaults
+    if is_dataclass(public_defaults):
+        return {
+            field.name: getattr(public_defaults, field.name)
+            for field in fields(public_defaults)
+        }
+    raise TypeError(
+        "public_defaults must be a mapping, dataclass instance, or None; "
+        f"got {type(public_defaults).__name__}."
+    )
+
 
 def attach_callable_contract_metadata(
     func: Any,
@@ -477,6 +656,85 @@ class CallableMetadataReader:
                 f"got {type(value).__name__}."
             )
         return value
+
+    def optional_request_binding(
+        self,
+        field_name: str,
+    ) -> CallableRequestBinding | None:
+        """Return an optional callable request-binding declaration."""
+        value = self.namespace.get(field_name)
+        if value is None:
+            return None
+        if not isinstance(value, CallableRequestBinding):
+            raise TypeError(
+                f"{self.function_name!r}.{field_name} must be "
+                "CallableRequestBinding, "
+                f"got {type(value).__name__}."
+            )
+        return value
+
+
+def _validate_request_public_fields(
+    request_type: type[object],
+    public_fields: tuple[str, ...],
+) -> None:
+    """Validate declared public request fields against the dataclass type."""
+    dataclass_field_names = {field.name for field in fields(request_type)}
+    missing = [
+        field_name
+        for field_name in public_fields
+        if field_name not in dataclass_field_names
+    ]
+    if missing:
+        raise ValueError(
+            f"{request_type.__name__} has no request field(s): "
+            f"{', '.join(missing)}."
+        )
+
+
+def _request_public_signature(
+    func: Callable[..., Any],
+    binding: CallableRequestBinding,
+    implementation_signature: inspect.Signature,
+) -> inspect.Signature:
+    """Return the public signature with request fields expanded."""
+    defaults = binding.public_defaults_dict
+    annotations = binding.public_annotations_dict
+    request_parameters = tuple(
+        inspect.Parameter(
+            field_name,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            default=_request_field_default(binding.request_type, field_name, defaults),
+            annotation=annotations.get(field_name, inspect.Parameter.empty),
+        )
+        for field_name in binding.public_fields
+    )
+    local_parameters = tuple(
+        parameter
+        for name, parameter in implementation_signature.parameters.items()
+        if name != binding.request_parameter
+    )
+    return inspect.Signature(
+        parameters=(*request_parameters, *local_parameters),
+        return_annotation=implementation_signature.return_annotation,
+    )
+
+
+def _request_field_default(
+    request_type: type[object],
+    field_name: str,
+    public_defaults: Mapping[str, Any],
+) -> Any:
+    """Return the public default for one request field."""
+    if field_name in public_defaults:
+        return public_defaults[field_name]
+    field_by_name = {field.name: field for field in fields(request_type)}
+    field = field_by_name[field_name]
+    if field.default is not MISSING:
+        return field.default
+    if field.default_factory is not MISSING:  # type: ignore[comparison-overlap]
+        return field.default_factory()  # type: ignore[misc]
+    return inspect.Parameter.empty
 
 
 def _artifact_spec_items(

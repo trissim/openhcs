@@ -781,7 +781,7 @@ class GenericModuleSettingsBindingStrategy(_ModuleSettingsBindingStrategy):
         unmapped_kwargs: dict[str, Any],
     ) -> None:
         """Bind CellProfiler threshold rows into absorbed threshold kwargs."""
-        ThresholdSettingsBindingRequest(
+        ThresholdSettingsBindingRequest.from_bound_kwargs(
             module=module,
             binder=binder,
             kwargs=kwargs,
@@ -853,13 +853,48 @@ class ParsedScalarSettingBindingStage:
 
 
 @dataclass(frozen=True, slots=True)
-class ThresholdSettingsBindingRequest:
-    """Mutable binding context for shared CellProfiler threshold settings."""
+class ModuleSettingsBindingContext:
+    """Immutable module/binder context for one CP settings-binding pass."""
 
     module: ModuleBlock
     binder: SettingsBinder
+
+    def repeated_value(
+        self,
+        setting_name: str,
+        policy: RepeatedSettingValuePolicy | None = None,
+    ) -> str | None:
+        """Return a repeated setting value using the requested policy."""
+        selected_policy = policy or RepeatedSettingValuePolicy.for_setting(setting_name)
+        return selected_policy.value(self.module, setting_name)
+
+    def parse_value(self, setting_name: str, value: Any) -> Any:
+        """Parse one setting through this pass's binder."""
+        return self.binder.parse_value(setting_name, value)
+
+
+@dataclass(frozen=True, slots=True)
+class MutableModuleSettingsBindingWorkspace:
+    """Mutable kwargs/unmapped-setting state for one CP binding pass."""
+
     kwargs: dict[str, Any]
     unmapped_kwargs: dict[str, Any]
+
+    def consume(self, setting_name: str) -> None:
+        """Mark one setting row as consumed from the unmapped set."""
+        self.unmapped_kwargs.pop(normalize_cellprofiler_setting_name(setting_name), None)
+
+    def assign(self, parameter_name: str, value: Any) -> None:
+        """Assign one absorbed kwarg value."""
+        self.kwargs[parameter_name] = value
+
+
+@dataclass(frozen=True, slots=True)
+class ThresholdSettingsBindingRequest:
+    """Mutable binding context for shared CellProfiler threshold settings."""
+
+    context: ModuleSettingsBindingContext
+    workspace: MutableModuleSettingsBindingWorkspace
     include_advanced_setting: bool
 
     @classmethod
@@ -873,53 +908,60 @@ class ThresholdSettingsBindingRequest:
         include_advanced_setting: bool,
     ) -> "ThresholdSettingsBindingRequest":
         return cls(
-            module=module,
-            binder=binder,
-            kwargs=kwargs,
-            unmapped_kwargs=unmapped_kwargs,
+            context=ModuleSettingsBindingContext(module=module, binder=binder),
+            workspace=MutableModuleSettingsBindingWorkspace(
+                kwargs=kwargs,
+                unmapped_kwargs=unmapped_kwargs,
+            ),
             include_advanced_setting=include_advanced_setting,
         )
 
+    @property
+    def module(self) -> ModuleBlock:
+        """Return the module being bound."""
+        return self.context.module
+
+    @property
+    def kwargs(self) -> dict[str, Any]:
+        """Return mutable absorbed kwargs."""
+        return self.workspace.kwargs
+
     def bind(self) -> None:
         if self.include_advanced_setting:
-            value = LastRepeatedSettingValuePolicy().value(
-                self.module,
+            value = self.context.repeated_value(
                 "Use advanced settings?",
+                LastRepeatedSettingValuePolicy(),
             )
             if value is not None:
-                self.kwargs["use_advanced_settings"] = self.binder.parse_value(
-                    "Use advanced settings?",
-                    value,
+                self.workspace.assign(
+                    "use_advanced_settings",
+                    self.context.parse_value("Use advanced settings?", value),
                 )
-            self.unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name("Use advanced settings?"),
-                None,
-            )
+            self.workspace.consume("Use advanced settings?")
 
         for setting_name, parameter_name in _CELLPROFILER_THRESHOLD_SETTINGS.items():
-            value = RepeatedSettingValuePolicy.for_setting(setting_name).value(
-                self.module,
+            value = self.context.repeated_value(
                 setting_name,
             )
             if value is not None:
-                self.kwargs[parameter_name] = _parse_cellprofiler_threshold_setting(
-                    self.binder,
-                    setting_name,
-                    value,
+                self.workspace.assign(
+                    parameter_name,
+                    _parse_cellprofiler_threshold_setting(
+                        self.context.binder,
+                        setting_name,
+                        value,
+                    ),
                 )
-            self.unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(setting_name),
-                None,
-            )
+            self.workspace.consume(setting_name)
 
         _upgrade_legacy_cellprofiler_threshold_kwargs(self.module, self.kwargs)
 
-        bounds = LastRepeatedSettingValuePolicy().value(
-            self.module,
+        bounds = self.context.repeated_value(
             "Lower and upper bounds on threshold",
+            LastRepeatedSettingValuePolicy(),
         )
         if bounds is not None:
-            parsed_bounds = self.binder.parse_value(
+            parsed_bounds = self.context.parse_value(
                 "Lower and upper bounds on threshold",
                 bounds,
             )
@@ -928,17 +970,12 @@ class ThresholdSettingsBindingRequest:
                     f"{self.module.name} threshold bounds must contain two values, "
                     f"got {bounds!r}."
                 )
-            self.kwargs["threshold_min"], self.kwargs["threshold_max"] = parsed_bounds
-        self.unmapped_kwargs.pop(
-            normalize_cellprofiler_setting_name("Lower and upper bounds on threshold"),
-            None,
-        )
+            self.workspace.assign("threshold_min", parsed_bounds[0])
+            self.workspace.assign("threshold_max", parsed_bounds[1])
+        self.workspace.consume("Lower and upper bounds on threshold")
 
         for setting_name in _IGNORED_CELLPROFILER_THRESHOLD_SETTINGS:
-            self.unmapped_kwargs.pop(
-                normalize_cellprofiler_setting_name(setting_name),
-                None,
-            )
+            self.workspace.consume(setting_name)
 
 
 _CELLPROFILER_THRESHOLD_SETTINGS: Mapping[str, str] = {

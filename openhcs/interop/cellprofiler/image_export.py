@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from enum import Enum
 import skimage.util
 from metaclass_registry import AutoRegisterMeta
+from openhcs.core.callable_contract import callable_request
 from openhcs.core.memory.decorators import numpy
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
@@ -97,6 +98,16 @@ class SaveImagesRequest:
             min_value=float(np.min(output)),
             max_value=float(np.max(output)),
         )
+
+
+@dataclass(frozen=True, slots=True)
+class SaveImagesRequestDefaults:
+    """Authoritative public defaults for SaveImages request fields."""
+
+    filename_prefix: str
+    file_format: FileFormat = FileFormat.TIFF
+    bit_depth: BitDepth = BitDepth.BIT_16
+    use_compression: bool = True
 
 
 class BitDepthConversionStrategy(
@@ -187,13 +198,13 @@ class RawBitConversionStrategy(BitDepthConversionStrategy):
             "shape_d", "shape_h", "shape_w", "dtype", "min_value", "max_value"],
     analysis_type="save_images"
 )))
+@callable_request(
+    SaveImagesRequest,
+    public_defaults=SaveImagesRequestDefaults(filename_prefix="saved_image"),
+)
 def save_images(
-    image: np.ndarray,
-    filename_prefix: str = "saved_image",
-    file_format: FileFormat = FileFormat.TIFF,
-    bit_depth: BitDepth = BitDepth.BIT_16,
+    request: SaveImagesRequest,
     image_type: ImageType = ImageType.IMAGE,
-    use_compression: bool = True,
 ) -> Tuple[np.ndarray, SaveMetadata]:
     """
     Prepare image for saving with specified format and bit depth.
@@ -213,13 +224,6 @@ def save_images(
     Returns:
         Tuple of (converted_image, save_metadata)
     """
-    request = SaveImagesRequest(
-        image=image,
-        filename_prefix=filename_prefix,
-        file_format=file_format,
-        bit_depth=bit_depth,
-        use_compression=use_compression,
-    )
     output = request.converted_image()
     
     # Handle mask/cropping types - ensure binary output
@@ -238,12 +242,12 @@ def save_images(
             "shape_d", "shape_h", "shape_w", "dtype", "min_value", "max_value"],
     analysis_type="save_images_3d"
 )))
+@callable_request(
+    SaveImagesRequest,
+    public_defaults=SaveImagesRequestDefaults(filename_prefix="saved_stack"),
+)
 def save_images_3d(
-    image: np.ndarray,
-    filename_prefix: str = "saved_stack",
-    file_format: FileFormat = FileFormat.TIFF,
-    bit_depth: BitDepth = BitDepth.BIT_16,
-    use_compression: bool = True,
+    request: SaveImagesRequest,
 ) -> Tuple[np.ndarray, SaveMetadata]:
     """
     Prepare 3D image stack for saving.
@@ -263,19 +267,11 @@ def save_images_3d(
     """
     # Validate format supports 3D
     volumetric_formats = [FileFormat.TIFF, FileFormat.NPY, FileFormat.H5]
-    if file_format not in volumetric_formats:
+    if request.file_format not in volumetric_formats:
         raise ValueError(
-            f"Format {file_format.value} does not support 3D. "
+            f"Format {request.file_format.value} does not support 3D. "
             f"Use one of: {[f.value for f in volumetric_formats]}"
         )
-    
-    request = SaveImagesRequest(
-        image=image,
-        filename_prefix=filename_prefix,
-        file_format=file_format,
-        bit_depth=bit_depth,
-        use_compression=use_compression,
-    )
     output = request.converted_image()
 
     metadata = request.metadata_for(output)
