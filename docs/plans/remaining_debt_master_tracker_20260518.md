@@ -579,10 +579,41 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widget
 # findings are class decomposition and attribute-probe/template-method families.
 ```
 
+Checkpoint 5:
+
+- Added `PlateGridModel` and `PlateGridBounds` as the pure coordinate authority
+  for standard and supplied non-standard well IDs.
+- Routed `PlateViewWidget` grid dimensions, row/column ranges, reverse lookup,
+  and axis membership through the model instead of keeping those projections in
+  QWidget state.
+- Added `PlateSubdirectoryButtonRegistry` and `PlateWellButtonRegistry` so Qt
+  button lookup/cleanup is owned by explicit registries rather than raw widget
+  dictionaries.
+- Removed the dead `_detect_dimensions` private wrapper and the trivial
+  `set_well_filter_widget` transport method.
+- Added pure model coverage for standard wells, supplied coordinates, explicit
+  dimensions, and row/column membership.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui -q
+# 95 passed
+
+.venv/bin/python -m py_compile openhcs/pyqt_gui/widgets/shared/plate_view_widget.py openhcs/pyqt_gui/widgets/image_browser.py
+# clean
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widgets/shared/plate_view_widget.py openhcs/pyqt_gui/widgets/image_browser.py
+# cleared PlateViewWidget bidirectional registry findings for subdir_buttons
+# and well_buttons, cleared the dead _detect_dimensions finding, and removed
+# the well-filter transport wrapper finding.
+```
+
 Remaining:
 
 - Split `image_browser.py` plate-view/detach/filter sync into controllers.
-- Split `plate_view_widget.py` grid model, subdirectory model, and filter sync.
+- Split `plate_view_widget.py` selection-event handling and filter sync into
+  smaller subsystems.
 - Split `progress_tree_builder.py` into composed projection/build/status
   subsystems if the remaining class quotient should be eliminated.
 - Extract larger production PyQt subsystem boundaries for `image_browser.py`,

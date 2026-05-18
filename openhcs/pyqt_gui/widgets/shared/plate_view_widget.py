@@ -88,6 +88,214 @@ WELL_BUTTON_STYLE_COLORS: dict[WellButtonState, WellButtonStyleColors] = {
 
 
 @dataclass(frozen=True, slots=True)
+class PlateGridBounds:
+    """Tight bounding rectangle for wells in plate coordinates."""
+
+    min_row: int
+    max_row: int
+    min_col: int
+    max_col: int
+
+    @property
+    def rows(self) -> list[int]:
+        return list(range(self.min_row, self.max_row + 1))
+
+    @property
+    def cols(self) -> list[int]:
+        return list(range(self.min_col, self.max_col + 1))
+
+    @property
+    def dimensions(self) -> tuple[int, int]:
+        return (self.max_row - self.min_row + 1, self.max_col - self.min_col + 1)
+
+
+@dataclass(frozen=True, slots=True)
+class PlateGridModel:
+    """Pure plate-coordinate model backing the Qt grid facade."""
+
+    wells_with_images: frozenset[str]
+    coord_to_well: dict[tuple[int, int], str]
+    well_to_coord: dict[str, tuple[int, int]]
+    plate_dimensions: tuple[int, int]
+    row_offset: int
+    col_offset: int
+    bounds: PlateGridBounds | None
+
+    @classmethod
+    def empty(cls) -> "PlateGridModel":
+        return cls(
+            wells_with_images=frozenset(),
+            coord_to_well={},
+            well_to_coord={},
+            plate_dimensions=(8, 12),
+            row_offset=0,
+            col_offset=0,
+            bounds=None,
+        )
+
+    @classmethod
+    def from_wells(
+        cls,
+        well_ids: Set[str],
+        plate_dimensions: Optional[Tuple[int, int]] = None,
+        coord_to_well: Optional[dict] = None,
+    ) -> "PlateGridModel":
+        coordinates = (
+            dict(coord_to_well)
+            if coord_to_well is not None
+            else cls._coordinates_from_standard_well_ids(well_ids)
+        )
+        reverse_coordinates = {
+            well_id: coord for coord, well_id in coordinates.items()
+        }
+
+        if not well_ids:
+            return cls.empty()
+
+        bounds = cls._detect_bounds(well_ids, coordinates)
+        dimensions = (
+            plate_dimensions
+            if plate_dimensions is not None
+            else (bounds.dimensions if bounds is not None else (8, 12))
+        )
+
+        return cls(
+            wells_with_images=frozenset(well_ids),
+            coord_to_well=coordinates,
+            well_to_coord=reverse_coordinates,
+            plate_dimensions=dimensions,
+            row_offset=(bounds.min_row - 1) if bounds is not None else 0,
+            col_offset=(bounds.min_col - 1) if bounds is not None else 0,
+            bounds=bounds,
+        )
+
+    @classmethod
+    def _coordinates_from_standard_well_ids(
+        cls, well_ids: Set[str]
+    ) -> dict[tuple[int, int], str]:
+        coordinates: dict[tuple[int, int], str] = {}
+        for well_id in well_ids:
+            coord = cls._parse_standard_well_id(well_id)
+            if coord is not None:
+                coordinates[coord] = well_id
+        return coordinates
+
+    @staticmethod
+    def _parse_standard_well_id(well_id: str) -> tuple[int, int] | None:
+        row_part = "".join(c for c in well_id if c.isalpha())
+        col_part = "".join(c for c in well_id if c.isdigit())
+        if not row_part or not col_part:
+            return None
+
+        row_idx = sum(
+            (ord(c.upper()) - ord("A") + 1) * (26**i)
+            for i, c in enumerate(reversed(row_part))
+        )
+        return (row_idx, int(col_part))
+
+    @classmethod
+    def _detect_bounds(
+        cls, well_ids: Set[str], coord_to_well: dict[tuple[int, int], str]
+    ) -> PlateGridBounds | None:
+        occupied = [
+            coord for coord, well_id in coord_to_well.items() if well_id in well_ids
+        ]
+        if not occupied:
+            return None
+
+        rows = [row for row, _ in occupied]
+        cols = [col for _, col in occupied]
+        return PlateGridBounds(
+            min_row=min(rows),
+            max_row=max(rows),
+            min_col=min(cols),
+            max_col=max(cols),
+        )
+
+    @property
+    def is_empty(self) -> bool:
+        return not self.wells_with_images
+
+    @property
+    def actual_rows(self) -> list[int]:
+        return self.bounds.rows if self.bounds is not None else []
+
+    @property
+    def actual_cols(self) -> list[int]:
+        return self.bounds.cols if self.bounds is not None else []
+
+    def well_at(self, row: int, col: int) -> str | None:
+        return self.coord_to_well.get((row, col))
+
+    def wells_on_axis(self, *, axis_index: int, axis_value: int) -> list[str]:
+        return sorted(
+            well_id
+            for well_id, coord in self.well_to_coord.items()
+            if coord[axis_index] == axis_value and well_id in self.wells_with_images
+        )
+
+
+class PlateSubdirectoryButtonRegistry:
+    """Own the Qt button registry for the plate-output selector."""
+
+    def __init__(self, button_group: QButtonGroup, layout: QHBoxLayout, style_gen):
+        self.button_group = button_group
+        self.layout = layout
+        self.style_gen = style_gen
+        self.buttons: dict[str, QPushButton] = {}
+
+    def clear(self) -> None:
+        for button in self.buttons.values():
+            self.button_group.removeButton(button)
+            button.deleteLater()
+        self.buttons.clear()
+
+    def populate(
+        self,
+        subdirs: List[str],
+        on_selected: Callable[[str], None],
+    ) -> str:
+        self.clear()
+        for subdir in subdirs:
+            button = QPushButton(subdir)
+            button.setCheckable(True)
+            button.setStyleSheet(self.style_gen.generate_button_style())
+            button.clicked.connect(lambda checked, s=subdir: on_selected(s))
+
+            self.button_group.addButton(button)
+            self.layout.insertWidget(self.layout.count() - 1, button)
+            self.buttons[subdir] = button
+
+        first_subdir = subdirs[0]
+        self.buttons[first_subdir].setChecked(True)
+        return first_subdir
+
+
+class PlateWellButtonRegistry:
+    """Own well-id to Qt button lookup for the plate grid."""
+
+    def __init__(self):
+        self._buttons: dict[str, QPushButton] = {}
+
+    def clear(self) -> None:
+        for button in self._buttons.values():
+            button.deleteLater()
+        self._buttons.clear()
+
+    def register(self, well_id: str, button: QPushButton) -> None:
+        self._buttons[well_id] = button
+
+    def contains(self, well_id: str) -> bool:
+        return well_id in self._buttons
+
+    def button(self, well_id: str) -> QPushButton:
+        return self._buttons[well_id]
+
+    def items(self):
+        return self._buttons.items()
+
+
+@dataclass(frozen=True, slots=True)
 class PlateSelectionEventRoute:
     """One event route into plate selection handling."""
 
@@ -390,9 +598,10 @@ class PlateViewWidget(QWidget):
         self.style_gen = StyleSheetGenerator(self.color_scheme)
 
         # State
-        self.well_buttons = {}  # well_id -> QPushButton
+        self.well_button_registry = PlateWellButtonRegistry()
         self.wells_with_images = set()  # Set of well IDs that have images
         self.selected_wells = set()  # Currently selected wells
+        self.grid_model = PlateGridModel.empty()
         self.plate_dimensions = (8, 12)  # rows, cols (default 96-well)
         self.row_offset = 0  # Offset for tight bounding box (first row index - 1)
         self.col_offset = 0  # Offset for tight bounding box (first col index - 1)
@@ -424,6 +633,7 @@ class PlateViewWidget(QWidget):
         # UI components
         self.subdir_buttons = {}  # subdir_name -> QPushButton
         self.subdir_button_group = None
+        self.subdir_button_registry = None
         self.well_grid_layout = None
         self.status_label = None
         self.selection_event_controller = PlateSelectionEventController(self)
@@ -472,6 +682,12 @@ class PlateViewWidget(QWidget):
 
         self.subdir_button_group = QButtonGroup(self)
         self.subdir_button_group.setExclusive(True)
+        self.subdir_button_registry = PlateSubdirectoryButtonRegistry(
+            self.subdir_button_group,
+            self.subdir_layout,
+            self.style_gen,
+        )
+        self.subdir_buttons = self.subdir_button_registry.buttons
 
         self.subdir_layout.addStretch()
         self.subdir_frame.setVisible(False)
@@ -533,12 +749,7 @@ class PlateViewWidget(QWidget):
             subdirs: List of subdirectory names
         """
         self.subdirs = subdirs
-
-        # Clear existing buttons
-        for btn in self.subdir_buttons.values():
-            self.subdir_button_group.removeButton(btn)
-            btn.deleteLater()
-        self.subdir_buttons.clear()
+        self.subdir_button_registry.clear()
 
         self._apply_subdirectory_mode(
             PlateSubdirectoryMode.from_count(len(subdirs)), subdirs
@@ -566,24 +777,14 @@ class PlateViewWidget(QWidget):
 
     def _set_multiple_subdirectories(self, subdirs: List[str]) -> None:
         self.subdir_frame.setVisible(True)
-        for subdir in subdirs:
-            btn = QPushButton(subdir)
-            btn.setCheckable(True)
-            btn.setStyleSheet(self.style_gen.generate_button_style())
-            btn.clicked.connect(lambda checked, s=subdir: self._on_subdir_selected(s))
 
-            self.subdir_button_group.addButton(btn)
-            self.subdir_layout.insertWidget(self.subdir_layout.count() - 1, btn)
-            self.subdir_buttons[subdir] = btn
+        def select_subdirectory(subdir: str) -> None:
+            self.active_subdir = subdir
 
-        first_btn = self.subdir_buttons[subdirs[0]]
-        first_btn.setChecked(True)
-        self.active_subdir = subdirs[0]
-
-    def _on_subdir_selected(self, subdir: str):
-        """Handle subdirectory selection."""
-        self.active_subdir = subdir
-        # Could emit signal here if needed for filtering by subdir
+        self.active_subdir = self.subdir_button_registry.populate(
+            subdirs,
+            select_subdirectory,
+        )
 
     def set_available_wells(
         self,
@@ -600,43 +801,22 @@ class PlateViewWidget(QWidget):
             coord_to_well: Optional mapping from (row_index, col_index) to well_id.
                           Required for non-standard well ID formats (e.g., Opera Phenix R01C01).
         """
-        self.wells_with_images = well_ids
+        self.grid_model = PlateGridModel.from_wells(
+            well_ids,
+            plate_dimensions=plate_dimensions,
+            coord_to_well=coord_to_well,
+        )
+        self.wells_with_images = set(self.grid_model.wells_with_images)
+        self.coord_to_well = self.grid_model.coord_to_well
+        self.well_to_coord = self.grid_model.well_to_coord
+        self.plate_dimensions = self.grid_model.plate_dimensions
+        self.row_offset = self.grid_model.row_offset
+        self.col_offset = self.grid_model.col_offset
 
-        # If coord_to_well not provided, build it from well_ids (for standard formats)
-        # IMPORTANT: Do this BEFORE calling _detect_dimensions
-        if coord_to_well is None:
-            self.coord_to_well = {}
-            for well_id in well_ids:
-                # Parse standard well ID format (A01, B12, etc.)
-                row_part = "".join(c for c in well_id if c.isalpha())
-                col_part = "".join(c for c in well_id if c.isdigit())
-
-                if row_part and col_part:
-                    # Convert row letter to index (A=1, B=2, etc.)
-                    row_idx = sum(
-                        (ord(c.upper()) - ord("A") + 1) * (26**i)
-                        for i, c in enumerate(reversed(row_part))
-                    )
-                    col_idx = int(col_part)
-                    self.coord_to_well[(row_idx, col_idx)] = well_id
-        else:
-            self.coord_to_well = coord_to_well
-
-        # Build reverse mapping (well_id -> coord)
-        self.well_to_coord = {
-            well_id: coord for coord, well_id in self.coord_to_well.items()
-        }
-
-        if not well_ids:
+        if self.grid_model.is_empty:
             self._clear_grid()
             self.status_label.setText("No wells")
             return
-
-        # Use provided dimensions or auto-detect (NOW coord_to_well is populated)
-        if plate_dimensions is not None:
-            self.plate_dimensions = plate_dimensions
-        else:
-            self.plate_dimensions = self._detect_dimensions(well_ids)
 
         # Rebuild grid
         self._build_grid()
@@ -644,69 +824,9 @@ class PlateViewWidget(QWidget):
         # Update status
         self._update_status()
 
-    def _detect_dimensions(self, well_ids: Set[str]) -> Tuple[int, int]:
-        """
-        Auto-detect plate dimensions from well IDs (tight bounding box).
-
-        Only includes rows/columns that contain wells with images.
-
-        Args:
-            well_ids: Set of well IDs
-
-        Returns:
-            (rows, cols) tuple
-        """
-        if not well_ids:
-            return (8, 12)  # Default
-
-        min_row = float("inf")
-        max_row = 0
-        min_col = float("inf")
-        max_col = 0
-
-        # If we have coord_to_well mapping, use that directly
-        if self.coord_to_well:
-            for (row_idx, col_idx), well_id in self.coord_to_well.items():
-                if well_id in well_ids:
-                    min_row = min(min_row, row_idx)
-                    max_row = max(max_row, row_idx)
-                    min_col = min(min_col, col_idx)
-                    max_col = max(max_col, col_idx)
-        else:
-            # Parse well IDs to extract coordinates
-            for well_id in well_ids:
-                # Extract row letter(s) and column number(s)
-                row_part = "".join(c for c in well_id if c.isalpha())
-                col_part = "".join(c for c in well_id if c.isdigit())
-
-                if row_part:
-                    # Convert row letter to index (A=1, B=2, AA=27, etc.)
-                    row_idx = sum(
-                        (ord(c.upper()) - ord("A") + 1) * (26**i)
-                        for i, c in enumerate(reversed(row_part))
-                    )
-                    min_row = min(min_row, row_idx)
-                    max_row = max(max_row, row_idx)
-
-                if col_part:
-                    col_idx = int(col_part)
-                    min_col = min(min_col, col_idx)
-                    max_col = max(max_col, col_idx)
-
-        # Store offset for coordinate mapping
-        self.row_offset = min_row - 1 if min_row != float("inf") else 0
-        self.col_offset = min_col - 1 if min_col != float("inf") else 0
-
-        rows = max_row - min_row + 1 if max_row > 0 else 8
-        cols = max_col - min_col + 1 if max_col > 0 else 12
-
-        return (rows, cols)
-
     def _clear_grid(self):
         """Clear the well grid."""
-        for btn in self.well_buttons.values():
-            btn.deleteLater()
-        self.well_buttons.clear()
+        self.well_button_registry.clear()
 
         # Clear layout
         while self.well_grid_layout.count():
@@ -718,24 +838,18 @@ class PlateViewWidget(QWidget):
         """Build the well grid based on current dimensions."""
         self._clear_grid()
 
-        # Get unique rows and columns that actually have wells
-        actual_rows = sorted(set(coord[0] for coord in self.coord_to_well.keys()))
-        actual_cols = sorted(set(coord[1] for coord in self.coord_to_well.keys()))
+        actual_rows = self.grid_model.actual_rows
+        actual_cols = self.grid_model.actual_cols
 
         if not actual_rows or not actual_cols:
             return
 
-        # Get bounding rectangle (min to max, inclusive)
-        min_row, max_row = min(actual_rows), max(actual_rows)
-        min_col, max_col = min(actual_cols), max(actual_cols)
-
-        # Create full range including empty positions
-        all_rows = list(range(min_row, max_row + 1))
-        all_cols = list(range(min_col, max_col + 1))
+        all_rows = actual_rows
+        all_cols = actual_cols
 
         # Calculate minimum size based on label width
         # Find longest column number for width calculation
-        max_col_label = str(max_col)
+        max_col_label = str(all_cols[-1])
         from PyQt6.QtGui import QFontMetrics
         from PyQt6.QtGui import QFont
 
@@ -829,8 +943,7 @@ class PlateViewWidget(QWidget):
 
             # Well buttons - for all columns in bounding rectangle
             for grid_col, actual_col in enumerate(all_cols, start=1):
-                # Check if this coordinate has a well
-                well_id = self.coord_to_well.get((actual_row, actual_col))
+                well_id = self.grid_model.well_at(actual_row, actual_col)
 
                 btn = SquareButton()  # Use SquareButton to maintain 1:1 aspect ratio
                 btn.setMinimumSize(min_well_size, min_well_size)
@@ -847,7 +960,7 @@ class PlateViewWidget(QWidget):
                     )
                     btn.setProperty("well_id", well_id)
                     btn.installEventFilter(self)
-                    self.well_buttons[well_id] = btn
+                    self.well_button_registry.register(well_id, btn)
                 else:
                     # Empty position in bounding rectangle
                     btn.setEnabled(False)
@@ -917,12 +1030,12 @@ class PlateViewWidget(QWidget):
 
         if checked:
             self.selected_wells.add(well_id)
-            self.well_buttons[well_id].setStyleSheet(
+            self.well_button_registry.button(well_id).setStyleSheet(
                 self._get_well_button_style(WellButtonState.SELECTED)
             )
         else:
             self.selected_wells.discard(well_id)
-            self.well_buttons[well_id].setStyleSheet(
+            self.well_button_registry.button(well_id).setStyleSheet(
                 self._get_well_button_style(WellButtonState.HAS_IMAGES)
             )
 
@@ -942,8 +1055,8 @@ class PlateViewWidget(QWidget):
             f"[CLEAR] clear_selection called, had {len(self.selected_wells)} wells, emit_signal={emit_signal}, sync_to_filter={sync_to_filter}"
         )
         for well_id in list(self.selected_wells):
-            if well_id in self.well_buttons:
-                btn = self.well_buttons[well_id]
+            if self.well_button_registry.contains(well_id):
+                btn = self.well_button_registry.button(well_id)
                 btn.setChecked(False)
                 btn.setStyleSheet(
                     self._get_well_button_style(WellButtonState.HAS_IMAGES)
@@ -978,9 +1091,12 @@ class PlateViewWidget(QWidget):
         self.clear_selection(emit_signal=False, sync_to_filter=False)
 
         for well_id in well_ids:
-            if well_id in self.well_buttons and well_id in self.wells_with_images:
+            if (
+                self.well_button_registry.contains(well_id)
+                and well_id in self.wells_with_images
+            ):
                 self.selected_wells.add(well_id)
-                btn = self.well_buttons[well_id]
+                btn = self.well_button_registry.button(well_id)
                 btn.setChecked(True)
                 btn.setStyleSheet(
                     self._get_well_button_style(WellButtonState.SELECTED)
@@ -1019,10 +1135,13 @@ class PlateViewWidget(QWidget):
 
     def _toggle_well_selection(self, well_id: str, select: bool):
         """Toggle selection state of a single well."""
-        if well_id not in self.well_buttons or well_id not in self.wells_with_images:
+        if (
+            not self.well_button_registry.contains(well_id)
+            or well_id not in self.wells_with_images
+        ):
             return
 
-        btn = self.well_buttons[well_id]
+        btn = self.well_button_registry.button(well_id)
 
         if select and well_id not in self.selected_wells:
             self.selected_wells.add(well_id)
@@ -1043,7 +1162,7 @@ class PlateViewWidget(QWidget):
 
         # Find all wells whose buttons intersect with the rectangle
         wells_in_rect = set()
-        for well_id, btn in self.well_buttons.items():
+        for well_id, btn in self.well_button_registry.items():
             if well_id not in self.wells_with_images:
                 continue
 
@@ -1076,10 +1195,10 @@ class PlateViewWidget(QWidget):
 
     def _toggle_axis_selection(self, *, axis_index: int, axis_value: int):
         """Toggle all wells whose coordinate matches one row/column axis."""
-        wells_in_axis = []
-        for well_id, coord in self.well_to_coord.items():
-            if coord[axis_index] == axis_value and well_id in self.wells_with_images:
-                wells_in_axis.append(well_id)
+        wells_in_axis = self.grid_model.wells_on_axis(
+            axis_index=axis_index,
+            axis_value=axis_value,
+        )
 
         if not wells_in_axis:
             return
@@ -1118,15 +1237,6 @@ class PlateViewWidget(QWidget):
         logger.info(f"[INVERT] selected_wells={self.selected_wells}")
 
         self._publish_selection_change()
-
-    def set_well_filter_widget(self, well_filter_widget):
-        """
-        Set reference to the well column filter widget for bidirectional sync.
-
-        Args:
-            well_filter_widget: ColumnFilterWidget instance for the 'well' column
-        """
-        self.well_filter_widget = well_filter_widget
 
     def sync_to_well_filter(self):
         """Sync current plate view selection to well filter checkboxes."""

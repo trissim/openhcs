@@ -754,7 +754,7 @@ class ImageBrowserWidget(QWidget):
         # Connect well filter to plate view for bidirectional sync
         if "Well" in self.column_filter_panel.column_filters and self.plate_view_widget:
             well_filter = self.column_filter_panel.column_filters["Well"]
-            self.plate_view_widget.set_well_filter_widget(well_filter)
+            self.plate_view_widget.well_filter_widget = well_filter
 
             # Connect well filter changes to sync back to plate view
             well_filter.filter_changed.connect(self._on_well_filter_changed)
