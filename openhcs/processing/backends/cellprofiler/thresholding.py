@@ -2326,30 +2326,6 @@ def _numpy_threshold_sum_of_entropies(
     return float(np.sum(hfg * np.log2(hfg)) + np.sum(hbg * np.log2(hbg)))
 
 
-def _unit_interval_quantized_codes(
-    values: np.ndarray,
-) -> tuple[np.ndarray, int] | None:
-    values_array = np.asarray(values)
-    if values_array.size == 0:
-        return None
-    minimum = np.min(values_array)
-    maximum = np.max(values_array)
-    if not np.isfinite(minimum) or not np.isfinite(maximum):
-        return None
-    if minimum < 0.0 or maximum > 1.0:
-        return None
-    for scale in (65535, 255):
-        codes = np.rint(values_array * scale).astype(np.int64, copy=False)
-        if np.any(codes < 0) or np.any(codes > scale):
-            continue
-        reconstructed = (
-            codes.astype(np.float32, copy=False) / np.float32(scale)
-        ).astype(np.float64, copy=False)
-        if np.array_equal(values_array, reconstructed):
-            return codes, int(scale)
-    return None
-
-
 def _rectangular_mask_domain(mask: np.ndarray) -> RectangularMaskDomain | None:
     """Return the true rectangle for masks that are exactly one filled rectangle."""
     if mask.ndim != 2:
