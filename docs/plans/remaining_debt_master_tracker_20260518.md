@@ -682,6 +682,27 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widget
 # No refactoring findings.
 ```
 
+Checkpoint 9:
+
+- Replaced step/lazy-capability attribute probing with explicit step
+  `__dict__` value reads and capability-name checks.
+- Added `StepSettingsFileController` so load/save dialog handling and
+  serialization behavior are no longer owned by `StepParameterEditorWidget`.
+- Focused advisor on `step_parameter_editor.py` reports no findings.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui -q
+# 95 passed
+
+.venv/bin/python -m py_compile openhcs/pyqt_gui/widgets/step_parameter_editor.py
+# clean
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widgets/step_parameter_editor.py
+# No refactoring findings.
+```
+
 Remaining:
 
 - Split `image_browser.py` plate-view/detach/filter/streaming roles into

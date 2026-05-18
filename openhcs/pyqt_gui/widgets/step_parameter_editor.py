@@ -70,6 +70,85 @@ class StepSettingsDialogRequest:
     file_filter: str = "Step Files (*.step);;All Files (*)"
 
 
+class StepSettingsFileController:
+    """Own load/save behavior for serialized step settings."""
+
+    def __init__(self, editor: "StepParameterEditorWidget"):
+        self.editor = editor
+
+    def load_step_settings(self) -> None:
+        file_path = self._show_dialog(
+            StepSettingsDialogRequest(
+                title="Load Step Settings (.step)",
+                mode="open",
+            )
+        )
+        if file_path:
+            self._load_from_file(file_path)
+
+    def save_step_settings(self) -> None:
+        file_path = self._show_dialog(
+            StepSettingsDialogRequest(
+                title="Save Step Settings (.step)",
+                mode="save",
+            )
+        )
+        if file_path:
+            self._save_to_file(file_path)
+
+    def _show_dialog(self, request: StepSettingsDialogRequest) -> Optional[Path]:
+        if not self.editor.service_adapter:
+            logger.warning("No service adapter available for file dialog")
+            return None
+
+        return self.editor.service_adapter.show_cached_file_dialog(
+            cache_key=request.cache_key,
+            title=request.title,
+            file_filter=request.file_filter,
+            mode=request.mode,
+        )
+
+    def _load_from_file(self, file_path: Path) -> None:
+        try:
+            import dill as pickle
+
+            with open(file_path, "rb") as handle:
+                step_data = pickle.load(handle)
+
+            for param_name, value in step_data.items():
+                try:
+                    self.editor.form_manager.update_parameter(param_name, value)
+                    setattr(self.editor.step, param_name, value)
+                except AttributeError:
+                    pass
+
+            self.editor.form_manager._refresh_all_placeholders()
+            logger.debug("Loaded %d parameters from %s", len(step_data), file_path.name)
+
+        except Exception as exc:
+            logger.error("Failed to load step settings from %s: %s", file_path, exc)
+            if self.editor.service_adapter:
+                self.editor.service_adapter.show_error_dialog(
+                    f"Failed to load step settings: {exc}"
+                )
+
+    def _save_to_file(self, file_path: Path) -> None:
+        try:
+            import dill as pickle
+
+            step_data = self.editor.state.get_current_values()
+            with open(file_path, "wb") as handle:
+                pickle.dump(step_data, handle)
+            logger.debug("Saved %d parameters to %s", len(step_data), file_path.name)
+
+        except Exception as exc:
+            logger.error("Failed to save step settings to %s: %s", file_path, exc)
+            if self.editor.service_adapter:
+                self.editor.service_adapter.show_error_dialog(
+                    f"Failed to save step settings: {exc}"
+                )
+
+
 def _activate_dataclass_tree_item(
     editor: "StepParameterEditorWidget", data: dict
 ) -> None:
@@ -157,6 +236,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         self._action_buttons_layout.setContentsMargins(0, 0, 0, 0)
         self._action_buttons_layout.setSpacing(2)
         self._action_buttons_layout.setAlignment(Qt.AlignmentFlag.AlignRight)
+        self.step_settings_files = StepSettingsFileController(self)
 
         code_btn = QPushButton("Code")
         code_btn.setMaximumWidth(60)
@@ -186,7 +266,7 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         for name, info in param_info.items():
             # All AbstractStep parameters are relevant for editing
             # ParameterFormManager will automatically route lazy dataclass parameters to LazyDataclassEditor
-            current_value = getattr(self.step, name, info.default_value)
+            current_value = self.step.__dict__.get(name, info.default_value)
 
             # CRITICAL FIX: For lazy dataclass parameters, leave current_value as None
             # This allows the UI to show placeholders and use lazy resolution properly
@@ -265,7 +345,8 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
         )
 
         logger.debug(
-            f"Step parameter editor initialized for step: {getattr(step, 'name', 'Unknown')}"
+            "Step parameter editor initialized for step: %s",
+            self.step.__dict__.get("name", "Unknown"),
         )
 
     def apply_scope_color_scheme(self, scheme) -> None:
@@ -316,16 +397,15 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
 
         # Check if the dataclass has lazy resolution capabilities
         try:
-            # Try to create an instance to see if it's a lazy dataclass
             test_instance = inner_type()
-            # Check for lazy dataclass methods - direct access will raise AttributeError if missing
-            test_instance._resolve_field_value
-            test_instance._lazy_resolution_config
-            return True
-        except AttributeError:
+        except Exception:
             return False
-        except:
-            return False
+
+        instance_members = set(dir(test_instance))
+        return {
+            "_resolve_field_value",
+            "_lazy_resolution_config",
+        }.issubset(instance_members)
 
     def _find_pipeline_field_by_type(self, target_type):
         """
@@ -586,87 +666,11 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
 
     def load_step_settings(self):
         """Load step settings from .step file (mirrors Textual TUI)."""
-        file_path = self._show_step_settings_dialog(
-            StepSettingsDialogRequest(
-                title="Load Step Settings (.step)",
-                mode="open",
-            )
-        )
-
-        if file_path:
-            self._load_step_settings_from_file(file_path)
+        self.step_settings_files.load_step_settings()
 
     def save_step_settings(self):
         """Save step settings to .step file (mirrors Textual TUI)."""
-        file_path = self._show_step_settings_dialog(
-            StepSettingsDialogRequest(
-                title="Save Step Settings (.step)",
-                mode="save",
-            )
-        )
-
-        if file_path:
-            self._save_step_settings_to_file(file_path)
-
-    def _show_step_settings_dialog(
-        self, request: StepSettingsDialogRequest
-    ) -> Optional[Path]:
-        if not self.service_adapter:
-            logger.warning("No service adapter available for file dialog")
-            return None
-
-        return self.service_adapter.show_cached_file_dialog(
-            cache_key=request.cache_key,
-            title=request.title,
-            file_filter=request.file_filter,
-            mode=request.mode,
-        )
-
-    def _load_step_settings_from_file(self, file_path: Path):
-        """Load step settings from file."""
-        try:
-            import dill as pickle
-
-            with open(file_path, "rb") as f:
-                step_data = pickle.load(f)
-
-            # Update form manager with loaded values
-            for param_name, value in step_data.items():
-                try:
-                    self.form_manager.update_parameter(param_name, value)
-                    # Also update to step object
-                    setattr(self.step, param_name, value)
-                except (AttributeError, AttributeError):
-                    pass
-
-            # Refresh the form to show loaded values
-            self.form_manager._refresh_all_placeholders()
-            logger.debug(f"Loaded {len(step_data)} parameters from {file_path.name}")
-
-        except Exception as e:
-            logger.error(f"Failed to load step settings from {file_path}: {e}")
-            if self.service_adapter:
-                self.service_adapter.show_error_dialog(
-                    f"Failed to load step settings: {e}"
-                )
-
-    def _save_step_settings_to_file(self, file_path: Path):
-        """Save step settings to file."""
-        try:
-            import dill as pickle
-
-            # Get current values from state
-            step_data = self.state.get_current_values()
-            with open(file_path, "wb") as f:
-                pickle.dump(step_data, f)
-            logger.debug(f"Saved {len(step_data)} parameters to {file_path.name}")
-
-        except Exception as e:
-            logger.error(f"Failed to save step settings to {file_path}: {e}")
-            if self.service_adapter:
-                self.service_adapter.show_error_dialog(
-                    f"Failed to save step settings: {e}"
-                )
+        self.step_settings_files.save_step_settings()
 
     def get_current_step(self) -> FunctionStep:
         """Get the current step with all parameter values."""
@@ -678,11 +682,12 @@ class StepParameterEditorWidget(ScrollableFormMixin, QWidget):
 
         # Update form manager with new values
         for param_name in self.form_manager.parameters.keys():
-            current_value = getattr(self.step, param_name, None)
+            current_value = self.step.__dict__.get(param_name)
             self.form_manager.update_parameter(param_name, current_value)
 
         logger.debug(
-            f"Updated step parameter editor for step: {getattr(step, 'name', 'Unknown')}"
+            "Updated step parameter editor for step: %s",
+            self.step.__dict__.get("name", "Unknown"),
         )
 
     def view_step_code(self):
