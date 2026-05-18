@@ -8,8 +8,11 @@ view them in Napari with configurable display settings.
 import logging
 import time
 import re
+import subprocess
+from dataclasses import dataclass
+from enum import Enum
 from pathlib import Path
-from typing import Optional, List, Dict, Set, Any
+from typing import Callable, Optional, List, Dict, Set, Any
 
 from PyQt6.QtWidgets import (
     QWidget,
@@ -32,7 +35,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal, pyqtSlot, QTimer
 
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import Backend, FileFormat
 from polystore.filemanager import FileManager
 from polystore.base import storage_registry
 from pyqt_reactive.theming import ColorScheme
@@ -46,6 +49,70 @@ from objectstate.lazy_factory import get_base_type_for_lazy
 from pyqt_reactive.forms import ParameterFormManager, FormManagerConfig
 
 logger = logging.getLogger(__name__)
+
+
+STREAMING_CONFIG_FIELD_NAMES = tuple(StreamingConfig.__registry__.keys())
+
+
+def _streaming_config_field_names() -> tuple[str, ...]:
+    """Registered streaming-config field names used by image-browser controls."""
+    return STREAMING_CONFIG_FIELD_NAMES
+
+
+class ResultFileType(str, Enum):
+    """Result-file types shown by the image browser."""
+    ROI = "ROI"
+    CSV = "CSV"
+    JSON = "JSON"
+
+    @classmethod
+    def from_path(cls, file_path: Path) -> Optional["ResultFileType"]:
+        suffix = file_path.suffix.lower()
+        if file_path.name.endswith(".roi.zip"):
+            return cls.ROI
+        if suffix in FileFormat.CSV.value:
+            return cls.CSV
+        if suffix in FileFormat.JSON.value:
+            return cls.JSON
+        return None
+
+
+@dataclass(frozen=True)
+class ResultFileAction:
+    """Double-click behavior for one result-file type."""
+    file_type: ResultFileType
+    display_name: str
+    handle: Callable[["ImageBrowserWidget", Path], None]
+
+    def run(self, browser: "ImageBrowserWidget", file_path: Path) -> None:
+        self.handle(browser, file_path)
+
+
+def _stream_roi_result(browser: "ImageBrowserWidget", file_path: Path) -> None:
+    browser._stream_roi_file(file_path)
+
+
+def _open_result_in_default_app(browser: "ImageBrowserWidget", file_path: Path) -> None:
+    subprocess.run(["xdg-open", str(file_path)])
+
+
+RESULT_FILE_ACTIONS = {
+    ResultFileType.ROI: ResultFileAction(
+        file_type=ResultFileType.ROI,
+        display_name="ROI",
+        handle=_stream_roi_result,
+    ),
+    ResultFileType.CSV: ResultFileAction(
+        file_type=ResultFileType.CSV,
+        display_name="CSV",
+        handle=_open_result_in_default_app,
+    ),
+    ResultFileType.JSON: ResultFileAction(
+        file_type=ResultFileType.JSON,
+        display_name="JSON",
+        handle=_open_result_in_default_app,
+    ),
+}
 
 
 def _get_viewer_display_name(field_name: str) -> str:
@@ -72,7 +139,7 @@ def _create_image_browser_config():
 
     # Auto-discover streaming configs from registry
     # Registry keys are now snake_case field names (e.g., 'napari_streaming_config')
-    for field_name in StreamingConfig.__registry__.keys():
+    for field_name in _streaming_config_field_names():
         lazy_class = StreamingConfig.__registry__[field_name]
         instance = lazy_class()  # Lazy config resolves from plate via parent_state
         setattr(config, field_name, instance)
@@ -102,12 +169,9 @@ class ImageBrowserWidget(QWidget):
         self.orchestrator = orchestrator
         self.color_scheme = color_scheme or ColorScheme()
         self.style_gen = StyleSheetGenerator(self.color_scheme)
-        # Use orchestrator's filemanager if available, otherwise create a new one with global registry
-        # This ensures the image browser can access all backends registered in the orchestrator's registry
-        # (e.g., virtual_workspace backend)
-        self.filemanager = (
-            orchestrator.filemanager if orchestrator else FileManager(storage_registry)
-        )
+        # Fallback for standalone browsing; orchestrator-owned runs derive their
+        # FileManager from the orchestrator property below.
+        self._fallback_filemanager = FileManager(storage_registry)
 
         # Scope ID for cross-window live context filtering (make distinct from PipelineConfig window)
         # Append a suffix so image browser uses a separate scope per plate
@@ -162,16 +226,9 @@ class ImageBrowserWidget(QWidget):
         # ZMQ manager widget (may be created in init_ui)
         self.zmq_manager = None
 
-        # Streaming service for unified Napari/Fiji streaming
-        self._streaming_service = None
-        if orchestrator:
-            from openhcs.ui.shared.streaming_service import StreamingService
-
-            self._streaming_service = StreamingService(
-                filemanager=self.filemanager,
-                microscope_handler=orchestrator.microscope_handler,
-                plate_path=orchestrator.plate_path,
-            )
+        # Streaming service for unified Napari/Fiji streaming.
+        self._streaming_service_cache = None
+        self._streaming_service_orchestrator = None
 
         self.init_ui()
 
@@ -181,6 +238,29 @@ class ImageBrowserWidget(QWidget):
         # Load images if orchestrator is provided
         if self.orchestrator:
             QTimer.singleShot(0, self.load_images)
+
+    @property
+    def filemanager(self):
+        """Current FileManager derived from orchestrator when available."""
+        if self.orchestrator:
+            return self.orchestrator.filemanager
+        return self._fallback_filemanager
+
+    @property
+    def streaming_service(self):
+        """Streaming service derived from the current orchestrator."""
+        if not self.orchestrator:
+            return None
+        if self._streaming_service_orchestrator is not self.orchestrator:
+            from openhcs.ui.shared.streaming_service import StreamingService
+
+            self._streaming_service_cache = StreamingService(
+                filemanager=self.filemanager,
+                microscope_handler=self.orchestrator.microscope_handler,
+                plate_path=self.orchestrator.plate_path,
+            )
+            self._streaming_service_orchestrator = self.orchestrator
+        return self._streaming_service_cache
 
     def init_ui(self):
         """Initialize the user interface."""
@@ -352,7 +432,7 @@ class ImageBrowserWidget(QWidget):
         # Top panel: Tabbed streaming config forms
         # Create view buttons for each streaming config (will be added to tab bar row)
         header_widgets = []
-        for field_name in StreamingConfig.__registry__.keys():
+        for field_name in _streaming_config_field_names():
             display_name = _get_viewer_display_name(field_name)
             btn = QPushButton(f"View in {display_name}")
             btn.clicked.connect(
@@ -365,7 +445,7 @@ class ImageBrowserWidget(QWidget):
 
         # Create a tab for each streaming config type
         tabs = []
-        for field_name in StreamingConfig.__registry__.keys():
+        for field_name in _streaming_config_field_names():
             display_name = _get_viewer_display_name(field_name)
             tabs.append(TabConfig(name=display_name, field_ids=[field_name]))
 
@@ -415,7 +495,7 @@ class ImageBrowserWidget(QWidget):
         """
         return [
             viewer_type
-            for viewer_type in StreamingConfig.__registry__.keys()
+            for viewer_type in _streaming_config_field_names()
             if self._is_viewer_enabled(viewer_type)
         ]
 
@@ -454,11 +534,6 @@ class ImageBrowserWidget(QWidget):
         self.scope_id = (
             f"{orchestrator.plate_path}::image_browser" if orchestrator else None
         )
-
-        # Use orchestrator's FileManager (has plate-specific backends like VirtualWorkspaceBackend)
-        if orchestrator:
-            self.filemanager = orchestrator.filemanager
-            logger.debug("Image browser now using orchestrator's FileManager")
 
         # Update state context and scope_id to use new pipeline_config
         if self.state and orchestrator:
@@ -940,31 +1015,18 @@ class ImageBrowserWidget(QWidget):
                             f"IMAGE BROWSER RESULTS: Found file: {file_path.name} (suffix={suffix})"
                         )
 
-                        # Determine file type using FileFormat registry
-                        from openhcs.constants.constants import FileFormat
-
-                        file_type = None
-                        if file_path.name.endswith(".roi.zip"):
-                            file_type = "ROI"
+                        result_file_type = ResultFileType.from_path(file_path)
+                        if result_file_type is not None:
+                            action = RESULT_FILE_ACTIONS[result_file_type]
                             logger.info(
-                                f"IMAGE BROWSER RESULTS: ✓ Matched as ROI: {file_path.name}"
+                                f"IMAGE BROWSER RESULTS: ✓ Matched as {action.display_name}: {file_path.name}"
                             )
-                        elif suffix in FileFormat.CSV.value:
-                            file_type = "CSV"
-                            logger.info(
-                                f"IMAGE BROWSER RESULTS: ✓ Matched as CSV: {file_path.name}"
-                            )
-                        elif suffix in FileFormat.JSON.value:
-                            file_type = "JSON"
-                            logger.info(
-                                f"IMAGE BROWSER RESULTS: ✓ Matched as JSON: {file_path.name}"
-                            )
-                        else:
+                        if result_file_type is None:
                             logger.debug(
                                 f"IMAGE BROWSER RESULTS: ✗ Filtered out: {file_path.name} (suffix={suffix})"
                             )
 
-                        if file_type:
+                        if result_file_type:
                             # Get relative path from plate_path (not results_dir) to include subdirectory
                             rel_path = file_path.relative_to(plate_path)
 
@@ -983,7 +1045,7 @@ class ImageBrowserWidget(QWidget):
                             # Build file info with parsed metadata (no full_path in metadata dict)
                             file_info = {
                                 "filename": str(rel_path),
-                                "type": file_type,
+                                "type": result_file_type.value,
                                 "size": size_str,
                             }
 
@@ -1275,7 +1337,7 @@ class ImageBrowserWidget(QWidget):
         normalized_param = param_name.lstrip(".")
 
         # Check if this is an 'enabled' field for any streaming config
-        for viewer_type in self.view_buttons.keys():
+        for viewer_type in _streaming_config_field_names():
             enabled_path = f"{viewer_type}.enabled"
             logger.debug(f"  Checking if {normalized_param} == {enabled_path}")
             if normalized_param == enabled_path:
@@ -1305,7 +1367,8 @@ class ImageBrowserWidget(QWidget):
         """Handle selection change from ImageTableBrowser."""
         has_selection = len(keys) > 0
         # Enable buttons based on selection AND enabled state from ObjectState
-        for viewer_type, view_btn in self.view_buttons.items():
+        for viewer_type in _streaming_config_field_names():
+            view_btn = self.view_buttons[viewer_type]
             is_enabled = self._is_viewer_enabled(viewer_type)
             view_btn.setEnabled(has_selection and is_enabled)
 
@@ -1360,21 +1423,8 @@ class ImageBrowserWidget(QWidget):
         # Result files are populated in load_results() which stores both
         # all_results[filename] and result_full_paths[filename] together - must exist
         file_path = self.result_full_paths[filename]
-        file_type = file_info["type"]
-
-        if file_type == "ROI":
-            # Stream ROI JSON to enabled viewer(s)
-            self._stream_roi_file(file_path)
-        elif file_type == "CSV":
-            # Open CSV in system default application
-            import subprocess
-
-            subprocess.run(["xdg-open", str(file_path)])
-        elif file_type == "JSON":
-            # Open JSON in system default application
-            import subprocess
-
-            subprocess.run(["xdg-open", str(file_path)])
+        result_file_type = ResultFileType(file_info["type"])
+        RESULT_FILE_ACTIONS[result_file_type].run(self, file_path)
 
     def _view_selected_in_viewer(self, viewer_type: str):
         """View all selected images in the specified viewer as a batch (builds hyperstack)."""
@@ -1441,7 +1491,11 @@ class ImageBrowserWidget(QWidget):
             ViewerStreamingContext,
         )
 
-        self._streaming_service.stream_images_async(
+        streaming_service = self.streaming_service
+        if streaming_service is None:
+            raise RuntimeError("No orchestrator set")
+
+        streaming_service.stream_images_async(
             ImageStreamingRequest(
                 context=ViewerStreamingContext(
                     viewer=viewer,
@@ -1484,7 +1538,11 @@ class ImageBrowserWidget(QWidget):
             ViewerStreamingContext,
         )
 
-        self._streaming_service.stream_rois_async(
+        streaming_service = self.streaming_service
+        if streaming_service is None:
+            raise RuntimeError("No orchestrator set")
+
+        streaming_service.stream_rois_async(
             RoiStreamingRequest(
                 context=ViewerStreamingContext(
                     viewer=viewer,
@@ -1500,55 +1558,6 @@ class ImageBrowserWidget(QWidget):
             )
         )
         logger.info(f"Streaming {len(roi_filenames)} ROI files to {viewer_type}...")
-
-    def _display_csv_file(self, csv_path: Path):
-        """Display CSV file in preview area."""
-        try:
-            import pandas as pd
-
-            # Read CSV
-            df = pd.read_csv(csv_path)
-
-            # Format as string (show first 100 rows)
-            if len(df) > 100:
-                preview_text = f"Showing first 100 of {len(df)} rows:\n\n"
-                preview_text += df.head(100).to_string(index=False)
-            else:
-                preview_text = df.to_string(index=False)
-
-            # Show preview
-            self.csv_preview.setPlainText(preview_text)
-            self.csv_preview.setVisible(True)
-
-            logger.info(f"Displayed CSV file: {csv_path.name} ({len(df)} rows)")
-
-        except Exception as e:
-            logger.error(f"Failed to display CSV file: {e}")
-            self.csv_preview.setPlainText(f"Error loading CSV: {e}")
-            self.csv_preview.setVisible(True)
-
-    def _display_json_file(self, json_path: Path):
-        """Display JSON file in preview area."""
-        try:
-            import json
-
-            # Read JSON
-            with open(json_path, "r") as f:
-                data = json.load(f)
-
-            # Format as pretty JSON
-            preview_text = json.dumps(data, indent=2)
-
-            # Show preview
-            self.csv_preview.setPlainText(preview_text)
-            self.csv_preview.setVisible(True)
-
-            logger.info(f"Displayed JSON file: {json_path.name}")
-
-        except Exception as e:
-            logger.error(f"Failed to display JSON file: {e}")
-            self.csv_preview.setPlainText(f"Error loading JSON: {e}")
-            self.csv_preview.setVisible(True)
 
     def cleanup(self):
         """Clean up resources before widget destruction."""

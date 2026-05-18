@@ -26,6 +26,18 @@ Finding families include:
 The first-wave PyQt campaign extracted `PlateViewWidget.eventFilter`, but the
 scan still identifies larger facade classes and mirrored registries.
 
+Checkpoint 1:
+
+- `ImageBrowserWidget` result-file double-click handling now routes through
+  typed `ResultFileType` and `ResultFileAction` authorities instead of raw
+  `"ROI"` / `"CSV"` / `"JSON"` string dispatch.
+- Unreferenced CSV/JSON preview helpers were deleted after repository-wide
+  call-site verification; CSV/JSON result files continue to open in the system
+  default application.
+- `filemanager` and streaming service access now derive from the current
+  `orchestrator` through properties, removing stale derived state from
+  `set_orchestrator`.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:
@@ -71,4 +83,3 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui
 - Active PyQt high-density findings are reduced without touching deprecated TUI.
 - Qt widgets become facades over typed services/models.
 - Offscreen smoke and PyQt unit tests pass.
-

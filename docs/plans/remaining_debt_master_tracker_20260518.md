@@ -486,7 +486,46 @@ timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/runtime/napari_
 # No refactoring findings.
 ```
 
-## Campaign 11 - Backend Dimensional Dispatch Authority
+## Campaign 11 - Active PyQt Residual Decomposition
+
+Status: Active Focus
+
+Checkpoint 1:
+
+- Replaced `ImageBrowserWidget` result-file string dispatch with typed
+  `ResultFileType` and `ResultFileAction` authorities.
+- Deleted unreferenced CSV/JSON preview helpers after repository-wide call-site
+  verification; CSV/JSON result double-clicks still open via the system default
+  application.
+- Converted `filemanager` and streaming-service access to orchestrator-derived
+  properties so `set_orchestrator` no longer partially synchronizes derived
+  state.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui -q
+# 91 passed
+
+.venv/bin/python -m py_compile openhcs/pyqt_gui/widgets/image_browser.py
+# clean
+
+timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widgets/image_browser.py
+# cleared file-type string dispatch, dangling CSV/JSON preview helpers, and
+# orchestrator-derived state finding; remaining findings are class decomposition,
+# viewer membership, and metadata/file registries.
+```
+
+Remaining:
+
+- Split `image_browser.py` plate-view/detach/filter sync into controllers.
+- Split `plate_view_widget.py` grid model, subdirectory model, and filter sync.
+- Convert `progress_tree_builder.py` marker checks into typed progress-node
+  projection records.
+- Audit `dual_editor_window.py` and `step_parameter_editor.py` for extractable
+  state models.
+
+## Campaign 12 - Backend Dimensional Dispatch Authority
 
 Status: On Hold
 
