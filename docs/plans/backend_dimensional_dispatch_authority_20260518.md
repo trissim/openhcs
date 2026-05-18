@@ -89,3 +89,26 @@ git diff --check
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/analysis/dxf_mask_pipeline.py
 # No refactoring findings.
 ```
+
+### Checkpoint 2 - Self-Supervised 3D Segmentation
+
+Implemented:
+
+- Added `SegmentationVolumeProjection` as the typed 3D/4D/5D input projection
+  to `[B, C, D, H, W]`.
+- Moved output mask shape restoration into the projection.
+- Expanded compressed inline control flow in decoder initialization, affine
+  augmentation, and k-means helper logic.
+
+Verification:
+
+```bash
+.venv/bin/python -m py_compile openhcs/processing/backends/analysis/self_supervised_segmentation_3d.py
+# clean
+
+git diff --check
+# clean
+
+timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/analysis/self_supervised_segmentation_3d.py
+# No refactoring findings.
+```
