@@ -1443,17 +1443,68 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
         *,
         size_predicate: HolePredicate | None = None,
     ) -> np.ndarray:
-        return _scipy_fill_labeled_holes(labels, size_predicate=size_predicate)
+        return self._scipy_fill_labeled_holes(labels, size_predicate=size_predicate)
 
     def fill_labeled_holes_below_size(
         self,
         labels: np.ndarray,
         maximum_hole_size: int,
     ) -> np.ndarray:
-        return _scipy_fill_labeled_holes(
+        return self._scipy_fill_labeled_holes(
             labels,
             size_predicate=lambda size, _is_foreground: size < maximum_hole_size,
         )
+
+    def _scipy_fill_labeled_holes(
+        self,
+        labels: np.ndarray,
+        *,
+        size_predicate: HolePredicate | None = None,
+    ) -> np.ndarray:
+        from scipy import ndimage as ndi
+
+        array = np.asarray(labels)
+        foreground = array != 0
+        background = ~foreground
+        if not background.any():
+            return array.copy()
+
+        structure = ndi.generate_binary_structure(array.ndim, 1)
+        background_labels, component_count = ndi.label(background, structure=structure)
+        if component_count == 0:
+            return array.copy()
+
+        border_ids = _border_component_ids(background_labels)
+        candidate_ids = set(range(1, component_count + 1)) - border_ids
+        if size_predicate is not None:
+            sizes = np.bincount(background_labels.ravel(), minlength=component_count + 1)
+            candidate_ids = {
+                component_id
+                for component_id in candidate_ids
+                if size_predicate(int(sizes[component_id]), False)
+            }
+        if not candidate_ids:
+            return array.copy()
+
+        fill_mask = np.isin(background_labels, tuple(sorted(candidate_ids)))
+        if array.dtype == bool or np.array_equal(
+            np.unique(array),
+            np.array([False, True]),
+        ):
+            output = foreground.copy()
+            output[fill_mask] = True
+            return output.astype(array.dtype, copy=False)
+
+        _, nearest_indices = ndi.distance_transform_edt(
+            background,
+            return_distances=True,
+            return_indices=True,
+        )
+        output = array.copy()
+        output[fill_mask] = array[
+            tuple(axis_indices[fill_mask] for axis_indices in nearest_indices)
+        ]
+        return output
 
     def restore_removed_declump_basins(
         self,
@@ -2435,54 +2486,6 @@ def _scipy_fix_labeled_result(values: np.ndarray) -> np.ndarray:
     if values.ndim == 0:
         return values.reshape(1)
     return values
-
-
-def _scipy_fill_labeled_holes(
-    labels: np.ndarray,
-    *,
-    size_predicate: HolePredicate | None = None,
-) -> np.ndarray:
-    from scipy import ndimage as ndi
-
-    array = np.asarray(labels)
-    foreground = array != 0
-    background = ~foreground
-    if not background.any():
-        return array.copy()
-
-    structure = ndi.generate_binary_structure(array.ndim, 1)
-    background_labels, component_count = ndi.label(background, structure=structure)
-    if component_count == 0:
-        return array.copy()
-
-    border_ids = _border_component_ids(background_labels)
-    candidate_ids = set(range(1, component_count + 1)) - border_ids
-    if size_predicate is not None:
-        sizes = np.bincount(background_labels.ravel(), minlength=component_count + 1)
-        candidate_ids = {
-            component_id
-            for component_id in candidate_ids
-            if size_predicate(int(sizes[component_id]), False)
-        }
-    if not candidate_ids:
-        return array.copy()
-
-    fill_mask = np.isin(background_labels, tuple(sorted(candidate_ids)))
-    if array.dtype == bool or np.array_equal(np.unique(array), np.array([False, True])):
-        output = foreground.copy()
-        output[fill_mask] = True
-        return output.astype(array.dtype, copy=False)
-
-    _, nearest_indices = ndi.distance_transform_edt(
-        background,
-        return_distances=True,
-        return_indices=True,
-    )
-    output = array.copy()
-    output[fill_mask] = array[
-        tuple(axis_indices[fill_mask] for axis_indices in nearest_indices)
-    ]
-    return output
 
 
 def _scipy_local_maxima_by_label(
