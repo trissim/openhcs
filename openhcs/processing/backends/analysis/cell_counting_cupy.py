@@ -50,6 +50,7 @@ from openhcs.processing.backends.analysis.cell_counting_common import (
     MultiChannelResult,
     ThresholdMethod,
     WatershedThresholdBackend,
+    WatershedThresholdMethodStrategy,
 )
 
 WATERSHED_THRESHOLD_BACKEND = WatershedThresholdBackend(
@@ -543,7 +544,10 @@ def _filter_by_area(
 
 def _detect_cells_watershed(image: cp.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
     """Detect cells using watershed segmentation."""
-    threshold_val = WATERSHED_THRESHOLD_BACKEND.threshold(
+    threshold_val = WatershedThresholdMethodStrategy.for_method_value(
+        params["watershed_threshold_method"],
+    ).threshold(
+        WATERSHED_THRESHOLD_BACKEND,
         image,
         params["watershed_threshold_method"],
     )

@@ -2,9 +2,14 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable
+from typing import Any, Callable, ClassVar
+
+from metaclass_registry import AutoRegisterMeta
+
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 
 
 class DetectionMethod(Enum):
@@ -127,9 +132,75 @@ class WatershedThresholdBackend:
     otsu: Callable[[Any], Any]
     li: Callable[[Any], Any]
 
-    def threshold(self, image: Any, method: str) -> Any:
-        if method == ThresholdMethod.OTSU.value:
-            return self.otsu(image)
-        if method == ThresholdMethod.LI.value:
-            return self.li(image)
-        return float(method)
+
+class WatershedThresholdMethodStrategy(
+    EnumKeyedStrategyMixin[ThresholdMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal watershed threshold method dispatcher shared by backends."""
+
+    __registry_key__ = "method_value"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+
+    method: ClassVar[ThresholdMethod]
+    method_value: ClassVar[str | None] = None
+
+    @classmethod
+    def for_method_value(
+        cls,
+        method: str,
+    ) -> "WatershedThresholdMethodStrategy":
+        try:
+            return cls.for_enum_member(ThresholdMethod(method))
+        except ValueError:
+            return ManualWatershedThresholdMethodStrategy()
+
+    @abstractmethod
+    def threshold(
+        self,
+        backend: WatershedThresholdBackend,
+        image: Any,
+        raw_method: str,
+    ) -> Any:
+        """Return the threshold value for one watershed method."""
+
+
+class OtsuWatershedThresholdMethodStrategy(WatershedThresholdMethodStrategy):
+    method = ThresholdMethod.OTSU
+    method_value = method.value
+
+    def threshold(
+        self,
+        backend: WatershedThresholdBackend,
+        image: Any,
+        raw_method: str,
+    ) -> Any:
+        return backend.otsu(image)
+
+
+class LiWatershedThresholdMethodStrategy(WatershedThresholdMethodStrategy):
+    method = ThresholdMethod.LI
+    method_value = method.value
+
+    def threshold(
+        self,
+        backend: WatershedThresholdBackend,
+        image: Any,
+        raw_method: str,
+    ) -> Any:
+        return backend.li(image)
+
+
+class ManualWatershedThresholdMethodStrategy(WatershedThresholdMethodStrategy):
+    method = ThresholdMethod.MANUAL
+    method_value = method.value
+
+    def threshold(
+        self,
+        backend: WatershedThresholdBackend,
+        image: Any,
+        raw_method: str,
+    ) -> float:
+        return float(raw_method)
