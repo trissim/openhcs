@@ -106,6 +106,16 @@ Checkpoint 7:
 - Focused advisor shows `PlateViewWidget` reduced from 25 methods to 17
   methods; remaining work is subdirectory/grid rendering extraction.
 
+Checkpoint 8:
+
+- Added `PlateSubdirectoryController` as the subdirectory selector state and
+  visibility authority for `PlateViewWidget`.
+- Kept mode handling as a small table dispatch so the widget no longer owns the
+  selector state machine, without introducing a fake strategy hierarchy for
+  three local UI states.
+- Focused Qt-offscreen plate tests pass, and focused advisor output for
+  `plate_view_widget.py` is clean.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:

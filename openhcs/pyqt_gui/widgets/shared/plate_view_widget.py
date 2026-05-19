@@ -271,6 +271,54 @@ class PlateSubdirectoryButtonRegistry:
         return first_subdir
 
 
+class PlateSubdirectoryController:
+    """Own plate-output subdirectory selector state and visibility."""
+
+    MODE_HANDLERS: dict[
+        PlateSubdirectoryMode,
+        Callable[["PlateSubdirectoryController", List[str]], None],
+    ] = {
+        PlateSubdirectoryMode.NONE: lambda controller, subdirs: (
+            controller._set_no_subdirectories()
+        ),
+        PlateSubdirectoryMode.SINGLE: lambda controller, subdirs: (
+            controller._set_single_subdirectory(subdirs[0])
+        ),
+        PlateSubdirectoryMode.MULTIPLE: lambda controller, subdirs: (
+            controller._set_multiple_subdirectories(subdirs)
+        ),
+    }
+
+    def __init__(self, view: "PlateViewWidget"):
+        self.view = view
+
+    def set_subdirectories(self, subdirs: List[str]) -> None:
+        self.view.subdirs = subdirs
+        self.view.subdir_button_registry.clear()
+
+        mode = PlateSubdirectoryMode.from_count(len(subdirs))
+        self.MODE_HANDLERS[mode](self, subdirs)
+
+    def _set_no_subdirectories(self) -> None:
+        self.view.subdir_frame.setVisible(False)
+        self.view.active_subdir = None
+
+    def _set_single_subdirectory(self, subdir: str) -> None:
+        self.view.subdir_frame.setVisible(False)
+        self.view.active_subdir = subdir
+
+    def _set_multiple_subdirectories(self, subdirs: List[str]) -> None:
+        self.view.subdir_frame.setVisible(True)
+
+        def select_subdirectory(subdir: str) -> None:
+            self.view.active_subdir = subdir
+
+        self.view.active_subdir = self.view.subdir_button_registry.populate(
+            subdirs,
+            select_subdirectory,
+        )
+
+
 class PlateWellButtonRegistry:
     """Own well-id to Qt button lookup for the plate grid."""
 
@@ -804,6 +852,7 @@ class PlateViewWidget(QWidget):
             None  # Reference to ColumnFilterWidget for 'well' column
         )
         self.selection_controller = PlateSelectionController(self)
+        self.subdirectory_controller = PlateSubdirectoryController(self)
 
         # UI components
         self.subdir_buttons = {}  # subdir_name -> QPushButton
@@ -923,43 +972,7 @@ class PlateViewWidget(QWidget):
         Args:
             subdirs: List of subdirectory names
         """
-        self.subdirs = subdirs
-        self.subdir_button_registry.clear()
-
-        self._apply_subdirectory_mode(
-            PlateSubdirectoryMode.from_count(len(subdirs)), subdirs
-        )
-
-    def _apply_subdirectory_mode(
-        self,
-        mode: PlateSubdirectoryMode,
-        subdirs: List[str],
-    ) -> None:
-        handlers = {
-            PlateSubdirectoryMode.NONE: PlateViewWidget._set_no_subdirectories,
-            PlateSubdirectoryMode.SINGLE: PlateViewWidget._set_single_subdirectory,
-            PlateSubdirectoryMode.MULTIPLE: PlateViewWidget._set_multiple_subdirectories,
-        }
-        handlers[mode](self, subdirs)
-
-    def _set_no_subdirectories(self, subdirs: List[str]) -> None:
-        self.subdir_frame.setVisible(False)
-        self.active_subdir = None
-
-    def _set_single_subdirectory(self, subdirs: List[str]) -> None:
-        self.subdir_frame.setVisible(False)
-        self.active_subdir = subdirs[0]
-
-    def _set_multiple_subdirectories(self, subdirs: List[str]) -> None:
-        self.subdir_frame.setVisible(True)
-
-        def select_subdirectory(subdir: str) -> None:
-            self.active_subdir = subdir
-
-        self.active_subdir = self.subdir_button_registry.populate(
-            subdirs,
-            select_subdirectory,
-        )
+        self.subdirectory_controller.set_subdirectories(subdirs)
 
     def set_available_wells(
         self,
