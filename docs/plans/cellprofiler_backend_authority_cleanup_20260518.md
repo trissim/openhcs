@@ -129,6 +129,16 @@ Checkpoint 9:
 - Verified the metaclass inheritance path with focused morphology registry
   tests; the morphology module is advisor-clean.
 
+Checkpoint 10:
+
+- Moved absorbed-function lookup/runtime metadata behavior behind
+  `CellProfilerFunctionCatalog`.
+- Preserved legacy module-level helper imports through an
+  `AutoRegisterMeta`-owned compatibility export family instead of a string
+  dispatch table or bare support-function surface.
+- Focused CellProfiler processing/import tests pass, and
+  `cellprofiler/__init__.py` is advisor-clean.
+
 Optional after behavior-adjacent changes:
 
 ```bash
