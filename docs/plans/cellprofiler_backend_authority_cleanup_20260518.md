@@ -111,6 +111,16 @@ Checkpoint 7:
 - Focused illumination median-smoothing tests pass, and advisor no longer
   reports the rank-median profiler log duplication.
 
+Checkpoint 8:
+
+- Moved CP masked grey erosion/dilation semantics into
+  `CellProfilerMaskedGreyMorphology`, so exact convex-hull smoothing no longer
+  shares hidden module-level helpers across native and Numba paths.
+- Collapsed duplicated Fenwick selection control flow behind the shared
+  `_fenwick_select_index` kernel while keeping dtype-specific Numba adapters.
+- Focused illumination tests pass, and the illumination module is
+  advisor-clean.
+
 Optional after behavior-adjacent changes:
 
 ```bash

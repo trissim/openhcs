@@ -1837,11 +1837,10 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
         if not np.any(valid_mask):
             return np.zeros(image.shape, dtype=np.float32)
 
-        eroded = _cellprofiler_masked_grey_erosion(
-            image,
-            valid_mask,
-            _convex_hull_smoothing_footprint(morphology),
+        grey_morphology = CellProfilerMaskedGreyMorphology.for_convex_hull(
+            morphology,
         )
+        eroded = grey_morphology.erode(image, valid_mask)
         valid_values = eroded[valid_mask]
         thresholds = np.linspace(
             float(np.min(valid_values)),
@@ -1854,11 +1853,7 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
             np.ascontiguousarray(valid_mask, dtype=np.bool_),
             np.ascontiguousarray(thresholds, dtype=np.float32),
         )
-        return _cellprofiler_masked_grey_dilation(
-            hull,
-            valid_mask,
-            _convex_hull_smoothing_footprint(morphology),
-        )
+        return grey_morphology.dilate(hull, valid_mask)
 
 
 class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
@@ -1913,67 +1908,85 @@ def _native_exact_level_set_convex_hull_smoothing(
     if not np.any(valid_mask):
         return np.zeros(image.shape, dtype=np.float32)
 
-    footprint = _convex_hull_smoothing_footprint(morphology)
-    eroded = _cellprofiler_masked_grey_erosion(image, valid_mask, footprint)
+    grey_morphology = CellProfilerMaskedGreyMorphology.for_convex_hull(
+        morphology,
+    )
+    eroded = grey_morphology.erode(image, valid_mask)
     valid_values = eroded[valid_mask]
     minimum = float(np.min(valid_values))
     maximum = float(np.max(valid_values))
     output = np.full(image.shape, minimum, dtype=np.float32)
     output[~valid_mask] = 0
     if maximum <= minimum:
-        return _cellprofiler_masked_grey_dilation(output, valid_mask, footprint)
+        return grey_morphology.dilate(output, valid_mask)
 
     for threshold in np.linspace(minimum, maximum, 256, dtype=np.float32)[1:]:
         level_mask = valid_mask & (eroded >= float(threshold))
         if not np.any(level_mask):
             continue
         output[morphology.convex_hull_image(level_mask) & valid_mask] = threshold
-    return _cellprofiler_masked_grey_dilation(output, valid_mask, footprint)
+    return grey_morphology.dilate(output, valid_mask)
 
 
-def _convex_hull_smoothing_footprint(morphology: object) -> np.ndarray:
-    """Return CP's radius-2 disk footprint for convex-hull smoothing."""
-    return np.asarray(morphology.disk_footprint(2), dtype=bool)
+@dataclass(frozen=True, slots=True)
+class CellProfilerMaskedGreyMorphology:
+    """CellProfiler masked grey morphology semantics for convex-hull smoothing."""
 
+    footprint: np.ndarray
 
-def _cellprofiler_masked_grey_erosion(
-    image: np.ndarray,
-    mask: np.ndarray,
-    footprint: np.ndarray,
-) -> np.ndarray:
-    """Match centrosome.cpmorphology.grey_erosion masking semantics."""
-    from scipy import ndimage as ndi
+    @classmethod
+    def for_convex_hull(
+        cls,
+        morphology: object,
+    ) -> "CellProfilerMaskedGreyMorphology":
+        """Build CP's radius-2 disk morphology for convex-hull smoothing."""
+        return cls(np.asarray(morphology.disk_footprint(2), dtype=bool))
 
-    radius = max(1, int(np.ceil(np.max(np.asarray(footprint.shape)) / 2 - 0.5)))
-    padded = np.ones(np.asarray(image.shape) + radius * 2, dtype=image.dtype)
-    core = tuple(slice(radius, -radius) for _axis in image.shape)
-    padded[core] = image
-    padded_core = padded[core]
-    padded_core[~mask] = 1
-    eroded = ndi.grey_erosion(padded, footprint=footprint)[core]
-    result = np.asarray(eroded, dtype=np.float32)
-    result[~mask] = image[~mask]
-    return result
+    def erode(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """Match centrosome.cpmorphology.grey_erosion masking semantics."""
+        from scipy import ndimage as ndi
 
+        radius = self._padding_radius()
+        padded = np.ones(np.asarray(image.shape) + radius * 2, dtype=image.dtype)
+        core = self._core_slice(image, radius)
+        padded[core] = image
+        padded_core = padded[core]
+        padded_core[~mask] = 1
+        eroded = ndi.grey_erosion(padded, footprint=self.footprint)[core]
+        return self._restore_masked_pixels(eroded, image, mask)
 
-def _cellprofiler_masked_grey_dilation(
-    image: np.ndarray,
-    mask: np.ndarray,
-    footprint: np.ndarray,
-) -> np.ndarray:
-    """Match centrosome.cpmorphology.grey_dilation masking semantics."""
-    from scipy import ndimage as ndi
+    def dilate(self, image: np.ndarray, mask: np.ndarray) -> np.ndarray:
+        """Match centrosome.cpmorphology.grey_dilation masking semantics."""
+        from scipy import ndimage as ndi
 
-    radius = max(1, int(np.ceil(np.max(np.asarray(footprint.shape)) / 2 - 0.5)))
-    padded = np.zeros(np.asarray(image.shape) + radius * 2, dtype=image.dtype)
-    core = tuple(slice(radius, -radius) for _axis in image.shape)
-    padded[core] = image
-    padded_core = padded[core]
-    padded_core[~mask] = 0
-    dilated = ndi.grey_dilation(padded, footprint=footprint)[core]
-    result = np.asarray(dilated, dtype=np.float32)
-    result[~mask] = image[~mask]
-    return result
+        radius = self._padding_radius()
+        padded = np.zeros(np.asarray(image.shape) + radius * 2, dtype=image.dtype)
+        core = self._core_slice(image, radius)
+        padded[core] = image
+        padded_core = padded[core]
+        padded_core[~mask] = 0
+        dilated = ndi.grey_dilation(padded, footprint=self.footprint)[core]
+        return self._restore_masked_pixels(dilated, image, mask)
+
+    def _padding_radius(self) -> int:
+        return max(
+            1,
+            int(np.ceil(np.max(np.asarray(self.footprint.shape)) / 2 - 0.5)),
+        )
+
+    @staticmethod
+    def _core_slice(image: np.ndarray, radius: int) -> tuple[slice, ...]:
+        return tuple(slice(radius, -radius) for _axis in image.shape)
+
+    @staticmethod
+    def _restore_masked_pixels(
+        morphed: np.ndarray,
+        image: np.ndarray,
+        mask: np.ndarray,
+    ) -> np.ndarray:
+        result = np.asarray(morphed, dtype=np.float32)
+        result[~mask] = image[~mask]
+        return result
 
 
 @njit(cache=True)
@@ -2495,11 +2508,25 @@ def _fenwick_add_code(tree: np.ndarray, code: int, delta: int) -> None:
 
 @njit(cache=True)
 def _fenwick_select_code(tree: np.ndarray, kth: int) -> int:
-    index = 0
+    return _fenwick_select_index(tree, kth, _highest_fenwick_bit(tree))
+
+
+@njit(cache=True)
+def _highest_fenwick_bit(tree: np.ndarray) -> int:
     bit = 1
     while bit < tree.shape[0]:
         bit <<= 1
-    bit >>= 1
+    return bit >> 1
+
+
+@njit(cache=True)
+def _fenwick_select_index(
+    tree: np.ndarray,
+    kth: int,
+    initial_bit: int,
+) -> int:
+    index = 0
+    bit = initial_bit
     target = kth + 1
     while bit != 0:
         next_index = index + bit
@@ -2582,16 +2609,7 @@ def _fenwick_add_uint16(tree: np.ndarray, value: np.uint16, delta: int) -> None:
 
 @njit(cache=True)
 def _fenwick_select_uint16(tree: np.ndarray, kth: int) -> np.uint16:
-    index = 0
-    bit = 32768
-    target = kth + 1
-    while bit != 0:
-        next_index = index + bit
-        if next_index < tree.shape[0] and tree[next_index] < target:
-            index = next_index
-            target -= tree[next_index]
-        bit >>= 1
-    return np.uint16(index)
+    return np.uint16(_fenwick_select_index(tree, kth, 32768))
 
 
 @njit(cache=True)
