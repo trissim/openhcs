@@ -50,6 +50,98 @@ INTERNAL_PARAMS = {"enabled", "slice_by_slice", "dtype_config"}
 MAX_FUNCTIONS_PER_LIBRARY = 30
 
 
+class LLMParameterDocumentationPolicy:
+    """Rules for exposing callable parameters to LLM prompt documentation."""
+
+    def __init__(self, internal_params: Set[str]):
+        self._internal_params = frozenset(internal_params)
+        self._variadic_parameter_kinds = frozenset(
+            {
+                inspect.Parameter.VAR_POSITIONAL,
+                inspect.Parameter.VAR_KEYWORD,
+            }
+        )
+
+    def should_document(
+        self,
+        name: str,
+        parameter: inspect.Parameter,
+        *,
+        skip_keyword_bag: bool = False,
+    ) -> bool:
+        if name in self._internal_params:
+            return False
+        if skip_keyword_bag and name == "kwargs":
+            return False
+        return parameter.kind not in self._variadic_parameter_kinds
+
+
+class LLMParameterFormatter:
+    """Formats Python signature details for prompt-safe display."""
+
+    def __init__(self, policy: LLMParameterDocumentationPolicy):
+        self._policy = policy
+
+    def signature(self, func: Callable, name: str) -> str:
+        try:
+            sig = inspect.signature(func)
+            params = []
+            for pname, param in sig.parameters.items():
+                if not self._policy.should_document(
+                    pname, param, skip_keyword_bag=True
+                ):
+                    continue
+
+                if param.default is inspect.Parameter.empty:
+                    params.append(pname)
+                else:
+                    params.append(f"{pname}={self._format_default(param.default)}")
+
+            return f"{name}({', '.join(params)})"
+        except Exception:
+            return f"{name}(...)"
+
+    def parameter_block(self, func: Callable) -> str:
+        try:
+            sig = inspect.signature(func)
+            lines = ["Parameters:"]
+
+            for pname, param in sig.parameters.items():
+                if not self._policy.should_document(pname, param):
+                    continue
+
+                lines.append(
+                    f"  - {pname}: {self._format_annotation(param.annotation)}"
+                    f"{self._format_default_suffix(param.default)}"
+                )
+
+            return "\n".join(lines) if len(lines) > 1 else ""
+        except Exception:
+            return ""
+
+    def _format_annotation(self, annotation: object) -> str:
+        if annotation is inspect.Parameter.empty:
+            return ""
+        if isinstance(annotation, type):
+            annotation_name = annotation.__name__
+            return annotation_name
+        return str(annotation)
+
+    def _format_default_suffix(self, default: object) -> str:
+        if default is inspect.Parameter.empty:
+            return ""
+        return f" = {self._format_default(default)}"
+
+    def _format_default(self, default: object) -> str:
+        if isinstance(default, Enum):
+            return f"{type(default).__name__}.{default.name}"
+        if default is None:
+            return "None"
+        if isinstance(default, str):
+            return f"'{default}'"
+        return repr(default)
+
+
 class LLMPipelineService:
     """
     Service for generating OpenHCS pipelines using LLM.
@@ -71,6 +163,9 @@ class LLMPipelineService:
         self.api_endpoint = api_endpoint
         self.base_url = self._derive_base_url(api_endpoint)
         self.model = model  # May be None, resolved on first test_connection
+        self._parameter_formatter = LLMParameterFormatter(
+            LLMParameterDocumentationPolicy(INTERNAL_PARAMS)
+        )
         # Build system prompts for different contexts
         self._system_prompts = {
             "pipeline": self._build_pipeline_system_prompt(),
@@ -183,6 +278,10 @@ class LLMPipelineService:
 
 IMPORTANT: Only use functions from the "Available Functions" section below. Do NOT invent function names.
 
+# OpenHCS Architecture Principles
+- Prefer explicit FunctionStep declarations over hidden runtime side effects.
+- Use OpenHCS enums and registry functions exactly as documented below.
+
 # OpenHCS Pipeline API
 
 ## Core Imports (always include these)
@@ -270,11 +369,17 @@ Generate COMPLETE, RUNNABLE Python code. Include ALL imports at the top.
 === CRITICAL RULES ===
 1. Include ALL imports (dataclass, typing, numpy, etc.)
 2. First parameter MUST be named 'image' (3D array: (C, Y, X) a.k.a. (Z, Y, X))
-3. Input/Output backend types are declared by the memory decorator (e.g. @numpy / @cupy / @pyclesperanto). Your function must accept the decorator's declared input type and return the declared output type.
+3. Input/Output backend types are declared by the memory decorator
+   (e.g. @numpy / @cupy / @pyclesperanto). Your function must accept the
+   decorator's declared input type and return the declared output type.
 4. DO NOT write FunctionStep or pipeline code - just the function
 5. Output ONLY Python code, no explanations
-6. Do NOT manually convert between array backends inside the function (no cp.asnumpy(), no cle.pull(), etc.). OpenHCS handles cross-step conversions.
-7. The decorator adds keyword-only args like slice_by_slice and dtype_conversion. dtype_conversion defaults to preserving the input dtype for the main output.
+6. Do NOT manually convert between array backends inside the function
+   (no cp.asnumpy(), no cle.pull(), etc.). OpenHCS handles cross-step
+   conversions.
+7. The decorator adds keyword-only args like slice_by_slice and
+   dtype_conversion. dtype_conversion defaults to preserving the input dtype
+   for the main output.
 
 {imports_section}
 
@@ -640,6 +745,7 @@ MaterializationSpec(CsvOptions(...), JsonOptions(...))"""
             import pyclesperanto as cle  # type: ignore[import-not-found]
 
             # Get commonly used functions that actually exist
+            available_functions = frozenset(dir(cle))
             key_funcs = []
             for name in [
                 "gaussian_blur",
@@ -661,7 +767,7 @@ MaterializationSpec(CsvOptions(...), JsonOptions(...))"""
                 "maximum_z_projection",
                 "mean_z_projection",
             ]:
-                if hasattr(cle, name):
+                if name in available_functions:
                     key_funcs.append(f"cle.{name}()")
             return "\n".join(key_funcs)
         except ImportError:
@@ -772,79 +878,11 @@ Signature: `{sig_str}`{desc}
 
     def _format_signature(self, func: Callable, name: str) -> str:
         """Format function signature, filtering internal params."""
-        try:
-            sig = inspect.signature(func)
-            params = []
-            for pname, param in sig.parameters.items():
-                # Skip internal/wrapper parameters
-                if pname in INTERNAL_PARAMS or pname == "kwargs":
-                    continue
-                # Skip *args, **kwargs
-                if param.kind in (
-                    inspect.Parameter.VAR_POSITIONAL,
-                    inspect.Parameter.VAR_KEYWORD,
-                ):
-                    continue
-
-                if param.default is inspect.Parameter.empty:
-                    params.append(pname)
-                else:
-                    default = param.default
-                    # Format enum defaults nicely
-                    if isinstance(default, Enum):
-                        default_str = f"{type(default).__name__}.{default.name}"
-                    elif default is None:
-                        default_str = "None"
-                    elif isinstance(default, str):
-                        default_str = f"'{default}'"
-                    else:
-                        default_str = repr(default)
-                    params.append(f"{pname}={default_str}")
-
-            return f"{name}({', '.join(params)})"
-        except Exception:
-            return f"{name}(...)"
+        return self._parameter_formatter.signature(func, name)
 
     def _format_parameters(self, func: Callable) -> str:
         """Format parameter documentation for core functions."""
-        try:
-            sig = inspect.signature(func)
-            lines = ["Parameters:"]
-
-            for pname, param in sig.parameters.items():
-                if pname in INTERNAL_PARAMS:
-                    continue
-                if param.kind in (
-                    inspect.Parameter.VAR_POSITIONAL,
-                    inspect.Parameter.VAR_KEYWORD,
-                ):
-                    continue
-
-                # Get type annotation
-                type_str = ""
-                if param.annotation is not inspect.Parameter.empty:
-                    ann = param.annotation
-                    if hasattr(ann, "__name__"):
-                        type_str = ann.__name__
-                    elif hasattr(ann, "__origin__"):
-                        type_str = str(ann)
-                    else:
-                        type_str = str(ann)
-
-                # Get default
-                default_str = ""
-                if param.default is not inspect.Parameter.empty:
-                    default = param.default
-                    if isinstance(default, Enum):
-                        default_str = f" = {type(default).__name__}.{default.name}"
-                    else:
-                        default_str = f" = {repr(default)}"
-
-                lines.append(f"  - {pname}: {type_str}{default_str}")
-
-            return "\n".join(lines) if len(lines) > 1 else ""
-        except Exception:
-            return ""
+        return self._parameter_formatter.parameter_block(func)
 
     def _get_enum_documentation(self) -> str:
         """Build documentation for relevant enums."""
@@ -957,8 +995,12 @@ Signature: `{sig_str}`{desc}
             logger.info(
                 f"Sending request to LLM: {self.api_endpoint} (code_type={code_type})"
             )
-            response = requests.post(self.api_endpoint, json=payload, timeout=60)
-            response.raise_for_status()
+            try:
+                response = requests.post(self.api_endpoint, json=payload, timeout=60)
+                response.raise_for_status()
+            except Exception as e:
+                logger.error(f"LLM request failed: {e}")
+                raise Exception(f"Failed to connect to LLM service: {e}") from e
 
             result = response.json()
             generated_code = result.get("response", "")
@@ -969,9 +1011,6 @@ Signature: `{sig_str}`{desc}
             logger.info(f"Successfully generated {code_type} code")
             return generated_code
 
-        except requests.exceptions.RequestException as e:
-            logger.error(f"LLM request failed: {e}")
-            raise Exception(f"Failed to connect to LLM service: {e}")
         except Exception as e:
             logger.error(f"Code generation failed: {e}")
             raise
