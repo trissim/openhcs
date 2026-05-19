@@ -13,8 +13,10 @@ Doctrinal Clauses:
 from __future__ import annotations
 
 import logging
+from abc import abstractmethod
 from typing import Any, List, Optional, Tuple
 
+from metaclass_registry import AutoRegisterMeta
 import numpy as np
 from skimage import exposure, filters
 from skimage import morphology as morph
@@ -22,8 +24,47 @@ from skimage import transform as trans
 
 # Use direct import from core memory decorators to avoid circular imports
 from openhcs.core.memory import numpy as numpy_func
+from openhcs.processing.backends.processors.method_axes import (
+    RegisteredProcessorMethodStrategy,
+)
 
 logger = logging.getLogger(__name__)
+
+
+class NumpySpatialBinStrategy(
+    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+):
+    @abstractmethod
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        raise NotImplementedError
+
+
+class NumpyMeanSpatialBinStrategy(NumpySpatialBinStrategy):
+    method = "mean"
+
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        return np.mean(array, axis=axis)
+
+
+class NumpySumSpatialBinStrategy(NumpySpatialBinStrategy):
+    method = "sum"
+
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        return np.sum(array, axis=axis)
+
+
+class NumpyMaxSpatialBinStrategy(NumpySpatialBinStrategy):
+    method = "max"
+
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        return np.max(array, axis=axis)
+
+
+class NumpyMinSpatialBinStrategy(NumpySpatialBinStrategy):
+    method = "min"
+
+    def apply(self, array: np.ndarray, axis: tuple[int, ...]) -> np.ndarray:
+        return np.min(array, axis=axis)
 
 
 @numpy_func
@@ -382,6 +423,28 @@ def mean_projection(stack: np.ndarray) -> np.ndarray:
     return projection_2d.reshape(1, projection_2d.shape[0], projection_2d.shape[1])
 
 
+class NumpyStackProjectionStrategy(
+    RegisteredProcessorMethodStrategy, metaclass=AutoRegisterMeta
+):
+    @abstractmethod
+    def apply(self, stack: np.ndarray) -> np.ndarray:
+        raise NotImplementedError
+
+
+class NumpyMaxStackProjectionStrategy(NumpyStackProjectionStrategy):
+    method = "max_projection"
+
+    def apply(self, stack: np.ndarray) -> np.ndarray:
+        return max_projection(stack)
+
+
+class NumpyMeanStackProjectionStrategy(NumpyStackProjectionStrategy):
+    method = "mean_projection"
+
+    def apply(self, stack: np.ndarray) -> np.ndarray:
+        return mean_projection(stack)
+
+
 @numpy_func
 def create_orthogonal_projections(
     stack: np.ndarray, projections: Tuple[str, ...] = ("xy", "xz", "yz")
@@ -461,8 +524,6 @@ def spatial_bin_2d(
 
     if bin_size <= 0:
         raise ValueError("bin_size must be positive")
-    if method not in ["mean", "sum", "max", "min"]:
-        raise ValueError("method must be one of: mean, sum, max, min")
 
     z_slices, height, width = stack.shape
 
@@ -485,15 +546,7 @@ def spatial_bin_2d(
         z_slices, new_height, bin_size, new_width, bin_size
     )
 
-    # Apply binning operation
-    if method == "mean":
-        result = np.mean(reshaped, axis=(2, 4))
-    elif method == "sum":
-        result = np.sum(reshaped, axis=(2, 4))
-    elif method == "max":
-        result = np.max(reshaped, axis=(2, 4))
-    elif method == "min":
-        result = np.min(reshaped, axis=(2, 4))
+    result = NumpySpatialBinStrategy.for_method(method).apply(reshaped, axis=(2, 4))
 
     return result.astype(stack.dtype)
 
@@ -519,8 +572,6 @@ def spatial_bin_3d(
 
     if bin_size <= 0:
         raise ValueError("bin_size must be positive")
-    if method not in ["mean", "sum", "max", "min"]:
-        raise ValueError("method must be one of: mean, sum, max, min")
 
     depth, height, width = stack.shape
 
@@ -545,15 +596,7 @@ def spatial_bin_3d(
         new_depth, bin_size, new_height, bin_size, new_width, bin_size
     )
 
-    # Apply binning operation across the three bin_size dimensions
-    if method == "mean":
-        result = np.mean(reshaped, axis=(1, 3, 5))
-    elif method == "sum":
-        result = np.sum(reshaped, axis=(1, 3, 5))
-    elif method == "max":
-        result = np.max(reshaped, axis=(1, 3, 5))
-    elif method == "min":
-        result = np.min(reshaped, axis=(1, 3, 5))
+    result = NumpySpatialBinStrategy.for_method(method).apply(reshaped, axis=(1, 3, 5))
 
     return result.astype(stack.dtype)
 
@@ -631,16 +674,7 @@ def create_projection(stack: np.ndarray, method: str = "max_projection") -> np.n
     """
     _validate_3d_array(stack)
 
-    if method == "max_projection":
-        return max_projection(stack)
-
-    if method == "mean_projection":
-        return mean_projection(stack)
-
-    # FAIL FAST: No fallback projection methods
-    raise ValueError(
-        f"Unknown projection method: {method}. Valid methods: max_projection, mean_projection"
-    )
+    return NumpyStackProjectionStrategy.for_method(method).apply(stack)
 
 
 @numpy_func
