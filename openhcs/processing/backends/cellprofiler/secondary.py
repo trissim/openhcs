@@ -71,6 +71,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
 )
+from openhcs.processing.backends.cellprofiler.enum_attributes import (
+    CellProfilerEnumAttributeMixin,
+)
 from openhcs.processing.backends.cellprofiler.watershed import (
     cellprofiler_legacy_watershed,
 )
@@ -79,20 +82,16 @@ logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
-class SecondaryMethod(Enum):
+class SecondaryMethod(CellProfilerEnumAttributeMixin, Enum):
     """CellProfiler IdentifySecondaryObjects segmentation method."""
+
+    __cellprofiler_attribute_names__ = ("requires_threshold",)
 
     PROPAGATION = ("propagation", True)
     WATERSHED_GRADIENT = ("watershed_gradient", True)
     WATERSHED_IMAGE = ("watershed_image", True)
     DISTANCE_N = ("distance_n", False)
     DISTANCE_B = ("distance_b", True)
-
-    def __new__(cls, value: str, requires_threshold: bool):
-        method = object.__new__(cls)
-        method._value_ = value
-        method.requires_threshold = requires_threshold
-        return method
 
 
 @dataclass(frozen=True, slots=True)

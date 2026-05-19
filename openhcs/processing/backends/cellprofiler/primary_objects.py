@@ -54,6 +54,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
 )
+from openhcs.processing.backends.cellprofiler.enum_attributes import (
+    CellProfilerEnumAttributeMixin,
+)
 
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
@@ -72,15 +75,11 @@ class WatershedMethod(Enum):
     NONE = "none"
 
 
-class ExcessObjectHandling(Enum):
+class ExcessObjectHandling(CellProfilerEnumAttributeMixin, Enum):
+    __cellprofiler_attribute_names__ = ("erase_excess",)
+
     CONTINUE = ("Continue", False)
     ERASE = ("Erase", True)
-
-    def __new__(cls, value: str, erase_excess: bool):
-        option = object.__new__(cls)
-        option._value_ = value
-        option.erase_excess = erase_excess
-        return option
 
 
 @dataclass

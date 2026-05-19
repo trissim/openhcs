@@ -139,6 +139,16 @@ Checkpoint 10:
 - Focused CellProfiler processing/import tests pass, and
   `cellprofiler/__init__.py` is advisor-clean.
 
+Checkpoint 11:
+
+- Added `CellProfilerEnumAttributeMixin` as the shared authority for
+  tuple-valued CP enum member metadata.
+- Moved repeated `__new__` metadata attachment from primary-object,
+  secondary-object, morphology fill-hole, and threshold method enums into that
+  mixin.
+- Focused CP enum/import tests pass, and the affected modules no longer report
+  repeated enum `__new__` skeleton findings.
+
 Optional after behavior-adjacent changes:
 
 ```bash

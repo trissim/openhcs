@@ -37,6 +37,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.enum_attributes import (
+    CellProfilerEnumAttributeMixin,
+)
 from openhcs.processing.backends.cellprofiler.perf_fixtures import (
     capture_array_fixture,
     capture_enabled,
@@ -73,8 +76,13 @@ class CellProfilerAveragingMethod(Enum):
     MODE = "Mode"
 
 
-class CellProfilerThresholdMethod(Enum):
+class CellProfilerThresholdMethod(CellProfilerEnumAttributeMixin, Enum):
     """Closed CP threshold methods with global-threshold source semantics."""
+
+    __cellprofiler_attribute_names__ = (
+        "_uses_raw_global_threshold_source",
+        "_uses_raw_global_threshold_source_when_log_transformed",
+    )
 
     OTSU = ("Otsu", True, False)
     MINIMUM_CROSS_ENTROPY = ("Minimum Cross-Entropy", True, False)
@@ -87,20 +95,6 @@ class CellProfilerThresholdMethod(Enum):
     LI = ("Li", True, False)
     TRIANGLE = ("Triangle", False, False)
     ISODATA = ("Isodata", False, False)
-
-    def __new__(
-        cls,
-        label: str,
-        uses_raw_global_threshold_source: bool,
-        uses_raw_global_threshold_source_when_log_transformed: bool,
-    ) -> "CellProfilerThresholdMethod":
-        member = object.__new__(cls)
-        member._value_ = label
-        member._uses_raw_global_threshold_source = uses_raw_global_threshold_source
-        member._uses_raw_global_threshold_source_when_log_transformed = (
-            uses_raw_global_threshold_source_when_log_transformed
-        )
-        return member
 
     def global_threshold_selection(
         self,

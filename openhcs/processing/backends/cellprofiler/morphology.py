@@ -64,6 +64,9 @@ from openhcs.interop.cellprofiler.mask_objects_settings import (
     MaskObjectsOverlapHandling,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
+from openhcs.processing.backends.cellprofiler.enum_attributes import (
+    CellProfilerEnumAttributeMixin,
+)
 from openhcs.processing.backends.cellprofiler.relationships import (
     ObjectRelationshipBackendStrategy,
 )
@@ -1074,24 +1077,17 @@ class CellProfilerDeclumpMethod(Enum):
     SHAPE = "shape"
 
 
-class FillHolesOption(Enum):
+class FillHolesOption(CellProfilerEnumAttributeMixin, Enum):
     """CellProfiler IdentifyPrimaryObjects hole-fill phase policy."""
+
+    __cellprofiler_attribute_names__ = (
+        "fill_before_declump",
+        "fill_after_declump",
+    )
 
     NEVER = ("never", False, False)
     AFTER_BOTH = ("after_both", True, True)
     AFTER_DECLUMP = ("after_declump", False, True)
-
-    def __new__(
-        cls,
-        value: str,
-        fill_before_declump: bool,
-        fill_after_declump: bool,
-    ):
-        option = object.__new__(cls)
-        option._value_ = value
-        option.fill_before_declump = fill_before_declump
-        option.fill_after_declump = fill_after_declump
-        return option
 
     def before_declump_requested(self, *, use_advanced_settings: bool) -> bool:
         """Return whether CP fills binary foreground holes before declumping."""
