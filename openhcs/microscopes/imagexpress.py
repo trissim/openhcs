@@ -6,7 +6,6 @@ for ImageXpress microscopes.
 """
 
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Type
@@ -71,8 +70,6 @@ class ImageXpressHandler(MicroscopeHandler):
         """
         return [Backend.DISK]
 
-
-
     # Uses default workspace initialization from base class
 
     def _build_virtual_mapping(self, plate_path: Path, filemanager: FileManager) -> Path:
@@ -129,71 +126,6 @@ class ImageXpressHandler(MicroscopeHandler):
             mapping_dict=mapping_dict,
             plate_path=plate_path
         )
-
-    def _process_files_in_directory(self, directory: Path, fm: FileManager):
-        """
-        Process files directly in a directory to ensure complete metadata.
-
-        This handles files that are not in Z-step folders but may be missing
-        channel or z-index information. Similar to how Z-step processing adds
-        z_index, this adds default values for missing components.
-
-        Args:
-            directory: Path to directory containing image files
-            fm: FileManager instance for file operations
-        """
-        # List all image files in the directory
-        img_files = fm.list_files(directory, Backend.DISK.value)
-
-        for img_file in img_files:
-            # Skip if not a file
-            if not fm.is_file(img_file, Backend.DISK.value):
-                continue
-
-            # Get the filename
-            img_file_name = img_file.name if isinstance(img_file, Path) else os.path.basename(str(img_file))
-
-            # Parse the original filename to extract components
-            components = self.parser.parse_filename(img_file_name)
-
-            if not components:
-                continue
-
-            # Check if we need to add missing metadata
-            needs_rebuild = False
-
-            # Add default channel if missing (like we do for z_index in Z-step processing)
-            if components['channel'] is None:
-                components['channel'] = 1
-                needs_rebuild = True
-                logger.debug("Added default channel=1 to file without channel info: %s", img_file_name)
-
-            # Add default z_index if missing (for 2D images)
-            if components['z_index'] is None:
-                components['z_index'] = 1
-                needs_rebuild = True
-                logger.debug("Added default z_index=1 to file without z_index info: %s", img_file_name)
-
-            # Only rebuild filename if we added missing components
-            if needs_rebuild:
-                # Construct new filename with complete metadata
-                new_name = self.parser.construct_filename(**components)
-
-                # Only rename if the filename actually changed
-                if new_name != img_file_name:
-                    new_path = directory / new_name
-
-                    try:
-                        # Pass the backend parameter as required by Clause 306
-                        # Use replace_symlinks=True to allow overwriting existing symlinks
-                        fm.move(img_file, new_path, Backend.DISK.value, replace_symlinks=True)
-                        logger.debug("Rebuilt filename with complete metadata: %s -> %s", img_file_name, new_name)
-                    except FileExistsError as e:
-                        logger.error("Cannot rename %s to %s: %s", img_file, new_path, e)
-                        raise
-                    except Exception as e:
-                        logger.error("Error renaming %s to %s: %s", img_file, new_path, e)
-                        raise
 
     def _flatten_timepoints(self, directory: Path, fm: FileManager, mapping_dict: Dict[str, str], plate_path: Path):
         """
