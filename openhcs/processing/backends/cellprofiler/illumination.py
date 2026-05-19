@@ -60,17 +60,12 @@ class IlluminationMask:
         if self.mask is None:
             return None
         mask_array = np.asarray(self.mask, dtype=bool)
-        if mask_array.shape == self.pixel_data.shape:
-            return mask_array
-        if mask_array.shape == self.pixel_data.shape[-mask_array.ndim :]:
-            return mask_array
-        if (
-            self.pixel_data.ndim == 2
-            and mask_array.ndim == 3
-            and mask_array.shape[0] == 1
-        ):
-            return mask_array[0]
-        return mask_array
+        return IlluminationMaskNormalizationStrategy.for_request(
+            IlluminationMaskNormalizationRequest(
+                mask_array=mask_array,
+                pixel_data=self.pixel_data,
+            )
+        ).normalize(mask_array)
 
     def for_stack_slice(self, slice_index: int) -> np.ndarray | None:
         mask = self.normalized
@@ -89,6 +84,108 @@ class IlluminationMask:
         if illumination.ndim == 2 and mask.ndim >= 3:
             return np.any(mask, axis=0)
         return mask
+
+
+@dataclass(frozen=True, slots=True)
+class IlluminationMaskNormalizationRequest:
+    """Shape facts needed to normalize an illumination mask."""
+
+    mask_array: np.ndarray
+    pixel_data: np.ndarray
+
+
+class IlluminationMaskNormalizationStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal matcher for closed illumination mask shape normalization cases."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
+    priority: ClassVar[int] = 100
+
+    @classmethod
+    def strategies(cls) -> tuple["IlluminationMaskNormalizationStrategy", ...]:
+        return tuple(
+            strategy_type()
+            for strategy_type in sorted(
+                cls.__registry__.values(),
+                key=lambda candidate: candidate.priority,
+            )
+        )
+
+    @classmethod
+    def for_request(
+        cls,
+        request: IlluminationMaskNormalizationRequest,
+    ) -> "IlluminationMaskNormalizationStrategy":
+        for strategy in cls.strategies():
+            if strategy.matches(request):
+                return strategy
+        return IlluminationMaskAsProvidedNormalizationStrategy()
+
+    @abstractmethod
+    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
+        """Return whether this strategy owns the request shape."""
+
+    @abstractmethod
+    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
+        """Return the normalized mask."""
+
+
+class ExactIlluminationMaskNormalizationStrategy(IlluminationMaskNormalizationStrategy):
+    """Mask already matches the illumination pixel data."""
+
+    registry_key = "exact"
+    priority = 0
+
+    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
+        return request.mask_array.shape == request.pixel_data.shape
+
+    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
+        return mask_array
+
+
+class SpatialIlluminationMaskNormalizationStrategy(IlluminationMaskNormalizationStrategy):
+    """Mask matches the trailing spatial domain of a stack-like image."""
+
+    registry_key = "spatial"
+    priority = 10
+
+    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
+        return request.mask_array.shape == request.pixel_data.shape[-request.mask_array.ndim :]
+
+    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
+        return mask_array
+
+
+class SingletonPlaneIlluminationMaskNormalizationStrategy(IlluminationMaskNormalizationStrategy):
+    """Single-plane stack mask used for a two-dimensional illumination image."""
+
+    registry_key = "singleton_plane"
+    priority = 20
+
+    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
+        return (
+            request.pixel_data.ndim == 2
+            and request.mask_array.ndim == 3
+            and request.mask_array.shape[0] == 1
+        )
+
+    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
+        return mask_array[0]
+
+
+class IlluminationMaskAsProvidedNormalizationStrategy(IlluminationMaskNormalizationStrategy):
+    """Fallback for legacy CellProfiler-compatible mask broadcasting behavior."""
+
+    registry_key = "as_provided"
+    priority = 30
+
+    def matches(self, request: IlluminationMaskNormalizationRequest) -> bool:
+        return True
+
+    def normalize(self, mask_array: np.ndarray) -> np.ndarray:
+        return mask_array
 
 
 @dataclass(frozen=True, slots=True)
