@@ -50,6 +50,8 @@ from openhcs.processing.backends.analysis.cell_counting_common import (
     CellCountResult,
     ColocalizationMethod,
     DetectionMethod,
+    DistanceColocalizationMetrics,
+    IntensityColocalizationMetrics,
     MultiChannelResult,
     ThresholdMethod,
     WatershedThresholdBackend,
@@ -836,11 +838,11 @@ def _colocalization_distance_based(
         avg_distance = 0
         max_distance_found = 0
 
-    metrics = {
-        "average_colocalization_distance": float(avg_distance),
-        "max_colocalization_distance": float(max_distance_found),
-        "distance_threshold_used": max_distance
-    }
+    metrics = DistanceColocalizationMetrics(
+        average_colocalization_distance=float(avg_distance),
+        max_colocalization_distance=float(max_distance_found),
+        distance_threshold_used=max_distance,
+    )
 
     return MultiChannelResult(
         slice_index=chan_1_result.slice_index,
@@ -851,7 +853,7 @@ def _colocalization_distance_based(
         colocalization_percentage=colocalization_percentage,
         chan_1_only_count=chan_1_only,
         chan_2_only_count=chan_2_only,
-        colocalization_metrics=metrics,
+        colocalization_metrics=metrics.as_dict(),
         overlap_positions=overlap_positions
     )
 
@@ -937,10 +939,9 @@ def _colocalization_intensity_based(
     total_cells = len(pos_1) + len(pos_2)
     colocalization_percentage = (2 * colocalized_count / total_cells * 100) if total_cells > 0 else 0
 
-    metrics = {
-        "intensity_threshold_used": intensity_threshold,
-        "correlation_method": "threshold_based"
-    }
+    metrics = IntensityColocalizationMetrics(
+        intensity_threshold_used=intensity_threshold,
+    )
 
     return MultiChannelResult(
         slice_index=chan_1_result.slice_index,
@@ -951,7 +952,7 @@ def _colocalization_intensity_based(
         colocalization_percentage=colocalization_percentage,
         chan_1_only_count=len(pos_1) - colocalized_count,
         chan_2_only_count=len(pos_2) - colocalized_count,
-        colocalization_metrics=metrics,
+        colocalization_metrics=metrics.as_dict(),
         overlap_positions=overlap_positions
     )
 
