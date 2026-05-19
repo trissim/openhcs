@@ -5242,6 +5242,10 @@ class MergeObjectsStrategy(SplitOrMergeOperationStrategy):
     operation = SplitOrMergeOperation.MERGE
 
     def execute(self, request: SplitOrMergeRequest) -> np.ndarray:
+        if request.operation is not SplitOrMergeOperation.MERGE:
+            raise ValueError(
+                f"MergeObjectsStrategy cannot execute {request.operation!r}."
+            )
         return SplitOrMergeMergeMethodStrategy.for_method(
             request.merge_method,
         ).merge(request)
