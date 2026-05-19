@@ -1143,3 +1143,30 @@ python -m py_compile openhcs/processing/backends/cellprofiler/projection.py open
 PYTHONPATH=/home/ts/code/projects/nominal-refactor-advisor timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/projection.py openhcs/processing/backends/cellprofiler/skeleton.py openhcs/processing/backends/cellprofiler/median_filter.py
 # No refactoring findings.
 ```
+
+Checkpoint 4:
+
+- Replaced manual `__all__` lists in CP `classification.py`,
+  `object_overlap.py`, and `primary_objects.py` with
+  `public_names_from_objects(...)`.
+- Added `ClassificationResult.empty(...)` for repeated empty ClassifyObjects
+  result rows.
+- Replaced `classification_threshold` enum branching with explicit
+  `ClassificationThresholdStrategy` subclasses keyed by
+  `ClassificationThresholdMethod`.
+
+Verification:
+
+```bash
+python -m py_compile openhcs/processing/backends/cellprofiler/classification.py openhcs/processing/backends/cellprofiler/object_overlap.py openhcs/processing/backends/cellprofiler/primary_objects.py
+# clean
+
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py -q -k 'classif or overlap or primary'
+# 13 passed, 136 deselected
+
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 402 passed, 5 warnings
+
+PYTHONPATH=/home/ts/code/projects/nominal-refactor-advisor timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/classification.py openhcs/processing/backends/cellprofiler/object_overlap.py openhcs/processing/backends/cellprofiler/primary_objects.py
+# Remaining focused finding is the deeper classification Numba anti-unified block.
+```

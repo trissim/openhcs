@@ -8,6 +8,7 @@ import scipy.ndimage
 import scipy.sparse
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.materialization import csv_materializer
 
@@ -456,12 +457,12 @@ def measure_object_overlap(
     return output_image, measurements
 
 
-__all__ = [
-    "DecimationMethod",
-    "ImageOverlapMeasurement",
-    "OverlapMeasurements",
-    "compute_image_earth_movers_distance",
-    "decimate_overlap_points",
-    "measureimageoverlap",
-    "measure_object_overlap",
-]
+__all__ = public_names_from_objects(
+    DecimationMethod,
+    ImageOverlapMeasurement,
+    OverlapMeasurements,
+    compute_image_earth_movers_distance,
+    decimate_overlap_points,
+    measureimageoverlap,
+    measure_object_overlap,
+)

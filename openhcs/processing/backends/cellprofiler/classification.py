@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
 import json
+from typing import ClassVar
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -14,6 +15,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -57,6 +59,61 @@ class ClassificationBinChoice(Enum):
     CUSTOM = "custom"
 
 
+class ClassificationThresholdStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Threshold calculation strategy for ClassifyObjects measurement vectors."""
+
+    __registry_key__ = "method"
+    __skip_if_no_key__ = True
+    method: ClassVar[ClassificationThresholdMethod | None] = None
+
+    @classmethod
+    def for_method(
+        cls,
+        method: ClassificationThresholdMethod,
+    ) -> "ClassificationThresholdStrategy":
+        return cls.__registry__[method]()
+
+    def threshold(self, values: np.ndarray, custom_value: float) -> float:
+        valid_values = values[~np.isnan(values)]
+        if len(valid_values) == 0:
+            return custom_value
+        return self._threshold(valid_values, custom_value)
+
+    @abstractmethod
+    def _threshold(self, valid_values: np.ndarray, custom_value: float) -> float:
+        """Return a threshold for finite measurement values."""
+
+
+class MeanClassificationThresholdStrategy(ClassificationThresholdStrategy):
+    """Mean-based ClassifyObjects threshold."""
+
+    method = ClassificationThresholdMethod.MEAN
+
+    def _threshold(self, valid_values: np.ndarray, custom_value: float) -> float:
+        del custom_value
+        return float(np.mean(valid_values))
+
+
+class MedianClassificationThresholdStrategy(ClassificationThresholdStrategy):
+    """Median-based ClassifyObjects threshold."""
+
+    method = ClassificationThresholdMethod.MEDIAN
+
+    def _threshold(self, valid_values: np.ndarray, custom_value: float) -> float:
+        del custom_value
+        return float(np.median(valid_values))
+
+
+class CustomClassificationThresholdStrategy(ClassificationThresholdStrategy):
+    """User-specified ClassifyObjects threshold."""
+
+    method = ClassificationThresholdMethod.CUSTOM
+
+    def _threshold(self, valid_values: np.ndarray, custom_value: float) -> float:
+        del valid_values
+        return custom_value
+
+
 @dataclass(frozen=True, slots=True)
 class ClassificationResult:
     """Results from object classification."""
@@ -66,6 +123,16 @@ class ClassificationResult:
     bin_counts: str
     bin_percentages: str
     object_classes: str = "{}"
+
+    @classmethod
+    def empty(cls, *, total_objects: int = 0) -> "ClassificationResult":
+        """Return an empty classification result row."""
+        return cls(
+            slice_index=0,
+            total_objects=total_objects,
+            bin_counts=json.dumps({}),
+            bin_percentages=json.dumps({}),
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,12 +159,7 @@ class SingleMeasurementClassificationRequest:
         unique_labels = backend.positive_label_ids(labels)
         num_objects = len(unique_labels)
         if num_objects == 0:
-            return labels, ClassificationResult(
-                slice_index=0,
-                total_objects=0,
-                bin_counts=json.dumps({}),
-                bin_percentages=json.dumps({}),
-            )
+            return labels, ClassificationResult.empty()
 
         if self.measurement_values is None:
             values = backend.mean_intensity_values(labels, image, unique_labels)
@@ -188,12 +250,7 @@ class TwoMeasurementClassificationRequest:
         unique_labels = backend.positive_label_ids(labels)
         num_objects = len(unique_labels)
         if num_objects == 0:
-            return labels, ClassificationResult(
-                slice_index=0,
-                total_objects=0,
-                bin_counts=json.dumps({}),
-                bin_percentages=json.dumps({}),
-            )
+            return labels, ClassificationResult.empty()
 
         if self.measurement1_values is None:
             values1 = backend.mean_intensity_values(labels, image, unique_labels)
@@ -254,23 +311,13 @@ class IntensityBinsClassificationRequest:
         unique_labels = backend.positive_label_ids(labels)
         num_objects = len(unique_labels)
         if num_objects == 0:
-            return labels, ClassificationResult(
-                slice_index=0,
-                total_objects=0,
-                bin_counts=json.dumps({}),
-                bin_percentages=json.dumps({}),
-            )
+            return labels, ClassificationResult.empty()
 
         values = backend.mean_intensity_values(labels, image, unique_labels)
         valid_mask = ~np.isnan(values)
         valid_values = values[valid_mask]
         if len(valid_values) == 0:
-            return labels, ClassificationResult(
-                slice_index=0,
-                total_objects=num_objects,
-                bin_counts=json.dumps({}),
-                bin_percentages=json.dumps({}),
-            )
+            return labels, ClassificationResult.empty(total_objects=num_objects)
 
         if self.use_percentiles:
             percentiles = np.linspace(0, 100, self.num_bins + 1)
@@ -309,16 +356,11 @@ def classification_threshold(
     custom_value: float,
 ) -> float:
     """Return the threshold for one ClassifyObjects measurement vector."""
-    valid_values = values[~np.isnan(values)]
-    if len(valid_values) == 0:
-        return custom_value
-    if method == ClassificationThresholdMethod.MEAN:
-        return float(np.mean(valid_values))
-    if method == ClassificationThresholdMethod.MEDIAN:
-        return float(np.median(valid_values))
-    if method == ClassificationThresholdMethod.CUSTOM:
-        return custom_value
-    raise ValueError(f"Unsupported classification threshold method: {method!r}")
+    method = coerce_cellprofiler_enum(ClassificationThresholdMethod, method)
+    return ClassificationThresholdStrategy.for_method(method).threshold(
+        values,
+        custom_value,
+    )
 
 
 def classification_result_from_bins(
@@ -655,21 +697,21 @@ def _apply_object_bins_numba(
     return output
 
 
-__all__ = [
-    "ClassificationBinChoice",
-    "ClassificationMethod",
-    "ClassificationResult",
-    "ClassificationThresholdMethod",
+__all__ = public_names_from_objects(
+    ClassificationBinChoice,
+    ClassificationMethod,
+    ClassificationResult,
+    ClassificationThresholdMethod,
     "CLASSIFICATION_RESULT_FIELDS",
-    "IntensityBinsClassificationRequest",
-    "NumbaNumpyObjectClassificationBackendStrategy",
-    "ObjectClassificationBackendStrategy",
-    "SingleMeasurementClassificationRequest",
-    "TwoMeasurementClassificationRequest",
-    "classify_objects_by_intensity_bins",
-    "classify_objects_single_measurement",
-    "classify_objects_two_measurements",
-    "classification_result_from_bins",
-    "classification_threshold",
-    "object_classification_backend",
-]
+    IntensityBinsClassificationRequest,
+    NumbaNumpyObjectClassificationBackendStrategy,
+    ObjectClassificationBackendStrategy,
+    SingleMeasurementClassificationRequest,
+    TwoMeasurementClassificationRequest,
+    classify_objects_by_intensity_bins,
+    classify_objects_single_measurement,
+    classify_objects_two_measurements,
+    classification_result_from_bins,
+    classification_threshold,
+    object_classification_backend,
+)

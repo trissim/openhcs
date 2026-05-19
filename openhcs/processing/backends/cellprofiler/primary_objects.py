@@ -7,6 +7,7 @@ from typing import Tuple
 from dataclasses import dataclass
 from enum import Enum
 from openhcs.core.memory import numpy
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
     image_payload_data,
@@ -629,11 +630,11 @@ def _prepare_identify_primary_objects() -> None:
 identify_primary_objects.__openhcs_prepare__ = _prepare_identify_primary_objects
 
 
-__all__ = [
-    "ExcessObjectHandling",
-    "FillHolesOption",
-    "PrimaryObjectStats",
-    "UnclumpMethod",
-    "WatershedMethod",
-    "identify_primary_objects",
-]
+__all__ = public_names_from_objects(
+    ExcessObjectHandling,
+    FillHolesOption,
+    PrimaryObjectStats,
+    UnclumpMethod,
+    WatershedMethod,
+    identify_primary_objects,
+)

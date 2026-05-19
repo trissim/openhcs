@@ -63,6 +63,20 @@ Checkpoint 3:
 - Focused advisor output for the three touched CP export modules is clean, and
   the CP compatibility gate passes.
 
+Checkpoint 4:
+
+- Replaced manual CP backend `__all__` lists in `classification.py`,
+  `object_overlap.py`, and `primary_objects.py` with
+  `public_names_from_objects(...)`.
+- Added `ClassificationResult.empty(...)` as the empty-result builder authority
+  for repeated ClassifyObjects no-data rows.
+- Replaced ClassifyObjects threshold enum branching with explicit
+  `ClassificationThresholdStrategy` subclasses keyed by
+  `ClassificationThresholdMethod`.
+- Focused advisor for these three modules is reduced to the deeper Numba
+  anti-unified block in `classification.py`, and the CP compatibility gate
+  passes.
+
 ## Completion Criteria
 
 - Manual export surfaces for selected active packages derive from explicit
