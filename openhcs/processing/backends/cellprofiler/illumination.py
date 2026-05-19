@@ -397,13 +397,6 @@ class IlluminationCorrectionInputStack:
             return mask_array[input_index : input_index + 1]
         return mask_array
 
-    def output_metadata(self, pair_index: int):
-        return (
-            image_payload_metadata(self.image)
-            .for_channel(self.input_index(pair_index))
-            .without_unit_interval_intensity_scale()
-        )
-
 
 class IlluminationCorrection:
     """Load-bearing CorrectIlluminationApply execution policy."""
@@ -438,7 +431,11 @@ class IlluminationCorrection:
         return image_payload_with_context(
             output_pixels[np.newaxis, ...].astype(np.float32, copy=False),
             mask=source.input_mask(pair_index),
-            metadata=source.output_metadata(pair_index),
+            metadata=(
+                image_payload_metadata(source.image)
+                .for_channel(source.input_index(pair_index))
+                .without_unit_interval_intensity_scale()
+            ),
         )
 
 
@@ -1321,6 +1318,24 @@ class RankMedianSmoothingBackendStrategy(
     __registry_key__ = "backend_key"
     __skip_if_no_key__ = True
 
+    @staticmethod
+    def disk_rows(footprint: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+        """Collapse a dense disk footprint into per-row horizontal radii."""
+        center_y = footprint.shape[0] // 2
+        center_x = footprint.shape[1] // 2
+        rows: list[int] = []
+        radii: list[int] = []
+        for y in range(footprint.shape[0]):
+            xs = np.flatnonzero(footprint[y])
+            if xs.size == 0:
+                continue
+            rows.append(y - center_y)
+            radii.append(int(np.max(np.abs(xs - center_x))))
+        return (
+            np.asarray(rows, dtype=np.int64),
+            np.asarray(radii, dtype=np.int64),
+        )
+
     @abstractmethod
     def smooth_background_plane(
         self,
@@ -1349,7 +1364,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
     def prepare_backend(self) -> None:
         """Compile rank-median numba kernels during compiler preparation."""
         footprint = np.ones((3, 3), dtype=np.bool_)
-        row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+        row_offsets_y, row_radii_x = self.disk_rows(footprint)
         scaled = np.arange(16, dtype=np.uint16).reshape((4, 4))
         code_image = np.arange(16, dtype=np.int32).reshape((4, 4))
         mask = np.ones(scaled.shape, dtype=np.bool_)
@@ -1394,7 +1409,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
                 f"mask {np.asarray(mask).shape!r} for image {image.shape!r}."
         )
         footprint = np.asarray(morphology.disk_footprint(radius), dtype=np.bool_)
-        row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+        row_offsets_y, row_radii_x = self.disk_rows(footprint)
         scaled = (image * 65535.0).astype(np.uint16)
         mask_array = (
             np.ones(image.shape, dtype=np.bool_)
@@ -1482,7 +1497,7 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
         """Compile exact compact-domain rank-median kernels during preparation."""
         code_image = np.arange(16, dtype=np.uint8).reshape((4, 4))
         footprint = np.ones((3, 3), dtype=np.bool_)
-        row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+        row_offsets_y, row_radii_x = self.disk_rows(footprint)
         _rank_median_small_codes_2d_sliding_histogram_numba(
             code_image,
             row_offsets_y,
@@ -1507,9 +1522,9 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
             raise ValueError(
                 "Rank-median illumination mask must match the image shape; got "
                 f"mask {mask_array.shape!r} for image {image.shape!r}."
-            )
+        )
         footprint = np.asarray(morphology.disk_footprint(radius), dtype=np.bool_)
-        row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+        row_offsets_y, row_radii_x = self.disk_rows(footprint)
         scaled = (image * 65535.0).astype(np.uint16)
         effective_scaled = scaled if mask_array is None else scaled.copy()
         if mask_array is not None:
@@ -1550,7 +1565,9 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
         )
         code_image = inverse.reshape(effective_scaled.shape).astype(code_dtype)
         if code_dtype == np.uint8:
-            row_offsets_y, row_radii_x = _rank_median_disk_rows(footprint)
+            row_offsets_y, row_radii_x = RankMedianSmoothingBackendStrategy.disk_rows(
+                footprint
+            )
             result_codes = _rank_median_small_codes_2d_sliding_histogram_numba(
                 np.ascontiguousarray(code_image),
                 row_offsets_y,
@@ -2194,26 +2211,6 @@ def _paint_line_hull(
             cross = dx * (query_col2 - y0) - dy * (query_row2 - x0)
             if cross == 0:
                 output[y, x] = threshold
-
-
-def _rank_median_disk_rows(
-    footprint: np.ndarray,
-) -> tuple[np.ndarray, np.ndarray]:
-    """Collapse a dense disk footprint into per-row horizontal radii."""
-    center_y = footprint.shape[0] // 2
-    center_x = footprint.shape[1] // 2
-    rows: list[int] = []
-    radii: list[int] = []
-    for y in range(footprint.shape[0]):
-        xs = np.flatnonzero(footprint[y])
-        if xs.size == 0:
-            continue
-        rows.append(y - center_y)
-        radii.append(int(np.max(np.abs(xs - center_x))))
-    return (
-        np.asarray(rows, dtype=np.int64),
-        np.asarray(radii, dtype=np.int64),
-    )
 
 
 @njit(cache=True)
