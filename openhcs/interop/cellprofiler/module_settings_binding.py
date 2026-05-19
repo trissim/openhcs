@@ -3192,59 +3192,44 @@ class _GrayToColorIndexedSchemeBindingStrategy(GrayToColorSchemeBindingStrategy)
         return BoundModuleSettings(kwargs)
 
 
-@dataclass(frozen=True, slots=True)
-class GrayToColorIndexedSchemeBindingDeclaration:
-    """Declaration for indexed GrayToColor channel/weight schemes."""
+class GrayToColorRgbBindingStrategy(_GrayToColorIndexedSchemeBindingStrategy):
+    """Bind RGB GrayToColor channel and weight settings."""
 
-    class_name: str
-    scheme: GrayToColorScheme
-    image_settings: tuple[str, ...]
-    image_parameters: tuple[str, ...]
-    weight_settings: tuple[str, ...]
-    weight_parameters: tuple[str, ...]
-
-    def materialize(self) -> type[GrayToColorSchemeBindingStrategy]:
-        return type(
-            self.class_name,
-            (_GrayToColorIndexedSchemeBindingStrategy,),
-            {
-                "__module__": __name__,
-                "scheme_literal": self.scheme.value,
-                "image_settings": tuple(
-                    zip(self.image_settings, self.image_parameters, strict=True)
-                ),
-                "weight_settings": tuple(
-                    zip(self.weight_settings, self.weight_parameters, strict=True)
-                ),
-            },
+    scheme = GrayToColorScheme.RGB
+    image_settings = tuple(
+        zip(
+            GRAY_TO_COLOR_RGB_IMAGE_SETTINGS,
+            ("red_channel", "green_channel", "blue_channel"),
+            strict=True,
         )
+    )
+    weight_settings = tuple(
+        zip(
+            GRAY_TO_COLOR_RGB_WEIGHT_SETTINGS,
+            ("red_weight", "green_weight", "blue_weight"),
+            strict=True,
+        )
+    )
 
 
-GRAY_TO_COLOR_INDEXED_SCHEME_BINDING_DECLARATIONS = (
-    GrayToColorIndexedSchemeBindingDeclaration(
-        "GrayToColorRgbBindingStrategy",
-        GrayToColorScheme.RGB,
-        GRAY_TO_COLOR_RGB_IMAGE_SETTINGS,
-        ("red_channel", "green_channel", "blue_channel"),
-        GRAY_TO_COLOR_RGB_WEIGHT_SETTINGS,
-        ("red_weight", "green_weight", "blue_weight"),
-    ),
-    GrayToColorIndexedSchemeBindingDeclaration(
-        "GrayToColorCmykBindingStrategy",
-        GrayToColorScheme.CMYK,
-        GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
-        ("cyan_channel", "magenta_channel", "yellow_channel", "gray_channel"),
-        GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
-        ("cyan_weight", "magenta_weight", "yellow_weight", "gray_weight"),
-    ),
-)
+class GrayToColorCmykBindingStrategy(_GrayToColorIndexedSchemeBindingStrategy):
+    """Bind CMYK GrayToColor channel and weight settings."""
 
-globals().update(
-    {
-        declaration.class_name: declaration.materialize()
-        for declaration in GRAY_TO_COLOR_INDEXED_SCHEME_BINDING_DECLARATIONS
-    }
-)
+    scheme = GrayToColorScheme.CMYK
+    image_settings = tuple(
+        zip(
+            GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
+            ("cyan_channel", "magenta_channel", "yellow_channel", "gray_channel"),
+            strict=True,
+        )
+    )
+    weight_settings = tuple(
+        zip(
+            GRAY_TO_COLOR_CMYK_WEIGHT_SETTINGS,
+            ("cyan_weight", "magenta_weight", "yellow_weight", "gray_weight"),
+            strict=True,
+        )
+    )
 
 
 class _GrayToColorStackFamilyBindingStrategy(GrayToColorSchemeBindingStrategy):
@@ -3279,41 +3264,16 @@ class _GrayToColorStackFamilyBindingStrategy(GrayToColorSchemeBindingStrategy):
         return BoundModuleSettings(kwargs)
 
 
-@dataclass(frozen=True, slots=True)
-class GrayToColorStackSchemeBindingDeclaration:
-    """Declaration for stack-family GrayToColor schemes."""
+class GrayToColorStackBindingStrategy(_GrayToColorStackFamilyBindingStrategy):
+    """Bind Stack GrayToColor repeated channel settings."""
 
-    class_name: str
-    scheme: GrayToColorScheme
-
-    def materialize(self) -> type[GrayToColorSchemeBindingStrategy]:
-        return type(
-            self.class_name,
-            (_GrayToColorStackFamilyBindingStrategy,),
-            {
-                "__module__": __name__,
-                "scheme_literal": self.scheme.value,
-            },
-        )
+    scheme = GrayToColorScheme.STACK
 
 
-GRAY_TO_COLOR_STACK_SCHEME_BINDING_DECLARATIONS = (
-    GrayToColorStackSchemeBindingDeclaration(
-        "GrayToColorStackBindingStrategy",
-        GrayToColorScheme.STACK,
-    ),
-    GrayToColorStackSchemeBindingDeclaration(
-        "GrayToColorCompositeBindingStrategy",
-        GrayToColorScheme.COMPOSITE,
-    ),
-)
+class GrayToColorCompositeBindingStrategy(_GrayToColorStackFamilyBindingStrategy):
+    """Bind Composite GrayToColor repeated channel settings."""
 
-globals().update(
-    {
-        declaration.class_name: declaration.materialize()
-        for declaration in GRAY_TO_COLOR_STACK_SCHEME_BINDING_DECLARATIONS
-    }
-)
+    scheme = GrayToColorScheme.COMPOSITE
 
 
 def _translate_bound_kwargs(
