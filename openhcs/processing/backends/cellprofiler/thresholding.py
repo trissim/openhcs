@@ -46,6 +46,7 @@ from openhcs.processing.materialization import csv_materializer
 
 
 CELLPROFILER_BASIC_THRESHOLD_SMOOTHING_SCALE = 1.3488
+THRESHOLD_BACKEND_REGISTRY_KEY = "backend_key"
 SCIPY_CONSTANT_BOUNDARY_MODE = "constant"
 CELLPROFILER_THRESHOLD_SMOOTHING_TRUNCATE_SIGMAS = 4.0
 CELLPROFILER_THRESHOLD_SMOOTHING_HALF_MASS_FACTOR = 0.6744
@@ -467,7 +468,7 @@ class ThresholdSmoothingBackendStrategy(
 ):
     """Memory-backend-specific threshold smoothing."""
 
-    __registry_key__ = "backend_key"
+    __registry_key__ = THRESHOLD_BACKEND_REGISTRY_KEY
     __skip_if_no_key__ = True
 
     @abstractmethod
@@ -598,7 +599,7 @@ class ThresholdDiagnosticsBackendStrategy(
 ):
     """Memory-backend-specific threshold diagnostic measurements."""
 
-    __registry_key__ = "backend_key"
+    __registry_key__ = THRESHOLD_BACKEND_REGISTRY_KEY
     __skip_if_no_key__ = True
 
     def diagnostics(
@@ -1016,7 +1017,7 @@ class ThresholdPrimitiveBackendStrategy(
 ):
     """Small threshold helper primitives supplied by an explicit provider."""
 
-    __registry_key__ = "backend_key"
+    __registry_key__ = THRESHOLD_BACKEND_REGISTRY_KEY
     __skip_if_no_key__ = True
 
     @abstractmethod
