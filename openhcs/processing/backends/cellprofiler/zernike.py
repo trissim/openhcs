@@ -12,6 +12,7 @@ import os
 from pathlib import Path
 import pickle
 import time
+from typing import TypeAlias
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -22,6 +23,7 @@ from openhcs.core.runtime_semantics import (
     ObjectIntensityZernikeMeasurementRows,
     ObjectMeasurementValueRow,
 )
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -38,6 +40,15 @@ logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
+ZernikeMomentIndexes: TypeAlias = tuple[tuple[int, int], ...]
+ShapeZernikeMoments: TypeAlias = tuple[ZernikeMomentIndexes, np.ndarray]
+IntensityZernikeMoments: TypeAlias = tuple[
+    ZernikeMomentIndexes,
+    np.ndarray,
+    np.ndarray,
+]
+
+
 @dataclass(frozen=True)
 class _ZernikeLabelGeometry:
     centers: np.ndarray
@@ -49,16 +60,26 @@ class _ZernikeLabelGeometry:
 
 
 @dataclass(frozen=True)
+class ZernikeIntensityDebugArrayTrace:
+    """Content identity for one array role in an intensity-Zernike debug trace."""
+
+    shape: tuple[int, ...]
+    dtype: str
+    digest: bytes
+
+    @classmethod
+    def from_array(cls, array: np.ndarray) -> "ZernikeIntensityDebugArrayTrace":
+        dtype, shape, digest = _array_content_key(array)
+        return cls(shape=shape, dtype=dtype, digest=digest)
+
+
+@dataclass(frozen=True)
 class ZernikeIntensityDebugTrace:
     """Object-indexed Zernike state emitted only when debug tracing is enabled."""
 
     backend_provider: CellProfilerBackendProvider
-    image_shape: tuple[int, ...]
-    image_dtype: str
-    image_digest: bytes
-    labels_shape: tuple[int, ...]
-    labels_dtype: str
-    labels_digest: bytes
+    image: ZernikeIntensityDebugArrayTrace
+    labels: ZernikeIntensityDebugArrayTrace
     max_order: int
     object_ids: np.ndarray
     zernike_numbers: tuple[tuple[int, int], ...]
@@ -92,16 +113,10 @@ class ZernikeIntensityDebugTrace:
         magnitudes: np.ndarray,
         phases: np.ndarray,
     ) -> "ZernikeIntensityDebugTrace":
-        image_key = _array_content_key(image)
-        labels_key = _array_content_key(labels)
         return cls(
             backend_provider=backend_provider,
-            image_shape=tuple(int(value) for value in image.shape),
-            image_dtype=image_key[0],
-            image_digest=image_key[2],
-            labels_shape=tuple(int(value) for value in labels.shape),
-            labels_dtype=labels_key[0],
-            labels_digest=labels_key[2],
+            image=ZernikeIntensityDebugArrayTrace.from_array(image),
+            labels=ZernikeIntensityDebugArrayTrace.from_array(labels),
             max_order=int(max_order),
             object_ids=np.ascontiguousarray(object_ids, dtype=np.int32),
             zernike_numbers=zernike_numbers,
@@ -125,8 +140,8 @@ class ZernikeIntensityDebugTrace:
         filename = (
             f"zernike_intensity_{os.getpid()}_{time.time_ns()}_"
             f"{self.backend_provider.value}_{self.object_ids.size}_"
-            f"{self.max_order}_{self.image_digest.hex()}_"
-            f"{self.labels_digest.hex()}.pkl"
+            f"{self.max_order}_{self.image.digest.hex()}_"
+            f"{self.labels.digest.hex()}.pkl"
         )
         path = trace_dir / filename
         with path.open("wb") as handle:
@@ -191,7 +206,7 @@ class ShapeZernikeBackendStrategy(
         measured_labels: np.ndarray,
         *,
         max_order: int,
-    ) -> tuple[tuple[tuple[int, int], ...], np.ndarray]:
+    ) -> ShapeZernikeMoments:
         """Return Zernike indexes and dense-label moment values."""
 
     @abstractmethod
@@ -202,7 +217,7 @@ class ShapeZernikeBackendStrategy(
         measured_labels: np.ndarray,
         *,
         max_order: int,
-    ) -> tuple[tuple[tuple[int, int], ...], np.ndarray, np.ndarray]:
+    ) -> IntensityZernikeMoments:
         """Return intensity-weighted Zernike magnitudes and phases."""
 
 
@@ -223,7 +238,7 @@ class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         measured_labels: np.ndarray,
         *,
         max_order: int,
-    ) -> tuple[tuple[tuple[int, int], ...], np.ndarray]:
+    ) -> ShapeZernikeMoments:
         import centrosome.zernike
 
         labels_array = np.asarray(labels)
@@ -249,7 +264,7 @@ class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         measured_labels: np.ndarray,
         *,
         max_order: int,
-    ) -> tuple[tuple[tuple[int, int], ...], np.ndarray, np.ndarray]:
+    ) -> IntensityZernikeMoments:
         import centrosome.cpmorphology
         import centrosome.zernike
         from scipy import ndimage as ndi
@@ -365,7 +380,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         measured_labels: np.ndarray,
         *,
         max_order: int,
-    ) -> tuple[tuple[tuple[int, int], ...], np.ndarray]:
+    ) -> ShapeZernikeMoments:
         labels_array = np.asarray(labels, dtype=np.int32)
         if labels_array.size == 0 or int(labels_array.max()) <= 0:
             zernike_numbers_array = _zernike_indexes_array(int(max_order))
@@ -442,7 +457,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         measured_labels: np.ndarray,
         *,
         max_order: int,
-    ) -> tuple[tuple[tuple[int, int], ...], np.ndarray, np.ndarray]:
+    ) -> IntensityZernikeMoments:
         image_array = np.asarray(image, dtype=np.float64)
         labels_array = np.asarray(labels, dtype=np.int32)
         measured_label_ids = np.asarray(measured_labels, dtype=np.int32)
@@ -546,7 +561,7 @@ def shape_zernike_moments(
     *,
     max_order: int,
     backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> tuple[tuple[tuple[int, int], ...], np.ndarray]:
+) -> ShapeZernikeMoments:
     """Return shape Zernike moments through the selected backend."""
     return ShapeZernikeBackendStrategy.for_memory_type(
         MemoryType.NUMPY,
@@ -565,7 +580,7 @@ def intensity_zernike_moments(
     *,
     max_order: int,
     backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> tuple[tuple[tuple[int, int], ...], np.ndarray, np.ndarray]:
+) -> IntensityZernikeMoments:
     """Return intensity-weighted Zernike moments through the selected backend."""
     return ShapeZernikeBackendStrategy.for_memory_type(
         MemoryType.NUMPY,
@@ -671,15 +686,16 @@ def _zernike_indexes_array(max_order: int) -> np.ndarray:
     return np.asarray(indexes, dtype=np.int64)
 
 
-__all__ = [
-    "CentrosomeNumpyShapeZernikeBackendStrategy",
-    "IntensityZernikeMeasurementRowsRequest",
-    "LegacyFastNumpyShapeZernikeBackendStrategy",
-    "ShapeZernikeBackendStrategy",
-    "ZernikeIntensityDebugTrace",
-    "intensity_zernike_moments",
-    "shape_zernike_moments",
-]
+__all__ = public_names_from_objects(
+    CentrosomeNumpyShapeZernikeBackendStrategy,
+    IntensityZernikeMeasurementRowsRequest,
+    LegacyFastNumpyShapeZernikeBackendStrategy,
+    ShapeZernikeBackendStrategy,
+    ZernikeIntensityDebugArrayTrace,
+    ZernikeIntensityDebugTrace,
+    intensity_zernike_moments,
+    shape_zernike_moments,
+)
 
 
 @njit(cache=True)
