@@ -10914,11 +10914,11 @@ class CellProfilerFunctionContractExecutor:
             function=function_name,
         )
         call_started_at = time.perf_counter()
-        result = _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
+        result = _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
             func,
             (projected_image,),
             projected_kwargs,
-        )
+        ).call()
         _log_module_profile(
             "cp_full_stack_raw_call",
             time.perf_counter() - call_started_at,
@@ -10940,7 +10940,7 @@ class CellProfilerFunctionContractExecutor:
         slice_results = tuple(
             Pure2DSliceIndexProjector.project(
                 SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(
-                    _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
+                    _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
                         func,
                         (slice_payload,),
                         aligned_image_stack_kwargs(
@@ -10949,7 +10949,7 @@ class CellProfilerFunctionContractExecutor:
                             len(image.slices),
                             reference_payload=slice_payload,
                         ),
-                    )
+                    ).call()
                 ),
                 slice_index,
             )
@@ -10982,11 +10982,11 @@ class CellProfilerFunctionContractExecutor:
         function_name = CallableContract.from_callable(func).function_name
         image_data = image_payload_data(image)
         if not isinstance(image_data, np.ndarray):
-            return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
+            return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
                 func,
                 (image,),
                 kwargs,
-            )
+            ).call()
 
         prepare_started_at = time.perf_counter()
         memory_type = detect_memory_type(image_data)
@@ -10998,11 +10998,11 @@ class CellProfilerFunctionContractExecutor:
                 or Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs)
             )
             if slice_count is None:
-                return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
+                return _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
                     func,
                     (image,),
                     kwargs,
-                )
+                ).call()
             slices_2d = tuple(image for _ in range(slice_count))
         elif is_color_image_slice(image_data):
             slice_count = Pure2DSliceCountPolicy.slice_count_from_kwargs(kwargs)
@@ -11094,11 +11094,11 @@ class CellProfilerFunctionContractExecutor:
         image: Any,
         **kwargs: Any,
     ) -> Any:
-        result_2d = _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
+        result_2d = _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
             func,
             (image,),
             kwargs,
-        )
+        ).call()
         result_data = image_payload_data(result_2d)
         result_mask = image_payload_mask(result_2d)
         result_metadata = image_payload_metadata(result_2d)
@@ -11139,11 +11139,11 @@ def _execute_pure_2d_slice(
 ) -> Any:
     sliced_kwargs = _slice_pure_2d_kwargs(kwargs, slice_index, slice_count)
     return Pure2DSliceIndexProjector.project(
-        _CELLPROFILER_RUNTIME_CALLABLE_POLICY.call(
+        _CELLPROFILER_RUNTIME_CALLABLE_POLICY.invocation(
             func,
             (slice_2d,),
             sliced_kwargs,
-        ),
+        ).call(),
         slice_index,
     )
 
