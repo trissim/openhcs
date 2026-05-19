@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar
+from typing import Any, ClassVar, NamedTuple
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -86,6 +86,28 @@ TrackingObjectFeatureValues = dict[str, Any]
 TrackingObjectValueTable = dict[TrackingObjectFrameKey, TrackingObjectFeatureValues]
 
 
+@dataclass(frozen=True, slots=True)
+class TrackingFrameRequest:
+    """Shared per-frame TrackObjects inputs."""
+
+    current_labels: np.ndarray
+    old_labels: np.ndarray | None
+    old_object_numbers: np.ndarray
+    max_object_number: int
+    pixel_radius: int
+
+
+class TrackingKernelFrame(NamedTuple):
+    """Numba-compatible dense-label state shared by tracking kernels."""
+
+    current_labels: np.ndarray
+    old_labels: np.ndarray
+    old_object_numbers: np.ndarray
+    max_object_number: int
+    current_count: int
+    old_count: int
+
+
 class ObjectTrackingBackendStrategy(
     CellProfilerBackendStrategyMixin,
     ABC,
@@ -103,21 +125,14 @@ class ObjectTrackingBackendStrategy(
     @abstractmethod
     def track_by_overlap(
         self,
-        current_labels: np.ndarray,
-        old_labels: np.ndarray | None,
-        old_object_numbers: np.ndarray,
-        max_object_number: int,
+        request: TrackingFrameRequest,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         """Assign track labels using maximum object overlap."""
 
     @abstractmethod
     def track_by_distance(
         self,
-        current_labels: np.ndarray,
-        old_labels: np.ndarray | None,
-        old_object_numbers: np.ndarray,
-        max_object_number: int,
-        pixel_radius: int,
+        request: TrackingFrameRequest,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         """Assign track labels using nearest centroid within a radius."""
 
@@ -138,8 +153,9 @@ class NumbaNumpyObjectTrackingBackendStrategy(ObjectTrackingBackendStrategy):
         previous = np.array([[0, 1], [1, 0]], dtype=np.int32)
         old_numbers = np.array([0, 1], dtype=np.int32)
         self.label_centers(current)
-        self.track_by_overlap(current, previous, old_numbers, 1)
-        self.track_by_distance(current, previous, old_numbers, 1, 5)
+        request = TrackingFrameRequest(current, previous, old_numbers, 1, 5)
+        self.track_by_overlap(request)
+        self.track_by_distance(request)
 
     def label_centers(self, labels: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         labels_array = np.asarray(labels)
@@ -154,56 +170,73 @@ class NumbaNumpyObjectTrackingBackendStrategy(ObjectTrackingBackendStrategy):
 
     def track_by_overlap(
         self,
-        current_labels: np.ndarray,
-        old_labels: np.ndarray | None,
-        old_object_numbers: np.ndarray,
-        max_object_number: int,
+        request: TrackingFrameRequest,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-        current = np.asarray(current_labels)
+        current = np.asarray(request.current_labels)
         current_count = int(current.max()) if current.size else 0
-        if old_labels is None or current_count == 0:
-            return _new_track_labels(current_count, max_object_number)
+        if request.old_labels is None or current_count == 0:
+            return self._new_track_labels(current_count, request.max_object_number)
 
-        old = np.asarray(old_labels)
+        old = np.asarray(request.old_labels)
         old_count = int(old.max()) if old.size else 0
         if old_count == 0:
-            return _new_track_labels(current_count, max_object_number)
+            return self._new_track_labels(current_count, request.max_object_number)
 
         return _track_by_overlap_numba(
-            np.ascontiguousarray(current),
-            np.ascontiguousarray(old),
-            np.asarray(old_object_numbers, dtype=np.int64),
-            int(max_object_number),
-            current_count,
-            old_count,
+            TrackingKernelFrame(
+                current_labels=np.ascontiguousarray(current),
+                old_labels=np.ascontiguousarray(old),
+                old_object_numbers=np.asarray(request.old_object_numbers, dtype=np.int64),
+                max_object_number=int(request.max_object_number),
+                current_count=current_count,
+                old_count=old_count,
+            )
         )
 
     def track_by_distance(
         self,
-        current_labels: np.ndarray,
-        old_labels: np.ndarray | None,
-        old_object_numbers: np.ndarray,
-        max_object_number: int,
-        pixel_radius: int,
+        request: TrackingFrameRequest,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-        current = np.asarray(current_labels)
+        current = np.asarray(request.current_labels)
         current_count = int(current.max()) if current.size else 0
-        if old_labels is None or current_count == 0:
-            return _new_track_labels(current_count, max_object_number)
+        if request.old_labels is None or current_count == 0:
+            return self._new_track_labels(current_count, request.max_object_number)
 
-        old = np.asarray(old_labels)
+        old = np.asarray(request.old_labels)
         old_count = int(old.max()) if old.size else 0
         if old_count == 0:
-            return _new_track_labels(current_count, max_object_number)
+            return self._new_track_labels(current_count, request.max_object_number)
 
         return _track_by_distance_numba(
-            np.ascontiguousarray(current),
-            np.ascontiguousarray(old),
-            np.asarray(old_object_numbers, dtype=np.int64),
-            int(max_object_number),
-            current_count,
-            old_count,
-            int(pixel_radius),
+            TrackingKernelFrame(
+                current_labels=np.ascontiguousarray(current),
+                old_labels=np.ascontiguousarray(old),
+                old_object_numbers=np.asarray(request.old_object_numbers, dtype=np.int64),
+                max_object_number=int(request.max_object_number),
+                current_count=current_count,
+                old_count=old_count,
+            ),
+            int(request.pixel_radius),
+        )
+
+    def _new_track_labels(
+        self,
+        object_count: int,
+        max_object_number: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
+        if object_count == 0:
+            return (
+                np.array([], dtype=int),
+                np.zeros(0, dtype=int),
+                np.zeros(0, dtype=int),
+                max_object_number,
+            )
+        new_labels = np.arange(1, object_count + 1, dtype=int) + max_object_number
+        return (
+            new_labels,
+            np.zeros(object_count, dtype=int),
+            np.zeros(object_count, dtype=int),
+            max_object_number + object_count,
         )
 
 
@@ -228,11 +261,7 @@ class TrackObjectsMethodStrategy(
 
     def track(
         self,
-        current_labels: np.ndarray,
-        old_labels: np.ndarray | None,
-        old_object_numbers: np.ndarray,
-        max_object_number: int,
-        pixel_radius: int,
+        request: TrackingFrameRequest,
         backend_provider: CellProfilerBackendProvider | None,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         """Assign stable object identities for the current frame."""
@@ -240,22 +269,14 @@ class TrackObjectsMethodStrategy(
             ObjectTrackingBackendStrategy.for_memory_type(
                 backend_provider=backend_provider,
             ),
-            current_labels,
-            old_labels,
-            old_object_numbers,
-            max_object_number,
-            pixel_radius,
+            request,
         )
 
     @abstractmethod
     def _track_with_backend(
         self,
         backend: ObjectTrackingBackendStrategy,
-        current_labels: np.ndarray,
-        old_labels: np.ndarray | None,
-        old_object_numbers: np.ndarray,
-        max_object_number: int,
-        pixel_radius: int,
+        request: TrackingFrameRequest,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
         """Delegate one frame to the concrete tracking primitive."""
 
@@ -268,19 +289,9 @@ class OverlapTrackObjectsMethodStrategy(TrackObjectsMethodStrategy):
     def _track_with_backend(
         self,
         backend: ObjectTrackingBackendStrategy,
-        current_labels: np.ndarray,
-        old_labels: np.ndarray | None,
-        old_object_numbers: np.ndarray,
-        max_object_number: int,
-        pixel_radius: int,
+        request: TrackingFrameRequest,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-        del pixel_radius
-        return backend.track_by_overlap(
-            current_labels,
-            old_labels,
-            old_object_numbers,
-            max_object_number,
-        )
+        return backend.track_by_overlap(request)
 
 
 class DistanceTrackObjectsMethodStrategy(TrackObjectsMethodStrategy):
@@ -291,19 +302,9 @@ class DistanceTrackObjectsMethodStrategy(TrackObjectsMethodStrategy):
     def _track_with_backend(
         self,
         backend: ObjectTrackingBackendStrategy,
-        current_labels: np.ndarray,
-        old_labels: np.ndarray | None,
-        old_object_numbers: np.ndarray,
-        max_object_number: int,
-        pixel_radius: int,
+        request: TrackingFrameRequest,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-        return backend.track_by_distance(
-            current_labels,
-            old_labels,
-            old_object_numbers,
-            max_object_number,
-            pixel_radius,
-        )
+        return backend.track_by_distance(request)
 
 
 @numpy
@@ -392,11 +393,13 @@ def track_objects(
 
         new_labels, parent_obj_nums, parent_img_nums, max_object_number = (
             tracking_strategy.track(
-                current_labels,
-                old_labels,
-                old_object_numbers,
-                max_object_number,
-                pixel_radius,
+                TrackingFrameRequest(
+                    current_labels=current_labels,
+                    old_labels=old_labels,
+                    old_object_numbers=old_object_numbers,
+                    max_object_number=max_object_number,
+                    pixel_radius=pixel_radius,
+                ),
                 tracking_backend_provider,
             )
         )
@@ -774,26 +777,6 @@ def _image_measurement_row(
     }
 
 
-def _new_track_labels(
-    object_count: int,
-    max_object_number: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    if object_count == 0:
-        return (
-            np.array([], dtype=int),
-            np.zeros(0, dtype=int),
-            np.zeros(0, dtype=int),
-            max_object_number,
-        )
-    new_labels = np.arange(1, object_count + 1, dtype=int) + max_object_number
-    return (
-        new_labels,
-        np.zeros(object_count, dtype=int),
-        np.zeros(object_count, dtype=int),
-        max_object_number + object_count,
-    )
-
-
 @njit(cache=True)
 def _label_centers_numba(labels: np.ndarray, label_count: int) -> np.ndarray:
     sums = np.zeros((label_count + 1, 2), dtype=np.float64)
@@ -820,41 +803,37 @@ def _label_centers_numba(labels: np.ndarray, label_count: int) -> np.ndarray:
 
 @njit(cache=True)
 def _track_by_overlap_numba(
-    current_labels: np.ndarray,
-    old_labels: np.ndarray,
-    old_object_numbers: np.ndarray,
-    max_object_number: int,
-    current_count: int,
-    old_count: int,
+    frame: TrackingKernelFrame,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    overlap = np.zeros((current_count + 1, old_count + 1), dtype=np.int64)
-    height, width = current_labels.shape
+    overlap = np.zeros((frame.current_count + 1, frame.old_count + 1), dtype=np.int64)
+    height, width = frame.current_labels.shape
     for y in range(height):
         for x in range(width):
-            current_label = int(current_labels[y, x])
-            old_label = int(old_labels[y, x])
+            current_label = int(frame.current_labels[y, x])
+            old_label = int(frame.old_labels[y, x])
             if (
                 current_label > 0
-                and current_label <= current_count
+                and current_label <= frame.current_count
                 and old_label > 0
-                and old_label <= old_count
+                and old_label <= frame.old_count
             ):
                 overlap[current_label, old_label] += 1
 
-    new_labels = np.zeros(current_count, dtype=np.int64)
-    parent_object_numbers = np.zeros(current_count, dtype=np.int64)
-    parent_image_numbers = np.zeros(current_count, dtype=np.int64)
-    for current_index in range(current_count):
+    new_labels = np.zeros(frame.current_count, dtype=np.int64)
+    parent_object_numbers = np.zeros(frame.current_count, dtype=np.int64)
+    parent_image_numbers = np.zeros(frame.current_count, dtype=np.int64)
+    max_object_number = frame.max_object_number
+    for current_index in range(frame.current_count):
         current_label = current_index + 1
         best_old = 0
         best_overlap = 0
-        for old_label in range(1, old_count + 1):
+        for old_label in range(1, frame.old_count + 1):
             current_overlap = overlap[current_label, old_label]
             if current_overlap > best_overlap:
                 best_overlap = current_overlap
                 best_old = old_label
         if best_old > 0 and best_overlap > 0:
-            new_labels[current_index] = old_object_numbers[best_old - 1]
+            new_labels[current_index] = frame.old_object_numbers[best_old - 1]
             parent_object_numbers[current_index] = best_old
             parent_image_numbers[current_index] = 1
         else:
@@ -865,28 +844,24 @@ def _track_by_overlap_numba(
 
 @njit(cache=True)
 def _track_by_distance_numba(
-    current_labels: np.ndarray,
-    old_labels: np.ndarray,
-    old_object_numbers: np.ndarray,
-    max_object_number: int,
-    current_count: int,
-    old_count: int,
+    frame: TrackingKernelFrame,
     pixel_radius: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, int]:
-    current_centers = _label_centers_numba(current_labels, current_count)
-    old_centers = _label_centers_numba(old_labels, old_count)
-    new_labels = np.zeros(current_count, dtype=np.int64)
-    parent_object_numbers = np.zeros(current_count, dtype=np.int64)
-    parent_image_numbers = np.zeros(current_count, dtype=np.int64)
+    current_centers = _label_centers_numba(frame.current_labels, frame.current_count)
+    old_centers = _label_centers_numba(frame.old_labels, frame.old_count)
+    new_labels = np.zeros(frame.current_count, dtype=np.int64)
+    parent_object_numbers = np.zeros(frame.current_count, dtype=np.int64)
+    parent_image_numbers = np.zeros(frame.current_count, dtype=np.int64)
     radius_squared = float(pixel_radius * pixel_radius)
+    max_object_number = frame.max_object_number
 
-    for current_index in range(current_count):
+    for current_index in range(frame.current_count):
         current_label = current_index + 1
         current_y = current_centers[current_label, 0]
         current_x = current_centers[current_label, 1]
         best_old = -1
         best_distance_squared = float((pixel_radius + 1) * (pixel_radius + 1))
-        for old_index in range(old_count):
+        for old_index in range(frame.old_count):
             old_label = old_index + 1
             old_y = old_centers[old_label, 0]
             old_x = old_centers[old_label, 1]
@@ -914,6 +889,8 @@ __all__ = public_names_from_objects(
     ObjectTrackingBackendStrategy,
     OverlapTrackObjectsMethodStrategy,
     TrackObjectsMethodStrategy,
+    TrackingFrameRequest,
+    TrackingKernelFrame,
     TrackingMethod,
     TrackingResult,
     track_objects,
