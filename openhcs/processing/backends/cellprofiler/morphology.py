@@ -162,6 +162,94 @@ class MaskChoice(Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class FillObjectsRequest:
+    """Complete request for one FillObjects mode implementation."""
+
+    image: np.ndarray
+    label_array: np.ndarray
+    diameter: float
+    morphology_backend_provider: BackendProviderInput
+
+
+class FillObjectsModeStrategy(
+    EnumKeyedStrategyMixin[FillMode],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal implementation for one FillObjects mode."""
+
+    __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "mode"
+
+    mode: ClassVar[FillMode | None] = None
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_mode(cls, mode: FillMode | str) -> "FillObjectsModeStrategy":
+        return cls.for_enum_member(coerce_cellprofiler_enum(FillMode, mode))
+
+    @abstractmethod
+    def fill(self, request: FillObjectsRequest) -> np.ndarray:
+        """Return labels transformed by this fill mode."""
+
+
+class FillObjectHolesStrategy(FillObjectsModeStrategy):
+    """Fill holes within each object below the configured area threshold."""
+
+    mode = FillMode.HOLES
+
+    def fill(self, request: FillObjectsRequest) -> np.ndarray:
+        from skimage.morphology import remove_small_holes
+
+        filled_labels = np.zeros_like(request.label_array)
+        max_hole_area = np.pi * (request.diameter / 2.0) ** 2
+        region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+            request.label_array
+        )
+        for label_id in region_props.label:
+            label_int = int(label_id)
+            obj_mask = request.label_array == label_int
+            filled_mask = remove_small_holes(
+                obj_mask,
+                area_threshold=int(max_hole_area),
+                connectivity=1,
+            )
+            filled_labels[filled_mask] = label_int
+        return filled_labels
+
+
+class FillObjectConvexHullStrategy(FillObjectsModeStrategy):
+    """Replace each object support with its convex hull."""
+
+    mode = FillMode.CONVEX_HULL
+
+    def fill(self, request: FillObjectsRequest) -> np.ndarray:
+        filled_labels = np.zeros_like(request.label_array)
+        morphology = MorphologyBackendStrategy.for_callable(
+            fill_objects,
+            backend_provider=request.morphology_backend_provider,
+        )
+        region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
+            request.label_array
+        )
+        for index, label_id in enumerate(region_props.label):
+            label_int = int(label_id)
+            obj_mask = request.label_array == label_int
+            minr = int(region_props.bbox_min_y[index])
+            minc = int(region_props.bbox_min_x[index])
+            maxr = int(region_props.bbox_max_y[index])
+            maxc = int(region_props.bbox_max_x[index])
+            obj_crop = obj_mask[minr:maxr, minc:maxc]
+            if obj_crop.sum() > 2:
+                hull = morphology.convex_hull_image(obj_crop)
+                filled_labels[minr:maxr, minc:maxc][hull] = label_int
+            else:
+                filled_labels[obj_mask] = label_int
+        return filled_labels
+
+
+@dataclass(frozen=True, slots=True)
 class PlaneStats:
     """Base summary row for operations reported per runtime plane."""
 
@@ -5868,53 +5956,18 @@ def fill_objects(
     morphology_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Fill object holes or replace objects with convex hull labels."""
-    from skimage.morphology import remove_small_holes
-
     label_array = object_label_dense_array(labels, dtype=np.int32)
     if label_array.max() == 0:
         return image, label_array.copy()
 
-    mode = coerce_cellprofiler_enum(FillMode, mode)
-    filled_labels = np.zeros_like(label_array)
-    region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
-        label_array
+    filled_labels = FillObjectsModeStrategy.for_mode(mode).fill(
+        FillObjectsRequest(
+            image=image,
+            label_array=label_array,
+            diameter=diameter,
+            morphology_backend_provider=morphology_backend_provider,
+        )
     )
-
-    if mode == FillMode.HOLES:
-        max_hole_area = np.pi * (diameter / 2.0) ** 2
-        for label_id in region_props.label:
-            label_int = int(label_id)
-            obj_mask = label_array == label_int
-            filled_mask = remove_small_holes(
-                obj_mask,
-                area_threshold=int(max_hole_area),
-                connectivity=1,
-            )
-            filled_labels[filled_mask] = label_int
-    elif mode == FillMode.CONVEX_HULL:
-        morphology = MorphologyBackendStrategy.for_callable(
-            fill_objects,
-            backend_provider=morphology_backend_provider,
-        )
-        for index, label_id in enumerate(region_props.label):
-            label_int = int(label_id)
-            obj_mask = label_array == label_int
-            minr = int(region_props.bbox_min_y[index])
-            minc = int(region_props.bbox_min_x[index])
-            maxr = int(region_props.bbox_max_y[index])
-            maxc = int(region_props.bbox_max_x[index])
-            obj_crop = obj_mask[minr:maxr, minc:maxc]
-            if obj_crop.sum() > 2:
-                hull = morphology.convex_hull_image(obj_crop)
-                filled_labels[minr:maxr, minc:maxc][hull] = label_int
-            else:
-                filled_labels[obj_mask] = label_int
-    else:
-        raise ValueError(
-            f"Mode '{mode}' is not supported. "
-            f"Available modes are: 'holes' and 'convex_hull'."
-        )
-
     return image, filled_labels.astype(label_array.dtype)
 
 
