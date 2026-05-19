@@ -3601,6 +3601,18 @@ def _fill_labeled_holes_single_label_components_numba(
 
 
 @njit(cache=True)
+def _max_label_2d_numba(labels: np.ndarray) -> int:
+    height, width = labels.shape
+    max_label = 0
+    for y in range(height):
+        for x in range(width):
+            label = int(labels[y, x])
+            if label > max_label:
+                max_label = label
+    return max_label
+
+
+@njit(cache=True)
 def _restore_removed_declump_basins_numba(
     pre_declump_labels: np.ndarray,
     labels_before_size_filter: np.ndarray,
@@ -3608,12 +3620,7 @@ def _restore_removed_declump_basins_numba(
 ) -> np.ndarray:
     height, width = labels_before_size_filter.shape
     output = labels_after_size_filter.copy()
-    max_pre_declump_label = 0
-    for y in range(height):
-        for x in range(width):
-            pre_label = int(pre_declump_labels[y, x])
-            if pre_label > max_pre_declump_label:
-                max_pre_declump_label = pre_label
+    max_pre_declump_label = _max_label_2d_numba(pre_declump_labels)
 
     component_surviving_label = np.zeros(max_pre_declump_label + 1, dtype=np.int64)
     for y in range(height):
@@ -4215,13 +4222,8 @@ class SkeletonizeStrategy(ExpandShrinkOperationStrategy):
 
 @njit(cache=True)
 def _labels_are_points_numba(labels: np.ndarray) -> bool:
-    max_label = 0
     height, width = labels.shape
-    for y in range(height):
-        for x in range(width):
-            label = int(labels[y, x])
-            if label > max_label:
-                max_label = label
+    max_label = _max_label_2d_numba(labels)
     if max_label <= 0:
         return True
 
@@ -4352,12 +4354,7 @@ def _restore_eroded_objects_to_centroids(
 @njit(cache=True)
 def _shrink_to_point_numba(labels: np.ndarray) -> np.ndarray:
     height, width = labels.shape
-    max_label = 0
-    for y in range(height):
-        for x in range(width):
-            label = int(labels[y, x])
-            if label > max_label:
-                max_label = label
+    max_label = _max_label_2d_numba(labels)
 
     y_sums = np.zeros(max_label + 1, dtype=np.float64)
     x_sums = np.zeros(max_label + 1, dtype=np.float64)
@@ -5749,12 +5746,7 @@ def filter_physical_border_objects_numba(
     right: bool,
 ) -> tuple[np.ndarray, bool]:
     height, width = labels.shape
-    max_label = 0
-    for y in range(height):
-        for x in range(width):
-            label = int(labels[y, x])
-            if label > max_label:
-                max_label = label
+    max_label = _max_label_2d_numba(labels)
     if max_label <= 0:
         return labels, False
 
