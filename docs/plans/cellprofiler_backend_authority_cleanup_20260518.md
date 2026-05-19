@@ -203,6 +203,18 @@ Checkpoint 16:
 - Focused threshold primitive/diagnostics tests pass; advisor now points to a
   remaining histogram/multi-Otsu primitive sub-boundary.
 
+Checkpoint 17:
+
+- Split histogram, unweighted Otsu, multi-Otsu, triangle, Isodata, Yen,
+  minimum-cross-entropy, and Sauvola Numba kernels into
+  `thresholding_threshold_numba_otsu_histogram_multiotsu.py`.
+- Reduced `thresholding_threshold_numba_otsu.py` to finite-value adapters,
+  log transform/inverse transform, MAD/LI kernels, and imports from the
+  focused primitive kernel families.
+- Focused threshold primitive/diagnostics tests pass; advisor now reports only
+  deeper size pressure inside the histogram/multi-Otsu kernel family and the
+  separate diagnostics sub-boundary/context-record work.
+
 Optional after behavior-adjacent changes:
 
 ```bash
