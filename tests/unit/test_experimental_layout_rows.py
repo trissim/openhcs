@@ -1,7 +1,17 @@
 from __future__ import annotations
 
+import sys
+from types import ModuleType
+
 import pandas as pd
 
+sys.modules.setdefault("xlsxwriter", ModuleType("xlsxwriter"))
+
+from openhcs.formats.experimental_analysis import (
+    average_wells,
+    individual_wells,
+    normalize_experiment,
+)
 from openhcs.formats.experimental_layout_rows import (
     ExperimentalAnalysisFeatureReaders,
     ExperimentalAnalysisPlateHandlers,
@@ -86,3 +96,73 @@ def test_experimental_analysis_scope_selects_plate_handlers_without_case_dispatc
         ["feature"],
         handlers,
     ) == ("metaxpress_filler", 1, {"plate": {}}, ["feature"])
+
+
+def test_experimental_analysis_well_value_projection_skips_missing_values() -> None:
+    plates = {
+        "plate_a": {
+            "A01": {"feature": 2.0},
+            "A02": {"feature": "bad"},
+            "A03": {"feature": 4.0},
+        }
+    }
+    plate_groups = {"N1": {"1": "plate_a", "2": "missing"}}
+    locations = [("A01", 1), ("A02", 1), ("A03", 1), ("A04", 1), ("A01", 2)]
+
+    assert average_wells(locations, "N1", "feature", plates, plate_groups) == {
+        "averaged": 3.0
+    }
+    assert individual_wells(locations, "N1", "feature", plates, plate_groups) == {
+        "A01_P1": 2.0,
+        "A03_P1": 4.0,
+    }
+
+
+def test_normalize_experiment_handles_control_and_treatment_modes() -> None:
+    experiment = {
+        "DMSO_Control": {
+            "N1": {"dose": {"feature": {"averaged": 2.0}}},
+            "N2": {"dose": {"feature": {"averaged": 4.0}}},
+        },
+        "Drug": {
+            "N1": {"dose": {"feature": {"well_a": 6.0, "well_b": None}}},
+            "N2": {"dose": {"feature": {"well_c": 12.0}}},
+        },
+    }
+    plates = {
+        "plate_a": {
+            "A01": {"feature": 2.0},
+            "A02": {"feature": 4.0},
+        },
+        "plate_b": {
+            "A01": {"feature": 3.0},
+            "A02": {"feature": 6.0},
+        },
+    }
+    plate_groups = {"N1": {"1": "plate_a"}, "N2": {"1": "plate_b"}}
+    ctrl_positions = {
+        "N1": [("A01", 1), ("A02", 1)],
+        "N2": [("A01", 1), ("A02", 1)],
+    }
+
+    normalized = normalize_experiment(
+        experiment,
+        ctrl_positions,
+        ["feature"],
+        plates,
+        plate_groups,
+    )
+
+    assert normalized["DMSO_Control"]["N1"]["dose"]["feature"] == {
+        "averaged": 2.0 / 3.0
+    }
+    assert normalized["DMSO_Control"]["N2"]["dose"]["feature"] == {
+        "averaged": 4.0 / 3.0
+    }
+    assert normalized["Drug"]["N1"]["dose"]["feature"] == {
+        "well_a": 2.0,
+        "well_b": None,
+    }
+    assert normalized["Drug"]["N2"]["dose"]["feature"] == {
+        "well_c": 12.0 / 4.5
+    }

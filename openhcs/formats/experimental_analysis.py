@@ -1054,16 +1054,8 @@ def average_wells(locations,replicate,feature,plates,plate_groups):
     Gracefully handles missing wells - only averages wells that exist in the data.
     Returns None if no valid wells are found.
     """
-    if len(locations) == 0:
-        return {"averaged": None}
-
-    values = []
-    for location in locations:
-        value = location_to_value(location,replicate,feature,plates,plate_groups)
-        if value is not None:  # Skip missing wells
-            values.append(value)
-
-    if len(values) == 0:
+    values = location_values(locations, replicate, feature, plates, plate_groups)
+    if not values:
         return {"averaged": None}  # No valid wells found
 
     averaged_value = sum(values) / float(len(values))
@@ -1084,6 +1076,14 @@ def individual_wells(locations,replicate,feature,plates,plate_groups):
             well_id = f"{well}_P{plate_group}"
             well_values[well_id] = value
     return well_values
+
+def location_values(locations,replicate,feature,plates,plate_groups):
+    values = []
+    for location in locations:
+        value = location_to_value(location,replicate,feature,plates,plate_groups)
+        if value is not None:
+            values.append(value)
+    return values
 
 def location_to_value(location,replicate,feature,plates,plate_groups):
     well, plate_group = location
@@ -1115,11 +1115,13 @@ def normalize_experiment(experiment_dict_values,ctrl_positions,features,plates,p
             per_replicate_ctrl_avg[feature] = {}
             for replicate, ctrl_wells in ctrl_positions.items():
                 if ctrl_wells:
-                    ctrl_values = []
-                    for location in ctrl_wells:
-                        value = location_to_value(location, replicate, feature, plates, plate_groups)
-                        if value is not None:
-                            ctrl_values.append(value)
+                    ctrl_values = location_values(
+                        ctrl_wells,
+                        replicate,
+                        feature,
+                        plates,
+                        plate_groups,
+                    )
                     if ctrl_values:
                         per_replicate_ctrl_avg[feature][replicate] = sum(ctrl_values) / len(ctrl_values)
                     else:
