@@ -405,21 +405,30 @@ def read_plate_layout(config_path):
 def get_features_EDDU_CX5(raw_df):
     return raw_df.iloc[:,raw_df.columns.str.find("Replicate").argmax()+1:-1].columns
 
+def metaxpress_well_header_row(raw_df) -> Optional[int]:
+    """Return the row index that owns the MetaXpress CSV well header."""
+    for row_index in range(min(10, len(raw_df))):
+        first_cell = str(raw_df.iloc[row_index, 0]).strip().lower()
+        if first_cell == "well":
+            return row_index
+    return None
+
+def metaxpress_feature_cells(row):
+    return [
+        str(cell).strip()
+        for cell in row[1:]
+        if pd.notna(cell) and str(cell).strip() != ""
+    ]
+
 def get_features_EDDU_metaxpress(raw_df):
     # Check if this is CSV format by looking for "Well" in the data
     # CSV format has column headers in row 6 (0-indexed), Excel format has null rows with features
     try:
         # Try CSV format first: look for row with "Well" in first column
-        well_row_idx = None
-        for i in range(min(10, len(raw_df))):  # Check first 10 rows
-            if str(raw_df.iloc[i, 0]).strip().lower() == 'well':
-                well_row_idx = i
-                break
-
+        well_row_idx = metaxpress_well_header_row(raw_df)
         if well_row_idx is not None:
             # CSV format: features are in the same row as "Well", starting from column 1
-            feature_row = raw_df.iloc[well_row_idx]
-            features = [str(col).strip() for col in feature_row[1:] if pd.notna(col) and str(col).strip() != '']
+            features = metaxpress_feature_cells(raw_df.iloc[well_row_idx])
         else:
             # Original Excel format: look for null rows with features
             feature_rows = raw_df[pd.isnull(raw_df.iloc[:,0])].iloc[0].tolist()[2:]
@@ -532,11 +541,7 @@ def fill_plates_dict_EDDU_CX5(raw_df,plates_dict,features):
 
 def fill_plates_dict_EDDU_metaxpress(raw_df,plates_dict,features):
     # Check if this is CSV format (has "Well" in data rows)
-    well_row_idx = None
-    for i in range(min(10, len(raw_df))):
-        if str(raw_df.iloc[i, 0]).strip().lower() == 'well':
-            well_row_idx = i
-            break
+    well_row_idx = metaxpress_well_header_row(raw_df)
 
     if well_row_idx is not None:
         # CSV format: may have multiple plates in same file
@@ -587,7 +592,7 @@ def fill_plates_dict_EDDU_metaxpress(raw_df,plates_dict,features):
 
             # Extract feature names from THIS plate section's header row
             header_row = raw_df.iloc[well_header_idx]
-            section_features = [str(col).strip() for col in header_row[1:] if pd.notna(col) and str(col).strip() != '']
+            section_features = metaxpress_feature_cells(header_row)
 
             # Process data rows for this plate
             for i in range(section['data_start'], section['data_end']):

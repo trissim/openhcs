@@ -9,7 +9,9 @@ sys.modules.setdefault("xlsxwriter", ModuleType("xlsxwriter"))
 
 from openhcs.formats.experimental_analysis import (
     average_wells,
+    get_features_EDDU_metaxpress,
     individual_wells,
+    metaxpress_well_header_row,
     normalize_experiment,
 )
 from openhcs.formats.experimental_layout_rows import (
@@ -166,3 +168,30 @@ def test_normalize_experiment_handles_control_and_treatment_modes() -> None:
     assert normalized["Drug"]["N2"]["dose"]["feature"] == {
         "well_c": 12.0 / 4.5
     }
+
+
+def test_metaxpress_csv_feature_discovery_uses_well_header_row() -> None:
+    raw_df = pd.DataFrame(
+        [
+            ["Barcode", None, None],
+            ["Plate ID", "plate_a", None],
+            ["Well", "Area", "Intensity"],
+            ["A01", 1, 2],
+        ]
+    )
+
+    assert metaxpress_well_header_row(raw_df) == 2
+    assert get_features_EDDU_metaxpress(raw_df) == ["Area", "Intensity"]
+
+
+def test_metaxpress_excel_feature_discovery_uses_null_feature_row() -> None:
+    raw_df = pd.DataFrame(
+        [
+            ["Plate Name", "plate_a", None, None],
+            [None, None, "Area", "Intensity"],
+            ["A01", "focus", 1, 2],
+        ]
+    )
+
+    assert metaxpress_well_header_row(raw_df) is None
+    assert get_features_EDDU_metaxpress(raw_df) == ["Area", "Intensity"]
