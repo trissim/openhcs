@@ -275,12 +275,12 @@ class PlateManagerWidget(AbstractManagerWidget):
         self._batch_workflow_service = BatchWorkflowService(
             self, client_service=self._zmq_client_service
         )
-        self._batch_workflow_service.add_debug_snapshot_listener(
-            self.debug_snapshot_available.emit
-        )
 
         # Initialize base class (creates style_generator, event_bus, item_list, buttons, status_label internally)
         super().__init__(service_adapter, color_scheme, gui_config, parent)
+        self._batch_workflow_service.add_debug_snapshot_listener(
+            self.debug_snapshot_available.emit
+        )
         self.code_execution_workflow = PlateManagerCodeWorkflow(self)
         self.deletion_workflow = PlateManagerDeletionWorkflow(self)
 
