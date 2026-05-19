@@ -40,6 +40,8 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 from openhcs.processing.materialization import csv_materializer, segmentation_mask_rois
 
 PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
+NDIMAGE_CONSTANT_MODE = "constant"
+WATERSHED_STRATEGY_REGISTRY_KEY = "strategy_label"
 logger = logging.getLogger(__name__)
 
 
@@ -214,7 +216,7 @@ class WatershedSeedStrategy(
 ):
     """Build seed labels for non-marker Watershed modes."""
 
-    __registry_key__ = "strategy_label"
+    __registry_key__ = WATERSHED_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     strategy_key: ClassVar[WatershedSeedMethod | None] = None
     strategy_label: ClassVar[str | None] = None
@@ -305,7 +307,7 @@ class WatershedDeclumpStrategy(
 ):
     """Build the watershed priority surface for one declumping family."""
 
-    __registry_key__ = "strategy_label"
+    __registry_key__ = WATERSHED_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     strategy_key: ClassVar[WatershedDeclumpMethod | None] = None
     strategy_label: ClassVar[str | None] = None
@@ -365,7 +367,7 @@ class WatershedMethodStrategy(
 ):
     """Build seed labels for one CellProfiler watershed seed source."""
 
-    __registry_key__ = "strategy_label"
+    __registry_key__ = WATERSHED_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     strategy_key: ClassVar[WatershedMethod | None] = None
     strategy_label: ClassVar[str | None] = None
@@ -459,7 +461,7 @@ class WatershedRuntimeStrategy(
 ):
     """Execute one nominal CellProfiler Watershed implementation family."""
 
-    __registry_key__ = "strategy_label"
+    __registry_key__ = WATERSHED_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     strategy_key: ClassVar[WatershedRuntimeFamily | None] = None
     strategy_label: ClassVar[str | None] = None
@@ -525,7 +527,7 @@ class CellProfiler4InitialWatershedStrategy(
 ):
     """Build the CP4 module's initial watershed labels before advanced refinement."""
 
-    __registry_key__ = "strategy_label"
+    __registry_key__ = WATERSHED_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     strategy_key: ClassVar[WatershedMethod | None] = None
     strategy_label: ClassVar[str | None] = None
@@ -1094,7 +1096,7 @@ class NumbaCellProfiler4DistanceMarkerBackendStrategy(
             == scipy.ndimage.maximum_filter(
                 distance_array,
                 footprint=peak_footprint_array,
-                mode="constant",
+                mode=NDIMAGE_CONSTANT_MODE,
                 cval=0,
             )
         ) & (distance_array > 0)
@@ -1327,16 +1329,16 @@ def _cellprofiler_legacy_watershed_request(
         None,
     )
     pad_width = [(int(width), int(width)) for width in offset]
-    padded_image = np.pad(request.image, pad_width, mode="constant")
+    padded_image = np.pad(request.image, pad_width, mode=NDIMAGE_CONSTANT_MODE)
     padded_mask = np.pad(
         request.mask.astype(np.bool_, copy=False),
         pad_width,
-        mode="constant",
+        mode=NDIMAGE_CONSTANT_MODE,
     ).ravel()
     output = np.pad(
         request.markers.astype(np.int32, copy=False),
         pad_width,
-        mode="constant",
+        mode=NDIMAGE_CONSTANT_MODE,
     )
     output_flat = output.ravel()
     image_flat = padded_image.ravel()
