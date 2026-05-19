@@ -193,6 +193,16 @@ Checkpoint 15:
   deeper sub-boundaries inside the new primitive and diagnostic kernel modules,
   plus the higher-level threshold request context split.
 
+Checkpoint 16:
+
+- Split weighted Otsu sorted-rank kernels out of the primitive kernel module
+  into `thresholding_threshold_numba_otsu_weighted.py`.
+- Made the weighted module entrypoint explicit/public at that module boundary
+  and imported it under the existing private local helper name in the primitive
+  module.
+- Focused threshold primitive/diagnostics tests pass; advisor now points to a
+  remaining histogram/multi-Otsu primitive sub-boundary.
+
 Optional after behavior-adjacent changes:
 
 ```bash
