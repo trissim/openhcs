@@ -13,6 +13,7 @@ from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.core.memory.decorators import numpy as numpy_decorator
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import (
     image_payload_data,
     image_payload_mask,
@@ -210,16 +211,33 @@ class NumbaSobelStrategy(EdgeEnhancementStrategyLeaf):
         )
 
 
-class NumbaSobelAllStrategy(NumbaSobelStrategy):
-    direction = EdgeDirection.ALL
+@dataclass(frozen=True, slots=True)
+class NumbaSobelStrategyDeclaration:
+    class_name: str
+    direction: EdgeDirection
+
+    def declare(self) -> type[NumbaSobelStrategy]:
+        return type(
+            self.class_name,
+            (NumbaSobelStrategy,),
+            {
+                "__module__": __name__,
+                "direction": self.direction,
+            },
+        )
 
 
-class NumbaSobelHorizontalStrategy(NumbaSobelStrategy):
-    direction = EdgeDirection.HORIZONTAL
-
-
-class NumbaSobelVerticalStrategy(NumbaSobelStrategy):
-    direction = EdgeDirection.VERTICAL
+_NUMBA_SOBEL_STRATEGY_DECLARATIONS = (
+    NumbaSobelStrategyDeclaration("NumbaSobelAllStrategy", EdgeDirection.ALL),
+    NumbaSobelStrategyDeclaration(
+        "NumbaSobelHorizontalStrategy",
+        EdgeDirection.HORIZONTAL,
+    ),
+    NumbaSobelStrategyDeclaration("NumbaSobelVerticalStrategy", EdgeDirection.VERTICAL),
+)
+_NUMBA_SOBEL_STRATEGY_TYPES = tuple(
+    declaration.declare() for declaration in _NUMBA_SOBEL_STRATEGY_DECLARATIONS
+)
 
 
 class NumpySobelAllStrategy(EdgeEnhancementStrategyLeaf):
@@ -473,11 +491,11 @@ def _full_sobel_neighborhood_is_valid(
     return True
 
 
-__all__ = [
-    "EdgeDirection",
-    "EdgeEnhancementRequest",
-    "EdgeEnhancementStrategy",
-    "EdgeEnhancementStrategyKey",
-    "EdgeMethod",
-    "enhance_edges",
-]
+__all__ = public_names_from_objects(
+    EdgeDirection,
+    EdgeEnhancementRequest,
+    EdgeEnhancementStrategy,
+    EdgeEnhancementStrategyKey,
+    EdgeMethod,
+    enhance_edges,
+)
