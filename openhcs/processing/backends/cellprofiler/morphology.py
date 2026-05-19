@@ -3943,24 +3943,21 @@ def _seed_points_from_components_numba(
 
 
 @njit(cache=True)
-def _relabel_sequential_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
-    height, width = labels.shape
+def _relabel_sequential_flat_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
     max_label = 0
-    for y in range(height):
-        for x in range(width):
-            label = labels[y, x]
-            if label > max_label:
-                max_label = label
+    for index in range(labels.size):
+        label = labels[index]
+        if label > max_label:
+            max_label = label
 
     if max_label <= 0:
-        return np.zeros((height, width), dtype=np.int32), 0
+        return np.zeros(labels.shape, dtype=np.int32), 0
 
     present = np.zeros(max_label + 1, dtype=np.bool_)
-    for y in range(height):
-        for x in range(width):
-            label = labels[y, x]
-            if label > 0:
-                present[label] = True
+    for index in range(labels.size):
+        label = labels[index]
+        if label > 0:
+            present[label] = True
 
     mapping = np.zeros(max_label + 1, dtype=np.int32)
     count = 0
@@ -3969,52 +3966,28 @@ def _relabel_sequential_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
             count += 1
             mapping[label] = count
 
-    output = np.zeros((height, width), dtype=np.int32)
-    for y in range(height):
-        for x in range(width):
-            label = labels[y, x]
-            if label > 0:
-                output[y, x] = mapping[label]
+    output = np.zeros(labels.shape, dtype=np.int32)
+    for index in range(labels.size):
+        label = labels[index]
+        if label > 0:
+            output[index] = mapping[label]
     return output, count
+
+
+@njit(cache=True)
+def _relabel_sequential_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
+    height, width = labels.shape
+    flat_output, count = _relabel_sequential_flat_numba(labels.reshape(height * width))
+    return flat_output.reshape((height, width)), count
 
 
 @njit(cache=True)
 def _relabel_sequential_3d_numba(labels: np.ndarray) -> tuple[np.ndarray, int]:
     plane_count, height, width = labels.shape
-    max_label = 0
-    for plane_index in range(plane_count):
-        for y in range(height):
-            for x in range(width):
-                label = labels[plane_index, y, x]
-                if label > max_label:
-                    max_label = label
-
-    if max_label <= 0:
-        return np.zeros((plane_count, height, width), dtype=np.int32), 0
-
-    present = np.zeros(max_label + 1, dtype=np.bool_)
-    for plane_index in range(plane_count):
-        for y in range(height):
-            for x in range(width):
-                label = labels[plane_index, y, x]
-                if label > 0:
-                    present[label] = True
-
-    mapping = np.zeros(max_label + 1, dtype=np.int32)
-    count = 0
-    for label in range(1, max_label + 1):
-        if present[label]:
-            count += 1
-            mapping[label] = count
-
-    output = np.zeros((plane_count, height, width), dtype=np.int32)
-    for plane_index in range(plane_count):
-        for y in range(height):
-            for x in range(width):
-                label = labels[plane_index, y, x]
-                if label > 0:
-                    output[plane_index, y, x] = mapping[label]
-    return output, count
+    flat_output, count = _relabel_sequential_flat_numba(
+        labels.reshape(plane_count * height * width)
+    )
+    return flat_output.reshape((plane_count, height, width)), count
 
 
 class ExpandShrinkOperationStrategy(
