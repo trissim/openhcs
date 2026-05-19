@@ -153,7 +153,7 @@ class PipelineEditorFunctionPresentation:
         return None
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class PipelineEditorDebugWorkflow:
     """Owns debug-toolbar command dispatch and snapshot inspector routing."""
 
