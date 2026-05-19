@@ -142,124 +142,322 @@ class LLMParameterFormatter:
         return repr(default)
 
 
-class LLMPipelineService:
-    """
-    Service for generating OpenHCS pipelines using LLM.
+class LLMFunctionDocumentationBuilder:
+    """Project registered OpenHCS functions into prompt documentation."""
 
-    Sends user requests to LLM endpoint with comprehensive system prompt
-    containing OpenHCS API documentation and examples.
-    """
+    def __init__(self, parameter_formatter: LLMParameterFormatter):
+        self._parameter_formatter = parameter_formatter
 
-    def __init__(
-        self, api_endpoint: str = DEFAULT_OLLAMA_ENDPOINT, model: Optional[str] = None
-    ):
-        """
-        Initialize LLM service.
-
-        Args:
-            api_endpoint: LLM API endpoint URL (default: Ollama local endpoint)
-            model: Model name (auto-detected if None)
-        """
-        self.api_endpoint = api_endpoint
-        self.base_url = self._derive_base_url(api_endpoint)
-        self.model = model  # May be None, resolved on first test_connection
-        self._parameter_formatter = LLMParameterFormatter(
-            LLMParameterDocumentationPolicy(INTERNAL_PARAMS)
-        )
-        # Build system prompts for different contexts
-        self._system_prompts = {
-            "pipeline": self._build_pipeline_system_prompt(),
-            "function": self._build_custom_function_system_prompt(),
-        }
-
-    @property
-    def system_prompt(self) -> str:
-        """Default system prompt (pipeline) for backward compatibility."""
-        return self._system_prompts.get("pipeline", "")
-
-    def get_system_prompt(self, code_type: str = "pipeline") -> str:
-        """Return the runtime-generated system prompt for a given context."""
-        if code_type == "function":
-            return self._system_prompts.get("function", self.system_prompt)
-        return self._system_prompts.get("pipeline", self.system_prompt)
-
-    def _derive_base_url(self, endpoint: str) -> str:
-        """Extract base URL from endpoint."""
-        parsed = urlparse(endpoint)
-        return urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
-
-    def _get_available_models(self) -> List[str]:
-        """Fetch available models from Ollama."""
+    def documentation(self) -> str:
+        """Build function documentation from the registry."""
         try:
-            response = requests.get(
-                f"{self.base_url}/api/tags", timeout=CONNECTION_TIMEOUT_S
+            from openhcs.processing.backends.lib_registry.registry_service import (
+                RegistryService,
             )
-            response.raise_for_status()
-            data = response.json()
-            return [m.get("name", "") for m in data.get("models", [])]
-        except Exception:
-            return []
 
-    def _select_best_model(self, available_models: List[str]) -> Optional[str]:
-        """Select best model from available ones based on preference order."""
-        if not available_models:
-            return None
-
-        # Check preferred models in order
-        for preferred in PREFERRED_MODELS:
-            for available in available_models:
-                # Match base name (e.g., "qwen2.5-coder" matches "qwen2.5-coder:7b")
-                if available.split(":")[0] == preferred or available.startswith(
-                    preferred
-                ):
-                    return available
-
-        # Fall back to first available model
-        return available_models[0] if available_models else None
-
-    def test_connection(self) -> Tuple[bool, str]:
-        """
-        Test connection to LLM service. Auto-selects model if not set.
-
-        Returns:
-            (is_connected, status_message)
-        """
-        try:
-            available_models = self._get_available_models()
-
-            if not available_models:
-                return (False, "No models available")
-
-            # Auto-select model if not set
-            if self.model is None:
-                self.model = self._select_best_model(available_models)
-                if self.model:
-                    logger.info(f"Auto-selected LLM model: {self.model}")
-
-            if self.model is None:
-                return (False, "No suitable model found")
-
-            # Check if selected model is available
-            if self.model in available_models:
-                return (True, self.model)
-
-            # Try base name match
-            model_base = self.model.split(":")[0]
-            for name in available_models:
-                if name.split(":")[0] == model_base:
-                    self.model = name  # Update to actual name
-                    return (True, name)
-
-            return (False, f"Model '{self.model}' not found")
-
-        except requests.exceptions.ConnectionError:
-            return (False, "Connection refused")
-        except requests.exceptions.Timeout:
-            return (False, "Connection timeout")
+            all_functions = RegistryService.get_all_functions_with_metadata()
         except Exception as e:
-            return (False, str(e))
+            logger.warning(f"Could not load function registry: {e}")
+            return self.fallback_function_docs()
 
-    def _build_pipeline_system_prompt(self) -> str:
+        if not all_functions:
+            return self.fallback_function_docs()
+
+        # Group functions by library
+        by_library: Dict[str, list] = {}
+        for composite_key, metadata in all_functions.items():
+            lib = metadata.registry.library_name
+            if lib not in by_library:
+                by_library[lib] = []
+            by_library[lib].append(metadata)
+
+        docs_parts = []
+
+        # Process each library - prioritize core functions
+        for lib_name in sorted(by_library.keys()):
+            functions = by_library[lib_name]
+            lib_docs = [f"\n## {lib_name.upper()} Functions\n"]
+
+            # Sort with core functions first, then alphabetically
+            sorted_functions = sorted(
+                functions,
+                key=lambda m: (
+                    0 if m.original_name in CORE_FUNCTIONS else 1,
+                    m.original_name,
+                ),
+            )
+
+            # Limit non-core functions to keep prompt size manageable
+            count = 0
+            for metadata in sorted_functions:
+                is_core = metadata.original_name in CORE_FUNCTIONS
+                if not is_core and count >= MAX_FUNCTIONS_PER_LIBRARY:
+                    continue  # Skip excess non-core functions
+
+                func_doc = self._format_function_doc(metadata)
+                if func_doc:
+                    lib_docs.append(func_doc)
+                    if not is_core:
+                        count += 1
+
+            if len(sorted_functions) > MAX_FUNCTIONS_PER_LIBRARY:
+                lib_docs.append(
+                    f"... and {len(sorted_functions) - MAX_FUNCTIONS_PER_LIBRARY} more functions\n"
+                )
+
+            docs_parts.append("\n".join(lib_docs))
+
+        return "\n".join(docs_parts)
+
+    def _format_function_doc(self, metadata) -> str:
+        """Format documentation for a single function."""
+        try:
+            func = metadata.func
+            original_name = metadata.original_name
+            module = metadata.module
+
+            # Build import path
+            if metadata.registry.library_name in ("pyclesperanto", "skimage", "cupy"):
+                # External libs use virtual modules
+                import_path = f"from openhcs.{metadata.registry.library_name} import {original_name}"
+            else:
+                # OpenHCS native functions
+                import_path = f"from {module} import {original_name}"
+
+            # Get signature (filtering internal params)
+            sig_str = self._format_signature(func, original_name)
+
+            # Get description (first line of docstring)
+            desc = ""
+            if metadata.doc:
+                first_line = metadata.doc.split("\n")[0].strip()
+                if first_line:
+                    desc = f"  # {first_line}"
+
+            # Core functions get detailed documentation
+            if original_name in CORE_FUNCTIONS:
+                param_doc = self._format_parameters(func)
+                return f"""
+### {original_name}
+{import_path}
+Signature: `{sig_str}`{desc}
+{param_doc}
+"""
+            else:
+                # Non-core functions: compact format (just name and import)
+                return f"- `{original_name}`: {import_path}\n"
+
+        except Exception as e:
+            logger.debug(f"Could not format function {metadata.name}: {e}")
+            return ""
+
+    def _format_signature(self, func: Callable, name: str) -> str:
+        """Format function signature, filtering internal params."""
+        return self._parameter_formatter.signature(func, name)
+
+    def _format_parameters(self, func: Callable) -> str:
+        """Format parameter documentation for core functions."""
+        return self._parameter_formatter.parameter_block(func)
+
+    def fallback_function_docs(self) -> str:
+        """Fallback function documentation if registry unavailable."""
+        return """
+## Core Functions (fallback - registry not loaded)
+- `stack_percentile_normalize`: from openhcs.processing.backends.processors.numpy_processor
+- `create_projection`: from openhcs.processing.backends.processors.numpy_processor
+- `create_composite`: from openhcs.processing.backends.processors.numpy_processor
+- `count_cells_single_channel`: from openhcs.processing.backends.analysis.cell_counting_cpu
+- `assemble_stack_cpu`: from openhcs.processing.backends.assemblers.assemble_stack_cpu
+"""
+
+
+
+class LLMPromptResourceCatalog:
+    """Provide prompt resource sections not owned by HTTP generation."""
+
+    def dynamic_imports_section(self) -> str:
+        """Generate imports section with actual module paths."""
+        # These are the actual import paths - single source of truth
+        return """=== REQUIRED IMPORTS (use exactly these paths) ===
+# Backend decorators
+from openhcs.core.memory import numpy, pyclesperanto, cupy
+
+# Special outputs/inputs (for analysis functions)
+from openhcs.core.pipeline.function_contracts import artifact_outputs, artifact_inputs
+
+# Materializers for CSV/JSON and ROI outputs
+from openhcs.processing.materialization import (
+    MaterializationSpec,
+    CsvOptions,
+    JsonOptions,
+    ROIOptions,
+    TiffStackOptions,
+    TextOptions,
+)
+
+# Standard library (include as needed)
+from dataclasses import dataclass
+from typing import List, Tuple, Optional
+import numpy as np"""
+
+    def dynamic_materializers_section(self) -> str:
+        """Generate materializers section with simple presets and advanced options."""
+        try:
+            from openhcs.processing.materialization import (
+                MaterializationSpec,
+                CsvOptions,
+                JsonOptions,
+                ROIOptions,
+                TiffStackOptions,
+                TextOptions,
+            )
+            from openhcs.processing.materialization.presets import (
+                json_and_csv,
+                csv_only,
+                json_only,
+                roi_zip,
+                tiff_stack,
+                text_only,
+            )
+            import inspect
+
+            csv_sig = str(inspect.signature(CsvOptions))
+            json_sig = str(inspect.signature(JsonOptions))
+            roi_sig = str(inspect.signature(ROIOptions))
+
+            return f"""=== SIMPLE MATERIALIZATION (Use These!) ===
+from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
+
+# JSON + CSV (most common for analysis)
+@artifact_outputs(("results", json_and_csv()))
+
+# CSV only
+@artifact_outputs(("measurements", csv_only()))
+
+# JSON only
+@artifact_outputs(("metadata", json_only()))
+
+# ROI zip for ImageJ/Fiji
+@artifact_outputs(("masks", roi_zip()))
+
+=== ADVANCED CUSTOMIZATION (When needed) ===
+CsvOptions{csv_sig}
+JsonOptions{json_sig}
+ROIOptions{roi_sig}
+
+Usage: MaterializationSpec(CsvOptions(filename_suffix="_custom.csv", fields=["x", "y"]))"""
+        except Exception:
+            return """=== SIMPLE MATERIALIZATION (Use These!) ===
+from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
+
+# Most common patterns - just use these:
+@artifact_outputs(("results", json_and_csv()))  # JSON + CSV
+@artifact_outputs(("measurements", csv_only()))  # CSV only
+@artifact_outputs(("masks", roi_zip()))  # ROIs for ImageJ
+
+=== ADVANCED CUSTOMIZATION ===
+MaterializationSpec(CsvOptions(...), JsonOptions(...))"""
+
+    def pyclesperanto_function_docs(self) -> str:
+        """Get pyclesperanto functions dynamically if available."""
+        try:
+            import pyclesperanto as cle  # type: ignore[import-not-found]
+
+            # Get commonly used functions that actually exist
+            available_functions = frozenset(dir(cle))
+            key_funcs = []
+            for name in [
+                "gaussian_blur",
+                "median",
+                "top_hat",
+                "bottom_hat",
+                "threshold_otsu",
+                "binary_opening",
+                "binary_closing",
+                "erode",
+                "dilate",
+                "label",
+                "connected_components_labeling",
+                "voronoi_labeling",
+                "exclude_labels_on_edges",
+                "exclude_small_labels",
+                "push",
+                "pull",
+                "maximum_z_projection",
+                "mean_z_projection",
+            ]:
+                if name in available_functions:
+                    key_funcs.append(f"cle.{name}()")
+            return "\n".join(key_funcs)
+        except ImportError:
+            return "pyclesperanto not available"
+
+    def enum_documentation(self) -> str:
+        """Build documentation for relevant enums."""
+        enums_to_document = []
+
+        # Core enums that are always useful
+        try:
+            from openhcs.processing.backends.analysis.cell_counting_cpu import (
+                DetectionMethod,
+                ThresholdMethod,
+                ColocalizationMethod,
+            )
+
+            enums_to_document.extend(
+                [DetectionMethod, ThresholdMethod, ColocalizationMethod]
+            )
+        except ImportError:
+            pass
+
+        try:
+            from openhcs.constants.constants import (
+                DtypeConversion,
+                VariableComponents,
+                GroupBy,
+            )
+
+            enums_to_document.extend([DtypeConversion, VariableComponents, GroupBy])
+        except ImportError:
+            pass
+
+        try:
+            from openhcs.constants.input_source import InputSource
+
+            enums_to_document.append(InputSource)
+        except ImportError:
+            pass
+
+        docs = []
+        for enum_type in enums_to_document:
+            values = ", ".join(m.name for m in enum_type)
+            module = enum_type.__module__
+            docs.append(f"- `{enum_type.__name__}`: from {module} → Values: {values}")
+
+        return "\n".join(docs) if docs else "# No enum documentation available"
+
+    def example_pipeline(self) -> str:
+        """Load example pipeline from file."""
+        basic_pipeline_path = (
+            Path(__file__).parent.parent.parent / "tests" / "basic_pipeline.py"
+        )
+        try:
+            with open(basic_pipeline_path, "r") as f:
+                return f.read()
+        except Exception as e:
+            logger.warning(f"Could not load example pipeline: {e}")
+            return "# Example pipeline not available"
+
+
+
+class LLMPromptBuilder:
+    """Assemble context-specific LLM prompts from documented authorities."""
+
+    def __init__(self, parameter_formatter: LLMParameterFormatter):
+        self._catalog = LLMPromptResourceCatalog()
+        self._function_docs = LLMFunctionDocumentationBuilder(parameter_formatter)
+
+    def build_pipeline_system_prompt(self) -> str:
         """
         Build system prompt for pipeline generation context.
 
@@ -270,9 +468,9 @@ class LLMPipelineService:
             Complete system prompt string for pipeline generation
         """
         # Build dynamic documentation from registry
-        function_docs = self._get_function_documentation()
-        enum_docs = self._get_enum_documentation()
-        example_pipeline = self._get_example_pipeline()
+        function_docs = self._function_docs.documentation()
+        enum_docs = self._catalog.enum_documentation()
+        example_pipeline = self._catalog.example_pipeline()
 
         prompt = f"""You are an expert OpenHCS pipeline generator. Generate complete, runnable OpenHCS pipeline code based on user descriptions.
 
@@ -352,16 +550,16 @@ FunctionStep(
 
         return prompt
 
-    def _build_custom_function_system_prompt(self) -> str:
+    def build_custom_function_system_prompt(self) -> str:
         """
         Build system prompt for custom function generation context.
 
         Uses dynamic discovery to follow single source of truth principle.
         """
         # Dynamic discovery of imports and signatures
-        imports_section = self._get_dynamic_imports_section()
-        materializers_section = self._get_dynamic_materializers_section()
-        pycle_docs = self._get_pyclesperanto_function_docs()
+        imports_section = self._catalog.dynamic_imports_section()
+        materializers_section = self._catalog.dynamic_materializers_section()
+        pycle_docs = self._catalog.pyclesperanto_function_docs()
 
         prompt = f'''You are an expert at writing custom image processing functions for OpenHCS.
 Generate COMPLETE, RUNNABLE Python code. Include ALL imports at the top.
@@ -656,300 +854,124 @@ def analyze_at_positions(image, cell_positions):
 '''
         return prompt
 
-    def _get_dynamic_imports_section(self) -> str:
-        """Generate imports section with actual module paths."""
-        # These are the actual import paths - single source of truth
-        return """=== REQUIRED IMPORTS (use exactly these paths) ===
-# Backend decorators
-from openhcs.core.memory import numpy, pyclesperanto, cupy
 
-# Special outputs/inputs (for analysis functions)
-from openhcs.core.pipeline.function_contracts import artifact_outputs, artifact_inputs
+class LLMPipelineService:
+    """
+    Service for generating OpenHCS pipelines using LLM.
 
-# Materializers for CSV/JSON and ROI outputs
-from openhcs.processing.materialization import (
-    MaterializationSpec,
-    CsvOptions,
-    JsonOptions,
-    ROIOptions,
-    TiffStackOptions,
-    TextOptions,
-)
+    Sends user requests to LLM endpoint with comprehensive system prompt
+    containing OpenHCS API documentation and examples.
+    """
 
-# Standard library (include as needed)
-from dataclasses import dataclass
-from typing import List, Tuple, Optional
-import numpy as np"""
+    def __init__(
+        self, api_endpoint: str = DEFAULT_OLLAMA_ENDPOINT, model: Optional[str] = None
+    ):
+        """
+        Initialize LLM service.
 
-    def _get_dynamic_materializers_section(self) -> str:
-        """Generate materializers section with simple presets and advanced options."""
-        try:
-            from openhcs.processing.materialization import (
-                MaterializationSpec,
-                CsvOptions,
-                JsonOptions,
-                ROIOptions,
-                TiffStackOptions,
-                TextOptions,
-            )
-            from openhcs.processing.materialization.presets import (
-                json_and_csv,
-                csv_only,
-                json_only,
-                roi_zip,
-                tiff_stack,
-                text_only,
-            )
-            import inspect
-
-            csv_sig = str(inspect.signature(CsvOptions))
-            json_sig = str(inspect.signature(JsonOptions))
-            roi_sig = str(inspect.signature(ROIOptions))
-
-            return f"""=== SIMPLE MATERIALIZATION (Use These!) ===
-from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
-
-# JSON + CSV (most common for analysis)
-@artifact_outputs(("results", json_and_csv()))
-
-# CSV only
-@artifact_outputs(("measurements", csv_only()))
-
-# JSON only
-@artifact_outputs(("metadata", json_only()))
-
-# ROI zip for ImageJ/Fiji
-@artifact_outputs(("masks", roi_zip()))
-
-=== ADVANCED CUSTOMIZATION (When needed) ===
-CsvOptions{csv_sig}
-JsonOptions{json_sig}
-ROIOptions{roi_sig}
-
-Usage: MaterializationSpec(CsvOptions(filename_suffix="_custom.csv", fields=["x", "y"]))"""
-        except Exception:
-            return """=== SIMPLE MATERIALIZATION (Use These!) ===
-from openhcs.processing.materialization import json_and_csv, csv_only, json_only, roi_zip
-
-# Most common patterns - just use these:
-@artifact_outputs(("results", json_and_csv()))  # JSON + CSV
-@artifact_outputs(("measurements", csv_only()))  # CSV only
-@artifact_outputs(("masks", roi_zip()))  # ROIs for ImageJ
-
-=== ADVANCED CUSTOMIZATION ===
-MaterializationSpec(CsvOptions(...), JsonOptions(...))"""
-
-    def _get_pyclesperanto_function_docs(self) -> str:
-        """Get pyclesperanto functions dynamically if available."""
-        try:
-            import pyclesperanto as cle  # type: ignore[import-not-found]
-
-            # Get commonly used functions that actually exist
-            available_functions = frozenset(dir(cle))
-            key_funcs = []
-            for name in [
-                "gaussian_blur",
-                "median",
-                "top_hat",
-                "bottom_hat",
-                "threshold_otsu",
-                "binary_opening",
-                "binary_closing",
-                "erode",
-                "dilate",
-                "label",
-                "connected_components_labeling",
-                "voronoi_labeling",
-                "exclude_labels_on_edges",
-                "exclude_small_labels",
-                "push",
-                "pull",
-                "maximum_z_projection",
-                "mean_z_projection",
-            ]:
-                if name in available_functions:
-                    key_funcs.append(f"cle.{name}()")
-            return "\n".join(key_funcs)
-        except ImportError:
-            return "pyclesperanto not available"
-
-    def _get_function_documentation(self) -> str:
-        """Build function documentation from the registry."""
-        try:
-            from openhcs.processing.backends.lib_registry.registry_service import (
-                RegistryService,
-            )
-
-            all_functions = RegistryService.get_all_functions_with_metadata()
-        except Exception as e:
-            logger.warning(f"Could not load function registry: {e}")
-            return self._get_fallback_function_docs()
-
-        if not all_functions:
-            return self._get_fallback_function_docs()
-
-        # Group functions by library
-        by_library: Dict[str, list] = {}
-        for composite_key, metadata in all_functions.items():
-            lib = metadata.registry.library_name
-            if lib not in by_library:
-                by_library[lib] = []
-            by_library[lib].append(metadata)
-
-        docs_parts = []
-
-        # Process each library - prioritize core functions
-        for lib_name in sorted(by_library.keys()):
-            functions = by_library[lib_name]
-            lib_docs = [f"\n## {lib_name.upper()} Functions\n"]
-
-            # Sort with core functions first, then alphabetically
-            sorted_functions = sorted(
-                functions,
-                key=lambda m: (
-                    0 if m.original_name in CORE_FUNCTIONS else 1,
-                    m.original_name,
-                ),
-            )
-
-            # Limit non-core functions to keep prompt size manageable
-            count = 0
-            for metadata in sorted_functions:
-                is_core = metadata.original_name in CORE_FUNCTIONS
-                if not is_core and count >= MAX_FUNCTIONS_PER_LIBRARY:
-                    continue  # Skip excess non-core functions
-
-                func_doc = self._format_function_doc(metadata)
-                if func_doc:
-                    lib_docs.append(func_doc)
-                    if not is_core:
-                        count += 1
-
-            if len(sorted_functions) > MAX_FUNCTIONS_PER_LIBRARY:
-                lib_docs.append(
-                    f"... and {len(sorted_functions) - MAX_FUNCTIONS_PER_LIBRARY} more functions\n"
-                )
-
-            docs_parts.append("\n".join(lib_docs))
-
-        return "\n".join(docs_parts)
-
-    def _format_function_doc(self, metadata) -> str:
-        """Format documentation for a single function."""
-        try:
-            func = metadata.func
-            original_name = metadata.original_name
-            module = metadata.module
-
-            # Build import path
-            if metadata.registry.library_name in ("pyclesperanto", "skimage", "cupy"):
-                # External libs use virtual modules
-                import_path = f"from openhcs.{metadata.registry.library_name} import {original_name}"
-            else:
-                # OpenHCS native functions
-                import_path = f"from {module} import {original_name}"
-
-            # Get signature (filtering internal params)
-            sig_str = self._format_signature(func, original_name)
-
-            # Get description (first line of docstring)
-            desc = ""
-            if metadata.doc:
-                first_line = metadata.doc.split("\n")[0].strip()
-                if first_line:
-                    desc = f"  # {first_line}"
-
-            # Core functions get detailed documentation
-            if original_name in CORE_FUNCTIONS:
-                param_doc = self._format_parameters(func)
-                return f"""
-### {original_name}
-{import_path}
-Signature: `{sig_str}`{desc}
-{param_doc}
-"""
-            else:
-                # Non-core functions: compact format (just name and import)
-                return f"- `{original_name}`: {import_path}\n"
-
-        except Exception as e:
-            logger.debug(f"Could not format function {metadata.name}: {e}")
-            return ""
-
-    def _format_signature(self, func: Callable, name: str) -> str:
-        """Format function signature, filtering internal params."""
-        return self._parameter_formatter.signature(func, name)
-
-    def _format_parameters(self, func: Callable) -> str:
-        """Format parameter documentation for core functions."""
-        return self._parameter_formatter.parameter_block(func)
-
-    def _get_enum_documentation(self) -> str:
-        """Build documentation for relevant enums."""
-        enums_to_document = []
-
-        # Core enums that are always useful
-        try:
-            from openhcs.processing.backends.analysis.cell_counting_cpu import (
-                DetectionMethod,
-                ThresholdMethod,
-                ColocalizationMethod,
-            )
-
-            enums_to_document.extend(
-                [DetectionMethod, ThresholdMethod, ColocalizationMethod]
-            )
-        except ImportError:
-            pass
-
-        try:
-            from openhcs.constants.constants import (
-                DtypeConversion,
-                VariableComponents,
-                GroupBy,
-            )
-
-            enums_to_document.extend([DtypeConversion, VariableComponents, GroupBy])
-        except ImportError:
-            pass
-
-        try:
-            from openhcs.constants.input_source import InputSource
-
-            enums_to_document.append(InputSource)
-        except ImportError:
-            pass
-
-        docs = []
-        for enum_type in enums_to_document:
-            values = ", ".join(m.name for m in enum_type)
-            module = enum_type.__module__
-            docs.append(f"- `{enum_type.__name__}`: from {module} → Values: {values}")
-
-        return "\n".join(docs) if docs else "# No enum documentation available"
-
-    def _get_example_pipeline(self) -> str:
-        """Load example pipeline from file."""
-        basic_pipeline_path = (
-            Path(__file__).parent.parent.parent / "tests" / "basic_pipeline.py"
+        Args:
+            api_endpoint: LLM API endpoint URL (default: Ollama local endpoint)
+            model: Model name (auto-detected if None)
+        """
+        self.api_endpoint = api_endpoint
+        self.base_url = self._derive_base_url(api_endpoint)
+        self.model = model  # May be None, resolved on first test_connection
+        self._parameter_formatter = LLMParameterFormatter(
+            LLMParameterDocumentationPolicy(INTERNAL_PARAMS)
         )
-        try:
-            with open(basic_pipeline_path, "r") as f:
-                return f.read()
-        except Exception as e:
-            logger.warning(f"Could not load example pipeline: {e}")
-            return "# Example pipeline not available"
+        self._prompt_builder = LLMPromptBuilder(self._parameter_formatter)
+        # Build system prompts for different contexts
+        self._system_prompts = {
+            "pipeline": self._prompt_builder.build_pipeline_system_prompt(),
+            "function": self._prompt_builder.build_custom_function_system_prompt(),
+        }
 
-    def _get_fallback_function_docs(self) -> str:
-        """Fallback function documentation if registry unavailable."""
-        return """
-## Core Functions (fallback - registry not loaded)
-- `stack_percentile_normalize`: from openhcs.processing.backends.processors.numpy_processor
-- `create_projection`: from openhcs.processing.backends.processors.numpy_processor
-- `create_composite`: from openhcs.processing.backends.processors.numpy_processor
-- `count_cells_single_channel`: from openhcs.processing.backends.analysis.cell_counting_cpu
-- `assemble_stack_cpu`: from openhcs.processing.backends.assemblers.assemble_stack_cpu
-"""
+    @property
+    def system_prompt(self) -> str:
+        """Default system prompt (pipeline) for backward compatibility."""
+        return self._system_prompts.get("pipeline", "")
+
+    def get_system_prompt(self, code_type: str = "pipeline") -> str:
+        """Return the runtime-generated system prompt for a given context."""
+        if code_type == "function":
+            return self._system_prompts.get("function", self.system_prompt)
+        return self._system_prompts.get("pipeline", self.system_prompt)
+
+    def _derive_base_url(self, endpoint: str) -> str:
+        """Extract base URL from endpoint."""
+        parsed = urlparse(endpoint)
+        return urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+
+    def _get_available_models(self) -> List[str]:
+        """Fetch available models from Ollama."""
+        try:
+            response = requests.get(
+                f"{self.base_url}/api/tags", timeout=CONNECTION_TIMEOUT_S
+            )
+            response.raise_for_status()
+            data = response.json()
+            return [m.get("name", "") for m in data.get("models", [])]
+        except Exception:
+            return []
+
+    def _select_best_model(self, available_models: List[str]) -> Optional[str]:
+        """Select best model from available ones based on preference order."""
+        if not available_models:
+            return None
+
+        # Check preferred models in order
+        for preferred in PREFERRED_MODELS:
+            for available in available_models:
+                # Match base name (e.g., "qwen2.5-coder" matches "qwen2.5-coder:7b")
+                if available.split(":")[0] == preferred or available.startswith(
+                    preferred
+                ):
+                    return available
+
+        # Fall back to first available model
+        return available_models[0] if available_models else None
+
+    def test_connection(self) -> Tuple[bool, str]:
+        """
+        Test connection to LLM service. Auto-selects model if not set.
+
+        Returns:
+            (is_connected, status_message)
+        """
+        try:
+            available_models = self._get_available_models()
+
+            if not available_models:
+                return (False, "No models available")
+
+            # Auto-select model if not set
+            if self.model is None:
+                self.model = self._select_best_model(available_models)
+                if self.model:
+                    logger.info(f"Auto-selected LLM model: {self.model}")
+
+            if self.model is None:
+                return (False, "No suitable model found")
+
+            # Check if selected model is available
+            if self.model in available_models:
+                return (True, self.model)
+
+            # Try base name match
+            model_base = self.model.split(":")[0]
+            for name in available_models:
+                if name.split(":")[0] == model_base:
+                    self.model = name  # Update to actual name
+                    return (True, name)
+
+            return (False, f"Model '{self.model}' not found")
+
+        except requests.exceptions.ConnectionError:
+            return (False, "Connection refused")
+        except requests.exceptions.Timeout:
+            return (False, "Connection timeout")
+        except Exception as e:
+            return (False, str(e))
 
     def generate_code(self, user_request: str, code_type: str = "pipeline") -> str:
         """

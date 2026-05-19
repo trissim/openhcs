@@ -68,6 +68,17 @@ Checkpoint 4:
 - Focused advisor output is reduced to the larger class decomposition and
   existing attribute-probe/template-method families.
 
+Checkpoint 5:
+
+- `LLMPipelineService` is now a generation/connection facade instead of also
+  owning prompt catalog and function-documentation projection.
+- Added `LLMPromptBuilder`, `LLMFunctionDocumentationBuilder`, and
+  `LLMPromptResourceCatalog` so prompt assembly, registry documentation, and
+  static/dynamic prompt resources have separate authorities.
+- Focused advisor output for `llm_pipeline_service.py` is clean; the remaining
+  active PyQt findings are `ImageBrowserWidget`, `PlateViewWidget`,
+  `DualEditorWindow`, and the cross-widget initialization skeleton finding.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:
