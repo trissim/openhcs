@@ -44,6 +44,7 @@ from openhcs.processing.backends.analysis.cell_counting_common import (
     WatershedThresholdBackend,
     WatershedThresholdMethodStrategy,
     colocalization_analyzer_catalog,
+    detection_method_catalog,
 )
 
 WATERSHED_THRESHOLD_BACKEND = WatershedThresholdBackend(
@@ -393,19 +394,11 @@ def _detect_cells_single_method(
     params: Dict[str, Any]
 ) -> CellCountResult:
     """Detect cells using specified method."""
-
-    if method == DetectionMethod.BLOB_LOG.value:
-        return _detect_cells_blob_log(image, slice_idx, params)
-    elif method == DetectionMethod.BLOB_DOG.value:
-        return _detect_cells_blob_dog(image, slice_idx, params)
-    elif method == DetectionMethod.BLOB_DOH.value:
-        return _detect_cells_blob_doh(image, slice_idx, params)
-    elif method == DetectionMethod.WATERSHED.value:
-        return _detect_cells_watershed(image, slice_idx, params)
-    elif method == DetectionMethod.THRESHOLD.value:
-        return _detect_cells_threshold(image, slice_idx, params)
-    else:
+    try:
+        detector = DETECTION_METHODS[method]
+    except KeyError as exc:
         raise ValueError(f"Unknown detection method: {method}")
+    return detector(image, slice_idx, params)
 
 
 def _detect_cells_blob_log(image: np.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
@@ -765,6 +758,21 @@ def _detect_cells_threshold(image: np.ndarray, slice_idx: int, params: Dict[str,
         params,
         binary_mask=filtered_labeled_mask,  # Labeled mask with only cells that passed all filters
     )
+
+
+DetectionMethodHandler = Callable[
+    [np.ndarray, int, Dict[str, Any]],
+    CellCountResult,
+]
+
+
+DETECTION_METHODS: dict[str, DetectionMethodHandler] = detection_method_catalog(
+    blob_log=_detect_cells_blob_log,
+    blob_dog=_detect_cells_blob_dog,
+    blob_doh=_detect_cells_blob_doh,
+    watershed=_detect_cells_watershed,
+    threshold=_detect_cells_threshold,
+)
 
 
 def _analyze_colocalization(

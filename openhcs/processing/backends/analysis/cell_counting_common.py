@@ -22,6 +22,24 @@ class DetectionMethod(Enum):
     THRESHOLD = "threshold"
 
 
+def detection_method_catalog(
+    *,
+    blob_log: Callable[..., CellCountResult],
+    blob_dog: Callable[..., CellCountResult],
+    blob_doh: Callable[..., CellCountResult],
+    watershed: Callable[..., CellCountResult],
+    threshold: Callable[..., CellCountResult],
+) -> dict[str, Callable[..., CellCountResult]]:
+    """Build the detector catalog from the single detection enum authority."""
+    return {
+        DetectionMethod.BLOB_LOG.value: blob_log,
+        DetectionMethod.BLOB_DOG.value: blob_dog,
+        DetectionMethod.BLOB_DOH.value: blob_doh,
+        DetectionMethod.WATERSHED.value: watershed,
+        DetectionMethod.THRESHOLD.value: threshold,
+    }
+
+
 class ColocalizationMethod(Enum):
     """Methods for multi-channel colocalization analysis."""
 
