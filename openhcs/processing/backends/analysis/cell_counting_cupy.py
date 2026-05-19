@@ -9,8 +9,6 @@ methods and colocalization metrics.
 import numpy as np  # Keep for CPU fallbacks and data conversion
 import logging
 from typing import Dict, List, Tuple, Any, Optional, Union, TYPE_CHECKING
-from dataclasses import dataclass
-from enum import Enum
 
 # Import CuPy using the established optional import pattern
 from openhcs.core.utils import optional_import
@@ -48,62 +46,13 @@ from openhcs.processing.materialization import (
     JsonOptions,
 )
 from openhcs.constants.constants import Backend
-
-
-class DetectionMethod(Enum):
-    """Cell detection methods available."""
-    BLOB_LOG = "blob_log"          # Laplacian of Gaussian (best for round cells)
-    BLOB_DOG = "blob_dog"          # Difference of Gaussian (faster, good general purpose)
-    BLOB_DOH = "blob_doh"          # Determinant of Hessian (good for elongated cells)
-    WATERSHED = "watershed"        # Watershed segmentation (best for touching cells)
-    THRESHOLD = "threshold"        # Simple thresholding (fastest, basic)
-
-
-class ColocalizationMethod(Enum):
-    """Methods for multi-channel colocalization analysis."""
-    OVERLAP_AREA = "overlap_area"           # Based on segmentation overlap
-    DISTANCE_BASED = "distance_based"       # Based on centroid distances
-    INTENSITY_CORRELATION = "intensity_correlation"  # Based on intensity correlation
-    MANDERS_COEFFICIENTS = "manders_coefficients"    # Manders colocalization coefficients
-
-
-class ThresholdMethod(Enum):
-    """Automatic thresholding methods for watershed segmentation."""
-    OTSU = "otsu"                  # Otsu's method (good for bimodal histograms)
-    LI = "li"                      # Li's method (good for low contrast images)
-    MANUAL = "manual"              # Manual threshold value (0.0-1.0)
-
-
-
-
-
-@dataclass
-class CellCountResult:
-    """Results for single-channel cell counting."""
-    slice_index: int
-    method: str
-    cell_count: int
-    cell_positions: List[Tuple[float, float]]  # (x, y) centroids
-    cell_areas: List[float]
-    cell_intensities: List[float]
-    detection_confidence: List[float]
-    parameters_used: Dict[str, Any]
-    binary_mask: Optional[cp.ndarray] = None  # Actual binary mask for segmentation methods
-
-
-@dataclass
-class MultiChannelResult:
-    """Results for multi-channel cell counting and colocalization."""
-    slice_index: int
-    chan_1_results: CellCountResult
-    chan_2_results: CellCountResult
-    colocalization_method: str
-    colocalized_count: int
-    colocalization_percentage: float
-    chan_1_only_count: int
-    chan_2_only_count: int
-    colocalization_metrics: Dict[str, float]
-    overlap_positions: List[Tuple[float, float]]
+from openhcs.processing.backends.analysis.cell_counting_common import (
+    CellCountResult,
+    ColocalizationMethod,
+    DetectionMethod,
+    MultiChannelResult,
+    ThresholdMethod,
+)
 
 
 def count_cells_single_channel(
