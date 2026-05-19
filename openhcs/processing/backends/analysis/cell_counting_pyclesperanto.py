@@ -520,15 +520,14 @@ def _detect_cells_blob_log(image: np.ndarray, slice_idx: int, params: Dict[str, 
         intensities = []
         confidences = []
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_log_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "blob_log_pyclesperanto",
+        positions,
+        areas,
+        intensities,
+        confidences,
+        params,
     )
 
 
@@ -598,15 +597,14 @@ def _detect_cells_blob_dog(image: np.ndarray, slice_idx: int, params: Dict[str, 
         intensities = []
         confidences = []
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_dog_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "blob_dog_pyclesperanto",
+        positions,
+        areas,
+        intensities,
+        confidences,
+        params,
     )
 
 
@@ -656,15 +654,8 @@ def _detect_cells_blob_dog(image: np.ndarray, slice_idx: int, params: Dict[str, 
         params["min_cell_area"], params["max_cell_area"]
     )
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_dog_pyclesperanto",
-        cell_count=len(filtered_data[0]),
-        cell_positions=filtered_data[0],
-        cell_areas=filtered_data[1],
-        cell_intensities=filtered_data[2],
-        detection_confidence=filtered_data[3],
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx, "blob_dog_pyclesperanto", *filtered_data, params
     )
 
 
@@ -754,15 +745,8 @@ def _detect_cells_blob_doh(image: np.ndarray, slice_idx: int, params: Dict[str, 
         params["min_cell_area"], params["max_cell_area"]
     )
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_doh_pyclesperanto",
-        cell_count=len(filtered_data[0]),
-        cell_positions=filtered_data[0],
-        cell_areas=filtered_data[1],
-        cell_intensities=filtered_data[2],
-        detection_confidence=filtered_data[3],
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx, "blob_doh_pyclesperanto", *filtered_data, params
     )
 
 
@@ -923,15 +907,14 @@ def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str,
     # Force garbage collection to free GPU memory
     gc.collect()
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="watershed_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=filtered_areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "watershed_pyclesperanto",
+        positions,
+        filtered_areas,
+        intensities,
+        confidences,
+        params,
     )
 
 
@@ -1024,15 +1007,14 @@ def _detect_cells_threshold(image: np.ndarray, slice_idx: int, params: Dict[str,
     # Force garbage collection to free GPU memory
     gc.collect()
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="threshold_pyclesperanto",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=filtered_areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "threshold_pyclesperanto",
+        positions,
+        filtered_areas,
+        intensities,
+        confidences,
+        params,
     )
 
 

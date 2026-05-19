@@ -516,15 +516,8 @@ def _detect_cells_blob_log(image: cp.ndarray, slice_idx: int, params: Dict[str, 
         params["min_cell_area"], params["max_cell_area"]
     )
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_log",
-        cell_count=len(filtered_data[0]),
-        cell_positions=filtered_data[0],
-        cell_areas=filtered_data[1],
-        cell_intensities=filtered_data[2],
-        detection_confidence=filtered_data[3],
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx, "blob_log", *filtered_data, params
     )
 
 
@@ -563,15 +556,8 @@ def _detect_cells_blob_dog(image: cp.ndarray, slice_idx: int, params: Dict[str, 
         params["min_cell_area"], params["max_cell_area"]
     )
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_dog",
-        cell_count=len(filtered_data[0]),
-        cell_positions=filtered_data[0],
-        cell_areas=filtered_data[1],
-        cell_intensities=filtered_data[2],
-        detection_confidence=filtered_data[3],
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx, "blob_dog", *filtered_data, params
     )
 
 
@@ -611,15 +597,8 @@ def _detect_cells_blob_doh(image: cp.ndarray, slice_idx: int, params: Dict[str, 
         params["min_cell_area"], params["max_cell_area"]
     )
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="blob_doh",
-        cell_count=len(filtered_data[0]),
-        cell_positions=filtered_data[0],
-        cell_areas=filtered_data[1],
-        cell_intensities=filtered_data[2],
-        detection_confidence=filtered_data[3],
-        parameters_used=params
+    return CellCountResult.from_measurements(
+        slice_idx, "blob_doh", *filtered_data, params
     )
 
 
@@ -711,16 +690,15 @@ def _detect_cells_watershed(image: cp.ndarray, slice_idx: int, params: Dict[str,
     # Create filtered binary mask with only cells that passed size filter
     filtered_binary_mask = cp.isin(labels, cp.array(valid_labels))
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="watershed",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params,
-        binary_mask=filtered_binary_mask  # Only cells that passed all filters
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "watershed",
+        positions,
+        areas,
+        intensities,
+        confidences,
+        params,
+        binary_mask=filtered_binary_mask,  # Only cells that passed all filters
     )
 
 
@@ -763,16 +741,15 @@ def _detect_cells_threshold(image: cp.ndarray, slice_idx: int, params: Dict[str,
     # Create filtered binary mask with only cells that passed size filter
     filtered_binary_mask = cp.isin(labels, cp.array(valid_labels))
 
-    return CellCountResult(
-        slice_index=slice_idx,
-        method="threshold",
-        cell_count=len(positions),
-        cell_positions=positions,
-        cell_areas=areas,
-        cell_intensities=intensities,
-        detection_confidence=confidences,
-        parameters_used=params,
-        binary_mask=filtered_binary_mask  # Only cells that passed all filters
+    return CellCountResult.from_measurements(
+        slice_idx,
+        "threshold",
+        positions,
+        areas,
+        intensities,
+        confidences,
+        params,
+        binary_mask=filtered_binary_mask,  # Only cells that passed all filters
     )
 
 

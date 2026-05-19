@@ -48,6 +48,31 @@ class CellCountResult:
     parameters_used: dict[str, Any]
     binary_mask: Any | None = None
 
+    @classmethod
+    def from_measurements(
+        cls,
+        slice_index: int,
+        method: str,
+        positions: list[tuple[float, float]],
+        areas: list[float],
+        intensities: list[float],
+        confidences: list[float],
+        parameters: dict[str, Any],
+        binary_mask: Any | None = None,
+    ) -> "CellCountResult":
+        """Build a count result from parallel detection measurement vectors."""
+        return cls(
+            slice_index=slice_index,
+            method=method,
+            cell_count=len(positions),
+            cell_positions=positions,
+            cell_areas=areas,
+            cell_intensities=intensities,
+            detection_confidence=confidences,
+            parameters_used=parameters,
+            binary_mask=binary_mask,
+        )
+
 
 @dataclass
 class MultiChannelResult:
