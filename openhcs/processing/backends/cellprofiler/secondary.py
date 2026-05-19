@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -69,23 +68,15 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
 from openhcs.processing.backends.cellprofiler.watershed import (
     cellprofiler_legacy_watershed,
 )
 
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
-
-
-def _profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _log_profile(label: str, seconds: float, **fields: object) -> None:
-    if not _profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
 class SecondaryMethod(Enum):
@@ -1499,7 +1490,7 @@ def identify_secondary_objects(
     )
     inputs = _normalize_secondary_inputs(raw_image_data, primary_labels)
     img = _normalize_intensity_image(inputs.image)
-    _log_profile(
+    runtime_profiler.log(
         "iso_prepare_inputs",
         time.perf_counter() - phase_started_at,
         function="identify_secondary_objects",
@@ -1530,7 +1521,7 @@ def identify_secondary_objects(
             diagnostics_unit_interval_scale=diagnostics_unit_interval_scale,
         )
     )
-    _log_profile(
+    runtime_profiler.log(
         "iso_threshold",
         time.perf_counter() - phase_started_at,
         function="identify_secondary_objects",
@@ -1550,7 +1541,7 @@ def identify_secondary_objects(
             propagation_backend_provider=propagation_backend_provider,
         )
     )
-    _log_profile(
+    runtime_profiler.log(
         "iso_segment",
         time.perf_counter() - phase_started_at,
         function="identify_secondary_objects",
@@ -1564,7 +1555,7 @@ def identify_secondary_objects(
         primary_labels=inputs.labels,
         morphology=morphology,
     )
-    _log_profile(
+    runtime_profiler.log(
         "iso_label_variants",
         time.perf_counter() - phase_started_at,
         function="identify_secondary_objects",
@@ -1579,7 +1570,7 @@ def identify_secondary_objects(
         weighted_variance=threshold.weighted_variance,
         sum_of_entropies=threshold.sum_of_entropies,
     )
-    _log_profile(
+    runtime_profiler.log(
         "iso_stats",
         time.perf_counter() - phase_started_at,
         function="identify_secondary_objects",
@@ -1590,13 +1581,13 @@ def identify_secondary_objects(
         primary_labels if isinstance(primary_labels, ObjectLabelPayload) else inputs.labels,
         object_labels.segmented,
     )
-    _log_profile(
+    runtime_profiler.log(
         "iso_relationships",
         time.perf_counter() - phase_started_at,
         function="identify_secondary_objects",
         method=method.value,
     )
-    _log_profile(
+    runtime_profiler.log(
         "iso_total",
         time.perf_counter() - profile_total_started_at,
         function="identify_secondary_objects",

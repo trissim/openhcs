@@ -29,21 +29,13 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
 
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 _INTENSITY_DEBUG_TRACE_DIR_ENV = "OPENHCS_ZERNIKE_INTENSITY_DEBUG_TRACE_DIR"
 logger = logging.getLogger(__name__)
-
-
-def _profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _log_profile(label: str, seconds: float, **fields: object) -> None:
-    if not _profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
 @dataclass(frozen=True)
@@ -434,7 +426,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             denominators,
             int(measured_label_ids.size),
         )
-        _log_profile(
+        runtime_profiler.log(
             "zernike_shape_score",
             time.perf_counter() - score_started_at,
             objects=int(measured_label_ids.size),
@@ -518,7 +510,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             term_counts,
             int(measured_label_ids.size),
         )
-        _log_profile(
+        runtime_profiler.log(
             "zernike_intensity_score",
             time.perf_counter() - score_started_at,
             objects=int(measured_label_ids.size),
@@ -598,7 +590,7 @@ def _zernike_label_geometry(
     object_ids_array = np.ascontiguousarray(object_ids, dtype=np.int32)
     key_started_at = time.perf_counter()
     key = (*_array_content_key(labels_array), *_array_content_key(object_ids_array))
-    _log_profile(
+    runtime_profiler.log(
         "zernike_geometry_key",
         time.perf_counter() - key_started_at,
         objects=object_ids_array.size,
@@ -606,7 +598,7 @@ def _zernike_label_geometry(
     entry = _ZERNIKE_LABEL_GEOMETRY_CACHE.get(key)
     if entry is not None:
         _ZERNIKE_LABEL_GEOMETRY_CACHE.move_to_end(key)
-        _log_profile(
+        runtime_profiler.log(
             "zernike_geometry_cache_hit",
             time.perf_counter() - total_started_at,
             objects=object_ids_array.size,
@@ -618,7 +610,7 @@ def _zernike_label_geometry(
         labels_array,
         object_ids_array,
     )
-    _log_profile(
+    runtime_profiler.log(
         "zernike_geometry_min_enclosing_circle",
         time.perf_counter() - circle_started_at,
         objects=object_ids_array.size,
@@ -639,7 +631,7 @@ def _zernike_label_geometry(
         labels_array[y_coords, x_coords],
         dtype=np.int32,
     )
-    _log_profile(
+    runtime_profiler.log(
         "zernike_geometry_compact_pixels",
         time.perf_counter() - compact_started_at,
         pixels=label_values.size,
@@ -656,7 +648,7 @@ def _zernike_label_geometry(
     _ZERNIKE_LABEL_GEOMETRY_CACHE.move_to_end(key)
     while len(_ZERNIKE_LABEL_GEOMETRY_CACHE) > _ZERNIKE_LABEL_GEOMETRY_CACHE_MAX_ENTRIES:
         _ZERNIKE_LABEL_GEOMETRY_CACHE.popitem(last=False)
-    _log_profile(
+    runtime_profiler.log(
         "zernike_geometry_total",
         time.perf_counter() - total_started_at,
         objects=object_ids_array.size,

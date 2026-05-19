@@ -2,7 +2,6 @@
 
 import logging
 import numpy as np
-import os
 import time
 from typing import Tuple
 from dataclasses import dataclass
@@ -45,6 +44,9 @@ from openhcs.processing.backends.cellprofiler.morphology import (
     filter_physical_border_objects_numba,
     manual_declumping_size,
 )
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
 from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -52,19 +54,8 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendProvider,
 )
 
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
-
-
-def _profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _log_profile(label: str, seconds: float, **fields: object) -> None:
-    if not _profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
 class UnclumpMethod(Enum):
@@ -223,7 +214,7 @@ def identify_primary_objects(
         CellProfilerThresholdMethod,
         threshold_method,
     )
-    _log_profile(
+    runtime_profiler.log(
         "ipo_prepare_inputs",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
@@ -247,7 +238,7 @@ def identify_primary_objects(
     )
     img = normalize_cellprofiler_image(image)
     effective_threshold_smoothing = threshold_smoothing_scale
-    _log_profile(
+    runtime_profiler.log(
         "ipo_normalize_image",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
@@ -277,7 +268,7 @@ def identify_primary_objects(
         smooth_threshold_application=True,
     )
     threshold_binary = np.asarray(binary, dtype=bool).copy()
-    _log_profile(
+    runtime_profiler.log(
         "ipo_threshold",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
@@ -290,7 +281,7 @@ def identify_primary_objects(
             binary,
             max_hole_size,
         )
-        _log_profile(
+        runtime_profiler.log(
             "ipo_fill_before_declump",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
@@ -303,7 +294,7 @@ def identify_primary_objects(
         connectivity=2,
     )
     declump_backend_method = CellProfilerDeclumpMethod.SHAPE
-    _log_profile(
+    runtime_profiler.log(
         "ipo_initial_label",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
@@ -357,7 +348,7 @@ def identify_primary_objects(
                 min_diameter=min_diameter,
             )
             maxima_image = smoothed
-            _log_profile(
+            runtime_profiler.log(
                 "ipo_declump_smooth",
                 time.perf_counter() - phase_started_at,
                 function="identify_primary_objects",
@@ -373,7 +364,7 @@ def identify_primary_objects(
                 distance.shape,
             )
             maxima_image = distance
-            _log_profile(
+            runtime_profiler.log(
                 "ipo_declump_distance",
                 time.perf_counter() - phase_started_at,
                 function="identify_primary_objects",
@@ -386,7 +377,7 @@ def identify_primary_objects(
             maxima_mask,
             image_resize_factor,
         )
-        _log_profile(
+        runtime_profiler.log(
             "ipo_declump_seed_points",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
@@ -396,7 +387,7 @@ def identify_primary_objects(
             maxima,
             connectivity=2,
         )
-        _log_profile(
+        runtime_profiler.log(
             "ipo_declump_marker_label",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
@@ -415,7 +406,7 @@ def identify_primary_objects(
                 watershed_image = 1 - img
             watershed_markers = np.zeros(watershed_image.shape, np.int32)
             watershed_markers[markers > 0] = -markers[markers > 0]
-            _log_profile(
+            runtime_profiler.log(
                 "ipo_watershed_prepare",
                 time.perf_counter() - phase_started_at,
                 function="identify_primary_objects",
@@ -429,13 +420,13 @@ def identify_primary_objects(
                 backend_provider=watershed_backend_provider,
             )
             object_count = int(labeled_image.max())
-            _log_profile(
+            runtime_profiler.log(
                 "ipo_watershed_execute",
                 time.perf_counter() - phase_started_at,
                 function="identify_primary_objects",
                 object_count=object_count,
             )
-        _log_profile(
+        runtime_profiler.log(
             "ipo_declump_total",
             time.perf_counter() - declump_started_at,
             function="identify_primary_objects",
@@ -444,7 +435,7 @@ def identify_primary_objects(
     phase_started_at = time.perf_counter()
     unedited_labels = labeled_image.copy()
     small_removed_labels = labeled_image.copy()
-    _log_profile(
+    runtime_profiler.log(
         "ipo_copy_label_variants",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
@@ -461,7 +452,7 @@ def identify_primary_objects(
             image_mask=input_mask,
             image_metadata=input_metadata,
         )
-        _log_profile(
+        runtime_profiler.log(
             "ipo_filter_border",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
@@ -476,7 +467,7 @@ def identify_primary_objects(
             min_diameter,
             max_diameter,
         )
-        _log_profile(
+        runtime_profiler.log(
             "ipo_filter_size",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
@@ -487,7 +478,7 @@ def identify_primary_objects(
         phase_started_at = time.perf_counter()
         capture_array_fixture("ipo_fill_after", labels=labeled_image)
         labeled_image = morphology.fill_labeled_holes(labeled_image)
-        _log_profile(
+        runtime_profiler.log(
             "ipo_fill_after_declump",
             time.perf_counter() - phase_started_at,
             function="identify_primary_objects",
@@ -496,7 +487,7 @@ def identify_primary_objects(
     # Relabel while preserving watershed boundaries between touching objects.
     phase_started_at = time.perf_counter()
     labeled_image, object_count = morphology.relabel_sequential(labeled_image)
-    _log_profile(
+    runtime_profiler.log(
         "ipo_relabel",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
@@ -519,7 +510,7 @@ def identify_primary_objects(
         mask=input_mask,
         proven_unit_interval_scale=diagnostics_unit_interval_scale,
     )
-    _log_profile(
+    runtime_profiler.log(
         "ipo_statistics_diagnostics",
         time.perf_counter() - phase_started_at,
         function="identify_primary_objects",
@@ -536,7 +527,7 @@ def identify_primary_objects(
         weighted_variance=threshold_diagnostics.weighted_variance,
         sum_of_entropies=threshold_diagnostics.sum_of_entropies,
     )
-    _log_profile(
+    runtime_profiler.log(
         "ipo_total",
         time.perf_counter() - profile_total_started_at,
         function="identify_primary_objects",

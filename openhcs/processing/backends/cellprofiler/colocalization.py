@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
@@ -44,22 +43,14 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
 from openhcs.processing.materialization import csv_materializer
 
 
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
-
-
-def _profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _log_profile(label: str, seconds: float, **fields: object) -> None:
-    if not _profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
 class ColocalizationCostesBackendStrategy(
@@ -1618,7 +1609,7 @@ def _colocalization_measurement(
             fi = np.empty(0, dtype=np.asarray(first_pixels).dtype)
             si = np.empty(0, dtype=np.asarray(second_pixels).dtype)
 
-    _log_profile(
+    runtime_profiler.log(
         "coloc_prepare_pixels",
         time.perf_counter() - phase_started_at,
         function="_colocalization_measurement",
@@ -1632,7 +1623,7 @@ def _colocalization_measurement(
                     backend_provider=options.costes_backend_provider,
                 ).correlation_slopes(fi, si)
             )
-            _log_profile(
+            runtime_profiler.log(
                 "coloc_correlation",
                 time.perf_counter() - phase_started_at,
                 function="_colocalization_measurement",
@@ -1658,7 +1649,7 @@ def _colocalization_measurement(
                 int(options.scale_max),
                 options.unit_interval_intensity_scale,
             )
-            _log_profile(
+            runtime_profiler.log(
                 "coloc_thresholded_metrics",
                 time.perf_counter() - phase_started_at,
                 function="_colocalization_measurement",
@@ -1684,7 +1675,7 @@ def _colocalization_measurement(
                     options.scale_max,
                     fast_mode,
                 )
-            _log_profile(
+            runtime_profiler.log(
                 "coloc_costes_thresholds",
                 time.perf_counter() - phase_started_at,
                 function="_colocalization_measurement",
@@ -1698,7 +1689,7 @@ def _colocalization_measurement(
                 _pixel_dtype_threshold(fi, thr_fi_c),
                 _pixel_dtype_threshold(si, thr_si_c),
             )
-            _log_profile(
+            runtime_profiler.log(
                 "coloc_costes_manders",
                 time.perf_counter() - phase_started_at,
                 function="_colocalization_measurement",
@@ -1721,7 +1712,7 @@ def _colocalization_measurement(
         costes_threshold_1=float(thr_fi_c) if not np.isnan(thr_fi_c) else 0.0,
         costes_threshold_2=float(thr_si_c) if not np.isnan(thr_si_c) else 0.0,
     )
-    _log_profile(
+    runtime_profiler.log(
         "coloc_total",
         time.perf_counter() - total_started_at,
         function="_colocalization_measurement",
@@ -1859,7 +1850,7 @@ def measure_colocalization(
     image_data = image_payload_data(image)
     if channel_1 >= image_data.shape[0] or channel_2 >= image_data.shape[0]:
         raise ValueError(f"Channel indices ({channel_1}, {channel_2}) out of range for image with {image_data.shape[0]} channels")
-    _log_profile(
+    runtime_profiler.log(
         "measure_coloc_input",
         time.perf_counter() - phase_started_at,
         function="measure_colocalization",
@@ -1888,7 +1879,7 @@ def measure_colocalization(
         ),
         costes_backend_provider=costes_backend_provider,
     )
-    _log_profile(
+    runtime_profiler.log(
         "measure_coloc_options",
         time.perf_counter() - phase_started_at,
         function="measure_colocalization",
@@ -1901,7 +1892,7 @@ def measure_colocalization(
         channel_1,
         channel_2,
     )
-    _log_profile(
+    runtime_profiler.log(
         "measure_coloc_prepare_arrays",
         time.perf_counter() - phase_started_at,
         function="measure_colocalization",
@@ -1914,7 +1905,7 @@ def measure_colocalization(
         options=options,
         valid_mask=valid_mask,
     )
-    _log_profile(
+    runtime_profiler.log(
         "measure_coloc_metrics",
         time.perf_counter() - phase_started_at,
         function="measure_colocalization",
@@ -1927,12 +1918,12 @@ def measure_colocalization(
         image_data,
         channel_1,
     ).payload()
-    _log_profile(
+    runtime_profiler.log(
         "measure_coloc_output_payload",
         time.perf_counter() - phase_started_at,
         function="measure_colocalization",
     )
-    _log_profile(
+    runtime_profiler.log(
         "measure_coloc_total",
         time.perf_counter() - total_started_at,
         function="measure_colocalization",

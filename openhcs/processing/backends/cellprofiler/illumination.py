@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from enum import Enum
 from functools import lru_cache
 import logging
-import os
 import time
 from typing import ClassVar
 import numpy as np
@@ -35,25 +34,17 @@ from openhcs.processing.backends.cellprofiler._backend import (
     cellprofiler_backend_key,
 )
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
 from openhcs.processing.backends.cellprofiler.smoothing import MaskedLinearFilterRequest
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 NDIMAGE_CONSTANT_MODE = "constant"
 ROBUST_FACTOR = 0.02
 logger = logging.getLogger(__name__)
-
-
-def _profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _log_profile(label: str, seconds: float, **fields: object) -> None:
-    if not _profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
 @dataclass(frozen=True, slots=True)
@@ -537,7 +528,7 @@ class IlluminationCalculation:
             request.mask,
             request.rescale_option,
         ).astype(np.float32)
-        _log_profile(
+        runtime_profiler.log(
             "cic_total",
             time.perf_counter() - total_started_at,
             function=self.function_name,
@@ -555,7 +546,7 @@ class IlluminationCalculation:
                 manual_filter_size=request.manual_filter_size,
             )
         )
-        _log_profile(
+        runtime_profiler.log(
             "cic_filter_size",
             time.perf_counter() - phase_started_at,
             function=self.function_name,
@@ -590,7 +581,7 @@ class IlluminationCalculation:
                 for slice_index, slice_data in enumerate(request.pixel_data)
             ]
             average_image = np.mean(np.stack(averaged_inputs, axis=0), axis=0)
-        _log_profile(
+        runtime_profiler.log(
             "cic_average_image",
             time.perf_counter() - phase_started_at,
             function=self.function_name,
@@ -635,7 +626,7 @@ class IlluminationCalculation:
             ).apply()
             if request.mask is not None:
                 result[~request.mask] = 0
-        _log_profile(
+        runtime_profiler.log(
             "cic_dilation",
             time.perf_counter() - phase_started_at,
             function=self.function_name,
@@ -668,7 +659,7 @@ class IlluminationCalculation:
                 rank_median_backend_provider=request.rank_median_backend_provider,
             )
         )
-        _log_profile(
+        runtime_profiler.log(
             "cic_smoothing",
             time.perf_counter() - phase_started_at,
             function=self.function_name,
@@ -707,7 +698,7 @@ class IlluminationCalculation:
                 result = pixel_data.copy()
                 if robust_minimum != 0:
                     result = result / robust_minimum
-        _log_profile(
+        runtime_profiler.log(
             "cic_scaling",
             time.perf_counter() - phase_started_at,
             function=self.function_name,
@@ -729,7 +720,7 @@ class IlluminationCalculation:
             calculation_type=request.intensity_choice.value,
             smoothing_method=request.smoothing_method.value,
         )
-        _log_profile(
+        runtime_profiler.log(
             "cic_stats",
             time.perf_counter() - phase_started_at,
             function=self.function_name,
@@ -1415,13 +1406,13 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
         minimum_value = np.min(effective_scaled)
         phase_started_at = time.perf_counter()
         if np.all(effective_scaled == minimum_value):
-            _log_profile(
+            runtime_profiler.log(
                 "rank_median_constant_minimum",
                 time.perf_counter() - phase_started_at,
                 radius=radius,
             )
             return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
-        _log_profile(
+        runtime_profiler.log(
             "rank_median_constant_minimum",
             time.perf_counter() - phase_started_at,
             radius=radius,
@@ -1434,14 +1425,14 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             row_radii_x,
             minimum_value,
         ):
-            _log_profile(
+            runtime_profiler.log(
                 "rank_median_minimum_majority",
                 time.perf_counter() - phase_started_at,
                 radius=radius,
                 result=True,
             )
             return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
-        _log_profile(
+        runtime_profiler.log(
             "rank_median_minimum_majority",
             time.perf_counter() - phase_started_at,
             radius=radius,
@@ -1450,7 +1441,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
 
         phase_started_at = time.perf_counter()
         values, inverse = np.unique(effective_scaled, return_inverse=True)
-        _log_profile(
+        runtime_profiler.log(
             "rank_median_unique_codes",
             time.perf_counter() - phase_started_at,
             radius=radius,
@@ -1464,7 +1455,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             row_radii_x,
             int(values.size),
         )
-        _log_profile(
+        runtime_profiler.log(
             "rank_median_numba_codes",
             time.perf_counter() - phase_started_at,
             radius=radius,

@@ -52,12 +52,28 @@ def profile_enabled() -> bool:
     return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
 
 
+@dataclass(frozen=True, slots=True)
+class CellProfilerRuntimeProfiler:
+    """Shared CellProfiler runtime-profile emitter bound to a module logger."""
+
+    logger: logging.Logger
+
+    def enabled(self) -> bool:
+        return profile_enabled()
+
+    def log(self, label: str, seconds: float, **fields: object) -> None:
+        if not self.enabled():
+            return
+        field_text = " ".join(f"{key}={value}" for key, value in fields.items())
+        self.logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+
+
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
+
+
 def log_profile(label: str, seconds: float, **fields: object) -> None:
     """Emit one granularity runtime profile event when enabled."""
-    if not profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+    runtime_profiler.log(label, seconds, **fields)
 
 
 @dataclass

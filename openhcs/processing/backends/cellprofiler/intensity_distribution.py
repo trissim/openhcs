@@ -8,7 +8,6 @@ from collections.abc import Callable
 from dataclasses import dataclass
 import hashlib
 import logging
-import os
 import time
 from typing import Any
 
@@ -43,6 +42,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
 from openhcs.processing.backends.cellprofiler.shape import shape_measurement_backend
 from openhcs.processing.backends.cellprofiler.secondary import (
     SecondaryPropagationBackendStrategy,
@@ -54,24 +56,13 @@ from openhcs.processing.backends.cellprofiler.zernike import (
 from openhcs.processing.materialization import csv_materializer
 
 
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
 _RADIAL_LABEL_GEOMETRY_CACHE_LIMIT = 16
 _RADIAL_LABEL_GEOMETRY_CACHE: OrderedDict[
     "RadialLabelGeometryCacheKey",
     "RadialLabelGeometry",
 ] = OrderedDict()
-
-
-def _runtime_profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _log_profile(label: str, seconds: float, **fields: object) -> None:
-    if not _runtime_profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
 
 
 @dataclass(frozen=True)
@@ -81,7 +72,7 @@ class IntensityDistributionProfiler:
     function_name: str
 
     def record(self, label: str, started_at: float, **fields: object) -> None:
-        _log_profile(
+        runtime_profiler.log(
             label,
             time.perf_counter() - started_at,
             function=self.function_name,
@@ -407,7 +398,7 @@ class RadialDistributionBackendStrategy(
         )
         phase_started_at = time.perf_counter()
         colors = shape_backend.color_labels(labels_array)
-        _log_profile(
+        runtime_profiler.log(
             "idist_center_color_labels",
             time.perf_counter() - phase_started_at,
             objects=object_count,
@@ -419,7 +410,7 @@ class RadialDistributionBackendStrategy(
             colors=colors,
             propagation_backend=self.center_propagation_backend(),
         ).fields()
-        _log_profile(
+        runtime_profiler.log(
             "idist_center_propagate",
             time.perf_counter() - phase_started_at,
             objects=object_count,
@@ -440,7 +431,7 @@ class RadialDistributionBackendStrategy(
         cached = _RADIAL_LABEL_GEOMETRY_CACHE.get(cache_key)
         if cached is not None:
             _RADIAL_LABEL_GEOMETRY_CACHE.move_to_end(cache_key)
-            _log_profile(
+            runtime_profiler.log(
                 "idist_label_geometry_cache_hit",
                 0.0,
                 objects=int(labels_array.max()) if labels_array.size else 0,
@@ -453,7 +444,7 @@ class RadialDistributionBackendStrategy(
         )
         phase_started_at = time.perf_counter()
         d_to_edge = shape_backend.distance_to_edge(labels_array)
-        _log_profile(
+        runtime_profiler.log(
             "idist_distance_to_edge",
             time.perf_counter() - phase_started_at,
             objects=object_count,
@@ -464,7 +455,7 @@ class RadialDistributionBackendStrategy(
             labels_array,
             np.arange(1, object_count + 1, dtype=np.int32),
         )
-        _log_profile(
+        runtime_profiler.log(
             "idist_maximum_position",
             time.perf_counter() - phase_started_at,
             objects=object_count,

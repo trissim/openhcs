@@ -5,7 +5,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 import logging
-import os
 import time
 from typing import Any
 
@@ -49,13 +48,16 @@ from openhcs.processing.backends.cellprofiler._backend import (
     cellprofiler_backend_key,
 )
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
 from openhcs.processing.backends.cellprofiler.secondary import _edt_1d_numba
 from openhcs.processing.materialization import csv_materializer
 from openhcs.processing.backends.cellprofiler.zernike import shape_zernike_moments
 
 _ZERNIKE_MAX_ORDER = 9
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
 ShapeFeatureArrays = tuple[dict[str, np.ndarray], np.ndarray]
 
 
@@ -85,17 +87,6 @@ class ObjectSizeShapeFeatureArrayOwner(ABC, metaclass=AutoRegisterMeta):
         )
 
 
-def _profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _log_profile(label: str, seconds: float, **fields: object) -> None:
-    if not _profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
-
-
 @dataclass(frozen=True, slots=True)
 class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
     """Backend-owned CellProfiler AreaShape feature-array measurement."""
@@ -123,7 +114,7 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
         shape_backend = ShapeMeasurementBackendStrategy.for_memory_type(
             backend_provider=self.shape_backend_provider,
         )
-        _log_profile(
+        runtime_profiler.log(
             "moss_backend_resolution",
             time.perf_counter() - phase_started_at,
             function="measure_object_size_shape",
@@ -132,7 +123,7 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
         fast_region_props = LabelRegionPropertiesBackendStrategy.for_memory_type().measure_2d(
             labels
         )
-        _log_profile(
+        runtime_profiler.log(
             "moss_region_properties",
             time.perf_counter() - phase_started_at,
             function="measure_object_size_shape",
@@ -140,7 +131,7 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
         )
         phase_started_at = time.perf_counter()
         props = fast_region_props.as_regionprops_table_subset()
-        _log_profile(
+        runtime_profiler.log(
             "moss_regionprops_table_subset",
             time.perf_counter() - phase_started_at,
             function="measure_object_size_shape",
@@ -151,7 +142,7 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
             labels,
             fast_region_props,
         )
-        _log_profile(
+        runtime_profiler.log(
             "moss_convex_area_solidity",
             time.perf_counter() - phase_started_at,
             function="measure_object_size_shape",
@@ -171,7 +162,7 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
             labels,
             measured_labels,
         )
-        _log_profile(
+        runtime_profiler.log(
             "moss_radius_features",
             time.perf_counter() - phase_started_at,
             function="measure_object_size_shape",
@@ -186,7 +177,7 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
             labels,
             measured_labels,
         )
-        _log_profile(
+        runtime_profiler.log(
             "moss_feret_diameters",
             time.perf_counter() - phase_started_at,
             function="measure_object_size_shape",
@@ -195,7 +186,7 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
 
         phase_started_at = time.perf_counter()
         dense_center_y, dense_center_x = _dense_label_centers_2d(labels)
-        _log_profile(
+        runtime_profiler.log(
             "moss_dense_centers",
             time.perf_counter() - phase_started_at,
             function="measure_object_size_shape",
@@ -270,7 +261,7 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
         if self.calculate_advanced:
             phase_started_at = time.perf_counter()
             features.update(_advanced_2d_features(props))
-            _log_profile(
+            runtime_profiler.log(
                 "moss_advanced_features",
                 time.perf_counter() - phase_started_at,
                 function="measure_object_size_shape",
@@ -284,13 +275,13 @@ class ObjectSizeShapeFeatureMeasurement(ObjectSizeShapeFeatureArrayOwner):
                     backend_provider=self.zernike_backend_provider,
                 )
             )
-            _log_profile(
+            runtime_profiler.log(
                 "moss_zernike_features",
                 time.perf_counter() - phase_started_at,
                 function="measure_object_size_shape",
                 objects=nobjects,
             )
-        _log_profile(
+        runtime_profiler.log(
             "moss_features_2d_total",
             time.perf_counter() - total_started_at,
             function="measure_object_size_shape",
@@ -482,7 +473,7 @@ def measure_object_size_shape(
         shape_backend_provider=shape_backend_provider,
         zernike_backend_provider=zernike_backend_provider,
     ).rows()
-    _log_profile(
+    runtime_profiler.log(
         "moss_total",
         time.perf_counter() - total_started_at,
         function="measure_object_size_shape",

@@ -8,7 +8,6 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from enum import Enum
 import logging
-import os
 import time
 from typing import ClassVar
 
@@ -27,24 +26,16 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
 )
+from openhcs.processing.backends.cellprofiler.granularity import (
+    CellProfilerRuntimeProfiler,
+)
 from openhcs.processing.backends.cellprofiler.thresholding import threshold_primitives
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
 
 
-_PROFILE_RUNTIME_ENV = "OPENHCS_PROFILE_FUNCTION_RUNTIME"
 logger = logging.getLogger(__name__)
-
-
-def _runtime_profile_enabled() -> bool:
-    return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
-
-
-def _log_profile(label: str, seconds: float, **fields: object) -> None:
-    if not _runtime_profile_enabled():
-        return
-    field_text = " ".join(f"{key}={value}" for key, value in fields.items())
-    logger.info("RUNTIME_PROFILE %s %.6fs %s", label, seconds, field_text)
+runtime_profiler = CellProfilerRuntimeProfiler(logger)
 
 
 class ThresholdMethod(Enum):
@@ -844,7 +835,7 @@ def measure_image_quality(
 
     phase_started_at = time.perf_counter()
     pixel_data = np.asarray(image, dtype=np.float32)
-    _log_profile(
+    runtime_profiler.log(
         "miq_prepare_image",
         time.perf_counter() - phase_started_at,
         function="measure_image_quality",
@@ -853,7 +844,7 @@ def measure_image_quality(
     if calculate_blur:
         phase_started_at = time.perf_counter()
         metrics.focus_score = image_quality_focus_score(pixel_data)
-        _log_profile(
+        runtime_profiler.log(
             "miq_focus_score",
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
@@ -863,7 +854,7 @@ def measure_image_quality(
             pixel_data,
             blur_scale,
         )
-        _log_profile(
+        runtime_profiler.log(
             "miq_local_focus_score",
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
@@ -874,7 +865,7 @@ def measure_image_quality(
             blur_scale,
             backend_provider=backend_provider,
         )
-        _log_profile(
+        runtime_profiler.log(
             "miq_correlation",
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
@@ -884,7 +875,7 @@ def measure_image_quality(
             pixel_data,
             backend_provider=backend_provider,
         )
-        _log_profile(
+        runtime_profiler.log(
             "miq_power_log_log_slope",
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
@@ -895,7 +886,7 @@ def measure_image_quality(
         metrics.percent_maximal, metrics.percent_minimal = image_quality_saturation(
             pixel_data
         )
-        _log_profile(
+        runtime_profiler.log(
             "miq_saturation",
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
@@ -912,7 +903,7 @@ def measure_image_quality(
         metrics.mad_intensity = intensity_metrics.mad_intensity
         metrics.min_intensity = intensity_metrics.min_intensity
         metrics.max_intensity = intensity_metrics.max_intensity
-        _log_profile(
+        runtime_profiler.log(
             "miq_intensity",
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
@@ -922,14 +913,14 @@ def measure_image_quality(
         phase_started_at = time.perf_counter()
         threshold_method = coerce_cellprofiler_enum(ThresholdMethod, threshold_method)
         metrics.threshold_otsu = image_quality_threshold(pixel_data, threshold_method)
-        _log_profile(
+        runtime_profiler.log(
             "miq_threshold",
             time.perf_counter() - phase_started_at,
             function="measure_image_quality",
             method=threshold_method.value,
         )
 
-    _log_profile(
+    runtime_profiler.log(
         "miq_total",
         time.perf_counter() - total_started_at,
         function="measure_image_quality",
