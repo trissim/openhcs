@@ -1100,10 +1100,25 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
 
         # Build new parameter list (insert before **kwargs)
         new_params = list(original_sig.parameters.values())
-        insert_index = next((i for i, p in enumerate(new_params) if p.kind == inspect.Parameter.VAR_KEYWORD), len(new_params))
+        insert_index = next(
+            (
+                i
+                for i, parameter in enumerate(new_params)
+                if parameter.kind == inspect.Parameter.VAR_KEYWORD
+            ),
+            len(new_params),
+        )
 
         for param_name, default_value, annotation in params_to_add:
-            new_params.insert(insert_index, inspect.Parameter(param_name, inspect.Parameter.KEYWORD_ONLY, default=default_value, annotation=annotation))
+            new_params.insert(
+                insert_index,
+                inspect.Parameter(
+                    param_name,
+                    inspect.Parameter.KEYWORD_ONLY,
+                    default=default_value,
+                    annotation=annotation,
+                ),
+            )
             insert_index += 1
 
         # Create wrapper
@@ -1599,7 +1614,11 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         return self.FLOAT_DTYPE
 
     # ===== CORE BEHAVIOR CONTRACT =====
-    def classify_function_behavior(self, func: Callable, declared_contract: Optional[ProcessingContract] = None) -> Tuple[ProcessingContract, bool]:
+    def classify_function_behavior(
+        self,
+        func: Callable,
+        declared_contract: Optional[ProcessingContract] = None,
+    ) -> Tuple[ProcessingContract, bool]:
         """Classify function behavior by testing 3D and 2D inputs, or use declared contract if provided."""
 
         # Fast path: If explicit contract is declared, use it directly (skip runtime testing)
@@ -1793,7 +1812,6 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         # Library-specific signature validation
         return self._check_first_parameter(params[0], func_name)
 
-
     def _validate_type_hints(self, func: Callable, func_name: str) -> bool:
         """
         Validate that function type hints can be resolved.
@@ -1893,8 +1911,6 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
         logger.info(f"✅ Discovery complete: {total_accepted}/{total_tested} functions accepted")
         return functions
 
-
-
     def _get_full_function_path(self, module, func_name: str, module_name: str) -> str:
         """Generate full module path for logging."""
         if module_name == "main":
@@ -1933,8 +1949,6 @@ class RuntimeTestingRegistryBase(LibraryRegistryBase):
             return "invalid signature"
 
         return "unknown"
-
-
 
     # ===== CUSTOMIZATION HOOKS =====
     def _generate_function_name(self, name: str, module_name: str) -> str:
