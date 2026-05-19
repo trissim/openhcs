@@ -2132,14 +2132,34 @@ class OpenCVNumpyMorphologyBackendStrategy(NumbaNumpyMorphologyBackendStrategy):
         image: np.ndarray,
         footprint: np.ndarray,
     ) -> np.ndarray:
-        return _opencv_morphology(image, footprint, operation="closing")
+        return self._opencv_morphology(image, footprint, operation="closing")
 
     def grayscale_opening(
         self,
         image: np.ndarray,
         footprint: np.ndarray,
     ) -> np.ndarray:
-        return _opencv_morphology(image, footprint, operation="opening")
+        return self._opencv_morphology(image, footprint, operation="opening")
+
+    def _opencv_morphology(
+        self,
+        image: np.ndarray,
+        footprint: np.ndarray,
+        *,
+        operation: str,
+    ) -> np.ndarray:
+        import cv2
+
+        image_array = np.asarray(image)
+        footprint_array = np.asarray(footprint, dtype=np.uint8)
+        op = cv2.MORPH_OPEN if operation == "opening" else cv2.MORPH_CLOSE
+        result = cv2.morphologyEx(
+            np.ascontiguousarray(image_array),
+            op,
+            footprint_array,
+            borderType=cv2.BORDER_REFLECT,
+        )
+        return np.asarray(result, dtype=image_array.dtype)
 
 
 def _scipy_disk_footprint(radius: float) -> np.ndarray:
@@ -2567,26 +2587,6 @@ def _skimage_grayscale_opening(
         skimage_opening(image_array, np.asarray(footprint, dtype=bool)),
         dtype=image_array.dtype,
     )
-
-
-def _opencv_morphology(
-    image: np.ndarray,
-    footprint: np.ndarray,
-    *,
-    operation: str,
-) -> np.ndarray:
-    import cv2
-
-    image_array = np.asarray(image)
-    footprint_array = np.asarray(footprint, dtype=np.uint8)
-    op = cv2.MORPH_OPEN if operation == "opening" else cv2.MORPH_CLOSE
-    result = cv2.morphologyEx(
-        np.ascontiguousarray(image_array),
-        op,
-        footprint_array,
-        borderType=cv2.BORDER_REFLECT,
-    )
-    return np.asarray(result, dtype=image_array.dtype)
 
 
 def _scipy_declumping_seed_points(
