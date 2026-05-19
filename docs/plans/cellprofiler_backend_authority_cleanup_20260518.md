@@ -88,6 +88,20 @@ Checkpoint 5:
 - Focused morphology advisor output is clean, and the full CP compatibility
   gate passes.
 
+Checkpoint 6:
+
+- Added `HelperBackedSmoothingPlaneStrategy` as the concrete template method
+  for illumination smoothing modes implemented by one helper authority.
+- Kept `FitPolynomialSmoothingPlaneStrategy`,
+  `GaussianFilterSmoothingPlaneStrategy`, and
+  `ConvexHullSmoothingPlaneStrategy` as explicit opaque strategy leaves; each
+  leaf implements the abstract helper hook instead of being collapsed into
+  sentinel dispatch.
+- Fixed Nominal Refactor Advisor separately so abstract hook implementations
+  are not misreported as removable trivial forwarding wrappers.
+- Focused illumination tests pass, and the helper-backed wrapper advisor
+  finding is cleared.
+
 Optional after behavior-adjacent changes:
 
 ```bash

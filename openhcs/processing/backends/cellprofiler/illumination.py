@@ -1129,6 +1129,17 @@ class SmoothingPlaneStrategy(ABC, metaclass=AutoRegisterMeta):
         """Return the smoothed illumination plane."""
 
 
+class HelperBackedSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+    """Template for smoothing modes implemented by one helper authority."""
+
+    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        return self._smooth_with_helper(request)
+
+    @abstractmethod
+    def _smooth_with_helper(self, request: SmoothingPlaneRequest) -> np.ndarray:
+        """Delegate to the concrete helper without exposing child identity."""
+
+
 class NoSmoothingPlaneStrategy(SmoothingPlaneStrategy):
     method = SmoothingMethod.NONE
     method_label = method.value
@@ -1137,22 +1148,22 @@ class NoSmoothingPlaneStrategy(SmoothingPlaneStrategy):
         return request.pixel_data
 
 
-class FitPolynomialSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+class FitPolynomialSmoothingPlaneStrategy(HelperBackedSmoothingPlaneStrategy):
     method = SmoothingMethod.FIT_POLYNOMIAL
     method_label = method.value
 
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+    def _smooth_with_helper(self, request: SmoothingPlaneRequest) -> np.ndarray:
         return fit_polynomial_surface(
             request.pixel_data,
             request.mask,
         )
 
 
-class GaussianFilterSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+class GaussianFilterSmoothingPlaneStrategy(HelperBackedSmoothingPlaneStrategy):
     method = SmoothingMethod.GAUSSIAN_FILTER
     method_label = method.value
 
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+    def _smooth_with_helper(self, request: SmoothingPlaneRequest) -> np.ndarray:
         return IlluminationGaussianFilter(
             request.pixel_data,
             request.mask,
@@ -1192,11 +1203,11 @@ class AverageSmoothingPlaneStrategy(SmoothingPlaneStrategy):
         )
 
 
-class ConvexHullSmoothingPlaneStrategy(SmoothingPlaneStrategy):
+class ConvexHullSmoothingPlaneStrategy(HelperBackedSmoothingPlaneStrategy):
     method = SmoothingMethod.CONVEX_HULL
     method_label = method.value
 
-    def smooth(self, request: SmoothingPlaneRequest) -> np.ndarray:
+    def _smooth_with_helper(self, request: SmoothingPlaneRequest) -> np.ndarray:
         return ConvexHullSmoothingBackendStrategy.for_memory_type(
             backend_provider=request.convex_hull_backend_provider,
         ).smooth_background_plane(
