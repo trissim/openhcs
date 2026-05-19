@@ -79,6 +79,19 @@ Checkpoint 5:
   active PyQt findings are `ImageBrowserWidget`, `PlateViewWidget`,
   `DualEditorWindow`, and the cross-widget initialization skeleton finding.
 
+Checkpoint 6:
+
+- Added `ImageBrowserFilterController` as the search/folder/well/column-filter
+  authority for `ImageBrowserWidget`.
+- Moved single-pass combined filtering, metadata display precomputation,
+  column-filter construction, search-service ownership, and well-filter sync
+  out of the widget facade.
+- Added a controller-level test that pins folder/result-folder, well, and
+  column-filter semantics without constructing the full widget.
+- Focused advisor shows `ImageBrowserWidget` reduced from 50 methods to 43
+  methods; remaining work is still the broader table/streaming/plate-view
+  subsystem split.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:

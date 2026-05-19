@@ -317,6 +317,171 @@ class ImageBrowserImageCatalog:
         return len(self.metadata_by_key)
 
 
+class ImageBrowserFilterController:
+    """Own search, folder, well, and column filtering for ImageBrowserWidget."""
+
+    def __init__(self, browser: "ImageBrowserWidget"):
+        self.browser = browser
+        self._search_service = None
+
+    def apply_combined_filters(self) -> None:
+        """Apply search, folder, well, and column filters in one pass."""
+        browser = self.browser
+        selected_items = browser.folder_tree.selectedItems()
+        folder_path = None
+        results_folder_path = None
+        if selected_items:
+            folder_path = selected_items[0].data(0, Qt.ItemDataRole.UserRole)
+            if folder_path:
+                results_folder_path = f"{folder_path}_results"
+
+        active_filters = self._active_column_filters()
+
+        result = {}
+        for filename, metadata in browser.filtered_files.items():
+            include = True
+
+            if folder_path and include:
+                include = (
+                    str(Path(filename).parent) == folder_path
+                    or filename.startswith(folder_path + "/")
+                    or str(Path(filename).parent) == results_folder_path
+                    or filename.startswith(results_folder_path + "/")
+                )
+
+            if browser.selected_wells and include:
+                include = self._matches_wells(filename, metadata)
+
+            if active_filters and include:
+                include = self._matches_column_filters(metadata, active_filters)
+
+            if include:
+                result[filename] = metadata
+
+        browser._update_table_with_filtered_items(result)
+        logger.debug("Combined filters: %s images shown", len(result))
+
+    def precompute_display_values(self) -> None:
+        """Pre-compute display values for all metadata keys in all files."""
+        browser = self.browser
+        for metadata in browser.all_files.values():
+            for metadata_key in browser.metadata_keys:
+                raw_value = metadata.get(metadata_key)
+                if raw_value is not None:
+                    display_value = (
+                        browser.metadata_display_resolver.display_value(
+                            metadata_key, raw_value
+                        )
+                    )
+                    metadata[f"_display_{metadata_key}"] = display_value
+
+    def build_column_filters(self) -> None:
+        """Build column filter widgets from loaded file metadata."""
+        browser = self.browser
+        if not browser.all_files or not browser.metadata_keys:
+            return
+
+        browser.column_filter_panel.clear_all_filters()
+
+        for metadata_key in browser.metadata_keys:
+            unique_values = {
+                browser.metadata_display_resolver.display_value(metadata_key, value)
+                for metadata in browser.all_files.values()
+                if (value := metadata.get(metadata_key)) is not None
+            }
+
+            if unique_values:
+                column_display_name = metadata_key.replace("_", " ").title()
+                browser.column_filter_panel.add_column_filter(
+                    column_display_name, sorted(unique_values)
+                )
+
+        if browser.column_filter_panel.column_filters:
+            browser.column_filter_panel.setVisible(True)
+
+        if (
+            "Well" in browser.column_filter_panel.column_filters
+            and browser.plate_view_widget
+        ):
+            well_filter = browser.column_filter_panel.column_filters["Well"]
+            browser.plate_view_widget.well_filter_widget = well_filter
+            well_filter.filter_changed.connect(self.on_well_filter_changed)
+
+        logger.debug(
+            "Built %s column filters",
+            len(browser.column_filter_panel.column_filters),
+        )
+
+    def filter_images(self, search_term: str) -> None:
+        """Filter files using shared search service."""
+        from openhcs.ui.shared.search_service import SearchService
+
+        browser = self.browser
+        if self._search_service is None:
+            self._search_service = SearchService(
+                all_items=browser.all_files,
+                searchable_text_extractor=self._searchable_text,
+            )
+        else:
+            self._search_service.update_items(browser.all_files)
+
+        browser.filtered_files = self._search_service.filter(search_term)
+        self.apply_combined_filters()
+
+    def on_well_filter_changed(self) -> None:
+        """Sync well checkbox changes back to plate view and table filters."""
+        if self.browser.plate_view_widget:
+            self.browser.plate_view_widget.sync_from_well_filter()
+        self.apply_combined_filters()
+
+    def _active_column_filters(self) -> dict[str, set] | None:
+        browser = self.browser
+        if not browser.column_filter_panel:
+            return None
+
+        active_filters = browser.column_filter_panel.get_active_filters()
+        if active_filters and browser.selected_wells and "Well" in active_filters:
+            active_filters = {
+                key: value
+                for key, value in active_filters.items()
+                if key != "Well"
+            }
+            logger.debug(
+                "[FILTER] Skipping Well column filter (plate view is filtering)"
+            )
+        return active_filters
+
+    def _matches_wells(self, filename: str, metadata: dict) -> bool:
+        try:
+            well_id = self.browser._extract_well_id(metadata)
+            matches = well_id in self.browser.selected_wells
+            if not matches:
+                logger.debug("[MATCH] Well %s not in selected_wells", well_id)
+            return matches
+        except (KeyError, ValueError) as exc:
+            logger.debug("[MATCH] No well metadata for %s: %s", filename, exc)
+            return False
+
+    @staticmethod
+    def _matches_column_filters(metadata: dict, active_filters: dict[str, set]) -> bool:
+        for column_name, selected_values in active_filters.items():
+            metadata_key = column_name.lower().replace(" ", "_")
+            item_value = metadata.get(f"_display_{metadata_key}", "")
+            if item_value not in selected_values:
+                return False
+        return True
+
+    @staticmethod
+    def _searchable_text(metadata: dict) -> str:
+        searchable_fields = [metadata["filename"]]
+        searchable_fields.extend(
+            str(value)
+            for key, value in metadata.items()
+            if key != "filename" and value is not None
+        )
+        return " ".join(str(field) for field in searchable_fields)
+
+
 class ImageBrowserWidget(QWidget):
     """
     Image browser widget that displays all image files from plate metadata.
@@ -387,6 +552,7 @@ class ImageBrowserWidget(QWidget):
         self.metadata_display_resolver = ImageBrowserMetadataDisplayResolver(
             lambda: self.orchestrator
         )
+        self.filter_controller = ImageBrowserFilterController(self)
 
         # Plate view widget (will be created in init_ui)
         self.plate_view_widget = None
@@ -395,9 +561,6 @@ class ImageBrowserWidget(QWidget):
 
         # Column filter panel
         self.column_filter_panel = None
-
-        # Search service (initialized lazily when first filter is applied)
-        self._search_service = None
 
         # ZMQ manager widget (may be created in init_ui)
         self.zmq_manager = None
@@ -450,7 +613,7 @@ class ImageBrowserWidget(QWidget):
 
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("Search images by filename or metadata...")
-        self.search_input.textChanged.connect(self.filter_images)
+        self.search_input.textChanged.connect(self.filter_controller.filter_images)
         # Apply same styling as function selector
         self.search_input.setStyleSheet(f"""
             QLineEdit {{
@@ -505,7 +668,7 @@ class ImageBrowserWidget(QWidget):
             color_scheme=self.color_scheme
         )
         self.column_filter_panel.filters_changed.connect(
-            self._on_column_filters_changed
+            self.filter_controller.apply_combined_filters
         )
         self.column_filter_panel.setVisible(False)  # Hidden until images load
         left_splitter.addWidget(self.column_filter_panel)
@@ -699,169 +862,11 @@ class ImageBrowserWidget(QWidget):
     def on_folder_selection_changed(self):
         """Handle folder tree selection changes to filter table."""
         # Apply folder filter on top of search filter
-        self._apply_combined_filters()
+        self.filter_controller.apply_combined_filters()
 
         # Update plate view for new folder
         if self.plate_view_widget and self.plate_view_widget.isVisible():
             self._update_plate_view()
-
-    def _apply_combined_filters(self):
-        """Apply search, folder, well, and column filters together in single pass."""
-        # Get folder filter if selected
-        selected_items = self.folder_tree.selectedItems()
-        folder_path = None
-        results_folder_path = None
-        if selected_items:
-            folder_path = selected_items[0].data(0, Qt.ItemDataRole.UserRole)
-            if folder_path:
-                results_folder_path = f"{folder_path}_results"
-
-        # Get active column filters (except Well if plate view is filtering)
-        active_filters = None
-        if self.column_filter_panel:
-            active_filters = self.column_filter_panel.get_active_filters()
-            if active_filters and self.selected_wells and "Well" in active_filters:
-                active_filters = {
-                    k: v for k, v in active_filters.items() if k != "Well"
-                }
-                logger.debug(
-                    "[FILTER] Skipping Well column filter (plate view is filtering)"
-                )
-
-        # Single-pass filtering: check all conditions for each file
-        result = {}
-        for filename, metadata in self.filtered_files.items():
-            include = True
-
-            # Folder filter
-            if folder_path and include:
-                include = (
-                    str(Path(filename).parent) == folder_path
-                    or filename.startswith(folder_path + "/")
-                    or str(Path(filename).parent) == results_folder_path
-                    or filename.startswith(results_folder_path + "/")
-                )
-
-            # Well filter
-            if self.selected_wells and include:
-                include = self._matches_wells(filename, metadata)
-
-            # Column filters (using pre-computed display values for speed)
-            if active_filters and include:
-                for column_name, selected_values in active_filters.items():
-                    metadata_key = column_name.lower().replace(" ", "_")
-                    # Use pre-computed display value directly from metadata
-                    item_value = metadata.get(f"_display_{metadata_key}", "")
-                    if item_value not in selected_values:
-                        include = False
-                        break
-
-            if include:
-                result[filename] = metadata
-
-        # Update table with filtered results
-        self._update_table_with_filtered_items(result)
-        logger.debug(f"Combined filters: {len(result)} images shown")
-
-    def _precompute_display_values(self):
-        """Pre-compute display values for all metadata keys in all files.
-
-        This pre-computes values like "1 | W1" (raw | display_name) during load
-        to avoid repeated lookups during filtering. Store as "_display_{key}" in metadata.
-        """
-        for metadata in self.all_files.values():
-            for metadata_key in self.metadata_keys:
-                raw_value = metadata.get(metadata_key)
-                if raw_value is not None:
-                    display_value = self.metadata_display_resolver.display_value(
-                        metadata_key, raw_value
-                    )
-                    metadata[f"_display_{metadata_key}"] = display_value
-
-    def _build_column_filters(self):
-        """Build column filter widgets from loaded file metadata."""
-        if not self.all_files or not self.metadata_keys:
-            return
-
-        # Clear existing filters
-        self.column_filter_panel.clear_all_filters()
-
-        # Extract unique values for each metadata column
-        for metadata_key in self.metadata_keys:
-            unique_values = set()
-            for metadata in self.all_files.values():
-                value = metadata.get(metadata_key)
-                if value is not None:
-                    # Use metadata display value instead of raw value
-                    display_value = self.metadata_display_resolver.display_value(
-                        metadata_key, value
-                    )
-                    unique_values.add(display_value)
-
-            if unique_values:
-                # Create filter for this column
-                column_display_name = metadata_key.replace("_", " ").title()
-                self.column_filter_panel.add_column_filter(
-                    column_display_name, sorted(list(unique_values))
-                )
-
-        # Show filter panel if we have filters
-        if self.column_filter_panel.column_filters:
-            self.column_filter_panel.setVisible(True)
-
-        # Connect well filter to plate view for bidirectional sync
-        if "Well" in self.column_filter_panel.column_filters and self.plate_view_widget:
-            well_filter = self.column_filter_panel.column_filters["Well"]
-            self.plate_view_widget.well_filter_widget = well_filter
-
-            # Connect well filter changes to sync back to plate view
-            well_filter.filter_changed.connect(self._on_well_filter_changed)
-
-        logger.debug(
-            f"Built {len(self.column_filter_panel.column_filters)} column filters"
-        )
-
-    def _on_column_filters_changed(self):
-        """Handle column filter changes."""
-        self._apply_combined_filters()
-
-    def _on_well_filter_changed(self):
-        """Handle well filter checkbox changes - sync to plate view."""
-        if self.plate_view_widget:
-            self.plate_view_widget.sync_from_well_filter()
-        # Apply the filter to the table
-        self._apply_combined_filters()
-
-    def filter_images(self, search_term: str):
-        """Filter files using shared search service (canonical code path)."""
-        from openhcs.ui.shared.search_service import SearchService
-
-        # Create searchable text extractor
-        def create_searchable_text(metadata):
-            """Create searchable text from file metadata."""
-            # 'filename' is guaranteed to exist (set in load_images/load_results)
-            searchable_fields = [metadata["filename"]]
-            # Add all metadata values
-            for key, value in metadata.items():
-                if key != "filename" and value is not None:
-                    searchable_fields.append(str(value))
-            return " ".join(str(field) for field in searchable_fields)
-
-        # Create or update search service
-        if self._search_service is None:
-            self._search_service = SearchService(
-                all_items=self.all_files,
-                searchable_text_extractor=create_searchable_text,
-            )
-        else:
-            # Update search service with current files
-            self._search_service.update_items(self.all_files)
-
-        # Perform search using shared service
-        self.filtered_files = self._search_service.filter(search_term)
-
-        # Apply combined filters (search + folder + column filters)
-        self._apply_combined_filters()
 
     def load_images(self):
         """Load image files from the orchestrator's metadata."""
@@ -953,7 +958,7 @@ class ImageBrowserWidget(QWidget):
         self.image_table_browser.set_metadata_keys(self.metadata_keys)
 
         # Pre-compute display values for fast filtering
-        self._precompute_display_values()
+        self.filter_controller.precompute_display_values()
 
         # Initialize filtered files to all files
         self.filtered_files = self.all_files.copy()
@@ -977,7 +982,7 @@ class ImageBrowserWidget(QWidget):
         # Build column filters after initial render
         def _build_filters_later():
             filters_start = time.perf_counter()
-            self._build_column_filters()
+            self.filter_controller.build_column_filters()
             logger.info(
                 "IMAGE BROWSER: Built column filters in %.3fs",
                 time.perf_counter() - filters_start,
@@ -1708,7 +1713,7 @@ class ImageBrowserWidget(QWidget):
         """Handle well selection from plate view."""
         logger.info(f"[WELLS_SELECTED] Received {len(well_ids)} wells: {well_ids}")
         self.selected_wells = well_ids
-        self._apply_combined_filters()
+        self.filter_controller.apply_combined_filters()
 
     def _update_plate_view(self):
         """Update plate view with current file data (images + results)."""
@@ -1747,19 +1752,6 @@ class ImageBrowserWidget(QWidget):
         current_folder = self._get_current_folder()
         subdirs = self._detect_plate_subdirs(current_folder)
         self.plate_view_widget.set_subdirectories(subdirs)
-
-    def _matches_wells(self, filename: str, metadata: dict) -> bool:
-        """Check if image matches selected wells."""
-        try:
-            well_id = self._extract_well_id(metadata)
-            matches = well_id in self.selected_wells
-            if not matches:
-                logger.debug(f"[MATCH] Well {well_id} not in selected_wells")
-            return matches
-        except (KeyError, ValueError) as e:
-            # Image has no well metadata, doesn't match well filter
-            logger.debug(f"[MATCH] No well metadata for {filename}: {e}")
-            return False
 
     def _get_current_folder(self) -> Optional[str]:
         """Get currently selected folder path from tree."""
