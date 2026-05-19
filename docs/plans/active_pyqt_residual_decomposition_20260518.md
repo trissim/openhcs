@@ -92,6 +92,20 @@ Checkpoint 6:
   methods; remaining work is still the broader table/streaming/plate-view
   subsystem split.
 
+Checkpoint 7:
+
+- Added `PlateSelectionController` as the well-selection mutation, status, and
+  well-filter synchronization authority for `PlateViewWidget`.
+- Fixed the existing `PlateSelectionEventController` lifecycle boundary:
+  `PlateSelectionInteractionLifecycle` no longer recursively constructs itself,
+  and the event controller now owns one lifecycle instance explicitly.
+- Moved rectangle selection, row/column axis toggles, inversion, public
+  select/clear delegation, and filter sync out of the widget body.
+- Added a Qt-offscreen selection-controller test covering select, invert, and
+  clear behavior.
+- Focused advisor shows `PlateViewWidget` reduced from 25 methods to 17
+  methods; remaining work is subdirectory/grid rendering extraction.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:

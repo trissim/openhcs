@@ -1,4 +1,9 @@
-from openhcs.pyqt_gui.widgets.shared.plate_view_widget import PlateGridModel
+from PyQt6.QtWidgets import QApplication
+
+from openhcs.pyqt_gui.widgets.shared.plate_view_widget import (
+    PlateGridModel,
+    PlateViewWidget,
+)
 
 
 def test_plate_grid_model_parses_standard_well_coordinates() -> None:
@@ -43,3 +48,22 @@ def test_plate_grid_model_projects_axis_membership() -> None:
     assert model.wells_on_axis(axis_index=0, axis_value=1) == ["A01", "A02"]
     assert model.wells_on_axis(axis_index=1, axis_value=1) == ["A01", "B01"]
 
+
+def test_plate_selection_controller_mutates_widget_selection() -> None:
+    app = QApplication.instance() or QApplication([])
+    widget = PlateViewWidget()
+    widget.set_available_wells(
+        {"A01", "A02"},
+        plate_dimensions=(1, 2),
+        coord_to_well={(1, 1): "A01", (1, 2): "A02"},
+    )
+
+    widget.select_wells({"A01"}, emit_signal=False)
+    assert widget.selected_wells == {"A01"}
+
+    widget.selection_controller.invert_selection()
+    assert widget.selected_wells == {"A02"}
+
+    widget.clear_selection(emit_signal=False)
+    assert widget.selected_wells == set()
+    assert app is not None
