@@ -6,7 +6,10 @@ FunctionRegistryService and business logic.
 """
 
 import logging
-from typing import Callable, Optional, Dict, Any
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable, Optional, Dict, Any, Iterable, Mapping
 
 from PyQt6.QtWidgets import (
     QDialog,
@@ -22,6 +25,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
+from metaclass_registry import AutoRegisterMeta
 
 # Use the registry service from correct location
 from openhcs.processing.backends.lib_registry.registry_service import RegistryService
@@ -33,6 +37,107 @@ from pyqt_reactive.widgets.shared.function_table_browser import FunctionTableBro
 from pyqt_reactive.widgets.shared.column_filter_widget import MultiColumnFilterPanel
 
 logger = logging.getLogger(__name__)
+
+
+FunctionMetadataMap = Mapping[str, Dict[str, Any]]
+
+
+def _contract_display_value(contract: object) -> str:
+    if contract is None:
+        return "unknown"
+    if isinstance(contract, Enum):
+        return contract.name
+    return str(contract)
+
+
+@dataclass(frozen=True)
+class FunctionFilterColumn:
+    """Column-specific extraction and match semantics for the filter panel."""
+
+    label: str
+    values_for: Callable[[Dict[str, Any]], Iterable[str]]
+
+    def display_values(self, metadata: Dict[str, Any]) -> tuple[str, ...]:
+        return tuple(value for value in self.values_for(metadata) if value)
+
+    def matches(self, metadata: Dict[str, Any], allowed_values: set[str]) -> bool:
+        return any(value in allowed_values for value in self.display_values(metadata))
+
+
+FUNCTION_FILTER_COLUMNS = (
+    FunctionFilterColumn(
+        "Registry", lambda metadata: (metadata.get("registry", "unknown").title(),)
+    ),
+    FunctionFilterColumn(
+        "Backend", lambda metadata: (metadata.get("backend", "unknown").title(),)
+    ),
+    FunctionFilterColumn(
+        "Contract", lambda metadata: (_contract_display_value(metadata.get("contract")),)
+    ),
+    FunctionFilterColumn("Tags", lambda metadata: tuple(metadata.get("tags", ()))),
+)
+FUNCTION_FILTER_COLUMNS_BY_LABEL = {
+    column.label: column for column in FUNCTION_FILTER_COLUMNS
+}
+
+
+class FunctionTreeNode(ABC, metaclass=AutoRegisterMeta):
+    """Domain object stored in the module tree instead of stringly item data."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
+
+    @abstractmethod
+    def filtered_functions(
+        self,
+        all_functions_metadata: FunctionMetadataMap,
+        module_path_for: Callable[[Dict[str, Any]], str],
+    ) -> Dict[str, Dict[str, Any]]:
+        """Return functions selected by this tree node."""
+
+    @abstractmethod
+    def filter_description(self) -> str:
+        """Human-readable status suffix for the active tree filter."""
+
+
+@dataclass(frozen=True)
+class ModuleFunctionTreeNode(FunctionTreeNode):
+    module_path: str
+    function_names: tuple[str, ...]
+
+    def filtered_functions(
+        self,
+        all_functions_metadata: FunctionMetadataMap,
+        module_path_for: Callable[[Dict[str, Any]], str],
+    ) -> Dict[str, Dict[str, Any]]:
+        function_names = frozenset(self.function_names)
+        return {
+            name: metadata
+            for name, metadata in all_functions_metadata.items()
+            if name in function_names
+        }
+
+    def filter_description(self) -> str:
+        return "filtered by module"
+
+
+@dataclass(frozen=True)
+class ModulePartTreeNode(FunctionTreeNode):
+    full_path: str
+
+    def filtered_functions(
+        self,
+        all_functions_metadata: FunctionMetadataMap,
+        module_path_for: Callable[[Dict[str, Any]], str],
+    ) -> Dict[str, Dict[str, Any]]:
+        return {
+            name: metadata
+            for name, metadata in all_functions_metadata.items()
+            if module_path_for(metadata).startswith(self.full_path)
+        }
+
+    def filter_description(self) -> str:
+        return f"filtered by module part: {self.full_path}"
 
 
 # Direct registry-based library detection (robust, no pattern matching)
@@ -368,7 +473,7 @@ class FunctionSelectorDialog(QDialog):
                     module_item.setData(
                         0,
                         Qt.ItemDataRole.UserRole,
-                        {"type": "module", "module": current_path, "functions": value},
+                        ModuleFunctionTreeNode(current_path, tuple(value)),
                     )
             elif isinstance(value, dict):
                 # This is a module part - create a tree node and recurse
@@ -390,11 +495,7 @@ class FunctionSelectorDialog(QDialog):
                 module_part_item.setData(
                     0,
                     Qt.ItemDataRole.UserRole,
-                    {
-                        "type": "module_part",
-                        "module_part": key,
-                        "full_path": ".".join(new_path_parts),
-                    },
+                    ModulePartTreeNode(".".join(new_path_parts)),
                 )
                 # Start collapsed - users can expand as needed
                 module_part_item.setExpanded(False)
@@ -549,36 +650,15 @@ class FunctionSelectorDialog(QDialog):
 
         self.column_filter_panel.clear_all_filters()
 
-        # Extract unique values for filterable columns
-        filter_columns = {
-            "Registry": lambda m: m.get("registry", "unknown").title(),
-            "Backend": lambda m: m.get("backend", "unknown").title(),
-            "Contract": lambda m: (
-                m.get("contract").name
-                if hasattr(m.get("contract"), "name")
-                else str(m.get("contract"))
-                if m.get("contract")
-                else "unknown"
-            ),
-            "Tags": None,  # Special handling for tags (multiple values per item)
-        }
-
-        for column_name, extractor in filter_columns.items():
+        for column in FUNCTION_FILTER_COLUMNS:
             unique_values = set()
 
             for metadata in self.all_functions_metadata.values():
-                if column_name == "Tags":
-                    # Tags is a list - add each tag individually
-                    tags = metadata.get("tags", [])
-                    unique_values.update(tags)
-                else:
-                    value = extractor(metadata)
-                    if value:
-                        unique_values.add(value)
+                unique_values.update(column.display_values(metadata))
 
             if unique_values:
                 self.column_filter_panel.add_column_filter(
-                    column_name, sorted(list(unique_values))
+                    column.label, sorted(list(unique_values))
                 )
 
         if self.column_filter_panel.column_filters:
@@ -599,31 +679,11 @@ class FunctionSelectorDialog(QDialog):
             matches = True
 
             for column_name, allowed_values in active_filters.items():
-                if column_name == "Registry":
-                    value = metadata.get("registry", "unknown").title()
-                elif column_name == "Backend":
-                    value = metadata.get("backend", "unknown").title()
-                elif column_name == "Contract":
-                    contract = metadata.get("contract")
-                    value = (
-                        contract.name
-                        if hasattr(contract, "name")
-                        else str(contract)
-                        if contract
-                        else "unknown"
-                    )
-                elif column_name == "Tags":
-                    # For tags, match if ANY tag is in allowed_values
-                    tags = metadata.get("tags", [])
-                    if not any(tag in allowed_values for tag in tags):
-                        matches = False
-                        continue
-                    else:
-                        continue  # Tags matched, check next column
-                else:
+                column = FUNCTION_FILTER_COLUMNS_BY_LABEL.get(column_name)
+                if column is None:
                     continue
 
-                if value not in allowed_values:
+                if not column.matches(metadata, set(allowed_values)):
                     matches = False
                     break
 
@@ -646,30 +706,11 @@ class FunctionSelectorDialog(QDialog):
         item = selected_items[0]
         data = item.data(0, Qt.ItemDataRole.UserRole)
 
-        if data:
-            node_type = data.get("type")
-
-            # Mathematical simplification: factor out filtering logic
-            if node_type == "module":
-                module_functions = data.get("functions", [])
-                filtered = {
-                    name: metadata
-                    for name, metadata in self.all_functions_metadata.items()
-                    if name in module_functions
-                }
-                self._update_filtered_view(filtered, "filtered by module")
-
-            elif node_type == "module_part":
-                # Filter by module part - find all functions whose modules start with this path
-                module_part_path = data.get("full_path", "")
-                filtered = {
-                    name: metadata
-                    for name, metadata in self.all_functions_metadata.items()
-                    if self._extract_module_path(metadata).startswith(module_part_path)
-                }
-                self._update_filtered_view(
-                    filtered, f"filtered by module part: {module_part_path}"
-                )
+        if isinstance(data, FunctionTreeNode):
+            filtered = data.filtered_functions(
+                self.all_functions_metadata, self._extract_module_path
+            )
+            self._update_filtered_view(filtered, data.filter_description())
         else:
             # No data means show all functions
             self._update_filtered_view(
