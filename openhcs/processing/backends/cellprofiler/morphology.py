@@ -2735,25 +2735,26 @@ def _scipy_shrink_components_to_seed_points(mask: np.ndarray) -> np.ndarray:
 
 @lru_cache(maxsize=1)
 def _binary_shrink_table_stack() -> np.ndarray:
+    binary_shrink = BinaryShrinkPatternAlgebra
     erode_table = np.array(
         [
-            _binary_shrink_pattern_center(index)
-            and _binary_shrink_component_count(index & ~16) != 1
+            binary_shrink.pattern_center(index)
+            and binary_shrink.component_count(index & ~16) != 1
             for index in range(512)
         ],
         dtype=np.bool_,
     )
-    erode_table[_binary_shrink_index_of(np.ones((3, 3), dtype=bool))] = True
+    erode_table[binary_shrink.index_of(np.ones((3, 3), dtype=bool))] = True
 
     tables = (
         erode_table
         | (
-            _binary_shrink_make_table(
+            binary_shrink.make_table(
                 False,
                 np.array([[0, 0, 0], [1, 1, 0], [0, 0, 0]], dtype=bool),
                 np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=bool),
             )
-            & _binary_shrink_make_table(
+            & binary_shrink.make_table(
                 False,
                 np.array([[1, 0, 0], [0, 1, 0], [0, 0, 0]], dtype=bool),
                 np.array([[1, 0, 0], [0, 1, 1], [0, 1, 1]], dtype=bool),
@@ -2761,12 +2762,12 @@ def _binary_shrink_table_stack() -> np.ndarray:
         ),
         erode_table
         | (
-            _binary_shrink_make_table(
+            binary_shrink.make_table(
                 False,
                 np.array([[0, 1, 0], [0, 1, 0], [0, 0, 0]], dtype=bool),
                 np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
             )
-            & _binary_shrink_make_table(
+            & binary_shrink.make_table(
                 False,
                 np.array([[0, 0, 1], [0, 1, 0], [0, 0, 0]], dtype=bool),
                 np.array([[0, 0, 1], [1, 1, 0], [1, 1, 0]], dtype=bool),
@@ -2774,12 +2775,12 @@ def _binary_shrink_table_stack() -> np.ndarray:
         ),
         erode_table
         | (
-            _binary_shrink_make_table(
+            binary_shrink.make_table(
                 False,
                 np.array([[0, 0, 0], [0, 1, 1], [0, 0, 0]], dtype=bool),
                 np.array([[0, 0, 0], [1, 1, 1], [0, 0, 0]], dtype=bool),
             )
-            & _binary_shrink_make_table(
+            & binary_shrink.make_table(
                 False,
                 np.array([[0, 0, 0], [0, 1, 0], [0, 0, 1]], dtype=bool),
                 np.array([[1, 1, 0], [1, 1, 0], [0, 0, 1]], dtype=bool),
@@ -2787,12 +2788,12 @@ def _binary_shrink_table_stack() -> np.ndarray:
         ),
         erode_table
         | (
-            _binary_shrink_make_table(
+            binary_shrink.make_table(
                 False,
                 np.array([[0, 0, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
                 np.array([[0, 1, 0], [0, 1, 0], [0, 1, 0]], dtype=bool),
             )
-            & _binary_shrink_make_table(
+            & binary_shrink.make_table(
                 False,
                 np.array([[0, 0, 0], [0, 1, 0], [1, 0, 0]], dtype=bool),
                 np.array([[0, 1, 1], [0, 1, 1], [1, 0, 0]], dtype=bool),
@@ -2802,85 +2803,89 @@ def _binary_shrink_table_stack() -> np.ndarray:
     return np.ascontiguousarray(np.stack(tables), dtype=np.bool_)
 
 
-def _binary_shrink_pattern_center(index: int) -> bool:
-    return bool(index & 16)
+class BinaryShrinkPatternAlgebra:
+    """Owns the 3x3 bit-pattern algebra used by binary shrink lookup tables."""
 
+    @staticmethod
+    def pattern_center(index: int) -> bool:
+        return bool(index & 16)
 
-def _binary_shrink_component_count(index: int) -> int:
-    pattern = _binary_shrink_pattern_of(index)
-    visited = np.zeros((3, 3), dtype=bool)
-    components = 0
-    for row in range(3):
-        for col in range(3):
-            if not pattern[row, col] or visited[row, col]:
-                continue
-            components += 1
-            stack: list[tuple[int, int]] = [(row, col)]
-            visited[row, col] = True
-            while stack:
-                current_row, current_col = stack.pop()
-                for delta_row, delta_col in (
-                    (-1, 0),
-                    (1, 0),
-                    (0, -1),
-                    (0, 1),
-                ):
-                    next_row = current_row + delta_row
-                    next_col = current_col + delta_col
-                    if (
-                        next_row < 0
-                        or next_row >= 3
-                        or next_col < 0
-                        or next_col >= 3
-                        or visited[next_row, next_col]
-                        or not pattern[next_row, next_col]
+    @classmethod
+    def component_count(cls, index: int) -> int:
+        pattern = cls.pattern_of(index)
+        visited = np.zeros((3, 3), dtype=bool)
+        components = 0
+        for row in range(3):
+            for col in range(3):
+                if not pattern[row, col] or visited[row, col]:
+                    continue
+                components += 1
+                stack: list[tuple[int, int]] = [(row, col)]
+                visited[row, col] = True
+                while stack:
+                    current_row, current_col = stack.pop()
+                    for delta_row, delta_col in (
+                        (-1, 0),
+                        (1, 0),
+                        (0, -1),
+                        (0, 1),
                     ):
-                        continue
-                    visited[next_row, next_col] = True
-                    stack.append((next_row, next_col))
-    return components
+                        next_row = current_row + delta_row
+                        next_col = current_col + delta_col
+                        if (
+                            next_row < 0
+                            or next_row >= 3
+                            or next_col < 0
+                            or next_col >= 3
+                            or visited[next_row, next_col]
+                            or not pattern[next_row, next_col]
+                        ):
+                            continue
+                        visited[next_row, next_col] = True
+                        stack.append((next_row, next_col))
+        return components
 
-
-def _binary_shrink_pattern_of(index: int) -> np.ndarray:
-    pattern = np.zeros((3, 3), dtype=bool)
-    bit = 1
-    for row in range(3):
-        for col in range(3):
-            pattern[row, col] = bool(index & bit)
-            bit <<= 1
-    return pattern
-
-
-def _binary_shrink_index_of(pattern: np.ndarray) -> int:
-    index = 0
-    bit = 1
-    for row in range(3):
-        for col in range(3):
-            if pattern[row, col]:
-                index += bit
-            bit <<= 1
-    return index
-
-
-def _binary_shrink_make_table(
-    value: bool,
-    pattern: np.ndarray,
-    care: np.ndarray,
-) -> np.ndarray:
-    table = np.empty(512, dtype=np.bool_)
-    for index in range(512):
-        matches = True
+    @staticmethod
+    def pattern_of(index: int) -> np.ndarray:
+        pattern = np.zeros((3, 3), dtype=bool)
         bit = 1
         for row in range(3):
             for col in range(3):
-                if care[row, col] and bool(index & bit) != bool(pattern[row, col]):
-                    matches = False
-                    break
+                pattern[row, col] = bool(index & bit)
                 bit <<= 1
-            if not matches:
-                break
-        table[index] = value if matches else not value
-    return table
+        return pattern
+
+    @staticmethod
+    def index_of(pattern: np.ndarray) -> int:
+        index = 0
+        bit = 1
+        for row in range(3):
+            for col in range(3):
+                if pattern[row, col]:
+                    index += bit
+                bit <<= 1
+        return index
+
+    @staticmethod
+    def make_table(
+        value: bool,
+        pattern: np.ndarray,
+        care: np.ndarray,
+    ) -> np.ndarray:
+        table = np.empty(512, dtype=np.bool_)
+        for index in range(512):
+            matches = True
+            bit = 1
+            for row in range(3):
+                for col in range(3):
+                    if care[row, col] and bool(index & bit) != bool(pattern[row, col]):
+                        matches = False
+                        break
+                    bit <<= 1
+                if not matches:
+                    break
+            table[index] = value if matches else not value
+        return table
 
 
 def _scipy_relabel_sequential(labels: np.ndarray) -> tuple[np.ndarray, int]:
