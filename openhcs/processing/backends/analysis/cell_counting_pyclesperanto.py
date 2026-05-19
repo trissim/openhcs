@@ -13,9 +13,6 @@ from typing import Dict, List, Tuple, Any, Union
 
 logger = logging.getLogger(__name__)
 
-# Core scientific computing imports
-import pandas as pd
-import json
 import pyclesperanto as cle
 from scipy.spatial.distance import cdist
 
@@ -27,7 +24,6 @@ from openhcs.processing.materialization import (
     CsvOptions,
     JsonOptions,
 )
-from openhcs.constants.constants import Backend
 from openhcs.processing.backends.analysis.cell_counting_common import (
     CellCountResult,
     ColocalizationMethod,
@@ -336,86 +332,6 @@ def count_cells_multi_channel(
         output_stack = np.stack([image_stack[chan_1], image_stack[chan_2], coloc_map])
 
     return output_stack, multi_results
-
-
-def _materialize_multi_channel_results(data: List[MultiChannelResult], path: str, filemanager, backend: str) -> str:
-    """Materialize multi-channel cell counting and colocalization results."""
-    # Generate output file paths based on the input path
-    # Use clean naming: preserve namespaced path structure, don't duplicate special output key
-    base_path = path.replace('.pkl', '')
-    json_path = f"{base_path}.json"
-    csv_path = f"{base_path}_details.csv"
-
-    # Ensure output directory exists for disk backend
-    from pathlib import Path
-    output_dir = Path(json_path).parent
-    if backend == Backend.DISK.value:
-        filemanager.ensure_directory(str(output_dir), backend)
-
-    summary = {
-        "analysis_type": "multi_channel_cell_counting_colocalization",
-        "total_slices": len(data),
-        "colocalization_summary": {
-            "total_chan_1_cells": 0,
-            "total_chan_2_cells": 0,
-            "total_colocalized": 0,
-            "average_colocalization_percentage": 0
-        },
-        "results_per_slice": []
-    }
-    rows = []
-
-    total_coloc_pct = 0
-    for result in data:
-        summary["colocalization_summary"]["total_chan_1_cells"] += result.chan_1_results.cell_count
-        summary["colocalization_summary"]["total_chan_2_cells"] += result.chan_2_results.cell_count
-        summary["colocalization_summary"]["total_colocalized"] += result.colocalized_count
-        total_coloc_pct += result.colocalization_percentage
-
-        # Add to summary
-        summary["results_per_slice"].append({
-            "slice_index": result.slice_index,
-            "chan_1_count": result.chan_1_results.cell_count,
-            "chan_2_count": result.chan_2_results.cell_count,
-            "colocalized_count": result.colocalized_count,
-            "colocalization_percentage": result.colocalization_percentage,
-            "chan_1_only": result.chan_1_only_count,
-            "chan_2_only": result.chan_2_only_count,
-            "colocalization_method": result.colocalization_method,
-            "colocalization_metrics": result.colocalization_metrics
-        })
-
-        # Add colocalization details to CSV
-        for i, pos in enumerate(result.overlap_positions):
-            rows.append({
-                'slice_index': result.slice_index,
-                'colocalization_id': f"slice_{result.slice_index}_coloc_{i}",
-                'x_position': pos[0],
-                'y_position': pos[1],
-                'colocalization_method': result.colocalization_method
-            })
-
-    summary["colocalization_summary"]["average_colocalization_percentage"] = (
-        total_coloc_pct / len(data) if data else 0
-    )
-
-    # Save JSON summary (overwrite if exists)
-    json_content = json.dumps(summary, indent=2, default=str)
-    # Remove existing file if it exists using filemanager
-    if filemanager.exists(json_path, backend):
-        filemanager.delete(json_path, backend)
-    filemanager.save(json_content, json_path, backend)
-
-    # Save CSV details (overwrite if exists)
-    if rows:
-        df = pd.DataFrame(rows)
-        csv_content = df.to_csv(index=False)
-        # Remove existing file if it exists using filemanager
-        if filemanager.exists(csv_path, backend):
-            filemanager.delete(csv_path, backend)
-        filemanager.save(csv_content, csv_path, backend)
-
-    return json_path
 
 
 def _preprocess_image(image, gaussian_sigma: float, median_disk_size: int):
@@ -774,47 +690,6 @@ def _filter_by_area(
             filtered_confidences.append(confidence)
 
     return filtered_positions, filtered_areas, filtered_intensities, filtered_confidences
-
-
-def _non_maximum_suppression_3d(positions, scales, responses, overlap_threshold):
-    """Apply non-maximum suppression across scale space."""
-    if len(positions) == 0:
-        return [], [], []
-
-    # Convert to numpy arrays for easier processing
-    positions = np.array(positions)
-    scales = np.array(scales)
-    responses = np.array(responses)
-
-    # Sort by response strength (highest first)
-    sorted_indices = np.argsort(responses)[::-1]
-
-    keep = []
-    for i in sorted_indices:
-        pos_i = positions[i]
-        scale_i = scales[i]
-
-        # Check if this detection overlaps with any already kept detection
-        should_keep = True
-        for j in keep:
-            pos_j = positions[j]
-            scale_j = scales[j]
-
-            # Calculate distance in space and scale
-            spatial_dist = np.sqrt(np.sum((pos_i - pos_j) ** 2))
-            scale_dist = abs(scale_i - scale_j) / max(scale_i, scale_j)
-
-            # Check if they overlap significantly
-            overlap_radius = max(scale_i, scale_j) * (1 + overlap_threshold)
-            if spatial_dist < overlap_radius and scale_dist < overlap_threshold:
-                should_keep = False
-                break
-
-        if should_keep:
-            keep.append(i)
-
-    # Return filtered results
-    return positions[keep].tolist(), scales[keep].tolist(), responses[keep].tolist()
 
 
 def _detect_cells_watershed(image: np.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
