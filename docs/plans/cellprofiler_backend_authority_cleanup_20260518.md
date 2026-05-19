@@ -121,6 +121,14 @@ Checkpoint 8:
 - Focused illumination tests pass, and the illumination module is
   advisor-clean.
 
+Checkpoint 9:
+
+- Removed repeated inherited AutoRegister skip-policy boilerplate from
+  morphology's `MorphOperationStrategy`, `RepeatModeStrategy`, and
+  `OpenLineStructuringElement` roots.
+- Verified the metaclass inheritance path with focused morphology registry
+  tests; the morphology module is advisor-clean.
+
 Optional after behavior-adjacent changes:
 
 ```bash

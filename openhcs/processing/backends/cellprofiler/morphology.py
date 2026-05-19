@@ -397,7 +397,6 @@ class MorphOperationStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterM
     """Registered implementation authority for CellProfiler Morph operations."""
 
     __registry_key__ = "operation"
-    __skip_if_no_key__ = True
     operation: ClassVar[MorphOperation | None] = None
     callback: ClassVar[MorphOperationImplementation | None] = None
 
@@ -424,7 +423,6 @@ class RepeatModeStrategy(RegisteredCallableStrategy, metaclass=AutoRegisterMeta)
     """Registered iteration-count policy for CellProfiler Morph repeat modes."""
 
     __registry_key__ = "repeat_mode"
-    __skip_if_no_key__ = True
     repeat_mode: ClassVar[RepeatMode | None] = None
     callback: ClassVar[RepeatCountResolver | None] = None
 
@@ -573,7 +571,6 @@ class OpenLineStructuringElement(RegisteredCallableStrategy, metaclass=AutoRegis
     """Registered structuring-element authority for Morph OPENLINES angles."""
 
     __registry_key__ = "angle"
-    __skip_if_no_key__ = True
     angle: ClassVar[int | None] = None
     callback: ClassVar[OpenLineStructureBuilder | None] = None
 
