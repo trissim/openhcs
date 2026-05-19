@@ -13,10 +13,6 @@ import time
 import numpy as np
 from numba import njit
 
-from openhcs.core.measurement_schemas import (
-    DataclassCompanionSchema,
-    DataclassFieldInsertion,
-)
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.runtime_values import object_label_dense_array
@@ -99,15 +95,28 @@ class GranularityMeasurement:
     gs16: float
 
 
-ObjectGranularityMeasurement = DataclassCompanionSchema(
-    source_type=GranularityMeasurement,
-    companion_name="ObjectGranularityMeasurement",
-    insertions=(
-        DataclassFieldInsertion("object_id", int, after_field="slice_index"),
-    ),
-    module_name=__name__,
-    doc="Granularity spectrum measurements per object.",
-).materialize()
+@dataclass
+class ObjectGranularityMeasurement:
+    """Granularity spectrum measurements per object."""
+
+    slice_index: int
+    object_id: int
+    gs1: float
+    gs2: float
+    gs3: float
+    gs4: float
+    gs5: float
+    gs6: float
+    gs7: float
+    gs8: float
+    gs9: float
+    gs10: float
+    gs11: float
+    gs12: float
+    gs13: float
+    gs14: float
+    gs15: float
+    gs16: float
 
 
 def _granularity_measurement(gs_values: list[float]) -> GranularityMeasurement:
@@ -187,14 +196,16 @@ class GranularityImageSeriesRequest:
     spectrum_length: int
     profile_function: str
 
+    def log_profile(self, label: str, seconds: float, **fields: object) -> None:
+        log_profile(label, seconds, function=self.profile_function, **fields)
+
     def series(self) -> GranularityImageSeries:
         image_array = np.asarray(self.image)
         phase_started_at = time.perf_counter()
         dtype, shape, digest = granularity_image_content_key(image_array)
-        log_profile(
+        self.log_profile(
             "granularity_series_key",
             time.perf_counter() - phase_started_at,
-            function=self.profile_function,
         )
         key = (
             dtype,
@@ -208,10 +219,9 @@ class GranularityImageSeriesRequest:
         entry = GRANULARITY_IMAGE_SERIES_CACHE.get(key)
         if entry is not None:
             GRANULARITY_IMAGE_SERIES_CACHE.move_to_end(key)
-            log_profile(
+            self.log_profile(
                 "granularity_series_cache_hit",
                 0.0,
-                function=self.profile_function,
             )
             return entry.series
 
@@ -222,10 +232,9 @@ class GranularityImageSeriesRequest:
             self.background_subsample_size,
             self.element_radius,
         )
-        log_profile(
+        self.log_profile(
             "granularity_background_correct",
             time.perf_counter() - phase_started_at,
-            function=self.profile_function,
             shape=tuple(int(value) for value in pixels.shape),
         )
         phase_started_at = time.perf_counter()
@@ -233,10 +242,9 @@ class GranularityImageSeriesRequest:
             pixels,
             self.spectrum_length,
         )
-        log_profile(
+        self.log_profile(
             "granularity_reconstruction_series",
             time.perf_counter() - phase_started_at,
-            function=self.profile_function,
             reconstructions=len(reconstructions),
         )
         series = GranularityImageSeries(

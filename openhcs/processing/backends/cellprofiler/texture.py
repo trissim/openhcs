@@ -4,18 +4,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import List, Tuple
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
 from numba import njit
 
 from openhcs.constants.constants import MemoryType
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.memory.decorators import numpy
-from openhcs.core.measurement_schemas import (
-    DataclassCompanionSchema,
-    DataclassFieldInsertion,
-)
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
@@ -45,6 +41,7 @@ F_HARALICK = [
 ]
 
 N_DIRECTIONS_2D = 4
+ObjectIntensityCrops = tuple[np.ndarray, tuple[np.ndarray, ...]]
 
 
 @dataclass
@@ -71,15 +68,29 @@ class TextureMeasurement:
     source_image_name: str | None = None
 
 
-ObjectTextureMeasurement = DataclassCompanionSchema(
-    source_type=TextureMeasurement,
-    companion_name="ObjectTextureMeasurement",
-    insertions=(
-        DataclassFieldInsertion("object_label", int, after_field="slice_index"),
-    ),
-    module_name=__name__,
-    doc="Texture measurement results per object.",
-).materialize()
+@dataclass
+class ObjectTextureMeasurement:
+    """Texture measurement results per object."""
+
+    slice_index: int
+    object_label: int
+    scale: int
+    direction: int
+    gray_levels: int
+    angular_second_moment: float
+    contrast: float
+    correlation: float
+    variance: float
+    inverse_difference_moment: float
+    sum_average: float
+    sum_variance: float
+    sum_entropy: float
+    entropy: float
+    difference_variance: float
+    difference_entropy: float
+    info_meas1: float
+    info_meas2: float
+    source_image_name: str | None = None
 
 
 class ObjectTextureCropBackendStrategy(
@@ -92,21 +103,12 @@ class ObjectTextureCropBackendStrategy(
     __registry_key__ = "backend_key"
     __skip_if_no_key__ = True
 
-    @classmethod
-    def for_callable(
-        cls,
-        func: object,
-        *,
-        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-    ) -> "ObjectTextureCropBackendStrategy":
-        return super().for_callable(func, backend_provider=backend_provider)
-
     @abstractmethod
     def object_intensity_crops(
         self,
         image: np.ndarray,
         labels: np.ndarray,
-    ) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+    ) -> ObjectIntensityCrops:
         """Return positive object labels and CP-style masked intensity crops."""
 
 
@@ -119,15 +121,6 @@ class HaralickTextureBackendStrategy(
 
     __registry_key__ = "backend_key"
     __skip_if_no_key__ = True
-
-    @classmethod
-    def for_callable(
-        cls,
-        func: object,
-        *,
-        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-    ) -> "HaralickTextureBackendStrategy":
-        return super().for_callable(func, backend_provider=backend_provider)
 
     @abstractmethod
     def haralick_features(
@@ -160,7 +153,7 @@ class NumbaNumpyObjectTextureCropBackendStrategy(ObjectTextureCropBackendStrateg
         self,
         image: np.ndarray,
         labels: np.ndarray,
-    ) -> tuple[np.ndarray, tuple[np.ndarray, ...]]:
+    ) -> ObjectIntensityCrops:
         image_array = np.asarray(image)
         labels_array = np.asarray(labels)
         if image_array.ndim != 2 or labels_array.ndim != 2:
@@ -454,7 +447,7 @@ def measure_texture(
     scale: int | tuple[int, ...] | list[int] = 3,
     gray_levels: int = 256,
     haralick_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> Tuple[np.ndarray, List[TextureMeasurement]]:
+) -> tuple[np.ndarray, list[TextureMeasurement]]:
     """Measure Haralick texture features on a grayscale image."""
     gray_levels = _normalize_gray_levels(gray_levels)
     pixel_data = CellProfilerTexturePixelDataRequest(
@@ -522,7 +515,7 @@ def measure_texture_objects(
     gray_levels: int = 256,
     texture_crop_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     haralick_backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> Tuple[np.ndarray, List[ObjectTextureMeasurement]]:
+) -> tuple[np.ndarray, list[ObjectTextureMeasurement]]:
     """Measure Haralick texture features for each labeled object."""
     gray_levels = _normalize_gray_levels(gray_levels)
     pixel_data = CellProfilerTexturePixelDataRequest(
@@ -582,16 +575,23 @@ measure_texture_objects.__openhcs_prepare__ = _prepare_measure_texture_objects
 
 
 @njit(cache=True)
+def _max_value_2d_numba(values: np.ndarray) -> int:
+    height, width = values.shape
+    max_value = 0
+    for y in range(height):
+        for x in range(width):
+            value = values[y, x]
+            if value > max_value:
+                max_value = value
+    return max_value
+
+
+@njit(cache=True)
 def _object_bounding_boxes_numba(
     labels: np.ndarray,
 ) -> tuple[np.ndarray, np.ndarray]:
     height, width = labels.shape
-    max_label = 0
-    for y in range(height):
-        for x in range(width):
-            label = labels[y, x]
-            if label > max_label:
-                max_label = label
+    max_label = _max_value_2d_numba(labels)
 
     min_y = np.full(max_label + 1, height, dtype=np.int64)
     min_x = np.full(max_label + 1, width, dtype=np.int64)
@@ -637,13 +637,8 @@ def _haralick_2d_features_numba(
     distance: int,
     ignore_zeros: bool,
 ) -> np.ndarray:
-    max_value = 0
     height, width = image.shape
-    for y in range(height):
-        for x in range(width):
-            value = image[y, x]
-            if value > max_value:
-                max_value = value
+    max_value = _max_value_2d_numba(image)
 
     gray_count = max_value + 1
     features = np.zeros((4, 13), dtype=np.float64)
@@ -798,18 +793,21 @@ def _entropy_matrix_numba(cmat: np.ndarray, total: float) -> float:
     return result
 
 
-__all__ = [
-    "CellProfilerTexturePixelDataRequest",
-    "F_HARALICK",
-    "HaralickFeatureMatrixRequest",
-    "HaralickTextureBackendStrategy",
-    "N_DIRECTIONS_2D",
-    "NativeNumpyHaralickTextureBackendStrategy",
-    "NumbaNumpyHaralickTextureBackendStrategy",
-    "NumbaNumpyObjectTextureCropBackendStrategy",
-    "ObjectTextureCropBackendStrategy",
-    "ObjectTextureMeasurement",
-    "TextureMeasurement",
-    "measure_texture",
-    "measure_texture_objects",
-]
+__all__ = public_names_from_objects(
+    CellProfilerTexturePixelDataRequest,
+    HaralickFeatureMatrixRequest,
+    HaralickTextureBackendStrategy,
+    NativeNumpyHaralickTextureBackendStrategy,
+    NumbaNumpyHaralickTextureBackendStrategy,
+    NumbaNumpyObjectTextureCropBackendStrategy,
+    ObjectTextureCropBackendStrategy,
+    ObjectTextureMeasurement,
+    TextureMeasurement,
+    measure_texture,
+    measure_texture_objects,
+    extra_names=(
+        "F_HARALICK",
+        "N_DIRECTIONS_2D",
+        "ObjectIntensityCrops",
+    ),
+)
