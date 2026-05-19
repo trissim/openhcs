@@ -23,7 +23,7 @@ from openhcs.processing.backends.cellprofiler.thresholding import (
     RobustBackgroundSpreadStrategy,
     RobustBackgroundThresholdSettings,
     ThresholdApplicationSmoothing,
-    cellprofiler_apply_threshold as _backend_cellprofiler_apply_threshold,
+    ThresholdApplicationRequest,
     cellprofiler_get_adaptive_threshold as _backend_cellprofiler_get_adaptive_threshold,
     cellprofiler_get_global_threshold as _backend_cellprofiler_get_global_threshold,
     cellprofiler_threshold as _backend_cellprofiler_threshold,
@@ -72,12 +72,12 @@ def cellprofiler_apply_threshold(
     smoothing: float = 0,
 ) -> tuple[np.ndarray, float]:
     """Compatibility wrapper for backend-owned threshold application."""
-    return _backend_cellprofiler_apply_threshold(
-        image,
+    return ThresholdApplicationRequest(
+        image=image,
         threshold=threshold,
         mask=mask,
         smoothing=smoothing,
-    )
+    ).apply()
 
 
 def cellprofiler_threshold(

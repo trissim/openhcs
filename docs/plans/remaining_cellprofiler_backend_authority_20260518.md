@@ -19,6 +19,9 @@ Highest active CP files in the refreshed advisor scan:
 Recent completed checkpoints:
 
 - Threshold robust-center/profiler/export cleanup.
+- Threshold application now uses `ThresholdApplicationRequest` directly inside
+  the backend; the legacy `cellprofiler_apply_threshold` name remains only at
+  the interop/benchmark compatibility facade.
 - Radial distribution constructors, request authority, profiler, and exports.
 - Watershed profiler/request authority and exports.
 
@@ -44,8 +47,9 @@ boundaries that need careful classification.
 1. `thresholding.py`
    - Classify robust-background nominal subclass family as intended registry
      identity unless registry consumption changes.
-   - Decide whether `cellprofiler_apply_threshold` is a public compatibility
-     wrapper or should move callers to `ThresholdApplicationRequest.apply`.
+   - Backend callers have moved to `ThresholdApplicationRequest.apply`; decide
+     separately when the interop/benchmark compatibility facade can drop the
+     legacy `cellprofiler_apply_threshold` export.
    - Delete or explicitly wire `_unit_interval_quantized_codes`.
    - Extract histogram/bin-scan repeated algorithms only if a typed Numba-safe
      helper keeps performance and readability.

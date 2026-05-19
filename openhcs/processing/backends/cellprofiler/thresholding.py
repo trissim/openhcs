@@ -1680,22 +1680,6 @@ def cellprofiler_get_adaptive_threshold(
     return thresholds
 
 
-def cellprofiler_apply_threshold(
-    image: np.ndarray,
-    *,
-    threshold: float | np.ndarray,
-    mask: np.ndarray | None = None,
-    smoothing: float = 0,
-) -> tuple[np.ndarray, float]:
-    """Apply threshold with CP's mask-aware smoothing convention."""
-    return ThresholdApplicationRequest(
-        image=image,
-        threshold=threshold,
-        mask=mask,
-        smoothing=smoothing,
-    ).apply()
-
-
 def threshold_multiotsu(values: np.ndarray, *, nbins: int) -> np.ndarray:
     """Compute CP-compatible multi-Otsu thresholds for the observed value range."""
     if values.size == 0:
@@ -1917,11 +1901,6 @@ def cellprofiler_threshold(
         if adaptive_threshold_function is None
         else adaptive_threshold_function
     )
-    apply_threshold = (
-        cellprofiler_apply_threshold
-        if apply_threshold_function is None
-        else apply_threshold_function
-    )
     profiler = CellProfilerThresholdProfiler(
         (lambda *args, **kwargs: None)
         if log_profile_function is None
@@ -2065,12 +2044,20 @@ def cellprofiler_threshold(
 
     application_smoothing = threshold_smoothing_scale if smooth_threshold_application else 0.0
     phase_started_at = time.perf_counter()
-    binary, _sigma = apply_threshold(
-        image,
-        threshold=final_threshold,
-        mask=threshold_mask,
-        smoothing=application_smoothing,
-    )
+    if apply_threshold_function is None:
+        binary, _sigma = ThresholdApplicationRequest(
+            image=image,
+            threshold=final_threshold,
+            mask=threshold_mask,
+            smoothing=application_smoothing,
+        ).apply()
+    else:
+        binary, _sigma = apply_threshold_function(
+            image,
+            threshold=final_threshold,
+            mask=threshold_mask,
+            smoothing=application_smoothing,
+        )
     profiler.record_apply(phase_started_at, application_smoothing)
     phase_started_at = time.perf_counter()
     if threshold_mask is not None:
