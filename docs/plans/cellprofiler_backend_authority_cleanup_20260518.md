@@ -182,6 +182,17 @@ Checkpoint 14:
   the next deeper threshold primitive split (`thresholding_threshold_numba_otsu.py`)
   and possible diagnostic sub-boundaries.
 
+Checkpoint 15:
+
+- Extracted threshold primitive/Otsu-family Numba kernels and finite-value
+  adapters into `thresholding_threshold_numba_otsu.py`.
+- Kept the public thresholding strategies in `thresholding.py`; they now call
+  the focused primitive kernel module rather than carrying the whole Numba
+  primitive implementation inline.
+- Focused threshold primitive/diagnostics tests pass; advisor now points to
+  deeper sub-boundaries inside the new primitive and diagnostic kernel modules,
+  plus the higher-level threshold request context split.
+
 Optional after behavior-adjacent changes:
 
 ```bash
