@@ -31,6 +31,7 @@ logger = logging.getLogger(__name__)
 # Dictionary to store registered metadata handlers for auto-detection
 # This will be auto-wrapped with SecondaryRegistryDict by the metaclass
 METADATA_HANDLERS = {}
+OPENHCS_DATA_MICROSCOPE_TYPE = "openhcsdata"
 
 
 def register_metadata_handler(handler_class, metadata_handler_class):
@@ -747,15 +748,23 @@ def _auto_detect_microscope_type(plate_folder: Path, filemanager: FileManager,
     # METADATA_HANDLERS is a SecondaryRegistryDict that auto-triggers discovery
     from polystore.exceptions import MetadataNotFoundError
 
-    # Build detection order: openhcsdata first, then filtered/ordered list
-    detection_order = ['openhcsdata']  # Always first, always included (correct registration name)
+    # Build detection order: OpenHCS data first, then filtered/ordered list.
+    detection_order = [OPENHCS_DATA_MICROSCOPE_TYPE]
 
     if allowed_types is None:
         # Use all registered handlers in registration order
-        detection_order.extend([name for name in METADATA_HANDLERS.keys() if name != 'openhcsdata'])
+        detection_order.extend(
+            name
+            for name in METADATA_HANDLERS.keys()
+            if name != OPENHCS_DATA_MICROSCOPE_TYPE
+        )
     else:
-        # Use filtered list, but ensure openhcsdata is first
-        filtered_types = [name for name in allowed_types if name != 'openhcsdata' and name in METADATA_HANDLERS]
+        # Use filtered list, but ensure OpenHCS data is first.
+        filtered_types = [
+            name
+            for name in allowed_types
+            if name != OPENHCS_DATA_MICROSCOPE_TYPE and name in METADATA_HANDLERS
+        ]
         detection_order.extend(filtered_types)
 
     # Try detection in order - only catch expected "not found" exceptions
