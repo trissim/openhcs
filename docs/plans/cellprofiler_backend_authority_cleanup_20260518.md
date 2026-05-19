@@ -102,6 +102,15 @@ Checkpoint 6:
 - Focused illumination tests pass, and the helper-backed wrapper advisor
   finding is cleared.
 
+Checkpoint 7:
+
+- Added `RankMedianProfilerPhase` as the single authority for rank-median
+  profiler event construction in illumination smoothing.
+- Removed repeated elapsed-time/log-field construction from the Numba rank
+  median fast paths without changing event names or payload fields.
+- Focused illumination median-smoothing tests pass, and advisor no longer
+  reports the rank-median profiler log duplication.
+
 Optional after behavior-adjacent changes:
 
 ```bash

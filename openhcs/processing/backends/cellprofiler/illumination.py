@@ -1457,6 +1457,26 @@ class RankMedianSmoothingBackendStrategy(
         """Return a rank-median smoothed illumination background plane."""
 
 
+@dataclass(frozen=True, slots=True)
+class RankMedianProfilerPhase:
+    """Single authority for rank-median profiler event construction."""
+
+    radius: int
+    started_at: float
+
+    @classmethod
+    def start(cls, radius: int) -> "RankMedianProfilerPhase":
+        return cls(radius=radius, started_at=time.perf_counter())
+
+    def log(self, event_name: str, **fields: object) -> None:
+        runtime_profiler.log(
+            event_name,
+            time.perf_counter() - self.started_at,
+            radius=self.radius,
+            **fields,
+        )
+
+
 class NumbaNumpyRankMedianSmoothingBackendStrategy(
     RankMedianSmoothingBackendStrategy,
 ):
@@ -1528,50 +1548,30 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
         effective_scaled = scaled.copy()
         effective_scaled[~mask_array] = np.uint16(0)
         minimum_value = np.min(effective_scaled)
-        phase_started_at = time.perf_counter()
+        phase = RankMedianProfilerPhase.start(radius)
         if np.all(effective_scaled == minimum_value):
-            runtime_profiler.log(
-                "rank_median_constant_minimum",
-                time.perf_counter() - phase_started_at,
-                radius=radius,
-            )
+            phase.log("rank_median_constant_minimum")
             return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
-        runtime_profiler.log(
-            "rank_median_constant_minimum",
-            time.perf_counter() - phase_started_at,
-            radius=radius,
-        )
+        phase.log("rank_median_constant_minimum")
 
-        phase_started_at = time.perf_counter()
+        phase = RankMedianProfilerPhase.start(radius)
         if _rank_median_global_minimum_is_majority_everywhere_numba(
             np.ascontiguousarray(effective_scaled),
             row_offsets_y,
             row_radii_x,
             minimum_value,
         ):
-            runtime_profiler.log(
-                "rank_median_minimum_majority",
-                time.perf_counter() - phase_started_at,
-                radius=radius,
-                result=True,
-            )
+            phase.log("rank_median_minimum_majority", result=True)
             return np.full(image.shape, minimum_value, dtype=np.float32) / 65535.0
-        runtime_profiler.log(
-            "rank_median_minimum_majority",
-            time.perf_counter() - phase_started_at,
-            radius=radius,
-            result=False,
-        )
+        phase.log("rank_median_minimum_majority", result=False)
 
-        phase_started_at = time.perf_counter()
+        phase = RankMedianProfilerPhase.start(radius)
         values, inverse = np.unique(effective_scaled, return_inverse=True)
-        runtime_profiler.log(
+        phase.log(
             "rank_median_unique_codes",
-            time.perf_counter() - phase_started_at,
-            radius=radius,
             value_count=int(values.size),
         )
-        phase_started_at = time.perf_counter()
+        phase = RankMedianProfilerPhase.start(radius)
         code_image = inverse.reshape(image.shape).astype(np.int32, copy=False)
         result_codes = _rank_median_codes_2d_sliding_histogram_numba(
             np.ascontiguousarray(code_image),
@@ -1579,10 +1579,8 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
             row_radii_x,
             int(values.size),
         )
-        runtime_profiler.log(
+        phase.log(
             "rank_median_numba_codes",
-            time.perf_counter() - phase_started_at,
-            radius=radius,
             value_count=int(values.size),
         )
         result = values[result_codes]
