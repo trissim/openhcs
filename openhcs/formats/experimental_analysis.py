@@ -19,6 +19,7 @@ import string
 import numpy as np
 import pandas as pd
 import sys
+from dataclasses import dataclass
 from typing import Optional
 
 from openhcs.formats.experimental_layout_rows import (
@@ -29,6 +30,75 @@ from openhcs.formats.experimental_layout_rows import (
 )
 
 
+
+
+@dataclass(frozen=True, slots=True)
+class ExcludedWellSet:
+    """Replicate-local well exclusion matcher for nested analysis structures."""
+
+    wells: frozenset[str]
+
+    @classmethod
+    def from_wells(cls, wells) -> "ExcludedWellSet":
+        if wells is None:
+            return cls(frozenset())
+        return cls(frozenset(str(well).upper() for well in wells))
+
+    @classmethod
+    def from_positions(cls, excluded_positions, replicate) -> "ExcludedWellSet":
+        if not excluded_positions or replicate not in excluded_positions:
+            return cls(frozenset())
+        return cls.from_wells(
+            well
+            for well, _plate_group in excluded_positions[replicate]
+        )
+
+    @property
+    def empty(self) -> bool:
+        return not self.wells
+
+    def allows_well_id(self, well_id) -> bool:
+        return str(well_id).upper() not in self.wells
+
+    def allows_well_tuple(self, well_tuple) -> bool:
+        return self.allows_well_id(well_tuple[0])
+
+    def filter_nested(self, data):
+        if self.empty:
+            return data
+        if not isinstance(data, dict):
+            return data
+
+        filtered = {}
+        for key, value in data.items():
+            if isinstance(value, dict):
+                if is_well_key(key):
+                    if self.allows_well_id(key):
+                        filtered[key] = self.filter_nested(value)
+                else:
+                    filtered[key] = self.filter_nested(value)
+            elif isinstance(value, list):
+                filtered[key] = [
+                    item
+                    for item in value
+                    if not is_well_tuple(item) or self.allows_well_tuple(item)
+                ]
+            else:
+                filtered[key] = value
+        return filtered
+
+
+def is_well_key(key) -> bool:
+    return (
+        isinstance(key, str)
+        and len(key) == 3
+        and key[0].isalpha()
+        and key[1:].isdigit()
+    )
+
+
+def is_well_tuple(item) -> bool:
+    return isinstance(item, tuple) and len(item) >= 1
 
 
 def read_results(results_path: str, scope: Optional[str] = None) -> pd.DataFrame:
@@ -81,6 +151,15 @@ def is_well_all_replicates_row(row_name):
 
 def is_well_specific_replicate_row(row_name):
     return ExperimentalLayoutRowRole(row_name).is_well_specific_replicate
+
+
+def plate_well_ids(row_indices=range(8), columns=range(1, 13)) -> list[str]:
+    return [
+        f"{string.ascii_uppercase[row_index]}{column:02d}"
+        for row_index in row_indices
+        for column in columns
+    ]
+
 
 def read_plate_layout(config_path):
     xls = pd.ExcelFile(config_path)
@@ -351,12 +430,7 @@ def get_features_EDDU_metaxpress(raw_df):
 
 def create_well_dict(raw_df, wells=None,scope=None):
     if wells == None:
-        rows=[string.ascii_uppercase[i] for i in range(8)]
-        cols=[i+1 for i in range(12)]
-        wells = []
-        for row in rows:
-            for col in cols:
-                wells.append(str(row)+str(col).zfill(2))
+        wells = plate_well_ids()
     features = get_features(raw_df,scope=scope)
     return {well:{feature:None for feature in features} for well in wells}
 
@@ -621,111 +695,46 @@ def average_plates_one_replicate(averaged_plates_names_dict,plates_dict,raw_df):
         averaged_plates_dict[plate_average_name]=average_plates(plates_to_average,raw_df)
     return averaged_plates_dict
 
-def filter_excluded_wells_from_data(data_dict, excluded_positions, current_replicate=None):
-    """
-    Filter out excluded wells from experimental data structures.
+def apply_excluded_positions_to_experiment_locations(
+    experiment_dict_locations,
+    excluded_positions,
+) -> None:
+    """Remove replicate-scoped excluded wells from experiment locations in-place."""
+    if not excluded_positions:
+        return
 
-    Args:
-        data_dict: Dictionary containing experimental data
-        excluded_positions: Dictionary with excluded wells per replicate: {"N1": [(well, plate_group), ...], "N2": [...]}
-        current_replicate: Current biological replicate context (e.g., 'N1')
-
-    Returns:
-        Filtered data dictionary with excluded wells removed
-    """
-    if excluded_positions is None or not excluded_positions:
-        return data_dict
-
-    # Get excluded wells for current replicate
-    excluded_wells_for_replicate = []
-    if current_replicate and current_replicate in excluded_positions:
-        excluded_wells_for_replicate = [well for well, plate_group in excluded_positions[current_replicate]]
-
-    # Convert to set for faster lookup
-    excluded_set = set(str(well).upper() for well in excluded_wells_for_replicate)
-
-    if not excluded_set:
-        return data_dict
-
-    # Filter the data structure
-    if isinstance(data_dict, dict):
-        filtered_dict = {}
-        for key, value in data_dict.items():
-            if isinstance(value, dict):
-                # Check if this looks like a well ID (e.g., 'A01', 'B12')
-                if isinstance(key, str) and len(key) == 3 and key[0].isalpha() and key[1:].isdigit():
-                    # This is a well-level dictionary
-                    if key.upper() not in excluded_set:
-                        filtered_dict[key] = filter_excluded_wells_from_data(value, excluded_positions, current_replicate)
-                else:
-                    # Recursively filter nested dictionaries
-                    filtered_dict[key] = filter_excluded_wells_from_data(value, excluded_positions, current_replicate)
-            elif isinstance(value, list):
-                # Filter lists that might contain well tuples
-                filtered_list = []
-                for item in value:
-                    if isinstance(item, tuple) and len(item) >= 1:
-                        # Check if first element looks like a well ID
-                        well_id = str(item[0]).upper()
-                        if well_id not in excluded_set:
-                            filtered_list.append(item)
-                    else:
-                        filtered_list.append(item)
-                filtered_dict[key] = filtered_list
-            else:
-                filtered_dict[key] = value
-        return filtered_dict
-    else:
-        return data_dict
+    for condition_locations in experiment_dict_locations.values():
+        for replicate, dose_locations in condition_locations.items():
+            excluded = ExcludedWellSet.from_positions(
+                excluded_positions,
+                replicate,
+            )
+            if excluded.empty:
+                continue
+            for dose, locations in dose_locations.items():
+                dose_locations[dose] = [
+                    location
+                    for location in locations
+                    if excluded.allows_well_tuple(location)
+                ]
 
 
-def filter_excluded_wells(data_dict, excluded_wells):
-    """
-    Filter out excluded wells from experimental data structures.
+def apply_excluded_positions_to_control_positions(
+    ctrl_positions,
+    excluded_positions,
+) -> None:
+    """Remove replicate-scoped excluded wells from control positions in-place."""
+    if not ctrl_positions or not excluded_positions:
+        return
 
-    Args:
-        data_dict: Dictionary containing experimental data (plates_dict, experiment_dict_locations, etc.)
-        excluded_wells: List of well IDs to exclude (e.g., ['A01', 'B03', 'C12'])
-
-    Returns:
-        Filtered data dictionary with excluded wells removed
-    """
-    if excluded_wells is None or len(excluded_wells) == 0:
-        return data_dict
-
-    # Convert excluded wells to set for faster lookup
-    excluded_set = set(str(well).upper() for well in excluded_wells)
-
-    # Filter plates_dict if it exists
-    if isinstance(data_dict, dict):
-        filtered_dict = {}
-        for key, value in data_dict.items():
-            if isinstance(value, dict):
-                # Check if this looks like a well ID (e.g., 'A01', 'B12')
-                if isinstance(key, str) and len(key) == 3 and key[0].isalpha() and key[1:].isdigit():
-                    # This is a well-level dictionary
-                    if key.upper() not in excluded_set:
-                        filtered_dict[key] = filter_excluded_wells(value, excluded_wells)
-                else:
-                    # Recursively filter nested dictionaries
-                    filtered_dict[key] = filter_excluded_wells(value, excluded_wells)
-            elif isinstance(value, list):
-                # Filter lists that might contain well tuples
-                filtered_list = []
-                for item in value:
-                    if isinstance(item, tuple) and len(item) >= 1:
-                        # Check if first element looks like a well ID
-                        well_id = str(item[0]).upper()
-                        if well_id not in excluded_set:
-                            filtered_list.append(item)
-                    else:
-                        filtered_list.append(item)
-                filtered_dict[key] = filtered_list
-            else:
-                filtered_dict[key] = value
-        return filtered_dict
-    else:
-        return data_dict
+    for replicate, ctrl_wells in ctrl_positions.items():
+        excluded = ExcludedWellSet.from_positions(excluded_positions, replicate)
+        if not excluded.empty:
+            ctrl_positions[replicate] = [
+                well_tuple
+                for well_tuple in ctrl_wells
+                if excluded.allows_well_tuple(well_tuple)
+            ]
 
 
 def load_plate_groups(config_path):
@@ -973,13 +982,7 @@ def feature_tables_to_excel(feature_tables,outpath):
                 table.to_excel(writer, sheet_name=remove_inval_chars(feature), merge_cells=False)
 
 def create_duplicate_wells():
-    rows=[string.ascii_uppercase[i] for i in range(0,8,2)]
-    cols=[i+1 for i in range(12)]
-    wells = []
-    for row in rows:
-        for col in cols:
-            wells.append(str(row)+str(col).zfill(2))
-    return wells
+    return plate_well_ids(row_indices=range(0, 8, 2))
 
 def make_experiment_dict_locations(plate_groups,plate_layout,conditions):
     experiment_dict={condition:{} for condition in conditions}
@@ -1298,36 +1301,14 @@ def run_experimental_analysis(
                     wells_only = [well for well, plate_group in wells_list]
                     print(f"  {replicate}: {wells_only}")
 
-            # Filter experiment_dict_locations by replicate
-            for condition in experiment_dict_locations:
-                for replicate in experiment_dict_locations[condition]:
-                    if replicate in excluded_positions:
-                        excluded_wells_for_replicate = [well for well, plate_group in excluded_positions[replicate]]
-                        excluded_set = set(str(well).upper() for well in excluded_wells_for_replicate)
-
-                        # Filter each dose's well list
-                        for dose in experiment_dict_locations[condition][replicate]:
-                            filtered_wells = []
-                            for well_tuple in experiment_dict_locations[condition][replicate][dose]:
-                                well_id = str(well_tuple[0]).upper()
-                                if well_id not in excluded_set:
-                                    filtered_wells.append(well_tuple)
-                            experiment_dict_locations[condition][replicate][dose] = filtered_wells
-
-            # Filter control positions to exclude excluded wells
-            if ctrl_positions is not None:
-                for replicate in ctrl_positions:
-                    if replicate in excluded_positions:
-                        excluded_wells_for_replicate = [well for well, plate_group in excluded_positions[replicate]]
-                        excluded_set = set(str(well).upper() for well in excluded_wells_for_replicate)
-
-                        # Filter control wells
-                        filtered_ctrl_wells = []
-                        for well_tuple in ctrl_positions[replicate]:
-                            well_id = str(well_tuple[0]).upper()
-                            if well_id not in excluded_set:
-                                filtered_ctrl_wells.append(well_tuple)
-                        ctrl_positions[replicate] = filtered_ctrl_wells
+            apply_excluded_positions_to_experiment_locations(
+                experiment_dict_locations,
+                excluded_positions,
+            )
+            apply_excluded_positions_to_control_positions(
+                ctrl_positions,
+                excluded_positions,
+            )
 
     # Create experiment data structure - ALWAYS generate both per-N and per-well versions
     # Filter features based on plot_config BEFORE creating tables
