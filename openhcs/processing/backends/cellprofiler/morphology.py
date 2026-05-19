@@ -91,6 +91,8 @@ LabelBoundingBox = tuple[int, tuple[slice, ...]]
 LabelBoundingBoxes = list[LabelBoundingBox]
 SCIPY_CONSTANT_BOUNDARY_MODE = "constant"
 MORPH_CONVOLUTION_MODE = "constant"
+MORPH_CONVEX_HULL_OPERATION = "convex_hull"
+MORPHOLOGY_STRATEGY_REGISTRY_KEY = "strategy_label"
 EIGHT_NEIGHBOR_KERNEL = np.array(
     [[1, 1, 1], [1, 0, 1], [1, 1, 1]],
     dtype=np.uint8,
@@ -109,7 +111,7 @@ class MorphOperation(Enum):
     BRANCHPOINTS = "branchpoints"
     BRIDGE = "bridge"
     CLEAN = "clean"
-    CONVEX_HULL = "convex_hull"
+    CONVEX_HULL = MORPH_CONVEX_HULL_OPERATION
     DIAG = "diag"
     DISTANCE = "distance"
     ENDPOINTS = "endpoints"
@@ -149,7 +151,7 @@ class ResizeObjectsMethod(Enum):
 
 class FillMode(Enum):
     HOLES = "holes"
-    CONVEX_HULL = "convex_hull"
+    CONVEX_HULL = MORPH_CONVEX_HULL_OPERATION
 
 
 class MaskChoice(Enum):
@@ -3930,7 +3932,7 @@ class ExpandShrinkOperationStrategy(
 ):
     """Nominal CellProfiler ExpandOrShrinkObjects operation strategy."""
 
-    __registry_key__ = "strategy_label"
+    __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     __enum_member_attr__ = "mode"
     mode: ClassVar[ExpandShrinkMode | None] = None
@@ -4905,7 +4907,7 @@ class SplitOrMergeOutputObjectType(Enum):
     """CellProfiler SplitOrMergeObjects per-parent output mode."""
 
     DISCONNECTED = "disconnected"
-    CONVEX_HULL = "convex_hull"
+    CONVEX_HULL = MORPH_CONVEX_HULL_OPERATION
 
 
 class SplitOrMergeIntensityMethod(Enum):
@@ -4950,7 +4952,7 @@ class SplitOrMergeOperationStrategy(
 ):
     """Nominal implementation for one SplitOrMergeObjects operation."""
 
-    __registry_key__ = "strategy_label"
+    __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     __enum_member_attr__ = "operation"
 
@@ -5000,7 +5002,7 @@ class SplitOrMergeMergeMethodStrategy(
 ):
     """Nominal implementation for one SplitOrMergeObjects merge method."""
 
-    __registry_key__ = "strategy_label"
+    __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
     __skip_if_no_key__ = True
     __enum_member_attr__ = "method"
 
