@@ -51,7 +51,9 @@ from openhcs.processing.backends.cellprofiler.morphology import MorphologyBacken
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
 )
-from openhcs.processing.backends.cellprofiler.secondary import _edt_1d_numba
+from openhcs.processing.backends.cellprofiler.secondary_numba_propagation_labels import (
+    _edt_1d_numba,
+)
 from openhcs.processing.materialization import csv_materializer
 from openhcs.processing.backends.cellprofiler.zernike import shape_zernike_moments
 

@@ -149,6 +149,17 @@ Checkpoint 11:
 - Focused CP enum/import tests pass, and the affected modules no longer report
   repeated enum `__new__` skeleton findings.
 
+Checkpoint 12:
+
+- Extracted the secondary-object EDT/propagation Numba kernel cohort into
+  `secondary_numba_propagation_labels.py`.
+- Updated secondary and shape callers to depend on that focused kernel module
+  directly instead of reaching through `secondary.py` for private worker
+  functions.
+- Focused secondary/shape CP tests pass; remaining advisor findings are export
+  surface cleanup and deeper Numba-context-record issues inside the new focused
+  module.
+
 Optional after behavior-adjacent changes:
 
 ```bash
