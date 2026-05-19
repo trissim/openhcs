@@ -52,6 +52,20 @@ from openhcs.processing.materialization import csv_materializer
 
 logger = logging.getLogger(__name__)
 runtime_profiler = CellProfilerRuntimeProfiler(logger)
+_COLOCALIZATION_MEASUREMENT_FUNCTION = "_colocalization_measurement"
+
+
+def _log_colocalization_measurement_phase(
+    phase_name: str,
+    started_at: float,
+    **fields: object,
+) -> None:
+    runtime_profiler.log(
+        phase_name,
+        time.perf_counter() - started_at,
+        function=_COLOCALIZATION_MEASUREMENT_FUNCTION,
+        **fields,
+    )
 
 
 class ColocalizationCostesBackendStrategy(
@@ -1690,10 +1704,9 @@ def _colocalization_measurement(
             fi = np.empty(0, dtype=np.asarray(first_pixels).dtype)
             si = np.empty(0, dtype=np.asarray(second_pixels).dtype)
 
-    runtime_profiler.log(
+    _log_colocalization_measurement_phase(
         "coloc_prepare_pixels",
-        time.perf_counter() - phase_started_at,
-        function="_colocalization_measurement",
+        phase_started_at,
         pixels=fi.size,
     )
     if fi.size:
@@ -1704,10 +1717,9 @@ def _colocalization_measurement(
                     backend_provider=options.costes_backend_provider,
                 ).correlation_slopes(fi, si)
             )
-            runtime_profiler.log(
+            _log_colocalization_measurement_phase(
                 "coloc_correlation",
-                time.perf_counter() - phase_started_at,
-                function="_colocalization_measurement",
+                phase_started_at,
             )
 
         if any((options.do_manders, options.do_rwc, options.do_overlap)):
@@ -1730,10 +1742,9 @@ def _colocalization_measurement(
                 int(options.scale_max),
                 options.unit_interval_intensity_scale,
             )
-            runtime_profiler.log(
+            _log_colocalization_measurement_phase(
                 "coloc_thresholded_metrics",
-                time.perf_counter() - phase_started_at,
-                function="_colocalization_measurement",
+                phase_started_at,
             )
 
         if options.do_costes:
@@ -1756,10 +1767,9 @@ def _colocalization_measurement(
                     options.scale_max,
                     fast_mode,
                 )
-            runtime_profiler.log(
+            _log_colocalization_measurement_phase(
                 "coloc_costes_thresholds",
-                time.perf_counter() - phase_started_at,
-                function="_colocalization_measurement",
+                phase_started_at,
                 method=options.costes_method.value,
             )
 
@@ -1770,10 +1780,9 @@ def _colocalization_measurement(
                 _pixel_dtype_threshold(fi, thr_fi_c),
                 _pixel_dtype_threshold(si, thr_si_c),
             )
-            runtime_profiler.log(
+            _log_colocalization_measurement_phase(
                 "coloc_costes_manders",
-                time.perf_counter() - phase_started_at,
-                function="_colocalization_measurement",
+                phase_started_at,
             )
 
     result = ColocalizationMeasurements(
@@ -1793,10 +1802,9 @@ def _colocalization_measurement(
         costes_threshold_1=float(thr_fi_c) if not np.isnan(thr_fi_c) else 0.0,
         costes_threshold_2=float(thr_si_c) if not np.isnan(thr_si_c) else 0.0,
     )
-    runtime_profiler.log(
+    _log_colocalization_measurement_phase(
         "coloc_total",
-        time.perf_counter() - total_started_at,
-        function="_colocalization_measurement",
+        total_started_at,
     )
     return result
 
