@@ -13,6 +13,7 @@ from openhcs.formats.experimental_analysis import (
     individual_wells,
     metaxpress_well_header_row,
     normalize_experiment,
+    PlateLayoutBuilder,
 )
 from openhcs.formats.experimental_layout_rows import (
     ExperimentalAnalysisFeatureReaders,
@@ -195,3 +196,60 @@ def test_metaxpress_excel_feature_discovery_uses_null_feature_row() -> None:
 
     assert metaxpress_well_header_row(raw_df) is None
     assert get_features_EDDU_metaxpress(raw_df) == ["Area", "Intensity"]
+
+
+def test_parse_plate_layout_frame_builds_controls_exclusions_and_assignments() -> None:
+    layout_frame = pd.DataFrame(
+        [
+            [2, None, None],
+            ["EDDU_CX5", None, None],
+            [True, None, None],
+            ["A01", "A02", None],
+            [1, 1, None],
+            [1, 2, None],
+            ["B01", None, None],
+            [2, None, None],
+            [2, None, None],
+            ["Drug", None, None],
+            [0.1, 1.0, None],
+            ["C01", "C02", None],
+            [1, 2, None],
+            ["D01", None, None],
+            [2, None, None],
+        ],
+        index=[
+            "N",
+            "scope",
+            "per well datapoints",
+            "control well",
+            "plate group",
+            "group n",
+            "exclude wells",
+            "plate group",
+            "group n",
+            "condition",
+            "dose",
+            "well",
+            "plate group",
+            "well2",
+            "plate group",
+        ],
+    )
+
+    scope, layout, conditions, ctrl_positions, excluded_positions, per_well = (
+        PlateLayoutBuilder().parse(layout_frame.dropna(how="all"))
+    )
+
+    assert scope == "EDDU_CX5"
+    assert conditions == ["Drug"]
+    assert per_well is True
+    assert ctrl_positions == {"N1": [("A01", 1)], "N2": [("A02", 1)]}
+    assert excluded_positions == {"N1": [], "N2": [("B01", 2)]}
+    assert layout["N1"]["Drug"] == {
+        0.1: [("C01", 1), ("C02", 2)],
+        1.0: [("C01", 1), ("C02", 2)],
+    }
+    assert layout["N2"]["Drug"] == {
+        0.1: [("C01", 1), ("C02", 2), ("D01", 2)],
+        1.0: [("C01", 1), ("C02", 2), ("D01", 2)],
+    }
