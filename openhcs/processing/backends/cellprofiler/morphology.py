@@ -4526,6 +4526,217 @@ class MaskObjectsPlaneResult:
     relationships: ParentChildRelationshipPayload
 
 
+class MaskObjectsOverlapHandlingStrategy(
+    EnumKeyedStrategyMixin[MaskObjectsOverlapHandling],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Apply one MaskObjects overlap-handling policy to a label plane."""
+
+    __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "overlap_handling"
+    __enum_label_attr__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
+
+    overlap_handling: ClassVar[MaskObjectsOverlapHandling | None] = None
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_choice(
+        cls,
+        overlap_handling: MaskObjectsOverlapHandling,
+    ) -> "MaskObjectsOverlapHandlingStrategy":
+        return cls.for_enum_member(overlap_handling)
+
+    @abstractmethod
+    def apply(
+        self,
+        label_image: np.ndarray,
+        masked_labels: np.ndarray,
+        binary_mask: np.ndarray,
+        *,
+        nobjects: int,
+        overlap_fraction: float,
+    ) -> np.ndarray:
+        """Return labels after applying the overlap policy."""
+
+
+class MaskObjectsMaskOverlapStrategy(MaskObjectsOverlapHandlingStrategy):
+    overlap_handling = MaskObjectsOverlapHandling.MASK
+
+    def apply(
+        self,
+        label_image: np.ndarray,
+        masked_labels: np.ndarray,
+        binary_mask: np.ndarray,
+        *,
+        nobjects: int,
+        overlap_fraction: float,
+    ) -> np.ndarray:
+        del label_image, nobjects, overlap_fraction
+        return masked_labels * binary_mask.astype(masked_labels.dtype)
+
+
+class MaskObjectsKeepOverlapStrategy(MaskObjectsOverlapHandlingStrategy):
+    overlap_handling = MaskObjectsOverlapHandling.KEEP
+
+    def apply(
+        self,
+        label_image: np.ndarray,
+        masked_labels: np.ndarray,
+        binary_mask: np.ndarray,
+        *,
+        nobjects: int,
+        overlap_fraction: float,
+    ) -> np.ndarray:
+        del overlap_fraction
+        import scipy.ndimage as ndi
+
+        object_indices = np.arange(1, nobjects + 1, dtype=np.int32)
+        pixel_counts = np.atleast_1d(
+            ndi.sum(binary_mask.astype(np.float64), label_image, object_indices)
+        )
+        keep = pixel_counts > 0
+        keep_lookup = np.concatenate([[False], keep])
+        masked_labels[~keep_lookup[label_image]] = 0
+        return masked_labels
+
+
+class MaskObjectsRemoveOverlapStrategy(MaskObjectsOverlapHandlingStrategy):
+    overlap_handling = MaskObjectsOverlapHandling.REMOVE
+
+    def apply(
+        self,
+        label_image: np.ndarray,
+        masked_labels: np.ndarray,
+        binary_mask: np.ndarray,
+        *,
+        nobjects: int,
+        overlap_fraction: float,
+    ) -> np.ndarray:
+        del overlap_fraction
+        import scipy.ndimage as ndi
+
+        object_indices = np.arange(1, nobjects + 1, dtype=np.int32)
+        pixel_counts = np.atleast_1d(
+            ndi.sum(binary_mask.astype(np.float64), label_image, object_indices)
+        )
+        total_pixels = np.atleast_1d(
+            ndi.sum(
+                np.ones(label_image.shape, dtype=np.float64),
+                label_image,
+                object_indices,
+            )
+        )
+        keep = pixel_counts == total_pixels
+        keep_lookup = np.concatenate([[False], keep])
+        masked_labels[~keep_lookup[label_image]] = 0
+        return masked_labels
+
+
+class MaskObjectsRemovePercentageOverlapStrategy(MaskObjectsOverlapHandlingStrategy):
+    overlap_handling = MaskObjectsOverlapHandling.REMOVE_PERCENTAGE
+
+    def apply(
+        self,
+        label_image: np.ndarray,
+        masked_labels: np.ndarray,
+        binary_mask: np.ndarray,
+        *,
+        nobjects: int,
+        overlap_fraction: float,
+    ) -> np.ndarray:
+        import scipy.ndimage as ndi
+
+        object_indices = np.arange(1, nobjects + 1, dtype=np.int32)
+        pixel_counts = np.atleast_1d(
+            ndi.sum(binary_mask.astype(np.float64), label_image, object_indices)
+        )
+        total_pixels = np.atleast_1d(
+            ndi.sum(
+                np.ones(label_image.shape, dtype=np.float64),
+                label_image,
+                object_indices,
+            )
+        )
+        with np.errstate(divide="ignore", invalid="ignore"):
+            fractions = np.where(
+                total_pixels > 0,
+                pixel_counts / total_pixels,
+                0,
+            )
+        keep = fractions >= overlap_fraction
+        keep_lookup = np.concatenate([[False], keep])
+        masked_labels[~keep_lookup[label_image]] = 0
+        return masked_labels
+
+
+class MaskObjectsNumberingStrategy(
+    EnumKeyedStrategyMixin[MaskObjectsNumberingChoice],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Apply one MaskObjects label-numbering policy."""
+
+    __registry_key__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "numbering"
+    __enum_label_attr__ = MORPHOLOGY_STRATEGY_REGISTRY_KEY
+
+    numbering: ClassVar[MaskObjectsNumberingChoice | None] = None
+    strategy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_choice(
+        cls,
+        numbering: MaskObjectsNumberingChoice,
+    ) -> "MaskObjectsNumberingStrategy":
+        return cls.for_enum_member(numbering)
+
+    @abstractmethod
+    def apply(
+        self,
+        masked_labels: np.ndarray,
+        *,
+        nobjects: int,
+    ) -> tuple[np.ndarray, int]:
+        """Return labels and remaining object count after numbering."""
+
+
+class MaskObjectsRenumberStrategy(MaskObjectsNumberingStrategy):
+    numbering = MaskObjectsNumberingChoice.RENUMBER
+
+    def apply(
+        self,
+        masked_labels: np.ndarray,
+        *,
+        nobjects: int,
+    ) -> tuple[np.ndarray, int]:
+        unique_labels = np.unique(masked_labels[masked_labels != 0])
+        if len(unique_labels) == 0:
+            return masked_labels, 0
+        indexer = np.zeros(nobjects + 1, dtype=np.int32)
+        indexer[unique_labels] = np.arange(
+            1,
+            len(unique_labels) + 1,
+            dtype=np.int32,
+        )
+        return indexer[masked_labels], len(unique_labels)
+
+
+class MaskObjectsRetainNumberingStrategy(MaskObjectsNumberingStrategy):
+    numbering = MaskObjectsNumberingChoice.RETAIN
+
+    def apply(
+        self,
+        masked_labels: np.ndarray,
+        *,
+        nobjects: int,
+    ) -> tuple[np.ndarray, int]:
+        del nobjects
+        return masked_labels, len(np.unique(masked_labels[masked_labels != 0]))
+
+
 @dataclass(frozen=True, slots=True)
 class MaskObjectsPlaneOperation:
     """CellProfiler MaskObjects semantics for one aligned object-label plane."""
@@ -4543,8 +4754,6 @@ class MaskObjectsPlaneOperation:
         *,
         slice_index: int = 0,
     ) -> MaskObjectsPlaneResult:
-        import scipy.ndimage as ndi
-
         label_image = np.asarray(label_image, dtype=np.int32)
         _aligned_labels, mask = DenseObjectLabelMaskAligner(label_image, mask).aligned()
         label_image = _aligned_labels.astype(np.int32, copy=False)
@@ -4571,64 +4780,18 @@ class MaskObjectsPlaneOperation:
             )
 
         binary_mask = _size_binary_mask_like_labels(label_image, binary_mask)
-        if self.overlap_handling == MaskObjectsOverlapHandling.MASK:
-            masked_labels = masked_labels * binary_mask.astype(masked_labels.dtype)
-        else:
-            object_indices = np.arange(1, nobjects + 1, dtype=np.int32)
-            pixel_counts = np.atleast_1d(
-                ndi.sum(binary_mask.astype(np.float64), label_image, object_indices)
-            )
-
-            if self.overlap_handling == MaskObjectsOverlapHandling.KEEP:
-                keep = pixel_counts > 0
-            else:
-                total_pixels = np.atleast_1d(
-                    ndi.sum(
-                        np.ones(label_image.shape, dtype=np.float64),
-                        label_image,
-                        object_indices,
-                    )
-                )
-
-                if self.overlap_handling == MaskObjectsOverlapHandling.REMOVE:
-                    keep = pixel_counts == total_pixels
-                elif (
-                    self.overlap_handling
-                    == MaskObjectsOverlapHandling.REMOVE_PERCENTAGE
-                ):
-                    with np.errstate(divide="ignore", invalid="ignore"):
-                        fractions = np.where(
-                            total_pixels > 0,
-                            pixel_counts / total_pixels,
-                            0,
-                        )
-                    keep = fractions >= self.overlap_fraction
-                else:
-                    raise ValueError(
-                        "Unsupported MaskObjects overlap handling: "
-                        f"{self.overlap_handling!r}"
-                    )
-
-            keep_lookup = np.concatenate([[False], keep])
-            masked_labels[~keep_lookup[label_image]] = 0
-
-        if self.numbering == MaskObjectsNumberingChoice.RENUMBER:
-            unique_labels = np.unique(masked_labels[masked_labels != 0])
-            if len(unique_labels) > 0:
-                indexer = np.zeros(nobjects + 1, dtype=np.int32)
-                indexer[unique_labels] = np.arange(
-                    1,
-                    len(unique_labels) + 1,
-                    dtype=np.int32,
-                )
-                masked_labels = indexer[masked_labels]
-                remaining_count = len(unique_labels)
-            else:
-                remaining_count = 0
-        elif self.numbering == MaskObjectsNumberingChoice.RETAIN:
-            remaining_count = len(np.unique(masked_labels[masked_labels != 0]))
-        else:
-            raise ValueError(f"Unsupported MaskObjects numbering: {self.numbering!r}")
+        masked_labels = MaskObjectsOverlapHandlingStrategy.for_choice(
+            self.overlap_handling
+        ).apply(
+            label_image,
+            masked_labels,
+            binary_mask,
+            nobjects=nobjects,
+            overlap_fraction=self.overlap_fraction,
+        )
+        masked_labels, remaining_count = MaskObjectsNumberingStrategy.for_choice(
+            self.numbering
+        ).apply(masked_labels, nobjects=nobjects)
 
         return MaskObjectsPlaneResult(
             labels=masked_labels,
