@@ -56,10 +56,13 @@ from openhcs.core.runtime_values import (
 )
 from openhcs.core.runtime_invocation import RuntimeOutputBundle
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
 from openhcs.core.config import LazyDtypeConfig , LazyWellFilterConfig, LazyStepWellFilterConfig
 
 logger = logging.getLogger(__name__)
+
+PURE2D_VALUE_TYPE_REGISTRY_KEY = "value_type"
 
 
 class RuntimeCallableView(Enum):
@@ -68,13 +71,6 @@ class RuntimeCallableView(Enum):
     DECORATED = auto()
     RAW = auto()
 
-    def resolve(self, func: Callable[..., Any]) -> Callable[..., Any]:
-        if self is RuntimeCallableView.DECORATED:
-            return func
-        if self is RuntimeCallableView.RAW:
-            return inspect.unwrap(func)
-        raise ValueError(f"Unsupported runtime callable view: {self!r}")
-
 
 class RuntimeInvocationKwargPolicy(Enum):
     """Nominal kwarg policy used by runtime callable invocation."""
@@ -82,26 +78,111 @@ class RuntimeInvocationKwargPolicy(Enum):
     PASS_THROUGH = auto()
     SIGNATURE_FILTERED = auto()
 
+
+class RuntimeCallableViewStrategy(
+    EnumKeyedStrategyMixin[RuntimeCallableView],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Resolve the callable object for a runtime invocation view."""
+
+    __registry_key__ = "view_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "view"
+    __enum_label_attr__ = "view_label"
+
+    view: ClassVar[RuntimeCallableView | None] = None
+    view_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_view(cls, view: RuntimeCallableView) -> "RuntimeCallableViewStrategy":
+        return cls.for_enum_member(view)
+
+    @abstractmethod
+    def resolve(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        """Return the callable object selected by this view."""
+
+
+class DecoratedRuntimeCallableViewStrategy(RuntimeCallableViewStrategy):
+    view = RuntimeCallableView.DECORATED
+
+    def resolve(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        return func
+
+
+class RawRuntimeCallableViewStrategy(RuntimeCallableViewStrategy):
+    view = RuntimeCallableView.RAW
+
+    def resolve(self, func: Callable[..., Any]) -> Callable[..., Any]:
+        return inspect.unwrap(func)
+
+
+class RuntimeInvocationKwargPolicyStrategy(
+    EnumKeyedStrategyMixin[RuntimeInvocationKwargPolicy],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Filter invocation kwargs for a runtime kwarg policy."""
+
+    __registry_key__ = "policy_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "policy"
+    __enum_label_attr__ = "policy_label"
+
+    policy: ClassVar[RuntimeInvocationKwargPolicy | None] = None
+    policy_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_policy(
+        cls,
+        policy: RuntimeInvocationKwargPolicy,
+    ) -> "RuntimeInvocationKwargPolicyStrategy":
+        return cls.for_enum_member(policy)
+
+    @abstractmethod
     def accepted_kwargs(
         self,
         func: Callable[..., Any],
         kwargs: Mapping[str, Any],
     ) -> dict[str, Any]:
-        if self is RuntimeInvocationKwargPolicy.PASS_THROUGH:
+        """Return kwargs accepted by ``func`` under this policy."""
+
+
+class PassThroughRuntimeInvocationKwargPolicyStrategy(
+    RuntimeInvocationKwargPolicyStrategy
+):
+    policy = RuntimeInvocationKwargPolicy.PASS_THROUGH
+
+    def accepted_kwargs(
+        self,
+        func: Callable[..., Any],
+        kwargs: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        del func
+        return dict(kwargs)
+
+
+class SignatureFilteredRuntimeInvocationKwargPolicyStrategy(
+    RuntimeInvocationKwargPolicyStrategy
+):
+    policy = RuntimeInvocationKwargPolicy.SIGNATURE_FILTERED
+
+    def accepted_kwargs(
+        self,
+        func: Callable[..., Any],
+        kwargs: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        parameters = _runtime_callable_parameters(func)
+        if any(
+            parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters.values()
+        ):
             return dict(kwargs)
-        if self is RuntimeInvocationKwargPolicy.SIGNATURE_FILTERED:
-            parameters = _runtime_callable_parameters(func)
-            if any(
-                parameter.kind is inspect.Parameter.VAR_KEYWORD
-                for parameter in parameters.values()
-            ):
-                return dict(kwargs)
-            return {
-                name: value
-                for name, value in kwargs.items()
-                if name in parameters
-            }
-        raise ValueError(f"Unsupported runtime kwarg policy: {self!r}")
+        return {
+            name: value
+            for name, value in kwargs.items()
+            if name in parameters
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,10 +198,14 @@ class RuntimeCallableInvocation:
     )
 
     def call(self) -> Any:
-        target = self.callable_view.resolve(self.func)
+        target = RuntimeCallableViewStrategy.for_view(self.callable_view).resolve(
+            self.func
+        )
         return target(
             *self.args,
-            **self.kwarg_policy.accepted_kwargs(target, self.kwargs),
+            **RuntimeInvocationKwargPolicyStrategy.for_policy(
+                self.kwarg_policy
+            ).accepted_kwargs(target, self.kwargs),
         )
 
 
@@ -247,6 +332,24 @@ class Pure2DRegisteredStrategyFamily(ABC):
         return tuple(strategy_type() for strategy_type in cls.registered_families())
 
     @classmethod
+    def nearest_registered_strategy(
+        cls,
+        strategy_type: type[Any],
+        *,
+        supports: Callable[[Any], bool],
+        distance: Callable[[Any], int],
+    ) -> Any | None:
+        """Return the nearest registered strategy satisfying ``supports``."""
+        candidates = [
+            strategy
+            for strategy in cls.registered_strategies()
+            if isinstance(strategy, strategy_type) and supports(strategy)
+        ]
+        if not candidates:
+            return None
+        return min(candidates, key=distance)
+
+    @classmethod
     @lru_cache(maxsize=None)
     def accepted_value_types(cls) -> tuple[type[Any], ...]:
         """Return nominal value types owned by this registered family."""
@@ -264,7 +367,7 @@ class Pure2DRegisteredStrategyFamily(ABC):
 class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMeta):
     """Unstack a PURE_2D main-flow input into nominal per-slice values."""
 
-    __registry_key__ = "value_type"
+    __registry_key__ = PURE2D_VALUE_TYPE_REGISTRY_KEY
     __registry__: ClassVar[dict[Any, type["Pure2DInputSlicer"]]] = {}
 
     @classmethod
@@ -283,21 +386,16 @@ class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMe
     @classmethod
     def strategy_for_value(cls, value: Any) -> "Pure2DInputSlicer":
         """Select the nearest registered slicer for a PURE_2D input value."""
-        candidates: list[Pure2DInputSlicer] = []
-        for strategy in cls.registered_strategies():
-            if not isinstance(strategy, Pure2DInputSlicer):
-                continue
-            if strategy.supports(value):
-                candidates.append(strategy)
-        if not candidates:
+        slicer = cls.nearest_registered_strategy(
+            Pure2DInputSlicer,
+            supports=lambda strategy: strategy.supports(value),
+            distance=lambda strategy: strategy.type_distance(value),
+        )
+        if slicer is None:
             raise TypeError(
                 "PURE_2D execution requires a registered input slicer for "
                 f"{type(value).__name__}."
             )
-        slicer = min(
-            candidates,
-            key=lambda candidate: candidate.type_distance(value),
-        )
         return slicer
 
     def supports(self, value: Any) -> bool:
@@ -384,7 +482,7 @@ class Pure2DAuxiliaryOutputAggregator(
 ):
     """Aggregate one auxiliary PURE_2D output position across slices."""
 
-    __registry_key__ = "value_type"
+    __registry_key__ = PURE2D_VALUE_TYPE_REGISTRY_KEY
     __registry__: ClassVar[dict[Any, type["Pure2DAuxiliaryOutputAggregator"]]] = {}
 
     @classmethod
@@ -395,17 +493,12 @@ class Pure2DAuxiliaryOutputAggregator(
     def aggregate(cls, values: list[Any], memory_type: str) -> Any:
         if not values:
             return []
-        candidates: list[Pure2DAuxiliaryOutputAggregator] = []
-        for strategy in cls.registered_strategies():
-            if not isinstance(strategy, Pure2DAuxiliaryOutputAggregator):
-                continue
-            if strategy.supports(values):
-                candidates.append(strategy)
-        if candidates:
-            aggregator = min(
-                candidates,
-                key=lambda candidate: candidate.type_distance(values),
-            )
+        aggregator = cls.nearest_registered_strategy(
+            Pure2DAuxiliaryOutputAggregator,
+            supports=lambda strategy: strategy.supports(values),
+            distance=lambda strategy: strategy.type_distance(values),
+        )
+        if aggregator is not None:
             return aggregator.aggregate_values(values, memory_type)
         if len(values) == 1:
             return values[0]
@@ -638,7 +731,7 @@ class TuplePure2DAuxiliaryOutputAggregator(FlatSequencePure2DAuxiliaryOutputAggr
 class Pure2DSliceIndexProjector(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMeta):
     """Project execution slice identity into nominal PURE_2D outputs."""
 
-    __registry_key__ = "value_type"
+    __registry_key__ = PURE2D_VALUE_TYPE_REGISTRY_KEY
     __registry__: ClassVar[dict[Any, type["Pure2DSliceIndexProjector"]]] = {}
 
     @classmethod
@@ -1179,18 +1272,6 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         return original_func
 
     # ===== PROCESSING CONTRACT EXECUTION METHODS =====
-    def _execute_slice_by_slice(self, func, image, *args, **kwargs):
-        """Shared slice-by-slice execution logic."""
-        if image.ndim == 3:
-            from openhcs.core.memory import unstack_slices, stack_slices
-            from openhcs.core.memory import detect_memory_type
-            mem = detect_memory_type(image)
-            slices = unstack_slices(image, mem, 0)
-            policy = RuntimeCallablePolicy()
-            results = [policy.call(func, (sl, *args), kwargs) for sl in slices]
-            return stack_slices(results, mem, 0)
-        return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
-
     def execute_pure_3d(self, func, image, *args, **kwargs):
         """Execute 3D→3D function directly (no change)."""
         return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
