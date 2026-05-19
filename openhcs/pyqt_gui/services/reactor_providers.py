@@ -172,7 +172,21 @@ class OpenHCSFunctionRegistry:
         }
 
 
-class OpenHCSLogDiscoveryProvider:
+class PyQtLogInfoProjectionMixin:
+    """Project OpenHCS log classification into pyqt-reactive's log row."""
+
+    def pyqt_log_file_info(self, log_info: Any):
+        from pyqt_reactive.core.log_utils import LogFileInfo
+
+        return LogFileInfo(
+            path=log_info.path,
+            log_type=log_info.log_type,
+            worker_id=log_info.worker_id,
+            display_name=log_info.display_name,
+        )
+
+
+class OpenHCSLogDiscoveryProvider(PyQtLogInfoProjectionMixin):
     """Adapter for OpenHCS log discovery utilities."""
 
     def get_current_log_path(self) -> Path:
@@ -187,7 +201,6 @@ class OpenHCSLogDiscoveryProvider:
         log_directory: Optional[Path] = None,
     ):
         from openhcs.core.log_utils import discover_logs
-        from pyqt_reactive.core.log_utils import LogFileInfo
 
         logs = discover_logs(
             base_log_path=base_log_path,
@@ -195,19 +208,11 @@ class OpenHCSLogDiscoveryProvider:
             log_directory=log_directory,
         )
         # Convert to pyqt_reactive LogFileInfo for consistency
-        converted = [
-            LogFileInfo(
-                path=l.path,
-                log_type=l.log_type,
-                worker_id=l.worker_id,
-                display_name=l.display_name,
-            )
-            for l in logs
-        ]
+        converted = [self.pyqt_log_file_info(log_info) for log_info in logs]
         return converted
 
 
-class OpenHCSServerScanProvider:
+class OpenHCSServerScanProvider(PyQtLogInfoProjectionMixin):
     """Scan OpenHCS ZMQ servers for log paths."""
 
     def scan_for_server_logs(self):
@@ -223,7 +228,6 @@ class OpenHCSServerScanProvider:
             get_default_transport_mode,
         )
         from openhcs.core.log_utils import classify_log_file
-        from pyqt_reactive.core.log_utils import LogFileInfo
 
         discovered = []
         ports_to_scan = get_all_streaming_ports(num_ports_per_type=10)
@@ -261,19 +265,15 @@ class OpenHCSServerScanProvider:
                 log_path = Path(pong["log_file_path"])
                 if log_path.exists():
                     log_info = classify_log_file(log_path, None, False)
-                    discovered.append(
-                        LogFileInfo(
-                            path=log_info.path,
-                            log_type=log_info.log_type,
-                            worker_id=log_info.worker_id,
-                            display_name=log_info.display_name,
-                        )
-                    )
+                    discovered.append(self.pyqt_log_file_info(log_info))
         return discovered
 
 
 class OpenHCSComponentSelectionProvider:
     """Component selection provider backed by OpenHCS orchestrator metadata."""
+
+    def __init__(self) -> None:
+        self._last_debug_info = "No debug info available"
 
     def get_groupby_enum(self) -> Any:
         from openhcs.constants.constants import GroupBy
@@ -373,10 +373,9 @@ class OpenHCSComponentSelectionProvider:
         orchestrator = self._get_current_orchestrator()
         if not orchestrator:
             # Return debug info as the error so it shows in the UI
-            debug_info = getattr(self, "_last_debug_info", "No debug info available")
             raise RuntimeError(
                 f"Cannot get component keys - no initialized orchestrator found!\n\n"
-                f"DEBUG INFO:\n{debug_info}\n"
+                f"DEBUG INFO:\n{self._last_debug_info}\n"
                 f"GROUP_BY: {group_by}"
             )
         return orchestrator.get_component_keys(group_by)

@@ -725,6 +725,36 @@ PYTHONPATH=/home/ts/code/projects/nominal-refactor-advisor timeout 120 .venv/bin
 # No refactoring findings.
 ```
 
+Checkpoint 11:
+
+- Declared PyQt component-selection debug state and synthetic-plate form-manager
+  state instead of recovering those contracts through reflective attribute
+  probes.
+- Added `PyQtLogInfoProjectionMixin` so OpenHCS log classification rows convert
+  to pyqt-reactive log rows through one nominal owner.
+
+Verification:
+
+```bash
+python -m py_compile openhcs/pyqt_gui/services/reactor_providers.py openhcs/pyqt_gui/windows/synthetic_plate_generator_window.py
+# clean
+
+QT_QPA_PLATFORM=offscreen .venv/bin/python - <<'PY'
+from PyQt6.QtWidgets import QApplication
+from openhcs.pyqt_gui.services.reactor_providers import OpenHCSComponentSelectionProvider, OpenHCSLogDiscoveryProvider
+from openhcs.pyqt_gui.windows.synthetic_plate_generator_window import SyntheticPlateGeneratorWindow
+app = QApplication.instance() or QApplication([])
+provider = OpenHCSComponentSelectionProvider()
+assert provider._last_debug_info == 'No debug info available'
+assert hasattr(OpenHCSLogDiscoveryProvider(), 'pyqt_log_file_info')
+print('ok')
+PY
+# ok
+
+PYTHONPATH=/home/ts/code/projects/nominal-refactor-advisor timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/services/reactor_providers.py openhcs/pyqt_gui/windows/synthetic_plate_generator_window.py
+# No refactoring findings.
+```
+
 Remaining:
 
 - Split `image_browser.py` plate-view/detach/filter/streaming roles into

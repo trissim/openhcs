@@ -124,6 +124,16 @@ Checkpoint 9:
   `ConfigCacheOperation` and an operation-runner table.
 - Focused compile and advisor checks for both files are clean.
 
+Checkpoint 10:
+
+- Declared `OpenHCSComponentSelectionProvider._last_debug_info` during
+  initialization instead of recovering it through `getattr`.
+- Declared `SyntheticPlateGeneratorWindow.form_manager` before UI setup so
+  cleanup can use a direct fail-loud attribute contract instead of `hasattr`.
+- Added `PyQtLogInfoProjectionMixin` as the shared projection authority for
+  OpenHCS log classifications converted into pyqt-reactive log rows.
+- Focused advisor output for the touched PyQt production files is clean.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:

@@ -62,6 +62,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
 
         # Output directory (will be set by user or use temp)
         self.output_dir: Optional[str] = None
+        self.form_manager: Optional[ParameterFormManager] = None
 
         # Setup UI
         self.setup_ui()
@@ -272,7 +273,7 @@ class SyntheticPlateGeneratorWindow(QDialog):
     def _cleanup(self):
         """Cleanup resources before window closes."""
         # Unregister from cross-window updates
-        if hasattr(self, "form_manager") and self.form_manager is not None:
+        if self.form_manager is not None:
             try:
                 self.form_manager.unregister_from_cross_window_updates()
             except RuntimeError:
