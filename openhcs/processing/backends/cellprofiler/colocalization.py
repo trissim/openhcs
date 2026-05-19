@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, fields, make_dataclass, replace
 from enum import Enum
-from typing import Tuple
+from typing import ClassVar, Tuple
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -1404,6 +1404,86 @@ class ColocalizationCostesThresholdCacheKey:
 
 
 @dataclass(frozen=True, slots=True)
+class ColocalizationMaskRequest:
+    """Resolved mask-shape matching request for an image-pair measurement."""
+
+    valid: np.ndarray
+    image_data: np.ndarray
+    mask_array: np.ndarray
+    channel_1: int
+    channel_2: int
+
+
+class ColocalizationMaskStrategy(ABC, metaclass=AutoRegisterMeta):
+    """Nominal matcher for one supported MeasureColocalization mask layout."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
+
+    @classmethod
+    def strategies(cls) -> tuple["ColocalizationMaskStrategy", ...]:
+        return tuple(strategy_type() for strategy_type in cls.__registry__.values())
+
+    @abstractmethod
+    def matches(self, request: ColocalizationMaskRequest) -> bool:
+        """Return whether this strategy owns the request's mask layout."""
+
+    @abstractmethod
+    def apply(self, request: ColocalizationMaskRequest) -> np.ndarray:
+        """Return valid pixels constrained by this mask layout."""
+
+
+class SpatialColocalizationMaskStrategy(ColocalizationMaskStrategy):
+    """Mask already matches the shared 2D spatial domain."""
+
+    registry_key = "spatial"
+
+    def matches(self, request: ColocalizationMaskRequest) -> bool:
+        return request.mask_array.shape == request.valid.shape
+
+    def apply(self, request: ColocalizationMaskRequest) -> np.ndarray:
+        return request.valid & request.mask_array
+
+
+class ImageStackColocalizationMaskStrategy(ColocalizationMaskStrategy):
+    """Mask matches the whole channel-first image stack."""
+
+    registry_key = "image_stack"
+
+    def matches(self, request: ColocalizationMaskRequest) -> bool:
+        return request.mask_array.shape == request.image_data.shape
+
+    def apply(self, request: ColocalizationMaskRequest) -> np.ndarray:
+        return (
+            request.valid
+            & request.mask_array[request.channel_1]
+            & request.mask_array[request.channel_2]
+        )
+
+
+class ChannelLeadingColocalizationMaskStrategy(ColocalizationMaskStrategy):
+    """Mask has channel-leading planes with the same shared spatial domain."""
+
+    registry_key = "channel_leading"
+
+    def matches(self, request: ColocalizationMaskRequest) -> bool:
+        return (
+            request.mask_array.ndim >= 3
+            and request.mask_array.shape[0] == request.image_data.shape[0]
+            and request.mask_array.shape[1:] == request.valid.shape
+        )
+
+    def apply(self, request: ColocalizationMaskRequest) -> np.ndarray:
+        return (
+            request.valid
+            & request.mask_array[request.channel_1]
+            & request.mask_array[request.channel_2]
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ColocalizationImagePairContext:
     """Resolved image-pair pixels shared by batched object colocalization calls."""
 
@@ -1435,16 +1515,16 @@ class ColocalizationImagePairContext:
 
         valid = np.isfinite(first_pixels) & np.isfinite(second_pixels)
         mask_array = np.asarray(mask, dtype=bool)
-        if mask_array.shape == valid.shape:
-            return valid & mask_array
-        if mask_array.shape == image_data.shape:
-            return valid & mask_array[channel_1] & mask_array[channel_2]
-        if (
-            mask_array.ndim >= 3
-            and mask_array.shape[0] == image_data.shape[0]
-            and mask_array.shape[1:] == valid.shape
-        ):
-            return valid & mask_array[channel_1] & mask_array[channel_2]
+        request = ColocalizationMaskRequest(
+            valid=valid,
+            image_data=image_data,
+            mask_array=mask_array,
+            channel_1=channel_1,
+            channel_2=channel_2,
+        )
+        for strategy in ColocalizationMaskStrategy.strategies():
+            if strategy.matches(request):
+                return strategy.apply(request)
         raise ValueError(
             "MeasureColocalization image mask must match the shared spatial "
             f"domain or channel stack; got mask {mask_array.shape!r} for image "
