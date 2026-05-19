@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Type
 
 from openhcs.constants.constants import Backend, GroupBy, AllComponents
+from metaclass_registry import AutoRegisterMeta
 from polystore.atomic import LOCK_CONFIG, FileLockError, atomic_update_json
 from polystore.exceptions import MetadataNotFoundError
 from polystore.filemanager import FileManager
@@ -176,6 +177,17 @@ class OpenHCSMetadataFields:
 # Global instance for easy access
 FIELDS = OpenHCSMetadataFields()
 
+
+@dataclass(frozen=True)
+class FilenameParserCatalog:
+    """Available OpenHCS source filename parsers keyed by class authority."""
+
+    parser_types: Tuple[Type[Any], ...]
+
+    def by_class_name(self) -> Dict[str, Type[Any]]:
+        return {parser_type.__name__: parser_type for parser_type in self.parser_types}
+
+
 def _get_available_filename_parsers():
     """
     Lazy import of filename parsers to avoid circular imports.
@@ -188,17 +200,20 @@ def _get_available_filename_parsers():
     from openhcs.microscopes.opera_phenix import OperaPhenixFilenameParser
     from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 
-    return {
-        "ImageXpressFilenameParser": ImageXpressFilenameParser,
-        "OperaPhenixFilenameParser": OperaPhenixFilenameParser,
-        "SourceSchemaFilenameParser": SourceSchemaFilenameParser,
-        # Add other parsers to this dictionary as they are implemented/imported.
-        # Example: "MyOtherParser": MyOtherParser,
-    }
+    return FilenameParserCatalog(
+        (
+            ImageXpressFilenameParser,
+            OperaPhenixFilenameParser,
+            SourceSchemaFilenameParser,
+        )
+    ).by_class_name()
 
 
-class OpenHCSMetadataBase(ABC):
+class OpenHCSMetadataBase(ABC, metaclass=AutoRegisterMeta):
     """Shared OpenHCS metadata I/O authorities."""
+
+    __registry_key__ = "__name__"
+    __skip_if_no_key__ = True
 
     def __init__(self, filemanager: FileManager):
         self.filemanager = filemanager
@@ -287,9 +302,9 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
             return self._metadata_cache
 
         except json.JSONDecodeError as e:
-            raise MetadataNotFoundError(f"Error decoding JSON from '{metadata_file_path}': {e}") from e
-
-
+            raise MetadataNotFoundError(
+                f"Error decoding JSON from '{metadata_file_path}': {e}"
+            ) from e
 
     def determine_main_subdirectory(self, plate_path: Union[str, Path]) -> str:
         """Determine main input subdirectory from metadata."""
@@ -354,16 +369,22 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
 
         # Fallback: recursive search
         try:
-            if found_files := self.filemanager.find_file_recursive(plate_p, self.METADATA_FILENAME, Backend.DISK.value):
+            if found_files := self.filemanager.find_file_recursive(
+                plate_p, self.METADATA_FILENAME, Backend.DISK.value
+            ):
                 if isinstance(found_files, list):
                     # Prioritize root location, then first found
-                    return next((Path(f) for f in found_files if Path(f).parent == plate_p), Path(found_files[0]))
+                    return next(
+                        (Path(f) for f in found_files if Path(f).parent == plate_p),
+                        Path(found_files[0]),
+                    )
                 return Path(found_files)
         except Exception as e:
-            logger.error(f"Error searching for {self.METADATA_FILENAME} in {plate_path}: {e}")
+            logger.error(
+                f"Error searching for {self.METADATA_FILENAME} in {plate_path}: {e}"
+            )
 
         return None
-
 
     def get_grid_dimensions(self, plate_path: Union[str, Path], context: Optional[Any] = None) -> Tuple[int, int]:
         """Get grid dimensions from OpenHCS metadata."""
@@ -457,8 +478,6 @@ class OpenHCSMetadataHandler(MetadataHandler, OpenHCSMetadataBase):
             return {}
 
         return available_backends
-
-
 
     def _resolve_plate_root(self, input_dir: Union[str, Path]) -> Path:
         """
@@ -645,9 +664,9 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
         if not allow_none_override:
             metadata_dict = {k: v for k, v in metadata_dict.items() if v is not None}
 
-        self.atomic_writer.merge_subdirectory_metadata(metadata_path, {sub_dir: metadata_dict})
-
-
+        self.atomic_writer.merge_subdirectory_metadata(
+            metadata_path, {sub_dir: metadata_dict}
+        )
 
     def _extract_metadata_from_disk_state(
         self,
@@ -761,9 +780,16 @@ class OpenHCSMetadataGenerator(OpenHCSMetadataBase):
                         result[component][component_value] = None
 
         # Convert empty dicts to None (no metadata for that component)
-        return {component: metadata_dict if metadata_dict else None for component, metadata_dict in result.items()}
+        return {
+            component: metadata_dict if metadata_dict else None
+            for component, metadata_dict in result.items()
+        }
 
-    def _merge_component_metadata(self, extracted: Dict[AllComponents, Optional[Dict[str, Optional[str]]]], cache: Dict[AllComponents, Optional[Dict[str, Optional[str]]]]) -> Dict[AllComponents, Optional[Dict[str, Optional[str]]]]:
+    def _merge_component_metadata(
+        self,
+        extracted: Dict[AllComponents, Optional[Dict[str, Optional[str]]]],
+        cache: Dict[AllComponents, Optional[Dict[str, Optional[str]]]],
+    ) -> Dict[AllComponents, Optional[Dict[str, Optional[str]]]]:
         """
         Merge extracted component keys with display names from original metadata cache.
 
@@ -900,9 +926,11 @@ class OpenHCSMicroscopeHandler(MetadataDetectMixin, MicroscopeHandler):
         # For now, if None is passed (from our super call), _parser remains None until dynamically loaded.
         # If a specific parser is passed, it will be set.
         if value is not None:
-            logger.debug(f"OpenHCSMicroscopeHandler.parser being explicitly set to: {type(value).__name__}")
+            logger.debug(
+                "OpenHCSMicroscopeHandler.parser being explicitly set to: "
+                f"{type(value).__name__}"
+            )
         self._parser = value
-
 
     @property
     def root_dir(self) -> str:
@@ -1041,25 +1069,11 @@ class OpenHCSMicroscopeHandler(MetadataDetectMixin, MicroscopeHandler):
                 f"Expected directory structure: {plate_path}/{main_subdir}/"
             )
 
-        logger.info(f"OpenHCS input directory determined: {input_dir} (subdirectory: {main_subdir})")
+        logger.info(
+            f"OpenHCS input directory determined: {input_dir} "
+            f"(subdirectory: {main_subdir})"
+        )
         return input_dir
-
-    def _prepare_workspace(self, workspace_path: Path, filemanager: FileManager) -> Path:
-        """
-        OpenHCS format assumes the workspace is already prepared (e.g., flat structure).
-        This method is a no-op.
-        Args:
-            workspace_path: Path to the symlinked workspace.
-            filemanager: FileManager instance for file operations.
-        Returns:
-            The original workspace_path.
-        """
-        logger.info(f"OpenHCSHandler._prepare_workspace: No preparation needed for {workspace_path} as it's pre-processed.")
-        # Ensure plate_folder is set if this is the first relevant operation knowing the path
-        if self.plate_folder is None:
-            self.plate_folder = Path(workspace_path)
-            logger.debug(f"OpenHCSHandler: plate_folder set to {self.plate_folder} during _prepare_workspace.")
-        return workspace_path
 
     def post_workspace(self, plate_path: Union[str, Path], filemanager: FileManager, skip_preparation: bool = False) -> Path:
         """
