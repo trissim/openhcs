@@ -290,6 +290,40 @@ class ResizeObjectsStats:
 
 
 @dataclass(frozen=True, slots=True)
+class ResizeObjectsRequest:
+    """Runtime resize configuration independent of public module signature shape."""
+
+    labels: np.ndarray
+    method: ResizeObjectsMethod
+    factor_x: float
+    factor_y: float
+    factor_z: float
+    width: int
+    height: int
+    planes: int
+
+    def target_shape(self) -> tuple[int, ...]:
+        return resize_objects_target_shape(
+            self.labels.shape,
+            planes=self.planes,
+            height=self.height,
+            width=self.width,
+        )
+
+    def zoom_factors(self) -> tuple[float, ...]:
+        if self.method == ResizeObjectsMethod.DIMENSIONS:
+            return tuple(
+                np.divide(np.multiply(1.0, self.target_shape()), self.labels.shape)
+            )
+        return resize_objects_zoom_factors(
+            self.labels.ndim,
+            factor_z=self.factor_z,
+            factor_y=self.factor_y,
+            factor_x=self.factor_x,
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class ErosionStats(ObjectRemovalTransitionStats):
     pass
 
@@ -6222,24 +6256,17 @@ def resize_objects(
 
     labels = object_label_dense_array(labels, dtype=np.int32)
     original_shape = labels.shape
-    method = coerce_cellprofiler_enum(ResizeObjectsMethod, method)
-
-    if method == ResizeObjectsMethod.DIMENSIONS:
-        target_size = resize_objects_target_shape(
-            labels.shape,
-            planes=planes,
-            height=height,
-            width=width,
-        )
-        zoom_factors = np.divide(np.multiply(1.0, target_size), labels.shape)
-    else:
-        zoom_factors = resize_objects_zoom_factors(
-            labels.ndim,
-            factor_z=factor_z,
-            factor_y=factor_y,
-            factor_x=factor_x,
-        )
-    resized_labels = zoom(labels, zoom_factors, order=0, mode="nearest").astype(
+    request = ResizeObjectsRequest(
+        labels=labels,
+        method=coerce_cellprofiler_enum(ResizeObjectsMethod, method),
+        factor_x=factor_x,
+        factor_y=factor_y,
+        factor_z=factor_z,
+        width=width,
+        height=height,
+        planes=planes,
+    )
+    resized_labels = zoom(labels, request.zoom_factors(), order=0, mode="nearest").astype(
         np.int32
     )
     unique_labels = np.unique(resized_labels)
@@ -6320,14 +6347,17 @@ def resize_objects_3d(
 
     labels = object_label_dense_array(labels, dtype=np.int32)
     original_shape = labels.shape
-    method = coerce_cellprofiler_enum(ResizeObjectsMethod, method)
-
-    if method == ResizeObjectsMethod.DIMENSIONS:
-        target_size = (planes, height, width)
-        zoom_factors = np.divide(np.multiply(1.0, target_size), labels.shape)
-    else:
-        zoom_factors = (factor_z, factor_y, factor_x)
-    resized_labels = zoom(labels, zoom_factors, order=0, mode="nearest").astype(
+    request = ResizeObjectsRequest(
+        labels=labels,
+        method=coerce_cellprofiler_enum(ResizeObjectsMethod, method),
+        factor_x=factor_x,
+        factor_y=factor_y,
+        factor_z=factor_z,
+        width=width,
+        height=height,
+        planes=planes,
+    )
+    resized_labels = zoom(labels, request.zoom_factors(), order=0, mode="nearest").astype(
         np.int32
     )
     unique_labels = np.unique(resized_labels)
