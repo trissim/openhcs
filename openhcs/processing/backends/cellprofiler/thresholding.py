@@ -1397,6 +1397,153 @@ def threshold_primitives(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class GlobalThresholdRequest:
+    """Context needed by one CellProfiler global threshold method."""
+
+    primitives: ThresholdPrimitiveBackendStrategy
+    threshold_image: np.ndarray
+    threshold_mask: np.ndarray | None
+    values: np.ndarray
+    assignment: CellProfilerThresholdAssignment
+    log_transform: bool
+    kwargs: dict[str, object]
+
+
+class GlobalThresholdMethodStrategy(
+    EnumKeyedStrategyMixin[CellProfilerThresholdMethod],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Nominal implementation for one CellProfiler global threshold method."""
+
+    __registry_key__ = "method_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "method"
+
+    method: ClassVar[CellProfilerThresholdMethod]
+    method_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_method(
+        cls,
+        method: CellProfilerThresholdMethod,
+    ) -> "GlobalThresholdMethodStrategy":
+        try:
+            return cls.for_enum_member(method)
+        except KeyError as exc:
+            raise NotImplementedError(
+                f"Threshold method {method} not supported."
+            ) from exc
+
+    @abstractmethod
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        """Compute the unclipped global threshold."""
+
+
+class MinimumCrossEntropyGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return request.primitives.minimum_cross_entropy_threshold(
+            request.threshold_image,
+            request.threshold_mask,
+        )
+
+
+class LiGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.LI
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return request.primitives.li_threshold(request.values)
+
+
+class RobustBackgroundGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.ROBUST_BACKGROUND
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return get_threshold_robust_background(
+            request.values,
+            **request.kwargs,
+        )
+
+
+class OtsuGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.OTSU
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return request.primitives.otsu_threshold(request.values)
+
+
+class MultiOtsuGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.MULTI_OTSU
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        bin_wanted = (
+            0
+            if request.assignment is CellProfilerThresholdAssignment.FOREGROUND
+            else 1
+        )
+        nbins = int(request.kwargs.get("nbins", CELLPROFILER_MULTI_OTSU_BINS))
+        thresholds = request.primitives.multiotsu_thresholds(
+            request.values,
+            nbins=nbins,
+        )
+        threshold = float(thresholds[bin_wanted])
+        if request.log_transform:
+            threshold += (
+                threshold_histogram_bin_width(request.values, nbins)
+                * CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET
+            )
+        return threshold
+
+
+class SauvolaGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.SAUVOLA
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return float(
+            np.mean(
+                request.primitives.sauvola_threshold_image(
+                    request.values.reshape(1, -1),
+                    window_size=int(request.kwargs.get("window_size", 15)),
+                )
+            )
+        )
+
+
+class TriangleGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.TRIANGLE
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return request.primitives.triangle_threshold(request.values)
+
+
+class IsodataGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.ISODATA
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return request.primitives.isodata_threshold(request.values)
+
+
+class MaxIntensityPercentageGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    method = CellProfilerThresholdMethod.MAX_INTENSITY_PERCENTAGE
+    method_label = method.value
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return float(
+            np.max(request.values) * float(request.kwargs.get("fraction", 0.75))
+        )
+
+
 def cellprofiler_get_global_threshold(
     image: np.ndarray,
     *,
@@ -1431,44 +1578,18 @@ def cellprofiler_get_global_threshold(
         threshold = 0.0
     elif np.all(values == values.ravel()[0]):
         threshold = float(values.ravel()[0])
-    elif method is CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY:
-        threshold = primitives.minimum_cross_entropy_threshold(
-            threshold_image,
-            threshold_mask,
-        )
-    elif method is CellProfilerThresholdMethod.LI:
-        threshold = primitives.li_threshold(values)
-    elif method is CellProfilerThresholdMethod.ROBUST_BACKGROUND:
-        threshold = get_threshold_robust_background(values, **kwargs)
-    elif method is CellProfilerThresholdMethod.OTSU:
-        threshold = primitives.otsu_threshold(values)
-    elif method is CellProfilerThresholdMethod.MULTI_OTSU:
-        bin_wanted = 0 if assignment is CellProfilerThresholdAssignment.FOREGROUND else 1
-        nbins = int(kwargs.get("nbins", CELLPROFILER_MULTI_OTSU_BINS))
-        thresholds = threshold_multiotsu(values, nbins=nbins)
-        threshold = float(thresholds[bin_wanted])
-        if log_transform:
-            threshold += (
-                threshold_histogram_bin_width(values, nbins)
-                * CELLPROFILER_LOG_MULTI_OTSU_BIN_CENTER_OFFSET
-            )
-    elif method is CellProfilerThresholdMethod.SAUVOLA:
-        threshold = float(
-            np.mean(
-                primitives.sauvola_threshold_image(
-                    values.reshape(1, -1),
-                    window_size=int(kwargs.get("window_size", 15)),
-                )
-            )
-        )
-    elif method is CellProfilerThresholdMethod.TRIANGLE:
-        threshold = primitives.triangle_threshold(values)
-    elif method is CellProfilerThresholdMethod.ISODATA:
-        threshold = primitives.isodata_threshold(values)
-    elif method is CellProfilerThresholdMethod.MAX_INTENSITY_PERCENTAGE:
-        threshold = float(np.max(values) * float(kwargs.get("fraction", 0.75)))
     else:
-        raise NotImplementedError(f"Threshold method {method} not supported.")
+        threshold = GlobalThresholdMethodStrategy.for_method(method).compute(
+            GlobalThresholdRequest(
+                primitives=primitives,
+                threshold_image=threshold_image,
+                threshold_mask=threshold_mask,
+                values=values,
+                assignment=assignment,
+                log_transform=log_transform,
+                kwargs=dict(kwargs),
+            )
+        )
 
     if conversion is not None:
         threshold = float(primitives.inverse_log_transform(threshold, conversion))
