@@ -54,11 +54,14 @@ class _ModuleFunctionResolutionStrategy(ABC, metaclass=AutoRegisterMeta):
 
     @classmethod
     def for_module(cls, module_name: str) -> "_ModuleFunctionResolutionStrategy":
-        strategy_type = cls.__registry__.get(
-            canonical_module_name(module_name),
-            DefaultModuleFunctionResolutionStrategy,
-        )
-        return strategy_type()
+        canonical_name = canonical_module_name(module_name)
+        strategy_type = cls.__registry__.get(canonical_name)
+        if strategy_type is not None:
+            return strategy_type()
+        rule = MODULE_FUNCTION_RESOLUTION_RULES.get(canonical_name)
+        if rule is not None:
+            return RuleBackedModuleFunctionResolutionStrategy(rule)
+        return DefaultModuleFunctionResolutionStrategy()
 
     @abstractmethod
     def resolve(
@@ -232,90 +235,146 @@ class VolumetricSettingFunctionResolutionStrategy(_ModuleFunctionResolutionStrat
 
 
 @dataclass(frozen=True, slots=True)
-class ModuleFunctionResolutionDeclaration:
-    """Typed declaration for metadata-only function-resolution strategies."""
+class ModuleFunctionResolutionRule:
+    """Data-owned function-resolution rule for metadata-only variants."""
 
-    class_name: str
     module_name: str
-    base: type[_ModuleFunctionResolutionStrategy]
     object_function_name: str | None = None
     scope_setting_name: SettingNameFamily | None = None
     default_scope_value: str | None = None
     volumetric_function_name: str | None = None
     volumetric_settings: tuple[SettingNameFamily, ...] = ()
 
-    def materialize(self) -> type[_ModuleFunctionResolutionStrategy]:
-        namespace = {
-            "module_name": self.module_name,
-            "__module__": __name__,
-        }
-        if self.object_function_name is not None:
-            namespace["object_function_name"] = self.object_function_name
-        if self.scope_setting_name is not None:
-            namespace["scope_setting_name"] = self.scope_setting_name
-        if self.default_scope_value is not None:
-            namespace["default_scope_value"] = self.default_scope_value
+    @property
+    def canonical_module_name(self) -> str:
+        return canonical_module_name(self.module_name)
+
+    def resolve(
+        self,
+        module: ModuleBlock,
+        *,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
         if self.volumetric_function_name is not None:
-            namespace["volumetric_function_name"] = self.volumetric_function_name
-        if self.volumetric_settings:
-            namespace["volumetric_settings"] = self.volumetric_settings
-        return type(self.class_name, (self.base,), namespace)
+            return self._resolve_volumetric(module, default_function_name)
+        if self.scope_setting_name is not None:
+            return self._resolve_scoped_measurement(module, default_function_name)
+        if self.object_function_name is not None:
+            return self._resolve_object_input(module, default_function_name)
+        return ResolvedModuleFunction(function_name=default_function_name)
+
+    def _resolve_scoped_measurement(
+        self,
+        module: ModuleBlock,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        scope = measurement_target_scope(
+            module,
+            setting=_required_class_attr(
+                self.scope_setting_name,
+                "scope_setting_name",
+            ),
+            default=_required_class_attr(
+                self.default_scope_value,
+                "default_scope_value",
+            ),
+        )
+        if scope is MeasurementTargetScope.IMAGE or not _setting_has_symbolic_values(
+            module,
+            OBJECT_MEASUREMENT_SETTING,
+        ):
+            return ResolvedModuleFunction(function_name=default_function_name)
+        return ResolvedModuleFunction(
+            function_name=_required_class_attr(
+                self.object_function_name,
+                "object_function_name",
+            )
+        )
+
+    def _resolve_object_input(
+        self,
+        module: ModuleBlock,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        if not _setting_has_symbolic_values(module, OBJECT_MEASUREMENT_SETTING):
+            return ResolvedModuleFunction(function_name=default_function_name)
+        return ResolvedModuleFunction(
+            function_name=_required_class_attr(
+                self.object_function_name,
+                "object_function_name",
+            )
+        )
+
+    def _resolve_volumetric(
+        self,
+        module: ModuleBlock,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        if any(setting_values(module, setting) for setting in self.volumetric_settings):
+            return ResolvedModuleFunction(
+                function_name=_required_class_attr(
+                    self.volumetric_function_name,
+                    "volumetric_function_name",
+                )
+            )
+        return ResolvedModuleFunction(function_name=default_function_name)
 
 
-MODULE_FUNCTION_RESOLUTION_DECLARATIONS: tuple[
-    ModuleFunctionResolutionDeclaration,
-    ...,
-] = (
-    ModuleFunctionResolutionDeclaration(
-        class_name="MeasureTextureFunctionResolutionStrategy",
-        module_name="MeasureTexture",
-        base=ScopedMeasurementFunctionResolutionStrategy,
-        scope_setting_name=SettingNameFamily(
-            "Measure images or objects?",
-            aliases=("Measure whole images or objects?",),
+@dataclass(frozen=True, slots=True)
+class RuleBackedModuleFunctionResolutionStrategy(_ModuleFunctionResolutionStrategy):
+    """Resolve a module function using a declarative metadata-only rule."""
+
+    rule: ModuleFunctionResolutionRule
+
+    def resolve(
+        self,
+        module: ModuleBlock,
+        *,
+        default_function_name: str,
+    ) -> ResolvedModuleFunction:
+        return self.rule.resolve(
+            module,
+            default_function_name=default_function_name,
+        )
+
+
+MODULE_FUNCTION_RESOLUTION_RULES: dict[str, ModuleFunctionResolutionRule] = {
+    rule.canonical_module_name: rule
+    for rule in (
+        ModuleFunctionResolutionRule(
+            module_name="MeasureTexture",
+            scope_setting_name=SettingNameFamily(
+                "Measure images or objects?",
+                aliases=("Measure whole images or objects?",),
+            ),
+            default_scope_value="Images",
+            object_function_name="measure_texture_objects",
         ),
-        default_scope_value="Images",
-        object_function_name="measure_texture_objects",
-    ),
-    ModuleFunctionResolutionDeclaration(
-        class_name="MeasureColocalizationFunctionResolutionStrategy",
-        module_name="MeasureColocalization",
-        base=ScopedMeasurementFunctionResolutionStrategy,
-        scope_setting_name=SettingNameFamily("Select where to measure correlation"),
-        default_scope_value="Across entire image",
-        object_function_name="measure_colocalization_objects",
-    ),
-    ModuleFunctionResolutionDeclaration(
-        class_name="MeasureGranularityFunctionResolutionStrategy",
-        module_name="MeasureGranularity",
-        base=ObjectInputMeasurementFunctionResolutionStrategy,
-        object_function_name="measure_granularity_objects",
-    ),
-    ModuleFunctionResolutionDeclaration(
-        class_name="ResizeFunctionResolutionStrategy",
-        module_name="Resize",
-        base=VolumetricSettingFunctionResolutionStrategy,
-        volumetric_function_name="resize_volumetric",
-        volumetric_settings=(RESIZE_FACTOR_Z_SETTING, RESIZE_PLANES_SETTING),
-    ),
-    ModuleFunctionResolutionDeclaration(
-        class_name="ResizeObjectsFunctionResolutionStrategy",
-        module_name="ResizeObjects",
-        base=VolumetricSettingFunctionResolutionStrategy,
-        volumetric_function_name="resize_objects_3d",
-        volumetric_settings=(
-            RESIZE_OBJECTS_FACTOR_Z_SETTING,
-            RESIZE_OBJECTS_PLANES_SETTING,
+        ModuleFunctionResolutionRule(
+            module_name="MeasureColocalization",
+            scope_setting_name=SettingNameFamily("Select where to measure correlation"),
+            default_scope_value="Across entire image",
+            object_function_name="measure_colocalization_objects",
         ),
-    ),
-)
-
-globals().update(
-    {
-        declaration.class_name: declaration.materialize()
-        for declaration in MODULE_FUNCTION_RESOLUTION_DECLARATIONS
-    }
-)
+        ModuleFunctionResolutionRule(
+            module_name="MeasureGranularity",
+            object_function_name="measure_granularity_objects",
+        ),
+        ModuleFunctionResolutionRule(
+            module_name="Resize",
+            volumetric_function_name="resize_volumetric",
+            volumetric_settings=(RESIZE_FACTOR_Z_SETTING, RESIZE_PLANES_SETTING),
+        ),
+        ModuleFunctionResolutionRule(
+            module_name="ResizeObjects",
+            volumetric_function_name="resize_objects_3d",
+            volumetric_settings=(
+                RESIZE_OBJECTS_FACTOR_Z_SETTING,
+                RESIZE_OBJECTS_PLANES_SETTING,
+            ),
+        ),
+    )
+}
 
 
 def measurement_target_scope(
