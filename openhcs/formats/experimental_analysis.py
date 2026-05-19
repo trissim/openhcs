@@ -193,8 +193,10 @@ def read_plate_layout(config_path):
         string1 = string1.replace(' ','')
         string2 = string2.replace('_','')
         string2 = string2.replace(' ','')
-        if len(string1) > 0 and not string1[-1] == 's': string1 +='s'
-        if len(string2) > 0 and not string2[-1] == 's': string2 +='s'
+        if len(string1) > 0 and not string1[-1] == 's':
+            string1 += 's'
+        if len(string2) > 0 and not string2[-1] == 's':
+            string2 += 's'
         return string1 == string2
 
     import logging
@@ -1032,7 +1034,16 @@ def make_experiment_dict_values(plates,experiment_dict_locations,features,plate_
         for condition, replicates in experiment_dict_locations.items():
             for replicate, doses in replicates.items():
                 for dose, locations in doses.items():
-                    feature_value_dict = {feature: average_wells(locations, replicate, feature, plates, plate_groups) for feature in features}
+                    feature_value_dict = {
+                        feature: average_wells(
+                            locations,
+                            replicate,
+                            feature,
+                            plates,
+                            plate_groups,
+                        )
+                        for feature in features
+                    }
                     experiment_dict_values[condition][replicate][dose] = feature_value_dict
 
     return experiment_dict_values
@@ -1179,7 +1190,9 @@ def normalize_experiment(experiment_dict_values,ctrl_positions,features,plates,p
                                 if avg_raw_value is None or avg_raw_value == 0 or condition_value_dict is None:
                                     experiment_dict_values_normalized[condition][replicate][dose][feature] = None
                                 else:
-                                    experiment_dict_values_normalized[condition][replicate][dose][feature] = condition_value_dict / avg_raw_value
+                                    experiment_dict_values_normalized[condition][replicate][dose][feature] = (
+                                        condition_value_dict / avg_raw_value
+                                    )
                 else:
                     # For treatment conditions: normalize to own replicate's control
                     for replicate in replicates.keys():
@@ -1329,9 +1342,21 @@ def run_experimental_analysis(
         print("Including all metrics in compiled results")
 
     # Per-N (averaged replicates)
-    experiment_dict_values_raw_per_n = make_experiment_dict_values(plates_dict, experiment_dict_locations, features, plate_groups, per_well_datapoints=False)
+    experiment_dict_values_raw_per_n = make_experiment_dict_values(
+        plates_dict,
+        experiment_dict_locations,
+        features,
+        plate_groups,
+        per_well_datapoints=False,
+    )
     # Per-well (individual datapoints)
-    experiment_dict_values_raw_per_well = make_experiment_dict_values(plates_dict, experiment_dict_locations, features, plate_groups, per_well_datapoints=True)
+    experiment_dict_values_raw_per_well = make_experiment_dict_values(
+        plates_dict,
+        experiment_dict_locations,
+        features,
+        plate_groups,
+        per_well_datapoints=True,
+    )
 
     # Generate raw (non-normalized) results for both modes
     feature_tables_raw_per_n = create_all_feature_tables(experiment_dict_values_raw_per_n, features, per_well_datapoints=False)
@@ -1347,12 +1372,32 @@ def run_experimental_analysis(
     # Apply normalization if controls are defined
     if ctrl_positions is not None:
         # Normalize both versions
-        experiment_dict_values_normalized_per_n = normalize_experiment(experiment_dict_values_raw_per_n, ctrl_positions, features, plates_dict, plate_groups)
-        experiment_dict_values_normalized_per_well = normalize_experiment(experiment_dict_values_raw_per_well, ctrl_positions, features, plates_dict, plate_groups)
+        experiment_dict_values_normalized_per_n = normalize_experiment(
+            experiment_dict_values_raw_per_n,
+            ctrl_positions,
+            features,
+            plates_dict,
+            plate_groups,
+        )
+        experiment_dict_values_normalized_per_well = normalize_experiment(
+            experiment_dict_values_raw_per_well,
+            ctrl_positions,
+            features,
+            plates_dict,
+            plate_groups,
+        )
 
         # Generate normalized results for both modes (features already filtered above)
-        feature_tables_normalized_per_n = create_all_feature_tables(experiment_dict_values_normalized_per_n, features, per_well_datapoints=False)
-        feature_tables_normalized_per_well = create_all_feature_tables(experiment_dict_values_normalized_per_well, features, per_well_datapoints=True)
+        feature_tables_normalized_per_n = create_all_feature_tables(
+            experiment_dict_values_normalized_per_n,
+            features,
+            per_well_datapoints=False,
+        )
+        feature_tables_normalized_per_well = create_all_feature_tables(
+            experiment_dict_values_normalized_per_well,
+            features,
+            per_well_datapoints=True,
+        )
 
         normalized_results_path_per_n = compiled_results_path
         normalized_results_path_per_well = compiled_results_path.replace('.xlsx', '_per_well.xlsx')
