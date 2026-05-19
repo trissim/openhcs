@@ -443,17 +443,7 @@ def _relate_sparse_ijv_children_to_parents_numba(
         parent_position = parent_end
         child_position = child_end
 
-    parents_of = np.zeros(child_count, dtype=np.int32)
-    for child_id in range(1, child_count + 1):
-        best_parent = 0
-        best_count = 0
-        for parent_id in range(1, parent_count + 1):
-            overlap = counts[child_id, parent_id]
-            if overlap > best_count:
-                best_count = overlap
-                best_parent = parent_id
-        parents_of[child_id - 1] = best_parent
-    return parents_of
+    return _parents_of_from_overlap_counts_numba(counts, child_count, parent_count)
 
 
 @njit(cache=True)
@@ -498,6 +488,15 @@ def _relate_children_to_parents_numba(
             ):
                 counts[child_id, parent_id] += 1
 
+    return _parents_of_from_overlap_counts_numba(counts, child_count, parent_count)
+
+
+@njit(cache=True)
+def _parents_of_from_overlap_counts_numba(
+    counts: np.ndarray,
+    child_count: int,
+    parent_count: int,
+) -> np.ndarray:
     parents_of = np.zeros(child_count, dtype=np.int32)
     for child_id in range(1, child_count + 1):
         best_parent = 0
