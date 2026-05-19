@@ -703,6 +703,28 @@ timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widget
 # No refactoring findings.
 ```
 
+Checkpoint 10:
+
+- Added `PlateSubdirectoryController` so `PlateViewWidget` no longer owns
+  subdirectory selector state and visibility transitions.
+- Replaced PyQt launcher platform string branches with a `QtPlatformSystem`
+  enum and enum-keyed setup table.
+- Replaced Qt config-cache worker load/save string dispatch with
+  `ConfigCacheOperation` and an operation-runner table.
+
+Verification:
+
+```bash
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/unit/pyqt_gui/test_plate_view_grid_model.py -q
+# 5 passed
+
+python -m py_compile openhcs/pyqt_gui/widgets/shared/plate_view_widget.py openhcs/pyqt_gui/launch.py openhcs/pyqt_gui/services/config_cache_adapter.py
+# clean
+
+PYTHONPATH=/home/ts/code/projects/nominal-refactor-advisor timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/pyqt_gui/widgets/shared/plate_view_widget.py openhcs/pyqt_gui/launch.py openhcs/pyqt_gui/services/config_cache_adapter.py
+# No refactoring findings.
+```
+
 Remaining:
 
 - Split `image_browser.py` plate-view/detach/filter/streaming roles into

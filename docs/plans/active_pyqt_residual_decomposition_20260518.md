@@ -116,6 +116,14 @@ Checkpoint 8:
 - Focused Qt-offscreen plate tests pass, and focused advisor output for
   `plate_view_widget.py` is clean.
 
+Checkpoint 9:
+
+- Replaced PyQt launcher platform string branches with a `QtPlatformSystem`
+  enum and enum-keyed setup table.
+- Replaced Qt config-cache worker load/save string dispatch with
+  `ConfigCacheOperation` and an operation-runner table.
+- Focused compile and advisor checks for both files are clean.
+
 ## Target Shape
 
 Introduce active PyQt service boundaries:
