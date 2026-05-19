@@ -1006,6 +1006,29 @@ Remaining:
 - Heap push/pop parameter threading remains in private Numba-compatible heap
   helpers.
 
+Checkpoint 5:
+
+- Reused the public CellProfiler worm-geometry authority for Morph
+  branchpoint/endpoint operations, deleting the local morphology shadow helpers.
+- Fixed `MeasurementTableAxisQuery.slice` as a classmethod constructor variant
+  after the CP compatibility gate exposed the runtime slice projection bug.
+
+Verification:
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py -q -k 'morph or Morph or branch or endpoint'
+# 1 passed, 148 deselected
+
+.venv/bin/python -m pytest tests/unit/test_runtime_artifact_queries.py tests/unit/test_cellprofiler_module_execution.py -q -k 'measurement_table_for_slice or runtime_slice_projection_offsets_repeated_scalar_measurement_tables or flexible_object_module_slices_measurement_tables or filterobjects_binds_selection_measurement_values'
+# 6 passed, 212 deselected
+
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 402 passed, 5 warnings
+
+PYTHONPATH=/home/ts/code/projects/nominal-refactor-advisor timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/morphology.py
+# No refactoring findings.
+```
+
 ## Campaign 14 - Public API And Export Surface Authority
 
 Checkpoint 1:

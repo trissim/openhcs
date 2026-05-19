@@ -75,6 +75,19 @@ a CellProfiler concept or a repeated OpenHCS compatibility concept.
 timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler
 ```
 
+## Checkpoints
+
+Checkpoint 5:
+
+- Routed Morph branchpoint/endpoint operations through the public
+  `worm_geometry.branchpoints` and `worm_geometry.endpoints` authorities instead
+  of maintaining local underscore-prefixed shadows.
+- Fixed the CP compatibility gate failure in
+  `MeasurementTableAxisQuery.slice` by restoring it as a classmethod constructor
+  variant.
+- Focused morphology advisor output is clean, and the full CP compatibility
+  gate passes.
+
 Optional after behavior-adjacent changes:
 
 ```bash
@@ -88,4 +101,3 @@ Optional after behavior-adjacent changes:
 - No fake generic bases for unrelated CP predicates.
 - CP generated-pipeline and compatibility tests pass.
 - Parity-sensitive changes have explicit rerun evidence.
-

@@ -73,6 +73,10 @@ from openhcs.processing.backends.cellprofiler.structuring_elements import (
     apply_structuring_element,
     build_structuring_element,
 )
+from openhcs.processing.backends.cellprofiler.worm_geometry import (
+    branchpoints as _branchpoints,
+    endpoints as _endpoints,
+)
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -497,19 +501,6 @@ class IterativeConvolutionMorphOperationStrategy(MorphOperationStrategy):
         return result
 
 
-def _branchpoints(image: np.ndarray) -> np.ndarray:
-    from scipy.ndimage import convolve
-
-    binary = _ensure_binary(image)
-    neighbor_count = convolve(
-        binary.astype(np.uint8),
-        EIGHT_NEIGHBOR_KERNEL,
-        mode=MORPH_CONVOLUTION_MODE,
-        cval=0,
-    )
-    return (binary & (neighbor_count > 2)).astype(np.float32)
-
-
 def _bridge(image: np.ndarray, iterations: int = 1) -> np.ndarray:
     from scipy.ndimage import convolve
 
@@ -554,19 +545,6 @@ def _distance(image: np.ndarray, rescale: bool = True) -> np.ndarray:
     if rescale and dist.max() > 0:
         dist = dist / dist.max()
     return dist.astype(np.float32)
-
-
-def _endpoints(image: np.ndarray) -> np.ndarray:
-    from scipy.ndimage import convolve
-
-    binary = _ensure_binary(image)
-    neighbor_count = convolve(
-        binary.astype(np.uint8),
-        EIGHT_NEIGHBOR_KERNEL,
-        mode=MORPH_CONVOLUTION_MODE,
-        cval=0,
-    )
-    return (binary & (neighbor_count == 1)).astype(np.float32)
 
 
 def _hbreak(image: np.ndarray, iterations: int = 1) -> np.ndarray:

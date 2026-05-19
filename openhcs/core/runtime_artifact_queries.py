@@ -1702,6 +1702,7 @@ class MeasurementTableAxisQuery:
     axis: MeasurementRowAxisField
     value: int
 
+    @classmethod
     def slice(cls, slice_index: int) -> "MeasurementTableAxisQuery":
         """Return a query for one runtime slice index."""
         return cls(MeasurementRowAxisField.SLICE_INDEX, int(slice_index))
