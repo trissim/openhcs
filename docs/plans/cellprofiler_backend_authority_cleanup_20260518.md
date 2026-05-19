@@ -171,6 +171,17 @@ Checkpoint 13:
   export-surface cleanup, the existing rescale strategy ladder, and deeper
   scan/quantile algorithm unification inside the focused kernel module.
 
+Checkpoint 14:
+
+- Extracted CellProfiler threshold diagnostic entropy constants, diagnostic
+  log-table/domain records, deterministic noise smoothing, and diagnostics
+  Numba kernels into `thresholding_threshold_numba_diagnostics.py`.
+- Left threshold-selection/Otsu primitive kernels in `thresholding.py` so the
+  diagnostics boundary does not mix separate threshold-selection semantics.
+- Focused threshold diagnostics/smoothing tests pass; advisor now points to
+  the next deeper threshold primitive split (`thresholding_threshold_numba_otsu.py`)
+  and possible diagnostic sub-boundaries.
+
 Optional after behavior-adjacent changes:
 
 ```bash
