@@ -137,16 +137,18 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
             sorted_first = np.ascontiguousarray(first[order])
             sorted_second = np.ascontiguousarray(second[order])
             return _linear_costes_sorted_events_numba(
-                np.ascontiguousarray(event_threshold[order]),
-                np.ascontiguousarray(np.cumsum(sorted_first)),
-                np.ascontiguousarray(np.cumsum(sorted_second)),
-                np.ascontiguousarray(np.cumsum(sorted_first * sorted_first)),
-                np.ascontiguousarray(np.cumsum(sorted_second * sorted_second)),
-                np.ascontiguousarray(np.cumsum(sorted_first * sorted_second)),
-                int(scale_max),
+                (
+                    np.ascontiguousarray(event_threshold[order]),
+                    np.ascontiguousarray(np.cumsum(sorted_first)),
+                    np.ascontiguousarray(np.cumsum(sorted_second)),
+                    np.ascontiguousarray(np.cumsum(sorted_first * sorted_first)),
+                    np.ascontiguousarray(np.cumsum(sorted_second * sorted_second)),
+                    np.ascontiguousarray(np.cumsum(sorted_first * sorted_second)),
+                    int(scale_max),
+                    slope,
+                    intercept,
+                ),
                 bool(fast_mode),
-                slope,
-                intercept,
             )
         return _linear_costes_numba(
             first,
@@ -194,23 +196,24 @@ class NumbaNumpyColocalizationCostesBackendStrategy(
                     product_sum,
                 ) = event_summaries
             return _scaled_second_channel_costes_grouped_events_numba(
-                np.ascontiguousarray(unique_events, dtype=np.float64),
+                (
+                    np.ascontiguousarray(unique_events, dtype=np.float64),
+                    np.ascontiguousarray(np.cumsum(first_sum), dtype=np.float64),
+                    np.ascontiguousarray(np.cumsum(second_sum), dtype=np.float64),
+                    np.ascontiguousarray(np.cumsum(first_square_sum), dtype=np.float64),
+                    np.ascontiguousarray(np.cumsum(second_square_sum), dtype=np.float64),
+                    np.ascontiguousarray(np.cumsum(product_sum), dtype=np.float64),
+                    int(scale_max),
+                    slope,
+                    intercept,
+                ),
                 np.ascontiguousarray(np.cumsum(counts), dtype=np.int64),
-                np.ascontiguousarray(np.cumsum(first_sum), dtype=np.float64),
-                np.ascontiguousarray(np.cumsum(second_sum), dtype=np.float64),
-                np.ascontiguousarray(np.cumsum(first_square_sum), dtype=np.float64),
-                np.ascontiguousarray(np.cumsum(second_square_sum), dtype=np.float64),
-                np.ascontiguousarray(np.cumsum(product_sum), dtype=np.float64),
-                int(scale_max),
-                slope,
-                intercept,
             )
         return _scaled_second_channel_costes_numba(
             first,
             second,
             int(scale_max),
         )
-
     def correlation_slopes(
         self,
         first_pixels: np.ndarray,
@@ -897,17 +900,20 @@ def _max_from_prefix_numba(prefix: np.ndarray) -> float:
 
 @njit(cache=True)
 def _linear_costes_sorted_events_numba(
-    sorted_event_threshold: np.ndarray,
-    prefix_x: np.ndarray,
-    prefix_y: np.ndarray,
-    prefix_x2: np.ndarray,
-    prefix_y2: np.ndarray,
-    prefix_xy: np.ndarray,
-    scale_max: int,
+    costes_context: tuple,
     fast_mode: bool,
-    slope: float,
-    intercept: float,
 ) -> tuple[float, float]:
+    (
+        sorted_event_threshold,
+        prefix_x,
+        prefix_y,
+        prefix_x2,
+        prefix_y2,
+        prefix_xy,
+        scale_max,
+        slope,
+        intercept,
+    ) = costes_context
     intensity_step = 1.0 / scale_max
     first_max = _max_from_prefix_numba(prefix_x)
     second_max = _max_from_prefix_numba(prefix_y)
@@ -1081,16 +1087,19 @@ def _scaled_second_channel_costes_numba(
 
 @njit(cache=True)
 def _scaled_second_channel_costes_sorted_events_numba(
-    sorted_event_threshold: np.ndarray,
-    prefix_x: np.ndarray,
-    prefix_y: np.ndarray,
-    prefix_x2: np.ndarray,
-    prefix_y2: np.ndarray,
-    prefix_xy: np.ndarray,
-    scale_max: int,
-    slope: float,
-    intercept: float,
+    costes_context: tuple,
 ) -> tuple[float, float]:
+    (
+        sorted_event_threshold,
+        prefix_x,
+        prefix_y,
+        prefix_x2,
+        prefix_y2,
+        prefix_xy,
+        scale_max,
+        slope,
+        intercept,
+    ) = costes_context
     minimum_scale_index = min(scale_max, 5)
     selected_first_threshold = 0.0
     selected_second_threshold = minimum_scale_index / scale_max
@@ -1131,17 +1140,20 @@ def _scaled_second_channel_costes_sorted_events_numba(
 
 @njit(cache=True)
 def _scaled_second_channel_costes_grouped_events_numba(
-    sorted_event_threshold: np.ndarray,
+    costes_context: tuple,
     prefix_count: np.ndarray,
-    prefix_x: np.ndarray,
-    prefix_y: np.ndarray,
-    prefix_x2: np.ndarray,
-    prefix_y2: np.ndarray,
-    prefix_xy: np.ndarray,
-    scale_max: int,
-    slope: float,
-    intercept: float,
 ) -> tuple[float, float]:
+    (
+        sorted_event_threshold,
+        prefix_x,
+        prefix_y,
+        prefix_x2,
+        prefix_y2,
+        prefix_xy,
+        scale_max,
+        slope,
+        intercept,
+    ) = costes_context
     minimum_scale_index = min(scale_max, 5)
     selected_first_threshold = 0.0
     selected_second_threshold = minimum_scale_index / scale_max
