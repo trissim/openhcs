@@ -232,15 +232,6 @@ class RuntimeCallablePolicy:
             kwarg_policy=self.kwarg_policy,
         )
 
-    def call(
-        self,
-        func: Callable[..., Any],
-        args: tuple[Any, ...],
-        kwargs: Mapping[str, Any],
-    ) -> Any:
-        return self.invocation(func, args, kwargs).call()
-
-
 @lru_cache(maxsize=256)
 def _runtime_callable_parameters(
     func: Callable[..., Any],
@@ -373,15 +364,6 @@ class Pure2DInputSlicer(Pure2DRegisteredStrategyFamily, metaclass=AutoRegisterMe
     @classmethod
     def family_root(cls) -> type["Pure2DInputSlicer"]:
         return Pure2DInputSlicer
-
-    @classmethod
-    def slice(cls, value: Any, memory_type: str) -> tuple[Any, ...]:
-        return cls.strategy_for_value(value).slice_value(value, memory_type)
-
-    @classmethod
-    def is_single_plane(cls, value: Any) -> bool:
-        """Return whether a PURE_2D input is already one 2D invocation."""
-        return cls.strategy_for_value(value).is_single_plane_value(value)
 
     @classmethod
     def strategy_for_value(cls, value: Any) -> "Pure2DInputSlicer":
@@ -1274,18 +1256,23 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
     # ===== PROCESSING CONTRACT EXECUTION METHODS =====
     def execute_pure_3d(self, func, image, *args, **kwargs):
         """Execute 3D→3D function directly (no change)."""
-        return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
+        return RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
 
     def execute_pure_2d(self, func, image, *args, **kwargs):
         """Execute 2D→2D function with unstack/restack wrapper."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
-        if Pure2DInputSlicer.is_single_plane(image):
-            return RuntimeCallablePolicy().call(func, (image, *args), kwargs)
-        slices = Pure2DInputSlicer.slice(image, memory_type)
+        slicer = Pure2DInputSlicer.strategy_for_value(image)
+        if slicer.is_single_plane_value(image):
+            return RuntimeCallablePolicy().invocation(func, (image, *args), kwargs).call()
+        slices = slicer.slice_value(image, memory_type)
         slice_results = [
             Pure2DSliceIndexProjector.project(
-                RuntimeCallablePolicy().call(func, (slice_2d, *args), kwargs),
+                RuntimeCallablePolicy().invocation(
+                    func,
+                    (slice_2d, *args),
+                    kwargs,
+                ).call(),
                 slice_index,
             )
             for slice_index, slice_2d in enumerate(slices)
@@ -1318,7 +1305,11 @@ class LibraryRegistryBase(ABC, metaclass=AutoRegisterMeta):
         """Execute 3D→2D function returning slice 3D array."""
         # Get memory type from the decorated function
         memory_type = func.output_memory_type
-        result_2d = RuntimeCallablePolicy().call(func, (image, *args), kwargs)
+        result_2d = RuntimeCallablePolicy().invocation(
+            func,
+            (image, *args),
+            kwargs,
+        ).call()
         return stack_slices([result_2d], memory_type, 0)
 
     # ===== LIBRARY WARM-UP HOOK =====
