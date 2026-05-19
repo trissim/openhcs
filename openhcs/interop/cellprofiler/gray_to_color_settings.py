@@ -2,12 +2,8 @@
 
 from __future__ import annotations
 
-from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import ClassVar
-
-from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.public_api import declared_public_names
 
@@ -99,35 +95,32 @@ def gray_to_color_rescale_default(module: ModuleBlock) -> str:
     return GrayToColorModuleRevision(module).rescale_default
 
 
-class _GrayToColorInputNameResolver(ABC, metaclass=AutoRegisterMeta):
-    """Nominal family for GrayToColor image-input discovery by scheme."""
+@dataclass(frozen=True, slots=True)
+class _GrayToColorInputNameResolver:
+    """GrayToColor image-input discovery policy for one scheme."""
 
-    __registry_key__ = "scheme_literal"
-    __skip_if_no_key__ = True
-    scheme_literal: ClassVar[str | None] = None
+    scheme: GrayToColorScheme
+    image_settings: tuple[str, ...] = ()
+    repeated_channels: bool = False
 
     @classmethod
     def for_module(cls, module: ModuleBlock) -> "_GrayToColorInputNameResolver":
         scheme = gray_to_color_scheme(module)
-        resolver_type = cls.__registry__.get(scheme.value)
-        if resolver_type is None:
+        resolver = _GRAY_TO_COLOR_INPUT_NAME_RESOLVERS.get(scheme)
+        if resolver is None:
             raise ValueError(f"Unsupported GrayToColor scheme: {scheme.value!r}")
-        return resolver_type()
+        return resolver
 
-    @abstractmethod
     def input_names(self, module: ModuleBlock) -> tuple[str, ...]:
         """Return ordered nonblank source image names for one GrayToColor module."""
-
-
-class FixedSettingGrayToColorInputNameResolver(_GrayToColorInputNameResolver):
-    """Scheme resolver backed by a fixed ordered setting family."""
-
-    image_settings: ClassVar[tuple[str, ...]] = ()
-
-    def input_names(self, module: ModuleBlock) -> tuple[str, ...]:
+        if self.repeated_channels:
+            return tuple(
+                channel.image_name
+                for channel in gray_to_color_stack_channels(module)
+            )
         return tuple(
             image_name
-            for setting_name in type(self).image_settings
+            for setting_name in self.image_settings
             if (
                 image_name := normalized_symbol_name(
                     module.get_setting(setting_name, "")
@@ -137,71 +130,24 @@ class FixedSettingGrayToColorInputNameResolver(_GrayToColorInputNameResolver):
         )
 
 
-class RepeatedImageNameGrayToColorInputNameResolver(_GrayToColorInputNameResolver):
-    """Base resolver for Stack/Composite repeated channel settings."""
-
-    def input_names(self, module: ModuleBlock) -> tuple[str, ...]:
-        return tuple(
-            channel.image_name
-            for channel in gray_to_color_stack_channels(module)
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class GrayToColorInputNameResolverDeclaration:
-    """Typed declaration for one GrayToColor input-name resolver class."""
-
-    class_name: str
-    scheme: GrayToColorScheme
-    base: type[_GrayToColorInputNameResolver]
-    image_settings: tuple[str, ...] = ()
-
-    def materialize(self) -> type[_GrayToColorInputNameResolver]:
-        return type(
-            self.class_name,
-            (self.base,),
-            {
-                "scheme_literal": self.scheme.value,
-                "image_settings": self.image_settings,
-                "__module__": __name__,
-            },
-        )
-
-
-GRAY_TO_COLOR_INPUT_NAME_RESOLVER_DECLARATIONS: tuple[
-    GrayToColorInputNameResolverDeclaration,
-    ...,
-] = (
-    GrayToColorInputNameResolverDeclaration(
-        "GrayToColorRgbInputNameResolver",
+_GRAY_TO_COLOR_INPUT_NAME_RESOLVERS = {
+    GrayToColorScheme.RGB: _GrayToColorInputNameResolver(
         GrayToColorScheme.RGB,
-        FixedSettingGrayToColorInputNameResolver,
-        GRAY_TO_COLOR_RGB_IMAGE_SETTINGS,
+        image_settings=GRAY_TO_COLOR_RGB_IMAGE_SETTINGS,
     ),
-    GrayToColorInputNameResolverDeclaration(
-        "GrayToColorCmykInputNameResolver",
+    GrayToColorScheme.CMYK: _GrayToColorInputNameResolver(
         GrayToColorScheme.CMYK,
-        FixedSettingGrayToColorInputNameResolver,
-        GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
+        image_settings=GRAY_TO_COLOR_CMYK_IMAGE_SETTINGS,
     ),
-    GrayToColorInputNameResolverDeclaration(
-        "GrayToColorStackInputNameResolver",
+    GrayToColorScheme.STACK: _GrayToColorInputNameResolver(
         GrayToColorScheme.STACK,
-        RepeatedImageNameGrayToColorInputNameResolver,
+        repeated_channels=True,
     ),
-    GrayToColorInputNameResolverDeclaration(
-        "GrayToColorCompositeInputNameResolver",
+    GrayToColorScheme.COMPOSITE: _GrayToColorInputNameResolver(
         GrayToColorScheme.COMPOSITE,
-        RepeatedImageNameGrayToColorInputNameResolver,
+        repeated_channels=True,
     ),
-)
-
-globals().update(
-    {
-        declaration.class_name: declaration.materialize()
-        for declaration in GRAY_TO_COLOR_INPUT_NAME_RESOLVER_DECLARATIONS
-    }
-)
+}
 
 
 def gray_to_color_stack_channels(
