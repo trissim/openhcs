@@ -549,7 +549,9 @@ def measure_object_neighbors(
     from openhcs.processing.backends.cellprofiler.morphology import (
         MorphologyBackendStrategy,
     )
-    from openhcs.processing.backends.cellprofiler.outlines import object_outline_backend
+    from openhcs.processing.backends.cellprofiler.outlines import (
+        ObjectOutlineBackendStrategy,
+    )
     from openhcs.processing.backends.cellprofiler.relationships import (
         ObjectRelationshipBackendStrategy,
     )
@@ -735,7 +737,7 @@ def measure_object_neighbors(
             variant_neighbor_count=variant_neighbor_count,
         )
 
-        perimeter_outlines = object_outline_backend(
+        perimeter_outlines = ObjectOutlineBackendStrategy.for_memory_type(
             backend_provider=outline_backend_provider,
         ).outline(working_labels)
         perimeters = neighbor_backend.perimeter_counts(

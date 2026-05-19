@@ -14,6 +14,7 @@ from scipy.fftpack import fft2, ifft2
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_values import (
     ImagePayloadMetadata,
@@ -102,16 +103,6 @@ class NumbaNumpyAlignmentBackendStrategy(AlignmentBackendStrategy):
         )
 
 
-def alignment_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> AlignmentBackendStrategy:
-    """Return the selected CellProfiler alignment backend."""
-    return AlignmentBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    )
-
-
 AlignAdditionalModes = tuple[AlignAdditionalMode | str, ...]
 AlignImageGeometry = tuple[tuple[int, int], tuple[int, int]]
 AlignGeometryPair = tuple[AlignImageGeometry, AlignImageGeometry]
@@ -156,7 +147,7 @@ class TranslationOffsetRequest:
                 moving_pixels,
             )
         else:
-            selected_backend = alignment_backend(
+            selected_backend = AlignmentBackendStrategy.for_memory_type(
                 backend_provider=self.alignment_backend_provider,
             )
             column_offset, row_offset = selected_backend.mutual_information_offset(
@@ -1275,12 +1266,11 @@ def _clear_used_histogram_bins_numba(
         histogram[used_bins[index]] = 0
 
 
-__all__ = [
-    "AlignExecution",
-    "AlignShiftMeasurement",
-    "AlignmentBackendStrategy",
-    "NumbaNumpyAlignmentBackendStrategy",
-    "align",
-    "alignment_backend",
-    "prepare_align",
-]
+__all__ = public_names_from_objects(
+    AlignExecution,
+    AlignShiftMeasurement,
+    AlignmentBackendStrategy,
+    NumbaNumpyAlignmentBackendStrategy,
+    align,
+    prepare_align,
+)

@@ -594,6 +594,7 @@ class MeasurementFeatureValueIndex:
     values_by_label: dict[int, float]
     positional_values: list[float]
 
+    @classmethod
     def empty(cls) -> "MeasurementFeatureValueIndex":
         return cls({}, [])
 

@@ -16,6 +16,7 @@ from openhcs.core.pipeline.function_contracts import (
     special_inputs,
     special_outputs,
 )
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_invocation import RuntimeOutputBundle
 from openhcs.interop.cellprofiler.relate_objects_settings import (
     RelateObjectsDistanceMethod as DistanceMethod,
@@ -205,16 +206,6 @@ class NumbaNumpyObjectRelationshipBackendStrategy(
             label_count,
         )
         return centroids[1:]
-
-
-def object_relationship_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> ObjectRelationshipBackendStrategy:
-    """Return the selected CellProfiler object relationship backend."""
-    return ObjectRelationshipBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -680,10 +671,9 @@ def _calculate_minimum_distances_numba(
     return distances
 
 
-__all__ = [
-    "NumbaNumpyObjectRelationshipBackendStrategy",
-    "ObjectRelationshipBackendStrategy",
-    "RelateObjectsResult",
-    "object_relationship_backend",
-    "relate_objects",
-]
+__all__ = public_names_from_objects(
+    NumbaNumpyObjectRelationshipBackendStrategy,
+    ObjectRelationshipBackendStrategy,
+    RelateObjectsResult,
+    relate_objects,
+)

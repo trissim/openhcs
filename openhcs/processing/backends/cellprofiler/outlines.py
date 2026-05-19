@@ -19,11 +19,10 @@ from openhcs.constants.constants import MemoryType
 from openhcs.core.image_shapes import is_color_image_slice
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.cellprofiler._backend import (
-    BackendProviderInput,
-    DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     cellprofiler_backend_key,
@@ -92,16 +91,6 @@ class CentrosomeNumpyObjectOutlineBackendStrategy(ObjectOutlineBackendStrategy):
         from centrosome.outline import outline
 
         return outline(labels)
-
-
-def object_outline_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> ObjectOutlineBackendStrategy:
-    """Return the selected CellProfiler object outline backend."""
-    return ObjectOutlineBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    )
 
 
 @njit(cache=True)
@@ -556,17 +545,16 @@ def _indexed_value(
     return values[-1]
 
 
-__all__ = [
-    "CentrosomeNumpyObjectOutlineBackendStrategy",
-    "LineMode",
-    "MaxType",
-    "NumbaNumpyObjectOutlineBackendStrategy",
-    "ObjectOutlineBackendStrategy",
-    "OutlineDisplayMode",
-    "OutlineSourceKind",
-    "OverlayOutlineExecutionContext",
-    "OverlayOutlineRuntimeRow",
-    "object_outline_backend",
-    "overlay_objects",
-    "overlay_outlines",
-]
+__all__ = public_names_from_objects(
+    CentrosomeNumpyObjectOutlineBackendStrategy,
+    LineMode,
+    MaxType,
+    NumbaNumpyObjectOutlineBackendStrategy,
+    ObjectOutlineBackendStrategy,
+    OutlineDisplayMode,
+    OutlineSourceKind,
+    OverlayOutlineExecutionContext,
+    OverlayOutlineRuntimeRow,
+    overlay_objects,
+    overlay_outlines,
+)

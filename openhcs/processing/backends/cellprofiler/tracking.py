@@ -15,6 +15,7 @@ from numba import njit
 from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_artifact_queries import (
     MEASUREMENT_FEATURE_NAME_FIELD,
@@ -204,16 +205,6 @@ class NumbaNumpyObjectTrackingBackendStrategy(ObjectTrackingBackendStrategy):
             old_count,
             int(pixel_radius),
         )
-
-
-def object_tracking_backend(
-    *,
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> ObjectTrackingBackendStrategy:
-    """Return the selected CellProfiler TrackObjects backend."""
-    return ObjectTrackingBackendStrategy.for_memory_type(
-        backend_provider=backend_provider,
-    )
 
 
 class TrackObjectsMethodStrategy(
@@ -915,16 +906,15 @@ def _track_by_distance_numba(
     return new_labels, parent_object_numbers, parent_image_numbers, max_object_number
 
 
-__all__ = [
-    "DistanceTrackObjectsMethodStrategy",
-    "MovementModel",
-    "NumbaNumpyObjectTrackingBackendStrategy",
-    "ObjectTrackingData",
-    "ObjectTrackingBackendStrategy",
-    "OverlapTrackObjectsMethodStrategy",
-    "TrackObjectsMethodStrategy",
-    "TrackingMethod",
-    "TrackingResult",
-    "object_tracking_backend",
-    "track_objects",
-]
+__all__ = public_names_from_objects(
+    DistanceTrackObjectsMethodStrategy,
+    MovementModel,
+    NumbaNumpyObjectTrackingBackendStrategy,
+    ObjectTrackingData,
+    ObjectTrackingBackendStrategy,
+    OverlapTrackObjectsMethodStrategy,
+    TrackObjectsMethodStrategy,
+    TrackingMethod,
+    TrackingResult,
+    track_objects,
+)
