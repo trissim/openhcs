@@ -1441,6 +1441,18 @@ class GlobalThresholdMethodStrategy(
         """Compute the unclipped global threshold."""
 
 
+class HelperBackedGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+    """Global-threshold strategy whose behavior is declared as a request helper."""
+
+    def compute(self, request: GlobalThresholdRequest) -> float:
+        return float(type(self)._threshold_helper(request))
+
+    @staticmethod
+    @abstractmethod
+    def _threshold_helper(request: GlobalThresholdRequest) -> float:
+        """Compute the method-specific raw threshold."""
+
+
 class MinimumCrossEntropyGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
     method = CellProfilerThresholdMethod.MINIMUM_CROSS_ENTROPY
     method_label = method.value
@@ -1460,11 +1472,12 @@ class LiGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
         return request.primitives.li_threshold(request.values)
 
 
-class RobustBackgroundGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+class RobustBackgroundGlobalThresholdStrategy(HelperBackedGlobalThresholdStrategy):
     method = CellProfilerThresholdMethod.ROBUST_BACKGROUND
     method_label = method.value
 
-    def compute(self, request: GlobalThresholdRequest) -> float:
+    @staticmethod
+    def _threshold_helper(request: GlobalThresholdRequest) -> float:
         return get_threshold_robust_background(
             request.values,
             **request.kwargs,
@@ -1503,11 +1516,12 @@ class MultiOtsuGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
         return threshold
 
 
-class SauvolaGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+class SauvolaGlobalThresholdStrategy(HelperBackedGlobalThresholdStrategy):
     method = CellProfilerThresholdMethod.SAUVOLA
     method_label = method.value
 
-    def compute(self, request: GlobalThresholdRequest) -> float:
+    @staticmethod
+    def _threshold_helper(request: GlobalThresholdRequest) -> float:
         return float(
             np.mean(
                 request.primitives.sauvola_threshold_image(
@@ -1534,11 +1548,12 @@ class IsodataGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
         return request.primitives.isodata_threshold(request.values)
 
 
-class MaxIntensityPercentageGlobalThresholdStrategy(GlobalThresholdMethodStrategy):
+class MaxIntensityPercentageGlobalThresholdStrategy(HelperBackedGlobalThresholdStrategy):
     method = CellProfilerThresholdMethod.MAX_INTENSITY_PERCENTAGE
     method_label = method.value
 
-    def compute(self, request: GlobalThresholdRequest) -> float:
+    @staticmethod
+    def _threshold_helper(request: GlobalThresholdRequest) -> float:
         return float(
             np.max(request.values) * float(request.kwargs.get("fraction", 0.75))
         )
