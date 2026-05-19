@@ -212,11 +212,16 @@ class IdentityBoundProcessCache(
     ProcessLocalBoundedCache[
         int,
         tuple[object, Any],
-    ]
+    ],
+    metaclass=AutoRegisterMeta,
 ):
     """Process-local cache whose keys are protected against id reuse."""
 
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
     max_entries = 4096
+    registry_key: ClassVar[str | None] = None
 
     def get_bound(
         self,
@@ -242,6 +247,8 @@ class IdentityBoundProcessCache(
 
 class ColumnarMeasurementTableSchemaCache(IdentityBoundProcessCache):
     """Process-local semantic cache keyed by a columnar row object identity."""
+
+    registry_key = "columnar_measurement_table_schema"
 
 
 @dataclass(frozen=True, slots=True)
@@ -587,7 +594,6 @@ class MeasurementFeatureValueIndex:
     values_by_label: dict[int, float]
     positional_values: list[float]
 
-    @classmethod
     def empty(cls) -> "MeasurementFeatureValueIndex":
         return cls({}, [])
 
@@ -917,6 +923,8 @@ class MeasurementRowSequenceFeatureValueIndex:
 
 class MeasurementTableObjectFeatureSemanticsCache(IdentityBoundProcessCache):
     """Bounded process-local cache for immutable measurement-table semantics."""
+
+    registry_key = "measurement_table_object_feature_semantics"
 
 @dataclass(frozen=True, slots=True)
 class MeasurementTableObjectFeatureSemantics:
@@ -1693,7 +1701,6 @@ class MeasurementTableAxisQuery:
     axis: MeasurementRowAxisField
     value: int
 
-    @classmethod
     def slice(cls, slice_index: int) -> "MeasurementTableAxisQuery":
         """Return a query for one runtime slice index."""
         return cls(MeasurementRowAxisField.SLICE_INDEX, int(slice_index))
