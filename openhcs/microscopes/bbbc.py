@@ -12,7 +12,7 @@ import logging
 import os
 import re
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union, Type
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Union, Type
 
 from openhcs.constants.constants import Backend
 from openhcs.microscopes.microscope_base import MicroscopeHandler
@@ -25,11 +25,53 @@ from polystore.filemanager import FileManager
 logger = logging.getLogger(__name__)
 
 
+class BBBCFilenameParser(FilenameParser):
+    """Shared BBBC parser shell for regex-based filename families."""
+
+    _pattern: ClassVar[re.Pattern[str]]
+
+    def __init__(self, filemanager=None, pattern_format=None):
+        super().__init__()
+        self.filemanager = filemanager
+        self.pattern_format = pattern_format
+
+    @classmethod
+    def can_parse(cls, filename: Union[str, Any]) -> bool:
+        """Return whether the filename matches this BBBC parser family."""
+        basename = Path(str(filename)).name
+        return cls._pattern.match(basename) is not None
+
+
+class BBBCHandlerBase(MicroscopeHandler):
+    """Shared BBBC handler shell for parser/metadata wiring."""
+
+    _parser_class: ClassVar[Type[BBBCFilenameParser]]
+    _metadata_handler_class: ClassVar[Type[MetadataHandler]]
+    _microscope_type: ClassVar[str]
+
+    def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
+        self.parser = self._parser_class(filemanager, pattern_format)
+        self.metadata_handler = self._metadata_handler_class(filemanager)
+        super().__init__(parser=self.parser, metadata_handler=self.metadata_handler)
+
+    @property
+    def microscope_type(self) -> str:
+        return self._microscope_type
+
+    @property
+    def metadata_handler_class(self) -> Type[MetadataHandler]:
+        return self._metadata_handler_class
+
+    @property
+    def compatible_backends(self) -> List[Backend]:
+        return [Backend.DISK]
+
+
 # ============================================================================
 # BBBC021 Handler (ImageXpress-like with UUID, in Week subfolders)
 # ============================================================================
 
-class BBBC021FilenameParser(FilenameParser):
+class BBBC021FilenameParser(BBBCFilenameParser):
     """
     Parser for BBBC021 dataset filenames.
 
@@ -61,17 +103,6 @@ class BBBC021FilenameParser(FilenameParser):
         r'(\.\w+)$',             # Extension
         re.IGNORECASE
     )
-
-    def __init__(self, filemanager=None, pattern_format=None):
-        super().__init__()
-        self.filemanager = filemanager
-        self.pattern_format = pattern_format
-
-    @classmethod
-    def can_parse(cls, filename: Union[str, Any]) -> bool:
-        """Check if filename matches BBBC021 pattern."""
-        basename = Path(str(filename)).name
-        return cls._pattern.match(basename) is not None
 
     def parse_filename(self, filename: Union[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -248,7 +279,7 @@ class BBBC021MetadataHandler(TiffPixelSizeMixin, MetadataHandler):
         return None
 
 
-class BBBC021Handler(MicroscopeHandler):
+class BBBC021Handler(BBBCHandlerBase):
     """
     Microscope handler for BBBC021 dataset.
 
@@ -258,6 +289,7 @@ class BBBC021Handler(MicroscopeHandler):
     """
 
     _microscope_type = 'bbbc021'
+    _parser_class = BBBC021FilenameParser
     _metadata_handler_class = BBBC021MetadataHandler
 
     @classmethod
@@ -278,11 +310,6 @@ class BBBC021Handler(MicroscopeHandler):
             return False
         return False
 
-    def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
-        self.parser = BBBC021FilenameParser(filemanager, pattern_format)
-        self.metadata_handler = BBBC021MetadataHandler(filemanager)
-        super().__init__(parser=self.parser, metadata_handler=self.metadata_handler)
-
     @property
     def root_dir(self) -> str:
         """
@@ -292,19 +319,6 @@ class BBBC021Handler(MicroscopeHandler):
         but virtually flattened to plate root.
         """
         return "."
-
-    @property
-    def microscope_type(self) -> str:
-        return 'bbbc021'
-
-    @property
-    def metadata_handler_class(self) -> Type[MetadataHandler]:
-        return BBBC021MetadataHandler
-
-    @property
-    def compatible_backends(self) -> List[Backend]:
-        """BBBC021 uses standard DISK backend."""
-        return [Backend.DISK]
 
     def _build_virtual_mapping(self, plate_path: Path, filemanager: FileManager) -> Path:
         """
@@ -376,7 +390,7 @@ class BBBC021Handler(MicroscopeHandler):
 # BBBC038 Handler (Kaggle Nuclei - Hex ID Format)
 # ============================================================================
 
-class BBBC038FilenameParser(FilenameParser):
+class BBBC038FilenameParser(BBBCFilenameParser):
     """
     Parser for BBBC038 dataset (Kaggle 2018 Data Science Bowl).
 
@@ -392,17 +406,6 @@ class BBBC038FilenameParser(FilenameParser):
 
     # Pattern: hex string + .png extension
     _pattern = re.compile(r'^([a-f0-9]+)\.png$', re.IGNORECASE)
-
-    def __init__(self, filemanager=None, pattern_format=None):
-        super().__init__()
-        self.filemanager = filemanager
-        self.pattern_format = pattern_format
-
-    @classmethod
-    def can_parse(cls, filename: Union[str, Any]) -> bool:
-        """Check if filename matches BBBC038 pattern (hex ID + .png)."""
-        basename = Path(str(filename)).name
-        return cls._pattern.match(basename) is not None
 
     def parse_filename(self, filename: Union[str, Any]) -> Optional[Dict[str, Any]]:
         """
@@ -532,7 +535,7 @@ class BBBC038MetadataHandler(MetadataHandler):
         return None
 
 
-class BBBC038Handler(MetadataDetectMixin, MicroscopeHandler):
+class BBBC038Handler(MetadataDetectMixin, BBBCHandlerBase):
     """
     Microscope handler for BBBC038 dataset (Kaggle nuclei, PNG format).
 
@@ -541,6 +544,7 @@ class BBBC038Handler(MetadataDetectMixin, MicroscopeHandler):
     """
 
     _microscope_type = 'bbbc038'
+    _parser_class = BBBC038FilenameParser
     _metadata_handler_class = BBBC038MetadataHandler
 
     @classmethod
@@ -557,11 +561,6 @@ class BBBC038Handler(MetadataDetectMixin, MicroscopeHandler):
         except Exception:
             return False
 
-    def __init__(self, filemanager: FileManager, pattern_format: Optional[str] = None):
-        self.parser = BBBC038FilenameParser(filemanager, pattern_format)
-        self.metadata_handler = BBBC038MetadataHandler(filemanager)
-        super().__init__(parser=self.parser, metadata_handler=self.metadata_handler)
-
     @property
     def root_dir(self) -> str:
         """
@@ -570,18 +569,6 @@ class BBBC038Handler(MetadataDetectMixin, MicroscopeHandler):
         Images are in stage1_train/{ImageId}/images/ subdirectories.
         """
         return "stage1_train"
-
-    @property
-    def microscope_type(self) -> str:
-        return 'bbbc038'
-
-    @property
-    def metadata_handler_class(self) -> Type[MetadataHandler]:
-        return BBBC038MetadataHandler
-
-    @property
-    def compatible_backends(self) -> List[Backend]:
-        return [Backend.DISK]
 
     def _build_virtual_mapping(self, plate_path: Path, filemanager: FileManager) -> Path:
         """
