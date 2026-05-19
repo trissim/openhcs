@@ -25,6 +25,7 @@ from openhcs.core.pipeline.function_contracts import (
     special_inputs,
     special_outputs,
 )
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_invocation import RuntimeBatchInvocationRequest
 from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValues
 from openhcs.core.runtime_values import (
@@ -2605,26 +2606,26 @@ def _divide_costes_measurements(numerator: object, denominator: object) -> np.nd
         return numerator_array / denominator_array
 
 
-__all__ = [
-    "ColocalizationCostesBackendStrategy",
-    "ColocalizationCostesThresholdBatch",
-    "ColocalizationCostesThresholdRequest",
-    "ColocalizationCostesThresholds",
-    "ColocalizationImagePairContext",
-    "ColocalizationMeasurementOptions",
-    "ColocalizationMeasurementSchema",
-    "ColocalizationMeasurements",
-    "ColocalizationObjectLabelContext",
-    "CostesMethod",
-    "NumbaNumpyColocalizationCostesBackendStrategy",
-    "ObjectColocalizationMeasurements",
-    "UnitIntervalDenseRankSemantics",
-    "costes_above_threshold_mask",
-    "costes_backend",
-    "measure_colocalization",
-    "measure_colocalization_objects",
-    "measure_colocalization_objects_batch",
-    "object_colocalization_base_reductions",
-    "object_colocalization_threshold_reductions",
-    "thresholded_colocalization_metrics",
-]
+__all__ = public_names_from_objects(
+    ColocalizationCostesBackendStrategy,
+    ColocalizationCostesThresholdBatch,
+    ColocalizationCostesThresholdRequest,
+    ColocalizationCostesThresholds,
+    ColocalizationImagePairContext,
+    ColocalizationMeasurementOptions,
+    ColocalizationMeasurementSchema,
+    ColocalizationMeasurements,
+    ColocalizationObjectLabelContext,
+    CostesMethod,
+    NumbaNumpyColocalizationCostesBackendStrategy,
+    ObjectColocalizationMeasurements,
+    UnitIntervalDenseRankSemantics,
+    costes_above_threshold_mask,
+    costes_backend,
+    measure_colocalization,
+    measure_colocalization_objects,
+    measure_colocalization_objects_batch,
+    object_colocalization_base_reductions,
+    object_colocalization_threshold_reductions,
+    thresholded_colocalization_metrics,
+)
