@@ -9,10 +9,9 @@ visualization by the frontend.
 """
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, ClassVar, Dict, List, Optional, Tuple
+from typing import ClassVar, Dict, List, Optional, Tuple
 
 import numpy as np
 from metaclass_registry import AutoRegisterMeta
@@ -24,10 +23,26 @@ from openhcs.processing.materialization import csv_materializer
 
 
 class AggregationMethod(Enum):
-    AVG = "avg"
-    MEDIAN = "median"
-    STDEV = "stdev"
-    CV = "cv%"
+    AVG = ("avg", np.mean)
+    MEDIAN = ("median", np.median)
+    STDEV = ("stdev", np.std)
+    CV = ("cv%", None)
+
+    def __init__(self, label: str, helper: object | None) -> None:
+        self._value_ = label
+        self._helper = helper
+
+    def aggregate(self, values: np.ndarray) -> float:
+        if self is AggregationMethod.CV:
+            mean_value = np.mean(values)
+            if mean_value == 0:
+                return np.nan
+            return float(np.std(values) / mean_value)
+        if self._helper is None:
+            raise NotImplementedError(
+                f"{type(self).__name__}.{self.name} does not declare an aggregation helper."
+            )
+        return float(self._helper(values))
 
 
 class PlateType(Enum):
@@ -112,96 +127,6 @@ class Plate384DimensionStrategy(PlateDimensionStrategy):
         return 16, 24
 
 
-class AggregationMethodStrategy(
-    EnumKeyedStrategyMixin[AggregationMethod],
-    ABC,
-    metaclass=AutoRegisterMeta,
-):
-    """Nominal aggregation behavior for one CellProfiler plate-map method."""
-
-    __registry_key__ = "aggregation_method_label"
-    __skip_if_no_key__ = True
-
-    aggregation_method: ClassVar[AggregationMethod | None] = None
-    aggregation_method_label: ClassVar[str | None] = None
-    helper: ClassVar[Callable[[np.ndarray], Any] | None] = None
-    __enum_member_attr__ = "aggregation_method"
-    __enum_label_attr__ = "aggregation_method_label"
-
-    @classmethod
-    def for_method(
-        cls,
-        method: AggregationMethod,
-    ) -> "AggregationMethodStrategy":
-        return cls.for_enum_member(method)
-
-    def aggregate(self, values: np.ndarray) -> float:
-        """Aggregate a non-empty numeric value vector."""
-        if self.helper is None:
-            raise NotImplementedError(
-                f"{type(self).__name__} must declare an aggregation helper."
-            )
-        return float(self.helper(values))
-
-
-class CoefficientOfVariationAggregationStrategy(AggregationMethodStrategy):
-    """Coefficient-of-variation aggregation."""
-
-    aggregation_method = AggregationMethod.CV
-
-    def aggregate(self, values: np.ndarray) -> float:
-        mean_value = np.mean(values)
-        if mean_value == 0:
-            return np.nan
-        return float(np.std(values) / mean_value)
-
-
-@dataclass(frozen=True, slots=True)
-class HelperBackedAggregationDeclaration:
-    """Metadata row for helper-backed aggregation strategies."""
-
-    class_name: str
-    aggregation_method: AggregationMethod
-    helper: Callable[[np.ndarray], Any]
-
-    def materialize(self) -> type[AggregationMethodStrategy]:
-        return type(
-            self.class_name,
-            (AggregationMethodStrategy,),
-            {
-                "__module__": __name__,
-                "aggregation_method": self.aggregation_method,
-                "helper": staticmethod(self.helper),
-            },
-        )
-
-
-HELPER_BACKED_AGGREGATION_DECLARATIONS = (
-    HelperBackedAggregationDeclaration(
-        "AverageAggregationStrategy",
-        AggregationMethod.AVG,
-        np.mean,
-    ),
-    HelperBackedAggregationDeclaration(
-        "StandardDeviationAggregationStrategy",
-        AggregationMethod.STDEV,
-        np.std,
-    ),
-    HelperBackedAggregationDeclaration(
-        "MedianAggregationStrategy",
-        AggregationMethod.MEDIAN,
-        np.median,
-    ),
-)
-
-globals().update(
-    {
-        declaration.class_name: declaration.materialize()
-        for declaration in HELPER_BACKED_AGGREGATION_DECLARATIONS
-    }
-)
-
-
 def _parse_well_name(well: str) -> Tuple[str, str]:
     """Parse well name like 'A01' into row 'A' and column '01'."""
     if len(well) >= 2:
@@ -215,7 +140,7 @@ def _aggregate_values(values: np.ndarray, method: AggregationMethod) -> float:
     """Aggregate array of values using specified method."""
     if len(values) == 0:
         return np.nan
-    return AggregationMethodStrategy.for_method(method).aggregate(values)
+    return method.aggregate(values)
 
 
 @numpy
