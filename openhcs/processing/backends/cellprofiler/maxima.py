@@ -17,6 +17,7 @@ from openhcs.core.memory.decorators import numpy
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.processing.materialization import csv_materializer
 
 MAXIMA_RESULT_FIELDS = [
@@ -169,15 +170,15 @@ def find_maxima_with_mask(
     return maxima[np.newaxis, ...], result
 
 
-__all__ = [
-    "ExcludeMode",
-    "MAXIMA_RESULT_FIELDS",
-    "MaskMaximaInputStrategy",
-    "MaximaInputStrategy",
-    "MaximaRequest",
-    "MaximaResult",
-    "ObjectMaximaInputStrategy",
-    "ThresholdMaximaInputStrategy",
-    "find_maxima",
-    "find_maxima_with_mask",
-]
+__all__ = public_names_from_objects(
+    ExcludeMode,
+    MaskMaximaInputStrategy,
+    MaximaInputStrategy,
+    MaximaRequest,
+    MaximaResult,
+    ObjectMaximaInputStrategy,
+    ThresholdMaximaInputStrategy,
+    find_maxima,
+    find_maxima_with_mask,
+    extra_names=("MAXIMA_RESULT_FIELDS",),
+)

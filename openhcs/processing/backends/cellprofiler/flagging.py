@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from openhcs.core.memory.decorators import numpy
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.interop.cellprofiler.flag_image import (
     CombinationChoice,
     FlagResult,
@@ -66,11 +67,11 @@ def flag_image_intensity(
     )
 
 
-__all__ = [
-    "CombinationChoice",
-    "FlagResult",
-    "MeasurementSource",
-    "flag_image",
-    "flag_image_intensity",
-    "flag_image_result",
-]
+__all__ = public_names_from_objects(
+    CombinationChoice,
+    FlagResult,
+    MeasurementSource,
+    flag_image,
+    flag_image_intensity,
+    flag_image_result,
+)

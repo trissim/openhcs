@@ -12,6 +12,7 @@ from metaclass_registry import AutoRegisterMeta
 
 from openhcs.core.memory import numpy as numpy_decorator
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.analysis.region_properties import (
@@ -208,15 +209,15 @@ def convert_objects_to_image(
     )
 
 
-__all__ = [
-    "BinaryImageModeRenderer",
-    "ColorImageModeRenderer",
-    "GrayscaleImageModeRenderer",
-    "ImageMode",
-    "ImageModeRenderer",
-    "ObjectConversionStats",
-    "Uint16ImageModeRenderer",
-    "convert_image_to_objects",
-    "convert_objects_to_image",
-    "object_label_colormap",
-]
+__all__ = public_names_from_objects(
+    BinaryImageModeRenderer,
+    ColorImageModeRenderer,
+    GrayscaleImageModeRenderer,
+    ImageMode,
+    ImageModeRenderer,
+    ObjectConversionStats,
+    Uint16ImageModeRenderer,
+    convert_image_to_objects,
+    convert_objects_to_image,
+    object_label_colormap,
+)
