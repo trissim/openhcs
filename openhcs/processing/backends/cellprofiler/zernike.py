@@ -542,18 +542,21 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
         )
         denominators = np.ascontiguousarray(np.pi * radii * radii, dtype=np.float64)
         score_started_at = time.perf_counter()
-        values = _score_zernike_moments_direct_numba(
-            np.ascontiguousarray(label_values, dtype=np.int32),
-            np.ascontiguousarray(y_coords, dtype=np.float64),
-            np.ascontiguousarray(x_coords, dtype=np.float64),
+        score_context = (
             np.ascontiguousarray(centers, dtype=np.float64),
             np.ascontiguousarray(radii, dtype=np.float64),
             np.ascontiguousarray(zernike_numbers_array, dtype=np.int64),
             coefficients,
             exponents,
             term_counts,
-            denominators,
             int(measured_label_ids.size),
+        )
+        values = _score_zernike_moments_direct_numba(
+            np.ascontiguousarray(label_values, dtype=np.int32),
+            np.ascontiguousarray(y_coords, dtype=np.float64),
+            np.ascontiguousarray(x_coords, dtype=np.float64),
+            score_context,
+            denominators,
         )
         runtime_profiler.log(
             "zernike_shape_score",
@@ -625,12 +628,7 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             zernike_numbers_array
         )
         score_started_at = time.perf_counter()
-        magnitudes, phases = _score_intensity_zernike_moments_direct_numba(
-            np.ascontiguousarray(image_array, dtype=np.float64),
-            label_values,
-            raw_label_values,
-            y_coords,
-            x_coords,
+        score_context = (
             np.ascontiguousarray(centers, dtype=np.float64),
             np.ascontiguousarray(radii, dtype=np.float64),
             np.ascontiguousarray(zernike_numbers_array, dtype=np.int64),
@@ -638,6 +636,14 @@ class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
             exponents,
             term_counts,
             int(measured_label_ids.size),
+        )
+        magnitudes, phases = _score_intensity_zernike_moments_direct_numba(
+            np.ascontiguousarray(image_array, dtype=np.float64),
+            label_values,
+            raw_label_values,
+            y_coords,
+            x_coords,
+            score_context,
         )
         runtime_profiler.log(
             "zernike_intensity_score",
@@ -734,22 +740,8 @@ __all__ = public_names_from_objects(
 
 
 @njit(cache=True)
-def _score_zernike_moments_direct_numba(
-    label_values: np.ndarray,
-    y_coords: np.ndarray,
-    x_coords: np.ndarray,
-    centers: np.ndarray,
-    radii: np.ndarray,
-    zernike_numbers: np.ndarray,
-    coefficients: np.ndarray,
-    exponents: np.ndarray,
-    term_counts: np.ndarray,
-    denominators: np.ndarray,
-    object_count: int,
-) -> np.ndarray:
+def _zernike_max_order_numba(zernike_numbers: np.ndarray) -> int:
     zernike_count = zernike_numbers.shape[0]
-    real_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
-    imag_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
     max_order = 0
     for zernike_index in range(zernike_count):
         n_value = int(zernike_numbers[zernike_index, 0])
@@ -758,6 +750,97 @@ def _score_zernike_moments_direct_numba(
             max_order = n_value
         if m_value > max_order:
             max_order = m_value
+    return max_order
+
+
+@njit(cache=True)
+def _prepare_zernike_pixel_basis_numba(
+    normalized_y: float,
+    normalized_x: float,
+    max_order: int,
+    rho_powers: np.ndarray,
+    cos_by_m: np.ndarray,
+    sin_by_m: np.ndarray,
+) -> bool:
+    rho_squared = normalized_x * normalized_x + normalized_y * normalized_y
+    if rho_squared > 1.0:
+        return False
+    rho = np.sqrt(rho_squared)
+    rho_powers[0] = 1.0
+    for order in range(1, max_order + 1):
+        rho_powers[order] = rho_powers[order - 1] * rho
+
+    cos_by_m[0] = 1.0
+    sin_by_m[0] = 0.0
+    if max_order > 0:
+        if rho > 0.0:
+            cos_theta = normalized_y / rho
+            sin_theta = normalized_x / rho
+        else:
+            cos_theta = 1.0
+            sin_theta = 0.0
+        cos_by_m[1] = cos_theta
+        sin_by_m[1] = sin_theta
+        for order in range(2, max_order + 1):
+            cos_by_m[order] = (
+                cos_by_m[order - 1] * cos_theta
+                - sin_by_m[order - 1] * sin_theta
+            )
+            sin_by_m[order] = (
+                sin_by_m[order - 1] * cos_theta
+                + cos_by_m[order - 1] * sin_theta
+            )
+    return True
+
+
+@njit(cache=True)
+def _accumulate_zernike_projection_numba(
+    object_index: int,
+    weight: float,
+    zernike_numbers: np.ndarray,
+    coefficients: np.ndarray,
+    exponents: np.ndarray,
+    term_counts: np.ndarray,
+    rho_powers: np.ndarray,
+    cos_by_m: np.ndarray,
+    sin_by_m: np.ndarray,
+    real_sums: np.ndarray,
+    imag_sums: np.ndarray,
+) -> None:
+    zernike_count = zernike_numbers.shape[0]
+    for zernike_index in range(zernike_count):
+        radial = 0.0
+        for term_index in range(term_counts[zernike_index]):
+            radial += (
+                coefficients[zernike_index, term_index]
+                * rho_powers[exponents[zernike_index, term_index]]
+            )
+        m = abs(zernike_numbers[zernike_index, 1])
+        real_sums[object_index, zernike_index] += weight * radial * cos_by_m[m]
+        imag_sums[object_index, zernike_index] += weight * radial * sin_by_m[m]
+
+
+@njit(cache=True)
+def _score_zernike_moments_direct_numba(
+    label_values: np.ndarray,
+    y_coords: np.ndarray,
+    x_coords: np.ndarray,
+    score_context: tuple,
+    denominators: np.ndarray,
+) -> np.ndarray:
+    (
+        centers,
+        radii,
+        zernike_numbers,
+        coefficients,
+        exponents,
+        term_counts,
+        object_count,
+    ) = score_context
+    zernike_count = zernike_numbers.shape[0]
+    real_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
+    imag_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
+    max_order = _zernike_max_order_numba(zernike_numbers)
     rho_powers = np.empty(max_order + 1, dtype=np.float64)
     cos_by_m = np.empty(max_order + 1, dtype=np.float64)
     sin_by_m = np.empty(max_order + 1, dtype=np.float64)
@@ -770,44 +853,27 @@ def _score_zernike_moments_direct_numba(
             continue
         normalized_y = (y_coords[pixel_index] - centers[object_index, 0]) / radius
         normalized_x = (x_coords[pixel_index] - centers[object_index, 1]) / radius
-        rho_squared = normalized_x * normalized_x + normalized_y * normalized_y
-        if rho_squared > 1.0:
-            continue
-        rho = np.sqrt(rho_squared)
-        rho_powers[0] = 1.0
-        for order in range(1, max_order + 1):
-            rho_powers[order] = rho_powers[order - 1] * rho
-
-        cos_by_m[0] = 1.0
-        sin_by_m[0] = 0.0
-        if max_order > 0:
-            if rho > 0.0:
-                cos_theta = normalized_y / rho
-                sin_theta = normalized_x / rho
-            else:
-                cos_theta = 1.0
-                sin_theta = 0.0
-            cos_by_m[1] = cos_theta
-            sin_by_m[1] = sin_theta
-            for order in range(2, max_order + 1):
-                cos_by_m[order] = (
-                    cos_by_m[order - 1] * cos_theta
-                    - sin_by_m[order - 1] * sin_theta
-                )
-                sin_by_m[order] = (
-                    sin_by_m[order - 1] * cos_theta
-                    + cos_by_m[order - 1] * sin_theta
-                )
-        for zernike_index in range(zernike_count):
-            radial = 0.0
-            for term_index in range(term_counts[zernike_index]):
-                radial += (
-                    coefficients[zernike_index, term_index]
-                    * rho_powers[exponents[zernike_index, term_index]]
-                )
-            m = abs(zernike_numbers[zernike_index, 1])
-            real_sums[object_index, zernike_index] += radial * cos_by_m[m]
-            imag_sums[object_index, zernike_index] += radial * sin_by_m[m]
+        if _prepare_zernike_pixel_basis_numba(
+            normalized_y,
+            normalized_x,
+            max_order,
+            rho_powers,
+            cos_by_m,
+            sin_by_m,
+        ):
+            _accumulate_zernike_projection_numba(
+                object_index,
+                1.0,
+                zernike_numbers,
+                coefficients,
+                exponents,
+                term_counts,
+                rho_powers,
+                cos_by_m,
+                sin_by_m,
+                real_sums,
+                imag_sums,
+            )
 
     output = np.empty((object_count, zernike_count), dtype=np.float64)
     for object_index in range(object_count):
@@ -833,26 +899,22 @@ def _score_intensity_zernike_moments_direct_numba(
     raw_label_values: np.ndarray,
     y_coords: np.ndarray,
     x_coords: np.ndarray,
-    centers: np.ndarray,
-    radii: np.ndarray,
-    zernike_numbers: np.ndarray,
-    coefficients: np.ndarray,
-    exponents: np.ndarray,
-    term_counts: np.ndarray,
-    object_count: int,
+    score_context: tuple,
 ) -> tuple[np.ndarray, np.ndarray]:
+    (
+        centers,
+        radii,
+        zernike_numbers,
+        coefficients,
+        exponents,
+        term_counts,
+        object_count,
+    ) = score_context
     zernike_count = zernike_numbers.shape[0]
     real_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
     imag_sums = np.zeros((object_count, zernike_count), dtype=np.float64)
     areas = np.zeros(object_count, dtype=np.float64)
-    max_order = 0
-    for zernike_index in range(zernike_count):
-        n_value = int(zernike_numbers[zernike_index, 0])
-        m_value = abs(int(zernike_numbers[zernike_index, 1]))
-        if n_value > max_order:
-            max_order = n_value
-        if m_value > max_order:
-            max_order = m_value
+    max_order = _zernike_max_order_numba(zernike_numbers)
     rho_powers = np.empty(max_order + 1, dtype=np.float64)
     cos_by_m = np.empty(max_order + 1, dtype=np.float64)
     sin_by_m = np.empty(max_order + 1, dtype=np.float64)
@@ -872,48 +934,26 @@ def _score_intensity_zernike_moments_direct_numba(
         areas[raw_object_index] += 1.0
         normalized_y = (y - centers[object_index, 0]) / radius
         normalized_x = (x - centers[object_index, 1]) / radius
-        rho_squared = normalized_x * normalized_x + normalized_y * normalized_y
-        if rho_squared > 1.0:
-            continue
-        rho = np.sqrt(rho_squared)
-        rho_powers[0] = 1.0
-        for order in range(1, max_order + 1):
-            rho_powers[order] = rho_powers[order - 1] * rho
-
-        cos_by_m[0] = 1.0
-        sin_by_m[0] = 0.0
-        if max_order > 0:
-            if rho > 0.0:
-                cos_theta = normalized_y / rho
-                sin_theta = normalized_x / rho
-            else:
-                cos_theta = 1.0
-                sin_theta = 0.0
-            cos_by_m[1] = cos_theta
-            sin_by_m[1] = sin_theta
-            for order in range(2, max_order + 1):
-                cos_by_m[order] = (
-                    cos_by_m[order - 1] * cos_theta
-                    - sin_by_m[order - 1] * sin_theta
-                )
-                sin_by_m[order] = (
-                    sin_by_m[order - 1] * cos_theta
-                    + cos_by_m[order - 1] * sin_theta
-                )
-        pixel_value = image[y, x]
-        for zernike_index in range(zernike_count):
-            radial = 0.0
-            for term_index in range(term_counts[zernike_index]):
-                radial += (
-                    coefficients[zernike_index, term_index]
-                    * rho_powers[exponents[zernike_index, term_index]]
-                )
-            m = abs(zernike_numbers[zernike_index, 1])
-            real_sums[raw_object_index, zernike_index] += (
-                pixel_value * radial * cos_by_m[m]
-            )
-            imag_sums[raw_object_index, zernike_index] += (
-                pixel_value * radial * sin_by_m[m]
+        if _prepare_zernike_pixel_basis_numba(
+            normalized_y,
+            normalized_x,
+            max_order,
+            rho_powers,
+            cos_by_m,
+            sin_by_m,
+        ):
+            _accumulate_zernike_projection_numba(
+                raw_object_index,
+                image[y, x],
+                zernike_numbers,
+                coefficients,
+                exponents,
+                term_counts,
+                rho_powers,
+                cos_by_m,
+                sin_by_m,
+                real_sums,
+                imag_sums,
             )
 
     magnitudes = np.empty((object_count, zernike_count), dtype=np.float64)
@@ -935,4 +975,3 @@ def _score_intensity_zernike_moments_direct_numba(
             )
 
     return magnitudes, phases
-
