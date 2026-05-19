@@ -152,7 +152,7 @@ class RobustBackgroundCenterStrategy(
 
     averaging_method: ClassVar[CellProfilerAveragingMethod | None] = None
     averaging_method_label: ClassVar[str | None] = None
-    center_helper: ClassVar[Callable[[np.ndarray], float] | None] = None
+    center_helper: ClassVar[Callable[[np.ndarray], float]]
 
     @classmethod
     def for_averaging_method(
@@ -167,11 +167,7 @@ class RobustBackgroundCenterStrategy(
 
     def center(self, values: np.ndarray) -> float:
         """Return the robust-background center for trimmed values."""
-        if self.center_helper is None:
-            raise NotImplementedError(
-                f"{type(self).__name__} must declare center_helper"
-            )
-        return float(self.center_helper(values))
+        return float(type(self).center_helper(values))
 
 
 class BinnedModeCenterHelper:
