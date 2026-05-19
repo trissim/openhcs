@@ -152,7 +152,6 @@ class RobustBackgroundCenterStrategy(
 
     averaging_method: ClassVar[CellProfilerAveragingMethod | None] = None
     averaging_method_label: ClassVar[str | None] = None
-    center_helper: ClassVar[Callable[[np.ndarray], float]]
 
     @classmethod
     def for_averaging_method(
@@ -167,14 +166,12 @@ class RobustBackgroundCenterStrategy(
 
     def center(self, values: np.ndarray) -> float:
         """Return the robust-background center for trimmed values."""
-        return float(type(self).center_helper(values))
+        return float(type(self)._center(values))
 
-
-class BinnedModeCenterHelper:
-    """Callable center helper backed by the active threshold primitive provider."""
-
-    def __call__(self, values: np.ndarray) -> float:
-        return float(threshold_primitives().binned_mode(values))
+    @staticmethod
+    @abstractmethod
+    def _center(values: np.ndarray) -> float:
+        """Return the strategy-specific center estimate."""
 
 
 @dataclass(frozen=True)
@@ -223,17 +220,26 @@ class CellProfilerThresholdProfiler:
 
 class MeanRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
     averaging_method = CellProfilerAveragingMethod.MEAN
-    center_helper = staticmethod(np.mean)
+
+    @staticmethod
+    def _center(values: np.ndarray) -> float:
+        return float(np.mean(values))
 
 
 class MedianRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
     averaging_method = CellProfilerAveragingMethod.MEDIAN
-    center_helper = staticmethod(np.median)
+
+    @staticmethod
+    def _center(values: np.ndarray) -> float:
+        return float(np.median(values))
 
 
 class ModeRobustBackgroundCenterStrategy(RobustBackgroundCenterStrategy):
     averaging_method = CellProfilerAveragingMethod.MODE
-    center_helper = BinnedModeCenterHelper()
+
+    @staticmethod
+    def _center(values: np.ndarray) -> float:
+        return float(threshold_primitives().binned_mode(values))
 
 
 class RobustBackgroundSpreadStrategy(
