@@ -13,6 +13,7 @@ from numba import njit
 
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_semantics import SpatialGridOrdering, SpatialGridOrigin
 from openhcs.core.runtime_values import (
     ObjectLabelPayload,
@@ -113,14 +114,25 @@ class GridSpotReference:
 
 
 @dataclass(frozen=True, slots=True)
-class SpatialGridDefinitionBase:
+class SpatialGridDefinitionBase(ABC, metaclass=AutoRegisterMeta):
     """Shared CellProfiler DefineGrid coordinate policy."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
 
     rows: int
     columns: int
     origin: SpatialGridOrigin
     ordering: SpatialGridOrdering
     image_shape_yx: tuple[int, int]
+
+    @classmethod
+    def registered_definition_types(
+        cls,
+    ) -> tuple[type["SpatialGridDefinitionBase"], ...]:
+        return tuple(cls.__registry__.values())
 
     def canonical_row_index(self, row: int) -> int:
         if self.origin.reverses_rows:
@@ -139,6 +151,8 @@ class SpatialGridDefinitionBase:
 @dataclass(frozen=True, slots=True)
 class SpatialGridManualDefinition(SpatialGridDefinitionBase):
     """Manual two-spot CellProfiler DefineGrid geometry policy."""
+
+    registry_key = "manual"
 
     first_spot: GridSpotReference
     second_spot: GridSpotReference
@@ -182,6 +196,8 @@ class SpatialGridManualDefinition(SpatialGridDefinitionBase):
 @dataclass(frozen=True, slots=True)
 class SpatialGridAutomaticDefinition(SpatialGridDefinitionBase):
     """Automatic CellProfiler DefineGrid geometry policy from object extrema."""
+
+    registry_key = "automatic"
 
     labels: np.ndarray
 
@@ -278,6 +294,36 @@ def spatial_grid_from_spacing(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class GridRuntimeDefinitionRequest:
+    """Runtime grid geometry fields shared by grid-definition builders."""
+
+    image_shape: tuple[int, int]
+    grid: SpatialGrid | None
+    grid_rows: int
+    grid_columns: int
+    x_spacing: float
+    y_spacing: float
+    x_origin: float
+    y_origin: float
+    ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS
+
+    def spatial_grid(self) -> SpatialGrid:
+        if self.grid is not None:
+            return self.grid
+        return SpatialGrid(
+            name="grid",
+            rows=self.grid_rows,
+            columns=self.grid_columns,
+            x_spacing=self.x_spacing,
+            y_spacing=self.y_spacing,
+            x_origin=self.x_origin,
+            y_origin=self.y_origin,
+            ordering=coerce_cellprofiler_enum(SpatialGridOrdering, self.ordering),
+            source_spatial_shape_yx=tuple(int(value) for value in self.image_shape),
+        )
+
+
 @dataclass
 class GridDefinition:
     """Executable grid geometry derived from OpenHCS spatial-grid artifacts."""
@@ -310,25 +356,31 @@ class GridDefinition:
         ordering: SpatialGridOrdering = SpatialGridOrdering.BY_ROWS,
     ) -> "GridDefinition":
         """Build executable grid geometry from a runtime grid or direct kwargs."""
-        spatial_grid = (
-            grid
-            if grid is not None
-            else SpatialGrid(
-                name="grid",
-                rows=grid_rows,
-                columns=grid_columns,
+        return cls.from_runtime_request(
+            GridRuntimeDefinitionRequest(
+                image_shape=image_shape,
+                grid=grid,
+                grid_rows=grid_rows,
+                grid_columns=grid_columns,
                 x_spacing=x_spacing,
                 y_spacing=y_spacing,
                 x_origin=x_origin,
                 y_origin=y_origin,
-                ordering=coerce_cellprofiler_enum(SpatialGridOrdering, ordering),
-                source_spatial_shape_yx=tuple(int(value) for value in image_shape),
+                ordering=ordering,
             )
         )
+
+    @classmethod
+    def from_runtime_request(
+        cls,
+        request: GridRuntimeDefinitionRequest,
+    ) -> "GridDefinition":
+        """Build executable grid geometry from one runtime request record."""
+        spatial_grid = request.spatial_grid()
         height, width = (
             spatial_grid.source_spatial_shape_yx
             if spatial_grid.source_spatial_shape_yx is not None
-            else image_shape
+            else request.image_shape
         )
         return cls(
             rows=spatial_grid.rows,
@@ -489,18 +541,29 @@ class GridObjectStats:
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
-class GridShapeContext(ABC):
+class GridShapeContext(ABC, metaclass=AutoRegisterMeta):
     """Shared grid-shape execution state carried through nominal requests."""
+
+    __registry_key__ = "registry_key"
+    __skip_if_no_key__ = True
+
+    registry_key: ClassVar[str | None] = None
 
     grid: GridDefinition
     guiding_labels: np.ndarray | None = None
     diameter_choice: DiameterChoice = DiameterChoice.MANUAL
     circle_diameter: int = 20
 
+    @classmethod
+    def registered_context_types(cls) -> tuple[type["GridShapeContext"], ...]:
+        return tuple(cls.__registry__.values())
+
 
 @dataclass(frozen=True, slots=True, kw_only=True)
 class GridShapeRequest(GridShapeContext):
     """Inputs needed to materialize one grid object shape strategy."""
+
+    registry_key = "shape_request"
 
     filtered_guides: np.ndarray | None = None
 
@@ -539,6 +602,8 @@ class GridShapeRequest(GridShapeContext):
 class IdentifyObjectsInGridRequest(GridShapeContext):
     """Executable request for CellProfiler IdentifyObjectsInGrid semantics."""
 
+    registry_key = "identify_objects"
+
     image: np.ndarray
     shape_choice: ShapeChoice
 
@@ -547,13 +612,7 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
         cls,
         *,
         image: np.ndarray,
-        grid: SpatialGrid | None,
-        grid_rows: int,
-        grid_columns: int,
-        x_spacing: float,
-        y_spacing: float,
-        x_origin: float,
-        y_origin: float,
+        grid_definition: GridRuntimeDefinitionRequest,
         shape_choice: ShapeChoice | str,
         diameter_choice: DiameterChoice | str,
         circle_diameter: int,
@@ -562,16 +621,7 @@ class IdentifyObjectsInGridRequest(GridShapeContext):
         """Bind CP/runtime inputs into one nominal executable request."""
         return cls(
             image=image,
-            grid=GridDefinition.from_runtime(
-                image_shape=image.shape,
-                grid=grid,
-                grid_rows=grid_rows,
-                grid_columns=grid_columns,
-                x_spacing=x_spacing,
-                y_spacing=y_spacing,
-                x_origin=x_origin,
-                y_origin=y_origin,
-            ),
+            grid=GridDefinition.from_runtime_request(grid_definition),
             shape_choice=coerce_cellprofiler_enum(ShapeChoice, shape_choice),
             diameter_choice=coerce_cellprofiler_enum(DiameterChoice, diameter_choice),
             circle_diameter=circle_diameter,
@@ -783,13 +833,16 @@ def identify_objects_in_grid(
     """Identify objects within each section of a grid pattern."""
     return IdentifyObjectsInGridRequest.from_runtime(
         image=image,
-        grid=grid,
-        grid_rows=grid_rows,
-        grid_columns=grid_columns,
-        x_spacing=x_spacing,
-        y_spacing=y_spacing,
-        x_origin=x_origin,
-        y_origin=y_origin,
+        grid_definition=GridRuntimeDefinitionRequest(
+            image_shape=image.shape,
+            grid=grid,
+            grid_rows=grid_rows,
+            grid_columns=grid_columns,
+            x_spacing=x_spacing,
+            y_spacing=y_spacing,
+            x_origin=x_origin,
+            y_origin=y_origin,
+        ),
         shape_choice=shape_choice,
         diameter_choice=diameter_choice,
         circle_diameter=circle_diameter,
@@ -831,13 +884,16 @@ def identify_objects_in_grid_with_guides(
     """Identify grid objects using guiding objects for shape/location."""
     return IdentifyObjectsInGridRequest.from_runtime(
         image=image,
-        grid=grid,
-        grid_rows=grid_rows,
-        grid_columns=grid_columns,
-        x_spacing=x_spacing,
-        y_spacing=y_spacing,
-        x_origin=x_origin,
-        y_origin=y_origin,
+        grid_definition=GridRuntimeDefinitionRequest(
+            image_shape=image.shape,
+            grid=grid,
+            grid_rows=grid_rows,
+            grid_columns=grid_columns,
+            x_spacing=x_spacing,
+            y_spacing=y_spacing,
+            x_origin=x_origin,
+            y_origin=y_origin,
+        ),
         shape_choice=shape_choice,
         diameter_choice=diameter_choice,
         circle_diameter=circle_diameter,
@@ -1122,26 +1178,27 @@ class NaturalGridShapeStrategy(GridShapeStrategy):
         return request.grid.labels_from_filtered_guides(request.required_filtered_guides)
 
 
-__all__ = [
-    "DiameterChoice",
-    "GridDefinition",
-    "GridInfo",
-    "GridObjectStats",
-    "GridShapeContext",
-    "GridShapeRequest",
-    "GridShapeStrategy",
-    "GridSpotReference",
-    "IdentifyObjectsInGridRequest",
-    "ShapeChoice",
-    "SpatialGridAutomaticDefinition",
-    "SpatialGridManualDefinition",
-    "centers_of_labels",
-    "define_grid_automatic",
-    "define_grid_manual",
-    "draw_grid_overlay",
-    "identify_objects_in_grid",
-    "identify_objects_in_grid_with_guides",
-    "label_centroid_extremes",
-    "prepare_identify_objects_in_grid",
-    "spatial_grid_from_spacing",
-]
+__all__ = public_names_from_objects(
+    DiameterChoice,
+    GridDefinition,
+    GridInfo,
+    GridObjectStats,
+    GridRuntimeDefinitionRequest,
+    GridShapeContext,
+    GridShapeRequest,
+    GridShapeStrategy,
+    GridSpotReference,
+    IdentifyObjectsInGridRequest,
+    ShapeChoice,
+    SpatialGridAutomaticDefinition,
+    SpatialGridManualDefinition,
+    centers_of_labels,
+    define_grid_automatic,
+    define_grid_manual,
+    draw_grid_overlay,
+    identify_objects_in_grid,
+    identify_objects_in_grid_with_guides,
+    label_centroid_extremes,
+    prepare_identify_objects_in_grid,
+    spatial_grid_from_spacing,
+)
