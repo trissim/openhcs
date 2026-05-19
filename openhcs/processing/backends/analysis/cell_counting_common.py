@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Callable
 
 
 class DetectionMethod(Enum):
@@ -63,3 +63,18 @@ class MultiChannelResult:
     chan_2_only_count: int
     colocalization_metrics: dict[str, float]
     overlap_positions: list[tuple[float, float]]
+
+
+@dataclass(frozen=True)
+class WatershedThresholdBackend:
+    """Backend-specific threshold primitives for watershed segmentation."""
+
+    otsu: Callable[[Any], Any]
+    li: Callable[[Any], Any]
+
+    def threshold(self, image: Any, method: str) -> Any:
+        if method == ThresholdMethod.OTSU.value:
+            return self.otsu(image)
+        if method == ThresholdMethod.LI.value:
+            return self.li(image)
+        return float(method)

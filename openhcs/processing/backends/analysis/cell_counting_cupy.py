@@ -52,6 +52,12 @@ from openhcs.processing.backends.analysis.cell_counting_common import (
     DetectionMethod,
     MultiChannelResult,
     ThresholdMethod,
+    WatershedThresholdBackend,
+)
+
+WATERSHED_THRESHOLD_BACKEND = WatershedThresholdBackend(
+    otsu=threshold_otsu,
+    li=threshold_li,
 )
 
 
@@ -643,13 +649,10 @@ def _filter_by_area(
 
 def _detect_cells_watershed(image: cp.ndarray, slice_idx: int, params: Dict[str, Any]) -> CellCountResult:
     """Detect cells using watershed segmentation."""
-    # Determine threshold
-    if params["watershed_threshold_method"] == "otsu":
-        threshold_val = threshold_otsu(image)
-    elif params["watershed_threshold_method"] == "li":
-        threshold_val = threshold_li(image)
-    else:
-        threshold_val = float(params["watershed_threshold_method"])
+    threshold_val = WATERSHED_THRESHOLD_BACKEND.threshold(
+        image,
+        params["watershed_threshold_method"],
+    )
 
     # Create binary mask
     binary = image > threshold_val
