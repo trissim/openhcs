@@ -3340,29 +3340,14 @@ def _inverse_log_transform_numba(
 def _binned_mode_numba(values: np.ndarray) -> float:
     if values.size == 0:
         return 0.0
-    minimum = values[0]
-    maximum = values[0]
-    for index in range(1, values.size):
-        value = values[index]
-        if value < minimum:
-            minimum = value
-        if value > maximum:
-            maximum = value
+    minimum, maximum = _histogram_range_numba(values)
     if maximum == minimum:
         return float(minimum)
 
     bin_count = int(math.ceil(math.sqrt(float(values.size))))
     if bin_count < 2:
         bin_count = 2
-    counts = np.zeros(bin_count, dtype=np.int64)
-    scale = float(bin_count) / (maximum - minimum)
-    for index in range(values.size):
-        bin_index = int((values[index] - minimum) * scale)
-        if bin_index < 0:
-            bin_index = 0
-        elif bin_index >= bin_count:
-            bin_index = bin_count - 1
-        counts[bin_index] += 1
+    counts = _histogram_counts_numba(values, bin_count, minimum, maximum)
 
     best_index = 0
     best_count = counts[0]
