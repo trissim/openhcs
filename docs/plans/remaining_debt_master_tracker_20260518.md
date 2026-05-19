@@ -1090,3 +1090,26 @@ PY
 timeout 180 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/thresholding.py openhcs/core/public_api.py
 # Manual __all__ finding cleared for thresholding.py.
 ```
+
+Checkpoint 3:
+
+- Replaced manual `__all__` lists in CP `projection.py`, `skeleton.py`, and
+  `median_filter.py` with `public_names_from_objects(...)`.
+- Preserved the previous export tuples and named median-filter padding mode
+  literals through module constants.
+
+Verification:
+
+```bash
+python -m py_compile openhcs/processing/backends/cellprofiler/projection.py openhcs/processing/backends/cellprofiler/skeleton.py openhcs/processing/backends/cellprofiler/median_filter.py
+# clean
+
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py -q -k 'projection or skeleton or median'
+# 7 passed, 142 deselected, 1 warning
+
+.venv/bin/python -m pytest tests/unit/test_cellprofiler_library_loading.py tests/unit/test_cellprofiler_module_execution.py tests/unit/test_cellprofiler_generated_pipeline_execution.py tests/unit/test_runner_cellprofiler_compatibility.py -q
+# 402 passed, 5 warnings
+
+PYTHONPATH=/home/ts/code/projects/nominal-refactor-advisor timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs/processing/backends/cellprofiler/projection.py openhcs/processing/backends/cellprofiler/skeleton.py openhcs/processing/backends/cellprofiler/median_filter.py
+# No refactoring findings.
+```

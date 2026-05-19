@@ -13,6 +13,7 @@ import numpy as np
 from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.materialization import csv_materializer
 
@@ -205,19 +206,19 @@ def make_projection(
     return result, request.stats(result)
 
 
-__all__ = [
-    "AverageProjectionStrategy",
-    "BrightfieldProjectionStrategy",
-    "MaskProjectionStrategy",
-    "MaximumProjectionStrategy",
-    "MinimumProjectionStrategy",
+__all__ = public_names_from_objects(
+    AverageProjectionStrategy,
+    BrightfieldProjectionStrategy,
+    MaskProjectionStrategy,
+    MaximumProjectionStrategy,
+    MinimumProjectionStrategy,
     "PROJECTION_STATS_FIELDS",
-    "PowerProjectionStrategy",
-    "ProjectionRequest",
-    "ProjectionStats",
-    "ProjectionStrategy",
-    "ProjectionType",
-    "SumProjectionStrategy",
-    "VarianceProjectionStrategy",
-    "make_projection",
-]
+    PowerProjectionStrategy,
+    ProjectionRequest,
+    ProjectionStats,
+    ProjectionStrategy,
+    ProjectionType,
+    SumProjectionStrategy,
+    VarianceProjectionStrategy,
+    make_projection,
+)

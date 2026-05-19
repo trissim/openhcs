@@ -51,10 +51,21 @@ PY
 timeout 120 .venv/bin/python -m nominal_refactor_advisor openhcs
 ```
 
+## Checkpoints
+
+Checkpoint 3:
+
+- Replaced manual CP backend `__all__` lists in `projection.py`,
+  `skeleton.py`, and `median_filter.py` with `public_names_from_objects(...)`
+  while preserving the previous export names and order.
+- Named the median-filter padding modes so the repeated `"constant"` and
+  `"reflect"` literals are owned by one module authority.
+- Focused advisor output for the three touched CP export modules is clean, and
+  the CP compatibility gate passes.
+
 ## Completion Criteria
 
 - Manual export surfaces for selected active packages derive from explicit
   authorities.
 - Public imports remain backwards compatible.
 - Import/export tests catch future drift.
-

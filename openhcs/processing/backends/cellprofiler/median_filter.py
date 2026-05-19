@@ -15,6 +15,7 @@ from openhcs.core.pipeline.function_contracts import (
     RuntimePure2DSliceBatchRequest,
     pure_2d_batch_executor,
 )
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
@@ -23,6 +24,9 @@ from openhcs.processing.backends.cellprofiler._backend import (
     cellprofiler_backend_key,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
+
+CONSTANT_PADDING_MODE = "constant"
+REFLECT_PADDING_MODE = "reflect"
 
 
 class MedianFilterBackendStrategy(
@@ -99,7 +103,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         normalized_window = self.normalized_window_size(int(kwargs.get("window_size", 3)))
         if normalized_window <= 1:
             return list(slices_2d)
-        mode = kwargs.get("mode", "constant")
+        mode = kwargs.get("mode", CONSTANT_PADDING_MODE)
         outputs = [
             self.filter(np.asarray(slice_2d), window_size=normalized_window, mode=mode)
             for slice_2d in slices_2d
@@ -113,7 +117,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         mode: str,
     ) -> np.ndarray | None:
         """Return an exact constant-mode median using NumPy's vectorized partition."""
-        if image.ndim != 3 or mode != "constant":
+        if image.ndim != 3 or mode != CONSTANT_PADDING_MODE:
             return None
         if not np.issubdtype(image.dtype, np.number):
             return None
@@ -129,7 +133,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         from numpy.lib.stride_tricks import sliding_window_view
 
         pad_width = int(window_size) // 2
-        padded = np.pad(image, pad_width, mode="constant", constant_values=0)
+        padded = np.pad(image, pad_width, mode=CONSTANT_PADDING_MODE, constant_values=0)
         windows = sliding_window_view(padded, window_shape)
         flattened_windows = windows.reshape(image.shape + (window_volume,))
         median_rank = window_volume // 2
@@ -155,7 +159,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         mode: str,
     ) -> np.ndarray | None:
         """Return OpenCV's exact 2-D median result when its border mode matches."""
-        if mode not in {"constant", "reflect"}:
+        if mode not in {CONSTANT_PADDING_MODE, REFLECT_PADDING_MODE}:
             return None
         if image.dtype not in (np.uint8, np.uint16, np.float32, np.float64):
             return None
@@ -166,7 +170,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
 
         cv2_input_dtype = np.float32 if image.dtype == np.float64 else image.dtype
         cv2_input = np.ascontiguousarray(image, dtype=cv2_input_dtype)
-        if mode == "reflect":
+        if mode == REFLECT_PADDING_MODE:
             filtered = cv2.medianBlur(cv2_input, int(window_size))
             return filtered.astype(image.dtype, copy=False)
 
@@ -174,7 +178,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         padded = np.pad(
             cv2_input,
             pad_width,
-            mode="constant",
+            mode=CONSTANT_PADDING_MODE,
             constant_values=0,
         )
         filtered = cv2.medianBlur(padded, int(window_size))[
@@ -190,7 +194,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
         mode: str,
     ) -> np.ndarray | None:
         """Return an exact rank-median result for finite constant-mode volumes."""
-        if image.ndim != 3 or mode != "constant":
+        if image.ndim != 3 or mode != CONSTANT_PADDING_MODE:
             return None
         if not np.issubdtype(image.dtype, np.integer) and not np.issubdtype(
             image.dtype,
@@ -210,7 +214,12 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
             return None
         codes = np.searchsorted(levels, image).astype(np.uint16)
         pad_width = int(window_size) // 2
-        padded_codes = np.pad(codes, pad_width, mode="constant", constant_values=0)
+        padded_codes = np.pad(
+            codes,
+            pad_width,
+            mode=CONSTANT_PADDING_MODE,
+            constant_values=0,
+        )
         filtered_codes = rank.median(
             padded_codes,
             footprint=np.ones((window_size, window_size, window_size), dtype=bool),
@@ -239,7 +248,7 @@ def median_filter_backend(
 def medianfilter(
     image: np.ndarray,
     window_size: int = 3,
-    mode: str = "constant",
+    mode: str = CONSTANT_PADDING_MODE,
 ) -> np.ndarray:
     """Apply CellProfiler-compatible median filtering."""
     return median_filter_backend().filter(
@@ -252,9 +261,9 @@ def medianfilter(
 pure_2d_batch_executor(median_filter_backend().filter_batch)(medianfilter)
 
 
-__all__ = [
-    "MedianFilterBackendStrategy",
-    "NumpyMedianFilterBackendStrategy",
-    "median_filter_backend",
-    "medianfilter",
-]
+__all__ = public_names_from_objects(
+    MedianFilterBackendStrategy,
+    NumpyMedianFilterBackendStrategy,
+    median_filter_backend,
+    medianfilter,
+)

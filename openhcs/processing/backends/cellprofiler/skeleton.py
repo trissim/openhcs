@@ -10,6 +10,7 @@ from skimage.morphology import remove_small_holes, skeletonize
 
 from openhcs.core.memory.decorators import numpy as numpy_backend
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
+from openhcs.core.public_api import public_names_from_objects
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
@@ -309,19 +310,19 @@ def measure_object_skeleton(
     return image, measurements
 
 
-__all__ = [
-    "DiskStructuringElement",
+__all__ = public_names_from_objects(
+    DiskStructuringElement,
     "EIGHT_NEIGHBOR_KERNEL",
     "OBJECT_SKELETON_MEASUREMENT_FIELDS",
-    "ObjectSkeletonMeasurement",
-    "ObjectSkeletonSliceMeasurement",
+    ObjectSkeletonMeasurement,
+    ObjectSkeletonSliceMeasurement,
     "SKELETON_MEASUREMENT_FIELDS",
-    "SkeletonConvolutionFeatures",
-    "SkeletonLabelPropagation",
-    "SkeletonLengthByLabel",
-    "SkeletonMeasurement",
-    "SkeletonNeighborhood",
-    "measure_image_skeleton",
-    "measure_image_skeleton_3d",
-    "measure_object_skeleton",
-]
+    SkeletonConvolutionFeatures,
+    SkeletonLabelPropagation,
+    SkeletonLengthByLabel,
+    SkeletonMeasurement,
+    SkeletonNeighborhood,
+    measure_image_skeleton,
+    measure_image_skeleton_3d,
+    measure_object_skeleton,
+)
