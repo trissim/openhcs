@@ -160,6 +160,17 @@ Checkpoint 12:
   surface cleanup and deeper Numba-context-record issues inside the new focused
   module.
 
+Checkpoint 13:
+
+- Extracted the object-intensity scipy/Numba scan and quantile cohort into
+  `intensity_object_quantiles_numba.py`.
+- Moved `ObjectIntensityArrays` with that implementation authority while
+  preserving the public `intensity.py` import/export surface for existing
+  callers.
+- Focused intensity/strategy tests pass; remaining advisor findings are
+  export-surface cleanup, the existing rescale strategy ladder, and deeper
+  scan/quantile algorithm unification inside the focused kernel module.
+
 Optional after behavior-adjacent changes:
 
 ```bash
