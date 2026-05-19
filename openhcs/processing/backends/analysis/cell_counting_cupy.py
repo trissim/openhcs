@@ -8,7 +8,7 @@ methods and colocalization metrics.
 
 import numpy as np  # Keep for CPU fallbacks and data conversion
 import logging
-from typing import Dict, List, Tuple, Any, Optional, Union, TYPE_CHECKING
+from typing import Callable, Dict, List, Tuple, Any, Optional, Union, TYPE_CHECKING
 
 # Import CuPy using the established optional import pattern
 from openhcs.core.utils import optional_import
@@ -51,6 +51,7 @@ from openhcs.processing.backends.analysis.cell_counting_common import (
     ThresholdMethod,
     WatershedThresholdBackend,
     WatershedThresholdMethodStrategy,
+    colocalization_analyzer_catalog,
 )
 
 WATERSHED_THRESHOLD_BACKEND = WatershedThresholdBackend(
@@ -681,25 +682,17 @@ def _analyze_colocalization(
     intensity_threshold: float
 ) -> MultiChannelResult:
     """Analyze colocalization between two channels."""
-
-    if method == ColocalizationMethod.DISTANCE_BASED.value:
-        return _colocalization_distance_based(
-            chan_1_result, chan_2_result, max_distance
-        )
-    elif method == ColocalizationMethod.OVERLAP_AREA.value:
-        return _colocalization_overlap_based(
-            chan_1_result, chan_2_result, min_overlap_area
-        )
-    elif method == ColocalizationMethod.INTENSITY_CORRELATION.value:
-        return _colocalization_intensity_based(
-            chan_1_result, chan_2_result, intensity_threshold
-        )
-    elif method == ColocalizationMethod.MANDERS_COEFFICIENTS.value:
-        return _colocalization_manders(
-            chan_1_result, chan_2_result, intensity_threshold
-        )
-    else:
+    try:
+        analyzer = COLOCALIZATION_ANALYZERS[method]
+    except KeyError as exc:
         raise ValueError(f"Unknown colocalization method: {method}")
+    return analyzer(
+        chan_1_result,
+        chan_2_result,
+        max_distance,
+        min_overlap_area,
+        intensity_threshold,
+    )
 
 
 def _colocalization_distance_based(
@@ -914,6 +907,50 @@ def _colocalization_manders(
     })
 
     return intensity_result
+
+
+ColocalizationAnalyzer = Callable[
+    [CellCountResult, CellCountResult, float, float, float],
+    MultiChannelResult,
+]
+
+
+COLOCALIZATION_ANALYZERS: dict[str, ColocalizationAnalyzer] = (
+    colocalization_analyzer_catalog(
+        distance_based=(
+            lambda chan_1_result, chan_2_result, max_distance, _min_overlap_area, _intensity_threshold:
+            _colocalization_distance_based(
+                chan_1_result,
+                chan_2_result,
+                max_distance,
+            )
+        ),
+        overlap_area=(
+            lambda chan_1_result, chan_2_result, _max_distance, min_overlap_area, _intensity_threshold:
+            _colocalization_overlap_based(
+                chan_1_result,
+                chan_2_result,
+                min_overlap_area,
+            )
+        ),
+        intensity_correlation=(
+            lambda chan_1_result, chan_2_result, _max_distance, _min_overlap_area, intensity_threshold:
+            _colocalization_intensity_based(
+                chan_1_result,
+                chan_2_result,
+                intensity_threshold,
+            )
+        ),
+        manders_coefficients=(
+            lambda chan_1_result, chan_2_result, _max_distance, _min_overlap_area, intensity_threshold:
+            _colocalization_manders(
+                chan_1_result,
+                chan_2_result,
+                intensity_threshold,
+            )
+        ),
+    )
+)
 
 
 def _create_segmentation_visualization(

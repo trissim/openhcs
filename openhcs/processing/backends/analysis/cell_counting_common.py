@@ -31,6 +31,22 @@ class ColocalizationMethod(Enum):
     MANDERS_COEFFICIENTS = "manders_coefficients"
 
 
+def colocalization_analyzer_catalog(
+    *,
+    distance_based: Callable[..., MultiChannelResult],
+    overlap_area: Callable[..., MultiChannelResult],
+    intensity_correlation: Callable[..., MultiChannelResult],
+    manders_coefficients: Callable[..., MultiChannelResult],
+) -> dict[str, Callable[..., MultiChannelResult]]:
+    """Build the analyzer catalog from the single colocalization enum authority."""
+    return {
+        ColocalizationMethod.DISTANCE_BASED.value: distance_based,
+        ColocalizationMethod.OVERLAP_AREA.value: overlap_area,
+        ColocalizationMethod.INTENSITY_CORRELATION.value: intensity_correlation,
+        ColocalizationMethod.MANDERS_COEFFICIENTS.value: manders_coefficients,
+    }
+
+
 class ThresholdMethod(Enum):
     """Automatic thresholding methods for watershed segmentation."""
 
