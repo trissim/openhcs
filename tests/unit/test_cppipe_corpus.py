@@ -128,6 +128,13 @@ def test_in_tree_cppipe_corpus_prepare_expectations(tmp_path: Path) -> None:
             assert len(import_result.artifact_contracts) == len(
                 prepared.generated_pipeline.artifact_contracts
             )
+            runtime_contracts_by_module_num = (
+                prepared.generated_pipeline.runtime_module_contracts_by_module_num
+            )
+            assert import_result.artifact_contracts == tuple(
+                runtime_contracts_by_module_num[module.module_num]
+                for module in import_result.provenance.processing_modules
+            )
             assert import_result.semantic_contracts == (
                 prepared.generated_pipeline.artifact_contracts
             )

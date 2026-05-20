@@ -125,6 +125,9 @@ class PreparedGeneratedPipeline(CPPipePipelineArtifact):
     @property
     def import_result(self) -> CellProfilerPipelineImportResult:
         """Return the product-facing import record for this prepared pipeline."""
+        runtime_contracts_by_module_num = (
+            self.generated_pipeline.runtime_module_contracts_by_module_num
+        )
         return CellProfilerPipelineImportResult(
             provenance=self.provenance,
             pipeline=self.pipeline,
@@ -133,8 +136,8 @@ class PreparedGeneratedPipeline(CPPipePipelineArtifact):
             generated_module_name=self.module_name,
             generated_module_path=self.module_path,
             artifact_contracts=tuple(
-                contract.module_contract
-                for contract in self.generated_pipeline.artifact_contracts
+                runtime_contracts_by_module_num[module.module_num]
+                for module in self.provenance.processing_modules
             ),
             semantic_contracts=self.generated_pipeline.artifact_contracts,
             registered_functions=self.registered_functions,
