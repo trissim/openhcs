@@ -1,9 +1,12 @@
 import json
+import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
 import imageio.v3 as imageio
 import numpy as np
+import pytest
 import tifffile
 
 from openhcs.interop.cellprofiler.runtime import (
@@ -13,6 +16,8 @@ from openhcs.interop.cellprofiler.runtime import (
 from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     bind_generated_pipeline_runtime,
     GeneratedPipelineContractSidecar,
+    GeneratedPipelineSemanticContractsFingerprint,
+    GeneratedPipelineSemanticContractsModule,
     materialize_generated_pipeline_import_module,
 )
 from openhcs.interop.cellprofiler.parser import ModuleBlock
@@ -186,6 +191,29 @@ def test_generated_pipeline_imports_artifact_kind_for_source_binding_literals():
     assert "from openhcs.core.artifacts import ArtifactKind" in generated.code
 
 
+def test_generated_runtime_binding_preserves_backend_callable_identity() -> None:
+    generated = _generated_pipeline(
+        [
+            _module(
+                1,
+                "IdentifyPrimaryObjects",
+                {
+                    "Select the input image": SOURCE_IMAGE,
+                    "Name the primary objects to be identified": NUCLEI,
+                },
+            )
+        ]
+    )
+    namespace = _pipeline_namespace(generated)
+    step_func = namespace["pipeline_steps"][0].func
+
+    assert step_func.__name__ == "identify_primary_objects"
+    assert step_func.__module__ == "openhcs.processing.backends.cellprofiler"
+    assert "benchmark_generated" not in step_func.__name__
+    assert "_runtime" not in step_func.__name__
+    assert runtime_adapter_spec_from_callable(step_func) is not None
+
+
 def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(
     tmp_path: Path,
 ) -> None:
@@ -239,6 +267,63 @@ def test_materialized_generated_pipeline_contract_sidecar_is_versioned_json(
     assert "GeneratedPipelineContractSidecar" in import_module_path.read_text(
         encoding="utf-8"
     )
+
+
+def test_materialized_generated_pipeline_exports_semantic_contracts_as_python(
+    tmp_path: Path,
+) -> None:
+    generated = _generated_pipeline(_image_artifact_pipeline_modules())
+    module_name = "test_generated_semantic_contract_sidecar"
+    fingerprint = GeneratedPipelineSemanticContractsFingerprint.from_generation(
+        source_cppipe=None,
+        generated_code=generated.code,
+        semantic_contracts=generated.artifact_contracts,
+    ).value
+
+    import_module_path = materialize_generated_pipeline_import_module(
+        generated.code,
+        module_name=module_name,
+        output_dir=tmp_path,
+        artifact_contracts=generated.runtime_module_contracts_by_module_num,
+        semantic_contracts=generated.artifact_contracts,
+        semantic_contract_fingerprint=fingerprint,
+    )
+
+    sidecar_path = tmp_path / f"{module_name}.cellprofiler_semantic_contracts.py"
+    assert sidecar_path.exists()
+    assert not (tmp_path / f"{module_name}.cellprofiler_semantic_contracts.json").exists()
+
+    restored = GeneratedPipelineSemanticContractsModule.load(
+        sidecar_path,
+        expected_fingerprint=fingerprint,
+    )
+    assert restored == generated.artifact_contracts
+    assert restored[0].source_bindings.groups[0].bindings[0].alias == SOURCE_IMAGE
+
+    spec = importlib.util.spec_from_file_location(module_name, import_module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[module_name] = module
+    spec.loader.exec_module(module)
+    assert module.CELLPROFILER_SEMANTIC_CONTRACTS == generated.artifact_contracts
+    assert module.CELLPROFILER_SEMANTIC_CONTRACT_FINGERPRINT == fingerprint
+
+
+def test_semantic_contract_sidecar_rejects_fingerprint_mismatch(
+    tmp_path: Path,
+) -> None:
+    generated = _generated_pipeline(_image_artifact_pipeline_modules())
+    sidecar_path = tmp_path / "semantic_contracts.py"
+    GeneratedPipelineSemanticContractsModule(
+        generated.artifact_contracts,
+        fingerprint="expected",
+    ).write(sidecar_path)
+
+    with pytest.raises(ValueError, match="fingerprint mismatch"):
+        GeneratedPipelineSemanticContractsModule.load(
+            sidecar_path,
+            expected_fingerprint="stale",
+        )
 
 
 def _synthetic_nuclei_image() -> np.ndarray:

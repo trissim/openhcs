@@ -108,6 +108,9 @@ class PlatePipelineRequestBuilder:
                 display_name,
             )
             definition_pipeline = []
+        definition_pipeline = CompileWorkflowService.normalize_pipeline_for_transport(
+            definition_pipeline
+        )
         self.validate_pipeline_steps(definition_pipeline)
         return definition_pipeline
 

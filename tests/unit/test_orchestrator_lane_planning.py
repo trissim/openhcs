@@ -296,6 +296,60 @@ def test_pooled_worker_lane_runner_submits_and_collects_lane_results(monkeypatch
     assert results == {"A01": ExecutionResult.success("A01")}
 
 
+def test_pooled_worker_lane_runner_submits_stripped_pipeline_shells(monkeypatch):
+    from openhcs.core.steps.function_step import FunctionStep
+
+    submitted_pipeline = []
+    stripped_step = FunctionStep(func=lambda image: image, name="Stripped")
+    for field_name in tuple(vars(stripped_step)):
+        delattr(stripped_step, field_name)
+
+    class FakeFuture:
+        def result(self):
+            return {"A01": ExecutionResult.success("A01")}
+
+    class FakeExecutor:
+        def submit(self, fn):
+            return FakeFuture()
+
+    class FakeWorkerLaneExecutor:
+        def __init__(self, *, pipeline_definition, **kwargs):
+            submitted_pipeline.extend(pipeline_definition)
+
+        def execute(self):
+            return {}
+
+    monkeypatch.setattr(
+        orchestrator_module.concurrent.futures,
+        "as_completed",
+        lambda futures: list(futures),
+    )
+    monkeypatch.setattr(
+        orchestrator_module,
+        "WorkerLaneExecutor",
+        FakeWorkerLaneExecutor,
+    )
+
+    execution_plan = WorkerLaneExecutionPlan(
+        identity=WorkerLaneExecutionIdentity(
+            execution_id="exec",
+            plate_id="plate",
+            debug_execution_policy=NoOpDebugExecutionPolicy(),
+        ),
+        lane_axis_contexts={"worker_0": [("A01", [("A01", object())])]},
+        worker_assignments={"worker_0": ["A01"]},
+        runtime_observation_mode=RuntimeObservationMode.OMIT,
+    )
+
+    PooledWorkerLaneRunner(FakeExecutor()).run(
+        pipeline_definition=[stripped_step],
+        execution_plan=execution_plan,
+        parent_contexts={},
+    )
+
+    assert submitted_pipeline == [stripped_step]
+
+
 def test_pooled_worker_lane_runner_emits_error_before_reraising(monkeypatch):
     emitted = []
 

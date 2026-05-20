@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import inspect
 import importlib
+import sys
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from functools import lru_cache, wraps
+from types import ModuleType
 from typing import Any, ClassVar
 
 from metaclass_registry import AutoRegisterMeta
@@ -35,6 +37,20 @@ from openhcs.processing.backends.lib_registry.unified_registry import Processing
 
 
 CELLPROFILER_MODULE_ATTR = "__openhcs_cellprofiler_module__"
+CELLPROFILER_FUNCTION_NAMES = frozenset(function_inventory())
+_STABLE_CELLPROFILER_FUNCTIONS: dict[str, Callable[..., Any]] = {}
+
+
+class CellProfilerBackendModule(ModuleType):
+    """Package attribute authority for CellProfiler backend function exports."""
+
+    def __getattribute__(self, name: str) -> Any:
+        module_dict = ModuleType.__getattribute__(self, "__dict__")
+        function_names = module_dict.get("CELLPROFILER_FUNCTION_NAMES", frozenset())
+        if name in function_names:
+            catalog = module_dict["CellProfilerFunctionCatalog"]
+            return catalog.get_function(name)
+        return ModuleType.__getattribute__(self, name)
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,9 +106,6 @@ class CellProfilerFunctionCatalog:
     @classmethod
     def get_function(cls, name: str) -> Callable[..., Any]:
         """Return one exported CellProfiler-compatible processing function."""
-        published = globals().get(name)
-        if callable(published):
-            return published
         return CELLPROFILER_FUNCTIONS[name]
 
     @classmethod
@@ -291,10 +304,13 @@ def _load_cellprofiler_functions() -> tuple[dict[str, Callable[..., Any]], dict[
         )
         if contract is None:
             continue
-        wrapped_function = _make_processing_wrapper(
-            module_name=module_name,
-            func=absorbed_function,
-            contract=contract,
+        wrapped_function = _STABLE_CELLPROFILER_FUNCTIONS.setdefault(
+            function_name,
+            _make_processing_wrapper(
+                module_name=module_name,
+                func=absorbed_function,
+                contract=contract,
+            ),
         )
         functions[wrapped_function.__name__] = wrapped_function
     return functions, {}
@@ -329,7 +345,7 @@ def __dir__() -> list[str]:
     return sorted(
         {
             *globals(),
-            *function_inventory(),
+            *CELLPROFILER_FUNCTION_NAMES,
         }
     )
 
@@ -344,7 +360,10 @@ __all__ = tuple(
             "list_cellprofiler_functions",
             "require_cellprofiler_function",
             "unavailable_cellprofiler_functions",
-            *function_inventory(),
+            *CELLPROFILER_FUNCTION_NAMES,
         )
     )
 )
+
+
+sys.modules[__name__].__class__ = CellProfilerBackendModule

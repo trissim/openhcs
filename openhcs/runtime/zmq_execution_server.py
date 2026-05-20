@@ -308,9 +308,12 @@ class ZMQExecutionServer(ExecutionServer):
         if compile_only and compile_artifact_id:
             raise ValueError("compile_only and compile_artifact_id cannot both be set")
 
+        from openhcs.runtime.zmq_pipeline_transport import ZMQPipelineCodeTransport
+
         namespace = {}
         exec(pipeline_code, namespace)
-        if not (pipeline_steps := namespace.get("pipeline_steps")):
+        pipeline_steps = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
+        if not pipeline_steps:
             raise ValueError("Code must define 'pipeline_steps'")
         logger.info(
             "[%s] Request received: plate=%s compile_only=%s artifact_id=%s step_count=%d pipeline_sha=%s request_sig=%s",

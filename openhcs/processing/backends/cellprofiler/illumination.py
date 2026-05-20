@@ -32,7 +32,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.granularity import (
@@ -1482,7 +1482,7 @@ class NumbaNumpyRankMedianSmoothingBackendStrategy(
 ):
     """NumPy-memory rank median matching skimage rank median border semantics."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -1592,7 +1592,7 @@ class NativeNumpyRankMedianSmoothingBackendStrategy(
 ):
     """Compact-domain skimage rank-median backend for NumPy planes."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NATIVE,
     )
@@ -1695,7 +1695,7 @@ class CentrosomeNumpyConvexHullSmoothingBackendStrategy(
 ):
     """CellProfiler/centrosome reference convex-hull smoothing for NumPy planes."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.CENTROSOME,
     )
@@ -1745,7 +1745,7 @@ class LegacyFastNumpyConvexHullSmoothingBackendStrategy(
 ):
     """Fast CP3-compatible convex-hull smoothing for NumPy planes."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.LEGACY_FAST,
     )
@@ -1788,7 +1788,7 @@ class ExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
 ):
     """Numba-accelerated exact level-set convex-hull reconstruction."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -1861,7 +1861,7 @@ class NativeExactLevelSetNumpyConvexHullSmoothingBackendStrategy(
 ):
     """Reference exact level-set convex-hull reconstruction for NumPy planes."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NATIVE,
     )

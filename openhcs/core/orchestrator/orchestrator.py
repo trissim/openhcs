@@ -27,10 +27,12 @@ from openhcs.constants import Microscope
 from openhcs.core.compiled_execution import CompiledExecutionBundle
 from openhcs.core.config import GlobalPipelineConfig, MultiprocessingStartMethod
 from openhcs.config_framework.global_config import get_current_global_config
+from openhcs.config_framework.lazy_factory import LazyDataclass
 
 
 from openhcs.core.metadata_cache import get_metadata_cache, MetadataCache
 from openhcs.core.context.processing_context import ProcessingContext
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.core.pipeline.compiler import PipelineCompiler
 from openhcs.core.steps.abstract import AbstractStep
 from openhcs.core.components.validation import convert_enum_by_value
@@ -780,6 +782,9 @@ class PooledWorkerLaneRunner:
         pipeline_definition: List[AbstractStep],
         execution_plan: WorkerLaneExecutionPlan,
     ) -> Dict[concurrent.futures.Future, tuple[str, List[str]]]:
+        pipeline_definition = FunctionStepTransportAuthority.normalize_pipeline(
+            pipeline_definition
+        )
         future_to_worker_slot: Dict[concurrent.futures.Future, tuple[str, List[str]]] = {}
         for worker_slot, lane_contexts in execution_plan.lane_axis_contexts.items():
             if not lane_contexts:
@@ -1014,10 +1019,7 @@ def _merge_nested_dataclass(pipeline_value, global_value):
     # Both are dataclasses - merge field by field
     merged_values = {}
     for field in dataclass_fields(type(pipeline_value)):
-        # CRITICAL FIX: Use __dict__.get() to get RAW stored value, not getattr()
-        # For lazy dataclasses, getattr() triggers resolution which falls back to class defaults
-        # We need the actual None value to know if it should inherit from global config
-        raw_pipeline_field = pipeline_value.__dict__.get(field.name)
+        raw_pipeline_field = _raw_dataclass_field(pipeline_value, field.name)
         global_field_value = getattr(global_value, field.name)
 
         if raw_pipeline_field is not None:
@@ -1036,6 +1038,21 @@ def _merge_nested_dataclass(pipeline_value, global_value):
     return type(pipeline_value)(**merged_values)
 
 
+def _raw_dataclass_field(instance, field_name: str):
+    """Read a dataclass field without triggering lazy resolution."""
+    try:
+        return object.__getattribute__(instance, field_name)
+    except AttributeError:
+        return None
+
+
+def _to_base_config_if_lazy(value):
+    """Convert ObjectState lazy config carriers to their concrete base config."""
+    if isinstance(value, LazyDataclass):
+        return value.to_base_config()
+    return value
+
+
 def _create_merged_config(
     pipeline_config: "PipelineConfig", global_config: GlobalPipelineConfig
 ) -> GlobalPipelineConfig:
@@ -1051,32 +1068,18 @@ def _create_merged_config(
 
     merged_config_values = {}
     for field in fields(GlobalPipelineConfig):
-        # CRITICAL: Access raw stored value from __dict__ to avoid lazy resolution fallback to MRO defaults
-        # For lazy dataclasses, getattr() triggers resolution which falls back to GlobalPipelineConfig defaults
-        # We need the actual None value to know if it should inherit from global config
-        pipeline_value = pipeline_config.__dict__.get(field.name)
+        pipeline_value = _raw_dataclass_field(pipeline_config, field.name)
 
         if pipeline_value is not None:
-            # CRITICAL FIX: For lazy configs, merge with global config BEFORE converting to base
-            # This ensures None values in lazy configs resolve to global values
-            # Then convert to base config to store in thread-local context
-            if hasattr(pipeline_value, "to_base_config"):
-                # This is a lazy config - merge with global config first
+            if isinstance(pipeline_value, LazyDataclass):
                 global_value = getattr(global_config, field.name)
                 from dataclasses import is_dataclass
 
                 if is_dataclass(global_value):
-                    # Merge lazy config with global config to resolve None values
                     merged_lazy = _merge_nested_dataclass(pipeline_value, global_value)
-                    # Now convert merged result to base config
-                    converted_value = (
-                        merged_lazy.to_base_config()
-                        if hasattr(merged_lazy, "to_base_config")
-                        else merged_lazy
-                    )
+                    converted_value = _to_base_config_if_lazy(merged_lazy)
                     merged_config_values[field.name] = converted_value
                 else:
-                    # No global value to merge with, just convert to base
                     converted_value = pipeline_value.to_base_config()
                     merged_config_values[field.name] = converted_value
             else:
@@ -2144,6 +2147,9 @@ class PipelineOrchestrator:
                         execution_bundle.runtime_contexts.items()
                         if fork_inherited_execution
                         else execution_bundle.transport_contexts.items()
+                    )
+                    contexts_snapshot = FunctionStepTransportAuthority.normalize_contexts(
+                        contexts_snapshot
                     )
 
                     worker_assignment_plan = CompiledContextLanePlanner(

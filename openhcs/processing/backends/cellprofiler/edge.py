@@ -25,7 +25,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
-    cellprofiler_backend_provider_selection,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.image_geometry import (
     CellProfilerPlaneGeometry,
@@ -117,7 +117,7 @@ class EdgeEnhancementRequest:
         manual_threshold: float,
         threshold_adjustment_factor: float,
     ) -> "EdgeEnhancementRequest":
-        resolved_provider = cellprofiler_backend_provider_selection(
+        resolved_provider = CellProfilerBackendAuthority.provider_selection(
             backend_provider
         ).provider_or(method.default_backend_provider)
         return cls(

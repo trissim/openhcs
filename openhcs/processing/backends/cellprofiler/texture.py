@@ -18,7 +18,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 from openhcs.processing.materialization import csv_materializer
@@ -136,7 +136,7 @@ class HaralickTextureBackendStrategy(
 class NumbaNumpyObjectTextureCropBackendStrategy(ObjectTextureCropBackendStrategy):
     """Numba-accelerated NumPy backend for object texture crop extraction."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -181,7 +181,7 @@ class NumbaNumpyObjectTextureCropBackendStrategy(ObjectTextureCropBackendStrateg
 class NumbaNumpyHaralickTextureBackendStrategy(HaralickTextureBackendStrategy):
     """Numba implementation of mahotas' default 2-D Haralick semantics."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -217,7 +217,7 @@ class NumbaNumpyHaralickTextureBackendStrategy(HaralickTextureBackendStrategy):
 class NativeNumpyHaralickTextureBackendStrategy(HaralickTextureBackendStrategy):
     """Explicit mahotas backend used as the native reference implementation."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NATIVE,
     )

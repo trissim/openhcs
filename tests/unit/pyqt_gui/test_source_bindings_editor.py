@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from PyQt6.QtWidgets import QApplication, QComboBox
+from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QApplication, QComboBox, QGroupBox, QPushButton
 
 from openhcs.core.pipeline_image_schema import ImageAssignment, PipelineImageSchema
 from openhcs.core.source_bindings import (
@@ -22,6 +23,7 @@ from openhcs.core.source_bindings import (
     StepSourceBindingsConfig,
 )
 from openhcs.constants.constants import AllComponents
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.core.source_bindings_view import SourceInventory
 from openhcs.pyqt_gui.widgets.source_bindings_editor import (
     MatchPlanColumn,
@@ -32,7 +34,16 @@ from openhcs.pyqt_gui.widgets.source_bindings_editor import (
     StructuredSelectorCellWidget,
     StructuredSelectorDialog,
 )
-from pyqt_reactive.forms import InlineDataclassWidgetInfo, create_parameter_info
+from openhcs.config_framework.object_state import ObjectState
+from pyqt_reactive.forms import (
+    FormManagerConfig,
+    InlineDataclassWidgetInfo,
+    ParameterFormManager,
+    create_parameter_info,
+)
+from pyqt_reactive.theming import ColorScheme
+from pyqt_reactive.animation.flash_mixin import create_groupbox_element
+from pyqt_reactive.widgets.shared.clickable_help_components import InlineDataclassGroupBox
 
 
 class QtApplicationHarness:
@@ -144,6 +155,177 @@ def test_source_bindings_editor_builds_from_bindings() -> None:
     assert widget.layout.count() > 0
 
 
+def test_source_bindings_editor_uses_compact_inline_step_binding_summary() -> None:
+    QtApplicationHarness.app()
+
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(
+            groups=(
+                GroupedSourceBindings(
+                    bindings=(NamedSourceBinding(alias="DNA"),),
+                ),
+            ),
+        )
+    )
+
+    button_labels = tuple(
+        button.text() for button in widget.findChildren(QPushButton)
+    )
+    assert widget.step_bindings_table is None
+    assert "Edit bindings..." in button_labels
+
+
+def test_source_bindings_editor_tables_expand_without_vertical_scrollbars() -> None:
+    QtApplicationHarness.app()
+
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(
+            groups=(
+                GroupedSourceBindings(
+                    bindings=(NamedSourceBinding(alias="DNA"),),
+                ),
+            ),
+        )
+    )
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
+
+    assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+    assert table.height() >= table.horizontalHeader().height() + table.rowHeight(0)
+
+
+def test_inline_source_bindings_widget_updates_object_state() -> None:
+    QtApplicationHarness.app()
+    step = FunctionStep(func=lambda image: image)
+    state = ObjectState(step)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    for _ in range(20):
+        QApplication.processEvents()
+        widget = manager.findChild(SourceBindingsEditorWidget)
+        if widget is not None:
+            break
+    else:
+        widget = None
+    assert widget is not None
+
+    widget.add_binding_row(NamedSourceBinding(alias="DNA"))
+    QApplication.processEvents()
+
+    edited = state.parameters["source_bindings"]
+    assert isinstance(edited, StepSourceBindingsConfig)
+    assert edited.groups[0].bindings[0].alias == "DNA"
+
+
+def test_inline_source_bindings_edit_queues_groupbox_flash() -> None:
+    QtApplicationHarness.app()
+    step = FunctionStep(func=lambda image: image)
+    state = ObjectState(step)
+    manager = ParameterFormManager(
+        state,
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    for _ in range(20):
+        QApplication.processEvents()
+        widget = manager.findChild(SourceBindingsEditorWidget)
+        if widget is not None:
+            break
+    else:
+        widget = None
+    assert widget is not None
+
+    queued: list[str] = []
+    manager.queue_flash_local = queued.append
+    widget.add_binding_row(NamedSourceBinding(alias="DNA"))
+    QApplication.processEvents()
+
+    assert "source_bindings" in queued
+
+
+def test_inline_source_bindings_uses_dataclass_groupbox_chrome() -> None:
+    QtApplicationHarness.app()
+    step = FunctionStep(func=lambda image: image)
+    manager = ParameterFormManager(
+        ObjectState(step),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    for _ in range(20):
+        QApplication.processEvents()
+        if "source_bindings" in manager.widgets:
+            break
+
+    container = manager.widgets["source_bindings"]
+    assert isinstance(container, InlineDataclassGroupBox)
+    assert container._inline_value_widget is not None
+    assert container._help_button is not None
+    assert container._flash_key == "source_bindings"
+
+    queued: list[str] = []
+    manager.queue_flash_local = queued.append
+    manager._queue_leaf_flash_for_path("source_bindings")
+
+    assert queued == ["source_bindings"]
+
+
+def test_source_bindings_flash_masks_nested_section_titles() -> None:
+    app = QtApplicationHarness.app()
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(
+            groups=(
+                GroupedSourceBindings(
+                    bindings=(NamedSourceBinding(alias="DNA"),),
+                ),
+            ),
+        )
+    )
+    container = InlineDataclassGroupBox(
+        title="Source Bindings",
+        help_target=StepSourceBindingsConfig,
+        color_scheme=ColorScheme(),
+        flash_key="source_bindings",
+    )
+    container.content_layout.addWidget(widget)
+    container.resize(900, 700)
+    container.show()
+
+    for _ in range(5):
+        app.processEvents()
+
+    element = create_groupbox_element("source_bindings", container)
+    assert element.get_child_rects is not None
+    child_rects = element.get_child_rects(container)
+    titled_sections = [section for section in widget.findChildren(QGroupBox) if section.title()]
+
+    title_rects = [
+        rect
+        for rect, _ in child_rects
+        if any(
+            section.mapTo(container, section.rect().topLeft()).y()
+            <= rect.y()
+            <= section.mapTo(container, section.rect().topLeft()).y()
+            + section.fontMetrics().height()
+            + 4
+            for section in titled_sections
+        )
+    ]
+
+    assert len(title_rects) >= len(titled_sections)
+
+
 def test_source_bindings_editor_round_trips_form_value() -> None:
     QtApplicationHarness.app()
     binding_config = StepSourceBindingsConfig(
@@ -217,11 +399,13 @@ def test_source_bindings_editor_edits_step_binding_table() -> None:
     widget = SourceBindingsEditorWidget.from_bindings(StepSourceBindingsConfig())
 
     widget.add_binding_row(NamedSourceBinding(alias="DNA"))
-    assert widget.step_bindings_table is not None
-    widget.step_bindings_table.item(
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
+    table.item(
         0,
         int(SourceBindingColumn.ALIAS),
     ).setText("OrigDNA")
+    widget._apply_step_binding_groups(dialog.groups())
 
     edited = widget.get_value()
     assert edited.groups[0].bindings[0].alias == "OrigDNA"
@@ -250,9 +434,10 @@ def test_source_bindings_editor_preserves_selector_on_basic_edits() -> None:
             ),
         )
     )
-    assert widget.step_bindings_table is not None
-
-    widget.step_bindings_table.item(0, int(SourceBindingColumn.ALIAS)).setText("OrigDNA")
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
+    table.item(0, int(SourceBindingColumn.ALIAS)).setText("OrigDNA")
+    widget._apply_step_binding_groups(dialog.groups())
 
     edited = widget.get_value().groups[0].bindings[0]
     assert edited.alias == "OrigDNA"
@@ -264,29 +449,31 @@ def test_source_bindings_editor_edits_selector_columns() -> None:
     widget = SourceBindingsEditorWidget.from_bindings(StepSourceBindingsConfig())
 
     widget.add_binding_row(NamedSourceBinding(alias="DNA"))
-    assert widget.step_bindings_table is not None
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
     set_editable_cell_text(
-        widget.step_bindings_table,
+        table,
         0,
         int(SourceBindingColumn.COMPONENTS),
         "channel=DNA;site=1",
     )
     set_editable_cell_text(
-        widget.step_bindings_table,
+        table,
         0,
         int(SourceBindingColumn.METADATA),
         "Well=A01",
     )
     set_editable_cell_text(
-        widget.step_bindings_table,
+        table,
         0,
         int(SourceBindingColumn.FILTERS),
         "file:contains:DNA",
     )
-    widget.step_bindings_table.item(
+    table.item(
         0,
         int(SourceBindingColumn.INHERIT),
     ).setText("False")
+    widget._apply_step_binding_groups(dialog.groups())
 
     selector = widget.get_value().groups[0].bindings[0].selector
     assert selector.components == (
@@ -336,12 +523,13 @@ def test_source_bindings_editor_uses_free_form_selector_pickers(tmp_path) -> Non
     )
 
     widget.add_binding_row(NamedSourceBinding(alias="DNA"))
-    assert widget.step_bindings_table is not None
-    components_widget = widget.step_bindings_table.cellWidget(
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
+    components_widget = table.cellWidget(
         0,
         int(SourceBindingColumn.COMPONENTS),
     )
-    metadata_widget = widget.step_bindings_table.cellWidget(
+    metadata_widget = table.cellWidget(
         0,
         int(SourceBindingColumn.METADATA),
     )
@@ -366,10 +554,12 @@ def test_source_bindings_editor_removes_selected_binding_row() -> None:
             ),
         )
     )
-    assert widget.step_bindings_table is not None
-    widget.step_bindings_table.selectRow(0)
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
+    table.selectRow(0)
 
-    widget.remove_selected_binding_rows()
+    dialog.editor.remove_selected_binding_rows()
+    widget._apply_step_binding_groups(dialog.groups())
 
     remaining_aliases = tuple(
         binding.alias
@@ -455,19 +645,21 @@ def test_source_bindings_editor_enum_columns_use_typed_combos() -> None:
     widget = SourceBindingsEditorWidget.from_bindings(StepSourceBindingsConfig())
 
     widget.add_binding_row(NamedSourceBinding(alias="DNA"))
-    assert widget.step_bindings_table is not None
+    dialog = widget._create_step_bindings_dialog()
+    table = dialog.editor.table
     set_combo_cell_text(
-        widget.step_bindings_table,
+        table,
         0,
         int(SourceBindingColumn.KIND),
         "object_labels",
     )
     set_combo_cell_text(
-        widget.step_bindings_table,
+        table,
         0,
         int(SourceBindingColumn.ORIGIN),
         "pipeline_start",
     )
+    widget._apply_step_binding_groups(dialog.groups())
 
     binding = widget.get_value().groups[0].bindings[0]
     assert binding.artifact_kind.value == "object_labels"

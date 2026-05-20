@@ -36,11 +36,13 @@ from openhcs.runtime.viewer_protocol import (
 from openhcs.runtime.napari_streaming_handlers import (
     NapariBatchProcessorStore,
     NapariComponentValueTracker,
+    NapariComponentMetadataNormalizer,
     NapariLayerUpdateAuthority,
     NapariLayerStateStore,
     NapariShapeLabelRasterizer,
     build_napari_streaming_data_type_handlers,
 )
+from openhcs.runtime.zmq_config import OPENHCS_ZMQ_CONFIG
 from zmqruntime.streaming import StreamingVisualizerServer, VisualizerProcessManager
 from zmqruntime.transport import (
     coerce_transport_mode,
@@ -68,6 +70,7 @@ logger = logging.getLogger(__name__)
 _NAPARI_LAYER_UPDATES = NapariLayerUpdateAuthority()
 _COMPONENT_DIMENSION_LABELS = ComponentDimensionLabelPolicy()
 _NAPARI_SHAPE_RASTERIZER = NapariShapeLabelRasterizer()
+_COMPONENT_METADATA_NORMALIZER = NapariComponentMetadataNormalizer()
 _ACK_ERROR = ViewerProtocolStatus.ERROR.value
 _ACK_SUCCESS = ViewerProtocolStatus.SUCCESS.value
 
@@ -382,7 +385,7 @@ def _handle_component_aware_display(
         # Use component metadata from ZMQ message - fail loud if not available
         if not component_metadata:
             raise ValueError(f"No component metadata available for path: {path}")
-        component_info = component_metadata
+        component_info = _COMPONENT_METADATA_NORMALIZER.normalize(component_metadata)
 
         component_modes, component_order = normalize_component_layout(display_config)
         layer_key = build_layer_key(
@@ -624,9 +627,50 @@ class NapariViewerServer(StreamingVisualizerServer):
         batch_processor.add_items(
             layer_key=layer_key,
             items=layer_items,
-            display_config={"component_modes": component_modes},
+            display_config={
+                "component_modes": component_modes,
+                "component_order": component_order,
+            },
             component_names_metadata=self.component_metadata,
         )
+
+    def display_layer_batch(
+        self,
+        *,
+        layer_key: str,
+        items: list[dict[str, Any]],
+        display_config: dict[str, Any],
+        component_names_metadata: dict[str, Any],
+    ) -> None:
+        """Display one debounced batch through the typed Napari layer routes."""
+
+        if component_names_metadata:
+            self.component_metadata.update(component_names_metadata)
+
+        component_modes = display_config["component_modes"]
+        component_order = display_config["component_order"]
+        stack_components = [
+            component
+            for component in component_order
+            if component_modes.get(component) == "stack"
+        ]
+
+        items_by_type: dict[StreamingDataType, list[dict[str, Any]]] = {}
+        for item in items:
+            data_type = item.get("data_type")
+            if isinstance(data_type, str):
+                data_type = StreamingDataType(data_type)
+            items_by_type.setdefault(data_type, []).append(item)
+
+        for data_type, typed_items in items_by_type.items():
+            update_route = self.layer_update_routes[data_type]
+            update_route(layer_key, typed_items, stack_components, component_modes)
+            logger.info(
+                "🔬 NAPARI PROCESS: Displayed %d %s item(s) in layer %s",
+                len(typed_items),
+                data_type.value,
+                layer_key,
+            )
 
     def _setup_dimension_label_handler(self, layer_key, stack_components):
         """

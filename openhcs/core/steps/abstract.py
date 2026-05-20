@@ -17,6 +17,10 @@ from openhcs.constants.input_source import InputSource
 from openhcs.core.config import LazyStepMaterializationConfig, LazyStreamingDefaults, LazyNapariStreamingConfig, LazyFijiStreamingConfig
 from openhcs.core.config import LazyStepWellFilterConfig
 from openhcs.core.config import LazyProcessingConfig, LazyDtypeConfig
+from openhcs.core.source_bindings import (
+    EMPTY_SOURCE_BINDINGS,
+    StepSourceBindingsConfig,
+)
 
 # ProcessingContext is used in type hints
 if TYPE_CHECKING:
@@ -103,6 +107,7 @@ class AbstractStep(abc.ABC):
         debug_pause: bool = False,
         dtype_config: 'LazyDtypeConfig' = LazyDtypeConfig(),
         processing_config: 'LazyProcessingConfig' = LazyProcessingConfig(),
+        source_bindings: 'StepSourceBindingsConfig' = EMPTY_SOURCE_BINDINGS,
         step_well_filter_config: 'LazyStepWellFilterConfig' = LazyStepWellFilterConfig(),
         step_materialization_config: 'LazyStepMaterializationConfig' = LazyStepMaterializationConfig(),
         streaming_defaults: 'LazyStreamingDefaults' = LazyStreamingDefaults(),
@@ -125,6 +130,7 @@ class AbstractStep(abc.ABC):
                     not affect normal execution.
             dtype_config: LazyDtypeConfig for dtype conversion behavior in memory type decorators.
             processing_config: LazyProcessingConfig for variable_components, group_by, input_source, and sequential processing.
+            source_bindings: StepSourceBindingsConfig for named semantic input bindings.
             step_well_filter_config: LazyStepWellFilterConfig for well filtering.
             step_materialization_config: Optional LazyStepMaterializationConfig for per-step materialized output.
                                    When provided, enables saving materialized copy of step output
@@ -141,6 +147,12 @@ class AbstractStep(abc.ABC):
         self.debug_pause = debug_pause
         self.dtype_config = dtype_config
         self.processing_config = processing_config
+        if not isinstance(source_bindings, StepSourceBindingsConfig):
+            raise TypeError(
+                "AbstractStep.source_bindings must be StepSourceBindingsConfig, "
+                f"got {type(source_bindings).__name__}."
+            )
+        self.source_bindings = source_bindings
         self.step_well_filter_config = step_well_filter_config
         self.step_materialization_config = step_materialization_config
         self.streaming_defaults = streaming_defaults

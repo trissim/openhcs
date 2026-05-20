@@ -4,6 +4,8 @@ import pytest
 
 from openhcs.constants.constants import AllComponents, GroupBy, VariableComponents
 from openhcs.core.artifacts import ArtifactKind
+from openhcs.core.config import GlobalPipelineConfig, PipelineConfig
+from openhcs.core.orchestrator.orchestrator import _create_merged_config
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
     ComponentSelector,
@@ -76,6 +78,16 @@ def test_step_source_bindings_reject_duplicate_aliases_and_group_keys():
                 GroupedSourceBindings(group_key="dna"),
             )
         )
+
+
+def test_step_source_bindings_global_config_merge_resolves_lazy_default():
+    merged = _create_merged_config(PipelineConfig(), GlobalPipelineConfig())
+
+    assert isinstance(merged.step_source_bindings_config, StepSourceBindingsConfig)
+    assert merged.step_source_bindings_config.is_empty
+    assert merged.step_source_bindings_config.groups == ()
+    assert merged.step_source_bindings_config.metadata_rules == ()
+    assert merged.step_source_bindings_config.match_plan is None
 
 
 def test_source_bindings_expose_generic_resolution_requirements():

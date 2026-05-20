@@ -93,8 +93,10 @@ class ZMQWorkerExecutionRequest:
             progress_forwarder.join()
 
     def steps_to_execute(self) -> list[Any]:
+        if self.execution_bundle is not None:
+            return list(self.execution_bundle.pipeline_definition)
         if self.compiled_pipeline_definition is not None:
-            return self.compiled_pipeline_definition
+            return list(self.compiled_pipeline_definition)
         return self.pipeline_steps
 
     def raise_if_cancelled(self, phase: str) -> None:

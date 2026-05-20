@@ -16,13 +16,14 @@ from openhcs.constants.constants import MemoryType
 from openhcs.core.memory.decorators import numpy
 from openhcs.core.pipeline.function_contracts import special_inputs, special_outputs
 from openhcs.core.public_api import public_names_from_objects
+from openhcs.core.runtime_semantics import ObjectLabelMeasurementValues
 from openhcs.core.runtime_values import object_label_dense_array
 from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enum
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
@@ -136,6 +137,40 @@ class ClassificationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class ClassificationMeasurementVector:
+    """Measurement vector normalized to the current object-label domain."""
+
+    values: np.ndarray
+
+    @classmethod
+    def from_value(
+        cls,
+        values: np.ndarray,
+    ) -> "ClassificationMeasurementVector":
+        return cls(np.asarray(values, dtype=np.float64).reshape(-1))
+
+    def aligned_to_labels(self, label_ids: np.ndarray) -> np.ndarray:
+        """Return values ordered like the materially present object labels."""
+        if label_ids.size == 0:
+            return np.zeros(0, dtype=np.float64)
+        if self.values.size == label_ids.size:
+            return self.values.copy()
+
+        max_label = int(label_ids[-1])
+        if self.values.size >= max_label and max_label > label_ids.size:
+            return ObjectLabelMeasurementValues.from_label_indexed_values(
+                tuple(int(label_id) for label_id in label_ids),
+                self.values,
+            ).values
+
+        aligned = np.full(label_ids.size, np.nan, dtype=np.float64)
+        copied = min(self.values.size, aligned.size)
+        if copied:
+            aligned[:copied] = self.values[:copied]
+        return aligned
+
+
+@dataclass(frozen=True, slots=True)
 class SingleMeasurementClassificationRequest:
     """Semantic request for single-measurement object classification."""
 
@@ -164,10 +199,9 @@ class SingleMeasurementClassificationRequest:
         if self.measurement_values is None:
             values = backend.mean_intensity_values(labels, image, unique_labels)
         else:
-            values = self.measurement_values.copy()
-
-        if len(values) < num_objects:
-            values = np.concatenate([values, np.full(num_objects - len(values), np.nan)])
+            values = ClassificationMeasurementVector.from_value(
+                self.measurement_values
+            ).aligned_to_labels(unique_labels)
 
         if bin_choice == ClassificationBinChoice.EVEN:
             low_threshold = self.low_threshold
@@ -255,7 +289,9 @@ class TwoMeasurementClassificationRequest:
         if self.measurement1_values is None:
             values1 = backend.mean_intensity_values(labels, image, unique_labels)
         else:
-            values1 = self.measurement1_values.copy()
+            values1 = ClassificationMeasurementVector.from_value(
+                self.measurement1_values
+            ).aligned_to_labels(unique_labels)
 
         if self.measurement2_values is None:
             values2 = np.bincount(
@@ -263,7 +299,9 @@ class TwoMeasurementClassificationRequest:
                 minlength=(int(unique_labels[-1]) + 1 if num_objects else 1),
             )[unique_labels].astype(float)
         else:
-            values2 = self.measurement2_values.copy()
+            values2 = ClassificationMeasurementVector.from_value(
+                self.measurement2_values
+            ).aligned_to_labels(unique_labels)
 
         t1 = classification_threshold(
             values1,
@@ -431,7 +469,7 @@ class NumbaNumpyObjectClassificationBackendStrategy(
 ):
     """Numba-backed NumPy object classification primitives."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )

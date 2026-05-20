@@ -25,10 +25,7 @@ from benchmark.adapters.cppipe_source import (
     materialize_cppipe_reference,
     resolve_cppipe_source,
 )
-from benchmark.converter.runtime_pipeline import (
-    execute_pipeline_direct,
-    prepare_generated_pipeline,
-)
+from benchmark.converter.runtime_pipeline import execute_pipeline_direct
 from benchmark.converter.execution_validation import (
     CPPipeExecutionValidation,
     CPPipeExecutionValidationError,
@@ -65,8 +62,13 @@ from openhcs.core.runtime_equivalence import (
 )
 from openhcs.core.runtime_execution_validation import runtime_output_roots
 from openhcs.core.runtime_exports import RuntimeExportObservation
-from openhcs.core.source_schema_workspace import materialize_source_schema_workspace
 from openhcs.core.source_schema_workspace import SourceSchemaImageSetSelection
+from openhcs.interop.cellprofiler.source_schema_ingestion import (
+    CellProfilerPipelinePreparationError,
+    CellProfilerSourceSchemaWorkspaceRequest,
+    CellProfilerSourceWorkspaceMaterializationError,
+    prepare_cellprofiler_source_schema_workspace,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -249,7 +251,7 @@ class OpenHCSRunRequest:
 
     @property
     def materialize_runtime_artifacts(self) -> bool:
-        return bool(self.pipeline_params.get("materialize_runtime_artifacts", False))
+        return bool(self.pipeline_params.get("materialize_runtime_artifacts", True))
 
     @property
     def raise_on_equivalence_failure(self) -> bool:
@@ -535,27 +537,9 @@ class OpenHCSAdapter(ToolAdapter):
         output_suffix = f"_{request.pipeline_name}_converted_cppipe"
         output_plate_root = request.output_dir / f"{request.dataset_path.name}{output_suffix}"
         generated_module_path = request.output_dir / f"{cppipe_path.stem}_openhcs.py"
-        try:
-            with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
-                prepared = prepare_generated_pipeline(
-                    cppipe_path,
-                    output_path=generated_module_path,
-                    prune_dead_unmaterialized_artifact_steps=(
-                        not request.compare_image_outputs
-                    ),
-                    materialize_skipped_save_images=request.compare_image_outputs,
-                    materialize_terminal_images=request.compare_image_outputs,
-                )
-        except ValueError as exc:
-            raise ToolExecutionError(
-                f"Failed to prepare converted .cppipe pipeline {cppipe_path.name}: "
-                f"{exc}"
-            ) from exc
         source_workspace_path = (
             request.output_dir
             / f"{request.dataset_path.name}_{cppipe_path.stem}_source_workspace"
-            if not prepared.source_schema.is_empty
-            else None
         )
 
         with phase_timing.phase(BenchmarkPhase.READ_CACHE):
@@ -581,30 +565,40 @@ class OpenHCSAdapter(ToolAdapter):
             image_output_count = len(validation.observation.exports.image_outputs)
             reused_runtime_execution_cache = True
         else:
-            execution_plate_path = request.dataset_path
+            try:
+                with phase_timing.phase(BenchmarkPhase.COMPILE_DIALECT):
+                    ingestion = prepare_cellprofiler_source_schema_workspace(
+                        CellProfilerSourceSchemaWorkspaceRequest(
+                            source_root=request.dataset_path,
+                            cppipe_path=cppipe_path,
+                            workspace_root=source_workspace_path,
+                            generated_pipeline_path=generated_module_path,
+                            filemanager=self._filemanager,
+                            image_set_selection=(
+                                request.axis_selection.source_schema_selection()
+                            ),
+                            prune_dead_unmaterialized_artifact_steps=(
+                                not request.compare_image_outputs
+                            ),
+                            materialize_skipped_save_images=(
+                                request.compare_image_outputs
+                            ),
+                            materialize_terminal_images=request.compare_image_outputs,
+                        )
+                    )
+            except CellProfilerPipelinePreparationError as exc:
+                raise ToolExecutionError(str(exc)) from exc
+            except CellProfilerSourceWorkspaceMaterializationError as exc:
+                raise ToolExecutionError(str(exc)) from exc
+
+            prepared = ingestion.prepared_pipeline
+            execution_plate_path = ingestion.execution_plate_path
+            source_workspace_path = ingestion.source_workspace_path
             execution_microscope = (
                 Microscope.AUTO
                 if source_workspace_path is not None
                 else self._configured_microscope(request.microscope_type)
             )
-            if source_workspace_path is not None:
-                try:
-                    with phase_timing.phase(BenchmarkPhase.MATERIALIZE_SOURCE_SCHEMA):
-                        source_workspace = materialize_source_schema_workspace(
-                            request.dataset_path,
-                            source_workspace_path,
-                            prepared.source_schema,
-                            filemanager=self._filemanager,
-                            image_set_selection=(
-                                request.axis_selection.source_schema_selection()
-                            ),
-                        )
-                except Exception as exc:
-                    raise ToolExecutionError(
-                        f"Failed to materialize CellProfiler source schema for "
-                        f"{cppipe_path.name}: {exc}"
-                    ) from exc
-                execution_plate_path = source_workspace.workspace_root
 
             execution_config = OpenHCSBenchmarkExecutionConfig.from_pipeline_params(
                 request.pipeline_params

@@ -9,6 +9,7 @@ from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
 from openhcs.interop.cellprofiler.module_roles import CellProfilerModuleRole
+from openhcs.interop.cellprofiler.symbol_table import ModuleArtifactContracts
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,6 +101,7 @@ class CellProfilerPipelineImportResult:
     generated_module_name: str
     generated_module_path: Path
     artifact_contracts: tuple[ModuleArtifactContract, ...] = ()
+    semantic_contracts: tuple[ModuleArtifactContracts, ...] = ()
     registered_functions: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
@@ -126,6 +128,11 @@ class CellProfilerPipelineImportResult:
         object.__setattr__(self, "artifact_contracts", tuple(self.artifact_contracts))
         object.__setattr__(
             self,
+            "semantic_contracts",
+            tuple(self.semantic_contracts),
+        )
+        object.__setattr__(
+            self,
             "registered_functions",
             tuple(self.registered_functions),
         )
@@ -134,6 +141,11 @@ class CellProfilerPipelineImportResult:
             "artifact_contracts",
             ModuleArtifactContract,
         ).validate(self.artifact_contracts)
+        TupleMemberTypeValidation(
+            "CellProfilerPipelineImportResult",
+            "semantic_contracts",
+            ModuleArtifactContracts,
+        ).validate(self.semantic_contracts)
         if not self.generated_source:
             raise ValueError(
                 "CellProfilerPipelineImportResult.generated_source must be "

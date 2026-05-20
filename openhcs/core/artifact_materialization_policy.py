@@ -7,7 +7,12 @@ from typing import Callable
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_values import RuntimeValue, RuntimeValueSchema
-from openhcs.processing.materialization import MaterializationSpec, csv_only, json_only
+from openhcs.processing.materialization import (
+    MaterializationSpec,
+    csv_only,
+    json_only,
+    segmentation_mask_rois,
+)
 
 
 class _NoArtifactMaterialization:
@@ -16,8 +21,15 @@ class _NoArtifactMaterialization:
     def __repr__(self) -> str:
         return "NO_ARTIFACT_MATERIALIZATION"
 
+    def __reduce__(self):
+        return (_no_artifact_materialization, ())
+
 
 NO_ARTIFACT_MATERIALIZATION = _NoArtifactMaterialization()
+
+
+def _no_artifact_materialization() -> _NoArtifactMaterialization:
+    return NO_ARTIFACT_MATERIALIZATION
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +65,10 @@ def _json_spec(_schema: RuntimeValueSchema) -> MaterializationSpec:
     return json_only(suffix=".json")
 
 
+def _object_label_spec(_schema: RuntimeValueSchema) -> MaterializationSpec:
+    return segmentation_mask_rois()
+
+
 DEFAULT_ARTIFACT_MATERIALIZATION_RULES: dict[
     ArtifactKind,
     ArtifactMaterializationRule,
@@ -72,6 +88,10 @@ DEFAULT_ARTIFACT_MATERIALIZATION_RULES: dict[
     ArtifactKind.SPATIAL_GRID: ArtifactMaterializationRule(
         ArtifactKind.SPATIAL_GRID,
         _json_spec,
+    ),
+    ArtifactKind.OBJECT_LABELS: ArtifactMaterializationRule(
+        ArtifactKind.OBJECT_LABELS,
+        _object_label_spec,
     ),
     ArtifactKind.METADATA: ArtifactMaterializationRule(
         ArtifactKind.METADATA,

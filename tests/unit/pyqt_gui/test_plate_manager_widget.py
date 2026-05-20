@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PyQt6.QtWidgets import QApplication
 from pyqt_reactive.theming import ColorScheme
 
 from openhcs.core.config import GlobalPipelineConfig
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.pyqt_gui.services.service_adapter import GlobalEventBus
 from openhcs.pyqt_gui.widgets.plate_manager import PlateManagerWidget
 
@@ -48,3 +51,118 @@ def test_plate_manager_constructor_initializes_qobject_before_signal_use(monkeyp
     assert widget.debug_snapshot_available is not None
     widget.cleanup()
     widget.close()
+
+
+def test_plate_manager_loads_cellprofiler_pipeline_into_empty_plate(monkeypatch) -> None:
+    QtApplicationHarness.app()
+    monkeypatch.setattr(PlateManagerWidget, "setup_ui", lambda self: None)
+    monkeypatch.setattr(PlateManagerWidget, "setup_connections", lambda self: None)
+    monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
+    widget = PlateManagerWidget(PlateManagerServiceStub())
+    pipeline_editor = PlatePipelineEditorRecorder()
+    widget.pipeline_editor = pipeline_editor
+    widget.selected_plate_path = "/plate"
+
+    widget._load_cellprofiler_pipeline_for_empty_plate(
+        "/plate",
+        CellProfilerWorkspaceResultFixture.with_steps(
+            (FunctionStep(func=lambda image: image, name="Imported"),)
+        ),
+    )
+
+    assert pipeline_editor.updated_pipeline == ("/plate", pipeline_editor.pipeline_steps)
+    assert len(pipeline_editor.pipeline_steps) == 1
+    assert pipeline_editor.changed_steps == pipeline_editor.pipeline_steps
+    widget.cleanup()
+    widget.close()
+
+
+def test_plate_manager_keeps_existing_pipeline_for_cellprofiler_plate(
+    monkeypatch,
+) -> None:
+    QtApplicationHarness.app()
+    monkeypatch.setattr(PlateManagerWidget, "setup_ui", lambda self: None)
+    monkeypatch.setattr(PlateManagerWidget, "setup_connections", lambda self: None)
+    monkeypatch.setattr(PlateManagerWidget, "update_button_states", lambda self: None)
+    widget = PlateManagerWidget(PlateManagerServiceStub())
+    pipeline_editor = PlatePipelineEditorRecorder(
+        existing_steps=(FunctionStep(func=lambda image: image, name="Existing"),)
+    )
+    widget.pipeline_editor = pipeline_editor
+
+    widget._load_cellprofiler_pipeline_for_empty_plate(
+        "/plate",
+        CellProfilerWorkspaceResultFixture.with_steps(
+            (FunctionStep(func=lambda image: image, name="Imported"),)
+        ),
+    )
+
+    assert pipeline_editor.updated_pipeline is None
+    assert pipeline_editor.changed_steps is None
+    widget.cleanup()
+    widget.close()
+
+
+class PlatePipelineChangedSignalRecorder:
+    """Signal-like recorder for pipeline_changed emissions."""
+
+    def __init__(self) -> None:
+        self.steps = None
+
+    def emit(self, steps) -> None:
+        self.steps = steps
+
+
+class PlatePipelineEditorRecorder:
+    """Pipeline editor seam used by PlateManager auto-import tests."""
+
+    def __init__(self, existing_steps: tuple[FunctionStep, ...] = ()) -> None:
+        self.existing_steps = existing_steps
+        self.pipeline_steps = []
+        self.pipeline_changed = PlatePipelineChangedSignalRecorder()
+        self.updated_pipeline = None
+
+    @property
+    def changed_steps(self):
+        return self.pipeline_changed.steps
+
+    def get_pipeline_for_plate(self, plate_path: str):
+        return list(self.existing_steps)
+
+    def update_pipeline_for_plate(self, plate_path: str, pipeline_steps) -> None:
+        self.updated_pipeline = (plate_path, pipeline_steps)
+
+    def update_item_list(self) -> None:
+        return None
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerWorkspaceResultFixture:
+    """Minimal CellProfiler workspace result carrying prepared pipeline steps."""
+
+    ingestion: object
+
+    @classmethod
+    def with_steps(cls, steps):
+        return cls(
+            ingestion=CellProfilerIngestionFixture(
+                prepared_pipeline=CellProfilerPreparedPipelineFixture(
+                    pipeline=CellProfilerPipelineFixture(steps=steps)
+                )
+            )
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerIngestionFixture:
+    prepared_pipeline: object
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerPreparedPipelineFixture:
+    pipeline: object
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerPipelineFixture:
+    steps: tuple[FunctionStep, ...]

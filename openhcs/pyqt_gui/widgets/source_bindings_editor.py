@@ -8,23 +8,29 @@ from enum import Enum, IntEnum
 from types import MappingProxyType
 from typing import Callable, Generic, Mapping, TypeVar
 
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
     QPushButton,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
-from pyqt_reactive.protocols.widget_protocols import ValueGettable, ValueSettable
+from pyqt_reactive.protocols.widget_protocols import (
+    ChangeSignalEmitter,
+    ValueGettable,
+    ValueSettable,
+)
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
@@ -211,6 +217,7 @@ class FreeFormCellSpec:
     editor_kind: FreeFormCellEditorKind = FreeFormCellEditorKind.SELECTOR_LIST
 
 
+EnumCellSpecMap = Mapping[tuple[type[IntEnum], IntEnum], EnumCellSpec]
 FreeFormCellSpecMap = Mapping[tuple[type[IntEnum], IntEnum], FreeFormCellSpec]
 
 
@@ -460,7 +467,7 @@ class EditableTableController(Generic[EditableRowT]):
 
     table: QTableWidget
     columns: tuple[IntEnum, ...]
-    enum_cell_specs: Mapping[tuple[type[IntEnum], IntEnum], EnumCellSpec]
+    enum_cell_specs: EnumCellSpecMap
     free_form_cell_specs: FreeFormCellSpecMap
     row_cells: Callable[[EditableRowT], tuple[str, ...]]
     row_from_cells: Callable[[tuple[str, ...]], EditableRowT | None]
@@ -543,6 +550,162 @@ class EditableTableController(Generic[EditableRowT]):
             combo.setCurrentIndex(index)
         combo.currentIndexChanged.connect(lambda _: self.apply_changes())
         self.table.setCellWidget(row_index, int(column), combo)
+
+
+class EditableTableLayout:
+    """Shared layout policy for compact source-binding tables."""
+
+    @staticmethod
+    def configure(table: QTableWidget) -> None:
+        table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        table.setSizePolicy(
+            QSizePolicy.Policy.Expanding,
+            QSizePolicy.Policy.Fixed,
+        )
+        table.horizontalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+        table.verticalHeader().setSectionResizeMode(
+            QHeaderView.ResizeMode.ResizeToContents
+        )
+
+    @staticmethod
+    def fit_to_rows(table: QTableWidget) -> None:
+        table.resizeRowsToContents()
+        header_height = table.horizontalHeader().height()
+        row_height = sum(table.rowHeight(row) for row in range(table.rowCount()))
+        if table.rowCount() == 0:
+            row_height = table.verticalHeader().defaultSectionSize()
+        scrollbar_height = table.horizontalScrollBar().sizeHint().height()
+        frame = table.frameWidth() * 2
+        table.setFixedHeight(header_height + row_height + scrollbar_height + frame + 8)
+
+
+class StepBindingsTableEditor(QWidget):
+    """Typed table editor for step-local source bindings."""
+
+    changed = pyqtSignal()
+
+    def __init__(
+        self,
+        *,
+        groups: tuple[GroupedSourceBindings, ...],
+        enum_cell_specs: EnumCellSpecMap,
+        free_form_cell_specs: FreeFormCellSpecMap,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._updating_ui = False
+        self.table = QTableWidget(0, len(SourceBindingColumn), self)
+        self.table.setHorizontalHeaderLabels(
+            tuple(column.name.title() for column in SourceBindingColumn)
+        )
+        self.controller = EditableTableController(
+            table=self.table,
+            columns=tuple(SourceBindingColumn),
+            enum_cell_specs=enum_cell_specs,
+            free_form_cell_specs=free_form_cell_specs,
+            row_cells=EditableSourceBindingRow.cells,
+            row_from_cells=EditableSourceBindingRow.from_cells,
+            apply_changes=self._emit_changed,
+        )
+        for binding_group in groups:
+            for binding in binding_group.bindings:
+                self.controller.append(
+                    EditableSourceBindingRow.from_binding(
+                        group_key=binding_group.group_key,
+                        binding=binding,
+                    )
+                )
+        self.table.itemChanged.connect(lambda _: self._emit_changed())
+        EditableTableLayout.configure(self.table)
+        EditableTableLayout.fit_to_rows(self.table)
+
+        buttons = QHBoxLayout()
+        add_button = QPushButton("Add binding", self)
+        add_button.clicked.connect(self.add_binding_row)
+        remove_button = QPushButton("Remove selected", self)
+        remove_button.clicked.connect(self.remove_selected_binding_rows)
+        buttons.addWidget(add_button)
+        buttons.addWidget(remove_button)
+        buttons.addStretch(1)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.table)
+        layout.addLayout(buttons)
+
+    def add_binding_row(self, binding: NamedSourceBinding | None = None) -> None:
+        row_model = EditableSourceBindingRow.from_binding(
+            group_key=None,
+            binding=binding or NamedSourceBinding(alias="NewSource"),
+        )
+        self._updating_ui = True
+        try:
+            self.controller.append(row_model)
+        finally:
+            self._updating_ui = False
+        EditableTableLayout.fit_to_rows(self.table)
+        self.changed.emit()
+
+    def remove_selected_binding_rows(self) -> None:
+        if not self.controller.remove_selected():
+            return
+        EditableTableLayout.fit_to_rows(self.table)
+        self.changed.emit()
+
+    def groups(self) -> tuple[GroupedSourceBindings, ...]:
+        grouped_bindings: dict[str | None, list[NamedSourceBinding]] = {}
+        for row in self.controller.rows():
+            grouped_bindings.setdefault(row.group_key, []).append(row.binding)
+        return tuple(
+            GroupedSourceBindings(
+                group_key=group_key,
+                bindings=tuple(bindings),
+            )
+            for group_key, bindings in grouped_bindings.items()
+        )
+
+    def _emit_changed(self) -> None:
+        if self._updating_ui:
+            return
+        self.changed.emit()
+
+
+class StepBindingsDialog(QDialog):
+    """Modal editor for the large step-bindings table."""
+
+    def __init__(
+        self,
+        *,
+        groups: tuple[GroupedSourceBindings, ...],
+        enum_cell_specs: EnumCellSpecMap,
+        free_form_cell_specs: FreeFormCellSpecMap,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Edit step source bindings")
+        self.editor = StepBindingsTableEditor(
+            groups=groups,
+            enum_cell_specs=enum_cell_specs,
+            free_form_cell_specs=free_form_cell_specs,
+            parent=self,
+        )
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok
+            | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.editor)
+        layout.addWidget(buttons)
+        self.resize(1100, 520)
+
+    def groups(self) -> tuple[GroupedSourceBindings, ...]:
+        return self.editor.groups()
 
 
 class SelectorListCodec:
@@ -822,11 +985,9 @@ class SourceBindingsEditorWidget(QWidget):
         self._inventory = inventory
         self._updating_ui = False
         self.step_bindings_table: QTableWidget | None = None
+        self.step_bindings_editor: StepBindingsTableEditor | None = None
         self.metadata_rules_table: QTableWidget | None = None
         self.match_plan_table: QTableWidget | None = None
-        self.step_bindings_controller: (
-            EditableTableController[EditableSourceBindingRow] | None
-        ) = None
         self.metadata_rules_controller: (
             EditableTableController[EditableMetadataRuleRow] | None
         ) = None
@@ -840,6 +1001,7 @@ class SourceBindingsEditorWidget(QWidget):
             (MatchPlanColumn, MatchPlanColumn.METHOD): EnumCellSpec(SourceBindingMatchMethod),
         }
         self.layout = QVBoxLayout(self)
+        self.layout.setSpacing(8)
         self.empty_label = QLabel("No source bindings loaded")
         self.layout.addWidget(self.empty_label)
         if view_model is not None:
@@ -932,7 +1094,7 @@ class SourceBindingsEditorWidget(QWidget):
                         str(len(view_model.pipeline_sources.imported_metadata_tables)),
                     ),
                 ),
-            )
+            ),
         )
         self.layout.addWidget(
             self._table_group(
@@ -947,7 +1109,7 @@ class SourceBindingsEditorWidget(QWidget):
                     )
                     for row in view_model.pipeline_bindings
                 ),
-            )
+            ),
         )
         self.layout.addWidget(self._step_bindings_group(view_model))
         self.layout.addWidget(self._metadata_rules_group())
@@ -1010,32 +1172,38 @@ class SourceBindingsEditorWidget(QWidget):
         self.layout.addStretch(1)
         self._updating_ui = False
 
+    def connect_change_signal(self, callback: Callable[[StepSourceBindingsConfig], None]) -> None:
+        """Implement ChangeSignalEmitter for pyqt-reactive inline dataclass forms."""
+
+        self.changed.connect(lambda: callback(self.get_value()))
+
+    def disconnect_change_signal(self, callback: Callable[[StepSourceBindingsConfig], None]) -> None:
+        """Disconnect a previously registered change callback when Qt can match it."""
+
+        try:
+            self.changed.disconnect(callback)
+        except TypeError:
+            pass
+
     def add_binding_row(self, binding: NamedSourceBinding | None = None) -> None:
         """Append one editable source binding row to the step-binding table."""
 
         if self.step_bindings_table is None:
+            self._append_step_binding(binding or NamedSourceBinding(alias="NewSource"))
             return
-        if self.step_bindings_controller is None:
-            raise RuntimeError("Step bindings table controller is not initialized.")
-        row_model = EditableSourceBindingRow.from_binding(
-            group_key=None,
-            binding=binding or NamedSourceBinding(alias="NewSource"),
-        )
-        self._updating_ui = True
-        self.step_bindings_controller.append(row_model)
-        self._updating_ui = False
-        self._apply_step_binding_table()
+        if self.step_bindings_editor is None:
+            self._append_step_binding(binding or NamedSourceBinding(alias="NewSource"))
+            return
+        self.step_bindings_editor.add_binding_row(binding)
+        self._apply_step_binding_groups(self.step_bindings_editor.groups())
 
     def remove_selected_binding_rows(self) -> None:
-        """Remove selected source binding rows from the step-binding table."""
+        """Remove selected source binding rows from the open dialog editor."""
 
-        if self.step_bindings_table is None:
+        if self.step_bindings_editor is None:
             return
-        if self.step_bindings_controller is None:
-            raise RuntimeError("Step bindings table controller is not initialized.")
-        if not self.step_bindings_controller.remove_selected():
-            return
-        self._apply_step_binding_table()
+        self.step_bindings_editor.remove_selected_binding_rows()
+        self._apply_step_binding_groups(self.step_bindings_editor.groups())
 
     def add_metadata_rule_row(
         self,
@@ -1060,6 +1228,7 @@ class SourceBindingsEditorWidget(QWidget):
             )
         finally:
             self._updating_ui = False
+        self._fit_table_to_rows(self.metadata_rules_table)
         self._apply_metadata_rules_table()
 
     def remove_selected_metadata_rule_rows(self) -> None:
@@ -1071,6 +1240,7 @@ class SourceBindingsEditorWidget(QWidget):
             raise RuntimeError("Metadata rules table controller is not initialized.")
         if not self.metadata_rules_controller.remove_selected():
             return
+        self._fit_table_to_rows(self.metadata_rules_table)
         self._apply_metadata_rules_table()
 
     def add_match_plan_row(
@@ -1091,6 +1261,7 @@ class SourceBindingsEditorWidget(QWidget):
             )
         finally:
             self._updating_ui = False
+        self._fit_table_to_rows(self.match_plan_table)
         self._apply_match_plan_table()
 
     def remove_selected_match_plan_rows(self) -> None:
@@ -1102,6 +1273,7 @@ class SourceBindingsEditorWidget(QWidget):
             raise RuntimeError("Match plan table controller is not initialized.")
         if not self.match_plan_controller.remove_selected():
             return
+        self._fit_table_to_rows(self.match_plan_table)
         self._apply_match_plan_table()
 
     def clear(self) -> None:
@@ -1111,9 +1283,9 @@ class SourceBindingsEditorWidget(QWidget):
             if widget is not None:
                 widget.deleteLater()
         self.step_bindings_table = None
+        self.step_bindings_editor = None
         self.metadata_rules_table = None
         self.match_plan_table = None
-        self.step_bindings_controller = None
         self.metadata_rules_controller = None
         self.match_plan_controller = None
 
@@ -1147,48 +1319,82 @@ class SourceBindingsEditorWidget(QWidget):
             ),
         }
 
-    def _step_bindings_group(self, _view_model: SourceBindingsViewModel) -> QGroupBox:
-        group = QGroupBox("Step Bindings")
+    def _step_bindings_group(self, view_model: SourceBindingsViewModel) -> QGroupBox:
+        group = self._section_group("Step Bindings")
         layout = QVBoxLayout(group)
-        table = QTableWidget(0, len(SourceBindingColumn))
-        table.setHorizontalHeaderLabels(
-            tuple(column.name.title() for column in SourceBindingColumn)
-        )
-        self.step_bindings_table = table
-        self.step_bindings_controller = EditableTableController(
-            table=table,
-            columns=tuple(SourceBindingColumn),
-            enum_cell_specs=self._enum_cell_specs,
-            free_form_cell_specs=self._free_form_cell_specs(),
-            row_cells=EditableSourceBindingRow.cells,
-            row_from_cells=EditableSourceBindingRow.from_cells,
-            apply_changes=self._apply_step_binding_table,
-        )
-        for binding_group in self._bindings.groups:
-            for binding in binding_group.bindings:
-                self.step_bindings_controller.append(
-                    EditableSourceBindingRow.from_binding(
-                        group_key=binding_group.group_key,
-                        binding=binding,
-                    )
-                )
-        table.itemChanged.connect(lambda _: self._apply_step_binding_table())
-        table.resizeColumnsToContents()
-        layout.addWidget(table)
+        summary_table = QTableWidget(0, 4)
+        summary_table.setHorizontalHeaderLabels(("Group", "Bindings", "Aliases", "Origins"))
+        for row_index, row in enumerate(self._binding_summary_rows(view_model)):
+            summary_table.insertRow(row_index)
+            for column_index, value in enumerate(row):
+                summary_table.setItem(row_index, column_index, QTableWidgetItem(value))
+        summary_table.resizeColumnsToContents()
+        self._configure_table(summary_table)
+        self._fit_table_to_rows(summary_table)
+        layout.addWidget(summary_table)
 
         buttons = QHBoxLayout()
-        add_button = QPushButton("Add binding")
+        edit_button = QPushButton("Edit bindings...", group)
+        edit_button.clicked.connect(self._open_step_bindings_dialog)
+        add_button = QPushButton("Add binding", group)
         add_button.clicked.connect(lambda: self.add_binding_row())
-        remove_button = QPushButton("Remove selected")
-        remove_button.clicked.connect(self.remove_selected_binding_rows)
+        buttons.addWidget(edit_button)
         buttons.addWidget(add_button)
-        buttons.addWidget(remove_button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
         return group
 
+    def _create_step_bindings_dialog(self) -> StepBindingsDialog:
+        return StepBindingsDialog(
+            groups=self._bindings.groups,
+            enum_cell_specs=self._enum_cell_specs,
+            free_form_cell_specs=self._free_form_cell_specs(),
+            parent=self,
+        )
+
+    def _open_step_bindings_dialog(self) -> None:
+        dialog = self._create_step_bindings_dialog()
+        self.step_bindings_editor = dialog.editor
+        self.step_bindings_table = dialog.editor.table
+        accepted = dialog.exec() == QDialog.DialogCode.Accepted
+        if accepted:
+            self._apply_step_binding_groups(dialog.groups())
+        self.step_bindings_editor = None
+        self.step_bindings_table = None
+
+    def _append_step_binding(self, binding: NamedSourceBinding) -> None:
+        groups = list(self._bindings.groups)
+        if groups:
+            first_group = groups[0]
+            groups[0] = GroupedSourceBindings(
+                group_key=first_group.group_key,
+                bindings=first_group.bindings + (binding,),
+            )
+        else:
+            groups.append(
+                GroupedSourceBindings(
+                    group_key=None,
+                    bindings=(binding,),
+                )
+            )
+        self._apply_step_binding_groups(tuple(groups))
+
+    def _binding_summary_rows(
+        self,
+        view_model: SourceBindingsViewModel,
+    ) -> tuple[tuple[str, str, str, str], ...]:
+        return tuple(
+            (
+                group.group_key or "default",
+                str(len(group.bindings)),
+                ", ".join(binding.alias for binding in group.bindings),
+                ", ".join(sorted({binding.origin for binding in group.bindings})),
+            )
+            for group in view_model.step_binding_groups
+        )
+
     def _metadata_rules_group(self) -> QGroupBox:
-        group = QGroupBox("Step Metadata Rules")
+        group = self._section_group("Step Metadata Rules")
         layout = QVBoxLayout(group)
         table = QTableWidget(0, len(MetadataRuleColumn))
         table.setHorizontalHeaderLabels(
@@ -1208,6 +1414,8 @@ class SourceBindingsEditorWidget(QWidget):
             self.metadata_rules_controller.append(EditableMetadataRuleRow.from_rule(rule))
         table.itemChanged.connect(lambda _: self._apply_metadata_rules_table())
         table.resizeColumnsToContents()
+        self._configure_table(table)
+        self._fit_table_to_rows(table)
         layout.addWidget(table)
 
         buttons = QHBoxLayout()
@@ -1222,7 +1430,7 @@ class SourceBindingsEditorWidget(QWidget):
         return group
 
     def _match_plan_group(self) -> QGroupBox:
-        group = QGroupBox("Step Match Plan")
+        group = self._section_group("Step Match Plan")
         layout = QVBoxLayout(group)
         table = QTableWidget(0, len(MatchPlanColumn))
         table.setHorizontalHeaderLabels(
@@ -1242,6 +1450,8 @@ class SourceBindingsEditorWidget(QWidget):
             self.match_plan_controller.append(row)
         table.itemChanged.connect(lambda _: self._apply_match_plan_table())
         table.resizeColumnsToContents()
+        self._configure_table(table)
+        self._fit_table_to_rows(table)
         layout.addWidget(table)
 
         buttons = QHBoxLayout()
@@ -1255,26 +1465,18 @@ class SourceBindingsEditorWidget(QWidget):
         layout.addLayout(buttons)
         return group
 
-    def _apply_step_binding_table(self) -> None:
-        if self._updating_ui or self.step_bindings_table is None:
+    def _apply_step_binding_groups(
+        self,
+        groups: tuple[GroupedSourceBindings, ...],
+    ) -> None:
+        if self._updating_ui:
             return
-        if self.step_bindings_controller is None:
-            raise RuntimeError("Step bindings table controller is not initialized.")
-        rows = self.step_bindings_controller.rows()
-        groups: dict[str | None, list[NamedSourceBinding]] = {}
-        for row in rows:
-            groups.setdefault(row.group_key, []).append(row.binding)
         self._bindings = StepSourceBindingsConfig(
-            groups=tuple(
-                GroupedSourceBindings(
-                    group_key=group_key,
-                    bindings=tuple(bindings),
-                )
-                for group_key, bindings in groups.items()
-            ),
+            groups=groups,
             metadata_rules=self._bindings.metadata_rules,
             match_plan=self._bindings.match_plan,
         )
+        self.refresh()
         self.changed.emit()
 
     def _apply_metadata_rules_table(self) -> None:
@@ -1316,13 +1518,14 @@ class SourceBindingsEditorWidget(QWidget):
         )
         return SourceBindingMatchPlan(method=method, dimensions=dimensions)
 
-    @staticmethod
+    @classmethod
     def _table_group(
+        cls,
         title: str,
         columns: tuple[str, ...],
         rows: tuple[tuple[str, ...], ...],
     ) -> QGroupBox:
-        group = QGroupBox(title)
+        group = cls._section_group(title)
         layout = QVBoxLayout(group)
         table = QTableWidget(len(rows), len(columns))
         table.setHorizontalHeaderLabels(columns)
@@ -1330,12 +1533,41 @@ class SourceBindingsEditorWidget(QWidget):
             for column_index, value in enumerate(row):
                 table.setItem(row_index, column_index, QTableWidgetItem(value))
         table.resizeColumnsToContents()
+        cls._configure_table(table)
+        cls._fit_table_to_rows(table)
         layout.addWidget(table)
         return group
+
+    @staticmethod
+    def _section_group(title: str) -> QGroupBox:
+        group = QGroupBox(title)
+        group.setStyleSheet(
+            """
+            QGroupBox {
+                margin-top: 18px;
+            }
+            QGroupBox::title {
+                color: #f0f0f0;
+                subcontrol-origin: margin;
+                left: 6px;
+                padding: 0 3px;
+            }
+            """
+        )
+        return group
+
+    @staticmethod
+    def _configure_table(table: QTableWidget) -> None:
+        EditableTableLayout.configure(table)
+
+    @staticmethod
+    def _fit_table_to_rows(table: QTableWidget) -> None:
+        EditableTableLayout.fit_to_rows(table)
 
 
 ValueGettable.register(SourceBindingsEditorWidget)
 ValueSettable.register(SourceBindingsEditorWidget)
+ChangeSignalEmitter.register(SourceBindingsEditorWidget)
 
 
 def create_source_bindings_editor_widget(

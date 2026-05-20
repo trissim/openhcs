@@ -4,6 +4,7 @@ import pandas as pd
 
 from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactOutputPlan, ArtifactScope
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
+from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
 from openhcs.core.runtime_values import (
     FieldSpec,
     DerivedImagePayloadContext,
@@ -100,6 +101,28 @@ class SpecificNominalObjectLabelDomainStrategy(ObjectLabelDomainMetadataStrategy
 class StructuralObjectLabelDomainLookalike:
     def object_label_domain(self) -> ObjectLabelDomain:
         return ObjectLabelDomain(declared_object_count=99)
+
+
+def test_measurement_table_slice_offset_reinfers_projected_row_schema():
+    table = MeasurementTable(
+        name="NucleiMeasurements",
+        rows=(
+            {"ObjectNumber": 1, "AreaShape_Area": 10.0},
+            {
+                "object_name": "Nuclei",
+                "feature_name": "AreaShape_Area",
+                "value": 10.0,
+            },
+        ),
+        fields=(FieldSpec("ObjectNumber"), FieldSpec("AreaShape_Area")),
+        validated_runtime_schema=True,
+    )
+
+    shifted = RuntimeSliceProjection.measurement_table_with_slice_offset(table, 1)
+
+    assert shifted.fields == ()
+    assert all("feature_name" in row for row in shifted.rows)
+    assert {row["slice_index"] for row in shifted.rows} == {1}
 
 
 def test_object_label_dense_data_uses_nominal_payload_registry() -> None:

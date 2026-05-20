@@ -24,7 +24,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
@@ -178,7 +178,7 @@ class YenImageQualityThresholdStrategy(ImageQualityThresholdStrategy):
 class NumpyImageQualityBackendStrategy(ImageQualityBackendStrategy):
     """Independent NumPy implementation of image-quality primitives."""
 
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY)
+    backend_key = CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY)
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NATIVE
     is_default_backend = False
@@ -208,7 +208,7 @@ class NumpyImageQualityBackendStrategy(ImageQualityBackendStrategy):
 class NumbaNumpyImageQualityBackendStrategy(NumpyImageQualityBackendStrategy):
     """Numba-accelerated NumPy image-quality backend."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -238,7 +238,7 @@ class NumbaNumpyImageQualityBackendStrategy(NumpyImageQualityBackendStrategy):
 class CentrosomeNumpyImageQualityBackendStrategy(ImageQualityBackendStrategy):
     """Explicit centrosome provider for image-quality primitives."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.CENTROSOME,
     )

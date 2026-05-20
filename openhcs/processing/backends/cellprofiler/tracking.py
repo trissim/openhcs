@@ -29,7 +29,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.materialization import csv_materializer
 
@@ -140,7 +140,7 @@ class ObjectTrackingBackendStrategy(
 class NumbaNumpyObjectTrackingBackendStrategy(ObjectTrackingBackendStrategy):
     """Numba implementation of TrackObjects dense-label primitives."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )

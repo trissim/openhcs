@@ -32,7 +32,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.alignment_mutual_information_offset import (
     mutual_information_offset_numba,
@@ -66,7 +66,7 @@ class AlignmentBackendStrategy(
 class NumbaNumpyAlignmentBackendStrategy(AlignmentBackendStrategy):
     """Numba-accelerated NumPy alignment primitives."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )

@@ -94,6 +94,11 @@ from openhcs.core.debug import (
     DebugReplayMode,
     DebugSession,
 )
+from openhcs.interop.cellprofiler.plate_workspace import (
+    CellProfilerPlateWorkspacePreparer,
+    CellProfilerPlateWorkspaceRequest,
+    CellProfilerPlateWorkspaceResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -759,10 +764,21 @@ class PlateManagerWidget(AbstractManagerWidget):
 
             def do_init():
                 self._ensure_context()
-                return orchestrator.initialize()
+                cellprofiler_workspace = CellProfilerPlateWorkspacePreparer(
+                    CellProfilerPlateWorkspaceRequest(Path(plate_path))
+                ).prepare()
+                orchestrator.initialize()
+                return cellprofiler_workspace
 
             try:
-                await asyncio.get_event_loop().run_in_executor(None, do_init)
+                cellprofiler_workspace = await asyncio.get_event_loop().run_in_executor(
+                    None,
+                    do_init,
+                )
+                self._load_cellprofiler_pipeline_for_empty_plate(
+                    plate_path,
+                    cellprofiler_workspace,
+                )
                 self.plate_init_pending.remove(plate_path)
                 self.update_item_list()
                 self.orchestrator_state_changed.emit(plate_path, "READY")
@@ -1605,6 +1621,34 @@ class PlateManagerWidget(AbstractManagerWidget):
         logger.debug("Pipeline editor reference set in plate manager")
 
     # _find_main_window() moved to AbstractManagerWidget
+
+    def _load_cellprofiler_pipeline_for_empty_plate(
+        self,
+        plate_path: str,
+        cellprofiler_workspace: CellProfilerPlateWorkspaceResult,
+    ) -> None:
+        """Assign converted CellProfiler steps unless the plate already has a pipeline."""
+        if self.pipeline_editor is None:
+            return
+        if cellprofiler_workspace.ingestion is None:
+            return
+        if self.pipeline_editor.get_pipeline_for_plate(plate_path):
+            return
+        pipeline_steps = list(
+            cellprofiler_workspace.ingestion.prepared_pipeline.pipeline.steps
+        )
+        if not pipeline_steps:
+            raise RuntimeError(
+                f"CellProfiler pipeline import produced no steps for {plate_path}."
+            )
+        self.pipeline_editor.update_pipeline_for_plate(plate_path, pipeline_steps)
+        if self.selected_plate_path == plate_path:
+            self.pipeline_editor.pipeline_steps = pipeline_steps
+            self.pipeline_editor.update_item_list()
+            self.pipeline_editor.pipeline_changed.emit(pipeline_steps)
+        self.status_message.emit(
+            f"Imported {len(pipeline_steps)} CellProfiler step(s) for {Path(plate_path).name}"
+        )
 
     def _on_progress_started(self, max_value: int):
         """Handle progress started signal - route to status bar."""

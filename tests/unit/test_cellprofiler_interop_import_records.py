@@ -8,6 +8,7 @@ from openhcs.constants import Backend
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline import Pipeline
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
+from openhcs.interop.cellprofiler.symbol_table import ModuleArtifactContracts
 from openhcs.interop.cellprofiler import (
     CellProfilerDialectCompiler,
     CellProfilerModuleReference,
@@ -67,12 +68,14 @@ def test_cellprofiler_pipeline_import_result_requires_openhcs_contracts() -> Non
         generated_module_name="generated_example",
         generated_module_path=Path("generated_example.py"),
         artifact_contracts=(ModuleArtifactContract("IdentifyPrimaryObjects"),),
+        semantic_contracts=(ModuleArtifactContracts("IdentifyPrimaryObjects", 1),),
         registered_functions=("generated_example:run",),
     )
 
     assert result.provenance is provenance
     assert result.generated_module_path == Path("generated_example.py")
     assert result.artifact_contracts[0].module_name == "IdentifyPrimaryObjects"
+    assert result.semantic_contracts[0].module_num == 1
 
 
 def test_cellprofiler_pipeline_import_result_rejects_benchmark_contract_shape() -> None:

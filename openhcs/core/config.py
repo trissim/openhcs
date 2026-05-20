@@ -428,6 +428,15 @@ class ProcessingConfig:
     """Input source strategy: PREVIOUS_STEP (normal chaining) or PIPELINE_START (access original input)."""
 
 
+from openhcs.core.source_bindings import StepSourceBindingsConfig as _StepSourceBindingsConfig
+
+StepSourceBindingsConfig = global_pipeline_config(
+    inherit_as_none=False,
+    preview_label="SRC",
+    abbreviation="src",
+)(_StepSourceBindingsConfig)
+
+
 @abbreviation("seq")
 @global_pipeline_config
 @dataclass(frozen=True)
@@ -698,6 +707,12 @@ class StreamingConfig(StreamingDefaults, ABC, metaclass=StreamingConfigMeta):
     @abstractmethod
     def viewer_type(self) -> str:
         """Viewer type identifier (e.g., 'napari', 'fiji') for queue tracking and logging."""
+        pass
+
+    @property
+    @abstractmethod
+    def streaming_config_key(self) -> str:
+        """ObjectState/registry field key for this streaming config."""
         pass
 
     @property

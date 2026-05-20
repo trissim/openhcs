@@ -9,6 +9,28 @@ from pyqt_reactive.services.pattern_data_manager import SCOPE_TOKEN_KEY
 from pycodify import FormatContext, SourceFormatter, SourceFragment, to_source
 
 
+def _module_contract_imports(contract: Any) -> set[tuple[str, str]]:
+    from openhcs.core.artifact_materialization_policy import (
+        NO_ARTIFACT_MATERIALIZATION,
+    )
+
+    imports: set[tuple[str, str]] = set()
+    specs = (
+        *contract.inputs,
+        *contract.runtime_artifact_inputs,
+        *contract.outputs,
+        *contract.declared_outputs,
+    )
+    if any(spec.materialization is NO_ARTIFACT_MATERIALIZATION for spec in specs):
+        imports.add(
+            (
+                "openhcs.core.artifact_materialization_policy",
+                "NO_ARTIFACT_MATERIALIZATION",
+            )
+        )
+    return imports
+
+
 def _is_external_registered_function(func: Any) -> bool:
     """Check if function is an external library function registered with OpenHCS."""
     return (
@@ -39,6 +61,86 @@ class OpenHCSCallableFormatter(SourceFormatter):
         import_pair = (module, name)
         mapped = context.name_mappings.get(import_pair, name)
         return SourceFragment(mapped, frozenset([import_pair]))
+
+
+class CellProfilerRuntimeCallableFormatter(SourceFormatter):
+    priority = 90
+
+    def can_format(self, value: Any) -> bool:
+        from openhcs.interop.cellprofiler.runtime.module_execution import (
+            CellProfilerRuntimeCallable,
+        )
+
+        return isinstance(value, CellProfilerRuntimeCallable)
+
+    def format(self, value: Any, context: FormatContext) -> SourceFragment:
+        raw_func_frag = to_source(value.raw_func, context)
+        contract_frag = to_source(value.contract, context.indented())
+        import_pair = (
+            "openhcs.interop.cellprofiler.runtime.module_execution",
+            "cellprofiler_module_callable",
+        )
+        factory_name = context.name_mappings.get(
+            import_pair,
+            "cellprofiler_module_callable",
+        )
+        imports = set(raw_func_frag.imports | contract_frag.imports)
+        imports |= _module_contract_imports(value.contract)
+        imports.add(import_pair)
+        args = [
+            raw_func_frag.code,
+            contract_frag.code,
+        ]
+        if value.declared_processing_contract is not None:
+            args.append(
+                f"declared_processing_contract={value.declared_processing_contract!r}"
+            )
+        if value.processing_contract is not None:
+            processing_contract_frag = to_source(value.processing_contract, context)
+            imports |= processing_contract_frag.imports
+            args.append(f"processing_contract={processing_contract_frag.code}")
+
+        field_ctx = context.indented()
+        inner = f",\n{field_ctx.indent_str}".join(args)
+        return SourceFragment(
+            f"{factory_name}(\n{field_ctx.indent_str}{inner}\n{context.indent_str})",
+            frozenset(imports),
+        )
+
+
+class MaterializationSpecFormatter(SourceFormatter):
+    priority = 110
+
+    def can_format(self, value: Any) -> bool:
+        from openhcs.processing.materialization.core import MaterializationSpec
+
+        return isinstance(value, MaterializationSpec)
+
+    def format(self, value: Any, context: FormatContext) -> SourceFragment:
+        import_pair = (
+            "openhcs.processing.materialization.core",
+            "MaterializationSpec",
+        )
+        class_name = context.name_mappings.get(import_pair, "MaterializationSpec")
+        item_ctx = context.indented()
+        output_frags = [to_source(output, item_ctx) for output in value.outputs]
+        imports = {import_pair}
+        for frag in output_frags:
+            imports |= set(frag.imports)
+
+        args = [frag.code for frag in output_frags]
+        if value.allowed_backends is not None:
+            allowed_backends_frag = to_source(value.allowed_backends, item_ctx)
+            imports |= set(allowed_backends_frag.imports)
+            args.append(f"allowed_backends={allowed_backends_frag.code}")
+        if value.primary != 0:
+            args.append(f"primary={value.primary}")
+
+        inner = f",\n{item_ctx.indent_str}".join(args)
+        return SourceFragment(
+            f"{class_name}(\n{item_ctx.indent_str}{inner}\n{context.indent_str})",
+            frozenset(imports),
+        )
 
 
 def _is_pattern_tuple(value: Any) -> bool:
@@ -131,20 +233,24 @@ class FunctionStepFormatter(SourceFormatter):
             (name, param)
             for name, param in inspect.signature(FunctionStep.__init__).parameters.items()
             if name != "self" and param.kind != inspect.Parameter.VAR_KEYWORD
-        ] + [
+        ]
+        seen = {name for name, _param in signatures}
+        signatures.extend(
             (name, param)
             for name, param in inspect.signature(AbstractStep.__init__).parameters.items()
-            if name != "self"
-        ]
+            if name != "self" and name not in seen
+        )
 
         default_step = FunctionStep(func=lambda: None)
+        step_values = vars(value)
+        default_values = vars(default_step)
         field_ctx = context.indented()
         params = []
         imports = set()
 
         for name, param in signatures:
-            current_value = getattr(value, name, param.default)
-            default_value = getattr(default_step, name, param.default)
+            current_value = step_values.get(name, param.default)
+            default_value = default_values.get(name, param.default)
 
             if context.clean_mode and current_value == default_value:
                 continue

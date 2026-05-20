@@ -369,6 +369,7 @@ class ViewerProcessHandle:
             return False
         except subprocess.TimeoutExpired:
             self.process.kill()
+            self.process.wait(timeout=kill_timeout)
             return True
 
 

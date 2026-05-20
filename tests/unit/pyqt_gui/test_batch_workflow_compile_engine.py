@@ -33,6 +33,9 @@ from openhcs.pyqt_gui.widgets.shared.services.plate_pipeline_request_builder imp
     PlatePipelineRequestBuilder,
     RunSpec,
 )
+from openhcs.pyqt_gui.widgets.shared.services.compile_workflow_service import (
+    CompileWorkflowService,
+)
 from openhcs.pyqt_gui.widgets.shared.services.progress_workflow_service import (
     ProgressWorkflowService,
 )
@@ -106,6 +109,57 @@ def test_build_compile_job_preserves_debug_config_params():
     )
 
     assert job.config_params == debug_config_params
+
+
+def test_compile_transport_normalizes_cellprofiler_submodule_function_collision():
+    import importlib
+    import pickle
+
+    from openhcs.core.steps.function_step import FunctionStep
+
+    crop_module = importlib.import_module("openhcs.processing.backends.cellprofiler.crop")
+    pipeline = [
+        FunctionStep(
+            func=(crop_module, {"crop_shape": "Rectangle"}),
+            name="Crop",
+        )
+    ]
+
+    normalized = CompileWorkflowService.normalize_pipeline_for_transport(pipeline)
+
+    normalized_func = normalized[0].func[0]
+    assert callable(normalized_func)
+    assert normalized_func.__name__ == "crop"
+    assert normalized_func.__module__ == "openhcs.processing.backends.cellprofiler"
+    pickle.dumps(normalized)
+
+
+def test_compile_transport_preserves_stable_cellprofiler_function_wrappers():
+    import pickle
+
+    import openhcs.processing.backends.cellprofiler as cellprofiler_backend
+    from openhcs.core.steps.function_step import FunctionStep
+
+    crop = cellprofiler_backend.crop
+    cellprofiler_backend._cellprofiler_function_maps.cache_clear()
+
+    pipeline = [FunctionStep(func=crop, name="Crop")]
+
+    normalized = CompileWorkflowService.normalize_pipeline_for_transport(pipeline)
+
+    assert normalized[0].func is cellprofiler_backend.crop
+    pickle.dumps(normalized)
+
+
+def test_compile_transport_rejects_unresolved_module_objects():
+    import math
+
+    from openhcs.core.steps.function_step import FunctionStep
+
+    pipeline = [FunctionStep(func=math, name="BadModule")]
+
+    with pytest.raises(TypeError, match="module object"):
+        CompileWorkflowService.normalize_pipeline_for_transport(pipeline)
 
 
 def test_compile_policy_fail_fast_submit_raises():
@@ -281,6 +335,25 @@ def test_execution_control_disconnect_uses_client_service() -> None:
 
     assert client_service.disconnect_sync_calls == 1
     assert client_service.zmq_client is None
+
+
+def test_compile_submit_rejects_missing_zmq_client() -> None:
+    service = CompileWorkflowService(
+        global_config_provider=lambda: object(),
+        run_blocking=lambda _loop, func: func(),
+    )
+
+    async def run_case() -> None:
+        with pytest.raises(RuntimeError, match="ZMQ client is not connected"):
+            await service.submit_compile_request(
+                zmq_client=None,
+                loop=object(),
+                plate_path="/tmp/plate",
+                definition_pipeline=[],
+                pipeline_config=object(),
+            )
+
+    asyncio.run(run_case())
 
 
 class RecordingProgressTracker:

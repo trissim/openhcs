@@ -108,6 +108,12 @@ class ZMQExecutionClient(ExecutionClient):
             header="# Edit this pipeline and save to apply changes",
             clean_mode=True,
         )
+        from openhcs.runtime.zmq_pipeline_transport import ZMQPipelineCodeTransport
+
+        pipeline_code = ZMQPipelineCodeTransport.from_pipeline_source(
+            source=pipeline_code,
+            pipeline_steps=pipeline_steps,
+        ).source
         request = {
             "type": "execute",
             "plate_id": str(plate_id),

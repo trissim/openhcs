@@ -36,7 +36,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.image_geometry import (
     cellprofiler_grayscale_plane,
@@ -392,7 +392,7 @@ class ObjectIntensityBackendStrategy(
 class NumbaNumpyObjectIntensityBackendStrategy(ObjectIntensityBackendStrategy):
     """Numba-accelerated NumPy object-intensity backend."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )

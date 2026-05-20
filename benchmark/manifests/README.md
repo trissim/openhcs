@@ -1,18 +1,24 @@
 # Benchmark Manifests
 
 `official30_portable_axis1.json` is the reproducible 30-case CP-vs-OpenHCS
-benchmark manifest. It avoids case-level absolute paths by declaring named roots:
+benchmark manifest. It avoids case-level absolute paths by declaring named,
+self-materializing roots:
 
-- `CELLPROFILER_EXAMPLES_ROOT`: local checkout/extraction of official CellProfiler
-  example pipelines and datasets. Defaults to `/tmp/cellprofiler_examples`.
-- `OPENHCS_BENCHMARK_DATASET_CACHE_ROOT`: dataset cache containing registry-backed
-  tutorial/supplement sources. Defaults to `/tmp/openhcs_benchmark_dataset_cache_last8`.
+- `CELLPROFILER_EXAMPLES_ROOT`: sparse checkout of official CellProfiler example
+  pipelines and datasets. Defaults to `/tmp/cellprofiler_examples`.
+- `OPENHCS_BENCHMARK_DATASET_CACHE_ROOT`: auto-acquired dataset cache containing
+  registry-backed tutorial/supplement sources. Defaults to
+  `/tmp/openhcs_benchmark_dataset_cache_last8`.
 - `OPENHCS_AXISONE_SUBSETS_ROOT`: compatibility root for older axis-one
   manifests. The official 30-case manifest uses full dataset-cache roots and
   applies `openhcs_max_axis_count` as a well/sample selector so all sites and
   channels for the selected sample remain present.
 
-Build or refresh registry-backed datasets with:
+The benchmark manifest loader materializes missing acquisition-enabled roots
+before resolving case paths. Set `OPENHCS_BENCHMARK_AUTO_ACQUIRE=0` to disable
+this and require pre-existing files.
+
+Build or refresh registry-backed datasets directly with:
 
 ```bash
 python scripts/prepare_cellprofiler_benchmark_datasets.py manifest \

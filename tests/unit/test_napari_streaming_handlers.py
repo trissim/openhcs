@@ -8,6 +8,7 @@ from polystore.streaming_constants import StreamingDataType
 from openhcs.runtime.viewer_protocol import ComponentDimensionLabelPolicy
 from openhcs.runtime.napari_streaming_handlers import (
     NapariBatchProcessorStore,
+    NapariComponentMetadataNormalizer,
     NapariComponentValueTracker,
     NapariLayerUpdateAuthority,
     NapariLayerStateStore,
@@ -221,6 +222,30 @@ def test_napari_batch_processor_store_creates_one_processor_per_layer(monkeypatc
         "batch_size": 7,
         "debounce_delay_ms": 123,
         "max_debounce_wait_ms": 456,
+    }
+
+
+def test_napari_component_metadata_normalizer_coerces_indexed_strings():
+    normalizer = NapariComponentMetadataNormalizer()
+
+    normalized = normalizer.normalize(
+        {
+            "well": "A01",
+            "site": "1",
+            "channel": "2",
+            "z_index": "0",
+            "timepoint": "3",
+            "source": "raw",
+        }
+    )
+
+    assert normalized == {
+        "well": "A01",
+        "site": "1",
+        "channel": 2,
+        "z_index": 0,
+        "timepoint": 3,
+        "source": "raw",
     }
 
 

@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Coroutine
 from dataclasses import dataclass
 import logging
 from pathlib import Path
 from typing import Any, Callable
 
+from objectstate import spawn_thread_with_context
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.debug import DebugCommandType, DebugSession, FileManagerDebugSnapshotStore
@@ -19,6 +21,34 @@ from pyqt_reactive.services.scope_token_service import ScopeTokenService
 
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True, slots=True)
+class PipelineEditorCoroutineRunner:
+    """Run async GUI workflow commands from Qt slots without requiring qasync."""
+
+    editor: Any
+
+    def submit(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            self._submit_background(coroutine)
+            return
+        loop.create_task(self._guard(coroutine))
+
+    def _submit_background(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        spawn_thread_with_context(
+            lambda: asyncio.run(self._guard(coroutine)),
+            name="pipeline-editor-async-command",
+        )
+
+    async def _guard(self, coroutine: Coroutine[Any, Any, None]) -> None:
+        try:
+            await coroutine
+        except Exception as exc:
+            logger.exception("Pipeline editor async command failed")
+            self.editor.status_message.emit(str(exc))
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +67,11 @@ class FunctionPatternInvocationBadge:
         suffix = " *" if self.is_dirty_replay_start else ""
         return f"{prefix}{self.group_key}[{self.position}] {self.function_name}{suffix}"
 
+    @property
+    def is_visible(self) -> bool:
+        """Only debug-significant invocations need a title badge."""
+        return self.is_current_cursor or self.is_dirty_replay_start
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineEditorFunctionPresentation:
@@ -45,7 +80,7 @@ class PipelineEditorFunctionPresentation:
     editor: Any
 
     def format_func_preview(self, func, state=None) -> str | None:
-        badges = self.invocation_badges(func)
+        badges = self.visible_invocation_badges(func)
         if badges:
             return "func=" + " | ".join(badge.text for badge in badges)
         if isinstance(func, tuple) and len(func) >= 1:
@@ -121,6 +156,12 @@ class PipelineEditorFunctionPresentation:
             for item in normalized.iter_items()
         )
 
+    def visible_invocation_badges(
+        self,
+        func,
+    ) -> tuple[FunctionPatternInvocationBadge, ...]:
+        return tuple(badge for badge in self.invocation_badges(func) if badge.is_visible)
+
     def badge_provider(self, step: Any) -> Callable[[str, int, Callable], str | None]:
         badges = {
             (badge.group_key, badge.position, badge.function_name): badge
@@ -129,7 +170,7 @@ class PipelineEditorFunctionPresentation:
 
         def badge_text(group_key: str, position: int, func: Callable) -> str | None:
             badge = badges.get((group_key, position, self.func_name(func)))
-            return None if badge is None else badge.text
+            return badge.text if badge is not None and badge.is_visible else None
 
         return badge_text
 
@@ -181,7 +222,7 @@ class PipelineEditorDebugWorkflow:
         self.editor.status_message.emit(
             f"Submitting debug {command_label} for {self.editor.current_plate}"
         )
-        asyncio.create_task(
+        PipelineEditorCoroutineRunner(self.editor).submit(
             self.editor.plate_manager.action_run_debug_plate(
                 self.editor.current_plate,
                 command_type=command_type,
@@ -312,7 +353,7 @@ class PipelineEditorDebugWorkflow:
             snapshot_store_ref=self.editor.debug_session_state.snapshot_store_ref,
             snapshot_store_backend=self.editor.debug_session_state.snapshot_store_backend,
         )
-        asyncio.create_task(task)
+        PipelineEditorCoroutineRunner(self.editor).submit(task)
 
 
 @dataclass(frozen=True, slots=True)

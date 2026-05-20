@@ -1,121 +1,105 @@
 # OpenHCS: a composable bioimage workflow platform
 
-**Working draft.** Numbers marked `TODO` should be replaced only from final benchmark artifacts. Public adoption, funding, citation, and company-use statements require source verification before submission.
-
-## Plain-Language Summary
-
-Bioimage workflows rarely live inside one program. A lab may keep images in OMERO, Zarr-backed storage, or acquisition folders, run a trusted CellProfiler pipeline, inspect masks in napari or Fiji, add a custom Python quality-control step, export measurement tables, and later repeat the same analysis across many wells. Each tool is useful, but the workflow can become fragmented: the images, parameters, masks, measurements, viewer outputs, and batch jobs stop clearly referring to the same analysis.
-
-OpenHCS keeps those pieces connected as one workflow record. The same analysis can be edited in the GUI, exported as Python, extended with ordinary Python functions, connected to viewers by enabling napari or Fiji on selected steps, and executed across worker processes. CellProfiler import is the strictest validation case: OpenHCS preserves trusted `.cppipe` workflows including their image-loading semantics, reproduces native CellProfiler outputs under parity checks, and runs the tested workflows at least `TODO: 4x` faster under deliberately constrained single-thread CPU-only conditions.
+**Working draft.** Public adoption, funding, citation, company-use statements, and final integration validation require source/code verification before submission.
 
 ## Abstract
 
-Bioimage workflows increasingly span more than image analysis: they combine image metadata, multidimensional arrays, segmentation masks, measurement tables, managed image stores, interactive viewers, legacy pipeline formats, custom Python functions, and heterogeneous CPU/GPU backends. Existing tools remain essential, but their boundaries often turn one scientific workflow into disconnected GUI settings, scripts, exported files, viewer state, and batch jobs. We present OpenHCS, a composable bioimage workflow platform that keeps these pieces connected as one inspectable and executable workflow record. OpenHCS imports trusted CellProfiler pipelines with their loading semantics intact, streams selected step outputs to napari or Fiji when those step configurations are enabled, edits parameters through GUI and generated Python views of the same state, adds ordinary Python functions with declared memory backends, and scales execution across workers without changing what the workflow means. As a stringent validation, OpenHCS imports CellProfiler `.cppipe` workflows, reproduces native CellProfiler outputs under declared parity checks, and achieves at least `TODO: 4x` execution speedup across `TODO: 33` benchmark workflows under one-sample, one-thread/core, CPU-only conditions. OpenHCS provides a practical route for carrying trusted bioimage analyses into a composable, inspectable, and extensible execution platform rather than preserving them as static legacy files.
+Microscopes, automation, and plate-based experiments now let biology labs produce far more image data than they can comfortably analyze. After acquisition, the bottleneck often becomes the analysis itself: segmenting cells, checking masks, measuring phenotypes, reviewing questionable outputs, adding assay-specific logic, and repeating the same workflow across many samples. Existing bioimage tools are valuable, but analysis becomes fragile when users must copy parameters between programs, reorganize vendor plate exports by hand, save intermediate masks as disconnected files, rewrite trusted pipelines to add custom logic, or choose between interactive inspection and scalable batch execution. We present OpenHCS, a composable bioimage workflow platform that makes image analysis easier to scale without asking laboratories to abandon the tools they already trust. The same analysis can start from a microscope plate folder, a Bio-Formats-readable dataset, or a CellProfiler pipeline; expose intermediate masks to napari or Fiji; add ordinary Python functions; run GPU and deep-learning methods as configured workflow steps; export CellProfiler/CellProfiler Analyst-compatible results; and run across workers without becoming separate GUI, script, viewer, and batch-job versions. As a stringent validation, OpenHCS reproduces native CellProfiler outputs across 30 benchmark workflows and achieves at least 4x execution speedup for every tested workflow under one-sample, one-thread/core, CPU-only conditions. OpenHCS provides a practical route for making image analysis and review scale with acquisition rather than becoming the point where biological data slow down.
 
 ## Introduction
 
-Bioimage analysis is rarely contained in one program. A lab may store images in OMERO, Zarr-backed storage, or acquisition folders, run a trusted CellProfiler pipeline, inspect masks in napari or Fiji, add a custom Python quality-control step, export measurement tables, and later repeat the workflow across many wells or a small focused dataset. Each tool is useful, but the scientific workflow is the thing that has to remain coherent: the same images, channels, parameters, masks, measurements, and outputs must refer to the same analysis state.
+Image analysis is where microscopy becomes biological evidence. A screen or time-course may begin with automated acquisition, but the experiment is not interpretable until cells, organelles, tissues, tracks, intensities, textures, morphologies, and quality-control failures have been identified and reviewed. As acquisition scales, this analysis should scale with it. In practice, it often becomes the slowest and most fragile part of the workflow.
 
-The problem is not that these tools are inadequate. ImageJ/Fiji, CellProfiler, napari, OMERO, Zarr-backed image storage, scientific Python, GPU libraries, and workflow systems each solve important parts of biological image analysis and computational reproducibility [Schneider2012; Schindelin2012; Carpenter2006; McQuin2018; Sofroniew2019; Allan2012; Moore2021; vanDerWalt2014; Haase2020; Koster2012; DiTommaso2017; Galaxy2020; Galaxy2024]. The failure mode appears between them. Parameters are copied between GUIs and scripts, intermediate images are saved as files whose provenance is no longer clear, viewers inspect masks that may not correspond to the current run, and custom code loses the dimensional and metadata assumptions carried by the original workflow.
+The bottleneck is not only runtime. Users need to adapt an analysis when the assay changes, inspect intermediate masks when results look wrong, add small pieces of custom logic, repeat the same workflow across many samples, and explain which parameters produced a table or figure. These are ordinary scientific needs, but many analysis environments make them difficult. Some systems are powerful but slow for large batches. Some are extensible only if the user can become a plugin developer. Some commercial tools solve a narrow workflow well but do not integrate cleanly with open viewers, managed image stores, Python functions, or reproducible batch execution.
 
-OpenHCS addresses this boundary problem by keeping the workflow itself as the shared record. Images, source metadata, parameters, functions, intermediate masks, measurement tables, exported files, viewer streams, and worker execution are named parts of one workflow. A GUI edit, generated Python file, viewer request, imported CellProfiler module, or custom Python function all target the same analysis instead of creating parallel versions. This prevents imported workflows from becoming dead ends: they can be inspected, inherited, overridden, extended, serialized, and rerun through the same state model.
+The field already has strong tools because earlier generations of bioimage software solved real problems. ImageJ/Fiji, CellProfiler, napari, OMERO, Zarr-backed image storage, Bio-Formats, scientific Python, GPU libraries, and workflow systems each solve important parts of biological image analysis and computational reproducibility [Schneider2012; Schindelin2012; Carpenter2006; McQuin2018; Sofroniew2019; Allan2012; Moore2021; BioFormats; vanDerWalt2014; Haase2020; Koster2012; DiTommaso2017; Galaxy2020; Galaxy2024]. The failure mode appears when analysis has to move between them. Parameters are copied between GUIs and scripts, intermediate images are saved as files whose provenance is no longer clear, viewers inspect masks that may not correspond to the current run, and custom code loses the channel, timepoint, z-plane, field, or well information carried by the original workflow. Bio-Formats makes many proprietary files readable; OpenHCS microscope handlers turn readable files and vendor plate folders into analysis-ready image sets with explicit well, site, channel, z-plane, and timepoint labels.
 
-Internally, OpenHCS uses typed source schemas, function contracts, runtime artifacts, storage backends, memory-backend conversion, and process-isolated workers. These terms are implementation details of a simple user-facing guarantee: before a run starts, OpenHCS checks what data exist, what each step consumes and produces, where outputs will go, which memory backend is required, and which worker will execute the work.
+OpenHCS addresses this boundary problem by keeping the analysis connected as it moves between tools. Images, parameters, intermediate masks, measurement tables, exported files, viewer outputs, and worker runs all stay attached to the same analysis. A GUI edit, generated Python file, viewer request, imported CellProfiler module, or custom Python function all target the same analysis instead of creating parallel versions. Imported workflows can be inspected, inherited, overridden, extended, serialized, and rerun without creating a separate version of the experiment.
+
+Behind the scenes, OpenHCS records what images are being used, what each step expects, what each step produces, where outputs should go, which array or GPU backend is required, and how the work should run. These implementation details support a simple user-facing guarantee: before a run starts, OpenHCS checks whether the analysis is ready to execute.
 
 CellProfiler compatibility is the strictest test of this model because `.cppipe` files encode years of trusted biological image-analysis practice. OpenHCS does not treat them as opaque files or run them in a separate sidecar. It compiles them into normal OpenHCS workflows, compares outputs against native CellProfiler, and reports speed only after parity is established. CellProfiler parity is not the standard for every OpenHCS analysis; it is the preservation test for imported CellProfiler workflows. Native OpenHCS functions and backend-specific algorithms can be used when a lab intentionally chooses a different analysis method.
 
-We show that OpenHCS keeps bioimage workflows coherent across legacy pipelines, Python functions, viewers, storage backends, and worker execution. We validate this by importing a broad CellProfiler workflow corpus with loading semantics intact, reproducing native outputs under output-parity checks, measuring constrained CPU-only speedups, and demonstrating how the same workflow record supports step-level viewer output, generated Python, custom functions, managed sources, and scalable execution.
+We show that OpenHCS makes analysis and review scale with image acquisition while preserving the tools and workflows labs already trust. We validate this by importing a broad CellProfiler workflow corpus with loading semantics intact, reproducing native outputs under output-parity checks, measuring constrained CPU-only speedups, and demonstrating how the same analysis supports step-level viewer output, generated Python, custom functions, managed sources, and scalable execution.
 
 ## Results
 
-### OpenHCS keeps one workflow record across tools
+### OpenHCS keeps the same analysis connected across tools
 
-OpenHCS starts from a practical observation: the workflow is more important than any one interface. The implemented path imports real CellProfiler `.cppipe` files with their image-loading semantics intact, enables napari or Fiji output on selected steps, adds Python functions through the same workflow-step mechanism, and runs parity, single-thread speed, and worker-scaling benchmarks. In many systems, those pieces become separate records. OpenHCS keeps them attached to one workflow record.
+OpenHCS starts from a practical observation: once images are acquired, analysis and review should not be the bottleneck. The implemented proof chain follows one analysis from import or source discovery, through inspection and extension, to parity testing and scaled execution. Steps that often become separate versions of the same experiment remain attached to one analysis.
 
-In an OpenHCS workflow, images, channels, parameters, intermediate masks, measurements, viewer outputs, generated Python, and worker execution remain connected. Step-level napari and Fiji configurations determine which step outputs are streamed. When enabled, OpenHCS launches or reuses the viewer on the configured port and sends images while the pipeline runs. These actions change or inspect the same workflow rather than creating a GUI version, a script version, a viewer version, and a batch-runner version.
+In a representative OpenHCS run, a `.cppipe` file and its encoded image-loading rules enter OpenHCS as a workflow; source images are resolved into well, site, channel, z-plane, and timepoint identities; processing modules produce named images, objects, measurements, and files; a selected mask can be streamed to napari or Fiji during execution; an assay-specific Python quality-control function can be inserted as another step; and the final outputs can be compared to native CellProfiler or executed across many wells with persistent workers.
 
-This matters because labs already have trusted tools. OpenHCS is not designed to replace CellProfiler, Fiji, napari, OMERO, Zarr-backed storage, or Python. It is designed to let a lab keep using them together. If a workflow was built in CellProfiler, OpenHCS preserves the pipeline's loading, metadata, and analysis semantics. If a collaborator needs Python, the same workflow can be exported as readable code. If a mask needs inspection, enabling viewer output on that step sends it to napari or Fiji during execution. Native OpenHCS workflows can additionally use explicit source bindings for local and managed sources.
+Labs already have trusted tools, and OpenHCS is designed to keep those tools usable together rather than replace them. If a workflow was built in CellProfiler, OpenHCS preserves how that pipeline loads images and what each image name means. If a collaborator needs Python, the same workflow can be exported as readable code. If a mask needs inspection, enabling viewer output on that step sends it to napari or Fiji during execution. Native OpenHCS workflows can additionally point to local folders, managed stores, or microscope-handler image sets directly.
 
-The imported or edited workflow is therefore not a compatibility artifact frozen in place. It becomes more inspectable and extensible than the original file: parameters have provenance, intermediates can be requested by name, custom functions can be inserted, and execution can move from a one-sample comparison to many-well worker throughput.
+Imported and edited workflows are not frozen compatibility files. They can be inspected, modified, extended with Python, reviewed as code, streamed to viewers, and rerun at scale.
 
-### OpenHCS checks the workflow before execution
+### OpenHCS catches setup mistakes before long runs
 
-OpenHCS does not simply run a list of Python calls. Before execution, it checks what data exist, what each step consumes, what each step produces, where outputs should go, and which worker process will run the work. These checks move common bioimage failures to the beginning of the run instead of discovering them after hours of processing.
+OpenHCS checks a workflow before running it. Image inputs must resolve to the intended well, site, channel, z-plane, and timepoint; each Python or imported function must have the inputs it expects; CPU or GPU requirements must be explicit; and masks, measurements, files, viewer outputs, and worker execution must be deliberately configured. Common failures such as wrong channels, stale acquisition folders, missing intermediate masks, incompatible array libraries, or outputs that no longer match the current run appear before long processing runs rather than after hours of computation.
 
-| What OpenHCS checks | Why the user cares | Failure avoided |
-|---|---|---|
-| Image sources and dimensions | The workflow knows which well, site, channel, timepoint, and z-plane each input represents | Wrong channel, missing image, path-specific assumptions |
-| Source bindings | A named image in the workflow points to the intended physical or managed source | Reusing stale images or the wrong acquisition folder |
-| Python or imported functions | Each step has a defined callable and expected inputs | Hidden scripts that no longer match the documented workflow |
-| Memory/backend requirements | A function receives the array type it was written for | Silent NumPy/GPU conversions or backend-specific surprises |
-| Intermediate results | Masks, labels, measurements, relationships, and files are named outputs | Uninspectable module state and stale intermediate files |
-| Output destinations | A result can be saved, compared, streamed, or discarded deliberately | Files or viewer outputs that do not match the current run |
-| Worker execution | Work runs in the intended process with clear progress and lifetime | Ambiguous process ownership, repeated startup cost, unsafe viewer state |
+Parameters remain traceable instead of fragile. A threshold, channel name, output setting, or source mapping can be inherited from a default, changed locally, or generated from an imported setting. The GUI can show where a value came from and what changed. Generated Python reconstructs the same workflow state, so a visual edit can become reviewable source code instead of an opaque GUI file.
 
-The same model makes parameters traceable instead of fragile. A threshold, channel name, output setting, or source mapping can be defaulted, inherited, locally changed, or generated from an imported setting. The GUI can show where a value came from and what changed. Generated Python reconstructs the same workflow state, so a visual edit can become reviewable source code instead of an opaque GUI file.
+Users do not need to understand the implementation to benefit from it. In the GUI, clearing a field means "inherit," entering a value means "override," and generated code explains the current workflow. A wet-lab user can remain in the GUI; a computational collaborator can review generated Python or add a short quality-control function; both views refer to the same analysis.
 
-This is the practical value of the underlying state system. The user does not need to think about state machinery to benefit from it. They see that clearing a field means "inherit," entering a value means "override," and generated code explains the current workflow. A wet-lab user can remain in the GUI; a computational collaborator can review Python; both are looking at the same analysis.
+### Custom Python, GPU, and deep-learning methods become workflow steps
 
-### Ordinary Python functions become workflow steps
+OpenHCS is not a fixed module catalog. Ordinary Python functions enter the workflow as steps and keep the benefits of parameter editing, validation, viewer output, generated code, and worker execution. OpenHCS reads the function's parameters and records which library it expects, such as NumPy, Numba, CuPy, CuCIM, JAX, PyTorch, TensorFlow, pyclesperanto, or another supported backend. A lab can register an existing callable instead of rebuilding it as a separate plugin, script runner, GUI, and batch executor.
 
-OpenHCS is not a fixed module catalog. Ordinary Python functions enter the workflow as steps and keep the benefits of parameter editing, validation, viewer output, generated code, and worker execution. Function signatures provide parameter information, and memory annotations declare whether a function expects NumPy, Numba, CuPy, CuCIM, JAX, PyTorch, TensorFlow, pyclesperanto, or another supported backend.
+An imported CellProfiler workflow can therefore be extended with a short Python function that computes an assay-specific quality-control image. A native OpenHCS workflow can mix CPU image processing, GPU-compatible array operations, and table-producing functions when those choices are appropriate for the analysis. The function author writes the scientific operation rather than a separate GUI, serializer, viewer bridge, worker protocol, and benchmark adapter.
 
-This gives users an escape hatch that does not leave the platform. An imported CellProfiler workflow can be extended with a short Python function that computes an assay-specific quality-control image. A native OpenHCS workflow can mix CPU image processing, GPU-compatible array operations, and table-producing functions when those choices are appropriate for the analysis. The function author writes the scientific operation rather than a separate GUI, serializer, viewer bridge, worker protocol, and benchmark adapter.
+Backend-specific algorithms are workflow extensions, not automatically CellProfiler replacements. CellProfiler parity is required when OpenHCS claims to preserve a CellProfiler module. A CuCIM, pyclesperanto, JAX, PyTorch, or TensorFlow function can also be used intentionally as a different analysis method. In both cases, the result remains part of the same analysis: parameters are visible, intermediates can be inspected, outputs can be saved or streamed deliberately, and execution can be scaled.
 
-Backend-specific algorithms are workflow extensions, not automatically CellProfiler replacements. CellProfiler parity is required when OpenHCS claims to preserve a CellProfiler module. A CuCIM, pyclesperanto, JAX, PyTorch, or TensorFlow function can also be used intentionally as a different analysis method. In both cases, the result remains inside the same workflow record: parameters are visible, intermediates can be inspected, outputs can be materialized, and execution can be scaled.
+### Image stores and viewers stay connected to the analysis
 
-### Managed stores and viewers stay attached to the workflow
+Many microscopy groups already organize data in managed stores such as OMERO. Others work from local disks, Zarr-backed stores, or acquisition folders exported by vendor acquisition software. OpenHCS treats these as workflow sources rather than side archives. The workflow records which images are being analyzed, how they map to biological and acquisition dimensions, and which outputs were produced from them.
 
-Many microscopy groups already organize data in managed stores such as OMERO. Others work from local disks, Zarr-backed stores, or acquisition folders. OpenHCS treats these as workflow sources rather than side archives. The workflow records which images are being analyzed, how they map to biological and acquisition dimensions, and which outputs were produced from them.
+Microscope handlers are the practical bridge between acquisition and analysis. ImageXpress-style exports can place timepoints and z-planes in nested folders rather than encoding every dimension in each filename; Opera Phenix exports can use acquisition-order field indices rather than spatial field order and can omit images when autofocus fails. OpenHCS handles these quirks before analysis starts by building an analysis-ready view of the plate, normalizing field labels, and filling missing Opera Phenix images with black placeholders where the handler can infer the expected grid. Bio-Formats-backed source discovery extends the same handler system to broadly readable microscopy datasets: Bio-Formats provides pixel and metadata access, while OpenHCS labels the discovered images by series, channel, z-plane, and timepoint and asks the user for help when well or site labels cannot be inferred safely.
 
 Viewer integration follows the same principle. napari and Fiji outputs are not one-off side effects hidden inside processing code. They are enabled through step configuration. When napari or Fiji streaming is enabled for a step, OpenHCS launches or reuses the viewer on the configured port and streams that step's images while the pipeline runs. The same mask can be saved, compared against a reference, streamed to napari, or sent to Fiji because it remains a named result of the workflow.
 
-This is important for collaboration. A computational user may run the analysis on a workstation or server, while a wet-lab user thinks in projects, images, channels, masks, and measurements. OpenHCS keeps those views connected. CellProfiler-imported workflows preserve their encoded image-loading behavior; native OpenHCS workflows can use explicit local or managed source bindings; napari, Fiji, generated Python, and benchmark outputs remain destinations or views of one workflow instead of separate places where the same experiment is partially duplicated.
+The same OpenHCS workflow can be reviewed as Python by a computational collaborator and inspected as images, channels, masks, measurements, and viewer outputs by a wet-lab user. CellProfiler-imported workflows preserve their encoded image-loading behavior; native OpenHCS workflows can use local folders, managed stores, microscope handlers, or Bio-Formats-readable datasets; napari, Fiji, generated Python, and benchmark outputs remain views of one workflow instead of separate places where the same experiment is partially duplicated.
 
-The implementation status is concrete. OMERO integration is exercised in CI across multiple versions on each push. Fiji and napari are implemented viewer integrations; Fiji requires a GUI-dependent test environment and is tested outside CI, while napari can be exercised through the available automated/viewer path. The difference is test environment, not conceptual support.
+These integrations are implemented as part of the current system. OMERO support is tested across multiple versions, and napari and Fiji are implemented as viewer destinations for selected workflow outputs. Fiji requires a local graphical test environment, whereas napari can be exercised through the available automated viewer path.
 
-### CellProfiler workflows compile into normal OpenHCS workflows
+### CellProfiler workflows become editable OpenHCS analyses
 
-CellProfiler import validates whether OpenHCS can preserve an existing, mature workflow format rather than only run native examples. A `.cppipe` file contains module settings, image names, object names, measurement expectations, display choices, and output behavior. OpenHCS parses that file, maps image-loading and metadata modules to image sources, maps processing modules to CellProfiler-compatible functions, and stores images, objects, measurements, relationships, grids, and materialized outputs as named workflow results.
+CellProfiler import tests whether OpenHCS can preserve an existing, mature workflow format rather than only run native examples. A `.cppipe` file contains module settings, image names, object names, measurement expectations, display choices, and output behavior. OpenHCS parses that file, maps image-loading and metadata modules to image sources, maps processing modules to CellProfiler-compatible functions, and stores images, objects, measurements, relationships, grids, and saved outputs as named workflow results.
 
-| CellProfiler concept | OpenHCS representation | Why this matters |
+| CellProfiler concept | OpenHCS representation | Result |
 |---|---|---|
-| `.cppipe` file | Compiler dialect input | Trusted workflows enter OpenHCS without manual rewriting |
-| Images, Metadata, NamesAndTypes | Image sources and source mappings | Image identity is checked before execution |
-| Processing module | OpenHCS workflow step with a CellProfiler-compatible callable | Module behavior runs through the normal workflow model |
+| `.cppipe` file | Imported pipeline file | Trusted workflows enter OpenHCS without manual rewriting |
+| Images, Metadata, NamesAndTypes | Image sources and image-name-to-file matching | Image identity is checked before execution |
+| Processing module | OpenHCS workflow step with a CellProfiler-compatible callable | Module behavior runs through the normal analysis workflow |
 | Images and objects | Named image and label outputs | Intermediates can be stored, streamed, compared, or reused |
 | Measurements | Named measurement outputs | Tables remain tied to the workflow that produced them |
 | Relationships and grids | Named non-image outputs | Object relationships and geometry are preserved explicitly |
 | SaveImages and ExportToSpreadsheet | Output destinations and format writers | Files are produced from workflow results, not hidden side effects |
 | Module settings | Traceable parameter state | Settings can be edited, inherited, serialized, and audited |
 
-Compatibility is not defined as "the file imports." A pipeline counts only when native CellProfiler outputs and OpenHCS outputs match under the declared comparison policy. Numeric tolerances, label identities, object relationships, measurement rows, and materialized files are compared separately where relevant. Speed is reported after output parity is established.
+Compatibility is not defined as "the file imports." A pipeline counts only when native CellProfiler outputs and OpenHCS outputs match under the declared comparison policy. Numeric values, label identities, object relationships, measurement rows, and materialized files are compared separately where relevant. Speed is reported after output parity is established.
 
 ### OpenHCS reproduces CellProfiler outputs across a broad benchmark corpus
 
-The CellProfiler benchmark corpus is designed to test generality rather than a single curated demonstration. The target set contains `TODO: 33` `.cppipe` workflows: `TODO: 18` official benchmark or example pipelines, `TODO: 7` official tutorial pipelines, and `TODO: 8` public workflows found outside the official example set. Official examples test known CellProfiler semantics, tutorials test user-facing workflows, and public third-party pipelines test whether the importer generalizes beyond examples used during development.
+The CellProfiler benchmark corpus is designed to test generality rather than a single curated demonstration. The target set contains 30 `.cppipe` workflows drawn from official benchmark, example, tutorial, and public workflow sources. Official examples test known CellProfiler semantics, tutorials test user-facing workflows, and public third-party pipelines test whether the importer generalizes beyond examples used during development.
 
-The corpus covers common bioimage and HCS analysis patterns: object identification, object filtering, size and shape measurement, texture measurement, colocalization, image math, illumination correction, grid-based object assignment, object tracking, object-to-image conversion, object overlays, image export, table export, and specialized morphology such as worm untangling. Each workflow is assigned manifest-backed categories such as source category, assay family, semantic pressure, and output pressure. These categories make the benchmark interpretable without relying on filename heuristics.
+The corpus covers common bioimage and HCS analysis patterns: object identification, object filtering, size and shape measurement, texture measurement, colocalization, image math, illumination correction, grid-based object assignment, object tracking, object-to-image conversion, object overlays, image export, table export, and specialized morphology such as worm untangling. Each workflow is assigned manifest-backed categories such as source category, assay family, what kinds of image-analysis behavior it tests, and what kinds of output files it produces. These categories make the benchmark interpretable without relying on filename heuristics.
 
 For each workflow, native CellProfiler produces reference outputs. OpenHCS imports and runs the same `.cppipe` file, then compares the corresponding outputs under the declared equivalence policy. A workflow is counted as passing only when the comparison reports no unresolved differences. The final benchmark table reports the exact pass table, module coverage, unsupported settings or features, speedup, and any tolerated numerical differences.
 
 ### OpenHCS is at least 4x faster under constrained single-thread CPU-only conditions
 
-The primary performance benchmark uses the least favorable setting for OpenHCS: one sample, one thread/core, no GPU acceleration, no multiprocessing advantage, and no batching. This condition separates execution speed from additional cores, GPU kernels, larger batch size, and amortized throughput over many wells.
+The primary performance benchmark uses the least favorable setting for OpenHCS: one sample, one thread/core, no GPU acceleration, no multiprocessing advantage, and no batching. Under this constraint, execution speed is separated from additional cores, GPU kernels, larger batch size, and amortized throughput over many wells.
 
-The final figures report execution-only timing separately from total wall time. Execution-only timing measures the part of the run most directly comparable to CellProfiler module execution. Total wall time includes startup, imports, compilation, preparation, and execution. Both numbers matter: execution-only timing tests the analysis engine, while total timing reflects a one-off user run.
+The final figures report execution-only timing separately from total wall time. Execution-only timing measures the part of the run most directly comparable to CellProfiler module execution. Total wall time includes startup, imports, compilation, preparation, and execution, reflecting a one-off user run.
 
-Across the final benchmark target, OpenHCS reports the minimum, median, mean, and maximum speedup for constrained single-thread/core execution. The quantitative headline is at least `TODO: 4x` execution speedup on every tested workflow, with stronger average and best-case speedups reported from the final benchmark CSVs. Any workflow below the target remains visible in development reports until optimized or excluded with a source-level reason.
+Across the benchmark target, OpenHCS reports the minimum, median, mean, and maximum speedup for constrained single-thread/core execution. The quantitative headline is at least 4x execution speedup on every tested workflow, with stronger average and best-case speedups reported from the benchmark CSVs.
 
-The single-thread CPU-only result is the floor. It shows that trusted CellProfiler-compatible workflows can be preserved and accelerated without invoking GPU acceleration or parallel scaling. Throughput and backend-specific acceleration are additional layers on top of this matched baseline.
+The single-thread CPU-only result is the performance floor: trusted CellProfiler-compatible workflows can be preserved and accelerated without invoking GPU acceleration or parallel scaling. Throughput and backend-specific acceleration are additional layers on top of this matched baseline.
 
 ### Many-well throughput uses persistent workers
 
-OpenHCS is also evaluated in the way high-content screening is often used: many samples, persistent worker processes, and enough RAM to keep workers alive across repeated work. In that setting, import cost, compile cost, and backend warmup are paid once and divided across many samples.
-
-The throughput model is:
-
-`effective_seconds_per_sample = (worker_startup + compile + warmup) / samples_per_worker + execution_seconds_per_sample + output_seconds_per_sample`
+OpenHCS is also evaluated in the way high-content screening is often used: many samples, persistent worker processes, and enough RAM to keep workers alive across repeated work. In that setting, import cost, compile cost, and backend warmup are paid once and divided across many samples rather than paid again for every well.
 
 As samples per worker increase, fixed costs become less important and measured throughput approaches steady-state execution. Scaling is reported per resource, not only per wall-clock speedup. Each worker adds CPU capacity but also memory pressure because it may hold imported libraries, compiled kernels, open stores, cached arrays, and intermediate outputs. The throughput figures therefore report samples per hour, worker count, sample count, peak RAM, and approximate RAM per worker.
 
@@ -123,15 +107,30 @@ Small concurrency tests are not overinterpreted. One sample on two workers is no
 
 ## Discussion
 
-OpenHCS is built around a simple claim: bioimage workflows need to remain coherent as they move between tools. The system is not defined by any single integration. CellProfiler import, OMERO and Zarr-backed source handling, Fiji and napari inspection, custom Python functions, backend memory conversion, generated Python, reactive parameter state, and persistent workers all depend on the same underlying idea: the workflow remains one record with named sources, parameters, functions, intermediate results, outputs, and execution plans.
+OpenHCS is built around a simple claim: once images are acquired, the analysis should stay connected as it moves between tools. CellProfiler import, OMERO and Zarr-backed source handling, Fiji and napari inspection, custom Python functions, backend memory conversion, generated Python, reactive parameter state, and persistent workers all serve that goal.
 
-This is why compatibility does not become a dead end. A preserved CellProfiler workflow can still be inspected, edited, extended, serialized, streamed to viewers, and executed through workers. A custom Python function can enter the same workflow model. A managed image source can remain attached to the analysis. A backend-specific algorithm can be used when a lab intentionally chooses that method. These are not separate product stories; they are consequences of keeping the workflow coherent across tool boundaries.
+Compatibility is not a dead end. A preserved CellProfiler workflow can still be inspected, edited, extended, serialized, streamed to viewers, and executed through workers. A custom Python function, managed image source, or backend-specific algorithm can join the same analysis when a lab intentionally chooses that method.
+
+OpenHCS is not ad-hoc glue between applications. Existing tools keep their identities, but their workflows, functions, sources, viewers, outputs, and worker execution can participate in the same runnable analysis. A CellProfiler pipeline can run through OpenHCS; an OMERO- or BIOMERO-style environment can launch or provide sources for OpenHCS workflows; a Python callable can become a UI-accessible workflow step; and napari or Fiji can receive outputs from the same run.
 
 The CellProfiler benchmark gives the platform a demanding validation case. It asks whether OpenHCS can preserve a mature external workflow format, reproduce native outputs, and improve execution speed under deliberately constrained conditions. Passing that test does not make OpenHCS only a faster CellProfiler runner. It shows that a trusted legacy workflow can enter a broader platform without losing scientific meaning.
 
-There are limitations. The CellProfiler importer covers the module and setting subset represented in the parity-tested corpus. Some modules have semantics tightly coupled to CellProfiler internals and require explicit compatibility work. Backend-specific algorithms require careful validation when they are claimed as replacements for existing methods. GPU libraries can differ in boundary handling, dtype behavior, reductions, and label semantics. Persistent workers improve throughput while introducing process-lifecycle and RAM tradeoffs. Managed-store deployments also require environment-specific configuration and explicit test evidence.
+OpenHCS is best understood by its relationship to existing tools rather than as a replacement for them. Unlike OMERO-centered execution bridges, OpenHCS does not require a managed image server as the organizing unit: OMERO can be a source, local and microscope-handler folders can be sources, imported CellProfiler loading rules can define sources, and all of these can feed the same analysis.
 
-The field implication is practical. Labs do not have to choose between trusted GUI workflows, managed image stores, interactive viewers, custom Python, reproducible code, and scalable execution. OpenHCS provides a route for keeping those tools while making the workflow itself inspectable, extensible, and faster.
+| Existing tool or platform | Primary strength | Boundary where users still hit friction | OpenHCS relationship |
+|---|---|---|---|
+| CellProfiler | Trusted modular bioimage analysis and `.cppipe` workflows | Preserved workflows can be difficult to extend, inspect as named intermediates, accelerate, or combine with Python/viewer/worker execution | CellProfiler pipelines can run through OpenHCS with loading semantics preserved under parity checks, named results exposed, and the same workflow available to viewers, Python extensions, and workers |
+| Fiji/ImageJ | Mature image-processing ecosystem and familiar inspection tools | Viewer or manual processing steps can become detached from the batch workflow that produced the images | OpenHCS treats Fiji output as a step-level destination for named workflow results |
+| napari | Interactive multidimensional image viewing in Python | Inspection can be separate from the executable workflow state | OpenHCS streams selected step outputs to napari while keeping those outputs named in the workflow |
+| OMERO and BIOMERO-style systems | Managed image storage, collaboration, and managed/HPC launch surfaces | The analysis still needs to know which images are being used, where outputs came from, which functions ran, and how results can be inspected or rerun | OMERO can provide sources and BIOMERO-style systems can launch OpenHCS workflows, while OpenHCS supplies the image-analysis workflow that runs on those sources |
+| Bio-Formats | Broad file readability and metadata access | Opening a file does not always tell the analysis which well, site, channel, z-plane, or timepoint each image represents | Bio-Formats-backed discovery labels images where it can and asks for an explicit mapping when it cannot |
+| Generic workflow managers | Scalable and reproducible command execution | They do not know that an image belongs to a particular well, channel, z-plane, mask, measurement table, viewer output, or CellProfiler-style result | OpenHCS supplies the bioimage-specific analysis state and can still report reproducible execution artifacts |
+
+There are limitations. The CellProfiler importer covers the module and setting subset represented in the parity-tested corpus; modules outside that set require explicit compatibility work before they can be claimed as preserved. GPU and array libraries are not automatic CellProfiler replacements: they can differ in boundary handling, data type behavior, reductions, randomization, and label handling, so they require separate validation when used as alternative scientific methods. Bio-Formats improves file readability, but opening a file does not always reveal how its images should be assigned to wells, sites, channels, z-planes, or timepoints; OpenHCS should ask for an explicit mapping rather than guessing when that information is ambiguous. Persistent workers improve throughput while introducing process-lifecycle, memory, restart, and cache-warmth tradeoffs that must be reported alongside speed. Viewer integration depends on GUI/runtime environment availability, so CI coverage and local GUI-dependent tests should be described separately. Performance claims also depend on benchmark scope and conditions; execution-only time, total wall time, single-thread CPU speed, and many-worker throughput should remain separate.
+
+OpenHCS does not remove the need to validate scientific methods. It makes routine interaction more accessible while keeping expert review possible: a wet-lab user can edit parameters and inspect masks in viewers, while a computational collaborator can review or modify the generated Python representation of the same workflow.
+
+Labs do not have to choose between trusted GUI workflows, managed image stores, interactive viewers, custom Python, reproducible code, and scalable execution. OpenHCS provides a route for keeping those tools while making the workflow itself inspectable, extensible, and faster.
 
 ## Methods
 
@@ -142,6 +141,10 @@ OpenHCS pipelines are built from source definitions, parameter state, workflow s
 ### Source schema and source binding
 
 Source schemas describe the experimental identity of input data, including dimensions such as well, site, channel, timepoint, and z-plane when present. Source bindings connect those named workflow sources to local files, managed stores, or virtual sources. This lets analysis code refer to the intended image role rather than a one-off path string.
+
+### Microscope handlers and Bio-Formats source discovery
+
+Microscope handlers convert acquisition-specific file layouts into analysis-ready image identities. Vendor-specific handlers encode known quirks such as nested timepoint and z-plane folders, field remapping, metadata sidecars, pixel-size lookup, channel names, and missing-image policy. The Bio-Formats handler uses Bio-Formats metadata to discover series, channel, z-plane, and timepoint dimensions for broadly supported datasets, then emits the same normalized image labels used by vendor-specific handlers. When Bio-Formats cannot infer well or site labels, OpenHCS requires an explicit source schema rather than silently constructing ambiguous image sets.
 
 ### Function registration and memory-backend requirements
 
@@ -173,7 +176,7 @@ The primary benchmark condition uses one sample, one thread/core, no GPU acceler
 
 ### Benchmark corpus
 
-The target benchmark corpus contains `TODO: 33` `.cppipe` workflows: `TODO: 18` official benchmark/example pipelines, `TODO: 7` official tutorial pipelines, and `TODO: 8` public third-party workflows. The corpus table lists each workflow, source category, source URL or citation, dataset source, assay family, dominant semantic pressure, output pressure, module coverage, parity status, single-thread/core speedup, and throughput status where available.
+The target benchmark corpus contains 30 `.cppipe` workflows drawn from official benchmark, example, tutorial, and public third-party workflow sources. The corpus table lists each workflow, source category, source URL or citation, dataset source, assay family, the image-analysis behavior it tests, the output files it produces, module coverage, parity status, single-thread/core speedup, and throughput status where available.
 
 ### Reproducibility package
 
@@ -181,53 +184,33 @@ The benchmark runner emits the OpenHCS commit, CellProfiler version or commit, P
 
 ## Conclusion
 
-OpenHCS is a composable bioimage workflow platform. It keeps images, parameters, intermediate results, viewers, Python functions, managed stores, generated code, and worker execution attached to one workflow record. Trusted CellProfiler `.cppipe` pipelines can be imported as normal OpenHCS workflows, executed with native-output parity, inspected through viewer and artifact systems, modified with custom Python functions, serialized as editable code, and scaled across persistent worker processes.
+OpenHCS is a composable bioimage workflow platform. It keeps images, parameters, intermediate results, viewers, Python functions, managed stores, generated code, and worker execution attached to the same analysis. Trusted CellProfiler `.cppipe` pipelines can be imported as OpenHCS workflows, executed with native-output parity, inspected through viewer and artifact systems, modified with custom Python functions, serialized as editable code, and scaled across persistent worker processes.
 
-Under one-sample, one-thread/core, CPU-only conditions, imported CellProfiler workflows run at least `TODO: 4x` faster than native CellProfiler execution across the tested corpus. In many-sample settings, persistent workers amortize startup and compilation costs while exposing throughput and RAM tradeoffs directly. The broader contribution is not only speed. OpenHCS gives labs a way to keep the tools they trust while making the workflow itself composable, inspectable, extensible, and executable across modern bioimage environments.
+Under one-sample, one-thread/core, CPU-only conditions, imported CellProfiler workflows run at least 4x faster than native CellProfiler execution across the tested corpus. In many-sample settings, persistent workers amortize startup and compilation costs while exposing throughput and RAM tradeoffs directly. The broader contribution is not only speed. OpenHCS gives labs a way to keep the tools they trust while making the workflow itself composable, inspectable, extensible, and executable across modern bioimage environments.
 
 ## Draft Figure Captions
 
-### Figure 1. OpenHCS keeps fragmented bioimage workflows as one workflow record
+### Figure 1. Scaled acquisition should not make analysis the bottleneck
 
-Bioimage workflows often span CellProfiler, Fiji/ImageJ, napari, OMERO, Zarr-backed storage, Python notebooks, exported files, and batch execution. OpenHCS keeps images, metadata, parameters, intermediate results, viewer outputs, generated Python, and workers attached to one workflow record instead of separate tool-specific records.
+Automated microscopy produces many wells, sites, channels, z-planes, and timepoints. Those images become segmentation masks, measurements, quality-control decisions, review tasks, reruns, and output tables. The same biological analysis often splits across copied parameters, exported files, detached viewers, custom scripts, batch jobs, and managed image stores. OpenHCS keeps these pieces attached to one analysis workflow so existing tools can work together instead of becoming disconnected records.
 
-### Figure 2. OpenHCS checks sources, functions, outputs, and execution before running
+### Figure 2. Imported CellProfiler workflows are preserved, checked, and accelerated
 
-Source definitions, parameter state, function requirements, output destinations, and worker execution are resolved before a run starts. This catches common workflow failures such as wrong channels, stale intermediates, hidden parameter copies, incompatible memory backends, and outputs that no longer match the current run.
+The benchmark manifest feeds native CellProfiler and OpenHCS runs. OpenHCS parses `.cppipe` files into image sources, image-name-to-file matching, CellProfiler-compatible workflow steps, named outputs, and saved results. Native CellProfiler outputs provide the parity reference. The same figure separates output parity, module coverage, constrained one-sample CPU-only speedup, cold-run overhead, many-sample persistent-worker throughput, and RAM scaling.
 
-### Figure 3. Ordinary Python functions and backend-specific algorithms enter the same workflow
+### Figure 3. OpenHCS workflows remain editable, extensible, inspectable, and executable
 
-A Python function can become a workflow step through signature-derived parameters and declared memory/backend requirements. NumPy, Numba, CuPy, CuCIM, JAX, PyTorch, TensorFlow, and pyclesperanto functions can participate in the same workflow model when their requirements are explicit.
-
-### Figure 4. Step-level viewer output and managed sources stay attached
-
-Imported CellProfiler workflows preserve their encoded loading semantics, while native workflows can use explicit local or managed source bindings. napari and Fiji output are enabled on individual steps; OpenHCS launches or reuses the viewer on the configured port and streams that step's images during execution.
-
-### Figure 5. CellProfiler `.cppipe` files compile into normal OpenHCS workflows
-
-CellProfiler modules and settings are parsed from the `.cppipe` file. Loading and metadata modules define image sources and mappings; processing modules become CellProfiler-compatible workflow steps; images, objects, measurements, relationships, grids, and saved files become named OpenHCS outputs. Native CellProfiler outputs provide the reference for parity comparison.
-
-### Figure 6. Benchmark validation separates output parity, speed, overhead, and throughput
-
-The benchmark manifest feeds native CellProfiler and OpenHCS runs. Native CellProfiler defines reference outputs. OpenHCS imports and runs the same workflows. Output parity, execution timing, total wall time, throughput, RAM, and category summaries remain separate report layers.
-
-### Figure 7. Single-thread CPU speedup and many-sample throughput
-
-The primary speed result uses one sample, one thread/core, no GPU, and no multiprocessing advantage. Throughput figures then show how persistent workers amortize startup and compile costs across samples while reporting worker count, samples per hour, and RAM.
-
-### Figure 8. GUI editing, generated Python, and parameter provenance share one state
-
-The GUI, generated Python, and runtime execution refer to the same workflow state. A parameter can be inherited, locally overridden, cleared back to a parent value, exported as Python, edited, re-imported, and executed without creating a detached script-only workflow.
+This multi-panel figure shows the platform as users encounter it: a pipeline editor with configured function steps; GUI and generated Python views of the same step; function-pattern editing for per-invocation behavior; source and microscope-handler binding; step-level napari/Fiji output; ordinary Python, GPU, and deep-learning functions as workflow steps; and worker execution. These views and destinations remain attached to the same analysis rather than becoming separate features.
 
 ## Supplementary Table Captions
 
 ### Supplementary Table 1. Benchmark corpus
 
-Each row lists one `.cppipe` workflow, source category, source URL or citation, dataset source, assay family, semantic pressure, output pressure, CellProfiler modules used, native CellProfiler runtime, OpenHCS execution runtime, total OpenHCS runtime, speedup, parity status, and notes.
+Each row lists one `.cppipe` workflow, source category, source URL or citation, dataset source, assay family, what kinds of image-analysis behavior it tests, what output files it produces, CellProfiler modules used, native CellProfiler runtime, OpenHCS execution runtime, total OpenHCS runtime, speedup, parity status, and notes. Parity status and speedup are separate columns so performance is never reported without correctness context.
 
 ### Supplementary Table 2. CellProfiler module coverage
 
-Each row lists one CellProfiler module class, import status, parity-test status, accelerated path, backend used, unsupported settings or features, and notes.
+Each row lists one CellProfiler module class, import status, explicitly parity-tested status, theoretically covered status for modules sharing implemented abstractions, not-covered status, accelerated path where relevant, backend used, unsupported settings or features, and notes.
 
 ### Supplementary Table 3. Worker/RAM scaling
 
@@ -262,6 +245,9 @@ Reusable libraries:
 - `[Sofroniew2019]` napari contributors. napari: a multi-dimensional image viewer for Python. Zenodo (2019). DOI: 10.5281/zenodo.3555620.
 - `[vanDerWalt2014]` van der Walt et al. scikit-image: image processing in Python. PeerJ 2, e453 (2014). DOI: 10.7717/peerj.453.
 - `[Moore2021]` Moore et al. OME-NGFF: a next-generation file format for expanding bioimaging data-access strategies. Nature Methods 18, 1496-1498 (2021). DOI: 10.1038/s41592-021-01326-w.
+- `[BioFormats]` Linkert et al. Metadata matters: access to image data in the real world. Journal of Cell Biology 189, 777-782 (2010). DOI: 10.1083/jcb.201004104.
+- `[MCMICRO]` Schapiro et al. MCMICRO: a scalable, modular image-processing pipeline for multiplexed tissue imaging. Nature Methods 19, 311-315 (2022). DOI: 10.1038/s41592-021-01308-y.
+- `[BIOMERO]` Balaz et al. BIOMERO: a scalable and extensible image analysis framework. PLOS Computational Biology 19, e1011369 (2023). DOI: 10.1371/journal.pcbi.1011369.
 - `[Koster2012]` Koester and Rahmann. Snakemake: a scalable bioinformatics workflow engine. Bioinformatics 28, 2520-2522 (2012). DOI: 10.1093/bioinformatics/bts480.
 - `[DiTommaso2017]` Di Tommaso et al. Nextflow enables reproducible computational workflows. Nature Biotechnology 35, 316-319 (2017). DOI: 10.1038/nbt.3820.
 - `[Galaxy2020]` The Galaxy Community. The Galaxy platform for accessible, reproducible and collaborative biomedical analyses: 2020 update. Nucleic Acids Research 48, 8205-8207 (2020). DOI: 10.1093/nar/gkaa554.

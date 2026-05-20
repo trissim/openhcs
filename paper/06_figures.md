@@ -1,68 +1,78 @@
 # Figure Plan
 
-**Target:** 8 main figures for a Nature Methods-style platform manuscript.
+**Target:** three main figures plus focused supplementary figures and tables.
 
-The revised figure story follows the manuscript's accessibility rule: show the practical workflow problem first, then show how OpenHCS keeps the analysis as one workflow record. Compiler/runtime terms should appear only after the reader understands the user-facing value.
+The earlier eight-figure plan was too granular for this manuscript. The main paper should not spend separate figures on checks, source bindings, Python functions, viewers, validation structure, and throughput when those are pieces of one platform story. The revised plan uses three high-density figures: one conceptual problem/solution figure, one quantitative validation figure, and one platform/UI/integration figure.
 
 Editable diagram drafts are in `paper/figures/diagrams/*.dot`; rendered SVG/PNG drafts are in `paper/figures/rendered/`. Rebuild all diagrams and the contact sheet with `python paper/figures/render_diagrams.py`.
 
-## Figure 1. Fragmented Bioimage Tools To One Workflow Record
+## Figure 1. Scaled Acquisition Should Not Make Analysis The Bottleneck
 
-Bioimage workflows often span CellProfiler, Fiji/ImageJ, napari, OMERO, Zarr-backed storage, Python notebooks, exported files, and batch execution. The figure should show the same analysis split across tools, then show OpenHCS keeping images, metadata, parameters, intermediate results, viewer outputs, generated Python, and workers attached to one workflow record.
+This should be one large conceptual figure, not two separate figures. The left side shows automated microscopy producing many wells, sites, channels, z-planes, and timepoints. The middle shows the analysis burden: segmentation masks, measurements, quality-control decisions, review, reruns, output tables, and collaborator handoff. The failure mode is fragmentation: copied parameters, exported files, detached viewers, custom scripts, batch jobs, and managed image stores that no longer clearly refer to the same analysis.
 
-**Main message:** Users can keep the tools they already use without splitting the workflow into disconnected records.
+The right side shows OpenHCS as the way those pieces stay connected. CellProfiler, Fiji/ImageJ, napari, OMERO or BIOMERO-style launch surfaces, Zarr/local/microscope-handler sources, Python functions, GPU/deep-learning methods, generated Python, output tables, and workers should appear around one OpenHCS workflow object.
 
-## Figure 2. Checks Before Execution
+**Main message:** OpenHCS lets labs keep familiar bioimage tools while preventing analysis and review from becoming disconnected bottlenecks after acquisition.
 
-Show that OpenHCS resolves sources, parameters, functions, intermediate results, output destinations, and worker execution before a run starts. Use user-facing failure examples: wrong channel, stale mask, copied threshold, incompatible backend, output table from an old run, and ambiguous worker/viewer state.
+Suggested panels:
 
-**Main message:** OpenHCS catches workflow mistakes before long runs instead of treating them as hidden script behavior.
+- A. Acquisition scale creates many images and review tasks.
+- B. Typical analysis fragments across tools and files.
+- C. OpenHCS keeps sources, workflows, viewers, functions, outputs, and workers attached to one analysis.
 
-## Figure 3. Drop-In Python And Backend-Specific Functions
+## Figure 2. CellProfiler Preservation, Parity, And Speed
 
-Show an ordinary Python function entering the workflow through signature-derived parameters and declared memory/backend requirements. Include NumPy/Numba, CuPy/CuCIM, JAX, PyTorch, TensorFlow, and pyclesperanto as possible backend paths when intentionally chosen.
+This should combine the old validation and performance figures into one main quantitative figure. The reader should see that performance is reported only after preservation/parity is established.
 
-**Main message:** OpenHCS is not a fixed module catalog; ordinary Python and backend-specific algorithms become workflow steps.
+The figure starts with `.cppipe` import: loading and metadata modules become source mappings, processing modules become CellProfiler-compatible workflow steps, and images, objects, measurements, relationships, grids, and saved files become named outputs. Native CellProfiler provides the reference run. OpenHCS produces the comparison run.
 
-## Figure 4. Step-Level Viewer Output And Managed Sources Stay Attached
+The quantitative panels should use the current `official30_well_throughput` benchmark figures as provisional data sources.
 
-Show two distinct but connected paths. For imported CellProfiler workflows, image-loading semantics come from the `.cppipe` pipeline. For native or managed workflows, explicit source bindings connect local files, OMERO, and Zarr-backed stores. Separately, napari and Fiji are enabled on individual steps; OpenHCS launches or reuses the viewer on the configured port and streams that step's images during execution.
+Suggested panels:
 
-**Main message:** Imported workflows do not need extra manual source binding when loading is already encoded, and viewer output is a simple step-level configuration rather than a separate workflow.
+- A. `.cppipe` import and native CellProfiler parity comparison pipeline.
+- B. Output parity across the 30-workflow benchmark corpus.
+- C. Module coverage: explicitly tested modules, shared-abstraction coverage, and not-covered modules.
+- D. Single-sample, one-thread/core, CPU-only speedup distribution showing every tested workflow at least 4x faster.
+- E. Persistent-worker throughput across wells/workers.
+- F. RAM or worker-scaling tradeoff, likely supplementary if space is tight.
 
-## Figure 5. CellProfiler Import As A Preservation Test
+**Main message:** OpenHCS preserves trusted CellProfiler workflows, proves output parity across the benchmark corpus, and then shows a conservative speed floor plus throughput scaling.
 
-Show `.cppipe` parsing into image sources, source mappings, CellProfiler-compatible workflow steps, named outputs, and parity comparison against native CellProfiler outputs.
+## Figure 3. One Editable Workflow Across GUI, Code, Viewers, Functions, And Workers
 
-**Main message:** CellProfiler compatibility is the strict validation case proving trusted legacy workflows can enter OpenHCS without losing meaning.
+This is the platform mega-figure. It should use cleaned-up screenshots or schematic screenshots based on the current GUI, not raw development screenshots. The figure should make the system tangible for non-technical readers: this is what it means for one analysis to remain editable, extensible, inspectable, and executable.
 
-## Figure 6. Benchmark Validation Structure
+Suggested panels:
 
-Show the benchmark manifest feeding native CellProfiler and OpenHCS runs. Separate output parity, execution timing, total wall time, throughput, RAM, and category summaries.
+- A. Pipeline editor showing named function steps, grouping/source hints, and viewer/materialization badges.
+- B. Step editor beside generated Python showing that GUI edits and code describe the same `FunctionStep`.
+- C. Function-pattern editor showing per-invocation behavior and parameters for a callable.
+- D. Source/microscope-handler binding panel showing local, managed, vendor folder, and Bio-Formats-backed source paths.
+- E. Viewer/output panel showing a selected intermediate mask streamed to napari or Fiji and/or exported as CellProfiler/CellProfiler Analyst-compatible results.
+- F. Function/backend panel showing ordinary Python, NumPy/Numba, CuPy/CuCIM, JAX, PyTorch, TensorFlow, and pyclesperanto methods entering as configured workflow steps.
+- G. Worker panel showing the same workflow running through persistent workers without changing the analysis.
 
-**Main message:** Correctness, execution speed, cold-run overhead, and HCS throughput are reported separately.
+**Main message:** OpenHCS is not a closed plugin catalog or a loose collection of scripts. GUI editing, generated Python, source binding, viewer output, GPU/deep-learning callables, CellProfiler-compatible outputs, and worker execution are all surfaces of the same workflow.
 
-## Figure 7. Single-Thread Speed And Many-Sample Throughput
+## Supplementary Figures
 
-Panel A should show the constrained one-sample, one-thread/core, CPU-only speedup distribution with the at-least-4x minimum target. Panel B should show persistent-worker throughput, samples per hour, worker count, sample count, and RAM.
+Use supplement for details that are real but too narrow for main figures.
 
-**Main message:** The 4x minimum single-thread result is the quantitative floor; persistent workers extend the same workflow to HCS-scale throughput.
-
-## Figure 8. GUI, Python, And Provenance Share One State
-
-Show GUI editing, generated Python, inherited/default/local parameter values, dirty state, re-import, and runtime execution as views over the same workflow state.
-
-**Main message:** OpenHCS makes workflows teachable and reviewable: visual edits, code, and execution refer to the same analysis.
+- Supplementary Figure 1. Pre-run checks: sources, dimensions, source bindings, function contracts, memory backends, outputs, and worker execution.
+- Supplementary Figure 2. Microscope handlers: ImageXpress, Opera Phenix, local/Zarr/OMERO source identities, and Bio-Formats-backed source discovery.
+- Supplementary Figure 3. GUI/code/provenance details: inherited/default/local values, dirty state, generated Python, re-import, and execution.
+- Supplementary Figure 4. Extended benchmark diagnostics: cold-run overhead, execution-only timing, RAM per worker, and per-pipeline outliers.
 
 ## Supplementary Tables
 
 ## Supplementary Table 1. Benchmark Corpus
 
-Each row should list one `.cppipe` workflow, source category, source URL or citation, dataset source, assay family, semantic pressure, output pressure, CellProfiler modules used, native CellProfiler runtime, OpenHCS execution runtime, total OpenHCS runtime, speedup, parity status, and notes.
+Each row should list one `.cppipe` workflow, source category, source URL or citation, dataset source, assay family, semantic pressure, output pressure, CellProfiler modules used, native CellProfiler runtime, OpenHCS execution runtime, total OpenHCS runtime, speedup, parity status, and notes. Parity status and speedup should remain separate so performance is not reported without correctness context.
 
 ## Supplementary Table 2. CellProfiler Module Coverage
 
-Each row should list one CellProfiler module class, import status, parity-test status, accelerated path if relevant, backend used, unsupported settings or features, and notes.
+Each row should list one CellProfiler module class, import status, explicitly parity-tested status, theoretically covered status for modules sharing implemented abstractions, not-covered status, accelerated path if relevant, backend used, unsupported settings or features, and notes.
 
 ## Supplementary Table 3. Worker/RAM Scaling
 
@@ -70,8 +80,8 @@ Each row should list a throughput condition, pipeline group, sample count, worke
 
 ## Next Iteration
 
-- Update DOT diagram names or labels to match this revised figure order.
-- Keep technical labels secondary to the user-facing story.
-- Add panel letters once diagrams become multi-panel composites.
-- Re-render SVGs after DOT edits.
-- Convert final SVGs to publication layout only after benchmark numbers and figure order are stable.
+- Collapse existing DOT drafts into three composite figure specs instead of maintaining eight independent main figures.
+- Keep Figure 1 accessible and non-technical.
+- Keep Figure 2 quantitative and reviewer-defensible.
+- Build Figure 3 from cleaned screenshots/schematics rather than raw GUI captures.
+- Move narrow mechanism details into supplement unless they are needed to understand the main claim.

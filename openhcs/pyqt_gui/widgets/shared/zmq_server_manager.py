@@ -315,7 +315,7 @@ class ZMQServerManagerWidget(ZMQServerBrowserWidgetABC):
                 except Exception:
                     continue
                 if isinstance(parsed_server_info, ExecutionServerInfo):
-                    self._update_execution_server_item(item, data)
+                    self._progress_renderer.update_execution_server_item(item, data)
         except Exception as error:
             logger.exception("Error updating from progress: %s", error)
 

@@ -35,7 +35,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.enum_attributes import (
     CellProfilerEnumAttributeMixin,
@@ -490,7 +490,7 @@ class ThresholdSmoothingBackendStrategy(
 class NumbaNumpyThresholdSmoothingBackendStrategy(ThresholdSmoothingBackendStrategy):
     """NumPy-memory threshold smoothing with Numba convolution."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -642,7 +642,7 @@ class ThresholdDiagnosticsBackendStrategy(
 class NumpyThresholdDiagnosticsBackendStrategy(ThresholdDiagnosticsBackendStrategy):
     """Independent NumPy implementation of CellProfiler threshold diagnostics."""
 
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY)
+    backend_key = CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY)
     memory_type = MemoryType.NUMPY
     is_default_backend = False
 
@@ -771,7 +771,7 @@ class NumbaNumpyThresholdDiagnosticsBackendStrategy(
 ):
     """Numba-accelerated NumPy implementation of threshold diagnostics."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -1110,7 +1110,7 @@ class NumbaLogTransformConversion:
 class NumbaNumpyThresholdPrimitiveBackendStrategy(ThresholdPrimitiveBackendStrategy):
     """Numba-backed threshold primitives for NumPy-memory images."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -1281,7 +1281,7 @@ class CentrosomeNumpyThresholdPrimitiveBackendStrategy(
 ):
     """Centrosome-backed threshold primitives exposed as a backend provider."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.CENTROSOME,
     )

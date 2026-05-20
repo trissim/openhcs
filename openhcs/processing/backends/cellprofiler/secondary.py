@@ -66,7 +66,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
@@ -294,7 +294,7 @@ class NumpySecondaryDistanceTransformBackendStrategy(
 ):
     """Reference NumPy/SciPy secondary distance-transform backend."""
 
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY)
+    backend_key = CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY)
     memory_type = MemoryType.NUMPY
     is_default_backend = False
 
@@ -326,7 +326,7 @@ class NumbaSecondaryDistanceTransformBackendStrategy(
 ):
     """Numba-accelerated exact 2-D Euclidean distance-transform backend."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -417,7 +417,7 @@ class CentrosomeSecondaryPropagationBackendStrategy(
 ):
     """Centrosome provider for exact CellProfiler propagation semantics."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.CENTROSOME,
     )
@@ -460,7 +460,7 @@ class NumbaSecondaryPropagationBackendStrategy(
 ):
     """Numba implementation of centrosome's regularized propagation semantics."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )

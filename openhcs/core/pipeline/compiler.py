@@ -44,10 +44,11 @@ from __future__ import annotations
 
 import logging
 import dataclasses
+import importlib
 import inspect
 import time
 from pathlib import Path
-from types import MappingProxyType
+from types import FunctionType, MappingProxyType
 from typing import (
     Annotated,
     Any,
@@ -73,6 +74,7 @@ from openhcs.constants.constants import (
     Backend,
 )
 from openhcs.core.callable_contract import (
+    CallableContract,
     DECLARED_PROCESSING_CONTRACT_ATTR,
     PROCESSING_CONTRACT_ATTR,
     PROCESSING_PREPARE_ATTR,
@@ -176,7 +178,6 @@ _FUNCTION_REFERENCE_PRESERVED_ATTRS = (
     PROCESSING_CONTRACT_ATTR,
     DECLARED_PROCESSING_CONTRACT_ATTR,
     RAW_PROCESSING_FUNCTION_ATTR,
-    PROCESSING_PREPARE_ATTR,
     RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
     "input_memory_type",
     "output_memory_type",
@@ -322,6 +323,12 @@ class FunctionReference:
         all_functions = RegistryService.get_all_functions_with_metadata()
         if self.composite_key in all_functions:
             return all_functions[self.composite_key].func
+        resolved = FunctionReferenceTransportAuthority.importable_function(
+            self.original_module,
+            self.function_name,
+        )
+        if callable(resolved):
+            return resolved
         raise RuntimeError(
             f"Function {self.composite_key} not found in registry. "
             f"Ensure the function registry is initialized in this process."
@@ -339,136 +346,360 @@ def _missing_plan_fields(
     ]
 
 
-def _refresh_function_objects_in_steps(pipeline_definition: List[AbstractStep]) -> None:
-    """
-    Refresh all function objects in pipeline steps to ensure they're picklable.
+class FunctionReferenceTransportAuthority:
+    """Converts pipeline callables into picklable registry references."""
 
-    This recreates function objects by importing them fresh from their original modules,
-    similar to how code mode works, which avoids unpicklable closures from registry wrapping.
-    """
-    logger.debug(f"🔄 FUNCTION REFRESH: Processing {len(pipeline_definition)} steps")
-    for step_idx, step in enumerate(pipeline_definition):
-        if isinstance(step, FunctionStep):
-            if step.func is not None:
-                old_type = type(step.func).__name__
-                step.func = _refresh_function_object(step.func)
-                new_type = type(step.func).__name__
+    @classmethod
+    def reference_pipeline(
+        cls,
+        pipeline_definition: Sequence[AbstractStep],
+    ) -> list[AbstractStep]:
+        """Return a declaration copy whose function specs are FunctionReferences."""
+        return [cls.reference_step(step) for step in pipeline_definition]
 
-                # Log what's inside containers
-                if isinstance(step.func, list) and step.func:
-                    first_item = step.func[0]
-                    first_item_type = type(first_item).__name__
-                    if isinstance(first_item, tuple) and len(first_item) == 2:
-                        inner_func_type = type(first_item[0]).__name__
-                        logger.debug(
-                            f"🔄 FUNCTION REFRESH: Step {step_idx} ({step.name}): {old_type} → {new_type} (first item: {first_item_type}, inner func: {inner_func_type})"
-                        )
-                    else:
-                        logger.debug(
-                            f"🔄 FUNCTION REFRESH: Step {step_idx} ({step.name}): {old_type} → {new_type} (first item: {first_item_type})"
-                        )
-                elif isinstance(step.func, tuple) and len(step.func) == 2:
-                    func_type = type(step.func[0]).__name__
+    @classmethod
+    def reference_pipeline_in_place(
+        cls,
+        pipeline_definition: List[AbstractStep],
+    ) -> None:
+        """Mutate FunctionStep callables into FunctionReferences for compilation."""
+        logger.debug(
+            "🔄 FUNCTION REFRESH: Processing %s steps",
+            len(pipeline_definition),
+        )
+        for step_idx, step in enumerate(pipeline_definition):
+            if not isinstance(step, FunctionStep):
+                continue
+
+            func_spec = step.function_spec()
+            if func_spec is None:
+                logger.debug(
+                    "🔄 FUNCTION REFRESH: Step %s (%s): No function pattern",
+                    step_idx,
+                    step.name,
+                )
+                continue
+
+            old_type = type(func_spec).__name__
+            step.func = cls.reference_function_spec(func_spec)
+            new_type = type(step.func).__name__
+
+            if isinstance(step.func, list) and step.func:
+                first_item = step.func[0]
+                first_item_type = type(first_item).__name__
+                if isinstance(first_item, tuple) and len(first_item) == 2:
+                    inner_func_type = type(first_item[0]).__name__
                     logger.debug(
-                        f"🔄 FUNCTION REFRESH: Step {step_idx} ({step.name}): {old_type} → {new_type} (func: {func_type})"
+                        "🔄 FUNCTION REFRESH: Step %s (%s): %s → %s "
+                        "(first item: %s, inner func: %s)",
+                        step_idx,
+                        step.name,
+                        old_type,
+                        new_type,
+                        first_item_type,
+                        inner_func_type,
                     )
                 else:
                     logger.debug(
-                        f"🔄 FUNCTION REFRESH: Step {step_idx} ({step.name}): {old_type} → {new_type}"
+                        "🔄 FUNCTION REFRESH: Step %s (%s): %s → %s "
+                        "(first item: %s)",
+                        step_idx,
+                        step.name,
+                        old_type,
+                        new_type,
+                        first_item_type,
                     )
+            elif isinstance(step.func, tuple) and len(step.func) == 2:
+                func_type = type(step.func[0]).__name__
+                logger.debug(
+                    "🔄 FUNCTION REFRESH: Step %s (%s): %s → %s (func: %s)",
+                    step_idx,
+                    step.name,
+                    old_type,
+                    new_type,
+                    func_type,
+                )
             else:
                 logger.debug(
-                    f"🔄 FUNCTION REFRESH: Step {step_idx} ({step.name}): No function pattern"
+                    "🔄 FUNCTION REFRESH: Step %s (%s): %s → %s",
+                    step_idx,
+                    step.name,
+                    old_type,
+                    new_type,
                 )
 
+    @classmethod
+    def reference_step(cls, step: AbstractStep) -> AbstractStep:
+        """Return a FunctionStep copy with referenced function specs."""
+        if not isinstance(step, FunctionStep):
+            return step
+        func_spec = step.function_spec()
+        if func_spec is None:
+            return step
+        referenced = cls.reference_function_spec(func_spec)
+        if referenced is func_spec:
+            return step
+        return step.with_function_spec(referenced)
 
-def _refresh_function_object(func_value):
-    """Convert function objects to picklable FunctionReference objects.
+    @classmethod
+    def reference_function_spec(cls, func_value):
+        """Convert function objects to picklable FunctionReference objects.
 
-    Also filters out functions with enabled=False at compile time.
-    """
-    if callable(func_value):
-        return _get_function_reference(func_value)
+        Also filters out functions with enabled=False at compile time.
+        """
+        if callable(func_value):
+            return cls.function_reference(func_value)
 
-    elif isinstance(func_value, tuple) and len(func_value) in {2, 3}:
-        func, params, *invocation_options = func_value
+        if isinstance(func_value, tuple) and len(func_value) in {2, 3}:
+            func, params, *invocation_options = func_value
 
-        if isinstance(params, dict) and params.get("enabled", True) is False:
-            return None
+            if isinstance(params, dict) and params.get("enabled", True) is False:
+                return None
 
-        if isinstance(params, dict) and "enabled" in params:
-            params = {k: v for k, v in params.items() if k != "enabled"}
+            if isinstance(params, dict) and "enabled" in params:
+                params = {k: v for k, v in params.items() if k != "enabled"}
 
-        if isinstance(params, dict) and "dtype_config" in params:
-            params = {k: v for k, v in params.items() if k != "dtype_config"}
+            if isinstance(params, dict) and "dtype_config" in params:
+                params = {k: v for k, v in params.items() if k != "dtype_config"}
 
-        if callable(func):
-            func_ref = _refresh_function_object(func)
-            return (func_ref, params, *invocation_options)
-        else:
+            if callable(func):
+                func_ref = cls.reference_function_spec(func)
+                return (func_ref, params, *invocation_options)
             return (func, params, *invocation_options)
 
-    elif isinstance(func_value, list):
-        refreshed = [_refresh_function_object(item) for item in func_value]
-        return [item for item in refreshed if item is not None]
+        if isinstance(func_value, list):
+            refreshed = [cls.reference_function_spec(item) for item in func_value]
+            return [item for item in refreshed if item is not None]
 
-    elif isinstance(func_value, dict):
-        refreshed = {
-            key: _refresh_function_object(value) for key, value in func_value.items()
-        }
-        return {key: value for key, value in refreshed.items() if value is not None}
+        if isinstance(func_value, dict):
+            refreshed = {
+                key: cls.reference_function_spec(value)
+                for key, value in func_value.items()
+            }
+            return {key: value for key, value in refreshed.items() if value is not None}
 
-    return func_value
+        return func_value
 
+    @staticmethod
+    def function_reference(func) -> FunctionReference:
+        """Convert a function to a picklable FunctionReference.
 
-def _get_function_reference(func):
-    """Convert a function to a picklable FunctionReference.
+        Preserves custom attributes (like __artifact_inputs__, __artifact_outputs__)
+        so they can be accessed during compilation without resolving the function.
 
-    Preserves custom attributes (like __artifact_inputs__, __artifact_outputs__)
-    so they can be accessed during compilation without resolving the function.
+        Compares unwrapped original functions to handle wrapper functions that may
+        be different Python objects but wrap the same underlying callable.
+        """
+        from openhcs.processing.backends.lib_registry.registry_service import (
+            RegistryService,
+        )
 
-    Compares unwrapped original functions to handle wrapper functions that may be
-    different Python objects but wrap the same underlying callable.
-    """
-    from openhcs.processing.backends.lib_registry.registry_service import (
-        RegistryService,
-    )
+        cellprofiler_reference = (
+            FunctionReferenceTransportAuthority.cellprofiler_catalog_reference(func)
+        )
+        if cellprofiler_reference is not None:
+            return cellprofiler_reference
 
-    def _get_original_func(f):
-        return inspect.unwrap(f)
+        def _get_original_func(f):
+            return inspect.unwrap(f)
 
-    original_func = _get_original_func(func)
-    original_name = original_func.__name__
-    original_module = original_func.__module__
+        original_func = _get_original_func(func)
+        original_name = original_func.__name__
+        original_module = original_func.__module__
 
-    all_functions = RegistryService.get_all_functions_with_metadata()
+        all_functions = RegistryService.get_all_functions_with_metadata()
 
-    for composite_key, metadata in all_functions.items():
-        registry_original = _get_original_func(metadata.func)
-        registry_module = registry_original.__module__
-        if (
-            registry_original.__name__ == original_name
-            and registry_module == original_module
-        ):
+        for composite_key, metadata in all_functions.items():
+            registry_original = _get_original_func(metadata.func)
+            registry_module = registry_original.__module__
+            if (
+                registry_original.__name__ == original_name
+                and registry_module == original_module
+            ):
+                function_attrs = func.__dict__
+                preserved_attrs = {
+                    attr: function_attrs[attr]
+                    for attr in _FUNCTION_REFERENCE_PRESERVED_ATTRS
+                    if attr in function_attrs
+                }
+
+                return FunctionReference(
+                    function_name=original_name,
+                    registry_name=metadata.registry.library_name,
+                    memory_type=metadata.registry.MEMORY_TYPE,
+                    composite_key=composite_key,
+                    original_module=original_module,
+                    preserved_attrs=preserved_attrs,
+                )
+
+        imported = FunctionReferenceTransportAuthority.importable_function(
+            original_module,
+            original_name,
+        )
+        if callable(imported):
+            contract = CallableContract.from_callable(func)
             function_attrs = func.__dict__
             preserved_attrs = {
                 attr: function_attrs[attr]
                 for attr in _FUNCTION_REFERENCE_PRESERVED_ATTRS
                 if attr in function_attrs
             }
-
             return FunctionReference(
                 function_name=original_name,
-                registry_name=metadata.registry.library_name,
-                memory_type=metadata.registry.MEMORY_TYPE,
-                composite_key=composite_key,
+                registry_name="python",
+                memory_type=contract.input_memory_type or "python",
+                composite_key=f"python:{original_module}:{original_name}",
                 original_module=original_module,
                 preserved_attrs=preserved_attrs,
             )
 
-    raise RuntimeError(
-        f"Function {original_name} (module: {original_module}) not found in registry - cannot create reference"
+        raise RuntimeError(
+            f"Function {original_name} (module: {original_module}) not found in "
+            "registry or importable module attribute - cannot create reference"
+        )
+
+    @staticmethod
+    def cellprofiler_catalog_reference(func: Callable) -> FunctionReference | None:
+        """Return a package-catalog reference for CellProfiler backend functions."""
+        if not isinstance(func, FunctionType):
+            return None
+        cellprofiler_module = "openhcs.processing.backends.cellprofiler"
+        module_name = func.__module__
+        function_name = func.__name__
+        if (
+            module_name != cellprofiler_module
+            and not module_name.startswith(f"{cellprofiler_module}.")
+        ):
+            return None
+
+        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
+
+        try:
+            CellProfilerFunctionCatalog.get_function(function_name)
+        except KeyError:
+            return None
+
+        contract = CallableContract.from_callable(func)
+        preserved_attrs = (
+            FunctionReferenceTransportAuthority.normalized_preserved_attrs(func)
+        )
+        return FunctionReference(
+            function_name=function_name,
+            registry_name="cellprofiler",
+            memory_type=contract.input_memory_type or "python",
+            composite_key=f"cellprofiler:{function_name}",
+            original_module=cellprofiler_module,
+            preserved_attrs=preserved_attrs,
+        )
+
+    @staticmethod
+    def normalized_preserved_attrs(func: Callable) -> dict[str, Any]:
+        """Return picklable preserved function attrs with catalog-stable raw callables."""
+        function_attrs = func.__dict__
+        preserved_attrs = {
+            attr: function_attrs[attr]
+            for attr in _FUNCTION_REFERENCE_PRESERVED_ATTRS
+            if attr in function_attrs
+        }
+        raw_processing_function = preserved_attrs.get(RAW_PROCESSING_FUNCTION_ATTR)
+        if callable(raw_processing_function):
+            stable_raw = (
+                FunctionReferenceTransportAuthority.cellprofiler_catalog_function(
+                    raw_processing_function
+                )
+            )
+            if stable_raw is not None:
+                preserved_attrs[RAW_PROCESSING_FUNCTION_ATTR] = stable_raw
+        return preserved_attrs
+
+    @staticmethod
+    def cellprofiler_catalog_function(func: Callable) -> Callable | None:
+        """Resolve a CellProfiler callable to the package-owned catalog function."""
+        if not isinstance(func, FunctionType):
+            return None
+        cellprofiler_module = "openhcs.processing.backends.cellprofiler"
+        module_name = func.__module__
+        function_name = func.__name__
+        if (
+            module_name != cellprofiler_module
+            and not module_name.startswith(f"{cellprofiler_module}.")
+        ):
+            return None
+        from openhcs.processing.backends.cellprofiler import CellProfilerFunctionCatalog
+
+        try:
+            return CellProfilerFunctionCatalog.get_function(function_name)
+        except KeyError:
+            return None
+
+    @staticmethod
+    def importable_function(module_name: str, function_name: str) -> Callable | None:
+        """Return a top-level importable function by explicit module namespace."""
+        module_namespace = vars(importlib.import_module(module_name))
+        resolved = module_namespace.get(function_name)
+        if callable(resolved):
+            return resolved
+        catalog_resolved = (
+            FunctionReferenceTransportAuthority.catalog_exported_function(
+                module_namespace,
+                function_name,
+            )
+        )
+        if catalog_resolved is not None:
+            return catalog_resolved
+        submodule = FunctionReferenceTransportAuthority.importable_submodule(
+            module_name,
+            function_name,
+        )
+        if submodule is None:
+            return None
+        resolved = vars(submodule).get(function_name)
+        if callable(resolved):
+            return resolved
+        return None
+
+    @staticmethod
+    def importable_submodule(module_name: str, function_name: str) -> Any | None:
+        """Return a same-named function submodule when the package exposes one."""
+        try:
+            return importlib.import_module(f"{module_name}.{function_name}")
+        except ModuleNotFoundError as exc:
+            if exc.name == f"{module_name}.{function_name}":
+                return None
+            raise
+
+    @staticmethod
+    def catalog_exported_function(
+        module_namespace: Mapping[str, Any],
+        function_name: str,
+    ) -> Callable | None:
+        """Return a function from a package-owned export catalog when present."""
+        function_names = module_namespace.get("CELLPROFILER_FUNCTION_NAMES")
+        catalog = module_namespace.get("CellProfilerFunctionCatalog")
+        if (
+            function_names is None
+            or catalog is None
+            or function_name not in function_names
+        ):
+            return None
+        return catalog.get_function(function_name)
+
+
+def _refresh_function_objects_in_steps(pipeline_definition: List[AbstractStep]) -> None:
+    """Refresh all function objects in pipeline steps for picklable transport."""
+    FunctionReferenceTransportAuthority.reference_pipeline_in_place(
+        pipeline_definition
     )
+
+
+def _refresh_function_object(func_value):
+    """Convert function objects to picklable FunctionReference objects."""
+    return FunctionReferenceTransportAuthority.reference_function_spec(func_value)
+
+
+def _get_function_reference(func):
+    """Convert a function to a picklable FunctionReference."""
+    return FunctionReferenceTransportAuthority.function_reference(func)
 
 
 def _dataclass_field_candidate(field_type: Any) -> Any:

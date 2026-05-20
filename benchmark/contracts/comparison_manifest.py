@@ -9,6 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from benchmark.contracts.manifest_acquisition import (
+    ManifestRootAcquisitionSpec,
+    manifest_auto_acquire_enabled,
+    materialize_manifest_roots,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ManifestPathRoot:
@@ -16,6 +22,7 @@ class ManifestPathRoot:
 
     name: str
     path: Path
+    acquisition: ManifestRootAcquisitionSpec | None = None
 
     @classmethod
     def from_manifest(cls, name: str, raw_value: object) -> "ManifestPathRoot":
@@ -23,26 +30,30 @@ class ManifestPathRoot:
             return cls(name=name, path=Path(os.path.expandvars(raw_value)).expanduser())
         if not isinstance(raw_value, Mapping):
             raise ValueError(f"Manifest path root {name!r} must be a string or object.")
-        env_name = raw_value.get("env")
-        default_value = raw_value.get("default")
-        path_value = raw_value.get("path")
-        if env_name is not None:
-            resolved = os.environ.get(str(env_name))
-            if resolved is not None:
-                return cls(name=name, path=Path(resolved).expanduser())
-        if path_value is not None:
-            return cls(
-                name=name,
-                path=Path(os.path.expandvars(str(path_value))).expanduser(),
-            )
-        if default_value is not None:
-            return cls(
-                name=name,
-                path=Path(os.path.expandvars(str(default_value))).expanduser(),
-            )
-        raise ValueError(
-            f"Manifest path root {name!r} must declare path, default, or env."
+        acquisition = (
+            ManifestRootAcquisitionSpec.from_manifest(raw_value["acquisition"])
+            if raw_value.get("acquisition") is not None
+            else None
         )
+        path = _manifest_root_path(name, raw_value)
+        return cls(name=name, path=path, acquisition=acquisition)
+
+
+def _manifest_root_path(name: str, raw_value: Mapping[object, object]) -> Path:
+    """Resolve the filesystem location declared by one manifest path root."""
+    env_name = raw_value.get("env")
+    default_value = raw_value.get("default")
+    path_value = raw_value.get("path")
+    resolved_path: str | None = None
+    if env_name is not None:
+        resolved_path = os.environ.get(str(env_name))
+    if resolved_path is None and path_value is not None:
+        resolved_path = str(path_value)
+    if resolved_path is None and default_value is not None:
+        resolved_path = str(default_value)
+    if resolved_path is not None:
+        return Path(os.path.expandvars(resolved_path)).expanduser()
+    raise ValueError(f"Manifest path root {name!r} must declare path, default, or env.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,13 +103,26 @@ class ComparisonManifest:
     path_resolver: ComparisonManifestPathResolver
 
     @classmethod
-    def load(cls, path: Path) -> "ComparisonManifest":
+    def load(
+        cls,
+        path: Path,
+        *,
+        materialize_roots: bool | None = None,
+    ) -> "ComparisonManifest":
         manifest_path = Path(path)
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         if not isinstance(payload, Mapping):
             raise ValueError("Benchmark manifest must be a JSON object.")
+        path_resolver = ComparisonManifestPathResolver.from_payload(payload)
+        should_materialize = (
+            manifest_auto_acquire_enabled()
+            if materialize_roots is None
+            else materialize_roots
+        )
+        if should_materialize:
+            materialize_manifest_roots(path_resolver.roots, payload.get("cases"))
         return cls(
             path=manifest_path,
             payload=payload,
-            path_resolver=ComparisonManifestPathResolver.from_payload(payload),
+            path_resolver=path_resolver,
         )

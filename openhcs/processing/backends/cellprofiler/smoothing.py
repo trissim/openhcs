@@ -30,7 +30,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     BackendProviderInput,
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
-    cellprofiler_backend_provider_selection,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -118,7 +118,8 @@ class SmoothingBackendProviderPolicy(
         backend_provider: BackendProviderInput,
         selection_request: SmoothingBackendSelectionRequest | None = None,
     ) -> CellProfilerBackendProvider:
-        return cellprofiler_backend_provider_selection(backend_provider).provider_or(
+        selection = CellProfilerBackendAuthority.provider_selection(backend_provider)
+        return selection.provider_or(
             cls.for_enum_member(method).default_provider(selection_request)
         )
 

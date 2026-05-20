@@ -16,6 +16,7 @@ class ZMQClientService:
     def __init__(self, port: int = 7777):
         self.port = port
         self.zmq_client = None
+        self._generation = 0
 
     async def connect(
         self,
@@ -32,19 +33,26 @@ class ZMQClientService:
                 return self.zmq_client
             await self.disconnect()
         loop = asyncio.get_event_loop()
-        self.zmq_client = ZMQExecutionClient(
+        self._generation += 1
+        generation = self._generation
+        client = ZMQExecutionClient(
             port=self.port,
             persistent=persistent,
             progress_callback=progress_callback,
         )
+        self.zmq_client = client
         connected = await loop.run_in_executor(
-            None, lambda: self.zmq_client.connect(timeout=timeout)
+            None, lambda: client.connect(timeout=timeout)
         )
         if not connected:
-            self.zmq_client = None
+            if self.zmq_client is client:
+                self.zmq_client = None
             raise RuntimeError("Failed to connect to ZMQ execution server")
+        if self.zmq_client is not client or generation != self._generation:
+            client.disconnect()
+            raise RuntimeError("ZMQ client connection was superseded before use")
         logger.info("✅ Connected to ZMQ execution server")
-        return self.zmq_client
+        return client
 
     async def disconnect(self) -> None:
         """Disconnect the client (async-safe)."""
@@ -53,6 +61,7 @@ class ZMQClientService:
         loop = asyncio.get_event_loop()
         client = self.zmq_client
         self.zmq_client = None
+        self._generation += 1
         await loop.run_in_executor(None, client.disconnect)
 
     def disconnect_sync(self) -> None:
@@ -63,3 +72,4 @@ class ZMQClientService:
             self.zmq_client.disconnect()
         finally:
             self.zmq_client = None
+            self._generation += 1

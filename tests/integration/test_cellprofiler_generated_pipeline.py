@@ -18,6 +18,7 @@ from openhcs.constants import Microscope
 from openhcs.constants.constants import AllComponents
 from openhcs.core.artifacts import ArtifactKind
 from openhcs.core.config import (
+    AnalysisConsolidationConfig,
     GlobalPipelineConfig,
     LazyPathPlanningConfig,
     MaterializationBackend,
@@ -550,6 +551,73 @@ def test_official_examplefly_cppipe_executes_measurement_math_classification(
         kind=ArtifactKind.IMAGE,
         axis_id="A01",
     )
+
+
+def test_official_examplefly_cppipe_executes_through_zmq_server(
+    tmp_path: Path,
+) -> None:
+    from openhcs.runtime.zmq_execution_client import (
+        OpenHCSExecutionSubmission,
+        ZMQExecutionClient,
+    )
+
+    examples_root = _official_cellprofiler_examples_root()
+    source_root = examples_root / "ExampleFly"
+    cppipe_path = source_root / "ExampleFly.cppipe"
+    if not cppipe_path.exists() or not source_root.exists():
+        pytest.skip(
+            "Official CellProfiler ExampleFly files are not available. "
+            f"Set CELLPROFILER_EXAMPLES_ROOT to a local examples checkout; "
+            f"looked under {examples_root}."
+        )
+
+    prepared = prepare_generated_pipeline(
+        cppipe_path,
+        output_path=tmp_path / "generated_official_examplefly_zmq_pipeline.py",
+    )
+    workspace = materialize_source_schema_workspace(
+        source_root,
+        tmp_path / "official_examplefly_zmq_openhcs_workspace",
+        prepared.source_schema,
+    )
+
+    global_config = GlobalPipelineConfig(
+        num_workers=1,
+        use_threading=False,
+        microscope=Microscope.AUTO,
+        analysis_consolidation_config=AnalysisConsolidationConfig(enabled=False),
+    )
+    ensure_global_config_context(GlobalPipelineConfig, global_config)
+    pipeline_config = PipelineConfig(
+        path_planning_config=LazyPathPlanningConfig(
+            global_output_folder=str(tmp_path / "zmq_output"),
+            output_dir_suffix="_generated_cppipe_zmq",
+        ),
+        vfs_config=VFSConfig(
+            materialization_backend=MaterializationBackend.DISK,
+        ),
+    )
+
+    client = ZMQExecutionClient(
+        port=18000 + (os.getpid() % 20000),
+        persistent=False,
+    )
+    try:
+        client.connect(timeout=30)
+        response = client.execute_pipeline(
+            OpenHCSExecutionSubmission(
+                plate_id=str(workspace.workspace_root),
+                pipeline_steps=prepared.pipeline.steps,
+                global_config=global_config,
+                pipeline_config=pipeline_config,
+            )
+        )
+    finally:
+        client.disconnect()
+
+    assert response["status"] == "complete"
+    assert response["results"]["well_count"] == 1
+    assert response["results"]["wells"] == ["A01"]
 
 
 def test_official_example_untangleworms_brightfield_cppipe_executes_overlay(

@@ -367,10 +367,43 @@
       "env": "OPENHCS_AXISONE_SUBSETS_ROOT"
     },
     "cellprofiler_examples": {
+      "acquisition": {
+        "git_ref": "4972b59e670a4ae96c3d453803c92eeff378d054",
+        "git_url": "https://github.com/CellProfiler/examples.git",
+        "kind": "git_sparse",
+        "sparse_paths": [
+          "CellProfiler3Pipelines",
+          "ExampleColocalization",
+          "ExampleCometAssay",
+          "ExampleFly",
+          "ExampleHuman",
+          "ExampleIlluminationCorrection",
+          "ExampleImagingFlowCytometryObjectsInGrid",
+          "ExampleNeighbors",
+          "ExamplePercentPositive",
+          "ExampleSpeckles",
+          "ExampleStraightenWorms",
+          "ExampleTrackObjects",
+          "ExampleTumor",
+          "ExampleUntangleWorms",
+          "ExampleUntangleWormsBrightField",
+          "ExampleVitraImages",
+          "ExampleWoundHealing",
+          "ExampleYeastColonies",
+          "ExampleYeastPatches"
+        ]
+      },
       "default": "/tmp/cellprofiler_examples",
       "env": "CELLPROFILER_EXAMPLES_ROOT"
     },
     "dataset_cache": {
+      "acquisition": {
+        "dataset_ids": [
+          "CellProfiler_tutorials",
+          "CellProfiler4_benchmark_supplement"
+        ],
+        "kind": "dataset_registry"
+      },
       "default": "/tmp/openhcs_benchmark_dataset_cache_last8",
       "env": "OPENHCS_BENCHMARK_DATASET_CACHE_ROOT"
     }

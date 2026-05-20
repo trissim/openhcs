@@ -89,7 +89,7 @@ class FunctionInvocationCallableResolver:
     @classmethod
     def prepare(cls, invocation: CompiledFunctionInvocation) -> None:
         """Resolve and cache one invocation callable before timed execution."""
-        cls.resolve(invocation)
+        prepare_processing_callable(cls.resolve(invocation))
 
     @classmethod
     def resolve(cls, invocation: CompiledFunctionInvocation) -> Callable:
@@ -103,7 +103,18 @@ class FunctionInvocationCallableResolver:
         from openhcs.core.pipeline.compiler import FunctionReference
 
         if isinstance(invocation.func, FunctionReference):
-            resolved = invocation.func.resolve()
+            from openhcs.core.function_reference_rehydration import (
+                FunctionReferenceRehydrationRequest,
+                FunctionReferenceRehydrator,
+            )
+
+            resolved = FunctionReferenceRehydrator.rehydrate_reference(
+                FunctionReferenceRehydrationRequest(
+                    reference=invocation.func,
+                    contract=invocation.contract,
+                    resolved_callable=invocation.func.resolve(),
+                )
+            )
         elif callable(invocation.func):
             resolved = invocation.func
         else:
@@ -119,7 +130,10 @@ class FunctionInvocationCallableResolver:
         from openhcs.core.pipeline.compiler import FunctionReference
 
         if isinstance(invocation.func, FunctionReference):
-            return invocation.func.composite_key
+            return (
+                invocation.func.composite_key,
+                id(invocation.contract),
+            )
         if callable(invocation.func):
             return id(invocation.func)
         raise TypeError(f"Invalid compiled invocation function: {invocation.func}")
@@ -555,7 +569,6 @@ def _resolve_invocation_callable(invocation: CompiledFunctionInvocation) -> Call
 def prepare_compiled_function_group(group: CompiledFunctionGroup) -> None:
     """Run optional preparation hooks for each callable in a compiled group."""
     for invocation in group.invocations:
-        prepare_processing_callable(invocation.func)
         FunctionInvocationCallableResolver.prepare(invocation)
 
 

@@ -120,6 +120,40 @@ def test_cellprofiler_processing_backend_exports_absorbed_function() -> None:
     )
 
 
+def test_classify_objects_aligns_dense_label_indexed_measurements_to_sparse_labels() -> None:
+    from openhcs.processing.backends.cellprofiler.classification import (
+        classify_objects_single_measurement,
+    )
+
+    image = np.ones((3, 4), dtype=np.float32)
+    labels = np.array(
+        [
+            [0, 2, 2, 0],
+            [5, 5, 0, 9],
+            [0, 9, 9, 0],
+        ],
+        dtype=np.int32,
+    )
+    measurement_values = np.full(9, np.nan, dtype=np.float64)
+    measurement_values[1] = 100.0
+    measurement_values[4] = 500.0
+    measurement_values[8] = 900.0
+
+    _classified, result = classify_objects_single_measurement(
+        image,
+        labels,
+        measurement_values=measurement_values,
+        bin_choice="even",
+        bin_count=3,
+        low_threshold=0.0,
+        high_threshold=900.0,
+        bin_names="Small,Medium,Large",
+    )
+
+    assert result.total_objects == 3
+    assert result.object_classes == '{"2": "Small", "5": "Medium", "9": "Large"}'
+
+
 def test_cellprofiler_processing_backend_exports_module_function_variants() -> None:
     from openhcs.processing.backends import cellprofiler
 
@@ -312,7 +346,7 @@ def test_cellprofiler_threshold_quantized_diagnostics_preserve_low_dynamic_range
 def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
     from openhcs.processing.backends.cellprofiler._backend import (
         CellProfilerBackendProvider,
-        cellprofiler_backend_key,
+        CellProfilerBackendAuthority,
     )
     from openhcs.processing.backends.cellprofiler.morphology import (
         CentrosomeNumpyMorphologyBackendStrategy,
@@ -360,7 +394,7 @@ def test_cellprofiler_backend_selection_is_memory_provider_keyed() -> None:
         ShapeZernikeBackendStrategy,
     )
 
-    assert cellprofiler_backend_key(MemoryType.NUMPY) == (
+    assert CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY) == (
         f"{MemoryType.NUMPY.value}:"
         f"{CellProfilerBackendProvider.NATIVE.value}"
     )

@@ -85,7 +85,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.analysis.region_properties import (
     LabelRegionPropertiesBackendStrategy,
@@ -1369,7 +1369,7 @@ class MorphologyBackendStrategy(
 class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
     """Independent NumPy/SciPy/skimage morphology backend."""
 
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY)
+    backend_key = CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY)
     memory_type = MemoryType.NUMPY
     is_default_backend = False
 
@@ -1580,7 +1580,7 @@ class NumpyMorphologyBackendStrategy(MorphologyBackendStrategy):
 class CentrosomeNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     """Optional centrosome provider for NumPy-memory morphology."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.CENTROSOME,
     )
@@ -1660,7 +1660,7 @@ class CentrosomeNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
 class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
     """Numba-accelerated NumPy morphology backend."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -2175,7 +2175,7 @@ class NumbaNumpyMorphologyBackendStrategy(NumpyMorphologyBackendStrategy):
 class OpenCVNumpyMorphologyBackendStrategy(NumbaNumpyMorphologyBackendStrategy):
     """OpenCV-accelerated NumPy morphology backend."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.OPENCV,
     )

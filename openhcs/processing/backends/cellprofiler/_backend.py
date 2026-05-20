@@ -66,7 +66,7 @@ class CellProfilerBackendRegistrySnapshot:
 
     def available_backend_providers(self) -> tuple[CellProfilerBackendProvider, ...]:
         providers = (
-            normalize_cellprofiler_backend_provider(strategy_cls.backend_provider)
+            CellProfilerBackendAuthority.provider(strategy_cls.backend_provider)
             for strategy_cls in self.registry.values()
             if strategy_cls.memory_type is self.memory_type
         )
@@ -130,7 +130,7 @@ class DefaultCellProfilerBackendProviderSelection(CellProfilerBackendProviderSel
         self,
         default_provider: CellProfilerBackendProvider,
     ) -> CellProfilerBackendProvider:
-        return normalize_cellprofiler_backend_provider(default_provider)
+        return CellProfilerBackendAuthority.provider(default_provider)
 
 
 @dataclass(frozen=True, slots=True)
@@ -144,7 +144,10 @@ class ExplicitCellProfilerBackendProviderSelection(CellProfilerBackendProviderSe
         self,
         snapshot: CellProfilerBackendRegistrySnapshot,
     ) -> type[BackendStrategyT]:
-        key = cellprofiler_backend_key(snapshot.memory_type, self.provider)
+        key = CellProfilerBackendAuthority.backend_key(
+            snapshot.memory_type,
+            self.provider,
+        )
         try:
             return snapshot.registry[key]
         except KeyError as exc:
@@ -171,49 +174,62 @@ BackendProviderInput: TypeAlias = (
 )
 
 
-def normalize_cellprofiler_memory_type(
-    memory_type: MemoryType | str = MemoryType.NUMPY,
-) -> MemoryType:
-    """Resolve a memory type value using OpenHCS' canonical enum."""
-    return memory_type if isinstance(memory_type, MemoryType) else MemoryType(str(memory_type))
+class CellProfilerBackendAuthority:
+    """Nominal authority for CellProfiler backend identity and selection."""
 
-
-def normalize_cellprofiler_backend_provider(
-    backend_provider: CellProfilerBackendProvider = DEFAULT_CELLPROFILER_BACKEND_PROVIDER,
-) -> CellProfilerBackendProvider:
-    """Resolve a backend provider using the closed typed provider enum."""
-    if not isinstance(backend_provider, CellProfilerBackendProvider):
-        raise TypeError(
-            "CellProfiler backend provider must be a "
-            "CellProfilerBackendProvider enum value"
+    @classmethod
+    def memory_type(cls, memory_type: MemoryType | str = MemoryType.NUMPY) -> MemoryType:
+        """Resolve a memory type value using OpenHCS' canonical enum."""
+        return (
+            memory_type
+            if isinstance(memory_type, MemoryType)
+            else MemoryType(str(memory_type))
         )
-    return backend_provider
 
-
-def cellprofiler_backend_provider_selection(
-    backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
-) -> CellProfilerBackendProviderSelection:
-    """Return the nominal backend-provider selection policy."""
-    if backend_provider is None:
-        return DEFAULT_CELLPROFILER_BACKEND_SELECTION
-    if isinstance(backend_provider, CellProfilerBackendProviderSelection):
+    @classmethod
+    def provider(
+        cls,
+        backend_provider: CellProfilerBackendProvider = (
+            DEFAULT_CELLPROFILER_BACKEND_PROVIDER
+        ),
+    ) -> CellProfilerBackendProvider:
+        """Resolve a backend provider using the closed typed provider enum."""
+        if not isinstance(backend_provider, CellProfilerBackendProvider):
+            raise TypeError(
+                "CellProfiler backend provider must be a "
+                "CellProfilerBackendProvider enum value"
+            )
         return backend_provider
-    return ExplicitCellProfilerBackendProviderSelection(
-        normalize_cellprofiler_backend_provider(backend_provider)
-    )
 
+    @classmethod
+    def provider_selection(
+        cls,
+        backend_provider: BackendProviderInput = DEFAULT_CELLPROFILER_BACKEND_SELECTION,
+    ) -> CellProfilerBackendProviderSelection:
+        """Return the nominal backend-provider selection policy."""
+        if backend_provider is None:
+            return DEFAULT_CELLPROFILER_BACKEND_SELECTION
+        if isinstance(backend_provider, CellProfilerBackendProviderSelection):
+            return backend_provider
+        return ExplicitCellProfilerBackendProviderSelection(
+            cls.provider(backend_provider)
+        )
 
-def cellprofiler_backend_key(
-    memory_type: MemoryType | str = MemoryType.NUMPY,
-    backend_provider: CellProfilerBackendProvider = DEFAULT_CELLPROFILER_BACKEND_PROVIDER,
-) -> str:
-    """Return the registry key for one memory/provider backend implementation."""
-    provider = normalize_cellprofiler_backend_provider(backend_provider)
-    return (
-        normalize_cellprofiler_memory_type(memory_type).value
-        + _BACKEND_KEY_SEPARATOR
-        + provider.value
-    )
+    @classmethod
+    def backend_key(
+        cls,
+        memory_type: MemoryType | str = MemoryType.NUMPY,
+        backend_provider: CellProfilerBackendProvider = (
+            DEFAULT_CELLPROFILER_BACKEND_PROVIDER
+        ),
+    ) -> str:
+        """Return the registry key for one memory/provider backend implementation."""
+        provider = cls.provider(backend_provider)
+        return (
+            cls.memory_type(memory_type).value
+            + _BACKEND_KEY_SEPARATOR
+            + provider.value
+        )
 
 
 class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
@@ -235,6 +251,8 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
     @classmethod
     def prepare_registered_family(cls) -> None:
         """Prepare every registered backend implementation for compiler warmup."""
+        if cls is CellProfilerBackendStrategyMixin:
+            return
         snapshot = CellProfilerBackendRegistrySnapshot.for_family(
             cls,
             MemoryType.NUMPY,
@@ -289,14 +307,14 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
         resolved = (
             None
             if memory_type is None
-            else normalize_cellprofiler_memory_type(memory_type)
+            else CellProfilerBackendAuthority.memory_type(memory_type)
         )
         providers: list[CellProfilerBackendProvider] = []
         for strategy_cls in cls.__registry__.values():
             if resolved is not None and strategy_cls.memory_type is not resolved:
                 continue
             providers.append(
-                normalize_cellprofiler_backend_provider(strategy_cls.backend_provider)
+                CellProfilerBackendAuthority.provider(strategy_cls.backend_provider)
             )
         return tuple(sorted(set(providers), key=lambda provider: provider.value))
 
@@ -308,9 +326,9 @@ class CellProfilerBackendStrategyMixin(CompilerPreparedAutoRegisterFamily):
     ) -> type[BackendStrategyT]:
         snapshot = CellProfilerBackendRegistrySnapshot.for_family(
             cls,
-            normalize_cellprofiler_memory_type(memory_type),
+            CellProfilerBackendAuthority.memory_type(memory_type),
         )
-        selection = cellprofiler_backend_provider_selection(backend_provider)
+        selection = CellProfilerBackendAuthority.provider_selection(backend_provider)
         return _resolve_backend_class_cached(snapshot, selection)
 
 
@@ -345,13 +363,10 @@ __all__ = [
     "DEFAULT_CELLPROFILER_BACKEND_PROVIDER",
     "DEFAULT_CELLPROFILER_BACKEND_SELECTION",
     "BackendProviderInput",
+    "CellProfilerBackendAuthority",
     "CellProfilerBackendProvider",
     "CellProfilerBackendProviderSelection",
     "CellProfilerBackendStrategyMixin",
     "DefaultCellProfilerBackendProviderSelection",
     "ExplicitCellProfilerBackendProviderSelection",
-    "cellprofiler_backend_key",
-    "cellprofiler_backend_provider_selection",
-    "normalize_cellprofiler_backend_provider",
-    "normalize_cellprofiler_memory_type",
 ]

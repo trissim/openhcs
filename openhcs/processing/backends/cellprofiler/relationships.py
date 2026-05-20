@@ -30,7 +30,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.core.runtime_semantics import (
     DenseObjectLabelPairAligner,
@@ -119,7 +119,7 @@ class NumbaNumpyObjectRelationshipBackendStrategy(
 ):
     """Numba-accelerated NumPy object relationship primitives."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )

@@ -96,9 +96,11 @@ class PlateManagerRunRecorder:
     def __init__(self) -> None:
         self.run_calls = []
 
-    def action_run_debug_plate(self, plate_path, **kwargs):
+    async def action_run_debug_plate(self, plate_path, **kwargs):
         self.run_calls.append((plate_path, kwargs))
-        return ("debug-run", plate_path, kwargs)
+
+    async def action_export_debug_artifact(self, **kwargs) -> None:
+        self.run_calls.append(("export", kwargs))
 
 
 class DebugBatchWorkflowRecorder:
@@ -127,9 +129,23 @@ class PlateManagerDebugHarness:
         self._active_debug_sessions = {}
         self._batch_workflow_service = DebugBatchWorkflowRecorder()
         self.execution_error = StatusSignalRecorder()
+        self.export_calls = []
 
     def get_selected_items(self) -> list[dict[str, str]]:
         return []
+
+    async def action_export_debug_artifact(self, **kwargs) -> None:
+        self.export_calls.append(kwargs)
+
+
+class ImmediatePipelineEditorCoroutineRunner:
+    """Test runner that executes workflow coroutines synchronously."""
+
+    def __init__(self, editor) -> None:
+        self.editor = editor
+
+    def submit(self, coroutine) -> None:
+        asyncio.run(coroutine)
 
 
 class PipelineEditorHarnessBase(metaclass=AutoRegisterMeta):
@@ -367,7 +383,11 @@ def test_plate_manager_reuses_persistent_paused_worker_across_commands(tmp_path)
 def test_pipeline_editor_routes_step_debug_command_to_bounded_run(monkeypatch) -> None:
     from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
-    monkeypatch.setattr(pipeline_editor_workflows.asyncio, "create_task", lambda task: None)
+    monkeypatch.setattr(
+        pipeline_editor_workflows,
+        "PipelineEditorCoroutineRunner",
+        ImmediatePipelineEditorCoroutineRunner,
+    )
     harness = PipelineEditorRunHarness()
 
     harness.debug_workflow.handle_command(DebugCommand(DebugCommandType.STEP))
@@ -390,33 +410,17 @@ def test_step_preview_config_detail_uses_nominal_formatter_family() -> None:
 
 
 def test_pipeline_editor_dispatches_pause_step_indices(monkeypatch) -> None:
-    created_tasks = []
-
-    def record_task(task):
-        created_tasks.append(task)
-        return None
-
-    import openhcs.pyqt_gui.widgets.pipeline_editor as pipeline_editor_module
-
     from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
-    monkeypatch.setattr(pipeline_editor_workflows.asyncio, "create_task", record_task)
+    monkeypatch.setattr(
+        pipeline_editor_workflows,
+        "PipelineEditorCoroutineRunner",
+        ImmediatePipelineEditorCoroutineRunner,
+    )
     harness = PipelineEditorRunHarness()
 
     harness.debug_workflow.run_command(DebugCommandType.RUN_TO_PAUSE)
 
-    assert created_tasks == [
-        (
-            "debug-run",
-            "plate",
-            {
-                "command_type": DebugCommandType.RUN_TO_PAUSE,
-                "pause_step_indices": (1,),
-                "start_step_index": 0,
-                "start_after_invocation_key": None,
-            },
-        )
-    ]
     assert harness.plate_manager.run_calls == [
         (
             "plate",
@@ -492,6 +496,19 @@ def test_pipeline_editor_formats_invocation_badges_with_debug_cursor() -> None:
     )
 
 
+def test_pipeline_editor_hides_inactive_invocation_badges_from_titles() -> None:
+    def crop(image):
+        return image
+
+    harness = PipelineEditorDirtyHarness()
+    step = FunctionStep(func=crop)
+
+    badge_provider = harness.function_presentation.badge_provider(step)
+
+    assert badge_provider("default", 0, crop) is None
+    assert harness.function_presentation.format_func_preview(crop) == "func=crop"
+
+
 def test_pipeline_editor_reports_stop_without_plate_manager() -> None:
     harness = PipelineEditorCommandHarness(None)
 
@@ -552,16 +569,15 @@ def test_pipeline_editor_connects_debug_inspector_artifact_actions(monkeypatch) 
 def test_pipeline_editor_exports_debug_artifact_through_plate_manager(monkeypatch) -> None:
     from openhcs.pyqt_gui.widgets.shared.services import pipeline_editor_workflows
 
-    created_tasks = []
     monkeypatch.setattr(
         pipeline_editor_workflows.QFileDialog,
         "getExistingDirectory",
         lambda *_args, **_kwargs: "/tmp/debug-export",
     )
     monkeypatch.setattr(
-        pipeline_editor_workflows.asyncio,
-        "create_task",
-        lambda task: created_tasks.append(task),
+        pipeline_editor_workflows,
+        "PipelineEditorCoroutineRunner",
+        ImmediatePipelineEditorCoroutineRunner,
     )
     harness = PipelineEditorSnapshotHarness()
     harness.debug_session_state = DebugSession(
@@ -570,10 +586,6 @@ def test_pipeline_editor_exports_debug_artifact_through_plate_manager(monkeypatc
         snapshot_store_backend="memory",
     )
     harness.plate_manager = PlateManagerRunRecorder()
-    harness.plate_manager.action_export_debug_artifact = lambda **kwargs: (
-        "export-task",
-        kwargs,
-    )
     artifact_ref = DebugArtifactRef(
         kind=ArtifactKind.MEASUREMENTS,
         name="Measurements",
@@ -586,9 +598,9 @@ def test_pipeline_editor_exports_debug_artifact_through_plate_manager(monkeypatc
         DebugArtifactMaterializeRequest(artifact_ref=artifact_ref)
     )
 
-    assert created_tasks == [
+    assert harness.plate_manager.run_calls == [
         (
-            "export-task",
+            "export",
             {
                 "debug_session_id": "debug-1",
                 "artifact_ref": artifact_ref,
@@ -616,21 +628,16 @@ def test_debug_gui_workflow_runs_commands_inspects_snapshot_and_exports(
         "getExistingDirectory",
         lambda *_args, **_kwargs: str(tmp_path / "export"),
     )
-    created_tasks = []
     monkeypatch.setattr(
-        pipeline_editor_workflows.asyncio,
-        "create_task",
-        lambda task: created_tasks.append(task),
+        pipeline_editor_workflows,
+        "PipelineEditorCoroutineRunner",
+        ImmediatePipelineEditorCoroutineRunner,
     )
 
     plate_path = str(tmp_path / "plate")
     plate_manager = PlateManagerDebugHarness()
     editor = PipelineEditorSnapshotHarness()
     editor.plate_manager = plate_manager
-    plate_manager.action_export_debug_artifact = lambda **kwargs: (
-        "export-task",
-        kwargs,
-    )
 
     asyncio.run(
         PlateManagerWidget.action_run_debug_plate(
@@ -688,15 +695,12 @@ def test_debug_gui_workflow_runs_commands_inspects_snapshot_and_exports(
     assert plate_path not in plate_manager._active_debug_sessions
     assert editor.debug_session_state.debug_session_id == "debug-1"
     assert len(editor.debug_inspector_window.store_loads) == 1
-    assert created_tasks == [
-        (
-            "export-task",
-            {
-                "debug_session_id": "debug-1",
-                "artifact_ref": artifact_ref,
-                "export_root": str(tmp_path / "export"),
-                "snapshot_store_ref": "/debug",
-                "snapshot_store_backend": "memory",
-            },
-        )
+    assert plate_manager.export_calls == [
+        {
+            "debug_session_id": "debug-1",
+            "artifact_ref": artifact_ref,
+            "export_root": str(tmp_path / "export"),
+            "snapshot_store_ref": "/debug",
+            "snapshot_store_backend": "memory",
+        }
     ]

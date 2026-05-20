@@ -45,7 +45,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.morphology import MorphologyBackendStrategy
 from openhcs.processing.backends.cellprofiler.granularity import (
@@ -783,7 +783,7 @@ class ShapeMeasurementBackendStrategy(
 class CentrosomeNumpyShapeMeasurementBackendStrategy(ShapeMeasurementBackendStrategy):
     """Centrosome-backed NumPy shape measurements."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.CENTROSOME,
     )
@@ -1010,7 +1010,7 @@ class LegacyFastNumpyShapeMeasurementBackendStrategy(
 ):
     """Mixed legacy-fast shape backend with explicit centrosome exact leaves."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.LEGACY_FAST,
     )
@@ -1025,7 +1025,7 @@ class NumbaNumpyShapeMeasurementBackendStrategy(
 ):
     """Pure Numba shape backend. Unsupported leaves fail explicitly."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )

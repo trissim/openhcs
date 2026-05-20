@@ -43,6 +43,7 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
     GeneratedPipelineFunctionRegistration,
     GeneratedPipelineModuleIdentity,
     GeneratedPipelineRuntimeModule,
+    GeneratedPipelineSemanticContractsFingerprint,
 )
 
 from openhcs.interop.cellprofiler.pipeline_generator import (
@@ -135,6 +136,7 @@ class PreparedGeneratedPipeline(CPPipePipelineArtifact):
                 contract.module_contract
                 for contract in self.generated_pipeline.artifact_contracts
             ),
+            semantic_contracts=self.generated_pipeline.artifact_contracts,
             registered_functions=self.registered_functions,
         )
 
@@ -235,7 +237,7 @@ def execute_pipeline_direct(
         }
         with _optional_phase(phase_timing, execute_phase):
             execution_results = orchestrator.execute_compiled_plate(
-                pipeline_definition=pipeline.steps,
+                pipeline_definition=list(execution_bundle.pipeline_definition),
                 compiled_contexts=compiled_contexts,
                 execution_bundle=execution_bundle,
                 progress_queue=progress_bridge.queue,
@@ -339,6 +341,7 @@ class CPPipePipelinePreparationRequest:
 
     generation: CPPipePipelineGenerationRequest
     output_path: Path
+    generated_pipeline_filemanager: FileManagerLike | None = None
     generated_pipeline_backend: Backend = Backend.DISK
 
     def prepare(self) -> PreparedGeneratedPipeline:
@@ -346,7 +349,7 @@ class CPPipePipelinePreparationRequest:
         converted = self.generation.generate()
         converted.generated_pipeline.save(
             self.output_path,
-            filemanager=self.generation.filemanager,
+            filemanager=self.generated_pipeline_filemanager,
             backend=self.generated_pipeline_backend,
         )
 
@@ -357,6 +360,12 @@ class CPPipePipelinePreparationRequest:
         artifact_contracts_by_module_num = (
             converted.generated_pipeline.runtime_module_contracts_by_module_num
         )
+        semantic_contracts = converted.generated_pipeline.artifact_contracts
+        semantic_fingerprint = GeneratedPipelineSemanticContractsFingerprint.from_generation(
+            source_cppipe=converted.cppipe_path,
+            generated_code=converted.generated_pipeline.code,
+            semantic_contracts=semantic_contracts,
+        ).value
         runtime_module = GeneratedPipelineRuntimeModule(
             GeneratedPipelineModuleIdentity(
                 module_path=self.output_path,
@@ -367,10 +376,14 @@ class CPPipePipelinePreparationRequest:
         module = runtime_module.load_from_source(
             filename=str(self.output_path),
             artifact_contracts=artifact_contracts_by_module_num,
+            semantic_contracts=semantic_contracts,
+            semantic_contract_fingerprint=semantic_fingerprint,
         )
         runtime_module.materialize_import_module(
             output_dir=self.output_path.parent,
             artifact_contracts=artifact_contracts_by_module_num,
+            semantic_contracts=semantic_contracts,
+            semantic_contract_fingerprint=semantic_fingerprint,
         )
         pipeline = runtime_module.pipeline_from_module(
             module,
@@ -470,10 +483,18 @@ def prepare_generated_pipeline(
     materialize_skipped_save_images: bool = True,
     materialize_terminal_images: bool = True,
     filemanager: FileManagerLike | None = None,
+    cppipe_filemanager: FileManagerLike | None = None,
+    generated_pipeline_filemanager: FileManagerLike | None = None,
     cppipe_backend: Backend = Backend.DISK,
     generated_pipeline_backend: Backend = Backend.DISK,
 ) -> PreparedGeneratedPipeline:
     """Generate, import, and register a .cppipe-derived OpenHCS pipeline."""
+    cppipe_filemanager = filemanager if cppipe_filemanager is None else cppipe_filemanager
+    generated_pipeline_filemanager = (
+        filemanager
+        if generated_pipeline_filemanager is None
+        else generated_pipeline_filemanager
+    )
     return CPPipePipelinePreparationRequest(
         generation=CPPipePipelineGenerationRequest(
             cppipe_path=cppipe_path,
@@ -485,9 +506,10 @@ def prepare_generated_pipeline(
             ),
             materialize_skipped_save_images=materialize_skipped_save_images,
             materialize_terminal_images=materialize_terminal_images,
-            filemanager=filemanager,
+            filemanager=cppipe_filemanager,
             cppipe_backend=cppipe_backend,
         ),
         output_path=output_path,
+        generated_pipeline_filemanager=generated_pipeline_filemanager,
         generated_pipeline_backend=generated_pipeline_backend,
     ).prepare()

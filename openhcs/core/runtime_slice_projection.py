@@ -562,7 +562,7 @@ class RuntimeSliceProjection:
                 for row in measurement_rows((table,))
             ],
             object_name=table.object_name,
-            fields=table.fields,
+            fields=(),
             object_id_field=table.object_id_field,
             source_image_name=table.source_image_name,
             subject=table.subject,
@@ -587,7 +587,7 @@ class RuntimeSliceProjection:
                 for row in measurement_rows((table,))
             ],
             object_name=table.object_name,
-            fields=table.fields,
+            fields=(),
             object_id_field=table.object_id_field,
             source_image_name=table.source_image_name,
             subject=table.subject,

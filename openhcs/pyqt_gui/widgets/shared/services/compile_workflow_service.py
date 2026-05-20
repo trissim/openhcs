@@ -7,6 +7,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, TypeVar
 
+from openhcs.core.function_step_transport import FunctionStepTransportAuthority
 from openhcs.runtime.zmq_execution_client import OpenHCSExecutionSubmission
 from zmqruntime.execution import CallbackBatchSubmitWaitPolicy
 
@@ -131,6 +132,12 @@ class CompileWorkflowService:
         pipeline_config,
         config_params: dict[str, Any] | None = None,
     ) -> CompileRequestResult:
+        if zmq_client is None:
+            raise RuntimeError("ZMQ client is not connected")
+        definition_pipeline = self.normalize_pipeline_for_transport(
+            definition_pipeline
+        )
+
         def submit_compile() -> Dict[str, Any]:
             logger.info(
                 "Submit compile: plate=%s steps=%d fingerprint=%s",
@@ -172,6 +179,8 @@ class CompileWorkflowService:
         execution_id: str,
         plate_path: str,
     ) -> None:
+        if zmq_client is None:
+            raise RuntimeError("ZMQ client is not connected")
         wait_result = await self._run_blocking(
             loop,
             lambda: zmq_client.wait_for_completion(execution_id),
@@ -187,12 +196,19 @@ class CompileWorkflowService:
         import openhcs.serialization.pycodify_formatters  # noqa: F401
         from pycodify import Assignment, generate_python_source
 
+        definition_pipeline = CompileWorkflowService.normalize_pipeline_for_transport(
+            definition_pipeline
+        )
         pipeline_code = generate_python_source(
             Assignment("pipeline_steps", definition_pipeline),
             header="# Edit this pipeline and save to apply changes",
             clean_mode=True,
         )
         return hashlib.sha256(pipeline_code.encode("utf-8")).hexdigest()[:12]
+
+    @staticmethod
+    def normalize_pipeline_for_transport(definition_pipeline: List) -> List:
+        return FunctionStepTransportAuthority.normalize_pipeline(definition_pipeline)
 
     @staticmethod
     def pipeline_step_names(definition_pipeline: List) -> List[str]:

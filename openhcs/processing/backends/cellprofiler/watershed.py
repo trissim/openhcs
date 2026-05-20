@@ -29,7 +29,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.structuring_elements import (
     StructuringElement,
@@ -966,7 +966,7 @@ class LegacyWatershedBackendStrategy(
 class NumpyLegacyWatershedBackendStrategy(LegacyWatershedBackendStrategy):
     """NumPy-memory reference legacy watershed backend."""
 
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY)
+    backend_key = CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY)
     memory_type = MemoryType.NUMPY
     is_default_backend = False
 
@@ -990,7 +990,7 @@ class NumpyLegacyWatershedBackendStrategy(LegacyWatershedBackendStrategy):
 class NumbaNumpyLegacyWatershedBackendStrategy(LegacyWatershedBackendStrategy):
     """NumPy-memory legacy watershed backend with required Numba acceleration."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -1046,7 +1046,7 @@ class MahotasCellProfiler4DistanceMarkerBackendStrategy(
 ):
     """Reference CellProfiler 4 marker backend."""
 
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY, CellProfilerBackendProvider.NATIVE)
+    backend_key = CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY, CellProfilerBackendProvider.NATIVE)
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NATIVE
     is_default_backend = False
@@ -1069,7 +1069,7 @@ class NumbaCellProfiler4DistanceMarkerBackendStrategy(
 ):
     """Exact numba backend for CellProfiler 4 regional-maxima markers."""
 
-    backend_key = cellprofiler_backend_key(MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA)
+    backend_key = CellProfilerBackendAuthority.backend_key(MemoryType.NUMPY, CellProfilerBackendProvider.NUMBA)
     memory_type = MemoryType.NUMPY
     backend_provider = CellProfilerBackendProvider.NUMBA
     is_default_backend = True

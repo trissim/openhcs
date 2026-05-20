@@ -128,6 +128,9 @@ def test_in_tree_cppipe_corpus_prepare_expectations(tmp_path: Path) -> None:
             assert len(import_result.artifact_contracts) == len(
                 prepared.generated_pipeline.artifact_contracts
             )
+            assert import_result.semantic_contracts == (
+                prepared.generated_pipeline.artifact_contracts
+            )
             continue
 
         assert case.expected_error_substring is not None

@@ -3,10 +3,15 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from benchmark.cellprofiler_comparison import load_comparison_cases
 
 
-def test_official30_portable_manifest_declares_roots_without_absolute_cases() -> None:
+def test_official30_portable_manifest_declares_roots_without_absolute_cases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OPENHCS_BENCHMARK_AUTO_ACQUIRE", "0")
     manifest_path = Path("benchmark/manifests/official30_portable_axis1.json")
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
 
@@ -15,6 +20,39 @@ def test_official30_portable_manifest_declares_roots_without_absolute_cases() ->
         "axis_one_subsets",
         "cellprofiler_examples",
         "dataset_cache",
+    }
+    assert payload["path_roots"]["cellprofiler_examples"]["acquisition"] == {
+        "git_ref": "4972b59e670a4ae96c3d453803c92eeff378d054",
+        "git_url": "https://github.com/CellProfiler/examples.git",
+        "kind": "git_sparse",
+        "sparse_paths": [
+            "CellProfiler3Pipelines",
+            "ExampleColocalization",
+            "ExampleCometAssay",
+            "ExampleFly",
+            "ExampleHuman",
+            "ExampleIlluminationCorrection",
+            "ExampleImagingFlowCytometryObjectsInGrid",
+            "ExampleNeighbors",
+            "ExamplePercentPositive",
+            "ExampleSpeckles",
+            "ExampleStraightenWorms",
+            "ExampleTrackObjects",
+            "ExampleTumor",
+            "ExampleUntangleWorms",
+            "ExampleUntangleWormsBrightField",
+            "ExampleVitraImages",
+            "ExampleWoundHealing",
+            "ExampleYeastColonies",
+            "ExampleYeastPatches",
+        ],
+    }
+    assert payload["path_roots"]["dataset_cache"]["acquisition"] == {
+        "dataset_ids": [
+            "CellProfiler_tutorials",
+            "CellProfiler4_benchmark_supplement",
+        ],
+        "kind": "dataset_registry",
     }
     assert all(not Path(case["dataset_path"]).is_absolute() for case in payload["cases"])
     assert all(not Path(case["cppipe_path"]).is_absolute() for case in payload["cases"])

@@ -280,6 +280,31 @@ class NapariLayerStateStore:
 
 
 @dataclass(slots=True)
+class NapariComponentMetadataNormalizer:
+    """Normalize component metadata before Napari stack indexing."""
+
+    indexed_components: frozenset[str] = frozenset(
+        {"channel", "z_index", "timepoint"}
+    )
+
+    def normalize(self, components: dict[str, object]) -> dict[str, object]:
+        return {
+            component: self.normalize_value(component, value)
+            for component, value in components.items()
+        }
+
+    def normalize_value(self, component: str, value: object) -> object:
+        if component not in self.indexed_components:
+            return value
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return value
+        return value
+
+
+@dataclass(slots=True)
 class NapariBatchProcessorStore:
     """Own lazy NapariBatchProcessor instances by layer key."""
 

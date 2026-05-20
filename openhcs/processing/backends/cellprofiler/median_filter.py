@@ -21,7 +21,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.lib_registry.unified_registry import ProcessingContract
 
@@ -66,7 +66,7 @@ class NumpyMedianFilterBackendStrategy(MedianFilterBackendStrategy):
     """NumPy/SciPy median filtering with exact accelerated rank paths."""
 
     max_vectorized_window_bytes = 1024**3
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NATIVE,
     )

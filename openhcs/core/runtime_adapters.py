@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from typing import Any, TypeVar
 from weakref import WeakKeyDictionary
 
+from python_introspect import set_parameter_exclusions
+
 from openhcs.core.artifacts import ArtifactInputPlan, ArtifactOutputPlan
 from openhcs.core.source_bindings import (
     CompiledSourceBindingPlan,
@@ -69,6 +71,7 @@ def runtime_adapter(
     def decorator(func: _F) -> _F:
         _RUNTIME_ADAPTER_SPECS[func] = spec
         setattr(func, "__runtime_adapter__", spec)
+        set_parameter_exclusions(func, (parameter_name,))
         return func
 
     return decorator

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Literal
 
@@ -23,9 +23,7 @@ logger = logging.getLogger(__name__)
 # Each image creates a shared memory segment (file descriptor on Linux)
 CHUNK_SIZE = 50
 
-# ViewerType is now the registry key (e.g., 'napari_streaming_config', 'fiji_streaming_config')
-# This provides type safety and consistency throughout the codebase
-ViewerType = str  # Registry key from StreamingConfig.__registry__
+ViewerType = str
 NAPARI_VIEWER_TOKEN = "napari"
 
 
@@ -62,9 +60,17 @@ class StreamingMetadata:
         )
 
     def to_backend_kwargs(self) -> dict[str, object]:
-        """Convert to kwargs at the third-party backend boundary."""
+        """Convert to kwargs while preserving runtime object identities."""
 
-        return asdict(self)
+        return {
+            "port": self.port,
+            "host": self.host,
+            "transport_mode": self.transport_mode,
+            "display_config": self.display_config,
+            "microscope_handler": self.microscope_handler,
+            "plate_path": self.plate_path,
+            "source": self.source,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,51 +121,40 @@ class StreamingService:
 
     @staticmethod
     def display_name_for_viewer_type(viewer_type: str) -> str:
-        """Get display name from registry key.
+        """Get display name from a viewer identity or streaming config key.
 
         Args:
-            viewer_type: Registry key (e.g., 'napari_streaming_config')
+            viewer_type: Viewer identity or registry key.
 
         Returns:
             Display name (e.g., 'Napari')
         """
-        # Extract viewer name from registry key (e.g., 'napari_streaming_config' -> 'napari')
-        viewer_name = viewer_type.replace('_streaming_config', '')
+        from openhcs.core.config import StreamingConfig
+
+        config_cls = StreamingConfig.__registry__.get(viewer_type)
+        if config_cls is not None:
+            viewer_name = config_cls().viewer_type
+        else:
+            viewer_name = viewer_type
         return viewer_name.title()
 
     _get_display_name = display_name_for_viewer_type
 
     @classmethod
     def supported_viewer_types(cls):
-        """Return a list of supported viewer short names (e.g. 'napari', 'fiji').
+        """Return supported streaming config field keys.
 
         Centralized so UI can discover which viewer buttons to create instead
         of hardcoding Napari/Fiji in multiple places.
         """
-        # Use the metaclass-driven StreamingConfig registry.
-        # StreamingConfig uses AutoRegisterMeta with __registry_key__ = 'viewer_type'
         from openhcs.core.config import StreamingConfig
 
         # Return stable ordering from the registry keys
         return sorted(list(StreamingConfig.__registry__.keys()))
 
-    def _get_backend_enum(self, viewer_type: str):
-        """Get the backend enum for the viewer type.
-
-        Args:
-            viewer_type: Registry key (e.g., 'napari_streaming_config', 'fiji_streaming_config')
-        """
-        from openhcs.constants.constants import Backend as BackendEnum
-
-        return (
-            BackendEnum.NAPARI_STREAM
-            if self.is_napari_viewer_type(viewer_type)
-            else BackendEnum.FIJI_STREAM
-        )
-
     @staticmethod
     def is_napari_viewer_type(viewer_type: str) -> bool:
-        """Return whether a streaming registry key targets napari."""
+        """Return whether a viewer identity or registry key targets napari."""
 
         return NAPARI_VIEWER_TOKEN in viewer_type
 
@@ -207,7 +202,7 @@ class StreamingService:
         Uses chunked streaming to prevent file descriptor exhaustion.
         """
         context = request.context
-        backend_enum = self._get_backend_enum(context.viewer_type)
+        backend_enum = context.config.backend
         display_name = self.display_name_for_viewer_type(context.viewer_type)
 
         def _worker():
@@ -295,7 +290,7 @@ class StreamingService:
     ) -> None:
         """Load and stream ROI files to viewer in background thread."""
         context = request.context
-        backend_enum = self._get_backend_enum(context.viewer_type)
+        backend_enum = context.config.backend
         display_name = self.display_name_for_viewer_type(context.viewer_type)
 
         def _worker():

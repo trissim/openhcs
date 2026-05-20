@@ -7,6 +7,7 @@ from openhcs.core.callable_contract import (
     CompilerPreparedAutoRegisterFamily,
     PROCESSING_CONTRACT_ATTR,
     RUNTIME_IMAGE_EXECUTION_MODE_ATTR,
+    _prepare_module_autoregister_families,
     attach_callable_contract_metadata,
     prepare_processing_callable,
     runtime_image_execution_mode,
@@ -90,6 +91,12 @@ def test_prepare_processing_callable_warms_imported_registered_families() -> Non
     prepare_processing_callable(_function_with_imported_prepared_family)
 
     assert _PREPARED_TEST_FAMILY_CALLS == 1
+
+
+def test_prepare_module_autoregister_families_skips_cellprofiler_backend_mixin_root() -> None:
+    _prepare_module_autoregister_families(
+        "openhcs.processing.backends.cellprofiler.crop"
+    )
 
 
 def test_callable_contract_preserves_immutable_runtime_batch_executors() -> None:

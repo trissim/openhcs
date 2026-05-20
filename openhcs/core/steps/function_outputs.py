@@ -8,6 +8,8 @@ from openhcs.constants.constants import Backend
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
 from openhcs.core.steps.function_artifact_materialization import (
+    PersistentArtifactMaterializationTargetPlan,
+    StreamingOnlyArtifactMaterializationTargetPlan,
     materialize_artifact_outputs,
 )
 from openhcs.core.steps.function_io import (
@@ -179,8 +181,11 @@ def _materialize_artifacts(
 ) -> None:
     if not plan.artifact_outputs:
         return
-    if not context.global_config.materialize_runtime_artifacts:
-        logger.info("Skipping persistent runtime artifact materialization")
+    if (
+        not context.global_config.materialize_runtime_artifacts
+        and not plan.streaming_configs
+    ):
+        logger.info("Skipping runtime artifact materialization and streaming")
         return
 
     logger.info(
@@ -191,16 +196,21 @@ def _materialize_artifacts(
         MaterializationFlagPlanner,
     )
 
-    materialization_backend = (
-        MaterializationFlagPlanner._resolve_materialization_backend(
-            context,
-            context.get_vfs_config(),
+    target_plan = StreamingOnlyArtifactMaterializationTargetPlan()
+    if context.global_config.materialize_runtime_artifacts:
+        target_plan = PersistentArtifactMaterializationTargetPlan(
+            MaterializationFlagPlanner._resolve_materialization_backend(
+                context,
+                context.get_vfs_config(),
+            )
         )
-    )
+    else:
+        logger.info("Skipping persistent runtime artifact materialization")
+
     materialize_artifact_outputs(
         context.filemanager,
         plan,
-        materialization_backend,
+        target_plan,
         context,
     )
     logger.info("Completed artifact materialization")

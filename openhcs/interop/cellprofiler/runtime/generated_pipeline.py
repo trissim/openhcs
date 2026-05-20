@@ -7,7 +7,8 @@ import importlib.util
 import inspect
 import json
 import sys
-from collections.abc import Callable, Mapping
+from collections.abc import Sequence
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass
 from pathlib import Path
 from types import ModuleType
@@ -16,7 +17,10 @@ from typing import Any, ClassVar
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.artifact_materialization_policy import NO_ARTIFACT_MATERIALIZATION
 from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSpec
+from openhcs.core.artifact_contract_preview import SourceBindingRuntimeContractGuard
 from openhcs.core.pipeline import Pipeline
+from openhcs.core.source_bindings import StepSourceBindingsConfig
+from openhcs.core.steps.function_step import FunctionStep
 from openhcs.processing.materialization import (
     CsvOptions,
     JsonOptions,
@@ -36,6 +40,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerModuleContractRegistry,
     CellProfilerRuntimeStepBinding,
 )
+from openhcs.interop.cellprofiler.symbol_table import ModuleArtifactContracts
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.processing.backends.cellprofiler import (
     cellprofiler_function_runtime_metadata,
@@ -278,6 +283,113 @@ class GeneratedPipelineMaterializationSidecarCodec:
 
 
 @dataclass(frozen=True, slots=True)
+class GeneratedPipelineSemanticContractsModule:
+    """Generated Python persistence for CellProfiler semantic contracts."""
+
+    contracts: tuple[ModuleArtifactContracts, ...]
+    fingerprint: str | None = None
+    export_name: ClassVar[str] = "CELLPROFILER_SEMANTIC_CONTRACTS"
+    fingerprint_export_name: ClassVar[str] = (
+        "CELLPROFILER_SEMANTIC_CONTRACT_FINGERPRINT"
+    )
+
+    def __post_init__(self) -> None:
+        for contract in self.contracts:
+            if not isinstance(contract, ModuleArtifactContracts):
+                raise TypeError(
+                    "GeneratedPipelineSemanticContractsModule requires "
+                    f"ModuleArtifactContracts values, got {type(contract).__name__}."
+                )
+
+    def write(self, path: Path) -> None:
+        """Write semantic contracts as importable Python source."""
+        import openhcs.serialization.pycodify_formatters  # noqa: F401
+        from pycodify import Assignment, CodeBlock, generate_python_source
+
+        assignments = [
+            Assignment(self.export_name, self.contracts),
+            Assignment(self.fingerprint_export_name, self.fingerprint),
+        ]
+
+        source = generate_python_source(
+            CodeBlock(tuple(assignments)),
+            header="# Generated CellProfiler semantic artifact contracts.",
+            clean_mode=False,
+        )
+        if not path.exists() or path.read_text(encoding="utf-8") != source:
+            path.write_text(source, encoding="utf-8")
+
+    @classmethod
+    def load(
+        cls,
+        path: str | Path,
+        *,
+        expected_fingerprint: str | None = None,
+    ) -> tuple[ModuleArtifactContracts, ...]:
+        """Load semantic contracts from a generated Python sidecar."""
+        sidecar_path = Path(path)
+        module_name = f"_openhcs_{sidecar_path.stem}_semantic_contracts"
+        spec = importlib.util.spec_from_file_location(module_name, sidecar_path)
+        if spec is None or spec.loader is None:
+            raise ImportError(
+                f"Unable to create semantic contract module spec for {sidecar_path}."
+            )
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        contracts = module.CELLPROFILER_SEMANTIC_CONTRACTS
+        actual_fingerprint = module.CELLPROFILER_SEMANTIC_CONTRACT_FINGERPRINT
+        if (
+            expected_fingerprint is not None
+            and actual_fingerprint != expected_fingerprint
+        ):
+            raise ValueError(
+                "Generated CellProfiler semantic contract sidecar fingerprint "
+                f"mismatch for {sidecar_path}."
+            )
+        normalized = tuple(contracts)
+        cls(normalized, fingerprint=actual_fingerprint)
+        return normalized
+
+
+@dataclass(frozen=True, slots=True)
+class GeneratedPipelineSemanticContractsFingerprint:
+    """Stable fingerprint for generated semantic contract sidecars."""
+
+    value: str
+
+    @classmethod
+    def from_generation(
+        cls,
+        *,
+        source_cppipe: Path | None,
+        generated_code: str,
+        semantic_contracts: Sequence[ModuleArtifactContracts],
+    ) -> "GeneratedPipelineSemanticContractsFingerprint":
+        import openhcs.serialization.pycodify_formatters  # noqa: F401
+        from pycodify import Assignment, generate_python_source
+
+        semantic_source = generate_python_source(
+            Assignment("contracts", tuple(semantic_contracts)),
+            clean_mode=False,
+        )
+        payload_parts = (
+            cls._source_cppipe_digest(source_cppipe),
+            hashlib.sha256(generated_code.encode("utf-8")).hexdigest(),
+            hashlib.sha256(semantic_source.encode("utf-8")).hexdigest(),
+        )
+        return cls(hashlib.sha256("::".join(payload_parts).encode("utf-8")).hexdigest())
+
+    @staticmethod
+    def _source_cppipe_digest(source_cppipe: Path | None) -> str:
+        if source_cppipe is None:
+            return ""
+        path = Path(source_cppipe)
+        if not path.exists():
+            return hashlib.sha256(str(path).encode("utf-8")).hexdigest()
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class GeneratedPipelineModuleIdentity:
     """Stable import identity for one generated pipeline module."""
 
@@ -334,6 +446,8 @@ class GeneratedPipelineRuntimeModule:
         *,
         filename: str,
         artifact_contracts: dict[int, Any] | None = None,
+        semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
+        semantic_contract_fingerprint: str | None = None,
     ) -> ModuleType:
         """Import generated pipeline code from source with the stable module name."""
         if artifact_contracts:
@@ -345,6 +459,10 @@ class GeneratedPipelineRuntimeModule:
         module.__file__ = filename
         sys.modules[self.module_name] = module
         exec(compile(self.identity.code, filename, "exec"), module.__dict__)
+        module.CELLPROFILER_SEMANTIC_CONTRACTS = tuple(semantic_contracts)
+        module.CELLPROFILER_SEMANTIC_CONTRACT_FINGERPRINT = (
+            semantic_contract_fingerprint
+        )
         if artifact_contracts:
             bind_generated_pipeline_runtime(module, artifact_contracts)
         return module
@@ -354,6 +472,8 @@ class GeneratedPipelineRuntimeModule:
         *,
         output_dir: Path,
         artifact_contracts: dict[int, Any] | None = None,
+        semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
+        semantic_contract_fingerprint: str | None = None,
     ) -> Path:
         """Write an importable module that restores registry visibility on import."""
         importable_path = output_dir / f"{self.module_name}.py"
@@ -369,11 +489,35 @@ class GeneratedPipelineRuntimeModule:
                 "    _openhcs_cp_contract_values = _openhcs_cp_contract_sidecar.register("
                 f"generated_module_name=__name__, path={str(contract_sidecar)!r})\n"
             )
+        semantic_sidecar = output_dir / (
+            f"{self.module_name}.cellprofiler_semantic_contracts.py"
+        )
+        semantic_prelude = "    CELLPROFILER_SEMANTIC_CONTRACTS = ()\n"
+        if semantic_contracts:
+            GeneratedPipelineSemanticContractsModule(
+                semantic_contracts,
+                fingerprint=semantic_contract_fingerprint,
+            ).write(semantic_sidecar)
+            fingerprint_argument = (
+                ""
+                if semantic_contract_fingerprint is None
+                else f", expected_fingerprint={semantic_contract_fingerprint!r}"
+            )
+            semantic_prelude = (
+                "    from openhcs.interop.cellprofiler.runtime.generated_pipeline import "
+                "GeneratedPipelineSemanticContractsModule as _openhcs_cp_semantic_contracts\n"
+                "    CELLPROFILER_SEMANTIC_CONTRACTS = "
+                "_openhcs_cp_semantic_contracts.load("
+                f"{str(semantic_sidecar)!r}{fingerprint_argument})\n"
+                "    CELLPROFILER_SEMANTIC_CONTRACT_FINGERPRINT = "
+                f"{semantic_contract_fingerprint!r}\n"
+            )
         importable_source = (
             self.identity.code
             + "\n\n"
             + "if __name__ != '__main__':\n"
             + contract_prelude
+            + semantic_prelude
             + "    import sys as _openhcs_generated_sys\n"
             + "    from openhcs.interop.cellprofiler.runtime.generated_pipeline import "
             + "GeneratedPipelineFunctionRegistration as _openhcs_registration\n"
@@ -419,8 +563,10 @@ def bind_generated_pipeline_runtime(
             raise TypeError(
                 "Generated CellProfiler artifact contracts must be "
                 f"ModuleArtifactContract values, got {type(contract).__name__}."
-            )
+        )
         normalized[int(module_num)] = contract
+    if normalized:
+        CellProfilerModuleContractRegistry.register(module.__name__, normalized)
     GeneratedPipelineRuntimeBindings(module, normalized).apply()
 
 
@@ -436,30 +582,64 @@ class GeneratedPipelineRuntimeBindings:
         if not self.artifact_contracts:
             return
 
-        contracts_by_module_name: dict[str, list[int]] = {}
-        for module_num, contract in self.artifact_contracts.items():
-            contracts_by_module_name.setdefault(contract.module_name, []).append(
-                module_num
-            )
-
+        contract_bindings = CellProfilerGeneratedStepContracts(
+            self.artifact_contracts
+        ).ordered()
         for step in GeneratedPipelineModuleExports(self.module).pipeline_steps:
-            step.func = self._bind_func_spec(step.func, contracts_by_module_name)
+            if not isinstance(step, FunctionStep):
+                raise TypeError(
+                    "Generated CellProfiler pipeline steps must be FunctionStep "
+                    f"instances, got {type(step).__name__}."
+                )
+            try:
+                step_contract = next(contract_bindings)
+            except StopIteration as exc:
+                raise ValueError(
+                    "Generated CellProfiler pipeline has more executable steps "
+                    "than runtime artifact contracts."
+                ) from exc
+            step.func = self._bind_func_spec(
+                step.func,
+                step_contract,
+                step.source_bindings,
+            )
+        try:
+            extra = next(contract_bindings)
+        except StopIteration:
+            return
+        raise ValueError(
+            "Generated CellProfiler runtime artifact contract has no matching "
+            f"step for module {extra.module_num} ({extra.contract.module_name!r})."
+        )
 
     def _bind_func_spec(
         self,
         func_spec: Any,
-        contracts_by_module_name: dict[str, list[int]],
+        step_contract: "CellProfilerGeneratedStepContract",
+        source_bindings: StepSourceBindingsConfig,
     ) -> Any:
         if callable(func_spec):
-            return self._bind_callable(func_spec, contracts_by_module_name)
+            return self._bind_callable(
+                func_spec,
+                step_contract,
+                source_bindings,
+            )
         if isinstance(func_spec, tuple) and len(func_spec) in {2, 3}:
             return (
-                self._bind_callable(func_spec[0], contracts_by_module_name),
+                self._bind_callable(
+                    func_spec[0],
+                    step_contract,
+                    source_bindings,
+                ),
                 *func_spec[1:],
             )
         if isinstance(func_spec, list):
             return [
-                self._bind_func_spec(item, contracts_by_module_name)
+                self._bind_func_spec(
+                    item,
+                    step_contract,
+                    source_bindings,
+                )
                 for item in func_spec
             ]
         return func_spec
@@ -467,25 +647,56 @@ class GeneratedPipelineRuntimeBindings:
     def _bind_callable(
         self,
         func: Callable[..., Any],
-        contracts_by_module_name: dict[str, list[int]],
+        step_contract: "CellProfilerGeneratedStepContract",
+        source_bindings: StepSourceBindingsConfig,
     ) -> Callable[..., Any]:
         metadata = cellprofiler_function_runtime_metadata(func)
         if metadata is None:
             return func
-        module_nums = contracts_by_module_name.get(metadata.module_name)
-        if not module_nums:
-            return func
-        module_num = module_nums.pop(0)
+        step_contract.validate_callable_metadata(metadata)
+        contract = step_contract.contract
+        SourceBindingRuntimeContractGuard(
+            contract,
+            source_bindings,
+        ).validate()
         return CellProfilerRuntimeStepBinding(
             raw_callable=func,
             generated_module_name=self.module.__name__,
-            module_num=module_num,
+            module_num=step_contract.module_num,
             declared_processing_contract=metadata.declared_processing_contract,
-            runtime_name=(
-                f"{self.module.__name__}_{metadata.function_name}_"
-                f"{module_num}_runtime"
-            ),
         ).load()
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerGeneratedStepContract:
+    """One executable generated step matched to its original CP module contract."""
+
+    module_num: int
+    contract: ModuleArtifactContract
+
+    def validate_callable_metadata(self, metadata: Any) -> None:
+        """Ensure generated step callable and contract describe the same CP module."""
+        if metadata.module_name == self.contract.module_name:
+            return
+        raise ValueError(
+            "Generated CellProfiler step callable does not match runtime "
+            f"artifact contract for module {self.module_num}: callable "
+            f"{metadata.module_name!r}, contract {self.contract.module_name!r}."
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerGeneratedStepContracts:
+    """Ordered executable-step contract stream for generated CP pipelines."""
+
+    contracts_by_module_num: Mapping[int, ModuleArtifactContract]
+
+    def ordered(self) -> "Iterator[CellProfilerGeneratedStepContract]":
+        """Yield contracts in original CellProfiler module execution order."""
+        return iter(
+            CellProfilerGeneratedStepContract(module_num, contract)
+            for module_num, contract in sorted(self.contracts_by_module_num.items())
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -496,13 +707,7 @@ class GeneratedPipelineModuleExports:
 
     @property
     def pipeline_steps(self) -> Any:
-        try:
-            return self.module.pipeline_steps
-        except AttributeError as exc:
-            raise AttributeError(
-                f"Generated module {self.module.__name__} does not define "
-                "pipeline_steps."
-            ) from exc
+        return self.module.pipeline_steps
 
     @property
     def step_callables(self) -> tuple[Callable[..., Any], ...]:
@@ -645,6 +850,8 @@ def load_generated_pipeline_module_from_source(
     module_name: str,
     filename: str,
     artifact_contracts: dict[int, Any] | None = None,
+    semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
+    semantic_contract_fingerprint: str | None = None,
 ) -> ModuleType:
     """Compatibility facade for importing generated code from source."""
     module_path = Path(filename)
@@ -657,6 +864,8 @@ def load_generated_pipeline_module_from_source(
     ).load_from_source(
         filename=filename,
         artifact_contracts=artifact_contracts,
+        semantic_contracts=semantic_contracts,
+        semantic_contract_fingerprint=semantic_contract_fingerprint,
     )
 
 
@@ -666,6 +875,8 @@ def materialize_generated_pipeline_import_module(
     module_name: str,
     output_dir: Path,
     artifact_contracts: dict[int, Any] | None = None,
+    semantic_contracts: tuple[ModuleArtifactContracts, ...] = (),
+    semantic_contract_fingerprint: str | None = None,
 ) -> Path:
     """Compatibility facade for generated module materialization."""
     module_path = output_dir / f"{module_name}.py"
@@ -678,6 +889,8 @@ def materialize_generated_pipeline_import_module(
     ).materialize_import_module(
         output_dir=output_dir,
         artifact_contracts=artifact_contracts,
+        semantic_contracts=semantic_contracts,
+        semantic_contract_fingerprint=semantic_contract_fingerprint,
     )
 
 

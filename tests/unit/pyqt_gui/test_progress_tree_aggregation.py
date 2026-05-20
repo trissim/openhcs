@@ -346,6 +346,51 @@ def test_progress_client_connection_tracks_execution_server_presence(monkeypatch
     assert client.disconnected is True
 
 
+def test_update_from_progress_delegates_execution_server_rows_to_renderer():
+    manager = ZMQServerManagerWidget.__new__(ZMQServerManagerWidget)
+    raw_server_data = {
+        "port": 7777,
+        "ready": True,
+        "server": "OpenHCSExecutionServer",
+        "log_file_path": "/tmp/server.log",
+        "workers": [],
+        "running_executions": [],
+        "queued_executions": [],
+    }
+
+    class _FakeItem:
+        def data(self, _column, _role):
+            return raw_server_data
+
+    class _FakeTree:
+        def __init__(self):
+            self.item = _FakeItem()
+
+        def topLevelItemCount(self):
+            return 1
+
+        def topLevelItem(self, _index):
+            return self.item
+
+    class _FakeRenderer:
+        def __init__(self):
+            self.calls = []
+
+        def update_execution_server_item(self, item, data):
+            self.calls.append((item, data))
+
+    renderer = _FakeRenderer()
+    manager.server_tree = _FakeTree()
+    manager._server_info_parser = DefaultServerInfoParser()
+    manager._progress_renderer = renderer
+    manager._progress_dirty = True
+
+    manager._update_from_progress()
+
+    assert renderer.calls == [(manager.server_tree.topLevelItem(0), raw_server_data)]
+    assert manager._progress_dirty is False
+
+
 def test_init_only_execution_with_assignments_renders_as_queued_not_compiling(
     monkeypatch,
 ):

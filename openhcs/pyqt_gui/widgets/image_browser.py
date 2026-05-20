@@ -123,8 +123,9 @@ class StreamingViewerField:
 
     @property
     def display_name(self) -> str:
-        viewer_name = self.field_name.replace("_streaming_config", "")
-        return viewer_name.replace("_", " ").title()
+        from openhcs.ui.shared.streaming_service import StreamingService
+
+        return StreamingService.display_name_for_viewer_type(self.field_name)
 
 
 STREAMING_VIEWER_FIELDS = tuple(
@@ -1166,42 +1167,36 @@ class ImageBrowserWidget(QWidget):
             if not self.orchestrator:
                 raise RuntimeError("No orchestrator set")
 
-            from openhcs.constants.constants import Backend as BackendEnum
             from openhcs.pyqt_gui.utils.threading_utils import spawn_thread_with_context
 
             # For each enabled viewer, resolve config + viewer on UI thread, then spawn worker
-            for viewer_type in enabled_viewers:
+            for viewer_field_name in enabled_viewers:
                 # Get fully resolved streaming config from ObjectState (includes inheritance)
-                config = self.state.get_resolved_value(viewer_type)
-
-                # Get the appropriate backend enum
-                backend_enum = getattr(
-                    BackendEnum, f"{viewer_type.upper()}_STREAM", None
-                )
-                if not backend_enum:
-                    logger.error(f"No backend enum for viewer type: {viewer_type}")
-                    continue
+                config = self.state.get_resolved_value(viewer_field_name)
+                backend_enum = config.backend
 
                 # Create closure to capture viewer_config
-                def _make_acquire_and_stream(cfg, vt):
+                def _make_acquire_and_stream(cfg, field_name, backend):
                     def _acquire_and_stream():
                         try:
                             viewer = self.orchestrator.get_or_create_visualizer(cfg)
                             # _stream_single_roi_async itself starts a worker thread,
                             # so we call it here to kick off the streaming flow.
                             self._stream_single_roi_async(
-                                viewer, roi_zip_path, cfg, backend_enum, vt
+                                viewer, roi_zip_path, cfg, backend, cfg.viewer_type
                             )
                         except Exception as e:
                             logger.error(
-                                f"Failed to acquire {vt} viewer or start streaming: {e}"
+                                f"Failed to acquire {field_name} viewer or start streaming: {e}"
                             )
                             from PyQt6.QtCore import QTimer
 
                             QTimer.singleShot(
                                 0,
-                                lambda vt=vt, e=e: QMessageBox.warning(
-                                    self, "Error", f"Failed to stream ROI to {vt}: {e}"
+                                lambda field_name=field_name, e=e: QMessageBox.warning(
+                                    self,
+                                    "Error",
+                                    f"Failed to stream ROI to {field_name}: {e}",
                                 ),
                             )
 
@@ -1209,8 +1204,8 @@ class ImageBrowserWidget(QWidget):
 
                 # Spawn the thread with captured config
                 spawn_thread_with_context(
-                    _make_acquire_and_stream(config, viewer_type),
-                    name=f"acquire_{viewer_type}",
+                    _make_acquire_and_stream(config, viewer_field_name, backend_enum),
+                    name=f"acquire_{viewer_field_name}",
                 )
 
             logger.info(f"Started async streaming of ROI file {roi_zip_path.name}")
@@ -1543,10 +1538,10 @@ class ImageBrowserWidget(QWidget):
                     viewer=viewer,
                     plate_path=plate_path,
                     config=config,
-                    viewer_type=viewer_type,
+                    viewer_type=config.viewer_type,
                     status_callback=self._status_update_signal.emit,
                     error_callback=lambda e: self._show_streaming_error(e)
-                    if StreamingService.is_napari_viewer_type(viewer_type)
+                    if StreamingService.is_napari_viewer_type(config.viewer_type)
                     else self._show_fiji_streaming_error(e),
                 ),
                 filenames=tuple(filenames),
@@ -1590,10 +1585,10 @@ class ImageBrowserWidget(QWidget):
                     viewer=viewer,
                     plate_path=plate_path,
                     config=config,
-                    viewer_type=viewer_type,
+                    viewer_type=config.viewer_type,
                     status_callback=self._status_update_signal.emit,
                     error_callback=lambda e: self._show_streaming_error(e)
-                    if StreamingService.is_napari_viewer_type(viewer_type)
+                    if StreamingService.is_napari_viewer_type(config.viewer_type)
                     else self._show_fiji_streaming_error(e),
                 ),
                 roi_filenames=tuple(roi_filenames),

@@ -516,7 +516,7 @@ class SourceBindingGroups:
         ).normalized()
 
 
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, kw_only=True)
 class _SourceBindingPlanBase(ABC, metaclass=AutoRegisterMeta):
     """Shared typed source-binding plan fields across editable and compiled views."""
 
@@ -565,7 +565,7 @@ class _SourceBindingPlanBase(ABC, metaclass=AutoRegisterMeta):
         """Whether the subclass-specific binding payload is empty."""
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class StepSourceBindingsConfig(_SourceBindingPlanBase):
     """First-class FunctionStep field for named semantic input bindings."""
 

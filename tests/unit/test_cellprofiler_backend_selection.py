@@ -8,20 +8,21 @@ from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
     ExplicitCellProfilerBackendProviderSelection,
-    cellprofiler_backend_provider_selection,
-    normalize_cellprofiler_backend_provider,
+    CellProfilerBackendAuthority,
 )
 
 
 def test_absent_backend_provider_uses_default_selection_policy() -> None:
     assert (
-        cellprofiler_backend_provider_selection(None)
+        CellProfilerBackendAuthority.provider_selection(None)
         is DEFAULT_CELLPROFILER_BACKEND_SELECTION
     )
 
 
 def test_explicit_backend_provider_uses_explicit_selection_policy() -> None:
-    selection = cellprofiler_backend_provider_selection(CellProfilerBackendProvider.NUMBA)
+    selection = CellProfilerBackendAuthority.provider_selection(
+        CellProfilerBackendProvider.NUMBA
+    )
 
     assert isinstance(selection, ExplicitCellProfilerBackendProviderSelection)
     assert selection.provider is CellProfilerBackendProvider.NUMBA
@@ -29,7 +30,7 @@ def test_explicit_backend_provider_uses_explicit_selection_policy() -> None:
 
 def test_backend_provider_normalizer_rejects_absent_provider() -> None:
     with pytest.raises(TypeError, match="CellProfiler backend provider"):
-        normalize_cellprofiler_backend_provider(None)  # type: ignore[arg-type]
+        CellProfilerBackendAuthority.provider(None)  # type: ignore[arg-type]
 
 
 def test_all_numba_cellprofiler_backends_define_compiler_prewarm() -> None:

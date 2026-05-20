@@ -113,7 +113,9 @@ def create_streaming_config(
     class_dict = {
         "port": port,
         "backend": property(lambda self: backend),
-        "viewer_type": property(lambda self: registry_key),  # Property returning registry key (e.g., 'napari_streaming_config')
+        "viewer_type": property(lambda self: viewer_name),
+        "streaming_config_key": property(lambda self: registry_key),
+        "display_name": property(lambda self: viewer_name.replace("_", " ").title()),
         "step_plan_output_key": property(lambda self: f"{viewer_name}_streaming_paths"),
         "get_streaming_kwargs": _get_streaming_kwargs,
         "create_visualizer": _create_visualizer,

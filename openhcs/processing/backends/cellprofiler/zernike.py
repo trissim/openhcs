@@ -29,7 +29,7 @@ from openhcs.processing.backends.cellprofiler._backend import (
     DEFAULT_CELLPROFILER_BACKEND_SELECTION,
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.granularity import (
     CellProfilerRuntimeProfiler,
@@ -224,7 +224,7 @@ class ShapeZernikeBackendStrategy(
 class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
     """Centrosome-backed NumPy implementation matching legacy semantics."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.CENTROSOME,
     )
@@ -366,7 +366,7 @@ class CentrosomeNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
 class LegacyFastNumpyShapeZernikeBackendStrategy(ShapeZernikeBackendStrategy):
     """Mixed legacy-fast Zernike backend with explicit centrosome exact leaves."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.LEGACY_FAST,
     )

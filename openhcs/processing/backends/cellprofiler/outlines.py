@@ -25,7 +25,7 @@ from openhcs.interop.cellprofiler.settings_binder import coerce_cellprofiler_enu
 from openhcs.processing.backends.cellprofiler._backend import (
     CellProfilerBackendProvider,
     CellProfilerBackendStrategyMixin,
-    cellprofiler_backend_key,
+    CellProfilerBackendAuthority,
 )
 from openhcs.processing.backends.cellprofiler.color import coerce_rgb_color
 from openhcs.processing.backends.cellprofiler.image_geometry import (
@@ -57,7 +57,7 @@ class ObjectOutlineBackendStrategy(
 class NumbaNumpyObjectOutlineBackendStrategy(ObjectOutlineBackendStrategy):
     """Numba-accelerated NumPy object outline primitives."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.NUMBA,
     )
@@ -79,7 +79,7 @@ class NumbaNumpyObjectOutlineBackendStrategy(ObjectOutlineBackendStrategy):
 class CentrosomeNumpyObjectOutlineBackendStrategy(ObjectOutlineBackendStrategy):
     """Explicit centrosome provider for NumPy object outlines."""
 
-    backend_key = cellprofiler_backend_key(
+    backend_key = CellProfilerBackendAuthority.backend_key(
         MemoryType.NUMPY,
         CellProfilerBackendProvider.CENTROSOME,
     )

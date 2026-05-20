@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import logging
+from abc import ABC, abstractmethod
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, ClassVar, Mapping
 
+from metaclass_registry import AutoRegisterMeta
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.artifact_materialization_policy import (
@@ -25,6 +27,48 @@ from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 
 
 logger = logging.getLogger(__name__)
+
+
+class ArtifactMaterializationTargetPlan(ABC, metaclass=AutoRegisterMeta):
+    """Nominal target policy for artifact materialization destinations."""
+
+    __registry_key__ = "target_key"
+    __skip_if_no_key__ = True
+    target_key: ClassVar[str | None] = None
+
+    def backend_kwargs(
+        self,
+        plan: FunctionStepExecutionPlan,
+        context: Any,
+    ) -> dict[str, dict[str, Any]]:
+        backend_kwargs = self.persistent_backend_kwargs()
+        for config in plan.streaming_configs:
+            backend_kwargs[config.backend.value] = config.get_streaming_kwargs(context)
+        return backend_kwargs
+
+    @abstractmethod
+    def persistent_backend_kwargs(self) -> dict[str, dict[str, Any]]:
+        """Return persistent materialization backends owned by this policy."""
+
+
+@dataclass(frozen=True, slots=True)
+class PersistentArtifactMaterializationTargetPlan(ArtifactMaterializationTargetPlan):
+    """Target policy for persistent files plus any enabled viewer streams."""
+
+    target_key = "persistent"
+    backend: str
+
+    def persistent_backend_kwargs(self) -> dict[str, dict[str, Any]]:
+        return {self.backend: {}}
+
+
+class StreamingOnlyArtifactMaterializationTargetPlan(ArtifactMaterializationTargetPlan):
+    """Target policy for viewer streams with no persistent artifact files."""
+
+    target_key = "streaming_only"
+
+    def persistent_backend_kwargs(self) -> dict[str, dict[str, Any]]:
+        return {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -310,18 +354,17 @@ def _actual_materialization_records(
 def materialize_artifact_outputs(
     filemanager: Any,
     plan: FunctionStepExecutionPlan,
-    backend: str,
+    target_plan: ArtifactMaterializationTargetPlan,
     context: Any,
 ) -> None:
     """Materialize planned artifact outputs to persistent and streaming backends."""
     from openhcs.processing.materialization import materialize
 
-    backends = [backend]
-    backend_kwargs: dict[str, dict[str, Any]] = {backend: {}}
+    backend_kwargs = target_plan.backend_kwargs(plan, context)
+    backends = list(backend_kwargs)
 
-    for config in plan.streaming_configs:
-        backends.append(config.backend.value)
-        backend_kwargs[config.backend.value] = config.get_streaming_kwargs(context)
+    if not backends:
+        return
 
     analysis_output_dir = plan.artifact_analysis_output_dir
     images_dir = plan.artifact_images_dir
