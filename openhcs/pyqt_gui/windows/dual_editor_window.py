@@ -44,6 +44,9 @@ from pyqt_reactive.forms.layout_constants import CURRENT_LAYOUT
 from pyqt_reactive.widgets.shared import BaseFormDialog, ResponsiveTwoRowWidget
 from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.introspection import UnifiedParameterAnalyzer
+from openhcs.pyqt_gui.widgets.artifact_contract_preview import (
+    ArtifactContractPreviewWidget,
+)
 from openhcs.pyqt_gui.widgets.step_parameter_editor import StepParameterEditorWidget
 
 logger = logging.getLogger(__name__)
@@ -148,6 +151,7 @@ class DualEditorWindow(BaseFormDialog):
         # hooks can run during init_scope_border() without attribute errors.
         self.step_editor = None
         self.func_editor = None
+        self.artifact_contract_preview = None
 
         self._flash_overlay = None  # Window flash overlay for visual feedback
         self._flash_overlay_cleaned = False  # Track if overlay was cleaned up
@@ -159,6 +163,7 @@ class DualEditorWindow(BaseFormDialog):
         self._func_buttons_widget: Optional[QWidget] = (
             None  # Button widget from func editor
         )
+        self._time_travel_title_refresh_callback = None
 
         # Setup UI
         self.setup_ui()
@@ -171,8 +176,39 @@ class DualEditorWindow(BaseFormDialog):
         # Connect automatic change detection (BaseManagedWindow feature)
         # This automatically calls detect_changes() when any parameter changes
         self._connect_change_detection()
+        self._connect_time_travel_title_refresh()
 
         logger.debug(f"Dual editor window initialized (new={is_new})")
+
+    def _connect_time_travel_title_refresh(self) -> None:
+        """Refresh local dirty/title state after registry time-travel completes."""
+        if not self.scope_id:
+            return
+
+        def refresh_after_time_travel(_dirty_states, _triggering_scope) -> None:
+            QTimer.singleShot(0, self._refresh_after_time_travel)
+
+        ObjectStateRegistry.add_time_travel_complete_callback(refresh_after_time_travel)
+        self._time_travel_title_refresh_callback = refresh_after_time_travel
+
+        def cleanup_refresh_callback(*_args) -> None:
+            callback = self._time_travel_title_refresh_callback
+            if callback is not None:
+                ObjectStateRegistry.remove_time_travel_complete_callback(callback)
+                self._time_travel_title_refresh_callback = None
+
+        self.destroyed.connect(cleanup_refresh_callback)
+
+    def _refresh_dirty_title_state(self) -> None:
+        """Synchronize save-button and title markers from current ObjectState."""
+        self.detect_changes()
+        self._update_window_title()
+
+    def _refresh_after_time_travel(self) -> None:
+        """Synchronize all step-derived tabs from restored ObjectState state."""
+
+        self._sync_function_editor_from_step()
+        self._refresh_dirty_title_state()
 
     def showEvent(self, event: QShowEvent) -> None:
         super().showEvent(event)
@@ -345,6 +381,7 @@ class DualEditorWindow(BaseFormDialog):
         # Create tabs (this adds content to the tab widget)
         self.create_step_tab()
         self.create_function_tab()
+        self.create_artifact_contract_tab()
 
         # Editors now exist; apply scope styling to their widget trees.
         self.apply_scope_accent_styling()
@@ -427,7 +464,7 @@ class DualEditorWindow(BaseFormDialog):
         """Update window title with dirty marker and signature diff underline.
 
         Two orthogonal visual semantics:
-        - Asterisk (*): dirty (resolved_live != resolved_saved)
+        - Asterisk (*): unsaved raw edits (parameters != saved_parameters)
         - Underline: signature diff (raw != signature default)
 
         Reads step name from ObjectState for live updates when user edits the name field.
@@ -451,7 +488,7 @@ class DualEditorWindow(BaseFormDialog):
 
         # Check dirty state from ObjectState
         is_dirty = bool(
-            step_editor and step_editor.state and step_editor.state.dirty_fields
+            step_editor and step_editor.state and step_editor.state.is_raw_dirty
         )
         has_sig_diff = bool(
             step_editor
@@ -473,8 +510,11 @@ class DualEditorWindow(BaseFormDialog):
         # Add asterisk if there are unsaved changes
         has_changes = self.has_changes
         new_text = f"* {base_text}" if has_changes else base_text
-        logger.info(
-            f"🔘 Updating save button text: is_new={self.is_new}, has_changes={has_changes} → '{new_text}'"
+        logger.debug(
+            "Updating save button text: is_new=%s, has_changes=%s -> %r",
+            self.is_new,
+            has_changes,
+            new_text,
         )
         self.save_button.setText(new_text)
         if self._save_button_base_style:
@@ -683,6 +723,15 @@ class DualEditorWindow(BaseFormDialog):
 
         self.tab_widget.addTab(self.func_editor, "Function Pattern")
 
+    def create_artifact_contract_tab(self):
+        """Create the read-only artifact contract preview tab."""
+        self.artifact_contract_preview = ArtifactContractPreviewWidget(
+            self._current_function_spec(),
+            source_bindings=self._current_source_bindings(),
+            parent=self,
+        )
+        self.tab_widget.addTab(self.artifact_contract_preview, "Artifacts")
+
     def _on_function_pattern_changed(self):
         """Handle function pattern changes from function editor."""
         # Update step func from function editor - use current_pattern to get full pattern data
@@ -735,6 +784,7 @@ class DualEditorWindow(BaseFormDialog):
                     )
 
         self.detect_changes()
+        self._refresh_artifact_contract_preview(current_pattern)
         logger.debug(f"Function pattern changed: {current_pattern}")
 
     def _get_event_bus(self):
@@ -826,6 +876,11 @@ class DualEditorWindow(BaseFormDialog):
             if self.func_editor and updated_step.func:
                 self.func_editor._initialize_pattern_data(updated_step.func)
                 self.func_editor._populate_function_list()
+            if self.artifact_contract_preview and updated_step.func:
+                self.artifact_contract_preview.set_function_spec(
+                    updated_step.func,
+                    source_bindings=updated_step.source_bindings,
+                )
 
             # Detect changes (might have unsaved changes now)
             self.detect_changes()
@@ -934,8 +989,33 @@ class DualEditorWindow(BaseFormDialog):
 
         # Trigger a refresh from the editor's authoritative ObjectState context.
         self.func_editor.refresh_from_context()
+        self._refresh_artifact_contract_preview(self._current_function_spec())
 
         logger.debug("✅ Triggered function editor refresh from context")
+
+    def _current_function_spec(self) -> Any:
+        """Return the live function spec from ObjectState, falling back to the clone."""
+
+        state = self.state
+        if state is not None and "func" in state.parameters:
+            return state.parameters["func"]
+        return self.editing_step.func
+
+    def _current_source_bindings(self):
+        """Return live source bindings from ObjectState, falling back to the clone."""
+
+        state = self.state
+        if state is not None and "source_bindings" in state.parameters:
+            return state.parameters["source_bindings"]
+        return self.editing_step.source_bindings
+
+    def _refresh_artifact_contract_preview(self, func_spec: Any) -> None:
+        if self.artifact_contract_preview is None:
+            return
+        self.artifact_contract_preview.set_function_spec(
+            func_spec,
+            source_bindings=self._current_source_bindings(),
+        )
 
     def _find_main_window(self):
         """Find the main window through the parent chain."""
@@ -1162,6 +1242,7 @@ class DualEditorWindow(BaseFormDialog):
         self.save_button.setEnabled(has_changes)
         # Update save button text to show asterisk when there are unsaved changes
         self._update_save_button_text()
+        self._update_window_title()
 
     def save_edit(self, *, close_window=True):
         """Save the edited step. If close_window is True, close after saving; else, keep open."""
@@ -1207,35 +1288,33 @@ class DualEditorWindow(BaseFormDialog):
 
             # CRITICAL FIX: For existing steps, apply changes to original step object
             # This ensures the pipeline gets the updated step with the same object identity
-            logger.info(
-                f"💾 Save: is_new={self.is_new}, original_step_reference={self.original_step_reference is not None}"
+            logger.debug(
+                "Save: is_new=%s, original_step_reference=%s",
+                self.is_new,
+                self.original_step_reference is not None,
             )
 
             if self.original_step_reference is not None:
                 # Editing existing step
-                logger.info(
-                    f"💾 Editing existing step: {self.original_step_reference.name}"
-                )
+                logger.debug("Editing existing step: %s", self.original_step_reference.name)
                 self._apply_changes_to_original()
                 step_to_save = self.original_step_reference
             else:
                 # For new steps, after first save, switch to edit mode
-                logger.info(f"💾 Creating new step, switching to edit mode")
+                logger.debug("Creating new step, switching to edit mode")
                 step_to_save = self.editing_step
                 self.original_step_reference = self.editing_step
                 self.is_new = False
-                logger.info(f"💾 Set is_new=False, original_step_reference set")
+                logger.debug("Set is_new=False, original_step_reference set")
                 self._update_window_title()
                 self._update_save_button_text()
 
             # Emit signals and call callback
-            logger.info(
-                f"💾 Emitting step_saved signal for: {getattr(step_to_save, 'name', 'Unknown')}"
-            )
+            logger.debug("Emitting step_saved signal for: %s", getattr(step_to_save, "name", "Unknown"))
             self.step_saved.emit(step_to_save)
 
             if self.on_save_callback:
-                logger.info(f"💾 Calling on_save_callback")
+                logger.debug("Calling on_save_callback")
                 self.on_save_callback(step_to_save)
 
             # After a successful save, update original_step and detect changes
@@ -1351,7 +1430,7 @@ class DualEditorWindow(BaseFormDialog):
 
         self.step_cancelled.emit()
 
-        logger.info("🔍 DualEditorWindow: About to call super().reject()")
+        logger.debug("DualEditorWindow: About to call super().reject()")
 
         # CRITICAL: super().reject() calls state.restore_saved() to undo ALL unsaved changes
         # This restores all parameters (including func) to last saved state automatically
@@ -1359,9 +1438,9 @@ class DualEditorWindow(BaseFormDialog):
 
         # CRITICAL: Trigger global refresh AFTER unregistration so other windows
         # re-collect live context without this cancelled window's values
-        logger.info("🔍 DualEditorWindow: About to trigger global refresh")
+        logger.debug("DualEditorWindow: About to trigger global refresh")
         ObjectStateRegistry.increment_token()
-        logger.info("🔍 DualEditorWindow: Triggered global refresh after cancel")
+        logger.debug("DualEditorWindow: Triggered global refresh after cancel")
 
     def closeEvent(self, event):
         """Handle dialog close event."""

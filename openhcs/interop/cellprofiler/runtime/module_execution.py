@@ -7,7 +7,7 @@ from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, fields as dataclass_fields, is_dataclass
 from enum import Enum
 from functools import lru_cache
-from inspect import Parameter, signature, unwrap
+from inspect import Parameter, get_annotations, signature, unwrap
 import json
 import logging
 import math
@@ -21,6 +21,11 @@ from typing import Any, ClassVar, TypeVar, get_args, get_origin, get_type_hints
 from metaclass_registry import AutoRegisterMeta, RegistryFamily, RegistryKeyAttribute
 from nominal_refactor_advisor.descriptor_algebra import AliasProperty
 import numpy as np
+from python_introspect import (
+    mark_enableable,
+    set_parameter_exclusions,
+    set_signature_analysis_target,
+)
 from openhcs.core.aligned_image_payload import (
     AlignedImageStack,
     ImageArrayShapeSemantics,
@@ -39,6 +44,10 @@ from openhcs.core.callable_contract import (
     prepare_processing_callable,
 )
 from openhcs.core.config import DtypeConfig
+from openhcs.core.function_reference_rehydration import (
+    FunctionReferenceRehydrationRequest,
+    FunctionReferenceRehydrator,
+)
 from openhcs.core.memory import (
     MEMORY_TYPE_NUMPY,
     convert_memory,
@@ -597,6 +606,183 @@ CellProfilerModuleContractLike = (
 )
 
 
+class CellProfilerRuntimeCallable:
+    """Picklable callable wrapper for one artifact-managed CellProfiler module."""
+
+    def __init__(
+        self,
+        raw_func: Callable[..., Any],
+        contract: ModuleArtifactContract,
+        *,
+        declared_processing_contract: str | None = None,
+        processing_contract: Any | None = None,
+    ) -> None:
+        from openhcs.processing.backends.cellprofiler import (
+            CellProfilerFunctionCatalog,
+        )
+
+        try:
+            raw_func = CellProfilerFunctionCatalog.get_function(raw_func.__name__)
+        except KeyError:
+            pass
+
+        self.raw_func = raw_func
+        self.contract = contract
+        self.executor = CellProfilerModuleExecutor(contract)
+        self.declared_processing_contract = declared_processing_contract
+        self.processing_contract = processing_contract
+
+        raw_contract = CallableContract.from_callable(raw_func)
+        self.__name__ = raw_func.__name__
+        self.__qualname__ = raw_func.__qualname__
+        self.__module__ = raw_func.__module__
+        self.__doc__ = raw_func.__doc__
+        self.__signature__ = _cellprofiler_runtime_callable_signature(raw_func)
+        self.__annotations__ = get_annotations(raw_func, eval_str=False)
+        if raw_contract.input_memory_type is not None:
+            self.input_memory_type = raw_contract.input_memory_type
+        if raw_contract.output_memory_type is not None:
+            self.output_memory_type = raw_contract.output_memory_type
+        if processing_contract is not None:
+            setattr(self, PROCESSING_CONTRACT_ATTR, processing_contract)
+
+        module_artifact_contract(contract)(self)
+        analysis_func = raw_contract.raw_processing_function or raw_func
+        set_signature_analysis_target(self, analysis_func)
+        mark_enableable(self)
+        runtime_adapter(
+            "cellprofiler_runtime",
+            cellprofiler_runtime_adapter_factory,
+            manages_artifact_inputs=True,
+        )(self)
+        set_parameter_exclusions(self, (
+            "cellprofiler_runtime",
+            "runtime_invocation_options",
+        ))
+        attach_callable_contract_metadata(
+            self,
+            declared_processing_contract=declared_processing_contract,
+            raw_processing_function=raw_func,
+            prepare=self.prepare_runtime_callable,
+            runtime_image_execution_mode=raw_contract.runtime_image_execution_mode,
+        )
+
+    def __call__(
+        self,
+        image: Any,
+        *,
+        cellprofiler_runtime: CellProfilerRuntimeAdapter,
+        runtime_invocation_options: Any | None = None,
+        enabled: bool = True,
+        **kwargs: Any,
+    ) -> Any:
+        if not enabled:
+            return image
+        kwargs.pop("slice_by_slice", None)
+        return self.executor.run(
+            self.raw_func,
+            image,
+            cellprofiler_runtime=cellprofiler_runtime,
+            invocation_options=runtime_invocation_options,
+            **kwargs,
+        )
+
+    def __reduce__(self) -> tuple[Callable[..., Any], tuple[Any, ...]]:
+        return (
+            rebuild_cellprofiler_runtime_callable,
+            (
+                self.raw_func,
+                self.contract,
+                self.declared_processing_contract,
+                self.processing_contract,
+            ),
+        )
+
+    def __eq__(self, other: object) -> bool:
+        """Compare runtime callables by their nominal CellProfiler module binding."""
+        if not isinstance(other, CellProfilerRuntimeCallable):
+            return NotImplemented
+        return (
+            self.raw_func == other.raw_func
+            and self.contract == other.contract
+            and self.declared_processing_contract == other.declared_processing_contract
+            and self.processing_contract == other.processing_contract
+        )
+
+    def __hash__(self) -> int:
+        return hash(
+            (
+                self.raw_func,
+                self.contract,
+                self.declared_processing_contract,
+                self.processing_contract,
+            )
+        )
+
+    def prepare_runtime_callable(self) -> None:
+        prepare_processing_callable(self.raw_func)
+        self.executor.prepare(self.raw_func)
+
+
+def _cellprofiler_runtime_callable_signature(raw_func: Callable[..., Any]):
+    """Return raw callable signature plus OpenHCS runtime injection parameters."""
+    runtime_parameters = (
+        Parameter(
+            "cellprofiler_runtime",
+            Parameter.KEYWORD_ONLY,
+            annotation=CellProfilerRuntimeAdapter,
+        ),
+        Parameter(
+            "runtime_invocation_options",
+            Parameter.KEYWORD_ONLY,
+            default=None,
+            annotation=Any | None,
+        ),
+        Parameter(
+            "enabled",
+            Parameter.KEYWORD_ONLY,
+            default=True,
+            annotation=bool,
+        ),
+    )
+    raw_signature = signature(raw_func)
+    existing_names = frozenset(raw_signature.parameters)
+    injected = [
+        parameter
+        for parameter in runtime_parameters
+        if parameter.name not in existing_names
+    ]
+    if not injected:
+        return raw_signature
+
+    parameters = list(raw_signature.parameters.values())
+    variadic_keyword_index = next(
+        (
+            index
+            for index, parameter in enumerate(parameters)
+            if parameter.kind is Parameter.VAR_KEYWORD
+        ),
+        len(parameters),
+    )
+    parameters[variadic_keyword_index:variadic_keyword_index] = injected
+    return raw_signature.replace(parameters=parameters)
+
+
+def rebuild_cellprofiler_runtime_callable(
+    raw_func: Callable[..., Any],
+    contract: ModuleArtifactContract,
+    declared_processing_contract: str | None,
+    processing_contract: Any | None,
+) -> CellProfilerRuntimeCallable:
+    """Rebuild a pickled CellProfiler runtime callable."""
+    return CellProfilerRuntimeCallable(
+        raw_func,
+        contract,
+        declared_processing_contract=declared_processing_contract,
+        processing_contract=processing_contract,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class CellProfilerRuntimeStepBinding:
     """Runtime wrapper binding for an already-declared generated FunctionStep."""
@@ -605,7 +791,6 @@ class CellProfilerRuntimeStepBinding:
     generated_module_name: str
     module_num: int
     declared_processing_contract: str | None
-    runtime_name: str
 
     def load(self) -> Callable[..., Any]:
         """Return the artifact-managed runtime callable for a generated step."""
@@ -617,7 +802,6 @@ class CellProfilerRuntimeStepBinding:
             ),
             declared_processing_contract=self.declared_processing_contract,
             processing_contract=ProcessingContract.FLEXIBLE,
-            name=self.runtime_name,
         )
 
 
@@ -627,7 +811,6 @@ def cellprofiler_module_callable(
     *,
     declared_processing_contract: str | None = None,
     processing_contract: Any | None = None,
-    name: str | None = None,
 ) -> Callable[..., Any]:
     """Build the product-owned runtime callable for one CellProfiler module."""
     if not callable(raw_func):
@@ -644,56 +827,39 @@ def cellprofiler_module_callable(
             f"got {type(contract).__name__}."
         )
 
-    executor = CellProfilerModuleExecutor(contract)
-    raw_contract = CallableContract.from_callable(raw_func)
-
-    @module_artifact_contract(contract)
-    @runtime_adapter(
-        "cellprofiler_runtime",
-        cellprofiler_runtime_adapter_factory,
-        manages_artifact_inputs=True,
+    return CellProfilerRuntimeCallable(
+        raw_func,
+        contract,
+        declared_processing_contract=declared_processing_contract,
+        processing_contract=processing_contract,
     )
-    def runtime_callable(
-        image: Any,
-        *,
-        cellprofiler_runtime: CellProfilerRuntimeAdapter,
-        runtime_invocation_options: Any | None = None,
-        enabled: bool = True,
-        **kwargs: Any,
-    ) -> Any:
-        if not enabled:
-            return image
-        kwargs.pop("slice_by_slice", None)
-        return executor.run(
-            raw_func,
-            image,
-            cellprofiler_runtime=cellprofiler_runtime,
-            invocation_options=runtime_invocation_options,
-            **kwargs,
+
+
+class CellProfilerFunctionReferenceRehydrator(FunctionReferenceRehydrator):
+    """Rebuild generated CellProfiler runtime callables from preserved contracts."""
+
+    rehydrator_key = "cellprofiler"
+
+    def supports(self, request: FunctionReferenceRehydrationRequest) -> bool:
+        contract = request.contract
+        return (
+            contract.module_artifact_contract is not None
+            and callable(contract.raw_processing_function)
+            and contract.runtime_adapter is not None
+            and contract.runtime_adapter.parameter_name == "cellprofiler_runtime"
         )
 
-    def prepare_runtime_callable() -> None:
-        prepare_processing_callable(raw_func)
-        executor.prepare(raw_func)
-
-    if name:
-        runtime_callable.__name__ = name
-        runtime_callable.__qualname__ = name
-    if raw_contract.input_memory_type is not None:
-        runtime_callable.input_memory_type = raw_contract.input_memory_type
-    if raw_contract.output_memory_type is not None:
-        runtime_callable.output_memory_type = raw_contract.output_memory_type
-    if processing_contract is not None:
-        setattr(runtime_callable, PROCESSING_CONTRACT_ATTR, processing_contract)
-
-    attach_callable_contract_metadata(
-        runtime_callable,
-        declared_processing_contract=declared_processing_contract,
-        raw_processing_function=raw_func,
-        prepare=prepare_runtime_callable,
-        runtime_image_execution_mode=raw_contract.runtime_image_execution_mode,
-    )
-    return runtime_callable
+    def rehydrate(
+        self,
+        request: FunctionReferenceRehydrationRequest,
+    ) -> Callable[..., Any]:
+        contract = request.contract
+        return cellprofiler_module_callable(
+            contract.raw_processing_function,
+            contract.module_artifact_contract,
+            declared_processing_contract=contract.declared_processing_contract,
+            processing_contract=contract.processing_contract,
+        )
 
 
 @lru_cache(maxsize=None)

@@ -40,6 +40,9 @@ from pyqt_reactive.theming import ColorScheme
 from openhcs.pyqt_gui.config import PyQtGUIConfig, get_default_pyqt_gui_config
 from openhcs.config_framework.object_state import ObjectState, ObjectStateRegistry
 from pyqt_reactive.services.scope_token_service import ScopeTokenService
+from pyqt_reactive.services.pattern_data_manager import (
+    FUNC_EDITOR_PATTERN_TOKENS_META_KEY,
+)
 from pyqt_reactive.animation import WindowFlashOverlay
 
 # Import shared list widget components (single source of truth)
@@ -1107,6 +1110,29 @@ class PipelineEditorWidget(AbstractManagerWidget):
         func_obj, kwargs = PatternDataManager.extract_func_and_kwargs(func_value)
         return [(func_obj, kwargs)] if func_obj else []
 
+    def _scope_tokens_for_function_pattern(self, scope_id: str, func_value):
+        if not func_value:
+            return []
+        from pyqt_reactive.services.pattern_data_manager import PatternDataManager
+
+        if isinstance(func_value, dict):
+            return {
+                str(channel_key): self._scope_tokens_for_function_pattern(
+                    scope_id,
+                    channel_funcs,
+                )
+                for channel_key, channel_funcs in func_value.items()
+            }
+        if isinstance(func_value, list):
+            tokens = []
+            for item in func_value:
+                func_obj, _kwargs = PatternDataManager.extract_func_and_kwargs(item)
+                if func_obj:
+                    tokens.append(ScopeTokenService.ensure_token(scope_id, func_obj))
+            return tokens
+        func_obj, _kwargs = PatternDataManager.extract_func_and_kwargs(func_value)
+        return [ScopeTokenService.ensure_token(scope_id, func_obj)] if func_obj else []
+
     def _get_reserved_param_name(self, func: Callable) -> Optional[str]:
         try:
             sig = inspect.signature(func)
@@ -1137,6 +1163,10 @@ class PipelineEditorWidget(AbstractManagerWidget):
                 parent_state=parent_state,
             )
             to_register.append(step_state)
+
+        step_state.metadata[FUNC_EDITOR_PATTERN_TOKENS_META_KEY] = (
+            self._scope_tokens_for_function_pattern(scope_id, step.func)
+        )
 
         for func_obj, kwargs in self._normalize_func_items(step.func):
             func_scope_id = ScopeTokenService.build_scope_id(scope_id, func_obj)

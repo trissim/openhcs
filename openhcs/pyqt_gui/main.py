@@ -43,10 +43,12 @@ from openhcs.pyqt_gui.services.main_window_workflows import (
 )
 from openhcs.pyqt_gui.services.time_travel_navigation import (
     TimeTravelNavigationTarget,
+    TimeTravelWindowRequest,
     parse_function_scope_ref,
     make_function_token_target,
     make_field_path_target,
     resolve_fallback_field_path,
+    should_include_time_travel_scope,
     should_replace_navigation_target,
 )
 
@@ -759,8 +761,9 @@ class OpenHCSMainWindow(QMainWindow):
         When time-travel restores state with unsaved changes, this callback
         reopens the appropriate editor windows so the user can see/save the changes.
 
-        Opens windows for ALL dirty states, not just the triggering scope.
-        The triggering_scope is passed for logging but not used for filtering.
+        Opens windows for the triggering mutation scope when available. Older
+        dirty states may still exist in the full registry snapshot, but undoing
+        one edit should not reopen unrelated editors.
 
         Args:
             dirty_states: List of (scope_id, ObjectState) tuples with unsaved changes
@@ -772,13 +775,53 @@ class OpenHCSMainWindow(QMainWindow):
             f"⏱️ TIME_TRAVEL_CALLBACK: triggering_scope={triggering_scope!r} dirty_count={len(dirty_states)}"
         )
 
+        pending = self._build_time_travel_window_requests(
+            dirty_states,
+            triggering_scope,
+        )
+
+        for request in pending.values():
+            field_path = (
+                request.target.to_field_path() if request.target is not None else None
+            )
+            if WindowManager.is_open(request.scope_id):
+                self._select_tab_for_time_travel(request.scope_id, request.target)
+                # Window exists - focus and navigate to dirty field
+                WindowManager.focus_and_navigate(
+                    request.scope_id,
+                    field_path=field_path,
+                )
+            else:
+                # Create new window
+                from pyqt_reactive.services import WindowFactory
+
+                window = WindowFactory.create_window_for_scope(
+                    request.scope_id,
+                    request.object_state,
+                )
+                if window:
+                    logger.info(
+                        f"⏱️ TIME_TRAVEL: Reopened window for dirty state: {request.scope_id}"
+                    )
+                    self._select_tab_for_time_travel(
+                        request.scope_id,
+                        request.target,
+                    )
+                    if field_path:
+                        WindowManager.focus_and_navigate(
+                            request.scope_id,
+                            field_path=field_path,
+                        )
+
+    def _build_time_travel_window_requests(
+        self,
+        dirty_states,
+        triggering_scope: str | None,
+    ) -> dict[str, TimeTravelWindowRequest]:
+        """Project changed ObjectStates into canonical window reopen requests."""
         from objectstate import ObjectStateRegistry
 
-        # Consolidate navigation requests:
-        # - Function ObjectStates map to their parent step scope
-        # - Function-scope changes navigate with token payload so function editor can
-        #   choose the correct dict-pattern key on its own invariant path.
-        pending: dict[str, TimeTravelNavigationTarget | None] = {}
+        pending: dict[str, TimeTravelWindowRequest] = {}
 
         for entry in dirty_states:
             if not isinstance(entry, (tuple, list)) or len(entry) != 2:
@@ -786,12 +829,16 @@ class OpenHCSMainWindow(QMainWindow):
             scope_id, state = entry
             if not isinstance(scope_id, str) or not isinstance(state, ObjectState):
                 continue
+            if not should_include_time_travel_scope(
+                changed_scope_id=scope_id,
+                triggering_scope=triggering_scope,
+            ):
+                continue
+
             use_scope_id = scope_id
             use_state = state
             target: TimeTravelNavigationTarget | None = None
 
-            # If this is a function ObjectState, map to parent step scope and
-            # force Function Pattern tab with token payload.
             function_scope = parse_function_scope_ref(scope_id)
             if function_scope is not None:
                 use_scope_id = function_scope.step_scope_id
@@ -801,10 +848,9 @@ class OpenHCSMainWindow(QMainWindow):
                 target = make_function_token_target(function_scope.function_token)
 
             if target is None:
-                # Use last_changed_field - tracks ANY value change (clean->dirty OR dirty->clean)
-                # This shows what changed in the time-travel transition, not just current dirty state
                 field_path = resolve_fallback_field_path(
-                    use_state.last_changed_field, use_state.dirty_fields
+                    use_state.last_changed_field,
+                    use_state.dirty_fields,
                 )
                 logger.debug(
                     f"⏱️ TIME_TRAVEL_NAV: scope={use_scope_id} last_changed_field={field_path}"
@@ -812,33 +858,18 @@ class OpenHCSMainWindow(QMainWindow):
                 if field_path:
                     target = make_field_path_target(field_path)
 
+            request = TimeTravelWindowRequest(
+                scope_id=use_scope_id,
+                object_state=use_state,
+                target=target,
+            )
             existing = pending.get(use_scope_id)
             if existing is None:
-                pending[use_scope_id] = target
-            else:
-                if should_replace_navigation_target(existing, target):
-                    pending[use_scope_id] = target
+                pending[use_scope_id] = request
+            elif should_replace_navigation_target(existing.target, target):
+                pending[use_scope_id] = request
 
-        for scope_id, target in pending.items():
-            field_path = target.to_field_path() if target is not None else None
-            if WindowManager.is_open(scope_id):
-                self._select_tab_for_time_travel(scope_id, target)
-                # Window exists - focus and navigate to dirty field
-                WindowManager.focus_and_navigate(scope_id, field_path=field_path)
-            else:
-                # Create new window
-                from pyqt_reactive.services import WindowFactory
-
-                window = WindowFactory.create_window_for_scope(scope_id, state)
-                if window:
-                    logger.info(
-                        f"⏱️ TIME_TRAVEL: Reopened window for dirty state: {scope_id}"
-                    )
-                    self._select_tab_for_time_travel(scope_id, target)
-                    if field_path:
-                        WindowManager.focus_and_navigate(
-                            scope_id, field_path=field_path
-                        )
+        return pending
 
     def _select_tab_for_time_travel(
         self, scope_id: str, target: TimeTravelNavigationTarget | None

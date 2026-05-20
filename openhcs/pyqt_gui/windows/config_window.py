@@ -394,10 +394,10 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         """Update window title with dirty marker and signature diff underline.
 
         Two orthogonal visual semantics:
-        - Asterisk (*): dirty (resolved_live != resolved_saved)
+        - Asterisk (*): unsaved raw edits (parameters != saved_parameters)
         - Underline: signature diff (raw != signature default)
         """
-        is_dirty = bool(self.state.dirty_fields)
+        is_dirty = bool(self.state.is_raw_dirty)
         has_sig_diff = bool(self.state.signature_diff_fields)
         current_title = self.windowTitle()
         has_marker = current_title.startswith("* ")
@@ -436,6 +436,7 @@ class ConfigWindow(ScrollableFormMixin, BaseFormDialog):
         """Handle changes detection."""
         # Enable/disable save button based on changes
         self._save_button.setEnabled(has_changes)
+        self._update_window_title_dirty_marker()
 
     def setup_ui(self):
         """Setup the user interface."""

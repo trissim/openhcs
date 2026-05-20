@@ -12,6 +12,8 @@ from pyqt_reactive.services.function_navigation import (
 )
 
 FUNCTION_STEP_SCOPE_PREFIX = "functionstep_"
+FIELD_PATH_TARGET_KIND: Literal["field_path"] = "field_path"
+FUNCTION_TOKEN_TARGET_KIND: Literal["function_token"] = "function_token"
 
 
 @dataclass(frozen=True)
@@ -31,12 +33,31 @@ class TimeTravelNavigationTarget:
 
     @property
     def is_function_target(self) -> bool:
-        return self.kind == "function_token" or is_function_field_path(self.value)
+        return self.kind == FUNCTION_TOKEN_TARGET_KIND or is_function_field_path(self.value)
 
     def to_field_path(self) -> str:
-        if self.kind == "function_token":
+        if self.kind == FUNCTION_TOKEN_TARGET_KIND:
             return build_function_token_field_path(self.value)
         return self.value
+
+
+@dataclass(frozen=True)
+class TimeTravelWindowRequest:
+    """Window request derived from one or more time-travel state changes."""
+
+    scope_id: str
+    object_state: object
+    target: TimeTravelNavigationTarget | None
+
+    def replace_target(
+        self,
+        target: TimeTravelNavigationTarget | None,
+    ) -> "TimeTravelWindowRequest":
+        return TimeTravelWindowRequest(
+            scope_id=self.scope_id,
+            object_state=self.object_state,
+            target=target,
+        )
 
 
 def parse_function_scope_ref(scope_id: str) -> FunctionScopeRef | None:
@@ -59,7 +80,7 @@ def parse_function_scope_ref(scope_id: str) -> FunctionScopeRef | None:
 def make_function_token_target(function_token: str) -> TimeTravelNavigationTarget:
     """Create typed function-token navigation target."""
     return TimeTravelNavigationTarget(
-        kind="function_token",
+        kind=FUNCTION_TOKEN_TARGET_KIND,
         value=function_token,
     )
 
@@ -67,7 +88,7 @@ def make_function_token_target(function_token: str) -> TimeTravelNavigationTarge
 def make_field_path_target(field_path: str) -> TimeTravelNavigationTarget:
     """Create typed plain field-path navigation target."""
     return TimeTravelNavigationTarget(
-        kind="field_path",
+        kind=FIELD_PATH_TARGET_KIND,
         value=field_path,
     )
 
@@ -99,6 +120,31 @@ def should_replace_navigation_target(
     if existing_target.is_function_target:
         return False
     return candidate_target.is_function_target
+
+
+def should_include_time_travel_scope(
+    *,
+    changed_scope_id: str,
+    triggering_scope: str | None,
+) -> bool:
+    """Return whether a changed scope belongs to the active time-travel edit.
+
+    ObjectState snapshots capture the whole registry, so old dirty states can
+    still be present when the user undoes one edit. UI navigation should follow
+    the semantic mutation owner when history provides one instead of reopening
+    every dirty ObjectState in the registry.
+    """
+    if triggering_scope is None:
+        return True
+
+    if changed_scope_id == triggering_scope:
+        return True
+
+    if changed_scope_id.startswith(f"{triggering_scope}::"):
+        return True
+
+    function_scope = parse_function_scope_ref(changed_scope_id)
+    return function_scope is not None and function_scope.step_scope_id == triggering_scope
 
 
 def _dirty_field_sort_key(field: str) -> tuple[int, int, str]:
