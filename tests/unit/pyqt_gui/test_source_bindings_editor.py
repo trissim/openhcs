@@ -281,6 +281,35 @@ def test_inline_source_bindings_uses_dataclass_groupbox_chrome() -> None:
     assert queued == ["source_bindings"]
 
 
+def test_nested_form_flash_delegates_to_root_manager() -> None:
+    QtApplicationHarness.app()
+    step = FunctionStep(func=lambda image: image)
+    manager = ParameterFormManager(
+        ObjectState(step),
+        FormManagerConfig(
+            color_scheme=ColorScheme(),
+            use_scroll_area=False,
+        ),
+    )
+
+    for _ in range(20):
+        QApplication.processEvents()
+        if "processing_config" in manager.nested_managers:
+            break
+
+    nested_manager = manager.nested_managers["processing_config"]
+    queued: list[str] = []
+    manager._queue_leaf_flash_for_path = queued.append
+
+    nested_manager.queue_field_flash("processing_config.group_by")
+    nested_manager._queue_leaf_flash_for_path("processing_config.input_source")
+
+    assert queued == [
+        "processing_config.group_by",
+        "processing_config.input_source",
+    ]
+
+
 def test_source_bindings_flash_masks_nested_section_titles() -> None:
     app = QtApplicationHarness.app()
     widget = SourceBindingsEditorWidget.from_bindings(
