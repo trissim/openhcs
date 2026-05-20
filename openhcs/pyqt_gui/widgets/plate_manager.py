@@ -1641,8 +1641,13 @@ class PlateManagerWidget(AbstractManagerWidget):
             raise RuntimeError(
                 f"CellProfiler pipeline import produced no steps for {plate_path}."
             )
+        import_result = cellprofiler_workspace.ingestion.prepared_pipeline.import_result
+        self.pipeline_editor.cellprofiler_import_results_by_plate[plate_path] = (
+            import_result
+        )
         self.pipeline_editor.update_pipeline_for_plate(plate_path, pipeline_steps)
         if self.selected_plate_path == plate_path:
+            self.pipeline_editor.cellprofiler_import_result = import_result
             self.pipeline_editor.pipeline_steps = pipeline_steps
             self.pipeline_editor.update_item_list()
             self.pipeline_editor.pipeline_changed.emit(pipeline_steps)

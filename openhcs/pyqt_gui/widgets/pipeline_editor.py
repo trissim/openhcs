@@ -379,6 +379,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
         self._clipboard_steps: List[FunctionStep] = []
         self.debug_toolbar: DebugToolbarWidget | None = None
         self.cellprofiler_import_result = None
+        self.cellprofiler_import_results_by_plate: dict[str, Any] = {}
         self.debug_inspector_window: Any | None = None
         self.debug_session_state: DebugSession | None = None
 
@@ -936,6 +937,8 @@ class PipelineEditorWidget(AbstractManagerWidget):
         )
         self.pipeline_steps = list(import_result.pipeline.steps)
         self.cellprofiler_import_result = import_result
+        if self.current_plate:
+            self.cellprofiler_import_results_by_plate[self.current_plate] = import_result
         self._normalize_step_scope_tokens(register=False)
 
         if self.current_plate:
@@ -1005,6 +1008,9 @@ class PipelineEditorWidget(AbstractManagerWidget):
         # the view, it doesn't delete the step editors.
 
         self.current_plate = plate_path
+        self.cellprofiler_import_result = (
+            self.cellprofiler_import_results_by_plate.get(plate_path)
+        )
 
         # Load pipeline for the new plate from Pipeline ObjectState
         if plate_path:
@@ -1314,9 +1320,20 @@ class PipelineEditorWidget(AbstractManagerWidget):
     def _current_source_schema(self) -> PipelineImageSchema | None:
         """Return the imported pipeline image schema available to step editors."""
 
-        if self.cellprofiler_import_result is None:
+        import_result = self.cellprofiler_import_result_for_current_plate()
+        if import_result is None:
             return None
-        return self.cellprofiler_import_result.source_schema
+        return import_result.source_schema
+
+    def cellprofiler_import_result_for_current_plate(self) -> Any | None:
+        """Return the CellProfiler import record for the selected plate."""
+        if self.current_plate:
+            import_result = self.cellprofiler_import_results_by_plate.get(
+                self.current_plate
+            )
+            if import_result is not None:
+                return import_result
+        return self.cellprofiler_import_result
 
     # _find_main_window() moved to AbstractManagerWidget
 

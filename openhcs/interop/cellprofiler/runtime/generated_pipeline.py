@@ -668,6 +668,45 @@ class GeneratedPipelineRuntimeBindings:
 
 
 @dataclass(frozen=True, slots=True)
+class CellProfilerPipelineRuntimeRebinder:
+    """Re-derive runtime CellProfiler callables from generated-pipeline contracts."""
+
+    generated_module_name: str
+    contracts_by_module_num: Mapping[int, ModuleArtifactContract]
+
+    @classmethod
+    def from_import_result(
+        cls,
+        import_result: Any,
+    ) -> "CellProfilerPipelineRuntimeRebinder":
+        return cls(
+            generated_module_name=import_result.generated_module_name,
+            contracts_by_module_num={
+                module.module_num: contract
+                for module, contract in zip(
+                    import_result.provenance.processing_modules,
+                    import_result.artifact_contracts,
+                    strict=True,
+                )
+            },
+        )
+
+    def rebind(self, pipeline_steps: Sequence[Any]) -> list[Any]:
+        """Return steps with raw CellProfiler functions rebound to runtime callables."""
+        CellProfilerModuleContractRegistry.register(
+            self.generated_module_name,
+            self.contracts_by_module_num,
+        )
+        module = ModuleType(self.generated_module_name)
+        module.pipeline_steps = list(pipeline_steps)
+        GeneratedPipelineRuntimeBindings(
+            module,
+            self.contracts_by_module_num,
+        ).apply()
+        return list(module.pipeline_steps)
+
+
+@dataclass(frozen=True, slots=True)
 class CellProfilerGeneratedStepContract:
     """One executable generated step matched to its original CP module contract."""
 

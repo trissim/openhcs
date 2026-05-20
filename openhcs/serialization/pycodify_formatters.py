@@ -75,6 +75,9 @@ class CellProfilerRuntimeCallableFormatter(SourceFormatter):
 
     def format(self, value: Any, context: FormatContext) -> SourceFragment:
         raw_func_frag = to_source(value.raw_func, context)
+        if context.clean_mode:
+            return raw_func_frag
+
         contract_frag = to_source(value.contract, context.indented())
         import_pair = (
             "openhcs.interop.cellprofiler.runtime.module_execution",

@@ -35,6 +35,9 @@ from openhcs.core.steps.function_step import FunctionStep
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     cellprofiler_module_callable,
 )
+from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    CellProfilerPipelineRuntimeRebinder,
+)
 from openhcs.processing.materialization.core import MaterializationSpec
 from openhcs.processing.materialization.options import TiffStackOptions
 from openhcs.runtime.zmq_pipeline_transport import ZMQPipelineCodeTransport
@@ -68,7 +71,7 @@ def test_transport_authority_normalizes_unstripped_pipeline_steps():
     pickle.dumps(normalized)
 
 
-def test_zmq_pipeline_transport_preserves_runtime_callable_contract_in_source():
+def test_zmq_pipeline_transport_source_rebinds_cellprofiler_contracts():
     import inspect
 
     contract = ModuleArtifactContract(
@@ -94,14 +97,20 @@ def test_zmq_pipeline_transport_preserves_runtime_callable_contract_in_source():
     exec(source, namespace)
 
     restored = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
-    restored_func = restored[0].func
+    rebound = CellProfilerPipelineRuntimeRebinder(
+        generated_module_name="generated_test_pipeline",
+        contracts_by_module_num={1: contract},
+    ).rebind(restored)
+    restored_func = rebound[0].func
     restored_contract = CallableContract.from_callable(restored_func)
 
     assert "__openhcs_zmq_pipeline_payload__" not in source
+    assert "ModuleArtifactContract(" not in source
+    assert "cellprofiler_module_callable" not in source
     assert restored_func.__name__ == "crop"
     assert "cellprofiler_runtime" in inspect.signature(restored_func).parameters
     assert restored_contract.module_artifact_contract == contract
-    pickle.dumps(restored)
+    pickle.dumps(rebound)
 
 
 def test_function_step_source_emits_source_bindings_once():
@@ -170,7 +179,7 @@ def test_cellprofiler_runtime_callable_is_function_step_picklable():
     assert restored_contract.module_artifact_contract == contract
 
 
-def test_cellprofiler_runtime_callable_source_uses_materialization_constructor():
+def test_cellprofiler_runtime_callable_source_derives_materialization_contract():
     contract = ModuleArtifactContract(
         module_name="Crop",
         outputs=(
@@ -197,13 +206,17 @@ def test_cellprofiler_runtime_callable_source_uses_materialization_constructor()
     exec(pipeline_source, namespace)
 
     restored = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
-    restored_contract = CallableContract.from_callable(restored[0].func)
+    rebound = CellProfilerPipelineRuntimeRebinder(
+        generated_module_name="generated_test_pipeline",
+        contracts_by_module_num={1: contract},
+    ).rebind(restored)
+    restored_contract = CallableContract.from_callable(rebound[0].func)
     restored_materialization = restored_contract.module_artifact_contract.outputs[
         0
     ].materialization
 
-    assert "MaterializationSpec(\n                            TiffStackOptions" in pipeline_source
-    assert "materialization=MaterializationSpec(\n                            outputs=" not in pipeline_source
+    assert "MaterializationSpec(" not in pipeline_source
+    assert "ModuleArtifactContract(" not in pipeline_source
     assert restored_materialization == contract.outputs[0].materialization
 
 

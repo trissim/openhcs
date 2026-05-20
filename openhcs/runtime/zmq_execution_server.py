@@ -315,6 +315,10 @@ class ZMQExecutionServer(ExecutionServer):
         pipeline_steps = ZMQPipelineCodeTransport.pipeline_from_namespace(namespace)
         if not pipeline_steps:
             raise ValueError("Code must define 'pipeline_steps'")
+        pipeline_steps = self._rebind_cellprofiler_pipeline_if_available(
+            plate_id,
+            pipeline_steps,
+        )
         logger.info(
             "[%s] Request received: plate=%s compile_only=%s artifact_id=%s step_count=%d pipeline_sha=%s request_sig=%s",
             execution_id,
@@ -369,6 +373,31 @@ class ZMQExecutionServer(ExecutionServer):
             if compile_only:
                 self._set_compile_status("compiled failed", str(e))
             raise
+
+    def _rebind_cellprofiler_pipeline_if_available(
+        self,
+        plate_id: str,
+        pipeline_steps: list[Any],
+    ) -> list[Any]:
+        """Re-derive CellProfiler runtime contracts from plate-local `.cppipe`."""
+        from pathlib import Path
+
+        from openhcs.interop.cellprofiler.plate_workspace import (
+            CellProfilerPlateWorkspacePreparer,
+            CellProfilerPlateWorkspaceRequest,
+        )
+        from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+            CellProfilerPipelineRuntimeRebinder,
+        )
+
+        workspace = CellProfilerPlateWorkspacePreparer(
+            CellProfilerPlateWorkspaceRequest(Path(plate_id))
+        ).prepare()
+        if workspace.ingestion is None:
+            return pipeline_steps
+        return CellProfilerPipelineRuntimeRebinder.from_import_result(
+            workspace.ingestion.prepared_pipeline.import_result,
+        ).rebind(pipeline_steps)
 
     def _build_config_from_params(self, p):
         from openhcs.core.config import (

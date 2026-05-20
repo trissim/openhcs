@@ -14,6 +14,9 @@ from openhcs.config_framework.object_state import ObjectStateRegistry
 from openhcs.core.callable_contract import CallableContract
 from openhcs.core.debug import DebugCommandType, DebugSession, FileManagerDebugSnapshotStore
 from openhcs.core.function_patterns import normalize_function_pattern
+from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
+    CellProfilerPipelineRuntimeRebinder,
+)
 from openhcs.pyqt_gui.windows.debug_inspector_window import DebugInspectorWindow
 from openhcs.utils.pipeline_migration import patch_step_constructors_for_migration
 from PyQt6.QtWidgets import QFileDialog
@@ -386,6 +389,11 @@ class PipelineEditorCodeWorkflow:
             return False
 
         pipeline_steps = namespace["pipeline_steps"]
+        import_result = self.editor.cellprofiler_import_result_for_current_plate()
+        if import_result is not None:
+            pipeline_steps = CellProfilerPipelineRuntimeRebinder.from_import_result(
+                import_result,
+            ).rebind(pipeline_steps)
         self.editor.pipeline_steps = pipeline_steps
         self.editor._normalize_step_scope_tokens(register=False)
 
