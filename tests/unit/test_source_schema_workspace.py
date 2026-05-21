@@ -44,6 +44,7 @@ from openhcs.core.source_schema_workspace import (
     SourceSchemaImageSetSelection,
     expand_source_schema_workspace_wells as expand_A01_schema_workspace_wells,
     materialize_source_schema_workspace as materialize_A01_schema_workspace,
+    source_schema_metadata_with_virtual_components,
 )
 from openhcs.core.steps.function_execution import SourceBoundAnchorPatternPolicy
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
@@ -52,17 +53,41 @@ from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
 def test_A01_schema_filename_parser_handles_artifact_suffixes() -> None:
     parser = SourceSchemaFilenameParser()
 
-    parsed = parser.parse_filename(
-        "A01_s001_w1_z001_t001_CorrectIlluminationCalculate_7_measurements_step2.csv"
-    )
-
-    assert parsed == {
+    expected = {
         "well": "A01",
         "site": 1,
         "channel": 1,
         "z_index": 1,
         "timepoint": 1,
-        "extension": ".csv",
+    }
+
+    assert parser.parse_filename(
+        "A01_s001_w1_z001_t001_CorrectIlluminationCalculate_7_measurements_step2.csv"
+    ) == {**expected, "extension": ".csv"}
+    assert parser.parse_filename(
+        "A01_s001_w1_z001_t001_Nuclei_step3_rois.roi.zip"
+    ) == {**expected, "extension": ".roi.zip"}
+
+
+def test_source_schema_metadata_with_virtual_components_overlays_canonical_axes() -> None:
+    metadata = source_schema_metadata_with_virtual_components(
+        "A01_s002_w3_z001_t001.TIF",
+        {
+            "OpenHCSImageType": "Grayscale image",
+            "Site": "POS002",
+            "ChannelName": "DNA",
+        },
+    )
+
+    assert metadata == {
+        "OpenHCSImageType": "Grayscale image",
+        "ChannelName": "DNA",
+        "well": "A01",
+        "site": "2",
+        "channel": "3",
+        "z_index": "1",
+        "timepoint": "1",
+        "extension": ".TIF",
     }
 
 
@@ -331,12 +356,20 @@ def test_expand_A01_schema_workspace_wells_replaces_source_well_metadata(
     source_metadata = metadata["subdirectories"]["."]["source_metadata"]
     assert source_metadata == {
         "W001_s001_w1_z001_t001.tif": {
-            "ChannelNumber": "1",
             "well": "W001",
+            "site": "1",
+            "channel": "1",
+            "z_index": "1",
+            "timepoint": "1",
+            "extension": ".tif",
         },
         "W002_s001_w1_z001_t001.tif": {
-            "ChannelNumber": "1",
             "well": "W002",
+            "site": "1",
+            "channel": "1",
+            "z_index": "1",
+            "timepoint": "1",
+            "extension": ".tif",
         },
     }
 
@@ -528,6 +561,10 @@ def test_materialize_A01_schema_workspace_uses_single_default_well_for_ordered_s
             primary["source_metadata"][path][SOURCE_IMAGE_TYPE_METADATA_FIELD]
             == "Grayscale image"
         )
+        assert primary["source_metadata"][path]["well"] == "A01"
+        assert primary["source_metadata"][path]["channel"] == "1"
+    assert primary["source_metadata"]["A01_s001_w1_z001_t001.tif"]["site"] == "1"
+    assert primary["source_metadata"]["A01_s002_w1_z001_t001.tif"]["site"] == "2"
 
 
 def test_materialize_A01_schema_workspace_uses_complete_ordered_image_sets(
@@ -701,7 +738,8 @@ def test_materialize_A01_schema_workspace_disambiguates_duplicate_site_metadata(
         "A01_s001_w1_z001_t001.tif",
         "A01_s002_w1_z001_t001.tif",
     }
-    assert primary["source_metadata"]["A01_s002_w1_z001_t001.tif"]["Site"] == "1"
+    assert primary["source_metadata"]["A01_s002_w1_z001_t001.tif"]["site"] == "2"
+    assert "Site" not in primary["source_metadata"]["A01_s002_w1_z001_t001.tif"]
 
 
 def test_materialize_A01_schema_workspace_matches_numeric_component_values(

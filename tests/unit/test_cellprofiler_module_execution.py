@@ -33,6 +33,7 @@ from openhcs.interop.cellprofiler.runtime import (
     CellProfilerGridCycleScope,
     CellProfilerInvocationOptions,
 )
+from openhcs.interop.cellprofiler.runtime.adapter import CellProfilerRuntimeAdapter
 from openhcs.interop.cellprofiler.runtime.module_execution import (
     AlignMeasurementFeature,
     CalculateMathInputPolicy,
@@ -66,6 +67,7 @@ from openhcs.interop.cellprofiler.runtime.module_execution import (
     CellProfilerMeasurementProjectionSource,
     CellProfilerMeasurementProjectionRequest,
     CellProfilerMeasurementImageResolver,
+    CellProfilerObjectLabelOutputContextStrategy,
     _measurement_image_for_labels,
     _measurement_labels_for_measurement_image,
     measurement_table_rows,
@@ -137,13 +139,19 @@ from openhcs.processing.backends.cellprofiler.secondary import (
 )
 from benchmark.cellprofiler_library.functions.tile import tile
 from benchmark.cellprofiler_library.functions.watershed import watershed
-from openhcs.core.artifacts import ArtifactKind, ArtifactSidecarRole, ArtifactSpec
+from openhcs.core.artifacts import (
+    ArtifactKind,
+    ArtifactOutputPlan,
+    ArtifactSidecarRole,
+    ArtifactSpec,
+)
 from openhcs.core.callable_contract import attach_callable_contract_metadata
 from openhcs.core.config import DtypeConfig
 from openhcs.core.module_artifact_contract import ModuleArtifactContract
 from openhcs.core.pipeline.function_contracts import special_inputs
 from openhcs.processing.backends.lib_registry.unified_registry import Pure2DSliceResultBatch
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
+from openhcs.core.runtime_stores import RuntimeValueStore
 from openhcs.core.runtime_semantics import (
     MeasurementObjectRowIdentity,
     ObjectLocationMeasurementFeature,
@@ -209,6 +217,113 @@ def test_projected_measurement_rows_support_mapping_and_attribute_access() -> No
     assert row["area_shape_area"] == 7.0
     assert row.area_shape_area == 7.0
     assert row.get("object_name") == "Worms"
+
+
+def test_object_label_output_context_preserves_source_slice_paths() -> None:
+    source_image = ImageMetadataPayload(
+        data=np.zeros((3, 4, 5), dtype=np.float32),
+        metadata=ImagePayloadMetadata(
+            channel_source_paths=(
+                "/input/A01_s001_w1_z001_t001.TIF",
+                "/input/A01_s002_w1_z001_t001.TIF",
+                "/input/A01_s003_w1_z001_t001.TIF",
+            ),
+            channel_source_component_metadata=(
+                {"well": "A01", "site": "001", "channel": "D"},
+                {"well": "A01", "site": "002", "channel": "D"},
+                {"well": "A01", "site": "003", "channel": "D"},
+            ),
+            source_spatial_shape_yx=(10, 12),
+        ),
+    )
+    labels = np.zeros((3, 4, 5), dtype=np.int32)
+
+    payload = CellProfilerObjectLabelOutputContextStrategy.for_value(
+        labels
+    ).runtime_object_label_value(labels, source_image)
+
+    assert isinstance(payload, ObjectLabelPayload)
+    assert payload.channel_source_paths == (
+        "/input/A01_s001_w1_z001_t001.TIF",
+        "/input/A01_s002_w1_z001_t001.TIF",
+        "/input/A01_s003_w1_z001_t001.TIF",
+    )
+    assert tuple(
+        dict(metadata)
+        for metadata in payload.channel_source_component_metadata
+        if metadata is not None
+    ) == (
+        {"well": "A01", "site": "001", "channel": "D"},
+        {"well": "A01", "site": "002", "channel": "D"},
+        {"well": "A01", "site": "003", "channel": "D"},
+    )
+    assert payload.source_spatial_shape_yx == (10, 12)
+
+
+class _RecordingFileManager:
+    def __init__(self) -> None:
+        self.saved: list[tuple[object, str, str]] = []
+        self._existing: set[tuple[str, str]] = set()
+
+    def ensure_directory(self, path: str, backend: str) -> None:
+        del path, backend
+
+    def exists(self, path: str, backend: str) -> bool:
+        return (path, backend) in self._existing
+
+    def delete(self, path: str, backend: str) -> None:
+        self._existing.discard((path, backend))
+
+    def save(self, data: object, path: str, backend: str) -> None:
+        self.saved.append((data, path, backend))
+        self._existing.add((path, backend))
+
+
+def test_cellprofiler_adapter_preserves_object_label_source_component_metadata() -> None:
+    store = RuntimeValueStore()
+    filemanager = _RecordingFileManager()
+    adapter = CellProfilerRuntimeAdapter(
+        runtime_value_store=store,
+        axis_id="A01_s001",
+        artifact_outputs={
+            "Nuclei": ArtifactOutputPlan(
+                name="Nuclei",
+                path="/memory/Nuclei.pkl",
+                kind=ArtifactKind.OBJECT_LABELS,
+            )
+        },
+        filemanager=filemanager,
+    )
+    labels = ObjectLabelPayload(
+        labels=np.array([[0, 1], [2, 0]], dtype=np.int32),
+        source_path="/input/01_POS002_D.TIF",
+        source_component_metadata={
+            "well": "01",
+            "site": "POS002",
+            "channel": "D",
+        },
+        channel_source_paths=("/input/01_POS002_D.TIF",),
+        channel_source_component_metadata=(
+            {"well": "01", "site": "POS002", "channel": "D"},
+        ),
+    )
+
+    record = adapter.add_objects("Nuclei", labels)
+
+    assert isinstance(record.value.data, ObjectLabelPayload)
+    assert record.value.data.source_path == "/input/01_POS002_D.TIF"
+    assert dict(record.value.data.source_component_metadata) == {
+        "well": "01",
+        "site": "POS002",
+        "channel": "D",
+    }
+    assert record.value.data.channel_source_paths == ("/input/01_POS002_D.TIF",)
+    assert tuple(
+        dict(metadata)
+        for metadata in record.value.data.channel_source_component_metadata
+        if metadata is not None
+    ) == ({"well": "01", "site": "POS002", "channel": "D"},)
+    assert filemanager.saved[0][0] is record.value.data
 
 
 def test_source_qualified_image_rows_use_current_image_number_not_slice_index() -> None:

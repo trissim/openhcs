@@ -23,6 +23,7 @@ from openhcs.interop.cellprofiler.runtime.generated_pipeline import (
 from openhcs.interop.cellprofiler.parser import ModuleBlock
 from openhcs.interop.cellprofiler.pipeline_generator import GeneratedPipeline, PipelineGenerator
 from openhcs.constants import Backend
+from openhcs.core.callable_contract import CallableContract
 from openhcs.core.artifacts import (
     ArtifactInputPlan,
     ArtifactKind,
@@ -212,6 +213,33 @@ def test_generated_runtime_binding_preserves_backend_callable_identity() -> None
     assert "benchmark_generated" not in step_func.__name__
     assert "_runtime" not in step_func.__name__
     assert runtime_adapter_spec_from_callable(step_func) is not None
+
+
+def test_generated_runtime_binding_matches_reordered_steps_by_module_contract() -> None:
+    generated = _generated_pipeline(_relationship_pipeline_modules())
+    namespace: dict = {"__name__": "test_generated_cellprofiler_reordered_pipeline"}
+    runtime_contracts = generated.runtime_module_contracts_by_module_num
+    CellProfilerModuleContractRegistry.register(
+        namespace["__name__"],
+        runtime_contracts,
+    )
+    exec(
+        compile(generated.code, "<generated-cellprofiler-pipeline>", "exec"),
+        namespace,
+    )
+    pipeline_steps = namespace["pipeline_steps"]
+    pipeline_steps[0], pipeline_steps[1] = pipeline_steps[1], pipeline_steps[0]
+
+    bind_generated_pipeline_runtime(SimpleNamespace(**namespace), runtime_contracts)
+
+    rebound_contracts = [
+        CallableContract.from_callable(step.func).module_artifact_contract.module_name
+        for step in pipeline_steps
+    ]
+    assert rebound_contracts[:2] == [
+        IDENTIFY_SECONDARY_OBJECTS,
+        IDENTIFY_PRIMARY_OBJECTS,
+    ]
 
 
 def test_generated_pipeline_save_can_use_explicit_filemanager_vfs(

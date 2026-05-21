@@ -6,7 +6,11 @@ import numpy as np
 
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.runtime_stores import RuntimeValueStore
-from openhcs.core.runtime_values import RuntimeArrayPayload, normalize_artifact_value
+from openhcs.core.runtime_values import (
+    ObjectLabelPayload,
+    RuntimeArrayPayload,
+    normalize_artifact_value,
+)
 from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
@@ -40,7 +44,7 @@ class ArrayLike(RuntimeArrayPayload):
         return data
 
 
-def _plan(output_plan, *, streaming_configs=()):
+def _plan(output_plan, *, streaming_configs=(), memory_paths=()):
     return SimpleNamespace(
         artifact_outputs={output_plan.name: output_plan},
         streaming_configs=streaming_configs,
@@ -49,7 +53,7 @@ def _plan(output_plan, *, streaming_configs=()):
         step_name="measure",
         axis_id="A01",
         pipeline_position=7,
-        get_paths_for_axis=lambda *_args: [],
+        get_paths_for_axis=lambda *_args: list(memory_paths),
         output_dir=Path("/tmp/output"),
         input_dir=Path("/tmp/input"),
         read_backend="memory",
@@ -61,6 +65,9 @@ def _context(filemanager):
     return SimpleNamespace(
         filemanager=filemanager,
         runtime_value_store=RuntimeValueStore(),
+        microscope_handler=SimpleNamespace(
+            parser=SimpleNamespace(parse_filename=lambda _filename: None)
+        ),
     )
 
 
@@ -416,3 +423,205 @@ def test_materialize_artifact_outputs_can_target_streaming_without_persistent_ba
     assert backends == ["napari_stream"]
     assert backend_kwargs["napari_stream"]["port"] == 5555
     assert backend_kwargs["napari_stream"]["source"] == "measure"
+
+
+def test_materialize_artifact_outputs_uses_artifact_source_metadata_for_streaming(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="labels",
+        path="/memory/labels.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    streaming_config = SimpleNamespace(
+        backend=SimpleNamespace(value="napari_stream"),
+        get_streaming_kwargs=lambda _context: {"port": 5555},
+    )
+    labels = ObjectLabelPayload(
+        labels=np.zeros((2, 2), dtype=np.int32),
+        source_path="/input/A01_s002_w3_z001_t001.TIF",
+        source_spatial_shape_yx=(100, 200),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.microscope_handler = SimpleNamespace(
+        parser=SimpleNamespace(
+            parse_filename=lambda filename: (
+                {"well": "A01", "site": 2, "channel": 3}
+                if filename == "A01_s002_w3_z001_t001.TIF"
+                else None
+            )
+        )
+    )
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, labels, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(
+            output_plan,
+            streaming_configs=(streaming_config,),
+            memory_paths=("/memory/A01_s001_w1_z001_t001.TIF",),
+        ),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/A01_s002_w3_z001_t001_labels_step7.roi.zip"
+    assert backend_kwargs["napari_stream"]["component_metadata"] == {
+        "well": "A01",
+        "site": 2,
+        "channel": 3,
+    }
+
+
+def test_materialize_artifact_outputs_streams_payload_component_metadata(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="Nuclei",
+        path="/memory/Nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    streaming_config = SimpleNamespace(
+        backend=SimpleNamespace(value="napari_stream"),
+        get_streaming_kwargs=lambda _context: {"port": 5555},
+    )
+    labels = ObjectLabelPayload(
+        labels=np.zeros((2, 2), dtype=np.int32),
+        source_path="/input/01_POS002_D.TIF",
+        source_component_metadata={"well": "01", "site": "POS002", "channel": "D"},
+        source_spatial_shape_yx=(100, 200),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, labels, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan, streaming_configs=(streaming_config,)),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/01_POS002_D_Nuclei_step7.roi.zip"
+    assert backend_kwargs["napari_stream"]["component_metadata"] == {
+        "well": "01",
+        "site": "POS002",
+        "channel": "D",
+    }
+
+
+def test_materialize_artifact_outputs_merges_parser_axes_into_source_metadata(
+    monkeypatch,
+):
+    output_plan = ArtifactOutputPlan(
+        name="Nuclei",
+        path="/memory/Nuclei.pkl",
+        kind=ArtifactKind.OBJECT_LABELS,
+    )
+    streaming_config = SimpleNamespace(
+        backend=SimpleNamespace(value="napari_stream"),
+        get_streaming_kwargs=lambda _context: {"port": 5555},
+    )
+    labels = ObjectLabelPayload(
+        labels=np.zeros((2, 2), dtype=np.int32),
+        source_path="/input/A01_s002_w3_z001_t001.TIF",
+        source_component_metadata={"OpenHCSImageType": "Grayscale image"},
+        source_spatial_shape_yx=(100, 200),
+    )
+    filemanager = FileManagerStub()
+    context = _context(filemanager)
+    context.microscope_handler = SimpleNamespace(
+        parser=SimpleNamespace(
+            parse_filename=lambda filename: (
+                {"well": "A01", "site": 2, "channel": 3}
+                if filename == "A01_s002_w3_z001_t001.TIF"
+                else None
+            )
+        )
+    )
+    context.runtime_value_store.record(
+        normalize_artifact_value(output_plan, labels, axis_id="A01"),
+        path=output_plan.path,
+        backend="memory",
+    )
+    materialized = []
+
+    def fake_materialize(
+        spec,
+        data,
+        path,
+        _filemanager,
+        backends,
+        backend_kwargs,
+        **_kwargs,
+    ):
+        materialized.append((spec, data, path, backends, backend_kwargs))
+        return path
+
+    monkeypatch.setattr(
+        "openhcs.processing.materialization.materialize",
+        fake_materialize,
+    )
+
+    materialize_artifact_outputs(
+        filemanager,
+        _plan(output_plan, streaming_configs=(streaming_config,)),
+        StreamingOnlyArtifactMaterializationTargetPlan(),
+        context,
+    )
+
+    _spec, _data, path, _backends, backend_kwargs = materialized[0]
+    assert path == "/analysis/A01_s002_w3_z001_t001_Nuclei_step7.roi.zip"
+    assert backend_kwargs["napari_stream"]["component_metadata"] == {
+        "OpenHCSImageType": "Grayscale image",
+        "well": "A01",
+        "site": "2",
+        "channel": "3",
+    }

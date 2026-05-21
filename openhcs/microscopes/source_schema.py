@@ -19,7 +19,7 @@ class SourceSchemaFilenameParser(FilenameParser):
         r"_z(?P<z_index>[^_]+)"
         r"_t(?P<timepoint>[^_.]+)"
         r"(?:_[^.]*)?"
-        r"(?P<extension>\.\w+)$"
+        r"(?P<extension>(?:\.\w+)+)$"
     )
 
     def __init__(self, filemanager=None, pattern_format=None):

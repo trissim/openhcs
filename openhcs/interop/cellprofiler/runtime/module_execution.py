@@ -162,6 +162,7 @@ from openhcs.core.runtime_values import (
     SingletonObjectLabelStackCollapseStrategy,
     SparseIJVLabelRows,
     object_label_dense_array,
+    object_label_payload_from_source_image,
 )
 from openhcs.core.runtime_values import (
     ImageMetadataPayload,
@@ -7155,7 +7156,24 @@ class TrackObjectsMeasurementRecordBuilder(CellProfilerMeasurementRecordBuilder)
         )
 
 
+class CellProfilerOutputContextSelectionMixin(ABC):
+    """Shared nominal selection algorithm for output-context strategy roots."""
+
+    @classmethod
+    def for_value(cls, value: Any) -> Any:
+        strategy = cls.for_nominal_value(value)
+        if strategy is not None:
+            return strategy
+        raise TypeError(cls.unsupported_value_message(value))
+
+    @classmethod
+    @abstractmethod
+    def unsupported_value_message(cls, value: Any) -> str:
+        """Return the type error message for unsupported output payloads."""
+
+
 class CellProfilerImageOutputContextStrategy(
+    CellProfilerOutputContextSelectionMixin,
     NominalTypeKeyedStrategyMixin,
     ABC,
     metaclass=AutoRegisterMeta,
@@ -7166,11 +7184,8 @@ class CellProfilerImageOutputContextStrategy(
     value_type: ClassVar[type[Any] | None] = None
 
     @classmethod
-    def for_value(cls, value: Any) -> "CellProfilerImageOutputContextStrategy":
-        strategy = cls.for_nominal_value(value)
-        if strategy is not None:
-            return strategy
-        raise TypeError(
+    def unsupported_value_message(cls, value: Any) -> str:
+        return (
             "CellProfiler image outputs must be image payloads or numpy arrays; "
             f"got {type(value).__name__}."
         )
@@ -7206,6 +7221,62 @@ class NumpyCellProfilerImageOutputStrategy(CellProfilerImageOutputContextStrateg
             source_image_payload,
             SINGLETON_STACK_OUTPUT_COLLAPSE.collapse(value),
         ).payload()
+
+
+class CellProfilerObjectLabelOutputContextStrategy(
+    CellProfilerOutputContextSelectionMixin,
+    NominalTypeKeyedStrategyMixin,
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Attach runtime source-image context to declared object-label outputs."""
+
+    __registry_family__ = RegistryFamily(RegistryKeyAttribute.VALUE_TYPE_LABEL)
+    value_type: ClassVar[type[Any] | None] = None
+
+    @classmethod
+    def unsupported_value_message(cls, value: Any) -> str:
+        return (
+            "CellProfiler object-label outputs must be object-label payloads or "
+            f"numpy arrays; got {type(value).__name__}."
+        )
+
+    @abstractmethod
+    def runtime_object_label_value(self, value: Any, source_image_payload: Any) -> Any:
+        """Return the output in OpenHCS runtime object-label payload form."""
+
+
+class ContextualCellProfilerObjectLabelOutputStrategy(
+    CellProfilerObjectLabelOutputContextStrategy
+):
+    """Preserve object-label outputs that already carry OpenHCS context."""
+
+    value_type = (ObjectLabelPayload, ObjectLabelSet)
+
+    def runtime_object_label_value(self, value: Any, source_image_payload: Any) -> Any:
+        del source_image_payload
+        if not isinstance(value, (ObjectLabelPayload, ObjectLabelSet)):
+            raise TypeError(
+                "Contextual object-label output strategy requires an OpenHCS "
+                "object-label payload."
+            )
+        return value
+
+
+class NumpyCellProfilerObjectLabelOutputStrategy(
+    CellProfilerObjectLabelOutputContextStrategy
+):
+    """Attach source image context to raw CellProfiler object-label arrays."""
+
+    value_type = np.ndarray
+
+    def runtime_object_label_value(self, value: Any, source_image_payload: Any) -> Any:
+        if not isinstance(value, np.ndarray):
+            raise TypeError("Numpy object-label output strategy requires numpy.ndarray.")
+        return object_label_payload_from_source_image(
+            source_image_payload,
+            value,
+        )
 
 
 class CellProfilerOutputRecorder(ABC, metaclass=AutoRegisterMeta):
@@ -7270,9 +7341,15 @@ class ObjectLabelsOutputRecorder(ImmediateOutputRecorder):
     kind = ArtifactKind.OBJECT_LABELS
 
     def record(self, request: CellProfilerOutputRecordRequest) -> None:
+        value = CellProfilerObjectLabelOutputContextStrategy.for_value(
+            request.value
+        ).runtime_object_label_value(
+            request.value,
+            request.source_image_payload,
+        )
         request.adapter.add_objects(
             request.spec.name,
-            request.value,
+            value,
             source_image_name=request.source_image_name,
         )
 

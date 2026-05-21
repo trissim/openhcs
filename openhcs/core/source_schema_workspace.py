@@ -706,11 +706,17 @@ class SourceVirtualPathMetadata:
 
     image_set_metadata: Mapping[str, str]
     candidate_metadata: Mapping[str, str]
+    virtual_path: str | None = None
     assignment: SourceAssignmentBase | None = None
 
     def metadata(self) -> Mapping[str, str]:
         metadata = dict(self.image_set_metadata)
         merge_source_metadata(metadata, self.candidate_metadata, path="source_metadata")
+        if self.virtual_path is not None:
+            metadata = dict(source_schema_metadata_with_virtual_components(
+                self.virtual_path,
+                metadata,
+            ))
         image_type = SourceAssignmentImageTypeProjection(self.assignment).image_type()
         if image_type is not None:
             merge_source_metadata(
@@ -719,6 +725,26 @@ class SourceVirtualPathMetadata:
                 path="source_metadata",
             )
         return MappingProxyType(metadata)
+
+
+def source_schema_metadata_with_virtual_components(
+    virtual_path: str,
+    metadata: Mapping[str, str],
+) -> Mapping[str, str]:
+    """Return metadata enriched with canonical components from a virtual path."""
+    parsed = SourceSchemaFilenameParser().parse_filename(virtual_path)
+    if parsed is None:
+        return MappingProxyType(dict(metadata))
+
+    enriched = dict(metadata)
+    for component in AllComponents:
+        value = parsed.get(component.value)
+        if value is not None:
+            enriched = with_source_component_metadata(enriched, component, value)
+    extension = parsed.get("extension")
+    if extension is not None:
+        enriched.setdefault("extension", str(extension))
+    return MappingProxyType(enriched)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1326,10 +1352,15 @@ def expand_source_schema_workspace_wells(
                 used_paths=used_expanded_paths,
             )
             expanded_mapping_sink.add(expanded_path, str(real_path))
-            expanded_source_metadata[expanded_path] = with_source_component_metadata(
-                path_source_metadata,
-                AllComponents.WELL,
-                well_id,
+            expanded_source_metadata[expanded_path] = dict(
+                source_schema_metadata_with_virtual_components(
+                    expanded_path,
+                    with_source_component_metadata(
+                        path_source_metadata,
+                        AllComponents.WELL,
+                        well_id,
+                    ),
+                )
             )
 
     main_metadata[FIELDS.IMAGE_FILES] = list(expanded_mapping)
@@ -1986,6 +2017,7 @@ def _primary_workspace_mappings(
             source_metadata[virtual_path] = SourceVirtualPathMetadata(
                 image_set.metadata,
                 candidate.metadata,
+                virtual_path=virtual_path,
                 assignment=assignment,
             ).metadata()
     component_values: WorkspaceComponentValues = MappingProxyType(
@@ -2228,6 +2260,7 @@ def _auxiliary_workspace_mappings(
             source_metadata[virtual_path] = SourceVirtualPathMetadata(
                 {"source_alias": alias},
                 candidate.metadata,
+                virtual_path=virtual_path,
                 assignment=assignments_by_alias.get(alias),
             ).metadata()
     return MappingProxyType(mappings), MappingProxyType(source_metadata)

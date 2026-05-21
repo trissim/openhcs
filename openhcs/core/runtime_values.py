@@ -63,10 +63,20 @@ from openhcs.core.runtime_slice_alignment import RuntimeSliceAlignedValueSet
 
 
 PhysicalBorderEdgesYX = tuple[bool, bool, bool, bool] | None
+SourceComponentMetadata = Mapping[str, Any]
+ChannelSourceComponentMetadata = tuple[SourceComponentMetadata | None, ...]
 
 _TPayload = TypeVar("_TPayload", bound=type[Any])
 _ARRAY_PAYLOAD_PREDICATES: list[Callable[[Any], bool]] = []
 logger = logging.getLogger(__name__)
+
+
+def _normalize_component_metadata(
+    metadata: SourceComponentMetadata | None,
+) -> SourceComponentMetadata | None:
+    if metadata is None:
+        return None
+    return MappingProxyType(dict(metadata))
 
 
 class RuntimeArrayPayload(ABC, metaclass=AutoRegisterMeta):
@@ -140,10 +150,12 @@ class ImagePayloadMetadata:
     intensity_scale: float | None = None
     source_dtype: str | None = None
     source_path: str | None = None
+    source_component_metadata: SourceComponentMetadata | None = None
     unit_interval_intensity_scale: int | None = None
     channel_intensity_scales: tuple[float | None, ...] = ()
     channel_source_dtypes: tuple[str | None, ...] = ()
     channel_source_paths: tuple[str | None, ...] = ()
+    channel_source_component_metadata: ChannelSourceComponentMetadata = ()
     channel_unit_interval_intensity_scales: tuple[int | None, ...] = ()
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
@@ -194,6 +206,21 @@ class ImagePayloadMetadata:
             source_path=source_path,
         )
 
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "source_component_metadata",
+            _normalize_component_metadata(self.source_component_metadata),
+        )
+        object.__setattr__(
+            self,
+            "channel_source_component_metadata",
+            tuple(
+                _normalize_component_metadata(metadata)
+                for metadata in self.channel_source_component_metadata
+            ),
+        )
+
     @property
     def has_values(self) -> bool:
         """Return whether this metadata carries any semantic image facts."""
@@ -202,10 +229,12 @@ class ImagePayloadMetadata:
                 self.intensity_scale is not None,
                 self.source_dtype is not None,
                 self.source_path is not None,
+                self.source_component_metadata is not None,
                 self.unit_interval_intensity_scale is not None,
                 bool(self.channel_intensity_scales),
                 bool(self.channel_source_dtypes),
                 bool(self.channel_source_paths),
+                bool(self.channel_source_component_metadata),
                 bool(self.channel_unit_interval_intensity_scales),
                 self.spatial_origin_yx is not None,
                 self.source_spatial_shape_yx is not None,
@@ -241,6 +270,10 @@ class ImagePayloadMetadata:
             or self.source_dtype,
             source_path=_tuple_value(self.channel_source_paths, channel_index)
             or self.source_path,
+            source_component_metadata=(
+                _tuple_value(self.channel_source_component_metadata, channel_index)
+                or self.source_component_metadata
+            ),
             unit_interval_intensity_scale=(
                 self.unit_interval_intensity_scale_for_channel(channel_index)
             ),
@@ -486,6 +519,15 @@ def image_payload_metadata(payload: Any) -> ImagePayloadMetadata:
     """Return runtime image metadata when present."""
     if isinstance(payload, (MaskedImagePayload, ImageMetadataPayload)):
         return payload.metadata
+    if isinstance(payload, ObjectLabelPayload):
+        return ImagePayloadMetadata(
+            source_path=payload.source_path,
+            source_component_metadata=payload.source_component_metadata,
+            channel_source_paths=payload.channel_source_paths,
+            channel_source_component_metadata=payload.channel_source_component_metadata,
+            spatial_origin_yx=payload.spatial_origin_yx,
+            source_spatial_shape_yx=payload.source_spatial_shape_yx,
+        )
     return ImagePayloadMetadata()
 
 
@@ -685,6 +727,10 @@ def compose_image_payload_metadata(
             metadata.source_path
             for metadata in metadata_by_payload
         ),
+        channel_source_component_metadata=tuple(
+            metadata.source_component_metadata
+            for metadata in metadata_by_payload
+        ),
         channel_unit_interval_intensity_scales=tuple(
             metadata.unit_interval_intensity_scale_for_channel(0)
             for metadata in metadata_by_payload
@@ -769,6 +815,7 @@ def image_payload_metadata_from_source(
     image: Any,
     *,
     source_path: str,
+    source_component_metadata: SourceComponentMetadata | None = None,
     read_backend: str | None = None,
     filemanager: Any | None = None,
 ) -> ImagePayloadMetadata:
@@ -784,14 +831,19 @@ def image_payload_metadata_from_source(
         str(resolved_source_path) if resolved_source_path is not None else source_path
     )
     if source_dtype is None:
-        return ImagePayloadMetadata.for_array(
+        array_metadata = ImagePayloadMetadata.for_array(
             image_payload_data(image),
             source_path=resolved_path_text,
+        )
+        return replace(
+            array_metadata,
+            source_component_metadata=source_component_metadata,
         )
     return ImagePayloadMetadata(
         intensity_scale=source_metadata.intensity_scale,
         source_dtype=str(source_dtype),
         source_path=resolved_path_text,
+        source_component_metadata=source_component_metadata,
     )
 
 
@@ -1015,6 +1067,10 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadataFields):
     plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
+    source_path: str | None = None
+    source_component_metadata: SourceComponentMetadata | None = None
+    channel_source_paths: tuple[str | None, ...] = ()
+    channel_source_component_metadata: ChannelSourceComponentMetadata = ()
 
     @classmethod
     def from_domain_metadata(
@@ -1038,6 +1094,10 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadataFields):
             plane_axis=metadata.plane_axis if plane_axis is None else plane_axis,
             spatial_origin_yx=metadata.spatial_origin_yx,
             source_spatial_shape_yx=metadata.source_spatial_shape_yx,
+            source_path=metadata.source_path,
+            source_component_metadata=metadata.source_component_metadata,
+            channel_source_paths=metadata.channel_source_paths,
+            channel_source_component_metadata=metadata.channel_source_component_metadata,
         )
 
     def __post_init__(self) -> None:
@@ -1083,6 +1143,29 @@ class ObjectLabelPayload(RuntimeArrayPayload, ObjectLabelDomainMetadataFields):
                     "source_spatial_shape_yx",
                 ),
             )
+        if self.source_path is not None:
+            object.__setattr__(self, "source_path", str(self.source_path))
+        object.__setattr__(
+            self,
+            "source_component_metadata",
+            _normalize_component_metadata(self.source_component_metadata),
+        )
+        object.__setattr__(
+            self,
+            "channel_source_paths",
+            tuple(
+                None if source_path is None else str(source_path)
+                for source_path in self.channel_source_paths
+            ),
+        )
+        object.__setattr__(
+            self,
+            "channel_source_component_metadata",
+            tuple(
+                _normalize_component_metadata(metadata)
+                for metadata in self.channel_source_component_metadata
+            ),
+        )
 
     @property
     def shape(self) -> Any:
@@ -1446,6 +1529,15 @@ def register_array_payload_predicate(
     return predicate
 
 
+def is_array_payload(data: Any) -> bool:
+    """Return whether a value satisfies the runtime array payload contract."""
+    _ensure_runtime_payload_integrations_registered()
+    return isinstance(data, RuntimeArrayPayload) or any(
+        predicate(data)
+        for predicate in _ARRAY_PAYLOAD_PREDICATES
+    )
+
+
 def register_columnar_rows_type(payload_type: _TPayload) -> _TPayload:
     """Declare an external type as a columnar rows payload."""
     ColumnarRows.register(payload_type)
@@ -1685,6 +1777,10 @@ class ObjectLabelSet(
     plane_axis: RuntimePlaneAxis = RuntimePlaneAxis.RUNTIME_SLICE
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
+    source_path: str | None = None
+    source_component_metadata: SourceComponentMetadata | None = None
+    channel_source_paths: tuple[str | None, ...] = ()
+    channel_source_component_metadata: ChannelSourceComponentMetadata = ()
 
     @classmethod
     def from_runtime_value(cls, value: RuntimeValue) -> Self:
@@ -1709,6 +1805,10 @@ class ObjectLabelSet(
                 plane_axis=payload.plane_axis,
                 spatial_origin_yx=payload.spatial_origin_yx,
                 source_spatial_shape_yx=payload.source_spatial_shape_yx,
+                source_path=payload.source_path,
+                source_component_metadata=payload.source_component_metadata,
+                channel_source_paths=payload.channel_source_paths,
+                channel_source_component_metadata=payload.channel_source_component_metadata,
                 dimensions=schema.dimensions,
                 source_image_name=schema.source_image_name,
                 representation=(
@@ -1777,6 +1877,26 @@ class ObjectLabelSet(
                     "source_spatial_shape_yx",
                     payload.source_spatial_shape_yx,
                 )
+            if self.source_path is None:
+                object.__setattr__(self, "source_path", payload.source_path)
+            if self.source_component_metadata is None:
+                object.__setattr__(
+                    self,
+                    "source_component_metadata",
+                    payload.source_component_metadata,
+                )
+            if not self.channel_source_paths:
+                object.__setattr__(
+                    self,
+                    "channel_source_paths",
+                    payload.channel_source_paths,
+                )
+            if not self.channel_source_component_metadata:
+                object.__setattr__(
+                    self,
+                    "channel_source_component_metadata",
+                    payload.channel_source_component_metadata,
+                )
         if self.declared_object_count is not None:
             count = int(self.declared_object_count)
             if count < 0:
@@ -1819,6 +1939,29 @@ class ObjectLabelSet(
                     "source_spatial_shape_yx",
                 ),
             )
+        if self.source_path is not None:
+            object.__setattr__(self, "source_path", str(self.source_path))
+        object.__setattr__(
+            self,
+            "source_component_metadata",
+            _normalize_component_metadata(self.source_component_metadata),
+        )
+        object.__setattr__(
+            self,
+            "channel_source_paths",
+            tuple(
+                None if source_path is None else str(source_path)
+                for source_path in self.channel_source_paths
+            ),
+        )
+        object.__setattr__(
+            self,
+            "channel_source_component_metadata",
+            tuple(
+                _normalize_component_metadata(metadata)
+                for metadata in self.channel_source_component_metadata
+            ),
+        )
         validator = _PAYLOAD_VALIDATORS[representation.payload_shape]
         if validator is not None and not validator(self.labels):
             raise TypeError(
@@ -1852,6 +1995,10 @@ class ObjectLabelSet(
             or self.plane_axis is not RuntimePlaneAxis.RUNTIME_SLICE
             or self.spatial_origin_yx is not None
             or self.source_spatial_shape_yx is not None
+            or self.source_path is not None
+            or self.source_component_metadata is not None
+            or self.channel_source_paths
+            or self.channel_source_component_metadata
         ):
             return ObjectLabelPayload.from_domain_metadata(
                 self,
@@ -1927,6 +2074,10 @@ class ObjectLabelSet(
             plane_axis=self.plane_axis,
             spatial_origin_yx=self.spatial_origin_yx,
             source_spatial_shape_yx=self.source_spatial_shape_yx,
+            source_path=self.source_path,
+            source_component_metadata=self.source_component_metadata,
+            channel_source_paths=self.channel_source_paths,
+            channel_source_component_metadata=self.channel_source_component_metadata,
             dimensions=self.dimensions,
             source_image_name=self.source_image_name,
         )
@@ -2409,6 +2560,68 @@ class ObjectLabelPure2DSliceAggregator(ABC, metaclass=AutoRegisterMeta):
         return self.common_value(value.source_spatial_shape_yx for value in self.values)
 
     @property
+    def source_path(self) -> str | None:
+        return self.common_value(self.source_path_for_value(value) for value in self.values)
+
+    @property
+    def source_component_metadata(self) -> SourceComponentMetadata | None:
+        values = tuple(
+            self.source_component_metadata_for_value(value)
+            for value in self.values
+        )
+        present = tuple(value for value in values if value is not None)
+        if not present:
+            return None
+        first = dict(present[0])
+        if all(dict(value) == first for value in present):
+            return MappingProxyType(first)
+        return None
+
+    @property
+    def channel_source_paths(self) -> tuple[str | None, ...]:
+        paths = tuple(self.source_path_for_value(value) for value in self.values)
+        if any(path is not None for path in paths):
+            return paths
+        return self.common_value(value.channel_source_paths for value in self.values) or ()
+
+    @property
+    def channel_source_component_metadata(self) -> ChannelSourceComponentMetadata:
+        metadata = tuple(
+            self.source_component_metadata_for_value(value) for value in self.values
+        )
+        if any(item is not None for item in metadata):
+            return metadata
+        channel_metadata = tuple(
+            value.channel_source_component_metadata for value in self.values
+        )
+        present = tuple(value for value in channel_metadata if value)
+        if not present:
+            return ()
+        first = tuple(None if item is None else dict(item) for item in present[0])
+        if all(
+            tuple(None if item is None else dict(item) for item in value) == first
+            for value in present
+        ):
+            return present[0]
+        return ()
+
+    @staticmethod
+    def source_path_for_value(value: Any) -> str | None:
+        if value.source_path is not None:
+            return value.source_path
+        if len(value.channel_source_paths) == 1:
+            return value.channel_source_paths[0]
+        return None
+
+    @staticmethod
+    def source_component_metadata_for_value(value: Any) -> SourceComponentMetadata | None:
+        if value.source_component_metadata is not None:
+            return value.source_component_metadata
+        if len(value.channel_source_component_metadata) == 1:
+            return value.channel_source_component_metadata[0]
+        return None
+
+    @property
     def spatial_origin_yx(self) -> tuple[int, int] | None:
         if self.expands_to_source_domain:
             return None
@@ -2552,6 +2765,10 @@ class ObjectLabelSetPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
             declared_object_id_domains=self.declared_object_id_domains,
             domain_scope=self.domain_scope,
             plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
+            source_path=self.source_path,
+            source_component_metadata=self.source_component_metadata,
+            channel_source_paths=self.channel_source_paths,
+            channel_source_component_metadata=self.channel_source_component_metadata,
             source_image_name=self.first.source_image_name,
         )
 
@@ -2571,6 +2788,10 @@ class ObjectLabelSetPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
             plane_axis=value.plane_axis,
             spatial_origin_yx=value.spatial_origin_yx,
             source_spatial_shape_yx=value.source_spatial_shape_yx,
+            source_path=value.source_path,
+            source_component_metadata=value.source_component_metadata,
+            channel_source_paths=value.channel_source_paths,
+            channel_source_component_metadata=value.channel_source_component_metadata,
             dimensions=value.dimensions,
             source_image_name=value.source_image_name,
         )
@@ -2597,6 +2818,10 @@ class ObjectLabelSetPure2DSliceAggregator(ObjectLabelPure2DSliceAggregator):
             source_image_name=self.first.source_image_name,
             spatial_origin_yx=self.spatial_origin_yx,
             source_spatial_shape_yx=self.source_spatial_shape_yx,
+            source_path=self.source_path,
+            source_component_metadata=self.source_component_metadata,
+            channel_source_paths=self.channel_source_paths,
+            channel_source_component_metadata=self.channel_source_component_metadata,
         )
 
 
@@ -2753,6 +2978,10 @@ def object_label_payload_from_source_image(
         declared_object_ids=declared_object_ids,
         spatial_origin_yx=metadata.spatial_origin_yx,
         source_spatial_shape_yx=metadata.source_spatial_shape_yx,
+        source_path=metadata.source_path,
+        source_component_metadata=metadata.source_component_metadata,
+        channel_source_paths=metadata.channel_source_paths,
+        channel_source_component_metadata=metadata.channel_source_component_metadata,
     )
 
 
@@ -2779,6 +3008,10 @@ def object_label_set_from_source_image(
         declared_object_ids=declared_object_ids,
         spatial_origin_yx=metadata.spatial_origin_yx,
         source_spatial_shape_yx=metadata.source_spatial_shape_yx,
+        source_path=metadata.source_path,
+        source_component_metadata=metadata.source_component_metadata,
+        channel_source_paths=metadata.channel_source_paths,
+        channel_source_component_metadata=metadata.channel_source_component_metadata,
     )
 
 
@@ -4209,11 +4442,7 @@ def _is_table_like(data: Any) -> bool:
 
 
 def _is_array_like(data: Any) -> bool:
-    _ensure_runtime_payload_integrations_registered()
-    return isinstance(data, RuntimeArrayPayload) or any(
-        predicate(data)
-        for predicate in _ARRAY_PAYLOAD_PREDICATES
-    )
+    return is_array_payload(data)
 
 
 def _is_mapping_like(data: Any) -> bool:

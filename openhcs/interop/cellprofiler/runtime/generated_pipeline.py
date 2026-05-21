@@ -582,35 +582,28 @@ class GeneratedPipelineRuntimeBindings:
         if not self.artifact_contracts:
             return
 
-        contract_bindings = CellProfilerGeneratedStepContracts(
+        contract_matcher = CellProfilerGeneratedStepContractMatcher(
             self.artifact_contracts
-        ).ordered()
+        )
         for step in GeneratedPipelineModuleExports(self.module).pipeline_steps:
             if not isinstance(step, FunctionStep):
                 raise TypeError(
                     "Generated CellProfiler pipeline steps must be FunctionStep "
                     f"instances, got {type(step).__name__}."
                 )
-            try:
-                step_contract = next(contract_bindings)
-            except StopIteration as exc:
-                raise ValueError(
-                    "Generated CellProfiler pipeline has more executable steps "
-                    "than runtime artifact contracts."
-                ) from exc
+            metadata = CellProfilerGeneratedStepFunctionSpec(step.func).metadata()
+            if metadata is None:
+                continue
+            step_contract = contract_matcher.match(
+                metadata,
+                step.source_bindings,
+            )
             step.func = self._bind_func_spec(
                 step.func,
                 step_contract,
                 step.source_bindings,
             )
-        try:
-            extra = next(contract_bindings)
-        except StopIteration:
-            return
-        raise ValueError(
-            "Generated CellProfiler runtime artifact contract has no matching "
-            f"step for module {extra.module_num} ({extra.contract.module_name!r})."
-        )
+        contract_matcher.validate_complete()
 
     def _bind_func_spec(
         self,
@@ -735,6 +728,135 @@ class CellProfilerGeneratedStepContracts:
         return iter(
             CellProfilerGeneratedStepContract(module_num, contract)
             for module_num, contract in sorted(self.contracts_by_module_num.items())
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class CellProfilerGeneratedStepFunctionSpec:
+    """CellProfiler runtime metadata projection for one FunctionStep func spec."""
+
+    func_spec: Any
+
+    def metadata(self) -> Any | None:
+        metadata = tuple(self._metadata_items(self.func_spec))
+        if not metadata:
+            return None
+        module_names = {item.module_name for item in metadata}
+        if len(module_names) != 1:
+            raise ValueError(
+                "Generated CellProfiler FunctionStep mixes multiple module "
+                f"callables: {sorted(module_names)!r}."
+            )
+        return metadata[0]
+
+    def _metadata_items(self, func_spec: Any) -> Iterator[Any]:
+        if callable(func_spec):
+            metadata = cellprofiler_function_runtime_metadata(func_spec)
+            if metadata is not None:
+                yield metadata
+            return
+        if isinstance(func_spec, tuple) and len(func_spec) in {2, 3}:
+            func = func_spec[0]
+            if callable(func):
+                metadata = cellprofiler_function_runtime_metadata(func)
+                if metadata is not None:
+                    yield metadata
+            return
+        if isinstance(func_spec, list):
+            for item in func_spec:
+                yield from self._metadata_items(item)
+
+
+@dataclass(slots=True)
+class CellProfilerGeneratedStepContractMatcher:
+    """Match edited generated steps to their original CP module contracts."""
+
+    contracts_by_module_num: Mapping[int, ModuleArtifactContract]
+    _contracts: tuple[CellProfilerGeneratedStepContract, ...] = field(init=False)
+    _matched_module_nums: set[int] = field(init=False)
+
+    def __post_init__(self) -> None:
+        self._contracts = tuple(
+            CellProfilerGeneratedStepContracts(self.contracts_by_module_num).ordered()
+        )
+        self._matched_module_nums: set[int] = set()
+
+    def match(
+        self,
+        metadata: Any,
+        source_bindings: StepSourceBindingsConfig,
+    ) -> CellProfilerGeneratedStepContract:
+        candidates = self._unmatched_module_candidates(metadata.module_name)
+        aligned = tuple(
+            candidate
+            for candidate in candidates
+            if SourceBindingRuntimeContractGuard(
+                candidate.contract,
+                source_bindings,
+            ).alignment().ok
+        )
+        if not aligned:
+            self._raise_no_matching_contract(metadata, source_bindings, candidates)
+        selected = aligned[0]
+        selected.validate_callable_metadata(metadata)
+        SourceBindingRuntimeContractGuard(
+            selected.contract,
+            source_bindings,
+        ).validate()
+        self._matched_module_nums.add(selected.module_num)
+        return selected
+
+    def validate_complete(self) -> None:
+        unmatched = tuple(
+            contract
+            for contract in self._contracts
+            if contract.module_num not in self._matched_module_nums
+        )
+        if not unmatched:
+            return
+        summary = ", ".join(
+            f"{contract.module_num} ({contract.contract.module_name!r})"
+            for contract in unmatched
+        )
+        raise ValueError(
+            "Generated CellProfiler runtime artifact contract has no matching "
+            f"step for module(s): {summary}."
+        )
+
+    def _unmatched_module_candidates(
+        self,
+        module_name: str,
+    ) -> tuple[CellProfilerGeneratedStepContract, ...]:
+        return tuple(
+            contract
+            for contract in self._contracts
+            if contract.module_num not in self._matched_module_nums
+            and contract.contract.module_name == module_name
+        )
+
+    def _raise_no_matching_contract(
+        self,
+        metadata: Any,
+        source_bindings: StepSourceBindingsConfig,
+        candidates: tuple[CellProfilerGeneratedStepContract, ...],
+    ) -> None:
+        if not candidates:
+            raise ValueError(
+                "Generated CellProfiler step callable has no remaining runtime "
+                f"artifact contract: callable {metadata.module_name!r}."
+            )
+        alignments = tuple(
+            SourceBindingRuntimeContractGuard(
+                candidate.contract,
+                source_bindings,
+            ).alignment().message
+            for candidate in candidates
+        )
+        raise ValueError(
+            "Generated CellProfiler step callable has no source-binding-compatible "
+            f"runtime artifact contract: callable {metadata.module_name!r}; "
+            f"candidate modules {[candidate.module_num for candidate in candidates]!r}; "
+            f"alignment failures {alignments!r}."
         )
 
 

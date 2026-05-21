@@ -7,6 +7,7 @@ import logging
 from openhcs.constants.constants import Backend
 from openhcs.core.context.processing_context import ProcessingContext
 from openhcs.core.image_file_serialization import prepare_disk_image_payloads
+from openhcs.core.runtime_values import image_payload_data
 from openhcs.core.steps.function_artifact_materialization import (
     PersistentArtifactMaterializationTargetPlan,
     StreamingOnlyArtifactMaterializationTargetPlan,
@@ -30,7 +31,7 @@ def finalize_function_step_outputs(
     """Persist images, streams, metadata, and non-image artifacts for one step."""
     _write_memory_outputs_if_needed(context, plan)
     _materialize_images_if_needed(context, plan)
-    _stream_outputs(context, plan)
+    StreamOutputsAuthority.stream_outputs(context, plan)
     _write_openhcs_metadata(context, plan)
     _materialize_artifacts(context, plan)
 
@@ -107,36 +108,41 @@ def _materialize_images_if_needed(
     )
 
 
-def _stream_outputs(
-    context: ProcessingContext,
-    plan: FunctionStepExecutionPlan,
-) -> None:
-    for config_instance in plan.streaming_configs:
-        memory_paths = plan.get_paths_for_axis(
-            plan.output_dir,
-            Backend.MEMORY.value,
-        )
-        if plan.has_materialized_output:
-            streaming_paths = generate_materialized_paths(
-                memory_paths,
-                plan.output_dir,
-                plan.materialized_output_dir,
-            )
-        else:
-            streaming_paths = memory_paths
+class StreamOutputsAuthority:
+    """Streams step image outputs through viewer backends."""
 
-        streaming_data = context.filemanager.load_batch(
-            memory_paths,
-            Backend.MEMORY.value,
-        )
-        kwargs = config_instance.get_streaming_kwargs(context)
-        kwargs["source"] = plan.step_name
-        context.filemanager.save_batch(
-            streaming_data,
-            streaming_paths,
-            config_instance.backend.value,
-            **kwargs,
-        )
+    @staticmethod
+    def stream_outputs(
+        context: ProcessingContext,
+        plan: FunctionStepExecutionPlan,
+    ) -> None:
+        for config_instance in plan.streaming_configs:
+            memory_paths = plan.get_paths_for_axis(
+                plan.output_dir,
+                Backend.MEMORY.value,
+            )
+            if plan.has_materialized_output:
+                streaming_paths = generate_materialized_paths(
+                    memory_paths,
+                    plan.output_dir,
+                    plan.materialized_output_dir,
+                )
+            else:
+                streaming_paths = memory_paths
+
+            streaming_data = context.filemanager.load_batch(
+                memory_paths,
+                Backend.MEMORY.value,
+            )
+            streaming_data = [image_payload_data(item) for item in streaming_data]
+            kwargs = config_instance.get_streaming_kwargs(context)
+            kwargs["source"] = plan.step_name
+            context.filemanager.save_batch(
+                streaming_data,
+                streaming_paths,
+                config_instance.backend.value,
+                **kwargs,
+            )
 
 
 def _write_openhcs_metadata(

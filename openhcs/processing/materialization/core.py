@@ -9,11 +9,13 @@ import csv
 import io
 import json
 import logging
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, is_dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, ClassVar, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import pandas as pd
+from metaclass_registry import AutoRegisterMeta
 
 from openhcs.processing.materialization.constants import MaterializationFormat, WriteMode
 from openhcs.processing.materialization.options import (
@@ -26,7 +28,12 @@ from openhcs.processing.materialization.options import (
     TextOptions,
     TiffStackOptions,
 )
-from openhcs.core.runtime_values import image_payload_data
+from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    image_payload_data,
+    image_payload_metadata,
+    runtime_array_operand,
+)
 from openhcs.processing.materialization.utils import (
     discover_array_fields,
     expand_array_field,
@@ -55,31 +62,74 @@ def _resolve_source(value: Any, source: Optional[str]) -> Any:
     return cur
 
 
-def _select_payload(data: Any, options: SourceOptions) -> Any:
-    payload = _resolve_source(data, options.source)
-    if isinstance(payload, (list, tuple)):
-        return type(payload)(image_payload_data(item) for item in payload)
-    return image_payload_data(payload)
-
-
-def _is_empty(value: Any) -> bool:
-    if value is None:
-        return True
-    size = getattr(value, "size", None)
-    if isinstance(size, int) and size == 0:
-        return True
-    try:
-        return len(value) == 0  # type: ignore[arg-type]
-    except Exception:
-        return False
-
-
 def _as_sequence(value: Any) -> list[Any]:
     if value is None:
         return []
     if isinstance(value, (list, tuple)):
         return list(value)
     return [value]
+
+
+class MaterializationEmptinessAuthority:
+    """Own empty-payload semantics shared by writer implementations."""
+
+    @staticmethod
+    def is_empty(value: Any) -> bool:
+        if value is None:
+            return True
+        size = getattr(value, "size", None)
+        if isinstance(size, int) and size == 0:
+            return True
+        try:
+            return len(value) == 0  # type: ignore[arg-type]
+        except Exception:
+            return False
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializationInputItem:
+    """One materialization payload item with semantic metadata preserved."""
+
+    data: Any
+    metadata: ImagePayloadMetadata
+
+    @classmethod
+    def from_payload(cls, payload: Any) -> "MaterializationInputItem":
+        return cls(
+            data=runtime_array_operand(image_payload_data(payload)),
+            metadata=image_payload_metadata(payload),
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializationInput:
+    """Normalized writer input with data and metadata from one authority."""
+
+    items: tuple[MaterializationInputItem, ...]
+    sequence_type: type | None = None
+
+    @classmethod
+    def from_value(
+        cls,
+        value: Any,
+        options: SourceOptions,
+    ) -> "MaterializationInput":
+        payload = _resolve_source(value, options.source)
+        sequence_type = type(payload) if isinstance(payload, (list, tuple)) else None
+        return cls(
+            items=tuple(
+                MaterializationInputItem.from_payload(item)
+                for item in _as_sequence(payload)
+            ),
+            sequence_type=sequence_type,
+        )
+
+    @property
+    def data(self) -> Any:
+        data_items = [item.data for item in self.items]
+        if self.sequence_type is None:
+            return data_items[0] if data_items else None
+        return self.sequence_type(data_items)
 
 
 class PathHelper:
@@ -107,6 +157,33 @@ class PathHelper:
 
     def with_suffix(self, suffix: str) -> str:
         return str(self.parent / f"{self.name}{suffix}")
+
+
+class WriteModePathPolicy(ABC, metaclass=AutoRegisterMeta):
+    """Apply existing-path policy for one write mode."""
+
+    __registry_key__ = "write_mode"
+    __skip_if_no_key__ = True
+
+    write_mode: ClassVar[WriteMode | None] = None
+
+    @abstractmethod
+    def prepare_existing_path(self, saver: "BackendSaver", backend: str, path: str) -> None:
+        """Prepare an already-existing backend path before saving."""
+
+
+class OverwritePathPolicy(WriteModePathPolicy):
+    write_mode = WriteMode.OVERWRITE
+
+    def prepare_existing_path(self, saver: "BackendSaver", backend: str, path: str) -> None:
+        saver.filemanager.delete(path, backend)
+
+
+class ErrorPathPolicy(WriteModePathPolicy):
+    write_mode = WriteMode.ERROR
+
+    def prepare_existing_path(self, saver: "BackendSaver", backend: str, path: str) -> None:
+        raise FileExistsError(f"Refusing to overwrite existing path: {path} ({backend})")
 
 
 class BackendSaver:
@@ -141,14 +218,11 @@ class BackendSaver:
         if not self.filemanager.exists(path, backend):
             return
 
-        if self.write_mode == WriteMode.OVERWRITE:
-            self.filemanager.delete(path, backend)
-            return
-
-        if self.write_mode == WriteMode.ERROR:
-            raise FileExistsError(f"Refusing to overwrite existing path: {path} ({backend})")
-
-        raise ValueError(f"Unknown WriteMode: {self.write_mode!r}")
+        WriteModePathPolicy.__registry__[self.write_mode]().prepare_existing_path(
+            self,
+            backend,
+            path,
+        )
 
 
 @dataclass(frozen=True)
@@ -178,10 +252,11 @@ class MaterializationContext:
 class WriterSpec:
     format: MaterializationFormat
     options_type: type
-    write: Callable[[Any, Any, MaterializationContext], list[Output]]
+    write: "WriterFunction"
     primary_path: Callable[[list[Output]], str]
 
 
+WriterFunction = Callable[[Any, Any, MaterializationContext], list[Output]]
 _WRITERS_BY_OPTIONS: Dict[type, WriterSpec] = {}
 
 
@@ -197,7 +272,7 @@ def writer_for(
     defining one options dataclass and one function.
     """
 
-    def decorator(fn: Callable[[Any, Any, MaterializationContext], list[Output]]):
+    def decorator(fn: WriterFunction):
         if options_type in _WRITERS_BY_OPTIONS:
             raise ValueError(f"Writer already registered for options type {options_type.__name__}")
         _WRITERS_BY_OPTIONS[options_type] = WriterSpec(
@@ -401,7 +476,8 @@ def _single_file_writer(
     validate_payload: Optional[Callable[[Any, Any], None]] = None,
 ) -> Callable[[Any, Any, "MaterializationContext"], list[Output]]:
     def write(data: Any, options: Any, ctx: MaterializationContext) -> list[Output]:
-        payload = _select_payload(data, options)
+        materialization_input = MaterializationInput.from_value(data, options)
+        payload = materialization_input.data
         if validate_payload is not None:
             validate_payload(payload, options)
         return [
@@ -455,22 +531,23 @@ def _roi_primary_path(outs: list[Output]) -> str:
 def _write_roi_zip(data: Any, options: ROIOptions, ctx: MaterializationContext) -> list[Output]:
     from polystore.roi import extract_rois_from_labeled_mask
 
-    data = _select_payload(data, options)
+    materialization_input = MaterializationInput.from_value(data, options)
+    payload = materialization_input.data
     paths = ctx.paths(options)
     roi_path = paths.with_suffix(options.roi_suffix)
     summary_path = paths.with_suffix(options.summary_suffix)
 
-    if _is_empty(data):
+    if MaterializationEmptinessAuthority.is_empty(payload):
         return [Output(path=summary_path, content="No segmentation masks generated (empty data)\n")]
 
-    masks = _as_sequence(data)
-
     all_rois: list[Any] = []
-    for mask in masks:
+    for item in materialization_input.items:
         rois = extract_rois_from_labeled_mask(
-            mask,
+            item.data,
             min_area=options.min_area,
             extract_contours=options.extract_contours,
+            spatial_origin_yx=item.metadata.spatial_origin_yx,
+            source_spatial_shape_yx=item.metadata.source_spatial_shape_yx,
         )
         all_rois.extend(rois)
 
@@ -478,7 +555,7 @@ def _write_roi_zip(data: Any, options: ROIOptions, ctx: MaterializationContext) 
     if all_rois:
         outs.append(Output(path=roi_path, content=all_rois))
 
-    summary = f"Segmentation ROIs: {len(all_rois)} cells\nZ-planes: {len(masks)}\n"
+    summary = f"Segmentation ROIs: {len(all_rois)} cells\nZ-planes: {len(materialization_input.items)}\n"
     if all_rois:
         summary += f"ROI file: {roi_path}\n"
     else:
@@ -489,11 +566,11 @@ def _write_roi_zip(data: Any, options: ROIOptions, ctx: MaterializationContext) 
 
 @writer_for(TiffStackOptions, MaterializationFormat.TIFF_STACK)
 def _write_tiff_stack(data: Any, options: TiffStackOptions, ctx: MaterializationContext) -> list[Output]:
-    data = _select_payload(data, options)
+    data = MaterializationInput.from_value(data, options).data
     paths = ctx.paths(options)
     base_name = paths.name
 
-    if _is_empty(data):
+    if MaterializationEmptinessAuthority.is_empty(data):
         summary_path = paths.with_suffix(options.summary_suffix)
         return [Output(path=summary_path, content=options.empty_summary)]
 

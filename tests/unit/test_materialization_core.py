@@ -10,6 +10,7 @@ from polystore.memory import MemoryStorageBackend
 from openhcs.processing.materialization import (
     JsonOptions,
     MaterializationSpec,
+    ROIOptions,
     csv_only,
     json_materializer,
     json_only,
@@ -17,6 +18,7 @@ from openhcs.processing.materialization import (
     tabular_field_names_from_materialization,
     tiff_stack,
 )
+from openhcs.core.runtime_values import ObjectLabelPayload
 
 
 @pytest.mark.unit
@@ -136,3 +138,27 @@ def test_tiff_stack_splits_scalar_3d_stack_by_plane() -> None:
     assert fm.exists("/tmp/A01_stack_slice_001.tif", "memory")
     assert fm.exists("/tmp/A01_stack_slice_002.tif", "memory")
     assert not fm.exists("/tmp/A01_stack_slice_003.tif", "memory")
+
+
+@pytest.mark.unit
+def test_roi_materialization_offsets_object_label_payload_geometry() -> None:
+    fm = FileManager({"memory": MemoryStorageBackend()})
+    labels = np.zeros((8, 8), dtype=np.int32)
+    labels[2:6, 3:7] = 1
+    payload = ObjectLabelPayload(labels=labels, spatial_origin_yx=(10, 20))
+
+    out = materialize(
+        MaterializationSpec(ROIOptions(min_area=0)),
+        data=payload,
+        path="/tmp/A01_Nuclei_step3.roi.zip",
+        filemanager=fm,
+        backends=["memory"],
+        backend_kwargs={},
+    )
+
+    rois = fm.load(out, "memory")
+    assert out == "/tmp/A01_Nuclei_step3_rois.roi.zip"
+    assert rois[0].metadata["bbox"] == (12, 23, 16, 27)
+    assert rois[0].metadata["centroid"] == (13.5, 24.5)
+    assert float(rois[0].shapes[0].coordinates[:, 0].min()) >= 11.5
+    assert float(rois[0].shapes[0].coordinates[:, 1].min()) >= 22.5

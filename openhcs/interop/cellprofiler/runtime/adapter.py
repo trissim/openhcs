@@ -100,8 +100,10 @@ from openhcs.core.runtime_semantics import (
     dense_object_label_id_domain,
 )
 from openhcs.core.runtime_values import (
+    ChannelSourceComponentMetadata,
     FieldSpec,
     RuntimeArrayPayload,
+    SourceComponentMetadata,
     MeasurementTable,
     NamedImage,
     ObjectLabelPayload,
@@ -872,6 +874,10 @@ class ObjectLabelSourceImageDomain:
 
     spatial_origin_yx: tuple[int, int] | None = None
     source_spatial_shape_yx: tuple[int, int] | None = None
+    source_path: str | None = None
+    source_component_metadata: SourceComponentMetadata | None = None
+    channel_source_paths: tuple[str | None, ...] = ()
+    channel_source_component_metadata: ChannelSourceComponentMetadata = ()
 
     @classmethod
     def for_adapter_source_image(
@@ -889,6 +895,10 @@ class ObjectLabelSourceImageDomain:
         return cls(
             spatial_origin_yx=metadata.spatial_origin_yx,
             source_spatial_shape_yx=metadata.source_spatial_shape_yx,
+            source_path=metadata.source_path,
+            source_component_metadata=metadata.source_component_metadata,
+            channel_source_paths=metadata.channel_source_paths,
+            channel_source_component_metadata=metadata.channel_source_component_metadata,
         )
 
     def origin_or(self, existing: tuple[int, int] | None) -> tuple[int, int] | None:
@@ -1483,6 +1493,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 domain_scope=labels.domain_scope,
                 spatial_origin_yx=labels.spatial_origin_yx,
                 source_spatial_shape_yx=labels.source_spatial_shape_yx,
+                source_path=labels.source_path,
+                source_component_metadata=labels.source_component_metadata,
+                channel_source_paths=labels.channel_source_paths,
+                channel_source_component_metadata=labels.channel_source_component_metadata,
                 source_image_name=source_image_name or labels.source_image_name,
                 dimensions=dimensions or labels.dimensions,
                 representation=labels.representation,
@@ -1506,6 +1520,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 domain_scope=labels.domain_scope,
                 spatial_origin_yx=labels.spatial_origin_yx,
                 source_spatial_shape_yx=labels.source_spatial_shape_yx,
+                source_path=labels.source_path,
+                source_component_metadata=labels.source_component_metadata,
+                channel_source_paths=labels.channel_source_paths,
+                channel_source_component_metadata=labels.channel_source_component_metadata,
                 source_image_name=source_image_name,
                 dimensions=dimensions,
                 representation=representation,
@@ -1522,6 +1540,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
                 ),
                 spatial_origin_yx=source_domain.spatial_origin_yx,
                 source_spatial_shape_yx=source_domain.source_spatial_shape_yx,
+                source_path=source_domain.source_path,
+                source_component_metadata=source_domain.source_component_metadata,
+                channel_source_paths=source_domain.channel_source_paths,
+                channel_source_component_metadata=source_domain.channel_source_component_metadata,
                 source_image_name=source_image_name,
                 dimensions=dimensions,
                 representation=representation,

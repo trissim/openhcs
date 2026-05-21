@@ -5,6 +5,7 @@ import pandas as pd
 from openhcs.core.artifacts import ArtifactKey, ArtifactKind, ArtifactOutputPlan, ArtifactScope
 from openhcs.core.runtime_invocation import RuntimeSliceAlignedValues
 from openhcs.core.runtime_slice_projection import RuntimeSliceProjection
+from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
 from openhcs.core.runtime_values import (
     FieldSpec,
     DerivedImagePayloadContext,
@@ -238,6 +239,29 @@ def test_object_label_pure_2d_aggregator_preserves_dense_payload_domains() -> No
     assert aggregated.declared_object_id_domains == ((1,), (2,))
 
 
+def test_object_label_pure_2d_aggregator_preserves_slice_source_paths() -> None:
+    first = ObjectLabelPayload(
+        labels=np.asarray([[0, 1], [0, 0]], dtype=np.int32),
+        source_path="/input/A01_s001_w1_z001_t001.TIF",
+    )
+    second = ObjectLabelPayload(
+        labels=np.asarray([[0, 2], [0, 0]], dtype=np.int32),
+        source_path="/input/A01_s002_w1_z001_t001.TIF",
+    )
+
+    aggregated = ObjectLabelPure2DSliceAggregator.aggregate(
+        (first, second),
+        "numpy",
+    )
+
+    assert isinstance(aggregated, ObjectLabelPayload)
+    assert aggregated.source_path is None
+    assert aggregated.channel_source_paths == (
+        "/input/A01_s001_w1_z001_t001.TIF",
+        "/input/A01_s002_w1_z001_t001.TIF",
+    )
+
+
 def test_object_label_pure_2d_aggregator_preserves_sparse_ijv_sets() -> None:
     first = ObjectLabelSet(
         name="Cells",
@@ -374,6 +398,14 @@ def test_object_label_payload_from_source_image_uses_image_metadata() -> None:
         metadata=ImagePayloadMetadata(
             spatial_origin_yx=(2, 3),
             source_spatial_shape_yx=(10, 12),
+            channel_source_paths=(
+                "/input/A01_s001_w1_z001_t001.TIF",
+                "/input/A01_s002_w1_z001_t001.TIF",
+            ),
+            channel_source_component_metadata=(
+                {"well": "A01", "site": "1", "channel": "1"},
+                {"well": "A01", "site": "2", "channel": "1"},
+            ),
         ),
     )
     labels = np.array([[0, 1], [2, 0]], dtype=np.int32)
@@ -388,6 +420,14 @@ def test_object_label_payload_from_source_image_uses_image_metadata() -> None:
     assert payload.declared_object_count == 2
     assert payload.spatial_origin_yx == (2, 3)
     assert payload.source_spatial_shape_yx == (10, 12)
+    assert payload.channel_source_paths == (
+        "/input/A01_s001_w1_z001_t001.TIF",
+        "/input/A01_s002_w1_z001_t001.TIF",
+    )
+    assert tuple(dict(item) for item in payload.channel_source_component_metadata) == (
+        {"well": "A01", "site": "1", "channel": "1"},
+        {"well": "A01", "site": "2", "channel": "1"},
+    )
 
 
 def test_object_label_set_from_source_image_uses_image_metadata() -> None:
@@ -396,6 +436,8 @@ def test_object_label_set_from_source_image_uses_image_metadata() -> None:
         metadata=ImagePayloadMetadata(
             spatial_origin_yx=(2, 3),
             source_spatial_shape_yx=(10, 12),
+            source_path="/input/A01_s001_w1_z001_t001.TIF",
+            source_component_metadata={"well": "A01", "site": "1", "channel": "1"},
         ),
     )
     sparse_rows = SparseIJVLabelRows(
@@ -415,6 +457,30 @@ def test_object_label_set_from_source_image_uses_image_metadata() -> None:
     assert label_set.declared_object_count == 2
     assert label_set.spatial_origin_yx == (2, 3)
     assert label_set.source_spatial_shape_yx == (10, 12)
+    assert label_set.source_path == "/input/A01_s001_w1_z001_t001.TIF"
+    assert dict(label_set.source_component_metadata) == {
+        "well": "A01",
+        "site": "1",
+        "channel": "1",
+    }
+
+
+def test_source_image_loading_semantics_attaches_component_metadata() -> None:
+    image = np.zeros((4, 5), dtype=np.uint16)
+
+    payload = apply_source_image_loading_semantics(
+        image,
+        source_metadata={"well": "01", "site": "POS002", "channel": "D"},
+        source_path="01_POS002_D.TIF",
+    )
+
+    metadata = image_payload_metadata(payload)
+    assert metadata.source_path == "01_POS002_D.TIF"
+    assert dict(metadata.source_component_metadata) == {
+        "well": "01",
+        "site": "POS002",
+        "channel": "D",
+    }
 
 
 def test_object_label_set_replacement_preserves_sparse_ijv_representation() -> None:
@@ -1004,6 +1070,86 @@ def test_image_payload_metadata_tracks_spatial_crop_edges() -> None:
         False,
     )
     assert metadata.for_channel(0).spatial_origin_yx == (3, 2)
+
+
+def test_image_payload_metadata_reads_object_label_spatial_context() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.zeros((4, 5), dtype=np.int32),
+        spatial_origin_yx=(3, 2),
+        source_spatial_shape_yx=(10, 12),
+        source_path="/input/A01_s001_w1_z001_t001.TIF",
+    )
+
+    metadata = image_payload_metadata(payload)
+
+    assert metadata.spatial_origin_yx == (3, 2)
+    assert metadata.source_spatial_shape_yx == (10, 12)
+    assert metadata.source_path == "/input/A01_s001_w1_z001_t001.TIF"
+
+
+def test_object_label_runtime_slice_projection_projects_source_path() -> None:
+    payload = ObjectLabelPayload(
+        labels=np.zeros((3, 4, 5), dtype=np.int32),
+        source_spatial_shape_yx=(10, 12),
+        channel_source_paths=(
+            "/input/A01_s001_w1_z001_t001.TIF",
+            "/input/A01_s002_w1_z001_t001.TIF",
+            "/input/A01_s003_w1_z001_t001.TIF",
+        ),
+        channel_source_component_metadata=(
+            {"well": "A01", "site": "1", "channel": "1"},
+            {"well": "A01", "site": "2", "channel": "1"},
+            {"well": "A01", "site": "3", "channel": "1"},
+        ),
+    )
+
+    projected = RuntimeSliceProjection.value_for_slice(payload, 1, 3)
+
+    assert isinstance(projected, ObjectLabelPayload)
+    assert projected.labels.shape == (4, 5)
+    assert projected.source_path == "/input/A01_s002_w1_z001_t001.TIF"
+    assert dict(projected.source_component_metadata) == {
+        "well": "A01",
+        "site": "2",
+        "channel": "1",
+    }
+    assert projected.channel_source_paths == ()
+    assert image_payload_metadata(projected).source_path == (
+        "/input/A01_s002_w1_z001_t001.TIF"
+    )
+
+
+def test_object_label_set_runtime_slice_projection_projects_source_path() -> None:
+    label_set = ObjectLabelSet(
+        name="Nuclei",
+        labels=np.zeros((3, 4, 5), dtype=np.int32),
+        source_spatial_shape_yx=(10, 12),
+        channel_source_paths=(
+            "/input/A01_s001_w1_z001_t001.TIF",
+            "/input/A01_s002_w1_z001_t001.TIF",
+            "/input/A01_s003_w1_z001_t001.TIF",
+        ),
+        channel_source_component_metadata=(
+            {"well": "A01", "site": "1", "channel": "1"},
+            {"well": "A01", "site": "2", "channel": "1"},
+            {"well": "A01", "site": "3", "channel": "1"},
+        ),
+    )
+
+    projected = RuntimeSliceProjection.value_for_slice(label_set, 2, 3)
+
+    assert isinstance(projected, ObjectLabelSet)
+    assert projected.labels.shape == (4, 5)
+    assert projected.source_path == "/input/A01_s003_w1_z001_t001.TIF"
+    assert dict(projected.source_component_metadata) == {
+        "well": "A01",
+        "site": "3",
+        "channel": "1",
+    }
+    assert projected.channel_source_paths == ()
+    assert image_payload_metadata(projected.runtime_payload()).source_path == (
+        "/input/A01_s003_w1_z001_t001.TIF"
+    )
 
 
 def test_compose_image_payload_metadata_preserves_shared_spatial_context() -> None:

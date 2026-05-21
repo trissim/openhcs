@@ -779,6 +779,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             orchestrator=orchestrator,
             gui_config=self.gui_config,
             parent=self,
+            service_adapter=self.service_adapter,
             source_schema=self._current_source_schema(),
             function_invocation_badge_provider=(
                 self.function_presentation.badge_provider(new_step)
@@ -1379,6 +1380,7 @@ class PipelineEditorWidget(AbstractManagerWidget):
             orchestrator=orchestrator,
             gui_config=self.gui_config,
             parent=self,
+            service_adapter=self.service_adapter,
             step_index=step_index,  # Pass actual position for border pattern
             source_schema=self._current_source_schema(),
             function_invocation_badge_provider=(

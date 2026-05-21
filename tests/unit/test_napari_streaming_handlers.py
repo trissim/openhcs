@@ -241,7 +241,7 @@ def test_napari_component_metadata_normalizer_coerces_indexed_strings():
 
     assert normalized == {
         "well": "A01",
-        "site": "1",
+        "site": 1,
         "channel": 2,
         "z_index": 0,
         "timepoint": 3,
@@ -265,6 +265,24 @@ def test_napari_component_value_tracker_expands_indexed_axes():
         "well": ["A01", "B02"],
     }
     assert tracker.values_for(["site"]) == {"site": []}
+
+
+def test_napari_component_value_tracker_skips_missing_axes_and_sorts_mixed_domains():
+    tracker = NapariComponentValueTracker()
+
+    tracker.update(
+        ["well", "channel"],
+        [
+            {"components": {"well": "A01", "channel": 1}},
+            {"components": {"channel": "D"}},
+            {"components": {}},
+        ],
+    )
+
+    assert tracker.values_for(["well", "channel"]) == {
+        "well": ["A01"],
+        "channel": [1, "D"],
+    }
 
 
 def test_component_dimension_label_policy_owns_channel_well_and_generic_labels():
@@ -320,6 +338,53 @@ def test_napari_shape_label_rasterizer_projects_polygon_and_path_by_component():
     assert labels[1, 0, 1] == 2
     assert labels[1, 1, 1] == 2
     assert labels[1, 2, 1] == 2
+
+
+def test_napari_shape_label_rasterizer_uses_source_canvas_shape_metadata():
+    rasterizer = NapariShapeLabelRasterizer()
+
+    labels = rasterizer.rasterize(
+        layer_items=[
+            {
+                "components": {"channel": 1},
+                "data": [
+                    {
+                        "type": "polygon",
+                        "coordinates": [[10, 20], [10, 22], [12, 22], [12, 20]],
+                        "metadata": {"source_spatial_shape_yx": (100, 200)},
+                    }
+                ],
+            }
+        ],
+        stack_components=["channel"],
+        component_values={"channel": [1]},
+    )
+
+    assert labels.shape == (1, 100, 200)
+    assert np.count_nonzero(labels[0] == 1) > 0
+
+
+def test_napari_shape_label_rasterizer_tolerates_missing_stack_components():
+    rasterizer = NapariShapeLabelRasterizer()
+
+    labels = rasterizer.rasterize(
+        layer_items=[
+            {
+                "components": {"source": "IdentifyPrimaryObjects"},
+                "data": [
+                    {
+                        "type": "polygon",
+                        "coordinates": [[0, 0], [0, 2], [2, 2], [2, 0]],
+                    }
+                ],
+            }
+        ],
+        stack_components=["well", "channel"],
+        component_values={"well": ["A01"], "channel": [1, 2]},
+    )
+
+    assert labels.shape == (1, 2, 3, 3)
+    assert np.count_nonzero(labels[0, 0] == 1) > 0
 
 
 def test_napari_shape_label_rasterizer_keeps_points_as_extent_only():

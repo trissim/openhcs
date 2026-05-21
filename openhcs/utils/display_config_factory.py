@@ -9,6 +9,32 @@ from enum import Enum
 from typing import Dict, Any, Callable, Optional, Type
 
 
+STANDARD_COMPONENTS = ("well", "site", "channel", "z_index", "timepoint")
+
+
+def component_value(component: object) -> str:
+    if isinstance(component, Enum):
+        return str(component.value)
+    return str(component).lower()
+
+
+def standard_component_defaults(
+    *,
+    well: Any,
+    site: Any,
+    channel: Any,
+    z_index: Any,
+    timepoint: Any,
+) -> dict[str, Any]:
+    return dict(
+        zip(
+            STANDARD_COMPONENTS,
+            (well, site, channel, z_index, timepoint),
+            strict=True,
+        )
+    )
+
+
 def create_display_config(
     name: str,
     base_fields: Dict[str, tuple[Type, Any]],
@@ -98,9 +124,16 @@ def create_display_config(
         for field_name, value in kwargs.items():
             object.__setattr__(self, field_name, value)
 
+    def component_modes(self) -> dict[str, str]:
+        return {
+            component: object.__getattribute__(self, f"{component}_mode").value
+            for component in component_order or ()
+        }
+
     class_attrs = {
         '__annotations__': annotations,
         '__init__': __init__,
+        'component_modes': component_modes,
         '__doc__': docstring or f"Display configuration for {name}",
     }
 
@@ -151,15 +184,8 @@ def create_napari_display_config(
         NapariDisplayConfig dataclass
     """
     def get_dimension_mode(self, component):
-        if hasattr(component, 'value'):
-            component_value = component.value
-        elif hasattr(component, 'name'):
-            component_value = component.name.lower()
-        else:
-            component_value = str(component).lower()
-
-        field_name = f"{component_value}_mode"
-        mode = getattr(self, field_name, None)
+        field_name = f"{component_value(component)}_mode"
+        mode = vars(self).get(field_name)
 
         if mode is None:
             # Default: all components are STACK (well, channel, site, z_index, timepoint)
@@ -171,13 +197,13 @@ def create_napari_display_config(
         return self.colormap.value
 
     # Merge component defaults - all components default to STACK
-    component_defaults = {
-        'well': dimension_mode_enum.STACK,
-        'channel': dimension_mode_enum.STACK,
-        'site': dimension_mode_enum.STACK,
-        'z_index': dimension_mode_enum.STACK,
-        'timepoint': dimension_mode_enum.STACK
-    }
+    component_defaults = standard_component_defaults(
+        well=dimension_mode_enum.STACK,
+        site=dimension_mode_enum.STACK,
+        channel=dimension_mode_enum.STACK,
+        z_index=dimension_mode_enum.STACK,
+        timepoint=dimension_mode_enum.STACK,
+    )
     if virtual_component_defaults:
         component_defaults.update(virtual_component_defaults)
 
@@ -248,26 +274,12 @@ def create_fiji_display_config(
         FijiDisplayConfig dataclass
     """
     def get_dimension_mode(self, component):
-        if hasattr(component, 'value'):
-            component_value = component.value
-        elif hasattr(component, 'name'):
-            component_value = component.name.lower()
-        else:
-            component_value = str(component).lower()
-
-        field_name = f"{component_value}_mode"
-        mode = getattr(self, field_name, None)
+        key = component_value(component)
+        field_name = f"{key}_mode"
+        mode = vars(self).get(field_name)
 
         if mode is None:
-            # Default mapping for Fiji hyperstacks
-            defaults = {
-                'well': dimension_mode_enum.FRAME,
-                'site': dimension_mode_enum.FRAME,
-                'channel': dimension_mode_enum.CHANNEL,
-                'z_index': dimension_mode_enum.SLICE,
-                'timepoint': dimension_mode_enum.FRAME
-            }
-            return defaults.get(component_value, dimension_mode_enum.CHANNEL)
+            return fiji_component_defaults.get(key, dimension_mode_enum.CHANNEL)
 
         return mode
 
@@ -275,13 +287,14 @@ def create_fiji_display_config(
         return self.lut.value
 
     # Merge component defaults
-    component_defaults = {
-        'well': dimension_mode_enum.FRAME,
-        'site': dimension_mode_enum.FRAME,
-        'channel': dimension_mode_enum.CHANNEL,
-        'z_index': dimension_mode_enum.SLICE,
-        'timepoint': dimension_mode_enum.FRAME
-    }
+    component_defaults = standard_component_defaults(
+        well=dimension_mode_enum.FRAME,
+        site=dimension_mode_enum.FRAME,
+        channel=dimension_mode_enum.CHANNEL,
+        z_index=dimension_mode_enum.SLICE,
+        timepoint=dimension_mode_enum.FRAME,
+    )
+    fiji_component_defaults = dict(component_defaults)
     if virtual_component_defaults:
         component_defaults.update(virtual_component_defaults)
 
@@ -319,4 +332,3 @@ def create_fiji_display_config(
         WINDOW mode creates separate windows instead of combining into hyperstack.
         """
     )
-

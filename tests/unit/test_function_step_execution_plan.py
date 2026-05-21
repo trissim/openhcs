@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 
 from openhcs.constants.constants import VariableComponents
 from openhcs.core.compiled_step_plan import (
@@ -12,7 +13,9 @@ from openhcs.core.step_dependencies import (
     StepInputDependency,
     StepInputDependencyKind,
 )
-from openhcs.core.steps.function_artifact_materialization import _build_analysis_filename
+from openhcs.core.steps.function_artifact_materialization import (
+    AnalysisOutputDescriptorAuthority,
+)
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 from openhcs.core.steps.function_runtime import _select_artifact_plan_for_component
 
@@ -25,7 +28,9 @@ class ContextStub:
     def __init__(self, compiled_plan):
         self.step_plans = {2: compiled_plan}
         self.filemanager = object()
-        self.microscope_handler = object()
+        self.microscope_handler = SimpleNamespace(
+            parser=SimpleNamespace(parse_filename=lambda _filename: None)
+        )
 
 
 def _compiled_plan(**overrides):
@@ -99,10 +104,8 @@ def test_execution_plan_snapshots_compiled_plan_without_raw_backing():
 
 
 def test_build_analysis_filename_uses_pipeline_position_for_image_derived_name():
-    plan = FunctionStepExecutionPlan.from_context(
-        ContextStub(_compiled_plan(pipeline_position=7)),
-        2,
-    )
+    context = ContextStub(_compiled_plan(pipeline_position=7))
+    plan = FunctionStepExecutionPlan.from_context(context, 2)
     def get_paths_for_axis(_dir, _backend):
         return ["/tmp/output/A01_site1.tif"]
 
@@ -111,7 +114,11 @@ def test_build_analysis_filename_uses_pipeline_position_for_image_derived_name()
     )
 
     assert (
-        _build_analysis_filename("measurements", plan)
+        AnalysisOutputDescriptorAuthority.build(
+            "measurements",
+            plan,
+            context=context,
+        ).filename
         == "A01_site1_measurements_step7.roi.zip"
     )
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Mapping
 
 from metaclass_registry import AutoRegisterMeta
-from openhcs.constants.constants import Backend
+from openhcs.constants.constants import AllComponents, Backend
 from openhcs.core.artifacts import ArtifactKind, ArtifactOutputPlan
 from openhcs.core.artifact_materialization_policy import (
     resolve_artifact_materialization_spec,
@@ -20,6 +20,8 @@ from openhcs.core.runtime_stores import (
     StoredRuntimeValue,
     require_runtime_value_store,
 )
+from openhcs.core.runtime_values import image_payload_metadata
+from openhcs.core.source_matching import source_component_metadata_value
 from openhcs.core.registry_strategies import str_enum_member_with_payload
 from openhcs.core.runtime_semantics import coerce_enum
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
@@ -178,34 +180,154 @@ class MaterializerInputSpec:
             )
 
 
-def _build_analysis_filename(
-    output_key: str,
-    plan: FunctionStepExecutionPlan,
-    dict_key: str | None = None,
-    context: Any = None,
-    artifact_path: str | None = None,
-) -> str:
-    """Build an analysis result filename from the first matching image path."""
-    memory_paths = plan.get_paths_for_axis(plan.output_dir, Backend.MEMORY.value)
+@dataclass(frozen=True, slots=True)
+class ArtifactAnalysisOutputDescriptor:
+    """Filename plus source component metadata for an artifact materialization."""
 
-    if not memory_paths:
-        if dict_key is not None and artifact_path is not None:
-            return f"{Path(artifact_path).stem}.roi.zip"
-        return f"{plan.axis_id}_{output_key}_step{plan.pipeline_position}.roi.zip"
+    filename: str
+    component_metadata: Mapping[str, Any] | None
 
-    if dict_key and context:
-        parser = context.microscope_handler.parser
-        filtered_paths = []
-        for path in memory_paths:
-            metadata = parser.parse_filename(Path(path).name)
-            if metadata and str(metadata.get("channel")) == str(dict_key):
-                filtered_paths.append(path)
 
-        if filtered_paths:
-            memory_paths = filtered_paths
+class AnalysisOutputDescriptorAuthority:
+    """Own analysis artifact filenames and their source component metadata."""
 
-    base_filename = Path(memory_paths[0]).stem
-    return f"{base_filename}_{output_key}_step{plan.pipeline_position}.roi.zip"
+    @classmethod
+    def build(
+        cls,
+        output_key: str,
+        plan: FunctionStepExecutionPlan,
+        dict_key: str | None = None,
+        context: Any = None,
+        artifact_path: str | None = None,
+        record: StoredRuntimeValue | None = None,
+    ) -> ArtifactAnalysisOutputDescriptor:
+        """Build analysis output identity from the artifact's source metadata."""
+        source_path = cls.source_path_for_record(record)
+        if source_path is not None:
+            return ArtifactAnalysisOutputDescriptor(
+                filename=f"{Path(source_path).stem}_{output_key}_step{plan.pipeline_position}.roi.zip",
+                component_metadata=cls.source_component_metadata_for_record(
+                    record,
+                    fallback=cls.component_metadata_for_path(context, source_path),
+                ),
+            )
+
+        if artifact_path is not None:
+            component_metadata = cls.component_metadata_for_path(context, artifact_path)
+            if component_metadata is not None:
+                return ArtifactAnalysisOutputDescriptor(
+                    filename=f"{Path(artifact_path).stem}.roi.zip",
+                    component_metadata=component_metadata,
+                )
+
+        memory_paths = plan.get_paths_for_axis(plan.output_dir, Backend.MEMORY.value)
+
+        if not memory_paths:
+            if dict_key is not None and artifact_path is not None:
+                return ArtifactAnalysisOutputDescriptor(
+                    filename=f"{Path(artifact_path).stem}.roi.zip",
+                    component_metadata=None,
+                )
+            return ArtifactAnalysisOutputDescriptor(
+                filename=f"{plan.axis_id}_{output_key}_step{plan.pipeline_position}.roi.zip",
+                component_metadata=None,
+            )
+
+        if dict_key and context:
+            parser = context.microscope_handler.parser
+            filtered_paths = []
+            for path in memory_paths:
+                metadata = parser.parse_filename(Path(path).name)
+                if metadata and str(metadata.get("channel")) == str(dict_key):
+                    filtered_paths.append(path)
+
+            if filtered_paths:
+                memory_paths = filtered_paths
+
+        base_filename = Path(memory_paths[0]).stem
+        return ArtifactAnalysisOutputDescriptor(
+            filename=f"{base_filename}_{output_key}_step{plan.pipeline_position}.roi.zip",
+            component_metadata=cls.component_metadata_for_path(context, memory_paths[0]),
+        )
+
+    @staticmethod
+    def source_path_for_record(record: StoredRuntimeValue | None) -> str | None:
+        """Return the source image path carried by a runtime artifact payload."""
+        if record is None:
+            return None
+        metadata = image_payload_metadata(record.value.data)
+        if metadata.source_path:
+            return str(metadata.source_path)
+        for source_path in metadata.channel_source_paths:
+            if source_path:
+                return str(source_path)
+        return None
+
+    @staticmethod
+    def source_component_metadata_for_record(
+        record: StoredRuntimeValue | None,
+        *,
+        fallback: Mapping[str, Any] | None = None,
+    ) -> Mapping[str, Any] | None:
+        """Return source component metadata carried by a runtime artifact payload."""
+        candidate: Mapping[str, Any] | None = None
+        if record is None:
+            return fallback
+        payload_metadata = image_payload_metadata(record.value.data)
+        if payload_metadata.source_component_metadata is not None:
+            candidate = payload_metadata.source_component_metadata
+        else:
+            for component_metadata in payload_metadata.channel_source_component_metadata:
+                if component_metadata is not None:
+                    candidate = component_metadata
+                    break
+        return AnalysisOutputDescriptorAuthority.merge_source_component_metadata(
+            candidate,
+            fallback,
+        )
+
+    @staticmethod
+    def merge_source_component_metadata(
+        primary: Mapping[str, Any] | None,
+        fallback: Mapping[str, Any] | None,
+    ) -> Mapping[str, Any] | None:
+        """Merge payload metadata with parser-derived axis metadata."""
+        if primary is None:
+            return fallback
+        if fallback is None:
+            return primary
+
+        merged = dict(primary)
+        for component in AllComponents:
+            if source_component_metadata_value(merged, component) is not None:
+                continue
+            fallback_value = source_component_metadata_value(fallback, component)
+            if fallback_value is not None:
+                merged[component.value] = fallback_value
+        return merged
+
+    @staticmethod
+    def component_metadata_for_path(
+        context: Any,
+        path: str | Path | None,
+    ) -> Mapping[str, Any] | None:
+        """Return microscope component metadata for a source path when available."""
+        if context is None or path is None:
+            return None
+        return context.microscope_handler.parser.parse_filename(Path(path).name)
+
+
+def _backend_kwargs_with_component_metadata(
+    backend_kwargs: Mapping[str, Mapping[str, Any]],
+    component_metadata: Mapping[str, Any] | None,
+) -> dict[str, dict[str, Any]]:
+    """Attach source component metadata to each materialization backend."""
+    if component_metadata is None:
+        return {backend: dict(kwargs) for backend, kwargs in backend_kwargs.items()}
+    return {
+        backend: {**kwargs, "component_metadata": dict(component_metadata)}
+        for backend, kwargs in backend_kwargs.items()
+    }
 
 
 def _resolve_materializer_inputs(
@@ -398,14 +520,15 @@ def materialize_artifact_outputs(
             if mat_spec is None:
                 continue
 
-            filename = _build_analysis_filename(
+            output_descriptor = AnalysisOutputDescriptorAuthority.build(
                 output_key,
                 plan,
                 dict_key,
                 context,
                 artifact_path=record.path,
+                record=record,
             )
-            analysis_path = analysis_output_dir / filename
+            analysis_path = analysis_output_dir / output_descriptor.filename
             extra_inputs = _resolve_materializer_inputs(
                 mat_spec,
                 dict_key=dict_key,
@@ -419,7 +542,10 @@ def materialize_artifact_outputs(
                 str(analysis_path),
                 filemanager,
                 backends,
-                backend_kwargs,
+                _backend_kwargs_with_component_metadata(
+                    backend_kwargs,
+                    output_descriptor.component_metadata,
+                ),
                 context=context,
                 extra_inputs=extra_inputs,
             )

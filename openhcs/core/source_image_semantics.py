@@ -54,6 +54,7 @@ class SourceImagePayloadSemantics:
 
     role: ImageTypeSourceRole | None
     source_path: str | None
+    source_component_metadata: Mapping[str, str] | None = None
     read_backend: str | None = None
     filemanager: Any | None = None
 
@@ -82,6 +83,7 @@ class SourceImagePayloadSemantics:
         return cls(
             role=role,
             source_path=source_path,
+            source_component_metadata=source_metadata,
             read_backend=read_backend,
             filemanager=filemanager,
         )
@@ -115,6 +117,7 @@ class SourceImagePayloadSemantics:
         return image_payload_metadata_from_source(
             data,
             source_path=self.source_path,
+            source_component_metadata=self.source_component_metadata,
             read_backend=self.read_backend,
             filemanager=self.filemanager,
         )

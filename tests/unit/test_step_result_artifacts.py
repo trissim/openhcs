@@ -16,7 +16,13 @@ from openhcs.core.steps.function_runtime import (
     _execute_function_core,
     _unstack_payload_context,
 )
-from openhcs.core.runtime_values import image_payload_with_context, image_payload_mask
+from openhcs.core.runtime_values import (
+    ImagePayloadMetadata,
+    ObjectLabelPayload,
+    image_payload_metadata,
+    image_payload_with_context,
+    image_payload_mask,
+)
 
 
 class MemoryBackend:
@@ -109,6 +115,93 @@ def test_execute_function_core_saves_named_step_result_artifacts():
     )
     assert len(stored) == 1
     assert stored[0].value.data == [{"count": 2}]
+
+
+def test_execute_function_core_preserves_main_output_source_metadata():
+    context = ContextStub()
+    source = image_payload_with_context(
+        np.zeros((2, 3), dtype=np.uint16),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/01_POS002_D.TIF",
+            source_component_metadata={
+                "well": "01",
+                "site": "POS002",
+                "channel": "D",
+            },
+        ),
+    )
+
+    def threshold(image):
+        return np.asarray(image) > 0
+
+    result = _execute_function_core(
+        FunctionExecutionRequest(
+            func_callable=threshold,
+            main_data_arg=source,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={},
+        )
+    )
+
+    metadata = image_payload_metadata(result)
+    assert metadata.source_path == "/input/01_POS002_D.TIF"
+    assert dict(metadata.source_component_metadata) == {
+        "well": "01",
+        "site": "POS002",
+        "channel": "D",
+    }
+
+
+def test_execute_function_core_contextualizes_bare_object_label_artifact():
+    context = ContextStub()
+    source = image_payload_with_context(
+        np.zeros((2, 3), dtype=np.uint16),
+        metadata=ImagePayloadMetadata(
+            source_path="/input/01_POS002_D.TIF",
+            source_component_metadata={
+                "well": "01",
+                "site": "POS002",
+                "channel": "D",
+            },
+        ),
+    )
+
+    def segment(image):
+        return StepResult(
+            image=image,
+            artifacts={
+                "nuclei": np.array([[0, 1, 0], [0, 0, 2]], dtype=np.int32),
+            },
+        )
+
+    _execute_function_core(
+        FunctionExecutionRequest(
+            func_callable=segment,
+            main_data_arg=source,
+            base_kwargs={},
+            context=context,
+            artifact_inputs={},
+            artifact_outputs={
+                "nuclei": ArtifactOutputPlan(
+                    name="nuclei",
+                    path="/memory/nuclei.pkl",
+                    kind=ArtifactKind.OBJECT_LABELS,
+                )
+            },
+        )
+    )
+
+    stored = context.runtime_value_store.find(name="nuclei", axis_id="A01")
+    assert len(stored) == 1
+    assert isinstance(stored[0].value.data, ObjectLabelPayload)
+    assert stored[0].value.data.source_path == "/input/01_POS002_D.TIF"
+    assert dict(stored[0].value.data.source_component_metadata) == {
+        "well": "01",
+        "site": "POS002",
+        "channel": "D",
+    }
 
 
 def test_execute_function_core_loads_artifact_input_from_vfs_via_store_record():

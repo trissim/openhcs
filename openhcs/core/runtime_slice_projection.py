@@ -879,6 +879,9 @@ class ObjectLabelSetRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrateg
                 context.slice_count,
             )
         )
+        slice_metadata = image_payload_metadata(value.runtime_payload()).for_channel(
+            context.slice_index
+        )
         return ObjectLabelSet(
             name=value.name,
             labels=RuntimeSliceProjection.value_for_slice(
@@ -912,6 +915,12 @@ class ObjectLabelSetRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStrateg
             plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
             spatial_origin_yx=value.spatial_origin_yx,
             source_spatial_shape_yx=value.source_spatial_shape_yx,
+            source_path=slice_metadata.source_path,
+            source_component_metadata=slice_metadata.source_component_metadata,
+            channel_source_paths=slice_metadata.channel_source_paths,
+            channel_source_component_metadata=(
+                slice_metadata.channel_source_component_metadata
+            ),
             dimensions=value.dimensions,
             source_image_name=value.source_image_name,
         )
@@ -947,6 +956,7 @@ class ObjectLabelPayloadRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStr
                 context.slice_count,
             )
         )
+        slice_metadata = image_payload_metadata(value).for_channel(context.slice_index)
         return ObjectLabelPayload(
             labels=RuntimeSliceProjection.value_for_slice(
                 value.labels,
@@ -978,6 +988,12 @@ class ObjectLabelPayloadRuntimeSliceProjectionStrategy(RuntimeSliceProjectionStr
             plane_axis=RuntimePlaneAxis.RUNTIME_SLICE,
             spatial_origin_yx=value.spatial_origin_yx,
             source_spatial_shape_yx=value.source_spatial_shape_yx,
+            source_path=slice_metadata.source_path,
+            source_component_metadata=slice_metadata.source_component_metadata,
+            channel_source_paths=slice_metadata.channel_source_paths,
+            channel_source_component_metadata=(
+                slice_metadata.channel_source_component_metadata
+            ),
         )
 
     def stack_views(self, value: Any) -> tuple[np.ndarray, ...]:

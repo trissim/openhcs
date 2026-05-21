@@ -4,6 +4,7 @@ This module owns callable invocation, artifact routing, and pattern-group stack
 execution. FunctionStep remains responsible for step-level orchestration.
 """
 
+from abc import ABC, abstractmethod
 import inspect
 import logging
 import os
@@ -12,13 +13,15 @@ from dataclasses import dataclass, field
 from threading import Lock
 from pathlib import Path
 from types import MappingProxyType
-from typing import Any, Callable, Mapping, Optional, Sequence
+from typing import Any, Callable, ClassVar, Mapping, Optional, Sequence
 from weakref import WeakKeyDictionary
 
+from metaclass_registry import AutoRegisterMeta
 import numpy as np
 
 from openhcs.constants.constants import Backend
 from openhcs.core.artifacts import (
+    ArtifactKind,
     ArtifactInputPlan,
     ArtifactOutputPlan,
     StepResult,
@@ -50,6 +53,9 @@ from openhcs.core.runtime_stores import (
 from openhcs.core.runtime_adapters import RuntimeAdapterRequest, RuntimeAdapterSpec
 from openhcs.core.runtime_invocation import RuntimeInvocationOptions
 from openhcs.core.source_image_semantics import apply_source_image_loading_semantics
+from openhcs.core.source_schema_workspace import (
+    source_schema_metadata_with_virtual_components,
+)
 from openhcs.core.source_matching import (
     source_component_metadata_values,
     source_metadata_values_equal,
@@ -60,14 +66,20 @@ from openhcs.core.source_bindings import (
     SourceBindingRuntimeContext,
 )
 from openhcs.core.runtime_values import (
+    DerivedImagePayloadContext,
     ImagePayloadMetadata,
+    ObjectLabelPayload,
+    ObjectLabelSet,
     image_payload_data,
     image_payload_metadata,
     image_payload_mask,
     image_payload_with_context,
+    is_array_payload,
     normalize_artifact_value,
+    object_label_payload_from_source_image,
     with_image_payload_data,
 )
+from openhcs.core.registry_strategies import EnumKeyedStrategyMixin
 from openhcs.core.runtime_semantics import RuntimePlaneProjection
 from openhcs.core.steps.function_plan import FunctionStepExecutionPlan
 
@@ -252,6 +264,90 @@ class FunctionChainExecutionRequest:
     )
 
 
+@dataclass(frozen=True, slots=True)
+class FunctionOutputContextRequest:
+    """Source/output pair for runtime output context preservation."""
+
+    source_payload: Any
+    output_value: Any
+    output_plan: ArtifactOutputPlan | None = None
+
+    @property
+    def kind(self) -> ArtifactKind:
+        if self.output_plan is None:
+            return ArtifactKind.IMAGE
+        return self.output_plan.kind
+
+
+class FunctionOutputContextStrategy(
+    EnumKeyedStrategyMixin[ArtifactKind],
+    ABC,
+    metaclass=AutoRegisterMeta,
+):
+    """Registered normalization for function outputs before chaining or storage."""
+
+    __registry_key__ = "kind_label"
+    __skip_if_no_key__ = True
+    __enum_member_attr__ = "kind"
+    __enum_label_attr__ = "kind_label"
+
+    kind: ClassVar[ArtifactKind | None] = None
+    kind_label: ClassVar[str | None] = None
+
+    @classmethod
+    def for_output(
+        cls,
+        request: FunctionOutputContextRequest,
+    ) -> "FunctionOutputContextStrategy":
+        strategy_type = cls.__registry__.get(request.kind.value)
+        if strategy_type is None:
+            return UnchangedFunctionOutputContextStrategy()
+        return strategy_type()
+
+    @abstractmethod
+    def contextualize(self, request: FunctionOutputContextRequest) -> Any:
+        """Return output with source context preserved where semantics allow it."""
+
+
+class UnchangedFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+    """Leave outputs unchanged when no contextual image semantics are declared."""
+
+    kind = ArtifactKind.SPECIAL
+
+    def contextualize(self, request: FunctionOutputContextRequest) -> Any:
+        return request.output_value
+
+
+class ImageFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+    """Preserve source-image metadata for image outputs derived from the main input."""
+
+    kind = ArtifactKind.IMAGE
+
+    def contextualize(self, request: FunctionOutputContextRequest) -> Any:
+        if image_payload_metadata(request.output_value).has_values:
+            return request.output_value
+        return DerivedImagePayloadContext(
+            request.source_payload,
+            request.output_value,
+        ).payload()
+
+
+class ObjectLabelsFunctionOutputContextStrategy(FunctionOutputContextStrategy):
+    """Preserve source-image metadata for object-label outputs."""
+
+    kind = ArtifactKind.OBJECT_LABELS
+
+    def contextualize(self, request: FunctionOutputContextRequest) -> Any:
+        if isinstance(request.output_value, (ObjectLabelPayload, ObjectLabelSet)):
+            return request.output_value
+        if not is_array_payload(request.output_value):
+            return request.output_value
+        return object_label_payload_from_source_image(
+            request.source_payload,
+            request.output_value,
+        )
+
+
 @dataclass(frozen=True)
 class ComponentArtifactPlans:
     """Artifact plans selected for one grouped component execution."""
@@ -424,13 +520,22 @@ def _save_artifact_value(
     context: ProcessingContext,
     output_plan: ArtifactOutputPlan,
     value: Any,
+    source_payload: Any,
 ) -> None:
     """Validate and save one planned artifact value to the memory VFS."""
     vfs_path = output_plan.path
     axis_id = _require_axis_id(context)
+    output_context_request = FunctionOutputContextRequest(
+        source_payload=source_payload,
+        output_value=value,
+        output_plan=output_plan,
+    )
+    contextualized_value = FunctionOutputContextStrategy.for_output(
+        output_context_request
+    ).contextualize(output_context_request)
     runtime_value = normalize_artifact_value(
         output_plan,
-        value,
+        contextualized_value,
         axis_id=axis_id,
     )
 
@@ -452,6 +557,15 @@ def _save_artifact_value(
         runtime_value.data,
         location,
     )
+
+
+def _contextualize_main_output(source_payload: Any, output_value: Any) -> Any:
+    """Preserve runtime image context for the main image-flow output."""
+    request = FunctionOutputContextRequest(
+        source_payload=source_payload,
+        output_value=output_value,
+    )
+    return FunctionOutputContextStrategy.for_output(request).contextualize(request)
 
 
 def _require_axis_id(context: ProcessingContext) -> str:
@@ -702,6 +816,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                     context,
                     output_plan,
                     raw_function_output.artifacts[output_key],
+                    request.main_data_arg,
                 )
                 profile.record_artifact_elapsed(
                     "artifact_output_save",
@@ -724,6 +839,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
                         context,
                         output_plan,
                         returned_artifact_values_tuple[i],
+                        request.main_data_arg,
                     )
                     profile.record_artifact_elapsed(
                         "artifact_output_save",
@@ -741,7 +857,7 @@ def _execute_function_core(request: FunctionExecutionRequest) -> Any:
     else:
         main_output_data = raw_function_output
 
-    return main_output_data
+    return _contextualize_main_output(request.main_data_arg, main_output_data)
 
 
 def execute_function_chain(request: FunctionChainExecutionRequest) -> Any:
@@ -1393,6 +1509,10 @@ class PatternGroupRuntime:
                 )
                 virtual_path = str(virtual_relative)
                 full_virtual_path = str(Path(self.context.plate_path) / virtual_path)
+                normalized_metadata = source_schema_metadata_with_virtual_components(
+                    virtual_path,
+                    normalized_metadata,
+                )
                 source_metadata_by_path[virtual_path] = normalized_metadata
                 source_metadata_by_path[full_virtual_path] = normalized_metadata
                 real_relative = workspace_mapping.get(virtual_path)

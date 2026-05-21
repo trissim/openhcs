@@ -136,6 +136,7 @@ def _create_step_editor_window(
         is_new=False,
         on_save_callback=None,  # ObjectState handles save
         orchestrator=orchestrator,
+        service_adapter=plate_manager.service_adapter,
         parent=None,
     )
     if window.tab_widget:

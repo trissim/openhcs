@@ -7,7 +7,7 @@ including filename parsing and metadata handling.
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Callable, ClassVar, Dict, Optional, Tuple, Union
 from openhcs.constants.constants import VariableComponents, AllComponents
 from openhcs.core.components.parser_metaprogramming import GenericFilenameParser
 from metaclass_registry import AutoRegisterMeta, LazyDiscoveryDict
@@ -112,6 +112,14 @@ class MetadataHandler(ABC):
     FALLBACK_VALUES = {
         'pixel_size': DEFAULT_PIXEL_SIZE,  # Default pixel size in micrometers
         'grid_dimensions': (1, 1),  # Default grid dimensions (1x1) when not available
+    }
+    COMPONENT_VALUE_GETTERS: ClassVar[
+        Dict[AllComponents, Callable[["MetadataHandler", Union[str, Path]], Optional[Dict[str, Optional[str]]]]]
+    ] = {
+        AllComponents.CHANNEL: lambda handler, plate_path: handler.get_channel_values(plate_path),
+        AllComponents.WELL: lambda handler, plate_path: handler.get_well_values(plate_path),
+        AllComponents.SITE: lambda handler, plate_path: handler.get_site_values(plate_path),
+        AllComponents.Z_INDEX: lambda handler, plate_path: handler.get_z_index_values(plate_path),
     }
 
     def __init__(self):
@@ -233,6 +241,17 @@ class MetadataHandler(ABC):
             Example: {"1": "Bottom", "2": "Middle", "3": "Top"} or None
         """
         pass
+
+    def get_component_values(
+        self,
+        plate_path: Union[str, Path],
+        component_name: str,
+    ) -> Optional[Dict[str, Optional[str]]]:
+        """Get display values for a named microscope component."""
+        component = AllComponents(component_name)
+        if component not in self.COMPONENT_VALUE_GETTERS:
+            raise ValueError(f"Unsupported metadata component {component_name!r}.")
+        return self.COMPONENT_VALUE_GETTERS[component](self, plate_path)
 
     def get_image_files(self, plate_path: Union[str, Path], all_subdirs: bool = False) -> list[str]:
         """

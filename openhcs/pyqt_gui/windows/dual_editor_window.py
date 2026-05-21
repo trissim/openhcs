@@ -78,6 +78,7 @@ class DualEditorWindow(BaseFormDialog):
         orchestrator=None,
         gui_config=None,
         parent=None,
+        service_adapter=None,
         step_index: Optional[int] = None,
         source_schema: PipelineImageSchema | None = None,
         function_invocation_badge_provider: Optional[
@@ -95,6 +96,7 @@ class DualEditorWindow(BaseFormDialog):
             orchestrator: Orchestrator instance for context management
             gui_config: Optional GUI configuration passed from PipelineEditor
             parent: Parent widget
+            service_adapter: PyQt service adapter that owns main window services
             step_index: Position in pipeline (for border pattern matching list item)
         """
         super().__init__(parent)
@@ -102,6 +104,7 @@ class DualEditorWindow(BaseFormDialog):
         # Store step_index for border pattern (used by ScopedBorderMixin.init_scope_border)
         self._step_index = step_index
         self._function_invocation_badge_provider = function_invocation_badge_provider
+        self.service_adapter = service_adapter
 
         # Make window non-modal (like plate manager and pipeline editor)
         self.setModal(False)
@@ -793,18 +796,30 @@ class DualEditorWindow(BaseFormDialog):
         Returns:
             GlobalEventBus instance or None if not found
         """
+        service_adapter = self._resolve_service_adapter()
+        if service_adapter is not None:
+            return service_adapter.get_event_bus()
+
+        logger.warning("Could not find service adapter for event bus")
+        return None
+
+    def _resolve_service_adapter(self):
+        """Resolve the OpenHCS service adapter from explicit ownership or parents."""
+        if self.service_adapter is not None:
+            return self.service_adapter
+
         try:
-            # Navigate up to find main window with service adapter
+            from pyqt_reactive.widgets.shared.abstract_manager_widget import (
+                AbstractManagerWidget,
+            )
+
             current = self.parent()
             while current:
-                if current.service_adapter:
-                    return current.service_adapter.get_event_bus()
+                if isinstance(current, AbstractManagerWidget):
+                    return current.service_adapter
                 current = current.parent()
-
-            logger.warning("Could not find service adapter for event bus")
-            return None
         except Exception as e:
-            logger.error(f"Error getting event bus: {e}")
+            logger.error(f"Error resolving service adapter: {e}")
             return None
 
     def _on_pipeline_changed(self, new_pipeline_steps: list):
@@ -1018,23 +1033,12 @@ class DualEditorWindow(BaseFormDialog):
         )
 
     def _find_main_window(self):
-        """Find the main window through the parent chain."""
-        try:
-            # Navigate up the parent chain to find OpenHCSMainWindow
-            current = self.parent()
-            while current:
-                # Check if this is a main window (has floating_windows attribute)
-                if current.floating_windows and current.service_adapter:
-                    logger.debug(f"Found main window: {type(current).__name__}")
-                    return current
-                current = current.parent()
-
-            logger.warning("Could not find main window in parent chain")
+        """Find the main window through the service-adapter authority."""
+        service_adapter = self._resolve_service_adapter()
+        if service_adapter is None:
+            logger.warning("Could not find service adapter for main window")
             return None
-
-        except Exception as e:
-            logger.error(f"Error finding main window: {e}")
-            return None
+        return service_adapter.main_window
 
     # Old function pane methods removed - now using dedicated FunctionListEditorWidget
 

@@ -284,7 +284,7 @@ class NapariComponentMetadataNormalizer:
     """Normalize component metadata before Napari stack indexing."""
 
     indexed_components: frozenset[str] = frozenset(
-        {"channel", "z_index", "timepoint"}
+        {"site", "channel", "z_index", "timepoint"}
     )
 
     def normalize(self, components: dict[str, object]) -> dict[str, object]:
@@ -355,9 +355,10 @@ class NapariComponentValueTracker:
 
         global_values = self.values_by_components[components_key]
         for item in layer_items:
+            components = item["components"]
             for comp in stack_components:
-                value = item["components"].get(comp, 0)
-                global_values[comp].add(value)
+                if comp in components:
+                    global_values[comp].add(components[comp])
 
     def values_for(self, stack_components) -> dict[str, list[object]]:
         components_key = tuple(stack_components)
@@ -371,15 +372,21 @@ class NapariComponentValueTracker:
 
     @staticmethod
     def _expanded_values(component: str, values: set[object]) -> list[object]:
-        sorted_values = sorted(values)
+        sorted_values = sorted(values, key=NapariComponentValueTracker._sort_key)
         indexed_components = {"channel", "z_index", "timepoint"}
         if component not in indexed_components or not sorted_values:
+            return sorted_values
+        if not all(isinstance(value, int) for value in sorted_values):
             return sorted_values
 
         max_value = max(sorted_values)
         if max_value > 1:
             return list(range(1, max_value + 1))
         return sorted_values
+
+    @staticmethod
+    def _sort_key(value: object) -> tuple[str, str]:
+        return (type(value).__name__, str(value))
 
 
 class NapariShapeKind(Enum):
@@ -432,7 +439,7 @@ class NapariShapeLabelRasterizer:
             )
             return np.zeros((1, 1, *self.default_image_shape), dtype=np.uint16)
 
-        image_shape = self._image_shape(first_shapes)
+        image_shape = self._image_shape(layer_items)
         nd_shape = [
             *(len(component_values[component]) for component in stack_components),
             *image_shape,
@@ -456,13 +463,18 @@ class NapariShapeLabelRasterizer:
         )
         return labels_array
 
-    def _image_shape(self, shapes: list[Mapping[str, object]]) -> tuple[int, int]:
+    def _image_shape(self, layer_items: list[Mapping[str, object]]) -> tuple[int, int]:
+        source_shape = self._source_spatial_shape(layer_items)
+        if source_shape is not None:
+            return source_shape
+
         max_y, max_x = 0, 0
-        for shape_dict in shapes:
-            shape_kind = NapariShapeKind(str(shape_dict["type"]))
-            bounds = self._coordinate_bounds(shape_dict, shape_kind)
-            max_y = max(max_y, bounds[0])
-            max_x = max(max_x, bounds[1])
+        for item in layer_items:
+            for shape_dict in item["data"]:
+                shape_kind = NapariShapeKind(str(shape_dict["type"]))
+                bounds = self._coordinate_bounds(shape_dict, shape_kind)
+                max_y = max(max_y, bounds[0])
+                max_x = max(max_x, bounds[1])
 
         if max_y == 0 or max_x == 0:
             logger.warning(
@@ -472,6 +484,26 @@ class NapariShapeLabelRasterizer:
             )
             return (max(max_y, self.default_image_shape[0]), max(max_x, self.default_image_shape[1]))
         return (max_y, max_x)
+
+    def _source_spatial_shape(
+        self,
+        layer_items: list[Mapping[str, object]],
+    ) -> tuple[int, int] | None:
+        for item in layer_items:
+            for shape_dict in item["data"]:
+                metadata = shape_dict.get("metadata", {})
+                if not isinstance(metadata, Mapping):
+                    continue
+                source_shape = metadata.get("source_spatial_shape_yx")
+                if source_shape is None:
+                    continue
+                if len(source_shape) != 2:
+                    raise ValueError(
+                        "source_spatial_shape_yx metadata must have two values, "
+                        f"got {source_shape!r}."
+                    )
+                return (int(source_shape[0]), int(source_shape[1]))
+        return None
 
     def _coordinate_bounds(
         self,
@@ -491,9 +523,39 @@ class NapariShapeLabelRasterizer:
     ) -> tuple[int, ...]:
         components = item["components"]
         return tuple(
-            component_values[component].index(components.get(component, 0))
+            self._component_index(component, components, component_values)
             for component in stack_components
         )
+
+    def _component_index(
+        self,
+        component: str,
+        components: Mapping[str, object],
+        component_values: Mapping[str, list[object]],
+    ) -> int:
+        values = component_values[component]
+        if not values:
+            return 0
+        if component not in components:
+            logger.warning(
+                "🔬 NAPARI PROCESS: Shape item missing stack component %s; "
+                "placing on first %s plane.",
+                component,
+                component,
+            )
+            return 0
+        value = components[component]
+        if value in values:
+            return values.index(value)
+        logger.warning(
+            "🔬 NAPARI PROCESS: Shape item has %s=%r outside stack values %s; "
+            "placing on first %s plane.",
+            component,
+            value,
+            values,
+            component,
+        )
+        return 0
 
     def _paint_polygon(
         self,
