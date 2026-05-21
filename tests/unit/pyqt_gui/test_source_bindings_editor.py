@@ -44,6 +44,8 @@ from pyqt_reactive.forms import (
 from pyqt_reactive.theming import ColorScheme
 from pyqt_reactive.animation.flash_mixin import create_groupbox_element
 from pyqt_reactive.widgets.shared.clickable_help_components import InlineDataclassGroupBox
+from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
+from pyqt_reactive.widgets.shared.scope_color_utils import get_scope_color_scheme
 
 
 class QtApplicationHarness:
@@ -192,6 +194,58 @@ def test_source_bindings_editor_tables_expand_without_vertical_scrollbars() -> N
 
     assert table.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAlwaysOff
     assert table.height() >= table.horizontalHeader().height() + table.rowHeight(0)
+
+
+def test_source_bindings_editor_tables_use_scoped_table_abstraction() -> None:
+    QtApplicationHarness.app()
+
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(
+            groups=(
+                GroupedSourceBindings(
+                    bindings=(NamedSourceBinding(alias="DNA"),),
+                ),
+            ),
+        )
+    )
+    scheme = get_scope_color_scheme("plate::step_0", step_index=0)
+
+    widget.set_scope_color_scheme(scheme)
+    tables = widget.findChildren(ScopedTableWidget)
+    dialog = widget._create_step_bindings_dialog()
+
+    assert tables
+    assert all(table._scope_color_scheme is scheme for table in tables)
+    assert isinstance(dialog.editor.table, ScopedTableWidget)
+    assert dialog.editor.table._scope_color_scheme is scheme
+
+
+def test_inline_groupbox_propagates_scope_to_source_binding_tables() -> None:
+    QtApplicationHarness.app()
+    widget = SourceBindingsEditorWidget.from_bindings(
+        StepSourceBindingsConfig(
+            groups=(
+                GroupedSourceBindings(
+                    bindings=(NamedSourceBinding(alias="DNA"),),
+                ),
+            ),
+        )
+    )
+    container = InlineDataclassGroupBox(
+        title="Source Bindings",
+        help_target=StepSourceBindingsConfig,
+        color_scheme=ColorScheme(),
+        flash_key="source_bindings",
+    )
+    scheme = get_scope_color_scheme("plate::step_0", step_index=0)
+
+    container.set_scope_color_scheme(scheme)
+    container.set_value_widget(widget)
+
+    tables = widget.findChildren(ScopedTableWidget)
+    assert tables
+    assert widget._scope_color_scheme is scheme
+    assert all(table._scope_color_scheme is scheme for table in tables)
 
 
 def test_inline_source_bindings_widget_updates_object_state() -> None:

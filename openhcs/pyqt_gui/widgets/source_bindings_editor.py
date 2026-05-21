@@ -31,6 +31,8 @@ from pyqt_reactive.protocols.widget_protocols import (
     ValueGettable,
     ValueSettable,
 )
+from pyqt_reactive.widgets.shared.scoped_table_widget import ScopedTableWidget
+from pyqt_reactive.widgets.shared.scope_color_receiver import ScopeColorSchemeReceiver
 
 from openhcs.constants.constants import AllComponents
 from openhcs.core.pipeline_image_schema import PipelineImageSchema
@@ -593,11 +595,13 @@ class StepBindingsTableEditor(QWidget):
         groups: tuple[GroupedSourceBindings, ...],
         enum_cell_specs: EnumCellSpecMap,
         free_form_cell_specs: FreeFormCellSpecMap,
+        scope_color_scheme: object | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._updating_ui = False
-        self.table = QTableWidget(0, len(SourceBindingColumn), self)
+        self.table = ScopedTableWidget(0, len(SourceBindingColumn), self)
+        self.table.set_scope_color_scheme(scope_color_scheme)
         self.table.setHorizontalHeaderLabels(
             tuple(column.name.title() for column in SourceBindingColumn)
         )
@@ -681,6 +685,7 @@ class StepBindingsDialog(QDialog):
         groups: tuple[GroupedSourceBindings, ...],
         enum_cell_specs: EnumCellSpecMap,
         free_form_cell_specs: FreeFormCellSpecMap,
+        scope_color_scheme: object | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -689,6 +694,7 @@ class StepBindingsDialog(QDialog):
             groups=groups,
             enum_cell_specs=enum_cell_specs,
             free_form_cell_specs=free_form_cell_specs,
+            scope_color_scheme=scope_color_scheme,
             parent=self,
         )
         buttons = QDialogButtonBox(
@@ -994,6 +1000,7 @@ class SourceBindingsEditorWidget(QWidget):
         self.match_plan_controller: (
             EditableTableController[EditableMatchPlanRow] | None
         ) = None
+        self._scope_color_scheme = None
         self._enum_cell_specs = {
             (SourceBindingColumn, SourceBindingColumn.KIND): EnumCellSpec(ArtifactKind),
             (SourceBindingColumn, SourceBindingColumn.ORIGIN): EnumCellSpec(SourceBindingOrigin),
@@ -1185,6 +1192,13 @@ class SourceBindingsEditorWidget(QWidget):
         except TypeError:
             pass
 
+    def set_scope_color_scheme(self, scheme) -> None:
+        """Apply scope styling to every source-binding table."""
+
+        self._scope_color_scheme = scheme
+        for table in self.findChildren(ScopedTableWidget):
+            table.set_scope_color_scheme(scheme)
+
     def add_binding_row(self, binding: NamedSourceBinding | None = None) -> None:
         """Append one editable source binding row to the step-binding table."""
 
@@ -1322,7 +1336,7 @@ class SourceBindingsEditorWidget(QWidget):
     def _step_bindings_group(self, view_model: SourceBindingsViewModel) -> QGroupBox:
         group = self._section_group("Step Bindings")
         layout = QVBoxLayout(group)
-        summary_table = QTableWidget(0, 4)
+        summary_table = self._create_table(0, 4)
         summary_table.setHorizontalHeaderLabels(("Group", "Bindings", "Aliases", "Origins"))
         for row_index, row in enumerate(self._binding_summary_rows(view_model)):
             summary_table.insertRow(row_index)
@@ -1349,6 +1363,7 @@ class SourceBindingsEditorWidget(QWidget):
             groups=self._bindings.groups,
             enum_cell_specs=self._enum_cell_specs,
             free_form_cell_specs=self._free_form_cell_specs(),
+            scope_color_scheme=self._scope_color_scheme,
             parent=self,
         )
 
@@ -1396,7 +1411,7 @@ class SourceBindingsEditorWidget(QWidget):
     def _metadata_rules_group(self) -> QGroupBox:
         group = self._section_group("Step Metadata Rules")
         layout = QVBoxLayout(group)
-        table = QTableWidget(0, len(MetadataRuleColumn))
+        table = self._create_table(0, len(MetadataRuleColumn))
         table.setHorizontalHeaderLabels(
             tuple(column.name.title() for column in MetadataRuleColumn)
         )
@@ -1432,7 +1447,7 @@ class SourceBindingsEditorWidget(QWidget):
     def _match_plan_group(self) -> QGroupBox:
         group = self._section_group("Step Match Plan")
         layout = QVBoxLayout(group)
-        table = QTableWidget(0, len(MatchPlanColumn))
+        table = self._create_table(0, len(MatchPlanColumn))
         table.setHorizontalHeaderLabels(
             tuple(column.name.title() for column in MatchPlanColumn)
         )
@@ -1518,25 +1533,29 @@ class SourceBindingsEditorWidget(QWidget):
         )
         return SourceBindingMatchPlan(method=method, dimensions=dimensions)
 
-    @classmethod
     def _table_group(
-        cls,
+        self,
         title: str,
         columns: tuple[str, ...],
         rows: tuple[tuple[str, ...], ...],
     ) -> QGroupBox:
-        group = cls._section_group(title)
+        group = self._section_group(title)
         layout = QVBoxLayout(group)
-        table = QTableWidget(len(rows), len(columns))
+        table = self._create_table(len(rows), len(columns))
         table.setHorizontalHeaderLabels(columns)
         for row_index, row in enumerate(rows):
             for column_index, value in enumerate(row):
                 table.setItem(row_index, column_index, QTableWidgetItem(value))
         table.resizeColumnsToContents()
-        cls._configure_table(table)
-        cls._fit_table_to_rows(table)
+        self._configure_table(table)
+        self._fit_table_to_rows(table)
         layout.addWidget(table)
         return group
+
+    def _create_table(self, rows: int, columns: int) -> ScopedTableWidget:
+        table = ScopedTableWidget(rows, columns)
+        table.set_scope_color_scheme(self._scope_color_scheme)
+        return table
 
     @staticmethod
     def _section_group(title: str) -> QGroupBox:
@@ -1568,6 +1587,7 @@ class SourceBindingsEditorWidget(QWidget):
 ValueGettable.register(SourceBindingsEditorWidget)
 ValueSettable.register(SourceBindingsEditorWidget)
 ChangeSignalEmitter.register(SourceBindingsEditorWidget)
+ScopeColorSchemeReceiver.register(SourceBindingsEditorWidget)
 
 
 def create_source_bindings_editor_widget(
