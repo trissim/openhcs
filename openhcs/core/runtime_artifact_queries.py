@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable, Iterator, Mapping, MutableMapping, Sequence
 from dataclasses import dataclass, field, fields as dataclass_fields, is_dataclass
 import math
+import re
 from typing import Any, ClassVar
 from weakref import WeakKeyDictionary
 
@@ -293,14 +294,6 @@ class MeasurementTableUnion:
             for table in self.tables
             for row in measurement_rows((table,))
         )
-
-
-def merged_measurement_table(
-    name: str,
-    tables: tuple[MeasurementTable, ...],
-) -> MeasurementTable:
-    """Return one row-owned measurement table for same-artifact subject records."""
-    return MeasurementTableUnion(name, tables).as_table()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1666,10 +1659,10 @@ def measurement_object_label(
 ) -> int | None:
     """Return the object id encoded on a measurement row."""
     if object_id_field is not None and object_id_field in row:
-        return _coerce_measurement_object_label(row[object_id_field])
+        return MeasurementObjectLabelResolution(row[object_id_field]).object_label
     for key in MEASUREMENT_OBJECT_ID_FIELDS:
         if key in row:
-            return _coerce_measurement_object_label(row[key])
+            return MeasurementObjectLabelResolution(row[key]).object_label
     return None
 
 
@@ -1679,17 +1672,62 @@ def measurement_row_has_object_identity(
     object_id_field: str | None = None,
 ) -> bool:
     """Return whether a measurement row carries object identity."""
-    try:
-        return measurement_object_label(row, object_id_field=object_id_field) is not None
-    except (TypeError, ValueError):
-        return False
+    return (
+        measurement_object_label(row, object_id_field=object_id_field)
+        is not None
+    )
 
 
-def _coerce_measurement_object_label(value: object) -> int | None:
-    """Return an integer object label from runtime/CSV scalar encodings."""
-    if value in (None, ""):
+@dataclass(frozen=True, slots=True)
+class MeasurementObjectLabelResolution:
+    """Integer object label resolved from runtime/CSV scalar encodings."""
+
+    value: object
+
+    @property
+    def object_label(self) -> int | None:
+        numeric = MeasurementNumericLiteral(self.value).value
+        if numeric is None:
+            return None
+        integer = int(numeric)
+        return integer if float(integer) == numeric else None
+
+
+@dataclass(frozen=True, slots=True)
+class MeasurementNumericLiteral:
+    """Finite numeric measurement literal accepted in row-axis fields."""
+
+    raw_value: object
+
+    _NUMERIC_LITERAL_RE: ClassVar[re.Pattern[str]] = re.compile(
+        r"^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$"
+    )
+
+    @property
+    def token(self) -> str | None:
+        if self.raw_value in (None, ""):
+            return None
+        if isinstance(self.raw_value, bool):
+            return str(int(self.raw_value))
+        if isinstance(self.raw_value, (int, float, np.integer, np.floating)):
+            return str(self.raw_value)
+        if isinstance(self.raw_value, str):
+            stripped = self.raw_value.strip()
+            return stripped or None
         return None
-    return int(float(value))
+
+    @property
+    def value_is_numeric(self) -> bool:
+        token = self.token
+        return token is not None and self._NUMERIC_LITERAL_RE.match(token) is not None
+
+    @property
+    def value(self) -> float | None:
+        token = self.token
+        if token is None or not self._NUMERIC_LITERAL_RE.match(token):
+            return None
+        numeric = float(token)
+        return numeric if math.isfinite(numeric) else None
 
 
 def measurement_table_object_id_field(table: MeasurementTable) -> str | None:
@@ -1818,13 +1856,12 @@ class MeasurementAxisValueProjection:
     @staticmethod
     def value_is_present(value: object) -> bool:
         """Return whether an axis value declares a concrete row domain."""
-        if value in (None, ""):
+        literal = MeasurementNumericLiteral(value)
+        if literal.token is None:
             return False
-        try:
-            numeric_value = float(value)
-        except (TypeError, ValueError):
+        if not literal.value_is_numeric:
             return True
-        return math.isfinite(numeric_value)
+        return literal.value is not None
 
 
 @dataclass(frozen=True, slots=True)

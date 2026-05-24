@@ -78,8 +78,8 @@ from openhcs.core.runtime_artifact_queries import (
     MeasurementFeatureQuery,
     MeasurementTableAxisQuery,
     MeasurementTableObjectFeatureSemantics,
+    MeasurementTableUnion,
     RuntimeArtifactQueryContext,
-    merged_measurement_table,
     measurement_value_indexes_for_object_feature_batch,
     measurement_values_for_feature,
     measurement_values_for_label_slices,
@@ -245,10 +245,10 @@ class ObjectMeasurementTableIndex:
                 not semantics.object_names for semantics in name_table_semantics
             )
             if len(object_names) > 1 or (object_names and has_image_level_rows):
-                logical_tables_by_name[name] = merged_measurement_table(
+                logical_tables_by_name[name] = MeasurementTableUnion(
                     name,
                     name_tables,
-                )
+                ).as_table()
         for table in tables:
             table_semantics = MeasurementTableObjectFeatureSemantics.from_table(table)
             group_key = RuntimeSliceProjection.measurement_table_repeated_scalar_group_key(
@@ -2092,10 +2092,10 @@ class CellProfilerRuntimeAdapter(RuntimePlaneAxisProjector):
             group_key=group_key,
             current_image=current_image,
         )
-        return merged_measurement_table(
+        return MeasurementTableUnion(
             name,
             tuple(MeasurementTable.from_runtime_value(record.value) for record in records),
-        )
+        ).as_table()
 
     def measurement_tables_for_object(
         self,
