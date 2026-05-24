@@ -9,6 +9,7 @@ import time
 import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+from enum import Enum
 from pathlib import Path
 from typing import Any, ClassVar, Mapping, Sequence
 
@@ -208,6 +209,118 @@ class SourceWorkspaceAnchorProjection:
         )
 
 
+class SourceAnchorSelectionStatus(str, Enum):
+    """Outcome of source-bound execution-anchor resolution."""
+
+    SELECTED = "selected"
+    DEFERRED_TO_RUNTIME = "deferred_to_runtime"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceAnchorPatternSelection:
+    """Resolved source-compatible anchors plus the authority that owns them."""
+
+    patterns: tuple[Any, ...]
+    status: SourceAnchorSelectionStatus
+    reason: str
+
+    @classmethod
+    def selected(
+        cls,
+        patterns: Sequence[Any],
+        *,
+        reason: str = "source selectors resolved at anchor boundary",
+    ) -> "SourceAnchorPatternSelection":
+        return cls(
+            patterns=tuple(patterns),
+            status=SourceAnchorSelectionStatus.SELECTED,
+            reason=reason,
+        )
+
+    @classmethod
+    def deferred_to_runtime(
+        cls,
+        patterns: Sequence[Any],
+        *,
+        reason: str,
+    ) -> "SourceAnchorPatternSelection":
+        return cls(
+            patterns=tuple(patterns),
+            status=SourceAnchorSelectionStatus.DEFERRED_TO_RUNTIME,
+            reason=reason,
+        )
+
+    @property
+    def owns_runtime_resolution(self) -> bool:
+        return self.status is SourceAnchorSelectionStatus.DEFERRED_TO_RUNTIME
+
+
+@dataclass(frozen=True, slots=True)
+class SourceWorkspaceAnchorNarrowing:
+    """Contract for partial anchors materialized from a virtual source workspace."""
+
+    source_context: SourcePatternResolutionContext
+    compatible_count: int
+    alias_count: int
+
+    def allows_runtime_completion(self) -> bool:
+        return (
+            self.source_context.has_virtual_source_workspace
+            and 0 < self.compatible_count < self.alias_count
+        )
+
+
+class SourceBindingMatchResolutionStatus(str, Enum):
+    """Outcome of matching one anchor pattern to source-binding aliases."""
+
+    MATCHED = "matched"
+    DEFERRED_TO_RUNTIME = "deferred_to_runtime"
+
+
+@dataclass(frozen=True, slots=True)
+class SourceBindingMatchResolution:
+    """Alias match result for one source-bound anchor pattern."""
+
+    status: SourceBindingMatchResolutionStatus
+    binding: NamedSourceBinding | None
+    reason: str
+
+    @classmethod
+    def matched(
+        cls,
+        binding: NamedSourceBinding,
+    ) -> "SourceBindingMatchResolution":
+        return cls(
+            status=SourceBindingMatchResolutionStatus.MATCHED,
+            binding=binding,
+            reason="exactly one selector binding matched the anchor",
+        )
+
+    @classmethod
+    def deferred_to_runtime(
+        cls,
+        *,
+        reason: str,
+    ) -> "SourceBindingMatchResolution":
+        return cls(
+            status=SourceBindingMatchResolutionStatus.DEFERRED_TO_RUNTIME,
+            binding=None,
+            reason=reason,
+        )
+
+    def require_binding(self) -> NamedSourceBinding:
+        if self.binding is None:
+            raise RuntimeError(
+                "Source binding resolution was deferred to runtime: "
+                f"{self.reason}."
+            )
+        return self.binding
+
+    @property
+    def owns_runtime_resolution(self) -> bool:
+        return self.status is SourceBindingMatchResolutionStatus.DEFERRED_TO_RUNTIME
+
+
 def _runtime_profile_enabled() -> bool:
     return os.environ.get(_PROFILE_RUNTIME_ENV, "").lower() in {"1", "true", "yes"}
 
@@ -283,16 +396,19 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
     ) -> list[Any]:
         """Return source-compatible anchor patterns for one execution group."""
 
-    def _source_compatible_anchor_patterns(
+    def _source_compatible_anchor_selection(
         self,
         pattern_list: Sequence[Any],
         *,
         bindings: Sequence[NamedSourceBinding],
         source_context: SourcePatternResolutionContext,
-    ) -> list[Any]:
+    ) -> SourceAnchorPatternSelection:
         selector_bindings = self._selector_bindings(bindings)
         if not selector_bindings:
-            return list(pattern_list)
+            return SourceAnchorPatternSelection.selected(
+                pattern_list,
+                reason="no selector bindings participate in anchor resolution",
+            )
 
         compatible = [
             pattern
@@ -307,14 +423,23 @@ class SourceBoundAnchorPatternPolicy(ABC, metaclass=AutoRegisterMeta):
             )
         ]
         if compatible:
-            return compatible
+            return SourceAnchorPatternSelection.selected(compatible)
         if self._metadata_selector_fields_are_unavailable(
             pattern_list,
             bindings=selector_bindings,
             source_context=source_context,
         ):
-            return list(pattern_list)
-        return compatible
+            return SourceAnchorPatternSelection.deferred_to_runtime(
+                pattern_list,
+                reason=(
+                    "selector metadata fields are unavailable at the execution "
+                    "anchor boundary"
+                ),
+            )
+        return SourceAnchorPatternSelection.selected(
+            (),
+            reason="source selectors resolved no compatible anchor patterns",
+        )
 
     @staticmethod
     def _metadata_selector_fields_are_unavailable(
@@ -396,11 +521,12 @@ class DefaultSourceBoundAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
         bindings: Sequence[NamedSourceBinding],
         source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
-        return self._source_compatible_anchor_patterns(
+        selection = self._source_compatible_anchor_selection(
             pattern_list,
             bindings=bindings,
             source_context=source_context,
         )
+        return list(selection.patterns)
 
 
 class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
@@ -415,11 +541,12 @@ class MatchedImageSetAnchorPatternPolicy(SourceBoundAnchorPatternPolicy):
         bindings: Sequence[NamedSourceBinding],
         source_context: SourcePatternResolutionContext,
     ) -> list[Any]:
-        compatible = self._source_compatible_anchor_patterns(
+        selection = self._source_compatible_anchor_selection(
             pattern_list,
             bindings=bindings,
             source_context=source_context,
         )
+        compatible = list(selection.patterns)
         selector_bindings = self._selector_bindings(bindings)
         anchor_bindings = tuple(
             binding
@@ -460,10 +587,11 @@ class OrderMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPolicy
     ) -> list[Any]:
         alias_count = len(selector_bindings)
         if len(compatible) % alias_count:
-            if (
-                source_context.has_virtual_source_workspace
-                and len(compatible) < alias_count
-            ):
+            if SourceWorkspaceAnchorNarrowing(
+                source_context=source_context,
+                compatible_count=len(compatible),
+                alias_count=alias_count,
+            ).allows_runtime_completion():
                 return list(compatible)
             raise ValueError(
                 "ORDER source binding produced an incomplete image set: "
@@ -504,11 +632,11 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
                 selector_bindings=selector_bindings,
                 source_context=source_context,
             )
-            if binding is None:
+            if binding.owns_runtime_resolution:
                 return list(compatible)
             key = self._metadata_image_set_key(
                 metadata,
-                binding=binding,
+                binding=binding.require_binding(),
                 bindings_by_alias=bindings_by_alias,
             )
             if key in seen:
@@ -523,7 +651,7 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
         *,
         selector_bindings: Sequence[NamedSourceBinding],
         source_context: SourcePatternResolutionContext,
-    ) -> NamedSourceBinding | None:
+    ) -> SourceBindingMatchResolution:
         matches = tuple(
             binding
             for binding in selector_bindings
@@ -534,15 +662,20 @@ class MetadataMatchedImageSetAnchorPatternPolicy(MatchedImageSetAnchorPatternPol
             )
         )
         if len(matches) > 1 and source_context.has_virtual_source_workspace:
-            return matches[0]
+            return SourceBindingMatchResolution.matched(matches[0])
         if len(matches) == 0 and source_context.has_virtual_source_workspace:
-            return None
+            return SourceBindingMatchResolution.deferred_to_runtime(
+                reason=(
+                    "virtual source workspace did not expose enough selector "
+                    "metadata to bind this anchor to one alias"
+                )
+            )
         if len(matches) != 1:
             raise ValueError(
                 "METADATA source binding expected exactly one alias match for "
                 f"{pattern!s}, got {len(matches)}."
             )
-        return matches[0]
+        return SourceBindingMatchResolution.matched(matches[0])
 
     def _metadata_image_set_key(
         self,

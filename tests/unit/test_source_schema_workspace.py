@@ -48,6 +48,7 @@ from openhcs.core.source_schema_workspace import (
 )
 from openhcs.core.steps.function_execution import (
     SourceBoundAnchorPatternPolicy,
+    SourceAnchorSelectionStatus,
     SourcePatternResolutionContext,
 )
 from openhcs.microscopes.source_schema import SourceSchemaFilenameParser
@@ -411,6 +412,77 @@ def test_source_bound_anchor_filter_defers_unavailable_metadata_selector() -> No
     )
 
     assert filtered == ["A01_s001_w{iii}_z001_t001.tif"]
+
+
+def test_source_bound_anchor_filter_reports_runtime_defer_authority() -> None:
+    binding = NamedSourceBinding(
+        alias="origDNA",
+        selector=SourceSelector(
+            metadata=(MetadataSelector("ChannelNumber", "2"),),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    plan = CompiledSourceBindingPlan(
+        bindings_by_group={None: (binding,)},
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/3d_monolayer_xy1_ch2.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {"channel": "1", "well": "A01"},
+        },
+    )
+
+    selection = SourceBoundAnchorPatternPolicy.for_plan(
+        plan
+    )._source_compatible_anchor_selection(
+        ["A01_s001_w{iii}_z001_t001.tif"],
+        bindings=plan.bindings_for_group(None),
+        source_context=source_context,
+    )
+
+    assert selection.status is SourceAnchorSelectionStatus.DEFERRED_TO_RUNTIME
+    assert selection.patterns == ("A01_s001_w{iii}_z001_t001.tif",)
+
+
+def test_source_bound_anchor_filter_does_not_defer_available_metadata_mismatch() -> None:
+    binding = NamedSourceBinding(
+        alias="origDNA",
+        selector=SourceSelector(
+            metadata=(MetadataSelector("ChannelNumber", "2"),),
+        ),
+        origin=SourceBindingOrigin.PIPELINE_START,
+    )
+    plan = CompiledSourceBindingPlan(
+        bindings_by_group={None: (binding,)},
+        match_plan=SourceBindingMatchPlan(method=SourceBindingMatchMethod.ORDER),
+    )
+    source_context = SourcePatternResolutionContext(
+        parser=SourceSchemaFilenameParser(),
+        source_paths_by_virtual_path={
+            "A01_s001_w1_z001_t001.tif": "/source/3d_monolayer_xy1_ch1.tif",
+        },
+        source_metadata_by_path={
+            "A01_s001_w1_z001_t001.tif": {
+                "ChannelNumber": "1",
+                "well": "A01",
+            },
+        },
+    )
+
+    selection = SourceBoundAnchorPatternPolicy.for_plan(
+        plan
+    )._source_compatible_anchor_selection(
+        ["A01_s001_w{iii}_z001_t001.tif"],
+        bindings=plan.bindings_for_group(None),
+        source_context=source_context,
+    )
+
+    assert selection.status is SourceAnchorSelectionStatus.SELECTED
+    assert selection.patterns == ()
 
 
 def test_metadata_matched_source_workspace_defers_when_template_matches_no_alias() -> None:
